@@ -94,7 +94,10 @@ class Words:
 
     def __init__(self, monkeypatch):
         self.said = ""
+        self.at = None            # None: said one second after "now" (so after any question asked now)
         monkeypatch.setattr(lvt, "_owner_words", lambda: self.said)
+        monkeypatch.setattr(lvt, "_owner_words_at", lambda: (
+            (self.said, self.at if self.at is not None else lvr._now() + 1) if self.said else ("", None)))
 
     def say(self, text):
         self.said = text
@@ -307,7 +310,11 @@ def test_it_is_offered_again_only_after_readiness_changed(monkeypatch, env):
     lvr.decide_switch_back("keep_cloud")
     assert lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 2400) is False, "kept: not asked again"
     assert lvr.maybe_offer_switch_back(REFUSED_SNAP, assessed_at=T0 + 3000) is False
-    assert store.data[lvr.SWITCHBACK_KEY] == {}, "readiness changed: the past offer is forgotten"
+    assert store.data[lvr.SWITCHBACK_KEY]["state"] == "kept", "one reading that is not capable is not a change"
+    assert lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 3100) is False
+    assert lvr.maybe_offer_switch_back(REFUSED_SNAP, assessed_at=T0 + 3200) is False
+    assert lvr.maybe_offer_switch_back(REFUSED_SNAP, assessed_at=T0 + 3300) is False
+    assert store.data[lvr.SWITCHBACK_KEY] == {}, "two readings in a row: readiness changed, the past offer is forgotten"
     assert lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 3600) is True
     assert len(p.of("LV7")) == 2
 
@@ -385,15 +392,32 @@ def test_after_an_always_the_idle_check_looks_daily_not_weekly(monkeypatch, env)
 
 # ── 4. the four modes ────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("mode", ["cloud_only", "local_only"])
-def test_no_switch_back_offer_in_cloud_only_or_local_only(monkeypatch, env, mode):
+def test_no_switch_back_offer_in_local_only(monkeypatch, env):
     store, p = _on_cloud_by_always(monkeypatch, env)
-    store.data["model_routing"] = {"mode": mode}
+    store.data["model_routing"] = {"mode": "local_only"}
     assert lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800) is False
     assert p.cards == [] and lvr._watching_for_switch_back() is False
 
 
-@pytest.mark.parametrize("mode", ["local_preferred", "cloud_preferred"])
+def test_cloud_only_the_factory_default_offers_the_switch_back_like_any_mode(monkeypatch, env):
+    store, p = _on_cloud_by_always(monkeypatch, env)
+    for blank in ({"mode": "cloud_only"}, {}, {"mode": ""}):
+        store.data["model_routing"] = blank
+        store.data[lvr.SWITCHBACK_KEY] = {}
+        p.cards.clear()
+        assert lvr._watching_for_switch_back() is True
+        assert lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800) is True, blank
+        assert len(p.of("LV7")) == 1 and store.engine_writes() == []
+
+
+def test_the_old_offer_is_not_suppressed_without_the_new_one_taking_its_place(monkeypatch, env):
+    """A recorded 'always' silences the old once-only offer; the switch-back offer must then fire for the same owner."""
+    store, p = _on_cloud_by_always(monkeypatch, env, model_routing={"mode": "cloud_only"})
+    assert lvr.maybe_offer_switch(CAPABLE_SNAP) is False
+    assert lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800) is True
+
+
+@pytest.mark.parametrize("mode", ["local_preferred", "cloud_preferred", "cloud_only"])
 def test_the_other_modes_do_offer_the_switch_back(monkeypatch, env, mode):
     store, p = _on_cloud_by_always(monkeypatch, env)
     store.data["model_routing"] = {"mode": mode}
@@ -528,13 +552,15 @@ def test_the_voice_answer_always_works(monkeypatch):
     assert store.data[lvr.CHOICE_KEY]["source"] == "voice"
 
 
-def test_the_answer_may_omit_the_choice_the_owners_words_give_it(monkeypatch):
+def test_an_answer_with_no_choice_named_by_the_model_is_not_accepted(monkeypatch):
     store = Store(monkeypatch)
     Pushes(monkeypatch)
     w = Words(monkeypatch).say("use cloud voice")
     _tool(action="cloud")
     w.say("just this call please")
-    assert _tool(action="answer")["kind"] == "answered" and store.data[lvr.CHOICE_KEY]["scope"] == "call"
+    out = _tool(action="answer")
+    assert out["kind"] == "asked_again" and store.engine_writes() == []
+    assert _tool(action="answer", choice="call")["kind"] == "answered"
 
 
 def test_the_same_breath_that_asked_is_not_the_answer(monkeypatch):
@@ -589,7 +615,7 @@ def test_the_voice_can_switch_back_and_keep_cloud(monkeypatch, env):
     store2, p2 = _on_cloud_by_always(monkeypatch, env)
     Words(monkeypatch).say("yes, switch back")
     lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800)
-    out = _tool(action="answer")
+    out = _tool(action="answer", choice="switch_back")
     assert out["kind"] == "answered" and store2.data["voice_engine"] == "local"
 
 
@@ -599,7 +625,7 @@ def test_an_answer_for_the_other_question_is_not_taken(monkeypatch):
     w = Words(monkeypatch).say("use cloud voice")
     _tool(action="cloud")
     w.say("keep cloud")
-    out = _tool(action="answer")
+    out = _tool(action="answer", choice="keep_cloud")
     assert out["kind"] == "asked_again" and "other question" in out["spoken"]
     assert store.engine_writes() == []
 
@@ -622,10 +648,18 @@ def test_local_only_refuses_by_voice_with_the_reason(monkeypatch):
 @pytest.mark.parametrize("words,expect", [
     ("just this call", "call"), ("Just this call, please.", "call"), ("only for this call", "call"),
     ("always", "always"), ("Always.", "always"), ("from now on", "always"),
-    ("switch back", "switch_back"), ("go back to local", "switch_back"),
+    ("switch back", "switch_back"), ("go back to local", "switch_back"), ("yes, switch back", "switch_back"),
     ("keep cloud", "keep_cloud"), ("keep the cloud", "keep_cloud"), ("stay on cloud", "keep_cloud"),
     ("never mind", "cancel"), ("stay on local", "cancel"),
     ("always, no, just this call", None), ("", None), ("what is the weather", None),
+    # a negation just before the phrase is a doubt, never the answer
+    ("no, not always", None), ("not always", None), ("don't switch back", None), ("do not switch back", None),
+    ("I don't want to keep cloud", None), ("never always", None), ("no, just this call", None),
+    # whole words only, and questions and long talk are not answers
+    ("who is this call from?", None), ("because local is fine", None), ("alwaysish", None),
+    ("is it always cloud?", None), ("maybe always", None), ("should I keep cloud", None),
+    ("I always forget which setting that is for this call", None), ("use local", None), ("not yet", None),
+    ("callous", None), ("recall", None),
 ])
 def test_what_the_owners_words_answer(words, expect):
     assert lvr.classify_answer(words) == expect
@@ -677,10 +711,13 @@ def test_the_panel_status_carries_the_question_the_offer_and_the_choice(monkeypa
     assert lvr.panel_status()["switch_back"]["choices"][0]["id"] == "switch_back"
 
 
-def _client(monkeypatch, store):
+def _client(monkeypatch, store, page=True):
     import agent_friday.routes.voice as rv
     from flask import Flask
     from agent_friday.privacy import cloud_consent as cc
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: page)
+    monkeypatch.setattr(rv, "_is_local_request", lambda: True)
     monkeypatch.setattr(cc, "stored_snapshot", lambda: CAPABLE_SNAP)
     app = Flask(__name__)
     app.register_blueprint(rv.voice_bp)
@@ -697,7 +734,10 @@ def test_the_routes_ask_answer_and_refuse(monkeypatch):
     assert store.engine_writes() == []
     bad = client.post("/api/voice/cloud-switch/answer", json={"choice": "sometimes"})
     assert bad.status_code == 409 and store.engine_writes() == []
-    ok = client.post("/api/voice/cloud-switch/answer", json={"choice": "call"})
+    qid = body["cloud_question"]["id"]
+    gone = client.post("/api/voice/cloud-switch/answer", json={"choice": "call", "id": "not-this-one"})
+    assert gone.status_code == 409 and store.engine_writes() == [], "another question's id is refused"
+    ok = client.post("/api/voice/cloud-switch/answer", json={"choice": "call", "id": qid})
     assert ok.status_code == 200 and store.data["voice_engine"] == "gemini"
     none = client.post("/api/voice/cloud-switch/answer", json={"choice": "always"})
     assert none.status_code == 409, "no question is waiting any more"
@@ -761,3 +801,219 @@ def test_the_settings_keys_are_declared_and_documented():
     assert DEFAULT_SETTINGS["voice_engine_choice"] == {} and DEFAULT_SETTINGS["voice_switch_back"] == {}
     docs = (ROOT / "docs" / "user-guide" / "configuration.md").read_text(encoding="utf-8")
     assert "`voice_engine_choice`" in docs and "`voice_switch_back`" in docs
+
+
+# ── 9. the critic's findings ──────────────────────────────────────────────────
+
+def test_the_routes_answer_only_to_the_owners_page(monkeypatch):
+    store = Store(monkeypatch)
+    Pushes(monkeypatch)
+    client = _client(monkeypatch, store, page=False)
+    assert client.post("/api/voice/cloud-switch", json={}).status_code == 403
+    assert client.post("/api/voice/cloud-switch/answer", json={"choice": "always"}).status_code == 403
+    assert client.post("/api/voice/local-readiness/switch-back", json={"choice": "switch_back"}).status_code == 403
+    assert store.writes == [] and lvr.cloud_question_card() is None
+
+
+def test_a_forged_reason_is_ignored_the_server_derives_it(monkeypatch):
+    store = Store(monkeypatch)
+    Pushes(monkeypatch)
+    client = _client(monkeypatch, store)
+    r = client.post("/api/voice/cloud-switch", json={"source": "settings", "reason": "local_voice_failed"})
+    qid = r.get_json()["cloud_question"]["id"]
+    assert r.get_json()["cloud_question"]["reason"] == "your_choice"
+    client.post("/api/voice/cloud-switch/answer", json={"choice": "always", "id": qid})
+    assert store.data[lvr.CHOICE_KEY]["reason"] == "your_choice"
+
+
+def test_a_question_runs_out(monkeypatch, env):
+    store = Store(monkeypatch)
+    p = Pushes(monkeypatch)
+    lvr.ask_cloud_switch(source="voice")
+    card = lvr.cloud_question_card()
+    assert card["id"] and card["expires_at"] == T0 + lvr.QUESTION_TTL_S
+    env[0] = T0 + lvr.QUESTION_TTL_S + 1
+    assert lvr.cloud_question_card() is None
+    res = lvr.answer_cloud_switch("always")
+    assert res["ok"] is False and store.engine_writes() == []
+    assert "cloud-voice-scope" in p.resolved, "its card goes with it"
+
+
+def test_an_answer_names_its_question(monkeypatch):
+    store = Store(monkeypatch)
+    Pushes(monkeypatch)
+    lvr.ask_cloud_switch(source="settings")
+    qid = lvr.cloud_question_card()["id"]
+    assert lvr.answer_cloud_switch("always", question_id="other")["ok"] is False
+    assert store.engine_writes() == []
+    lvr.ask_cloud_switch(source="settings")                      # asked again: a new id
+    assert lvr.answer_cloud_switch("always", question_id=qid)["ok"] is False, "the old question is gone"
+    assert lvr.answer_cloud_switch("always", question_id=lvr.cloud_question_card()["id"])["ok"] is True
+
+
+def test_words_spoken_before_the_question_are_not_an_answer(monkeypatch, env):
+    store = Store(monkeypatch)
+    Pushes(monkeypatch)
+    w = Words(monkeypatch).say("use cloud voice")
+    _tool(action="cloud")
+    w.say("just this call")
+    w.at = T0 - 5                                               # said before the question was asked
+    out = _tool(action="answer", choice="call")
+    assert out["kind"] == "asked_again" and store.engine_writes() == []
+    w.at = T0 + 2
+    assert _tool(action="answer", choice="call")["kind"] == "answered"
+
+
+def test_a_relay_cannot_carry_an_older_utterance_into_an_answer(monkeypatch, env):
+    """Owner words with no stamp, or too old, are not owner words for an answer."""
+    src = (ROOT / "src" / "agent_friday" / "services" / "local_voice_tools.py").read_text(encoding="utf-8")
+    assert "OWNER_WORDS_MAX_AGE_S" in src and "voice_owner_at" in src and "owner_text_at" in src
+    vs = (ROOT / "src" / "agent_friday" / "routes" / "voice.py").read_text(encoding="utf-8")
+    assert vs.count('["owner_text_at"] = _time.time()') == 2 and '"owner_text_at": _time.time()' in vs
+    ve = (ROOT / "src" / "agent_friday" / "services" / "voice_engine.py").read_text(encoding="utf-8")
+    assert ve.count('"voice_owner_at": (session or {}).get("owner_text_at")') == 2
+
+
+def test_a_spoken_switch_back_must_come_after_the_offer(monkeypatch, env):
+    store, p = _on_cloud_by_always(monkeypatch, env)
+    w = Words(monkeypatch)
+    lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800)
+    made = store.data[lvr.SWITCHBACK_KEY]["made_at"]
+    w.say("switch back")
+    w.at = made - 10
+    assert _tool(action="answer", choice="switch_back")["kind"] == "asked_again"
+    assert store.data["voice_engine"] == "gemini"
+    w.at = made + lvr.SWITCH_BACK_VOICE_TTL_S + 10
+    assert _tool(action="answer", choice="switch_back")["kind"] == "asked_again"
+    w.at = made + 5
+    assert _tool(action="answer", choice="switch_back")["kind"] == "answered"
+    assert store.data["voice_engine"] == "local"
+
+
+def test_the_page_answer_names_the_offer_too(monkeypatch, env):
+    store, _ = _on_cloud_by_always(monkeypatch, env)
+    lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800)
+    assert lvr.decide_switch_back("switch_back", question_id="stale")["ok"] is False
+    assert store.data["voice_engine"] == "gemini"
+    assert lvr.decide_switch_back("switch_back", question_id=lvr.switch_back_card()["id"])["ok"] is True
+
+
+def test_federation_never_syncs_the_voice_engine_or_the_choice_records():
+    from agent_friday.routes import federation
+    for key in ("voice_engine", "voice_engine_choice", "voice_switch_back"):
+        assert key not in federation._SYNC_SAFE_KEYS, key
+
+
+def test_a_restart_in_the_middle_of_just_this_call_goes_back_at_boot(monkeypatch):
+    store = Store(monkeypatch)
+    p = Pushes(monkeypatch)
+    lvr.ask_cloud_switch(source="settings")
+    lvr.answer_cloud_switch("call")
+    assert store.data["voice_engine"] == "gemini"
+    assert lvr.reconcile_at_boot() is True
+    assert store.data["voice_engine"] == "local" and store.data[lvr.CHOICE_KEY] == {}
+    assert len(p.of("LV9")) == 1, "said, not silent"
+    assert lvr.reconcile_at_boot() is False
+
+
+def test_boot_leaves_an_always_alone(monkeypatch):
+    store = Store(monkeypatch)
+    Pushes(monkeypatch)
+    lvr.ask_cloud_switch(source="settings")
+    lvr.answer_cloud_switch("always")
+    assert lvr.reconcile_at_boot() is False and store.data["voice_engine"] == "gemini"
+
+
+def test_the_readiness_loop_reconciles_before_its_first_look():
+    import inspect
+    src = inspect.getsource(lvr.loop)
+    assert src.index("reconcile_at_boot()") < src.index("time.sleep(90.0)")
+
+
+def test_the_settings_gate_fails_closed(monkeypatch):
+    from agent_friday.routes import core_routes
+    monkeypatch.setattr(lvr, "gate_settings_write", lambda ns: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = core_routes._check_cloud_voice_switch({"voice_engine": "gemini"})
+    assert out["http"] == 409 and out["body"]["status"] == "error"
+    assert core_routes._check_cloud_voice_switch({"voice_engine": "local"}) is None
+    assert core_routes._check_cloud_voice_switch({"theme": "dark"}) is None
+
+
+def test_one_failed_measurement_does_not_repeat_a_kept_offer(monkeypatch, env):
+    store, p = _on_cloud_by_always(monkeypatch, env)
+    unknown = {"state": "unknown", "roles": {"voice": {"state": "unknown"}}}
+    lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800)
+    lvr.decide_switch_back("keep_cloud")
+    p.cards.clear()
+    for at, snap in ((T0 + 2000, unknown), (T0 + 2100, CAPABLE_SNAP), (T0 + 2200, unknown), (T0 + 2300, CAPABLE_SNAP)):
+        assert lvr.maybe_offer_switch_back(snap, assessed_at=at) is False
+    assert p.cards == [] and store.data[lvr.SWITCHBACK_KEY]["state"] == "kept"
+
+
+def test_the_switch_back_is_one_delivery_a_tray_card_not_also_a_call(monkeypatch, env):
+    import inspect
+    assert not hasattr(lvr, "_say_in_calls")
+    assert "_CHANNELS" not in inspect.getsource(lvr)
+    store, p = _on_cloud_by_always(monkeypatch, env)
+    delivered = []
+    monkeypatch.setattr(vlc, "deliver", lambda *a, **k: delivered.append(a) or True)
+    vlc._CHANNELS["c1"] = lambda *a, **k: True
+    lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800)
+    assert delivered == [] and len(p.of("LV7")) == 1
+
+
+def test_a_question_made_moot_closes_its_card(monkeypatch):
+    store = Store(monkeypatch)
+    p = Pushes(monkeypatch)
+    lvr.ask_cloud_switch(source="voice")
+    store.data["model_routing"] = {"mode": "local_only"}
+    assert lvr.drop_stale_question() is True
+    assert "cloud-voice-scope" in p.resolved and lvr.cloud_question_card() is None
+    assert lvr.drop_stale_question() is False
+    store.data["model_routing"] = {"mode": "local_preferred"}
+    lvr.ask_cloud_switch(source="voice")
+    store.data["voice_engine"] = "gemini"                       # moved by another path
+    p.resolved.clear()
+    lvr.note_engine_written("gemini")
+    assert "cloud-voice-scope" in p.resolved
+
+
+def test_the_answer_is_read_and_applied_under_one_lock(monkeypatch):
+    import inspect
+    assert "with _ANSWER_LOCK:" in inspect.getsource(lvr.answer_cloud_switch)
+    assert "with _ANSWER_LOCK:" in inspect.getsource(lvr.decide_switch_back)
+    store = Store(monkeypatch)
+    Pushes(monkeypatch)
+    lvr.ask_cloud_switch(source="settings")
+    assert lvr.answer_cloud_switch("always")["ok"] is True
+    assert lvr.answer_cloud_switch("call")["ok"] is False, "the question is used up: the second answer does not apply"
+    assert [w.get("voice_engine") for w in store.writes if "voice_engine" in w] == ["gemini"]
+
+
+def test_setup_asks_before_it_chooses_cloud_voice():
+    src = (ROOT / "src" / "agent_friday" / "setup_wizard.py").read_text(encoding="utf-8")
+    assert "def step_cloud_voice_scope(config" in src
+    assert "step_cloud_voice_scope(config)" in src
+    assert 'Prompt.ask("  [cyan]Choose (1-2)[/cyan]", choices=["1", "2"])' in src, "no default: nothing preselected"
+    assert "Recommended: back to local voice" in src
+
+
+def test_the_stale_descriptions_are_corrected():
+    root = ROOT / "src" / "agent_friday"
+    agent = (root / "services" / "agent.py").read_text(encoding="utf-8")
+    assert "(never switches)" not in agent
+    reg = (root / "services" / "notice_registry.py").read_text(encoding="utf-8")
+    assert "maybe_offer_switch_back" in reg
+    docs = (ROOT / "docs" / "user-guide" / "configuration.md").read_text(encoding="utf-8")
+    assert "no local voice to go back to" not in docs and "default cloud-only mode included" in docs
+    assert "when Friday restarts in the middle of one" in docs
+    change = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "cloud-only, the default, included" in change
+
+
+def test_both_ui_files_wire_the_failure_offer_the_ids_and_the_refusal():
+    for name in ("index.html", "ui_parts/app.html"):
+        html = (ROOT / name).read_text(encoding="utf-8")
+        assert "m.offer.kind === 'cloud_switch'" in html and "m.offer.endpoint" in html, name
+        assert "id: st.cloud_question.id" in html and "id: st.switch_back.id" in html, name
+        assert "data-cloud-voice-refused" in html and "setRefusal(" in html, name
