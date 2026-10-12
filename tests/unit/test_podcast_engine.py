@@ -380,9 +380,11 @@ def test_the_renderer_never_downloads(monkeypatch):
 
 def test_a_voice_that_is_not_installed_is_refused_by_name(monkeypatch):
     monkeypatch.setattr(render, "_cached", lambda repo, fn: None)
+    monkeypatch.setattr(render, "installed_voices", lambda: ["af_heart"])
     with pytest.raises(render.RenderError) as exc:
         render.CpuKokoro().speak("hello", "am_michael")
     assert exc.value.code == "voice_not_installed" and "am_michael" in str(exc.value)
+    assert "af_heart" in str(exc.value)
 
 
 def test_kokoro_is_built_from_cached_paths_on_the_cpu(monkeypatch, tmp_path):

@@ -53,6 +53,18 @@ class RenderError(RuntimeError):
 
 # ── local files only ────────────────────────────────────────────────────────
 
+def hub_cache_dir() -> str | None:
+    """The Hugging Face cache this process reads, as the library resolved it
+    when it was imported. Environment changes made later in the process
+    (another engine pointing HF_HOME at its own folder) do not move it, so this
+    is the cache the server's own lookups use, and the one a child must be given."""
+    try:
+        from huggingface_hub import constants
+        return str(constants.HF_HUB_CACHE)
+    except Exception:
+        return None
+
+
 def _cached(repo: str, filename: str) -> str | None:
     """The cached path of `filename`, or None. Never touches the network."""
     try:
@@ -64,6 +76,21 @@ def _cached(repo: str, filename: str) -> str | None:
     except Exception:
         return None
     return p if isinstance(p, str) and os.path.isfile(p) else None
+
+
+def inventory_fault() -> str | None:
+    """Why the voice inventory is empty, in plain words; None while it has voices.
+
+    An empty inventory is never "no voice to pick": it means this process cannot
+    see the Kokoro files, which is an engine fault, and the message says where
+    it looked so the cause can be found."""
+    if installed_voices():
+        return None
+    return ("Friday's speaker found no Kokoro voices (it looked in %s). The voice "
+            "files may be installed but out of this process's sight, for example "
+            "if HF_HOME or HF_HUB_CACHE points somewhere else. This is an engine "
+            "fault, not a missing voice choice. Nothing was downloaded."
+            % (hub_cache_dir() or "an unknown cache"))
 
 
 def installed_voices() -> list[str]:
@@ -165,11 +192,14 @@ class CpuKokoro:
             return np.zeros(0, dtype="float32")
         vpath = _cached(KOKORO_REPO, f"voices/{voice}.pt")
         if not vpath:
+            fault = inventory_fault()
+            if fault:
+                raise RenderError("voice_inventory_empty", fault)
             raise RenderError(
                 "voice_not_installed",
                 "The voice %r is not installed on this computer. Pick an "
                 "installed voice (%s) for the hosts; nothing is downloaded "
-                "during a render." % (voice, ", ".join(installed_voices()) or "none"))
+                "during a render." % (voice, ", ".join(installed_voices())))
         self.load()
         stuck = self._stuck
         if stuck is not None and stuck.is_alive():
@@ -247,6 +277,14 @@ class ProcessKokoro:
         for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS",
                   "FRIDAY_PODCAST_SPEAKER_THREADS"):
             env[k] = str(SPEAKER_THREADS)
+        # The child resolves the cache from its own environment at import. The
+        # server may have changed HF_HOME since it imported the library (the
+        # NeMo loaders do), so the environment alone would send the child to a
+        # different folder with no Kokoro in it. Hand it the folder the server reads.
+        cache = hub_cache_dir()
+        if cache:
+            env["HF_HUB_CACHE"] = cache
+            env.pop("HUGGINGFACE_HUB_CACHE", None)
         return env
 
     def _start(self):

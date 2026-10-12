@@ -56257,8 +56257,25 @@ function PushToTranscribeRows({ s, save }) {
         /*#__PURE__*/React.createElement("li", null, "The recording is discarded as soon as it has been transcribed."),
         /*#__PURE__*/React.createElement("li", null, "Turning Push-to-Transcribe off removes the hook entirely.")))));
 }
+const KOKORO_VOICE_LABELS = [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']];
+// The picker lists the voices installed on this computer (the same inventory
+// the podcast renderer speaks from). A voice already chosen but not installed
+// stays visible and is marked, so the select never silently shows another.
+function kokoroVoiceOptions(inv, current) {
+  const installed = inv && Array.isArray(inv.installed) ? inv.installed : null;
+  const rows = KOKORO_VOICE_LABELS.filter(([v]) => !installed || installed.includes(v));
+  (installed || []).forEach(v => { if (!KOKORO_VOICE_LABELS.some(([k]) => k === v)) rows.push([v, v]); });
+  if (current && !rows.some(([v]) => v === current)) rows.push([current, current + ' (not installed)']);
+  return rows.map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l));
+}
 function VoiceStackCard({ s, save, mc }) {
   const [manifest, setManifest] = useState(null);
+  const [kokoroInv, setKokoroInv] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    fetch('/api/podcasts/voices').then(r => r.json()).then(d => { if (!stop && d && Array.isArray(d.installed)) setKokoroInv({ installed: d.installed, error: d.engine_error || '' }); }).catch(() => {});
+    return () => { stop = true; };
+  }, []);
   const [err, setErr] = useState('');
   const [note, setNote] = useState('');
   const pollRef = useRef(null);
@@ -56325,7 +56342,8 @@ function VoiceStackCard({ s, save, mc }) {
         policyRow('voice_mouth_gpu', 'Graphics card'),
         sel === 'kokoro' && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 } },
           /*#__PURE__*/React.createElement("select", { className: "input", style: { width: '100%' }, value: s.local_voice_kokoro_voice || 'af_heart', onChange: e => save({ local_voice_kokoro_voice: e.target.value }) },
-            [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']].map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l))),
+            kokoroVoiceOptions(kokoroInv, s.local_voice_kokoro_voice || 'af_heart')),
+          kokoroInv && kokoroInv.error && /*#__PURE__*/React.createElement("div", { role: "status", style: { fontSize: 11, opacity: 0.8, marginTop: 4, lineHeight: 1.45 } }, kokoroInv.error),
           /*#__PURE__*/React.createElement("button", { className: `settings-btn ${s.local_voice_kokoro_allow_cpu ? 'active' : ''}`, style: { fontSize: 11, padding: '5px 10px', marginTop: 6 }, onClick: () => save({ local_voice_kokoro_allow_cpu: !s.local_voice_kokoro_allow_cpu }) }, s.local_voice_kokoro_allow_cpu ? 'Kokoro on the processor: allowed (default; slower than the card)' : 'Kokoro on the processor: off (Piper speaks when the card is busy)')))));
 }
 // ── Settings → Voice → Local voice readiness (Laya in every mode, LV-7) ──

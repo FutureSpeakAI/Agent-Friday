@@ -106,6 +106,7 @@ def podcasts_listen():
 def podcasts_voices():
     from agent_friday.services import podcast_render
     return jsonify({"status": "ok", "installed": podcast_render.installed_voices(),
+                    "engine_error": podcast_render.inventory_fault(),
                     "settings": pe.settings()})
 
 
