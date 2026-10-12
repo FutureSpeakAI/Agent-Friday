@@ -225,7 +225,8 @@ def test_the_same_title_twice_is_one_candidate(monkeypatch):
              Candidate("news", "b1", "Board game cafe opens", "", 0.4, {"url": "https://x/3"})]
     r = laya_resolver.resolve("open that story about the school board votes",
                               sources={"news": lambda t: cands})
-    assert r.status == "command" and r.command["input"]["url"] == "https://x/1"
+    # the first of the two keeps its id; a story opens as navigate_to news_article (command_for)
+    assert r.status == "command" and r.command == {"tool": "navigate_to", "input": {"kind": "news_article", "id": "a1"}}
     assert not [c for c in laya.calls if "item" in c]
 
 

@@ -475,6 +475,15 @@ def test_shadow_runs_in_one_visible_job_per_burst_not_one_card_per_turn(tmp_path
             if vj.CURRENT.get() is None:
                 tops.append(self._kw["name"])
             return super().__enter__()
+    # A runner an earlier test started may still sit in its idle window, inside ITS visible job; this
+    # burst must open its own. Wake it: with nothing queued it ends at once.
+    for _ in range(200):
+        with lh._shadow_cv:
+            if not lh._shadow_runner:
+                break
+            lh._shadow_cv.notify_all()
+        time.sleep(0.02)
+    assert not lh._shadow_runner, "a runner from an earlier test is still draining"
     monkeypatch.setattr(vj, "visible_job", Counting)
     monkeypatch.setattr(lh, "SHADOW_IDLE_WINDOW_S", 0.3)
     gate = threading.Event()
