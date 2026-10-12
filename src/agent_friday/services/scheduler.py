@@ -1772,6 +1772,13 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             status, summary = "skipped", str(e)
             _patch_record(sid, last_status="skipped", last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0)
+        except StoodDown as e:
+            # The owner took the machine back (or is on a call): a skip with
+            # its reason, not a failure. No retry and no failure card; the job
+            # runs at its next slot after Friday resumes.
+            status, summary = "skipped", str(e)
+            _patch_record(sid, last_status="skipped", last_summary=summary,
+                          retry_pending=False, retry_count=0, not_before=0)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"
             # print_exc() writes to stderr, which the packaged app has none
