@@ -222,3 +222,27 @@ def test_on_change_no_delta_is_silent(monkeypatch):
         "task": {"kind": "builtin", "ref": "t_nochange"}})
     _run_and_wait(rec, "sch_t_nochange")
     assert seen["run"] == 0
+
+
+def test_a_stood_down_run_is_a_skip_with_its_reason_and_no_failure_card(monkeypatch):
+    """Taking the machine back (or a call) pauses background jobs. That pause
+    is not a failure: no retry, no "failed" card, the reason in the history."""
+    from agent_friday.services import stand_down
+    notified = []
+    monkeypatch.setattr(s, "_notify_run", lambda *a, **k: notified.append(a))
+    monkeypatch.setattr(stand_down, "is_stood_down", lambda *a, **k: True)
+    monkeypatch.setattr(stand_down, "reason", lambda *a, **k: "you asked for the machine")
+    ran = []
+    s.register_builtin_task("t_stood_down", lambda: ran.append(1), label="Sync",
+                            default_trigger="interval", default_spec={"every_minutes": 60},
+                            notify="silent")
+    rec = s.register_schedule({
+        "id": "sch_t_stood_down", "name": "Sync", "trigger": "interval",
+        "spec": {"every_minutes": 60}, "notify": "silent",
+        "retry": {"max": 2, "backoff_seconds": 300},
+        "task": {"kind": "builtin", "ref": "t_stood_down"}})
+    _run_and_wait(rec, "sch_t_stood_down")
+    live = next(r for r in s._read_store() if r["id"] == "sch_t_stood_down")
+    assert not ran
+    assert live["last_status"] == "skipped" and "machine" in live["last_summary"]
+    assert not live.get("retry_pending") and notified == []
