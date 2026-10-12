@@ -356,21 +356,28 @@ def _defer(w, cid="c1", text="what is going on"):
     w.tick()
 
 
+def _tied(w, cid="c1", text="what is going on", task_id="t1"):
+    """A deferred turn handed to the deeper mind as ``task_id``: the full path a shadow row needs."""
+    _defer(w, cid=cid, text=text)
+    _delegate(cid, text, task_id=task_id)
+
+
 def test_a_tainted_turn_a_failed_call_and_the_routers_own_tools_never_teach(w):
-    for kw in ({"tainted": True}, {"ok": False}, {"denied": True}, {"conversation_id": None}, {"conversation_id": ""}):
-        _defer(w)
-        args = dict(ok=True, tainted=False, conversation_id="c1")
-        args.update(kw)
-        lp.on_executed("query_calendar", {}, **args)
+    clean = dict(ok=True, tainted=False, conversation_id="c1", task_id="t1")
+    cases = [("query_calendar", dict(clean, **kw)) for kw in (
+        {"tainted": True}, {"tainted": lambda: True},                     # read untrusted content
+        {"ok": False}, {"denied": True}, {"conversation_id": None}, {"conversation_id": ""},
+        {"task_id": None}, {"task_id": "t2"})]
+    cases += [(tool, clean) for tool in ("answer_card", "undo_action", "delegate_to_friday", "task_control")]
+    for tool, args in cases:
+        _tied(w)
+        n = len(w.rows())
+        lp.on_executed(tool, {}, **args)
+        assert len(w.rows()) == n, (tool, args)
+        lp.on_executed("query_calendar", {}, **clean)      # positive control: the same turn was waiting for a clean call
+        assert len(w.rows()) == n + 1 and w.rows()[-1]["kind"] == "shadow", (tool, args)
         lp._held.clear()
-    _defer(w)
-    lp.on_executed("query_calendar", {}, ok=True, tainted=lambda: True, conversation_id="c1")      # read untrusted content
-    lp._held.clear()
-    for tool in ("answer_card", "undo_action", "delegate_to_friday", "task_control"):
-        _defer(w)
-        lp.on_executed(tool, {}, ok=True, tainted=False, conversation_id="c1")
-        lp._held.clear()
-    assert w.rows() == []
+    # red when: any one of the varied properties is ignored, or the tie is missing so the control makes no row
 
 
 def test_a_call_from_another_conversation_cannot_resolve_this_ones_waiting_turn(w):
@@ -390,10 +397,17 @@ def test_a_turn_with_no_conversation_id_is_never_held_or_labelled(w):
 
 
 def test_the_two_waiting_turns_are_ambiguous_so_nothing_is_guessed(w):
-    lp.note_routed("what is going on", w.route("defer", None), conversation_id="c1")
-    lp.note_routed("pull up my inbox", w.route("defer", None), conversation_id="c1")
-    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c1")
+    # both deferrals tied to the same task: its call cannot say which one it answers
+    _tied(w, cid="c1", text="what is going on", task_id="t1")
+    _tied(w, cid="c1", text="pull up my inbox", task_id="t1")
+    assert [e.get("task_id") for e in lp._held] == ["t1", "t1"]
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c1", task_id="t1")
     assert w.rows() == []
+    # positive control: two deferrals, each tied to its own task, are not ambiguous
+    _tied(w, cid="c2", text="what is going on", task_id="t2")
+    _tied(w, cid="c2", text="pull up my inbox", task_id="t3")
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c2", task_id="t3")
+    assert [(r["kind"], r["text"]) for r in w.rows()] == [("shadow", "pull up my inbox")]
 
 
 def test_a_label_is_the_owners_choice_never_whatever_the_brain_ran_next(w):
@@ -404,7 +418,9 @@ def test_a_label_is_the_owners_choice_never_whatever_the_brain_ran_next(w):
     # a correction the deeper mind has to answer: whatever it picks is not a label
     lp.note_routed("show my agenda", w.route("tool", "query_calendar"), conversation_id="c2")
     lp.note_routed("no, the other one", w.route("defer", None), conversation_id="c2")
-    lp.on_executed("search_files", {}, ok=True, tainted=False, conversation_id="c2")
+    _delegate("c2", "no, the other one")                                  # handed over, and its task really runs a tool
+    assert not any(e["text"] == "no, the other one" for e in lp._held)    # the correction line is never held to tie
+    lp.on_executed("search_files", {}, ok=True, tainted=False, conversation_id="c2", task_id="t1")
     assert w.rows() == []
     # a correction Laya reads as the same tool she chose teaches nothing; a cloud-routed answer is not hers
     lp.note_routed("show my agenda", w.route("tool", "query_calendar"), conversation_id="c3")
@@ -1315,10 +1331,17 @@ def test_invariant_3_a_broken_personal_layer_never_blocks_the_router(w):
 
 
 def test_invariant_3_capture_never_raises_into_the_turn(w):
-    w.monkeypatch.setattr(store, "append", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk")))
+    tried = []
+
+    def disk_full(*a, **k):
+        tried.append(a)
+        raise RuntimeError("disk")
+    w.monkeypatch.setattr(store, "append", disk_full)
     lp.note_routed("show my agenda", w.route("tool", "query_calendar"), conversation_id="c1")
-    lp.note_routed("no, I meant that", w.route("tool", "check_email"), conversation_id="c1")
-    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c1")      # nothing raised
+    lp.note_routed("no, I meant that", w.route("tool", "check_email", layer="rule"), conversation_id="c1")   # a correction
+    _tied(w, cid="c2")
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c2", task_id="t1")      # a shadow row
+    assert len(tried) == 2                       # both writes really reached the failing store, and nothing raised
 
 
 def test_invariant_4_the_receipt_names_the_personal_version(w):

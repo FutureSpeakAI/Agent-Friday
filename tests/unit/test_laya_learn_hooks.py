@@ -165,14 +165,24 @@ def _run(agent, ctx, name="query_calendar"):
 def test_a_voice_tool_in_the_conversation_does_not_resolve_a_deferred_turn(rig):
     """The voice dispatcher sets the conversation outside _execute_tool; Laya's own routed tool on the next
     turn, or a cloud voice tool, must not become the deeper mind's choice."""
+    from agent_friday.services import laya_router_learn as ll
+    ll.note_delegated("t1", conversation_id="c1", request=LEASE)       # the turn really is waiting for task t1
     tok = rig.agent._CURRENT_CONVERSATION.set("c1")
     try:
-        _run(rig.agent, {"authenticated": True})
-        _run(rig.agent, {"authenticated": True, "conversation_id": "c1"})
-        _run(rig.agent, {"authenticated": True, "conversation_id": "c1", "chosen_by": "laya_router:rule"})
+        # each call its own turn, so the call verifier's repeat cache cannot answer one without running it
+        _run(rig.agent, {"authenticated": True, "turn_id": "v1"})
+        _run(rig.agent, {"authenticated": True, "conversation_id": "c1", "turn_id": "v2"})
+        _run(rig.agent, {"authenticated": True, "conversation_id": "c1", "chosen_by": "laya_router:rule", "turn_id": "v3"})
+        # Laya's own routed tool, even carrying the delegated task's id, is not the deeper mind's choice
+        _run(rig.agent, {"authenticated": True, "conversation_id": "c1", "chosen_by": "laya_router:rule",
+                         "is_background_task": True, "task_id": "t1", "turn_id": "v4"})
     finally:
         rig.agent._CURRENT_CONVERSATION.reset(tok)
     assert rig.kept == []
+    # positive control: the delegated task's own call still makes the row
+    _run(rig.agent, {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1",
+                     "turn_id": "v5"})
+    assert rig.kept == [("shadow", LEASE, "query_calendar")]
     # red on f943324a8: the first call is read with the outer conversation after the reset and makes a row
 
 
@@ -210,9 +220,17 @@ def test_a_tainted_task_call_and_a_crew_or_phone_call_make_no_row(rig, monkeypat
 
 
 def test_a_deferral_with_no_delegated_task_never_makes_a_row(rig):
+    from agent_friday.services import laya_router_learn as ll
     mine = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
-    _run(rig.agent, mine)
+    _run(rig.agent, dict(mine, turn_id="d1"))
     assert rig.kept == []
+    # positive control: once the turn is handed to t1 by its own words, the same call (a new turn) makes the row
+    ll.note_delegated("t1", conversation_id="c1", request="some other words")      # other words tie nothing
+    _run(rig.agent, dict(mine, turn_id="d2"))
+    assert rig.kept == []
+    ll.note_delegated("t1", conversation_id="c1", request=LEASE)
+    _run(rig.agent, dict(mine, turn_id="d3"))
+    assert rig.kept == [("shadow", LEASE, "query_calendar")]
 
 
 LEASE = "sort out the thing with the lease"
