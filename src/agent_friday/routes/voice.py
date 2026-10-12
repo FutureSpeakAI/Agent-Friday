@@ -2513,7 +2513,7 @@ def _resolve_voice_engine(settings=None):
             # not something the mode picked; the panel says so.
             from agent_friday.services import cloud_intent as _ci_label
             label = _ci_label.local_voice_label(
-                (settings.get('model_routing') or {}).get('mode'), label)
+                (settings.get('model_routing') or {}).get('mode'), label, tier=tier)
             return {"engine": "local", "ws_url": "/ws/voice-local",
                     "label": label, "tier": tier,
                     "models_ready": models_ready,

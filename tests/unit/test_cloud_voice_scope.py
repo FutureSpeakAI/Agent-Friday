@@ -724,6 +724,7 @@ def _client(monkeypatch, store, page=True):
     monkeypatch.setattr(rv, "_is_local_request", lambda: True)
     monkeypatch.setattr(cc, "stored_snapshot", lambda: CAPABLE_SNAP)
     app = Flask(__name__)
+    app.secret_key = "test"                 # login_required keeps a session on loopback
     app.register_blueprint(rv.voice_bp)
     return app.test_client()
 
