@@ -180,11 +180,19 @@ def describe_dispatch(model: str, daemon_tags: set | None = None) -> dict:
     tag instead. Nothing in the log says so unless something is asked to.
 
     Returns the same decision `call()` makes, as data:
-      route     — "seat" | "daemon" | "unreachable"
+      route     — "seat" | "daemon" | "cloud_relay" | "unreachable"
+                  ("cloud_relay" is a `:cloud` / `-cloud` Ollama tag: not local)
       endpoint  — the base URL those requests go to
       answering — what that endpoint says it is holding (the seat's own
                   /v1/models id, not the name we asked for)
     """
+    # An Ollama `:cloud` / `-cloud` tag is answered through the daemon but run
+    # on ollama.com. It is its own route, so nothing that means "local"
+    # (route in ("seat", "daemon")) can ever accept it.
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    if is_cloud_model_tag(model):
+        return {"model": model, "route": "cloud_relay",
+                "endpoint": ollama_url(), "answering": None}
     tags = _daemon_tags() if daemon_tags is None else daemon_tags
     base = seat_endpoint(model)
     if base:
@@ -246,6 +254,9 @@ def log_dispatch_table(models, expect_up=None) -> list:
         elif row["route"] == "daemon":
             _log.info("local dispatch: %s -> Ollama daemon %s",
                       model, row["endpoint"])
+        elif row["route"] == "cloud_relay":
+            _log.info("local dispatch: %s is an Ollama cloud-relayed model "
+                      "(ollama.com), not a local seat", model)
         elif model in expect_up:
             # The failure this exists to surface: the plan says this seat is up,
             # and nothing is serving it. Every call 404s and escalates to the
@@ -270,6 +281,20 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     """
     import requests
 
+    # A cloud-tagged Ollama model (`glm-4.6:cloud`) is answered through the
+    # daemon but run on ollama.com. Inside a local-only run it is refused
+    # before anything is queued or sent. Outside one it continues to the
+    # daemon path below, where gate_ollama_body seals it like any cloud payload.
+    from agent_friday.services.local_only_guard import (
+        CloudRefused, is_cloud_model_tag, refuse_if_active)
+    _cloud_tagged = is_cloud_model_tag(model)
+    if _cloud_tagged:
+        try:
+            refuse_if_active("ollama", model)
+        except CloudRefused as e:
+            _log.warning("local_call refused cloud-relayed model %s: %s", model, e)
+            return ""
+
     # The Local AI queue's choke point (services/background_gate): inside a
     # background job this waits while an interactive turn is active. A job
     # cancelled from the queue stops here (the one exception this function
@@ -284,9 +309,9 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
         pass
     # A workspace job's card names the local model that is about to answer.
     from agent_friday.services import visible_jobs as _vj
-    _vj.note_inference(model, local=True)
+    _vj.note_inference(model, local=not _cloud_tagged)
 
-    base = seat_endpoint(model)
+    base = None if _cloud_tagged else seat_endpoint(model)
     if base:
         return _openai_style(base, system, user, model, json_mode, max_tokens,
                              timeout)

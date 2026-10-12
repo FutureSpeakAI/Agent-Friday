@@ -54,6 +54,10 @@ def _names_a_cloud_model(model) -> bool:
     mid = str(model or "").strip()
     if not mid:
         return False
+    # An Ollama `:cloud` / `-cloud` tag is run on ollama.com, not on a seat.
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    if is_cloud_model_tag(mid):
+        return True
     try:
         from agent_friday.routing.model_router import provider_family
         fam = provider_family(mid)
@@ -267,7 +271,9 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     except Exception as e:
         _log.debug("could not read the Ollama inventory: %s", e)
 
-    rows = [t for t in rows if "embed" not in t[0].lower()]
+    from agent_friday.services.local_only_guard import is_cloud_model_tag as _is_cloud_tag
+    rows = [t for t in rows if "embed" not in t[0].lower()
+            and not _is_cloud_tag(t[0])]
 
     # A GGUF ON DISK IS NOT A SEAT A CALLER CAN REACH.
     #

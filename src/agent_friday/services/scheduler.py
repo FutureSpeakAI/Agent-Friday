@@ -197,8 +197,14 @@ def _resolve_local_seat():
             if name and name not in candidates:
                 candidates.append(name)
         candidates += [n for n, _ in (local_seats.installed() or [])]
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
         for name in candidates:
             if not name:
+                continue
+            # An Ollama `:cloud` / `-cloud` tag is answered by the local
+            # daemon but run on ollama.com: never a local seat, whatever
+            # route the dispatch table reports for it.
+            if is_cloud_model_tag(name):
                 continue
             try:
                 d = describe_dispatch(name) or {}
