@@ -184,7 +184,8 @@ def test_only_the_delegated_tasks_own_call_makes_the_shadow_row_and_reads_its_ow
     mine = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
     _run(rig.agent, other)
     assert rig.kept == []
-    _run(rig.agent, mine, name="set_chat_tray")          # a tool the router cannot choose does not label it
+    assert "search_contacts" not in lr.TOOLS
+    _run(rig.agent, mine, name="search_contacts")        # a tool the router cannot choose does not label it
     assert rig.kept == []
     _run(rig.agent, mine)
     assert rig.kept == [("shadow", "sort out the thing with the lease", "query_calendar")]
@@ -196,13 +197,15 @@ def test_a_tainted_task_call_and_a_crew_or_phone_call_make_no_row(rig, monkeypat
     from agent_friday.services import slice_head
     ll.note_delegated("t1", conversation_id="c1", request=LEASE)
     base = {"authenticated": True, "is_background_task": True, "task_id": "t1", "conversation_id": "c1"}
-    _run(rig.agent, dict(base, crew_agent_id="a1"))
-    _run(rig.agent, dict(base, origin="phone"))
+    # Each call is its own turn of the task: the same read repeated inside one turn is answered from the call
+    # verifier's repeat cache (services/call_verifier) and never runs, so it would reach no hook at all.
+    _run(rig.agent, dict(base, crew_agent_id="a1", turn_id="r1"))
+    _run(rig.agent, dict(base, origin="phone", turn_id="r2"))
     monkeypatch.setattr(slice_head, "is_tainted", lambda key: True)
-    _run(rig.agent, base)
+    _run(rig.agent, dict(base, turn_id="r3"))
     assert rig.kept == []
     monkeypatch.setattr(slice_head, "is_tainted", lambda key: False)
-    _run(rig.agent, base)
+    _run(rig.agent, dict(base, turn_id="r4"))
     assert len(rig.kept) == 1
 
 

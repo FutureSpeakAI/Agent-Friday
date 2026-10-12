@@ -315,10 +315,19 @@ def test_silence_is_nothing(w):
     assert w.rows() == []
 
 
+def _delegate(cid, text, task_id="t1"):
+    """The real hand-over: the voice route delegates the deferred turn to the deeper mind as background task
+    ``task_id``, with the request built from the owner's own words (laya_router_learn.note_delegated, which
+    ties it in the personal layer through on_delegated). Only that task's own calls can resolve the turn."""
+    from agent_friday.services import laya_router_learn as ll
+    ll.note_delegated(task_id, conversation_id=cid, request=text)
+
+
 def test_the_brains_choice_is_a_shadow_row_and_never_a_label_until_confirmed(w):
     lp.note_routed("what is going on", w.route("defer", None), conversation_id="c1")
+    _delegate("c1", "what is going on")
     w.tick()
-    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c1")
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c1", task_id="t1")
     (row,) = w.rows()
     assert (row["kind"], row["weight"]) == ("shadow", "shadow")
     res = lp.rebuild(lp.OWNER_PROFILE)
@@ -336,7 +345,8 @@ def test_the_brains_choice_is_a_shadow_row_and_never_a_label_until_confirmed(w):
 
 def test_dismissing_a_brain_choice_forgets_it(w):
     lp.note_routed("what is going on", w.route("defer", None), conversation_id="c1")
-    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c1")
+    _delegate("c1", "what is going on")
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="c1", task_id="t1")
     (row,) = w.rows()
     assert lp.confirm_shadow(lp.OWNER_PROFILE, row["id"], False)["ok"] and w.rows() == []
 
@@ -365,10 +375,11 @@ def test_a_tainted_turn_a_failed_call_and_the_routers_own_tools_never_teach(w):
 
 def test_a_call_from_another_conversation_cannot_resolve_this_ones_waiting_turn(w):
     _defer(w, cid="mine")
-    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="someone-elses")
-    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id=None)
+    _delegate("mine", "what is going on")
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="someone-elses", task_id="t1")
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id=None, task_id="t1")
     assert w.rows() == []
-    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="mine")
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="mine", task_id="t1")
     assert [r["kind"] for r in w.rows()] == ["shadow"]
 
 
@@ -1530,7 +1541,8 @@ def test_the_report_card_lists_what_she_learned_turned_down_and_why_and_what_wai
     w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
     w.correct("flips a test question", "check_email", routed=("tool", "query_calendar"))
     lp.note_routed("read me the morning", w.route("defer", None), conversation_id="cz")
-    lp.on_executed("get_briefing", {}, ok=True, tainted=False, conversation_id="cz")
+    _delegate("cz", "read me the morning")
+    lp.on_executed("get_briefing", {}, ok=True, tainted=False, conversation_id="cz", task_id="t1")
     lp.rebuild(lp.OWNER_PROFILE)
     rep = lp.report()
     assert [i["text"] for i in rep["learned"]] == ["pull up my inbox"]
@@ -1610,7 +1622,8 @@ def test_the_api_undoes_forgets_resets_rolls_back_and_wipes(w, client):
 
 def test_the_api_confirms_a_brain_choice(w, client):
     lp.note_routed("read me the morning", w.route("defer", None), conversation_id="cz")
-    lp.on_executed("get_briefing", {}, ok=True, tainted=False, conversation_id="cz")
+    _delegate("cz", "read me the morning")
+    lp.on_executed("get_briefing", {}, ok=True, tainted=False, conversation_id="cz", task_id="t1")
     (row,) = w.rows()
     assert client.post("/api/laya/learning/confirm", json={"id": row["id"], "confirm": True}).get_json()["status"] == "ok"
     assert w.rows()[0]["weight"] == "gold"
@@ -1816,8 +1829,9 @@ def test_a_turn_that_read_untrusted_content_runs_no_control(w, tool):
 def test_the_trust_bearing_api_calls_need_a_click_on_the_screen(w, client):
     w.correct("pull up my inbox", "check_email", routed=("tool", "query_calendar"))
     lp.note_routed("read me the morning", w.route("defer", None), conversation_id="cz")
-    lp.on_executed("get_briefing", {}, ok=True, tainted=False, conversation_id="cz")
-    ids = {r["text"]: r["id"] for r in w.rows()}
+    _delegate("cz", "read me the morning")
+    lp.on_executed("get_briefing", {}, ok=True, tainted=False, conversation_id="cz", task_id="t1")
+    ids ={r["text"]: r["id"] for r in w.rows()}
     client.screen[0] = False                                                 # a bare local call, token or no token
     for path, body in (("forget", {"id": ids["pull up my inbox"]}), ("confirm", {"id": ids["read me the morning"], "confirm": True}),
                        ("wipe", {"confirm": True}), ("loosen", {"head": "router", "name": "act", "value": 0.45})):
@@ -2099,8 +2113,9 @@ def test_an_append_that_takes_the_file_over_the_cap_schedules_the_trim(w):
     asked = []
     w.monkeypatch.setattr(lp, "schedule_rebuild", lambda profile, why="": asked.append(why))
     lp.note_routed("what is going on", w.route("defer", None), conversation_id="s3")      # a shadow row: not gold
+    _delegate("s3", "what is going on")
     w.tick()
-    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="s3")
+    lp.on_executed("check_email", {}, ok=True, tainted=False, conversation_id="s3", task_id="t1")
     assert w.rows()[-1]["weight"] == "shadow"
     assert asked, "an append past the cap must schedule a rebuild, which trims the oldest rows"
 
@@ -2629,6 +2644,8 @@ def test_forgetting_a_person_clears_only_what_names_them_from_memory(w):
     lp.note_routed("show my agenda", w.route("tool", "query_calendar"), conversation_id="c9")
     lp._control_turn.update(op="reset", text="reset what you learned", at=w.clock[0], cid="c9")
     lp.people_purge({"dana"}, set())
-    assert [e["text"] for e in lp._held] == ["show my agenda"]
+    # _dana_world's own corrected turns stay held (resolved): the one that does not name her (p1) stays with
+    # the waiting c9 turn; both that name her (p2, c8) go.
+    assert [(e["conversation_id"], e["text"]) for e in lp._held] == [("p1", "show my agenda"), ("c9", "show my agenda")]
     assert "show my agenda" in lp._private_vecs and "ask dana about my agenda" not in lp._private_vecs
     assert lp._control_turn
