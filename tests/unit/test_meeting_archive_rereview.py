@@ -158,13 +158,16 @@ def test_a_bullet_friday_added_does_not_widen_what_the_notes_may_name_and_is_fil
     from agent_friday.services import meeting_workspace as mw
     m = record(A)
     lines = mw.spoken(m)
-    item = [{"bullet": 1, "text": "Zed will send the contract.", "spans": [1]}]
-    owner = [{"id": 1, "t": 5, "text": "Zed to send the contract"}]
-    hers = [{"id": 1, "t": 5, "text": "Zed to send the contract", "by": "friday"}]
+    # A name the transcript never says, which the entity check reads as a name when it opens a line
+    # (test_meeting_workspace: "Rowan owns the venue." -> ["rowan"]).
+    assert "rowan" not in " ".join(ln["text"] for ln in lines).lower()
+    item = [{"bullet": 1, "text": "Rowan will send the contract.", "spans": [1]}]
+    owner = [{"id": 1, "t": 5, "text": "Rowan to send the contract"}]
+    hers = [{"id": 1, "t": 5, "text": "Rowan to send the contract", "by": "friday"}]
     kept, _left = mw.validate_expansion(item, lines, owner)
     assert len(kept) == 1
     kept, left = mw.validate_expansion(item, lines, hers)
-    assert kept == [] and "Zed" in left[0]["why"]
+    assert kept == [] and "rowan" in left[0]["why"]
     m2 = record(A, pad=hers, polished={"status": "done", "lines": [{"bullet": 1, "text": "The launch is set.", "spans": [{"i": 1, "t": 20}]}]})
     assert any(b["text"].startswith("From a bullet Friday added: ") for b in mw.notes_blocks(m2))
 
