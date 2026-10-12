@@ -148,6 +148,13 @@ def _on_decision(record: dict) -> None:
         return
 
     aid = record.get("approval_id")
+    try:
+        # A memory write approved once covers the same kind of write for the
+        # rest of the conversation (services/agent.mint_memory_write_batch).
+        from agent_friday.services.agent import mint_memory_write_batch
+        mint_memory_write_batch(record)
+    except Exception as e:
+        _log.warning("no batch grant for approval %s: %s", aid, e)
     from agent_friday.services import approvals as _ap
     if not _ap.claim_for_execution(aid):
         return                                  # someone else already has it
