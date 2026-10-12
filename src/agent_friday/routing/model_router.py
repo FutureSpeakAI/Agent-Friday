@@ -762,9 +762,11 @@ class ModelRouter:
         local_preferred, smart and local_only call the cloud only with a recorded
         intent (services/cloud_intent). The routes that hold the owner's word
         (a chat bound to a cloud model, "send it to Claude", a pinned job) set it
-        before routing; everything else, including a global cloud reasoning seat,
-        a background task carrying `subagent_model`, a cloud task override and the
-        vault "redact" fallback, stays on a local seat or is refused with an offer.
+        before routing; a configured per-task cloud override carries the implied
+        remembered_choice in local_preferred (never in local_only). Everything
+        else, including a global cloud reasoning seat, a background task carrying
+        `subagent_model` and the vault "redact" fallback, stays on a local seat or
+        is refused with an offer.
         """
         from agent_friday.services import cloud_intent as _ci
         mode = self.mode
@@ -1418,7 +1420,9 @@ class ModelRouter:
                     return name
         if task_type == TaskType.SIMPLE:
             return sorted(pool, key=lambda n: (sizes.get(n, 0), n))[0]
-        if mode in ("local_only", "local_preferred"):
+        # An old `smart` reads as local_preferred here too, as it does in `mode`.
+        from agent_friday.services.cloud_intent import normalize_mode
+        if normalize_mode(mode) in ("local_only", "local_preferred"):
             return sorted(pool, key=lambda n: (-sizes.get(n, 0), n))[0]
         return None
 
