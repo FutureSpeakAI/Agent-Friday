@@ -151,8 +151,9 @@ file against the publisher's checksum, and resumes if the connection drops.
 
 - **The installer is not code-signed.** SmartScreen warns, as described above.
   Check the SHA-256 before you run it.
-- **There is no signed update channel.** Updates are not delivered or verified
-  through a signed channel; download a new release from the releases page and
+- **There is no signed update channel.** Friday checks GitHub at most once a
+  week and tells you when a newer release exists; it never downloads or
+  installs one itself. Download a new release from the releases page and
   check its hash.
 - **Phone pairing is not in this release.**
 
