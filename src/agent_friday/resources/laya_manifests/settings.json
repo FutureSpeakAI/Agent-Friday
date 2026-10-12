@@ -162,7 +162,12 @@
   {
    "action": "settings.local_voice_switch_offer",
    "kind": "by_design",
-   "reason": "The switch to local voice is the owner's yes on its own card, once; Laya never takes it."
+   "reason": "Switch back or keep cloud, once: the owner's own answer, on the card or by voice (ask_friday, local_voice_readiness answer); not a router tool."
+  },
+  {
+   "action": "settings.cloud_voice_scope",
+   "kind": "by_design",
+   "reason": "Just this call or always: asked at every switch to cloud voice; by voice via ask_friday, local_voice_readiness, on the owner's own words only."
   },
   {
    "action": "settings.interruptions",

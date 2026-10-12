@@ -752,10 +752,13 @@ def test_the_tool_measure_action_only_queues_it(monkeypatch):
     assert store.writes == []
 
 
-def test_the_tool_cannot_switch_the_engine():
+def test_the_tool_switches_nothing_by_itself():
+    """The tool can ask the cloud voice question and carry out an answer, but only the owner's own
+    words in the turn answer it (tests/unit/test_cloud_voice_scope.py holds that); status and
+    measure never touch the engine."""
     from agent_friday.services import local_voice_tools as lvt
     schema = lvt.TOOLS[0]["input_schema"]["properties"]["action"]["enum"]
-    assert set(schema) == {"status", "measure"}, "switching is the owner's own click, never a tool call"
+    assert set(schema) == {"status", "measure", "cloud", "answer"}
 
 
 def test_the_tool_is_registered_internal_and_loaded_on_demand():
