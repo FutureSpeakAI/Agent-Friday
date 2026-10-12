@@ -785,7 +785,8 @@ CLAUDE_TOOLS = [
          "account_id": {"type": "string"}},
       "required": ["series_id"]}},
     {"name": "query_calendar", "description": "Read today's and tomorrow's Google Calendar events. Built-in integration: 'not connected' needs one-time OAuth; offer setup, never claim calendar access is unavailable.",
-     "input_schema": {"type": "object", "properties": {}}},
+     "input_schema": {"type": "object", "properties": {
+         "day": {"type": "string", "format": "date", "description": "Only this day (YYYY-MM-DD); omit for both."}}}},
     {"name": "search_email", "description": "Search/read recent Gmail across connected accounts (read-only). Gmail operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes, OR. Empty query returns recent unread. Not connected means OAuth setup is needed: offer it, without claiming Gmail is unavailable. search_failed/error means the search failed, never zero results.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:alex after:2026-09-01'. Empty means recent unread."}}, "required": ["query"]}},
     {"name": "search_drive", "description": "Read-only: search file/folder names across all connected Google accounts. Returns id, name, mime_type and account; pass id + mime_type to read_doc for Docs/Sheets. Report missing Drive permission per account, not as 'not connected'.",
@@ -1866,6 +1867,18 @@ def _tool_query_calendar(_inp):
         return json.dumps({**state, "events": [], "count": 0,
                            "note": summary["note"] or _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Calendar", reads="your calendar")})
+    # `day` (the schema's ISO date, which the verifier checks) narrows the read to
+    # that day, as the voice tool does. The fetch is today and tomorrow; a day
+    # outside it is not read, and the result says so rather than reading as free.
+    day = None
+    if isinstance(_inp, dict) and _inp.get("day"):
+        from agent_friday.services.voice_engine import _calendar_day, _event_on
+        day = _calendar_day(_inp.get("day"))
+    if day is not None and not (date.today() <= day <= date.today() + timedelta(days=1)):
+        return json.dumps({**state, "day": day.isoformat(), "count": 0, "events": [],
+                           "outside_window": True,
+                           "note": "Only today's and tomorrow's calendar is read here, "
+                                   "so this cannot say what is on %s." % day.isoformat()})
     try:
         result = ga.merged_calendar(days=2)
     except Exception as e:
@@ -1876,6 +1889,8 @@ def _tool_query_calendar(_inp):
                                     + f" Calendar fetch error: {e}").strip()})
     accounts_status = _summarize_multi_account_errors(result)
     events = result.get("events") or []
+    if day is not None:
+        events = [ev for ev in events if _event_on(ev, day)]
     out = []
     for ev in events[:20]:
         out.append({

@@ -2967,8 +2967,13 @@ def _deferred_request(user_text, r, local=False) -> str:
     note = ("[Resolved on the owner's screen by rules, not by you: %s %d row(s) in %s%s. Row ids: %s. "
             "Nothing has been changed yet; raise the one card for it.]"
             % (r.args["intent"], len(refs), str(r.args.get("workspace") or "the list")[:24],
-               " (say the count back)" if r.args.get("say_count") else "", ", ".join(refs[:30])))
-    return (text + chr(10) * 2 + note)[:4000]
+               " (say the count back)" if r.args.get("say_count") else "", ", ".join(refs)))
+    out = text + chr(10) * 2 + note
+    if len(out) > 4000:
+        # Every row id the count claims, or none: a cut list would have the card built from rows the
+        # deeper mind cannot see. Too many to hand over: the owner's words alone.
+        return text[:4000]
+    return out
 
 
 def _deeper_mind_is_local(session=None) -> bool:

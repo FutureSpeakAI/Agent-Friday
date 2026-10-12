@@ -21,6 +21,7 @@ NOW = datetime(2026, 10, 9, 10, 30)
 @pytest.fixture
 def clock(monkeypatch):
     monkeypatch.setattr(lr, "_now", lambda: NOW)
+    monkeypatch.setattr(lr, "_today", lambda: NOW.date())     # the calendar template's own clock
 
 
 # ── fuzzy dates ─────────────────────────────────────────────────────────────
@@ -52,7 +53,8 @@ def test_a_tool_that_declares_a_date_argument_gets_the_resolved_date(clock, monk
     monkeypatch.setitem(lr.DATE_ARGS, "query_calendar", ("date", "part"))
     r = lr.route("what's on tomorrow afternoon", log=False)
     assert (r.decision, r.tool) == ("tool", "query_calendar")
-    assert r.args == {"date": "2026-10-10", "part": "afternoon"}
+    # the declared date argument and part of the day, beside the template's own declared `day`
+    assert r.args == {"day": "2026-10-10", "date": "2026-10-10", "part": "afternoon"}
 
 
 def test_an_unparsable_date_for_such_a_tool_asks_instead_of_guessing(clock, monkeypatch):
@@ -62,12 +64,33 @@ def test_an_unparsable_date_for_such_a_tool_asks_instead_of_guessing(clock, monk
     assert "day" in r.question.lower()
 
 
+_ISO_DAY = r"^\d{4}-\d{2}-\d{2}"
+
+
+def _date_props(tool):
+    """The arguments the governed schema of ``tool`` declares with a date format: the only ones the
+    verifier sanity-checks as dates (call_verifier._is_date_prop), for chat and voice alike (both run
+    through agent._execute_tool, which reads this schema)."""
+    from agent_friday.services import agent
+    props = (agent._schema_for_tool(tool) or {}).get("properties") or {}
+    return {k for k, spec in props.items() if isinstance(spec, dict) and spec.get("format") in ("date", "date-time")}
+
+
 def test_no_date_is_ever_passed_to_a_tool_whose_schema_declares_none(clock):
-    """query_calendar takes no arguments today (the verifier only allows dates where a schema declares
-    a date format), so the router passes none."""
+    """A date reaches a tool only through an argument its governed schema declares with a date format
+    (the verifier only checks dates where a schema declares one). query_calendar's schema declares
+    ``day`` (the day the words name, which the router passes), and nothing else."""
+    import re
     assert lr.DATE_ARGS == {}
+    assert _date_props("query_calendar") == {"day"}
     r = lr.route("what's on tomorrow afternoon", log=False)
-    assert (r.decision, r.tool, r.args) == ("tool", "query_calendar", {})
+    assert (r.decision, r.tool, r.args) == ("tool", "query_calendar", {"day": "2026-10-10"})
+    # every router template, on words that name a day: a date-shaped value only under a declared date argument
+    for name, (_label, template, _req) in lr.TOOLS.items():
+        for text in ("what's on tomorrow afternoon", "search for the plan due on Friday",
+                     "any emails from tomorrow", "what about Monday"):
+            dated = {k for k, v in template(text).items() if isinstance(v, str) and re.match(_ISO_DAY, v)}
+            assert dated <= _date_props(name), (name, text, dated)
 
 
 # ── composed text is never the router's ─────────────────────────────────────

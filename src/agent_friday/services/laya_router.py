@@ -879,6 +879,12 @@ def point_act_route(text: str, *, stage, pointed, quiet: bool) -> Optional[Route
         # star / label / mark read run without a card on the model path: no Laya-resolved rows go along.
         return Route("defer", confidence=0.92, layer="point_act",
                      reason="a change that runs without a card on the model path: the words go alone")
+    if str(args.get("rule") or "").startswith("all"):
+        # "archive all of them": every row on screen is one reading; the ticked rows or the "them" of the
+        # conversation are others. No rule picks among them, so the words go alone (the safe writes' own
+        # rule: "all of them is the model's to propose").
+        return Route("defer", confidence=0.92, layer="point_act",
+                     reason="all of them names no rows a rule can pick: the words go alone")
     return Route("defer", args=args, confidence=0.92, layer="point_act", reason=reason)
 
 

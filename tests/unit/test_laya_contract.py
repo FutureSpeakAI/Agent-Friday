@@ -61,12 +61,18 @@ def test_ask_returns_the_contract_shape(preset):
 
 def test_the_router_is_a_preset_and_keeps_its_signature():
     assert "route" in laya.PRESETS
-    # route() is unchanged: the same parameters, in the same order, with the same defaults.
+    # route() keeps its contract: the same first parameters, in the same order, with the same defaults. The
+    # head, trust, screen and safe-write tracks add keyword-only parameters after them, each with a default,
+    # so every existing call means what it meant.
     sig = inspect.signature(lr.route)
-    assert [(p.name, p.kind.name) for p in sig.parameters.values()] == [
+    params = list(sig.parameters.values())
+    assert [(p.name, p.kind.name) for p in params[:7]] == [
         ("text", "POSITIONAL_OR_KEYWORD"), ("tools", "KEYWORD_ONLY"), ("budget_ms", "KEYWORD_ONLY"),
         ("surface", "KEYWORD_ONLY"), ("log", "KEYWORD_ONLY"), ("pending_card", "KEYWORD_ONLY"),
         ("last_route", "KEYWORD_ONLY")]
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY and p.default is not inspect.Parameter.empty
+               for p in params[7:]), params[7:]
+    assert sig.parameters["trusted"].default is False      # the screen rungs are opt-in, never the default
     assert sig.parameters["budget_ms"].default == lr.DEFAULT_BUDGET_MS
     assert sig.parameters["surface"].default == "voice" and sig.parameters["log"].default is True
 
@@ -89,6 +95,9 @@ def test_route_through_ask_is_the_router_unchanged(text, monkeypatch):
 
 def test_route_turn_passes_exactly_the_arguments_it_was_given(monkeypatch):
     seen = {}
+    real_route = lr.route
+    real_kw = frozenset(n for n, p in inspect.signature(lr.route).parameters.items()
+                        if p.kind is inspect.Parameter.KEYWORD_ONLY)
 
     def fake(text, **kw):
         seen["text"], seen["kw"] = text, kw
@@ -102,9 +111,12 @@ def test_route_turn_passes_exactly_the_arguments_it_was_given(monkeypatch):
                           "last_route": {"tool": "check_email"}}
     with pytest.raises(TypeError):
         laya.route_turn("x", nonsense=1)
+    # a wrapper (**kw) says nothing about what the router takes: the contract then promises only the base set,
+    # every name of which the real router takes
+    assert laya._route_kw() <= real_kw and {"tools", "surface", "log", "last_route"} <= laya._route_kw()
     # an argument another track adds to route() (trusted, quiet, head_mode...) is refused here until route() takes it
-    assert laya._route_kw() == frozenset(n for n, p in inspect.signature(lr.route).parameters.items()
-                                         if p.kind is inspect.Parameter.KEYWORD_ONLY)
+    monkeypatch.setattr(lr, "route", real_route)
+    assert laya._route_kw() == real_kw
 
 
 def test_route_verdict_maps_the_decision(monkeypatch):
@@ -228,7 +240,15 @@ def test_the_router_hanging_is_the_routers_own_degraded_route(monkeypatch):
     monkeypatch.setattr(laya, "RULE_ALLOWANCE_MS", 100)
     t0 = time.perf_counter()
     try:
+        # The degraded route is the router's own sealed rules (M2), run on the caller's thread: a turn they
+        # place keeps that decision, and only those rules ever decide it (never the encoder or the screen).
         r = laya.route_turn("what's on my calendar", log=False, budget_ms=50)
+        assert (time.perf_counter() - t0) < 1.5
+        want = lr.rules_route("what's on my calendar")
+        assert (r.decision, r.tool, r.layer) == (want.decision, want.tool, want.layer) == ("tool", "query_calendar", "rule")
+        # a turn the sealed rules cannot place is no_tool at layer degraded: the model's own turn
+        t0 = time.perf_counter()
+        r = laya.route_turn("what is a good name for a goldfish", log=False, budget_ms=50)
         assert (time.perf_counter() - t0) < 1.5
         assert r.decision == "no_tool" and r.layer == "degraded"
     finally:
@@ -391,7 +411,8 @@ def test_point_and_act_routes_through_laya(monkeypatch):
     monkeypatch.setattr(laya, "point_act_turn", lambda m, **k: calls.append((m, k)))
     out = reflex_chat._point_act_turn("open the second one", {}, session_id="s", conversation_id="c",
                                       turn_id="t", authenticated=True, local=True)
-    assert out is None and calls == [("open the second one", {"quiet": False})]
+    # the typed chat line on the verified page, named as its own caller in the receipt
+    assert out is None and calls == [("open the second one", {"quiet": False, "caller": "chat.point"})]
 
 
 def test_the_triage_heads_read_through_laya(monkeypatch):
@@ -650,6 +671,10 @@ def test_versions_does_not_retry_an_absent_module_or_read_the_table_cold(monkeyp
     lc.set_table(None)
     monkeypatch.setattr(lc, "load_table", lambda: (_ for _ in ()).throw(AssertionError("file read on the turn")))
     monkeypatch.setitem(sys.modules, "agent_friday.services.laya_router_head", None)
+    # Absent means absent from the package too: once any test imported it, `from agent_friday.services
+    # import laya_router_head` finds the package attribute and never consults sys.modules.
+    import agent_friday.services as services_pkg
+    monkeypatch.delattr(services_pkg, "laya_router_head", raising=False)
     laya.versions()
     imports = []
     real_import = __import__
