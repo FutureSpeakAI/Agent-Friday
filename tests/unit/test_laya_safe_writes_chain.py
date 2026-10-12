@@ -924,7 +924,8 @@ def test_l4_a_newer_message_is_left_out_and_the_card_says_so(real_mail, monkeypa
     assert "1 newer message not included" in out, out
     assert "m_new" not in card["payload"]["messages"]["acct_work"]["t1"]
     assert card["payload"]["newer_not_included"] == 1
-    assert "newer message" in card["description"] and "left out" in card["description"]
+    # the card's own text on screen (its action line; the description is the fixed approve sentence and the rows)
+    assert "newer message" in card["action_description"] and "left out" in card["action_description"]
     assert not any("eve@late.example" in line for line in card["payload"]["lines"]), "the left-out sender is not shown"
     ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(card["approval_id"], 10)
@@ -1687,7 +1688,7 @@ def test_f3_docs_say_how_a_laya_card_is_approved_and_what_is_named():
     root = Path(__file__).resolve().parents[2]
     flat = lambda name: " ".join((root / name).read_text(encoding="utf-8").split())
     mail, phone, log = flat("docs/user-guide/mail.md"), flat("docs/user-guide/phone.md"), flat("CHANGELOG.md")
-    assert "A text message does not approve it either" in mail and "never addresses" in mail
+    assert "A text message does not approve it either" in mail and "never the addresses" in mail
     assert "never texted" in phone and "Voice history keeps no card details" in log
     assert "they say that a card was raised" in mail
 
@@ -1867,7 +1868,8 @@ def test_fn_md1_a_card_free_change_on_a_spoken_turn_reaches_that_turns_receipt(c
     assert "DONE" in out or "starred" in out.lower(), out
     got = turn_receipt.build("voice-abc123")
     (change,) = got["card_free_changes"]
-    assert change["action"] == "star" and change["count"] == 2 and change["undoable"] is True
+    # the count is conversations (one was named), as the receipt and the docs say
+    assert change["action"] == "star" and change["count"] == 1 and change["undoable"] is True
 
 
 def test_fn_md1_a_live_tool_call_and_a_background_task_get_their_own_ids(chat, gmail, monkeypatch):

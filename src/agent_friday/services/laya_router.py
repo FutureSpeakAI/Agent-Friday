@@ -312,7 +312,8 @@ _ACT = re.compile(
     r"label|snooze|flag|tag|pin|unpin|mute|unmute|block|dismiss|reserve|rsvp|sign up|"
     # Point-and-act's own change verbs, so the router and the pointing rung agree on what a change is
     # ("star these", "junk the ones from X"; a bare "star wars" or "spam folder" is not one).
-    r"(?:star|unstar|bin|junk|spam|favou?rite|categori[sz]e|undelete)(?=\s+(?:these|those|them|this|that|it|the|all)\b))\b"
+    r"(?:star|unstar|bin|junk|spam|favou?rite|categori[sz]e|undelete)"
+    r"(?=\s+(?:these|those|them|this|that|it|the|all|both|each|every|everything)\b))\b"
     # A fragment or an idiom is not a request to change anything: "cancel
     # that", "move on", "make sense?", "set?" carry no object to act on.
     r"(?!\s*(?:that|it|this|them)?\s*[?.!]*$)(?!\s+(?:on|sense|up)\b\s*[?.!]*$)",
@@ -945,11 +946,14 @@ def safe_write_route(text: str, *, stage=_UNSET, pointed=_UNSET, quiet: bool = F
             got = [r for r in (pa.args.get("refs") or [])]
             plural = bool(re.match(r"(?:these|those|them|both|all)\b", str(parsed.obj or "")))
             question = ""
-            if plural and len(got) == 1:
-                question = sw.ONE_ROW_QUESTION      # "these" that found one row: asked, with or without numbers
-            elif fresh_numbers and (str(pa.args.get("rule") or "") in ("deictic:open", "deictic:focus", "deictic:cursor")
-                                    or len(got) != len((friday_pointed or {}).get("refs") or [])):
-                question = sw.DEICTIC_QUESTION      # Friday's numbers are on screen and "these" means something else
+            if fresh_numbers and (str(pa.args.get("rule") or "") in ("deictic:open", "deictic:focus", "deictic:cursor")
+                                  or len(got) != len((friday_pointed or {}).get("refs") or [])
+                                  or (plural and len(got) == 1)):
+                # Friday's numbers are on screen and "these" means something else. Asked first: the one-row
+                # question's "this one" would point at the same open or focused row and be asked again.
+                question = sw.DEICTIC_QUESTION
+            elif plural and len(got) == 1:
+                question = sw.ONE_ROW_QUESTION      # "these" that found one row, with no numbers on screen
             if question:
                 if m == "shadow":
                     sw.shadow(None, "a deictic that would pick one row or another set", text, surface)

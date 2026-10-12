@@ -277,6 +277,14 @@ def _clean_label(raw: Any) -> str:
     return s if _LABEL_OK.match(s) else ""
 
 
+def _said_as_written(label: str, text: Any) -> bool:
+    """True when ``label`` is in the owner's words as a whole phrase (case and runs of spaces aside), so a
+    label point_act rebuilt from normalised words is never put on a card in place of what was said."""
+    said = " ".join(str(text or "").replace("’", "'").split()).lower()
+    want = " ".join(label.split()).lower()
+    return bool(want) and re.search(r"(?<![A-Za-z0-9])" + re.escape(want) + r"(?![A-Za-z0-9])", said) is not None
+
+
 #: The only ways point_act may have chosen the rows for a safe write: the deictic rules, the
 #: owner's numbers, and a sender / kind-of-mail rule. A ranking over row text ("choice"), a
 #: count that did not match, "all" and anything else is the model's.
@@ -308,10 +316,11 @@ def scope_unclear(text: Any) -> bool:
     return p.kind == "all" or bool(_SCOPE.search(p.obj))
 
 
-def build(pa: Any, *, stage: Optional[dict] = None) -> Tuple[Optional[Proposal], str]:
+def build(pa: Any, *, stage: Optional[dict] = None, text: Any = None) -> Tuple[Optional[Proposal], str]:
     """(proposal, why-not) from a point_act ``defer`` for a change. Pure: no
     ticket, no log, no network. ``stage`` is the stage the rows were resolved
-    on (for its revision)."""
+    on (for its revision); ``text``, when given, is the owner's own words, which
+    a label must appear in as written."""
     if pa is None or getattr(pa, "decision", "") != "defer":
         return None, "not a change request"
     a = dict(getattr(pa, "args", None) or {})
@@ -339,6 +348,10 @@ def build(pa: Any, *, stage: Optional[dict] = None) -> Tuple[Optional[Proposal],
         label = _clean_label(a.get("destination"))
         if not label:
             return None, "no usable label in the owner's words"
+        if text is not None and not _said_as_written(label, text):
+            # point_act reads normalised words: "<b>x</b>" or "R&D" comes out as another name. The card names
+            # only a label the owner actually said.
+            return None, "the label is not in the owner's words as written"
     elif a.get("destination") and verb.action not in ("read", "unread"):
         return None, "a destination on a verb that takes none"          # (mark ... as read: the word is the verb's)
     method = str(a.get("rule") or "")
@@ -463,10 +476,10 @@ def expire_pending_cards() -> int:
     """Safe writes were turned down: every card Laya raised that is still waiting expires, so nothing she
     proposed under the old setting can be approved afterwards."""
     try:
-        from agent_friday.services import approvals
-        return approvals.expire_matching(
-            lambda r: (r.get("payload") or {}).get("origin") == "laya_safe_write",
-            "system:safe_writes_off", "Laya's safe writes were turned off")
+        # The approvals module's one narrow door for this module: it expires Laya's own pending cards and can
+        # do nothing else (no id, no match, no decision). Imported by name; the module itself is never bound.
+        from agent_friday.services.approvals import expire_laya_cards
+        return expire_laya_cards()
     except Exception as e:      # noqa: BLE001
         _log.debug("could not expire pending safe-write cards: %s", e)
         return 0
@@ -558,7 +571,7 @@ def decide(pa: Any, text: str, *, surface: str = "voice", stage: Optional[dict] 
         m = mode(settings)
         if m == "off" or surface not in SURFACES:
             return None
-        p, why = build(pa, stage=stage)
+        p, why = build(pa, stage=stage, text=text)
         if m == "shadow":
             if getattr(pa, "decision", "") == "defer":
                 shadow(p, why, text, surface)

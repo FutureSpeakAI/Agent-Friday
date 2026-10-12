@@ -92,7 +92,8 @@ card Laya raised that was still waiting:
   "label", which run with no card when a model asks, wait for your yes here.
 
 She may propose archive, mark read, mark unread, star, unstar, label, and move
-to a label that already exists. She never makes a label, and she never trashes,
+to a label that already exists, named as you said it (a name she could only read
+with its symbols changed goes to the model). She never makes a label, and she never trashes,
 reports spam, unsubscribes, sends, replies or deletes. A request for "all of
 them", for more than 25 conversations, with two jobs in one sentence, or that
 leaves some out ("not those", "the rest") goes to the model: she only acts on
@@ -133,6 +134,8 @@ would mean the row you have open or a different number of rows than she
 numbered, could mean either, so Laya asks you to say it again with a number
 counted from the top of your list, or to tick the rows, instead of guessing. With
 no numbers on screen she counts from the top of your list and the card says so.
+"These" that would mean only one row is asked too, numbers or not: say "this
+one" if that is what you mean, or tick the rows you want.
 
 ## Changes Friday makes without a card (a rule you set)
 

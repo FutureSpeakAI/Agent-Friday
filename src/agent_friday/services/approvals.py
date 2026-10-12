@@ -708,6 +708,14 @@ def expire_matching(match, by: str, note: str = "") -> int:
     return len(expired)
 
 
+def expire_laya_cards() -> int:
+    """Expire every PENDING card Laya's safe writes raised (payload origin ``laya_safe_write``) and nothing else.
+    The one door services/laya_safe_writes has into this module: it takes no card id, no match and no
+    decision, so it can never approve, run or touch any other card. Returns how many expired."""
+    return expire_matching(lambda r: (r.get("payload") or {}).get("origin") == "laya_safe_write",
+                           "system:safe_writes_off", "Laya's safe writes were turned off")
+
+
 def _expire_due(now: float, notify: bool = True) -> List[Dict[str, Any]]:
     """Move pending cards past their expiry to 'expired' (never approves anything). A card the
     interruption policy was holding expires on its own clock like any other: holding stops a popup, not
