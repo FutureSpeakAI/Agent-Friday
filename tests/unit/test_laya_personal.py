@@ -1399,7 +1399,7 @@ def tool(w):
         if r is None:
             r = SimpleNamespace(decision="no_tool", tool=None, reason="", confidence=0.9, layer="rule", candidates=[])
         lp.note_routed(text, r, surface="chat", conversation_id="ctl")
-    yield SimpleNamespace(handle=t.handle, say=say, taint_key=lambda k: taint.CURRENT_KEY.set(k))
+    yield SimpleNamespace(handle=t._tool_laya_learning, say=say, taint_key=lambda k: taint.CURRENT_KEY.set(k))
     agent._CURRENT_OWNER_TEXT.reset(toks[0])
     taint.CURRENT_KEY.reset(toks[1])
     agent._CURRENT_CONVERSATION.reset(toks[2])

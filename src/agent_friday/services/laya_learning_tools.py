@@ -56,7 +56,7 @@ def _tainted_turn() -> bool:
         return True
 
 
-def handle(inp=None) -> str:
+def _tool_laya_learning(inp=None) -> str:
     from agent_friday.services import laya_personal as lp
     inp = inp if isinstance(inp, dict) else {}
     op = str(inp.get("op") or "summary").strip().lower()
@@ -79,7 +79,7 @@ def handle(inp=None) -> str:
     return text if text.startswith(("NEEDS_SCREEN", "NOT DONE")) else "NOT DONE: " + text
 
 
-HANDLERS = {"laya_learning": handle}
+HANDLERS = {"laya_learning": _tool_laya_learning}
 
 
 def register(claude_tools, handlers, rings):
