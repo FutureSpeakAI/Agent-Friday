@@ -152,24 +152,6 @@
    "task_kind": "calendar_quick_add",
    "activity_label": "Quick add event",
    "entry": "agent_friday.routes.calendar:api_calendar_quick_add"
-  },
-  {
-   "id": "calendar.meeting_transcript",
-   "trigger": "button",
-   "model_class": "speech",
-   "helper": "visible_job",
-   "task_kind": "meeting_transcript",
-   "activity_label": "Meeting transcript",
-   "entry": "agent_friday.services.meeting_capture:_default_transcriber"
-  },
-  {
-   "id": "calendar.meeting_notes",
-   "trigger": "button",
-   "model_class": "brain",
-   "helper": "visible_job",
-   "task_kind": "meeting_notes",
-   "activity_label": "Meeting notes",
-   "entry": "agent_friday.services.meeting_capture:_default_notes_call"
   }
  ],
  "not_for_laya": [

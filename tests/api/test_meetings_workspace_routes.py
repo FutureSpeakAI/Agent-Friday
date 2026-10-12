@@ -120,6 +120,8 @@ def test_the_calendar_route_returns_a_card_not_a_write(client, monkeypatch):
 
 
 def test_the_archive_choice_is_the_owners_and_indexing_runs_off_the_request(client, monkeypatch):
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)       # the page's own click
     monkeypatch.setattr(ma, "status", lambda **k: {"choice": "", "documents": 0, "scope": "meetings", "index_encrypted": True})
     assert client.get("/api/meetings/archive").get_json()["choice"] == ""
     assert client.post("/api/meetings/archive", json={"choice": "maybe"}).status_code == 400
@@ -141,6 +143,8 @@ def test_a_remote_caller_gets_none_of_it(client):
 
 
 def test_choosing_the_archive_on_a_plain_index_is_refused_in_plain_words(client, monkeypatch):
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
     monkeypatch.setattr(ma, "set_choice", lambda c, **k: {"choice": "", "refused": ma.NOT_ENCRYPTED})
     r = client.post("/api/meetings/archive", json={"choice": "on"})
     assert r.status_code == 409 and r.get_json()["error"] == "Not available on this PC: the Library index isn't encrypted."

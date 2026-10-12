@@ -657,7 +657,7 @@ def _default_email_requester(**kw):
 
 def _default_archive_index(m: dict):
     from agent_friday.services import meeting_archive
-    return meeting_archive.index_meeting(m)
+    return meeting_archive.index_when_free(m)
 
 
 def _default_archive_remove(mid: str):

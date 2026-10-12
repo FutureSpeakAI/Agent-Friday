@@ -14,19 +14,34 @@ and indexed through the Library's own pipeline:
 A dedicated scope
 -----------------
 The documents carry ``scope = "meetings"`` and a path that is not a file the
-Library reads: ``<home>/meetings/<id>/library/<part>.md``. Because no folder
-consent covers such a path, ``is_archive_path`` is the one place that says
-whether the Library may show it: only while the owner has chosen to make
-meetings searchable (``settings.meeting_archive == "on"``). Nothing is indexed
-until they choose. Choosing "off" removes everything that was indexed.
+Library reads: ``<home>/meetings/<id>/library/<part>.md``. No folder consent
+covers such a path, so ``covers`` is the one place that says whether the Library
+may show it, and the Library's consent check (``grants.allowed``, the batch
+``Allower`` and ``_allowed_uncached``) asks it on every ask, keeping nothing:
+only while the owner has chosen to make meetings searchable
+(``settings.meeting_archive == "on"``), only for the owner's own Library, only for
+a meeting whose record still exists, and never for a path with a never-send mark
+or while the consent ledger is suspended. Nothing is indexed until they choose,
+and choosing is a click on the screen (``routes/meetings``). Choosing "off"
+removes everything that was indexed, and until it has finished no document is an
+answer, because the choice is read afresh on each search.
+
+Wiki drafting (KW-2) never reads these documents: ``staging`` refuses them in
+``eligible``, ``_still_ok`` and ``draft_document``, and ``grants.scope_covered``
+never covers one. A document the owner forgets is tombstoned and is not read back
+in; a name the owner asked Friday to forget is redacted as the record is read in.
+The reading is one visible job (kind ``meeting_archive``) that waits while a
+recording is on or background work is paused; its encoder runs on the CPU, through
+the Library's own vector step.
 
 Local only, by construction
 ---------------------------
 The archive's text is never offered to a cloud model: ``library.tools`` leaves
 documents of this scope out of any cloud answer whatever file grants say, and
-``search`` scopes a question to it only by the word "meetings". Deleting a
-meeting, by hand or by a retention choice, removes its documents in the same
-step. This module opens no connection and names no provider.
+``search`` scopes a question to it only by the word "meetings"; ``tools`` also holds
+them back from any reader that is not a loop known to be local speaking here (a cloud
+loop, or a local model whose answer a cloud voice reads out). Deleting a meeting, by
+hand or by a retention choice, removes its documents in the same step. This module opens no connection and names no provider.
 """
 from __future__ import annotations
 
@@ -34,10 +49,12 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from pathlib import Path
 
 from agent_friday.services import meeting_workspace as mw
+from agent_friday.services.visible_jobs import visible_job
 
 log = logging.getLogger("friday.meetings.archive")
 
@@ -96,9 +113,47 @@ def is_archive_path(path) -> bool:
             and bool(_ID_RE.fullmatch(parts[-3])) and parts[-4] == "meetings")
 
 
+def _same(a, b) -> bool:
+    import os
+    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+
+
+def owns(path) -> bool:
+    """True for the archive document of a meeting, at the place the archive keeps it: the shape above, under
+    this PC's meetings folder. A file of the owner's that merely looks like one is an ordinary file and goes
+    through the ordinary consent check."""
+    if not is_archive_path(path):
+        return False
+    try:
+        parts = Path(str(path)).parts
+        part = next(k for k, v in PARTS.items() if v == parts[-1])
+        return _same(path, path_for(parts[-3], part))
+    except Exception:  # noqa: BLE001 - what cannot be placed is not the archive's
+        return False
+
+
+def meeting_exists(mid: str) -> bool:
+    """Is there a recorded meeting with this id right now? Read from the meeting's own record on disk."""
+    try:
+        from agent_friday.services import meeting_capture as mc
+        return bool(_ID_RE.fullmatch(str(mid or ""))) and (mc._root() / mid / "meeting.json.enc").is_file()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def covers(path) -> bool:
-    """May the Library show this path? Used by the Library's consent check for archive paths."""
-    return is_archive_path(path) and visible()
+    """May the Library show this path right now? The Library's consent check asks this for archive paths,
+    on every ask: only while the owner's answer is yes, only for a meeting that still exists, and never for a
+    path carrying a never-send mark. Nothing here is kept."""
+    if not (owns(path) and visible()):
+        return False
+    if not meeting_exists(Path(str(path)).parts[-3]):
+        return False
+    try:
+        from agent_friday.services import file_grants as fg
+        return fg.check_grant(Path(path)).state != "denied"
+    except Exception:  # noqa: BLE001 - a check that cannot run is not a yes
+        return False
 
 
 def is_archive_doc(row) -> bool:
@@ -138,17 +193,38 @@ def unavailable(store=None) -> str:
         return NOT_ENCRYPTED
 
 
+JOB_KIND = "meeting_archive"
+POLL_S = 2.0
+_sleep = time.sleep
+
+
+def _redact(text: str) -> str:
+    """A name the owner asked Friday to forget is not read into the archive again from the meeting's own
+    record (forget-person writes a tombstone, and the indexer consults it on every run)."""
+    from agent_friday.services import forget_person
+    return forget_person.redact_forgotten_names(text)
+
+
 def _index_one(store, mid: str, part: str, title: str, blocks: list, force: bool = False) -> str:
     from agent_friday.services.library import structure, vectors, withhold
     from agent_friday.services.library.store import INDEX_VERSION
     from agent_friday.services.library.textclean import safe_title
     path = str(path_for(mid, part))
+    try:
+        title = _redact(title)
+        blocks = [dict(b, text=_redact(b["text"])) for b in blocks]
+    except Exception:  # noqa: BLE001 - a forgotten name that cannot be checked for is not left in
+        return "failed"
     sha = hashlib.sha256(json.dumps([title, [b["text"] for b in blocks]], ensure_ascii=False)
                          .encode("utf-8")).hexdigest()
+    if store.tombstoned(sha, path):
+        return "skipped"                    # forgotten from the Library: not read again until un-forgotten
     prior = store.find_document(path)
     if (prior and not force and prior["state"] == "indexed" and prior["sha256"] == sha
             and prior["index_version"] == INDEX_VERSION):
         return "unchanged"
+    if choice() != "on" or not meeting_exists(mid):
+        return "skipped"                    # said no, or deleted, while this was waiting its turn
     fid = store.folder_id(SCOPE, "")
     doc_id = store.upsert_document(
         path, sha256=sha, size=sum(len(b["text"]) for b in blocks), mtime=time.time(), kind="markdown",
@@ -186,7 +262,8 @@ def _index_one(store, mid: str, part: str, title: str, blocks: list, force: bool
 
 def index_meeting(m: dict, *, store=None, force: bool = False) -> dict:
     """Index (or refresh) one meeting's transcript and notes. Does nothing until the owner has said
-    yes, and never while the meeting is still being recorded or transcribed."""
+    yes, and never while the meeting is still being recorded or transcribed. The work is a visible job
+    (an encoder on the CPU reading a few hundred passages), a step of the larger job when there is one."""
     if choice() != "on":
         return {"indexed": 0, "skipped": "not chosen"}
     why = unavailable(store)
@@ -195,25 +272,27 @@ def index_meeting(m: dict, *, store=None, force: bool = False) -> dict:
     if m.get("state") in ("recording", "transcribing"):
         return {"indexed": 0, "skipped": "still being recorded"}
     mid = str(m.get("id") or "")
-    if not _ID_RE.fullmatch(mid):
+    if not _ID_RE.fullmatch(mid) or not meeting_exists(mid):
         return {"indexed": 0, "skipped": "no such meeting"}
-    st = _store(store)
-    lines = mw.spoken(m)
-    docs = {}
-    if lines:
-        docs["transcript"] = (mw.archive_title(m, "transcript"), mw.transcript_blocks(lines))
-    nb = mw.notes_blocks(m)
-    if nb:
-        docs["notes"] = (mw.archive_title(m, "notes"), nb)
-    out = {"indexed": 0, "unchanged": 0, "removed": 0}
-    for part, (title, blocks) in docs.items():
-        r = _index_one(st, mid, part, title, blocks, force=force)
-        if r in out:
-            out[r] += 1
-    for part in PARTS:
-        if part not in docs:
-            out["removed"] += _remove_part(st, mid, part)
-    return out
+    with visible_job("Making a meeting searchable", kind="meeting_archive", workspace="meetings", queued=False,
+                     deferrable=True, key=JOB_KIND + ":" + mid):
+        st = _store(store)
+        lines = mw.spoken(m)
+        docs = {}
+        if lines:
+            docs["transcript"] = (mw.archive_title(m, "transcript"), mw.transcript_blocks(lines))
+        nb = mw.notes_blocks(m)
+        if nb:
+            docs["notes"] = (mw.archive_title(m, "notes"), nb)
+        out = {"indexed": 0, "unchanged": 0, "removed": 0}
+        for part, (title, blocks) in docs.items():
+            r = _index_one(st, mid, part, title, blocks, force=force)
+            if r in out:
+                out[r] += 1
+        for part in PARTS:
+            if part not in docs:
+                out["removed"] += _remove_part(st, mid, part)
+        return out
 
 
 def _remove_part(store, mid: str, part: str) -> int:
@@ -257,22 +336,77 @@ def remove_all(*, store=None) -> int:
     return n
 
 
-def reindex_all(manager, *, store=None, force: bool = False) -> dict:
-    """Index every finished meeting. Run after the owner says yes, off the request's thread."""
+def _holds() -> str:
+    """Why background reading must wait right now, in words, or "": the owner's Pause, a recording meeting,
+    off the record, battery (the holds that stop the Library reading a folder)."""
+    try:
+        from agent_friday.services.library import staging
+        return staging.holds(OWNER)
+    except Exception:  # noqa: BLE001 - what cannot be told is not a hold
+        return ""
+
+
+def _wait_free(vj, hold=None) -> bool:
+    """Wait, off the queue, while a hold stands; True when it is time to read, False when the owner has
+    since said no (or stopped the job from its card)."""
+    noted = False
+    while True:
+        if choice() != "on":
+            return False
+        why = (hold or _holds)()
+        if not why:
+            return True
+        if vj is not None:
+            if not noted:
+                noted = True
+                vj.log("Paused: " + why.replace("paused: ", ""))
+            vj.check_stop()
+        _sleep(POLL_S)
+
+
+def reindex_all(manager, *, store=None, force: bool = False, hold=None) -> dict:
+    """Index every finished meeting. Run after the owner says yes, off the request's thread, as one visible
+    job that waits whenever a recording is on or the owner has paused background work."""
     out = {"meetings": 0, "indexed": 0}
     if choice() != "on":
         return out
-    for row in manager.list():
-        if row.get("state") in ("recording", "transcribing", "unreadable"):
-            continue
-        try:
-            r = index_meeting(manager.get(row["id"]), store=store, force=force)
-        except Exception as e:  # noqa: BLE001 - one meeting must not stop the rest
-            log.info("meeting %s not indexed: %s", row.get("id"), e)
-            continue
-        out["meetings"] += 1
-        out["indexed"] += r.get("indexed", 0)
+    with visible_job("Making meetings searchable", kind="meeting_archive", workspace="meetings", queued=False,
+                     deferrable=True, key=JOB_KIND + ":all") as vj:
+        for row in manager.list():
+            if row.get("state") in ("recording", "transcribing", "unreadable"):
+                continue
+            if not _wait_free(vj, hold):
+                break
+            try:
+                vj.check_stop()
+                r = index_meeting(manager.get(row["id"]), store=store, force=force)
+            except Exception as e:  # noqa: BLE001 - one meeting must not stop the rest
+                log.info("meeting %s not indexed: %s", row.get("id"), type(e).__name__)
+                continue
+            out["meetings"] += 1
+            out["indexed"] += r.get("indexed", 0)
+        vj.set_result("%d meetings read" % out["meetings"])
     return out
+
+
+def index_when_free(m: dict, *, hold=None) -> None:
+    """The hook the notes worker calls when a meeting's notes are done: read it into the archive off that
+    worker's thread, once no recording is on and the owner has not paused background work."""
+    if choice() != "on":
+        return
+    threading.Thread(target=_index_when_free, args=(dict(m), hold), name="meeting-archive-index",
+                     daemon=True).start()
+
+
+def _index_when_free(m: dict, hold=None) -> None:
+    try:
+        with visible_job("Making a meeting searchable", kind="meeting_archive", workspace="meetings", queued=False,
+                         deferrable=True, key=JOB_KIND + ":" + str(m.get("id"))) as vj:
+            if _wait_free(vj, hold):
+                index_meeting(m)
+    except Exception as e:  # noqa: BLE001 - a search index never spoils the notes
+        log.info("meeting %s not indexed for search: %s", m.get("id"), type(e).__name__)
+
 
 
 def set_choice(value: str, *, store=None) -> dict:

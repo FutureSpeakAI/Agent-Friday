@@ -133,22 +133,35 @@ The first time, Meetings asks whether to **Make my meetings searchable**
 meeting's transcript and notes are read into your Library, in a scope of their
 own, on this PC. Then **Ask your meetings** answers "what did we decide about
 the budget?" with footnotes that open the exact transcript line, and you can
-ask the same by voice. Saying no indexes nothing, and **Stop making them
-searchable** removes what was indexed. Deleting a meeting removes its Library
-documents in the same step, and so does a retention choice that deletes it.
+ask the same by voice. Saying yes is a click on the screen in the Friday window: the
+settings write ignores `meeting_archive`, and voice and Friday's tools cannot set it. Saying no
+indexes nothing, and **Stop making them searchable** removes what was indexed. Both
+ends take effect at once: the answer is read again on every search, so a meeting
+stops being an answer the moment you say no, before the documents are cleared.
+Deleting a meeting takes it out of search first and removes its Library documents
+in the same step, and so does a retention choice that deletes it. Deleting only the
+audio leaves the notes and the archive as they are. If you ask Friday to forget a
+Library document or a person, the meeting's documents are included, and the
+transcript is not read back in with that name or that document.
 
 Meetings are encrypted in their own store, so they are read into the Library
 only when the Library's index is encrypted too (its optional encryption
 component installed and keyed). Otherwise the box says "Not available on this
 PC: the Library index isn't encrypted", and nothing is indexed. Meeting
 text in the Library is never offered to a cloud model, even with cloud answers
-for the Library switched on and a file permission in place. The setting is
+for the Library switched on and a file permission in place, and it is not read out
+on a cloud voice call or in an answer relayed to one: with a cloud voice, Friday
+says the meetings stay on this PC. A meeting is never drafted into the wiki's
+suggested notes either; the Library's learning from your files does not read your
+meetings. The setting is
 `meeting_archive`; see [Configuration](configuration.md).
 
 ## By voice
 
 - "What did we decide about the budget?" and "What are my action items from the
-  Marta call?" search your meetings through the Library, with citations.
+  Marta call?" search your meetings through the Library, with citations, when
+  the local voice and the local model are answering. On a cloud voice call Friday
+  says your meetings stay on this PC.
 - "Open my last meeting", "open the Marta call" and "open the second one" open
   that meeting in the workspace. "Open the second one" means the second in the
   list on screen.

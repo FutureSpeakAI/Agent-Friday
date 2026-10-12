@@ -38,8 +38,13 @@ def _env(tmp_path, monkeypatch):
 def _reference(principal: str, path) -> bool:
     """The consent check as it was before anything was kept: every part worked out on this ask."""
     from agent_friday.services import file_grants as fg
+    from agent_friday.services import meeting_archive
     from agent_friday.services.library import grants, indexer
     path = Path(path)
+    if meeting_archive.owns(path):
+        # A meeting's transcript or notes: the owner's yes to a searchable archive, read on this ask, for the owner's
+        # own Library and a meeting that exists. No folder consent covers these and none is needed.
+        return principal == meeting_archive.OWNER and not grants.suspended() and meeting_archive.covers(path)
     if fg.check_grant(path).state == "denied":
         return False
     try:
@@ -344,3 +349,35 @@ def test_revoking_a_scope_leaves_the_document_out_of_the_next_search(tmp_path, m
     assert titles() == ["bread"]
     after = search.run("how much notice to end the lease")
     assert all(e["doc"] != "lease" for e in after["evidence"])
+
+
+def test_a_meeting_archive_path_gets_the_owners_live_answer_from_every_way_of_asking(tmp_path, monkeypatch):
+    """The archive's yes is its own and is never kept: the single check, a batch, a long-lived batch and the
+    from-scratch reference agree on an archive path as the owner's answer flips, as the meeting is deleted
+    and for a path that only looks like one; and a folder grant over the same place does not change it."""
+    from agent_friday.services import meeting_archive as ma
+    from agent_friday.services import meeting_capture as mc
+    from agent_friday.services.library import grants
+    monkeypatch.setattr(grants, "_RECHECK_S", 0.0)
+    state = {"choice": ""}
+    monkeypatch.setattr(ma, "_settings", lambda: {"meeting_archive": state["choice"]})
+    root = tmp_path / "fh" / "meetings"
+    monkeypatch.setattr(mc, "_root", lambda: root)
+    mid = "a1a1a1a1a1a1"
+    (root / mid).mkdir(parents=True)
+    (root / mid / "meeting.json.enc").write_bytes(b"x")
+    look = tmp_path / "Lib" / "meetings" / mid / "library" / "notes.md"
+    look.parent.mkdir(parents=True)
+    look.write_text("an ordinary note that is named like an archive document", encoding="utf-8")
+    grants.add_scope("owner", str(tmp_path / "Lib"))
+    paths = [ma.path_for(mid, "notes"), ma.path_for(mid, "transcript"), ma.path_for("b2b2b2b2b2b2", "notes"), look] + _tree(tmp_path)
+    held = grants.allower("owner")
+    for choice in ("", "on", "off", "on"):
+        state["choice"] = choice
+        want = _agree(paths, label="archive %r" % choice, held=held)
+        assert want[ma.path_for(mid, "notes")] is (choice == "on")
+        assert want[ma.path_for("b2b2b2b2b2b2", "notes")] is False, "no such meeting"
+        assert want[look] is True, "an ordinary file is judged by the ordinary consent (the folder grant), as before"
+    (root / mid / "meeting.json.enc").unlink()
+    want = _agree(paths, label="the meeting deleted", held=held)
+    assert not want[ma.path_for(mid, "notes")] and not want[ma.path_for(mid, "transcript")]

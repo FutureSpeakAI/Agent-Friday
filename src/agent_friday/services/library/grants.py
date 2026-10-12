@@ -285,11 +285,16 @@ def _archive_verdict(principal: str, path) -> bool | None:
     ledger is suspended or the path carries a never-send mark. No folder consent covers these paths and
     none can: a grant, the tracked consent and a glob are not an answer for a meeting. Read live."""
     from agent_friday.services import meeting_archive
-    if not meeting_archive.is_archive_path(path):
+    if not meeting_archive.owns(path):
         return None
-    if principal != meeting_archive.OWNER or suspended():
+    if principal != meeting_archive.OWNER:
         return False
-    return meeting_archive.covers(path)
+    try:
+        if suspended():
+            return False                              # an unverifiable ledger trusts no yes
+        return bool(meeting_archive.covers(path))
+    except Exception:  # noqa: BLE001 - a check that cannot run is not consent
+        return False
 
 
 def _allowed_uncached(principal: str, path: Path) -> bool:

@@ -416,6 +416,9 @@ def lib(tmp_path, monkeypatch):
     state = {"choice": "on"}
     monkeypatch.setattr(ma, "_settings", lambda: {"meeting_archive": state["choice"]})
     monkeypatch.setattr(mc, "_root", lambda: tmp_path / "fh" / "meetings")
+    # these tests index meetings that were never written to disk; the live check of the meeting's record has its
+    # own tests (test_meeting_archive_consent.py)
+    monkeypatch.setattr(ma, "meeting_exists", lambda mid: True)
     # the test environment may have no sqlcipher: stand in for an encrypted, keyed index (the other branch is tested below)
     lstore.store_for("owner").encrypted = True
     yield state
@@ -531,7 +534,7 @@ def test_deleting_a_meeting_or_turning_the_archive_off_removes_its_documents(lib
     r = rig()
     mid = r.put(record(A))
     r.m.delete(mid)
-    assert r.removed == [mid], "deleting a meeting clears its archive documents in the same step"
+    assert r.removed and set(r.removed) == {mid}, "deleting a meeting clears its archive documents in the same step"
 
 
 def test_finishing_the_notes_refreshes_the_archive(rig):

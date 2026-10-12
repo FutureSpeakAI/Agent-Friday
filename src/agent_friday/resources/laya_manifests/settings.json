@@ -208,7 +208,7 @@
  "notes": [
   {
    "id": "meeting_retention",
-   "text": "Meeting retention (meeting_audio_retention, meeting_text_retention, meeting_text_retention_days) is the owner's own choice, set in Privacy & Data and the Meetings view; it is not a voice-settable key and has no verb."
+   "text": "Meeting retention (meeting_audio_retention, meeting_text_retention, meeting_text_retention_days) and whether meetings are searchable from the Library (meeting_archive) are the owner's own choices, set in Privacy & Data and the Meetings view; none is a voice-settable key or has a verb, and the archive's yes is taken only from a click on the screen."
   },
   {
    "id": "voice_live_trim",
