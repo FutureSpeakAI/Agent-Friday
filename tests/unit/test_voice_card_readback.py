@@ -125,7 +125,7 @@ class _Call:
         monkeypatch.setattr(rv, "_voice_route_plan", plan)
         monkeypatch.setattr(rv, "_local_voice_tool", self._tool)
 
-    def _tool(self, name, args, send, session, cut=True):
+    def _tool(self, name, args, send, session, cut=True, owner_call=False):
         self.ran.append((name, dict(args)))
         if name == "organize_email":
             self.cards.append({"approval_id": CARD, "status": "pending", "payload": {

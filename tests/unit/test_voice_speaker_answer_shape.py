@@ -627,7 +627,7 @@ def test_a_long_email_list_is_parsed_whole_before_anything_is_cut(monkeypatch):
                                    for i in range(25)]})
     assert len(big) > rv.LOCAL_TOOL_RESULT_CHARS
     calls = []
-    monkeypatch.setattr(rv, "_run_voice_tool_bounded", lambda f, a, s, sess=None: big)
+    monkeypatch.setattr(rv, "_run_voice_tool_bounded", lambda f, a, s, sess=None, limit=None, runner=None: big)
     monkeypatch.setattr(rv, "_voice_orb_start", lambda name: "orb")
     monkeypatch.setattr(rv, "_voice_orb_finish", lambda *a: None)
     monkeypatch.setattr(rv, "_discard_voice_orb", lambda orb: None)

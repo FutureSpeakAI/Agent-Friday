@@ -47,5 +47,8 @@ def test_the_local_handler_pins_the_turn_and_builds_the_prompt_for_its_seat():
     import agent_friday.routes.voice as rv
     src = inspect.getsource(rv)
     assert "_build_voice_system_prompt(settings, seat=_brain)" in src
-    assert src.count('"pin_to_seat": True') >= 2, (
-        "both the session's turns and its prefix warm must be pinned to the seat")
+    # The prefix warm is always on the seat. A turn is on the seat unless the owner took the spoken
+    # "send it to Claude" offer for that one turn (cloud_once, under a recorded cloud intent).
+    assert src.count('"pin_to_seat": True') >= 1, "the prefix warm must be pinned to the seat"
+    assert '"pin_to_seat": not cloud_once' in src and "model=(None if cloud_once else _brain)" in src, (
+        "the session's turns must be pinned to the seat unless the owner sent this one turn to the cloud")
