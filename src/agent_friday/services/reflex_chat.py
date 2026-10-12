@@ -414,7 +414,9 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
     # The same call a model's tool use makes: confirmation, governance, vault,
     # sandbox, receipts. This module has no other way to run a command.
     result = agent._execute_tool(tool, tool_input, session_ctx=ctx)
-    result = str(result if result is not None else "")
+    # A str result is kept as it is, so exception text a handler marked (user_errors.exception_text)
+    # stays marked in the trace and in a reply quoting it, and routes._errors.public_result hides it.
+    result = result if isinstance(result, str) else str(result if result is not None else "")
     status = agent._tool_call_status(result)
     entry = {"name": tool, "input": tool_input, "result": result}
     title = ""
@@ -450,7 +452,10 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
     count("open_" + outcome)
     _record_plan(turn_id, shape="reflex_open", reason="resolver: one sealed command",
                  reflex={"by": "resolver", "kind": "open", "tool": tool, "outcome": outcome})
-    return {"reply": reply.text, "tool_trace": [entry], "actions": [], "outcome": outcome,
+    from agent_friday.user_errors import keep_mark
+    # The refused and unconfirmed replies quote the result's first line: they carry its mark.
+    shown_text = keep_mark((result,), reply.text) if outcome in ("refused", "not_confirmed") else reply.text
+    return {"reply": shown_text, "tool_trace": [entry], "actions": [], "outcome": outcome,
             "laya": reply.receipt(), "history_text": hist}
 
 

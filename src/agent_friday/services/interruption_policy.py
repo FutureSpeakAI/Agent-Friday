@@ -180,8 +180,10 @@ def focus_on(s: Optional[dict] = None) -> bool:
 # ── the hour's count ─────────────────────────────────────────────────────────
 
 def _k(key: Any) -> str:
-    """What an item is remembered under: a hash, so the state file holds no id, title or dedupe key."""
-    return hashlib.sha1(str(key).encode("utf-8")).hexdigest()[:16] if key else ""
+    """What an item is remembered under: a hash, so the state file holds no id, title or dedupe key.
+    The digest is a short lookup key over Friday's own task ids and dedupe keys; no signature,
+    password or secret depends on it, so SHA-1 is declared not used for security."""
+    return hashlib.sha1(str(key).encode("utf-8"), usedforsecurity=False).hexdigest()[:16] if key else ""
 
 
 def set_state_path(path: Any) -> None:

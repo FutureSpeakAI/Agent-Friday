@@ -448,11 +448,13 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
      r"(?P<q>(?:last|latest|most recent|previous|newest)\s+(?:meeting|call|recording))" + _END),
 ]]
 
-#: A spoken answer to a card: a yes or a no and nothing else.
+#: A spoken answer to a card: a yes or a no and nothing else. The punctuation after the
+#: optional tail word belongs to that word's group, so a run of spaces or dots has one
+#: way to match and a long run is read once (linear, not quadratic).
 _YES = re.compile(r"^(?:friday,?\s+)?(?:yes|yeah|yep|sure|ok(?:ay)?|go ahead|do it|approve(?:d)?|confirm(?:ed)?|"
-                  r"please do|that's fine|sounds good)\b[\s,.!]*(?:go ahead|do it|please)?[\s,.!]*$", re.I)
+                  r"please do|that's fine|sounds good)\b[\s,.!]*(?:(?:go ahead|do it|please)[\s,.!]*)?$", re.I)
 _NO = re.compile(r"^(?:friday,?\s+)?(?:no|nope|don'?t|do not|decline|deny|cancel(?: that| it)?|"
-                 r"never mind|stop)\b[\s,.!]*(?:thanks|thank you)?[\s,.!]*$", re.I)
+                 r"never mind|stop)\b[\s,.!]*(?:(?:thanks|thank you)[\s,.!]*)?$", re.I)
 
 #: (tool, pattern). First match wins; order is most specific first.
 _RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
@@ -541,10 +543,13 @@ def _strip_triggers(text: str) -> str:
     return _clean_query(_TRIGGERS.sub("", text.strip(), count=1))
 
 
-#: Greetings, thanks and sign-offs, when they are the whole turn.
+#: Greetings, thanks and sign-offs, when they are the whole turn: the opening word, then
+#: anything up to the first "?", and after a "?" only spaces and punctuation ("hi, how are
+#: you?" and "thanks!" are small talk; "hi, can you check my mail? now" is not). Written
+#: so that each character has one way to match, which keeps it linear on long input.
 _SMALL_TALK = re.compile(
     r"^(?:hi|hello|hey|good (?:morning|afternoon|evening|night)|thanks?|thank you|cheers|bye|goodbye|"
-    r"okay|ok|sure|great|cool|nice|never mind|no worries)\b[^?]*?(?:how are you(?: doing)?(?: today)?)?[\s,.!?]*$",
+    r"okay|ok|sure|great|cool|nice|never mind|no worries)\b[^?]*(?:\?[\s,.!?]*)?$",
     re.I)
 
 

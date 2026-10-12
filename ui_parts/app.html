@@ -25705,7 +25705,7 @@ function App(){
           voiceKeepRef.current.fatalTs=Date.now();
           // m.detail carries the actionable text (install command, key fix,
           // model fix) — the bare error code alone left users stranded.
-          if (m.offer && m.offer.kind === 'cloud_switch') { try { apiFetch(m.offer.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: m.offer.source || 'failure' }) }).then(() => { try { window.dispatchEvent(new CustomEvent('friday:cloud-voice-asked')); } catch (_) {} }).catch(() => {}); } catch (_) {} }
+          if (m.offer && m.offer.kind === 'cloud_switch') { try { apiFetch('/api/voice/cloud-switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: m.offer.source || 'failure' }) }).then(() => { try { window.dispatchEvent(new CustomEvent('friday:cloud-voice-asked')); } catch (_) {} }).catch(() => {}); } catch (_) {} }
           setVoiceStatus('error: '+(m.detail||m.error||'unknown'));
         }
       }

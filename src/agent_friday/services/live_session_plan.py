@@ -123,7 +123,25 @@ def estimate_tokens(text: str) -> int:
 
 # ── LV-1: the capped, voice-only instruction ────────────────────────────────
 
-_HEADER = re.compile(r"^(={2,3})[ \t]*([^=\n][^\n]*?)[ \t]*\1[ \t]*$", re.M)
+_HEADER = re.compile(r"(={2,3})[ \t]*([^=\n][^\n]*?)[ \t]*\1[ \t]*\Z")
+
+#: A header is one short line. _HEADER's lazy middle costs the square of the line it
+#: reads, so it only ever reads lines this short that start with "=="; a longer line is
+#: body text, never a header.
+_HEADER_MAX = 200
+
+
+def _header_marks(text: str) -> List[Tuple[int, str]]:
+    """(offset of the line, header name) for every header line in ``text``."""
+    marks: List[Tuple[int, str]] = []
+    pos = 0
+    for line in text.split("\n"):
+        if line.startswith("==") and len(line) <= _HEADER_MAX:
+            m = _HEADER.match(line)
+            if m:
+                marks.append((pos, m.group(2)))
+        pos += len(line) + 1
+    return marks
 
 # Mandatory: never dropped, whatever the cap. Matched on the header, upper-cased.
 _MANDATORY = re.compile(
@@ -209,7 +227,7 @@ def split_blocks(text: str) -> List[Block]:
         from agent_friday.services.action_policy import ACTION_PERMISSION_POLICY as _POLICY
     except Exception:  # pragma: no cover
         _POLICY = None
-    marks = [(m.start(), m.group(2)) for m in _HEADER.finditer(text)]
+    marks = _header_marks(text)
     if not marks:
         return [Block("preamble", text, "mandatory")] if text else []
     cuts: List[Tuple[int, str]] = []
@@ -379,10 +397,26 @@ def safety_ok(before: str, after: str) -> bool:
         pol = None
     if pol and pol in before and pol not in after:
         return False
-    for h in re.findall(r"^={2,3}[ \t]*(ASIMOV[^\n=]*?)[ \t]*={2,3}", before, re.M | re.I):
+    for h in _asimov_headers(before):
         if h not in after:
             return False
     return True
+
+
+#: The start of an ASIMOV header line: "==" or "===", spaces, then the name up to the first "=".
+_ASIMOV_HEAD = re.compile(r"={2,3}[ \t]*(ASIMOV[^\n=]*)", re.I)
+
+
+def _asimov_headers(text: str) -> List[str]:
+    """The name of every "== ASIMOV ... ==" line in ``text``, without the spaces before the
+    closing "==". Every line is read, however long: the name is the greedy run up to the
+    first "=", trimmed, so there is one way to match and the scan is linear."""
+    out: List[str] = []
+    for line in text.split("\n"):
+        m = _ASIMOV_HEAD.match(line)
+        if m and line.startswith("==", m.end()):
+            out.append(m.group(1).rstrip(" \t"))
+    return out
 
 
 # ── LV-2: the tool kit ──────────────────────────────────────────────────────
