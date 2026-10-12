@@ -1,59 +1,106 @@
-# Agent Friday™ Beta 1.0.2
+# Agent Friday™ Beta 1.1
 
 *FutureSpeak.AI™*
 
-Agent Friday™ is a private AI agent that runs on your own Windows PC. Beta 1.0.2
-is a hotfix after Beta 1.0.1, which followed Beta 1.0, the first release of the
-app. It is a **pre-release**: it is meant to be tried, and it has rough edges,
-listed below.
+Agent Friday™ is a private AI agent that runs on your own Windows PC. Beta 1.1
+follows Beta 1.0.2, Beta 1.0.1 and Beta 1.0, the first release of the app. It
+is a **pre-release**: it is meant to be tried, and it has rough edges, listed
+below.
 
-## Background AI work waits its turn
+## What's new
 
-Background jobs that use your local model now go through one queue. That covers
-wiki notes from voice chats, scheduled briefings and background tasks.
+- **One scheduler for your local models.** Every call to a local model waits
+  its turn in the order voice, chat, Local API, jobs you asked for, background.
+  No model loads if it would leave less than 4 GB of memory free; the job waits
+  and the Local AI chip says why. A second GPU job waits for the card instead of
+  being refused. Say "cancel the podcast job" to take a waiting job out of the
+  line.
+- **Four places, one rule each.** The top-bar chip opens **Needs you** (only
+  what waits for your decision), **Activity** (every task, whoever started it),
+  **Updates** (a digest you pull) and **Receipts & traces** (pulled from an
+  item's **Why?**). At most 6 things an hour may pop up, speak or text
+  (`interruption_budget_per_hour`), quiet hours are there when you turn them on,
+  and approvals of one kind can show as one batch card.
+- **Meetings.** The recorder and past meetings have their own workspace. A
+  recording starts only from the start card, after your consent and a confirm,
+  and can record both sides of a call. A notes pad takes your bullets during the
+  call, and afterwards every note line cites the transcript. The tray icon
+  carries a red dot while a meeting records. Meetings become searchable only
+  after you say yes.
+- **Your folders, read while you are away.** A folder you add is read as one
+  Local AI queue job, only while the PC is idle, and picked up where it stopped
+  after a restart. Friday notes each document's type, how sensitive it is and
+  whether it is a copy, and a local model drafts summaries and facts for your
+  review. Nothing is published without you.
+- **What Laya learns about you** (on by default; Settings > Privacy & Data).
+  When you correct her in a local voice call, or in typed chat while she picks
+  the tool, she keeps your words sealed in your vault on this PC and learns your
+  phrasing. A report card shows what she learned and what she turned down, with
+  undo, forget, reset and roll back.
+- **Laya's safe writes** (off until you turn them on; Settings > Privacy & Data >
+  Safe writes). Laya can raise the approval card for a mail change you can undo
+  (archive, mark read or unread, star, unstar, label, move to an existing label)
+  on the rows you pointed at. You approve every card, and Undo puts back the
+  labels Friday changed.
+- **Cloud voice is asked for, and offered back once** (Settings > Voice).
+  Moving voice to the cloud asks "just this call, or always?". After an always,
+  when local voice is measured and ready again, Friday offers once to switch
+  back. Nothing switches silently in either direction. Settings > Voice also says
+  whether local voice can run on this PC, with **Measure now**.
+- **Local voice starts faster.** The ear, the voice and the fast reply model
+  load at the same time, and the page shows an estimate from this PC's recent
+  starts. In a call, "open the second one" or "select these" are
+  settled against the rows on your screen.
+- **Exact mail Undo.** Undo now puts back only the labels each message really
+  gained or lost, on only those messages, and says so when it cannot.
 
-- **One at a time, and behind you.** A job never starts while you are in a chat
-  or a local voice turn. A job that is already running pauses before its next
-  step and carries on when you are done.
-- **Work that can wait, waits for you to be away.** Deferrable jobs, such as
-  wiki notes, start only after the computer has been idle for 10 minutes. You
-  can change that in Settings > Advanced: "Background AI work waits until
-  you've been away for" (5, 10, 15, 30 or 60 minutes).
-- **Work with a time still runs on time.** The 7:00 news, the 16:00 briefing and
-  the 18:00 front page do not wait for idle. They still run one at a time and
-  behind you.
-- **Duplicates merge.** A second request for work that is already waiting
-  joins the first.
-- **You can see it.** A "Local AI: N queued" chip appears in the top bar while
-  work waits or runs. It opens a list with what waits and why, and a **Run
-  now** and a **Cancel** for each job. **Run now** skips only the idle wait. The
-  tray tooltip shows the same. Ask by voice: "what's in your queue?"
+## Also in 1.1
 
-## Also in 1.0.2
+- A plain "yes" typed on Friday's page runs the action Friday is waiting on
+  (`reflex_approval_replies`, on by default).
+- "Open the X" without a model (`reflex_open_enabled`, off until you choose).
+- Laya can pick the tool for a typed lookup (`chat_tool_routing`, unchosen by
+  default).
+- Local modes call the cloud only when you asked. When a local answer fails,
+  Friday offers to try again locally, give a shorter version or send it to
+  Claude, with nothing preselected.
+- Podcast lengths are spoken time: Short about 2 minutes, Standard about 5 (the
+  default) and Long about 10, each story written from its full article where it
+  can be read.
+- One media player for episodes and recordings; the avatar follows the audio.
+- The avatar stays centred in the visible part of the desktop, and Simple has a
+  **Hide the cards** control.
+- Mail reads time out with an error and **Retry** instead of showing an empty
+  inbox.
+- Settings survive a read that meets a save; a failed read can never be saved
+  over your settings.
+- Ollama models that run in Ollama's cloud (`:cloud` or `-cloud`) are checked
+  like any other cloud model and are sent no images.
+- Library search stays fast with thousands of documents.
 
-- **Settings** reads never wait on a stopped Ollama. A voice turn could stall
-  for seconds on the refused connection.
-- A timing check in the test suite no longer fails by a hair.
+The full list is in the [CHANGELOG](CHANGELOG.md).
 
 ## Upgrading
 
-Run this installer over an existing Beta 1.0.1 (v1.0.1-beta.1), Beta 1.0
-(v1.0.0-beta.1) or 5.x install, including 5.14.3. It upgrades in place. Before it changes anything, setup stops
-Friday and backs up your data folder to a dated folder under `.friday-backups`
-in your user folder, and your vault is part of that backup. When it finishes, it
-checks that your data folder has every file it had before and that your vault's
-key files are unchanged. Upgrades from 5.14.3, Beta 1.0 and Beta 1.0.1 are tested before each release.
-Details are in [Upgrading from 5.x](#upgrading-from-5x) below.
+Run this installer over an existing Beta 1.0.2 (v1.0.2-beta.1), Beta 1.0.1
+(v1.0.1-beta.1), Beta 1.0 (v1.0.0-beta.1) or 5.x install, including 5.14.3. It
+upgrades in place. Before it changes anything, setup stops Friday and backs up
+your data folder to a dated folder under `.friday-backups` in your user folder,
+and your vault is part of that backup. When it finishes, it checks that your
+data folder has every file it had before and that your vault's key files are
+unchanged. Upgrades from 5.14.3, Beta 1.0, Beta 1.0.1 and Beta 1.0.2 are tested
+before each release. Details are in [Upgrading from 5.x](#upgrading-from-5x)
+below.
 
 ## Download and install
 
-Download `AgentFriday-Setup-1.0.2-beta.1.exe` (about 640 MB) from the assets
+Download `AgentFriday-Setup-1.1.0-beta.1.exe` (about ⟨SIZE⟩ MB) from the assets
 below. The same hash is in the `.sha256` file beside it.
 
 **SHA-256:** `<SHA256 PLACEHOLDER: filled in when the release is published>`
 
 1. Check the file. In PowerShell:
-   `Get-FileHash .\AgentFriday-Setup-1.0.2-beta.1.exe -Algorithm SHA256`.
+   `Get-FileHash .\AgentFriday-Setup-1.1.0-beta.1.exe -Algorithm SHA256`.
    The `Hash` must match the line above.
 2. Double-click the file. It installs for your Windows account only, needs no
    administrator rights, and brings its own Python and every package, so you
@@ -94,11 +141,20 @@ file against the publisher's checksum, and resumes if the connection drops.
   numbered badges, ticks or filters what you mean, and fills in a field you can
   see. Acting on what is ticked still needs your approval, and trash and
   archive always ask.
-- Mail, calendar, documents, the Library and Media workspaces, Workflows,
-  scheduled jobs and podcasts.
+- Mail, calendar, meetings, documents, the Library and Media workspaces,
+  Workflows, scheduled jobs and podcasts.
 - Settings grouped into General, Voice, Models, Privacy & Data, Connections,
   Appearance and Advanced, with About at the bottom.
 - No telemetry. The update check is off until you turn it on.
+
+## What is not in this release
+
+- **The installer is not code-signed.** SmartScreen warns, as described above.
+  Check the SHA-256 before you run it.
+- **There is no signed update channel.** Updates are not delivered or verified
+  through a signed channel; download a new release from the releases page and
+  check its hash.
+- **Phone pairing is not in this release.**
 
 ## Upgrading from 5.x
 
@@ -108,9 +164,9 @@ anything, setup stops Friday and copies your data to a dated folder under
 data folder has every file it had before and that your vault's key files are
 unchanged. Your notes, settings and passphrase are never deleted by an update.
 
-Beta 1.0.2 (1.0.2b1) is numerically lower than 5.14.3 and is newer. Friday and
-the setup program order releases by build sequence, so a 5.x build, Beta 1.0 or
-Beta 1.0.1 is never offered to this beta as an upgrade.
+Beta 1.1 (1.1.0b1) is numerically lower than 5.14.3 and is newer. Friday and
+the setup program order releases by build sequence, so a 5.x build, Beta 1.0,
+Beta 1.0.1 or Beta 1.0.2 is never offered to this beta as an upgrade.
 
 ## Uninstalling
 
@@ -129,11 +185,11 @@ matter:
   RAM to run on the processor, where it is slow (an estimate of 3 to 6 tokens
   per second), and a 12 GB NVIDIA card for fast, long-context use.
 - The optional, more accurate "turbo" speech listener is not offered yet.
-- The first local voice call after a while takes about a minute to start,
-  because the voice models load onto the graphics card. Cloud voice calls
-  (Gemini Live) do not pause background local-model work; only local voice
-  turns do.
+- The first local voice call after a while is slow to start,
+  because the voice models load first. Cloud voice calls (Gemini Live) do not
+  pause background local-model work; only local voice turns do.
+- Laya's safe writes are off and await their separate safety review.
 - It has had little time on real computers. Please report what you find at
   [github.com/FutureSpeakAI/Agent-Friday/issues](https://github.com/FutureSpeakAI/Agent-Friday/issues).
 
-Build sequence: 101000201
+Build sequence: 101010001

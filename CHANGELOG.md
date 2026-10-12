@@ -13,6 +13,14 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+---
+
+## [1.1.0-beta.1] - Agent Friday Beta 1.1 (⟨DATE⟩)
+
+Agent Friday™ Beta 1.1 (version `1.1.0b1`, tag `v1.1.0-beta.1`, build
+sequence 101010001) follows Beta 1.0.2. It installs over Beta 1.0.2, Beta 1.0.1,
+Beta 1.0 and 5.x in place, with the data backed up first.
+
 ### Added
 
 - **Laya's safe writes** (off until you turn them on; Settings > Privacy & Data >
@@ -192,6 +200,72 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 - **New and changed files are found while the PC is idle** and read as one job
   per folder, never at the moment of a change.
 
+- **A Meetings workspace.** The recorder and past meetings move out of Calendar
+  into Meetings in the dock (Calendar keeps a link). A recording starts only
+  from the start card on screen, after your consent and an explicit confirm;
+  Friday never starts one by herself. It can record both sides of a call: the
+  microphone is "You" and the computer's sound is "Them". A notes pad takes
+  shorthand bullets during the call; afterwards a local model expands them, and
+  every kept line cites a transcript segment and time. People, decisions and
+  projects become memory proposals, never direct writes, and the summary reaches
+  the calendar event only through an approval card. Retention settings have
+  nothing preselected, and the audio can be deleted apart from the notes. The
+  tray icon carries a red dot while a meeting records. Your meetings become
+  searchable in the Library only after you say yes (`meeting_archive`, empty
+  until you choose). Page: [Meetings](docs/user-guide/meetings.md).
+- **Settings > Voice says whether local voice can run here.** A Local voice row
+  shows capable, not measured (with **Measure now**) or not ready with its
+  reason, and why voice is on the cloud when it is. "Not measured" is no longer
+  shown as "can't". The measurement is refreshed as a visible, idle-time job when
+  a local model is installed, when the graphics card, its driver or the memory
+  changes, and weekly. Ask "can you run voice locally now?" by voice or in chat.
+- **The avatar stays centred in what you can see.** In Classic it re-centres in
+  the visible part of the desktop when panels, the chat tray or windows change
+  the space, and eases there. In Simple a **Hide the cards** control gives the
+  avatar one half and the chat the other; say "hide the cards" or "show the
+  cards". Reduced motion moves more gently.
+- **One media player.** Every way into a podcast episode or a recording opens
+  Friday's one player, and the avatar follows the audio that is playing. Until
+  you drag it, the player rests in the work area's bottom corner, above the
+  selection bar, so it does not cover a workspace's header or toolbar.
+- **Podcast lengths are spoken time.** Short is about 2 minutes, Standard about
+  5 (the default for every routine and every new episode) and Long about 10,
+  with fewer stories each told longer. Each story is written from its full
+  article where the page can be read, and the transcript and the player list
+  each segment's sources. Writing an episode is a job in the Local AI queue;
+  cancelling the job cancels the episode.
+- **Cloud work orders (off by default).** With the internal switch
+  `work_orders_enabled` on, a cloud model you are already using can hand this PC
+  a plan that names your material only by random handles; Friday's own models
+  do the work here, and what goes back depends on how private the material is.
+  There is no Settings control for it yet. Page:
+  [Cloud work orders](docs/user-guide/cloud-work-orders.md).
+- A small Laya chip marks the replies Laya wrote herself.
+
+### Changed
+
+- **Local voice starts faster.** The ear, the voice and the fast reply model now
+  load at the same time instead of one after another. The page says "Warming up
+  the voice" with an estimate taken from this PC's recent starts for the stages
+  that will really run, and no number when there is no record.
+- A follow-up that drops its subject, such as "what about tomorrow?" after a
+  calendar question, re-uses the previous look-up with the new day or name; with
+  nothing to carry over it goes to the deeper mind.
+- **Local modes call the cloud only when you asked.** In `local_preferred` and
+  `local_only`, background, health, media, avatar, research and resume calls no
+  longer reach a cloud provider on their own. When a local answer fails, Friday
+  offers to try again locally, give a shorter version or send it to Claude, with
+  nothing preselected, by voice too. The old `smart` mode is read as
+  `local_preferred` (a one-time settings migration).
+- **Mail reads have a time limit.** A list that does not load within 20 seconds
+  shows an error with **Retry** instead of an empty inbox; a list already on
+  screen stays, with a "couldn't refresh" note.
+- Installing local voice also installs spaCy's small English model, which the
+  Kokoro pronouncer needs, as part of the download you agree to, instead of a
+  silent download on first use.
+- The installer's upgrade check now proves upgrades from v5.14.3,
+  v1.0.0-beta.1, v1.0.1-beta.1 and v1.0.2-beta.1.
+
 ### Fixed
 
 - **Undoing a mailbox change is now exact for every message in a conversation.**
@@ -213,6 +287,22 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   list also hides both forms of cloud tag from the on-device picks.
 - Library search stays fast with thousands of documents. Your consents are
   still read fresh on every search, so removing a folder takes effect at once.
+- **Settings survive a read that meets a save.** On Windows, reading
+  `settings.json` while it was being saved could fail and fall back to factory
+  defaults, and a later save could then write those defaults over your
+  settings. A read now retries briefly, and a failed read can never become a
+  save.
+- The speech engines a voice call loads in the server are released when the
+  call ends, instead of staying in memory.
+- A mail read that does not answer is shown as an error, never as an empty
+  inbox.
+
+### Security
+
+- Passages of a meeting's transcript or notes reach only a local model
+  answering on this PC (not one answering for a cloud voice call), and a reply that came from a turn that read a meeting is left out of
+  the history sent to a cloud model.
+- A model that Ollama runs in its cloud is sent no images.
 
 ---
 
