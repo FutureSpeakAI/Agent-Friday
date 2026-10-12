@@ -167,6 +167,16 @@ def log_path():
     return FRIDAY_DIR / "runtime" / LOG_DIRNAME / LOG_NAME
 
 
+def _router_log_path():
+    """The router's decision log, resolved when the decision is taken (None if
+    it cannot be): a row the writer thread appends later still lands there."""
+    try:
+        from agent_friday.services import laya_router
+        return laya_router.log_path()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 #: Disk writes (the receipt, the router's own log row) never run on the turn's
 #: thread: a bounded queue drained by one daemon thread. A full queue drops the
 #: row rather than make the turn wait.
@@ -419,12 +429,14 @@ def _preset_route(ctx: Ctx, spec: dict) -> dict:
     if want_log or owner_turn:
         surface = str(kw.get("surface", "voice"))
         at = time.strftime("%Y-%m-%dT%H:%M:%S")            # the decision's time, taken on the worker at decision
+        log_at = _router_log_path() if want_log else None   # and its log, fixed now; only the write is deferred
         cid = kw.get("conversation_id")
         owner = bool(kw.get("trusted"))       # the owner's own voice or verified page only
 
         def _commit():
             if want_log:
-                laya_router._write(ctx.text, r, surface, at=at)
+                if log_at is not None:
+                    laya_router._write(ctx.text, r, surface, at=at, path=log_at)
                 laya_router.note_learn(ctx.text, r, surface, cid, owner=owner)
             if owner_turn:
                 # The owner's own voice on this PC only (route_turn's `trusted`); services/laya_personal
@@ -798,7 +810,10 @@ def route_turn(text: str, *, caller: Optional[str] = None, mode: Optional[str] =
                                     last_route=kw.get("last_route"), reason="Laya over budget or unavailable")
         if kw.get("log", True):
             at = time.strftime("%Y-%m-%dT%H:%M:%S")        # stamped now, on the turn, not when the writer gets to it
-            _enqueue_counted(lambda: laya_router._write(" ".join(str(text or "").split()), r, surface, at=at))
+            log_at = _router_log_path()                    # the log is fixed on the turn too
+            if log_at is not None:
+                _enqueue_counted(lambda: laya_router._write(" ".join(str(text or "").split()), r, surface,
+                                                            at=at, path=log_at))
     r.laya_receipt_id = res["receipt_id"]       # not a Route field: as_dict() is unchanged
     return r
 
