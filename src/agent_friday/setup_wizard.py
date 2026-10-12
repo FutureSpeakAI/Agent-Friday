@@ -1374,6 +1374,32 @@ def step_voice_engine(total: int, existing_engine: str) -> str:
     return "gemini" if str(choice).strip() == "2" else "local"
 
 
+def step_cloud_voice_scope(config: dict) -> None:
+    """Moving voice to the cloud is asked here as it is everywhere else: "just this call, or
+    always?". Nothing is preselected (the prompt has no default); "just this call" is marked
+    Recommended because it keeps local voice the default. The answer is recorded the way
+    Settings records it (services/local_voice_readiness). Local-only mode keeps voice local."""
+    import time as _time
+    mode = str((config.get("model_routing") or {}).get("mode") or "").strip().lower()
+    if mode == "local_only":
+        config["voice_engine"] = "local"
+        config["voice_engine_choice"] = {}
+        console.print("\n  [yellow]Local only mode is on, so voice stays on this PC and cloud "
+                      "voice is not allowed.[/yellow]\n")
+        return
+    console.print(
+        "\n  Use cloud voice for just this call, or always?\n\n"
+        "  [bold cyan]1[/bold cyan].  [bold white]Just this call[/bold white]  "
+        "[dim](Recommended: back to local voice when the call ends)[/dim]\n"
+        "  [bold cyan]2[/bold cyan].  [bold white]Always[/bold white]  "
+        "[dim](until you change it; Friday offers once to switch back when local voice is ready)[/dim]\n"
+    )
+    choice = Prompt.ask("  [cyan]Choose (1-2)[/cyan]", choices=["1", "2"])
+    config["voice_engine_choice"] = {
+        "scope": "call" if str(choice).strip() == "1" else "always", "engine": "gemini",
+        "previous": "local", "at": _time.time(), "reason": "your_choice", "source": "setup"}
+
+
 def step_voice(total: int, existing_voice: str) -> str:
     _clear()
     _header(7, total, "VOICE PERSONA")
@@ -1792,8 +1818,13 @@ def main():
 
     if not quick:
         # Step 10: Voice — engine (local default / cloud opt-in) + TTS persona.
+        _was_engine = str(config.get("voice_engine", "local")).lower()
         config["voice_engine"] = step_voice_engine(
             total_steps, config.get("voice_engine", "local"))
+        if config["voice_engine"] == "gemini" and _was_engine != "gemini":
+            step_cloud_voice_scope(config)
+        elif config["voice_engine"] != "gemini":
+            config["voice_engine_choice"] = {}
         config["tts_voice"] = step_voice(total_steps, config.get("tts_voice", "Aoede"))
 
         # Step 7: Scene

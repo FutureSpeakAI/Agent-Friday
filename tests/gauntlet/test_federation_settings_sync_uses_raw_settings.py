@@ -132,7 +132,7 @@ class TestSettingsSyncReceiveUsesRawSettings:
         # The incoming delta itself never touches model_routing -- proving
         # the RAW tag in the saved data came from the local merge base, not
         # from the payload.
-        payload = {"settings": {"voice_engine": "piper"}}
+        payload = {"settings": {"voice_silence_ms": 900}}
         result = fedroutes._handle_federation_message(
             "SETTINGS_SYNC", payload, "some-sender-pubkey-hex")
 
@@ -144,5 +144,5 @@ class TestSettingsSyncReceiveUsesRawSettings:
             "(_load_settings()) as the merge base instead of the real "
             "persisted settings (_load_settings_raw())"
         )
-        assert result["applied"] == ["voice_engine"]
+        assert result["applied"] == ["voice_silence_ms"]
         assert result["count"] == 1

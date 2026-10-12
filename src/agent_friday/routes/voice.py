@@ -3468,17 +3468,33 @@ def _note_local_voice_failed():
         pass
 
 
+_NOT_THE_PAGE = ({"status": "error", "error": "not_on_screen",
+                  "message": "Cloud voice is chosen on Friday's own page, in Settings, Voice."}, 403)
+
+
+def _owner_page_only():
+    """None for the owner's own page on this PC (a click of this server's page with the page's
+    session token); else the refusal. A local script or a CLI holding no page is not the owner."""
+    from agent_friday.services import screen_click
+    if not screen_click.screen_session(request) or not _is_local_request():
+        return jsonify(_NOT_THE_PAGE[0]), _NOT_THE_PAGE[1]
+    return None
+
+
 @voice_bp.route('/api/voice/cloud-switch', methods=['POST'])
 @login_required
 def voice_cloud_switch():
     """Ask to move voice to the cloud. Nothing moves: this raises the question
     "just this call, or always?" (two choices, one marked Recommended, nothing
-    preselected). Local-only mode refuses with its reason."""
+    preselected). Local-only mode refuses with its reason. Only the owner's page may
+    ask; the reason shown is worked out on the server, never taken from the request."""
+    no = _owner_page_only()
+    if no is not None:
+        return no
     data = request.get_json(silent=True) or {}
     try:
         from agent_friday.services import local_voice_readiness as _lvr
-        res = _lvr.ask_cloud_switch(source=str(data.get("source") or "settings"),
-                                    reason=str(data.get("reason") or ""))
+        res = _lvr.ask_cloud_switch(source=str(data.get("source") or "settings"))
         if res.get("refused"):
             return jsonify({"status": "refused", "reason": res.get("reason"),
                             "message": res.get("message"), **_lvr.panel_status()}), 409
@@ -3490,13 +3506,16 @@ def voice_cloud_switch():
 @voice_bp.route('/api/voice/cloud-switch/answer', methods=['POST'])
 @login_required
 def voice_cloud_switch_answer():
-    """The owner's answer to the question: `call` (just this call), `always` or
-    `cancel`. Only a waiting question can be answered; this and the voice answer
-    are the only ways the engine moves to the cloud."""
+    """The owner's click on the question: `call` (just this call), `always` or
+    `cancel`, with the question's id. Only a waiting question can be answered, and
+    only from the owner's page; the spoken answer goes through the voice tool."""
+    no = _owner_page_only()
+    if no is not None:
+        return no
     data = request.get_json(silent=True) or {}
     try:
         from agent_friday.services import local_voice_readiness as _lvr
-        res = _lvr.answer_cloud_switch(data.get("choice"))
+        res = _lvr.answer_cloud_switch(data.get("choice"), question_id=data.get("id"))
         if not res.get("ok"):
             return jsonify({"status": "refused" if res.get("refused") else "error",
                             "message": res.get("message")}), 409
@@ -3508,12 +3527,15 @@ def voice_cloud_switch_answer():
 @voice_bp.route('/api/voice/local-readiness/switch-back', methods=['POST'])
 @login_required
 def voice_switch_back_answer():
-    """The owner's answer to the one switch-back offer: `switch_back` or
-    `keep_cloud`. No answer leaves everything as it was."""
+    """The owner's click on the one switch-back offer: `switch_back` or
+    `keep_cloud`, with the offer's id. No answer leaves everything as it was."""
+    no = _owner_page_only()
+    if no is not None:
+        return no
     data = request.get_json(silent=True) or {}
     try:
         from agent_friday.services import local_voice_readiness as _lvr
-        res = _lvr.decide_switch_back(data.get("choice"))
+        res = _lvr.decide_switch_back(data.get("choice"), question_id=data.get("id"))
         if not res.get("ok"):
             return jsonify({"status": "error", "message": res.get("message")}), 409
         return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
@@ -4420,6 +4442,7 @@ if sock is not None:
 
             def _front_turn(user_text, on_delta):
                 _tool_session["owner_text"] = str(user_text or "")[:4000]
+                _tool_session["owner_text_at"] = _time.time()
                 if _front.get("speaker"):
                     try:
                         return _routed_front_turn(user_text, on_delta)
@@ -4510,6 +4533,7 @@ if sock is not None:
                                          "is_voice": True,
                                          "surface": "voice-local",
                                          "owner_text": str(user_text or "")[:4000],
+                                         "owner_text_at": _time.time(),
                                          # The local mind or an honest failure,
                                          # never a cloud leg answering for it.
                                          "pin_to_seat": not cloud_once,
@@ -6130,6 +6154,7 @@ if sock is not None:
                                                 in_buf.append(in_tr.text)
                                                 _lsp_plan.on_input_text(in_tr.text)   # CV-A: local prefetch only
                                                 _voice_session["owner_text"] = ''.join(in_buf)[-600:]
+                                                _voice_session["owner_text_at"] = _time.time()
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})
                                                 _user_words_ts[0] = _time.time()
                                                 _live_laya.for_call(_voice_session).on_input(in_tr.text)
