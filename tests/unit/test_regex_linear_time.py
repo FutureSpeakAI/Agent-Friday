@@ -252,6 +252,85 @@ def test_html_callers_share_the_scanner(monkeypatch):
     assert agent._html_to_text(PAGE) == "T Fish & chips a < b x y 3 < 4"
 
 
+# ── services/laya_router.py: a yes or no to a card, and small talk ─────────
+
+def test_card_answers_and_small_talk():
+    from agent_friday.services import laya_router as lr
+    _fast(lr._YES.match, "yes" + "\t" * N + "x")
+    _fast(lr._NO.match, "no" + "\t" * N + "x")
+    _fast(lr._SMALL_TALK.match, "hi" + "\t" * N + "x")
+    # The owner's words reach them through the router, which keeps runs of dots and commas.
+    _fast(lr.rules_route, "yes" + " ." * (N // 2) + " x", pending_card="c1")
+    _fast(lr.rule_route, "hi" + " ," * (N // 2) + " x")
+    for yes in ("yes", "Friday, yes please", "ok, go ahead!", "sounds good. do it.", "okay", "yes... please!!"):
+        assert lr._YES.match(yes), yes
+    for other in ("yes but change it", "yes, go ahead and send it to Sam", "yesterday", "yes please please"):
+        assert not lr._YES.match(other), other
+    for no in ("no", "nope, thanks.", "cancel that", "never mind thank you", "stop!"):
+        assert lr._NO.match(no), no
+    for other in ("no, send it to Sam", "nobody", "no thanks thanks"):
+        assert not lr._NO.match(other), other
+    for st in ("hi", "hello, how are you doing today?", "thanks!", "good morning friday", "hi? ?!",
+               "hey there, nice weather"):
+        assert lr._SMALL_TALK.match(st), st
+    for other in ("hi, can you check my mail? now", "his notes", "hi? x", "great question?x"):
+        assert not lr._SMALL_TALK.match(other), other
+
+
+def test_clause_split_and_query_fillers_read_collapsed_whitespace():
+    # _CLAUSE_SPLIT, _FILLER_TAIL and live_laya._CLAUSES start with \s*, which retries a run of
+    # spaces from each of its characters; every caller reaches them through route, rules_route,
+    # rule_route or live_laya.write_intent, which collapse whitespace to single spaces first.
+    from agent_friday.services import laya_router as lr, live_laya as ll
+    _fast(lr.rule_route, "archive it" + " " * N + "and" + "\t" * N + "x")
+    _fast(lr.rules_route, "find news about" + " " * N + "x" + " " * N + "online")
+    _fast(ll.write_intent, "a" + " " * N + "and" + " " * N + "x")
+    assert lr._clauses("archive it, then star the rest") == ["archive it", "star the rest"]
+
+
+# ── services/point_act.py: courtesy words at the end of a request ──────────
+
+def test_point_act_trailing_courtesy_words():
+    from agent_friday.services import point_act as pa
+    _fast(pa.normalize, "open it" + " please now" * (N // 11))
+    _fast(pa.normalize, "a" + " " * N + "x")
+    assert pa.normalize("open the second one now please") == "open the second one"
+    assert pa.normalize("archive them right now thank you") == "archive them"
+    assert pa.normalize("open the snow report okay") == "open the snow report"
+    assert pa._strip_tail("please") == "please"                  # a word only counts after a space
+
+
+# ── services/calendar_quickadd.py: attendee addresses ──────────────────────
+
+def test_calendar_quickadd_addresses():
+    from agent_friday.services import calendar_quickadd as cq
+    _fast(cq.parse, "+" * N)
+    _fast(cq.parse, "a" + "." * N)
+    out = cq.parse("lunch with sam@example.com and lee.k+cal@mail.example.org tomorrow at 1pm")
+    assert out["fields"]["attendees"] == ["sam@example.com", "lee.k+cal@mail.example.org"]
+    assert cq.parse("call (ana-b@x.co) at 3pm")["fields"]["attendees"] == ["ana-b@x.co"]
+
+
+# ── services/live_session_plan.py: the voice instruction's headers ─────────
+
+def test_live_instruction_headers():
+    from agent_friday.services import live_session_plan as lsp
+    _fast(lsp.split_blocks, "==x" + "\t" * N + "y")
+    _fast(lsp.split_blocks, ("==x" + "\t" * 190 + "y\n") * (N // 194))
+    _fast(lsp.safety_ok, "==ASIMOV" + "\t" * N + "y", "")
+    text = "intro\n=== Memory ===\nm\n==  Tools \t==  \nt\n== not = closed\n====x====\n"
+    assert [(b.name, b.text) for b in lsp.split_blocks(text)][:3] == [
+        ("preamble", "intro\n"), ("memory", "=== Memory ===\nm\n"),
+        ("tools", "==  Tools \t==  \nt\n== not = closed\n====x====\n")]
+    assert lsp._header_marks("== a == b ==") == [(0, "a == b")]
+    assert lsp._header_marks("== " + "a" * 300 + " ==") == []        # a long line is body text
+    before = "x\n== ASIMOV Laws \t==\n=== asimov two ===\n==ASIMOV open\n"
+    assert lsp._asimov_headers(before) == ["ASIMOV Laws", "asimov two"]
+    assert lsp.safety_ok(before, "ASIMOV Laws and asimov two")
+    assert not lsp.safety_ok(before, "ASIMOV Laws only")
+    assert lsp._asimov_headers("== ASIMOV " + "a " * N + "==") == ["ASIMOV " + "a " * (N - 1) + "a"]
+
+
 # ── index.html and ui_parts/app.html: read-aloud text ──────────────────────
 
 def test_read_aloud_text_uses_the_dom_parser_in_both_ui_files():

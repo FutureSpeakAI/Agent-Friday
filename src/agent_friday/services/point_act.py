@@ -109,6 +109,25 @@ _LEAD = re.compile(
     r"let's|lets)\b\s*")
 
 
+#: Courtesy words a request may end with, longest first so "right now" goes before "now".
+_TAIL = tuple(sorted(("please", "thanks", "thank you", "for me", "right now", "now", "will you", "ok", "okay"),
+                     key=len, reverse=True))
+
+
+def _strip_tail(t: str) -> str:
+    """``t`` (single-spaced) without the courtesy words at its end ("open it now please" ->
+    "open it"). A word only counts after a space, so a turn that is nothing but "please" is
+    kept. One pass from the end: a long run of them costs its length, not its square."""
+    end = len(t)
+    while True:
+        for w in _TAIL:
+            if t.endswith(" " + w, 0, end):
+                end -= len(w) + 1
+                break
+        else:
+            return t[:end].strip()
+
+
 def _num(tok: str) -> Optional[int]:
     if tok in _NUMW:
         return _NUMW[tok]
@@ -131,10 +150,7 @@ def normalize(text: Any) -> str:
         prev = t
         t = _LEAD.sub("", t).strip()
     t = re.sub(r"\b(\w+) \1\b", r"\1", t)                      # "open open the second"
-    prev = None
-    while prev != t:
-        prev = t
-        t = re.sub(r"\s+(?:please|thanks|thank you|for me|right now|now|will you|ok|okay)$", "", t).strip()
+    t = _strip_tail(t)
     t = re.sub(r"\b(\d+)(?:st|nd|rd|th)\b", lambda m: next((k for k, v in _ORDW.items() if v == int(m.group(1))), m.group(1)), t)
     t = re.sub(r"\bwon\b", "one", t)
     t = re.sub(r"\b(first|last|top|next|number|bottom|numbers?) (to|too)\b", r"\1 two", t)

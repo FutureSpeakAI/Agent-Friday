@@ -17,7 +17,9 @@ _MONTHS = ("january|february|march|april|may|june|july|august|september|october|
 _DAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
 _AMPM = r"(?:am|pm|a\.m\.|p\.m\.)"
 
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# An address starts where a run of address characters starts: a scan never retries
+# the same run from each of its characters, so a long run without an "@" costs one pass.
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _RANGE_RE = re.compile(
     r"(?:\b(?:at|from)\s+|@\s*)?\b(\d{1,2})(?::(\d{2}))?\s*(" + _AMPM + r")?\s*"
     r"(?:-|–|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(" + _AMPM + r")(?![\w])", re.I)
