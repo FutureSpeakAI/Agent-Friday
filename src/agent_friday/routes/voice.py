@@ -3017,8 +3017,7 @@ def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None,
         tool, args = "delegate_to_friday", {"request": _deferred_request(
             user_text, r, local=_deeper_mind_is_local(session))}
         ack, label, handed = DEFER_ACK, "handed to the deeper mind", "delegate_to_friday"
-    receipt = dict(_lr.receipt(r), ran=tool, handed_to=handed,
-                   laya_receipt=getattr(r, "laya_receipt_id", None))
+    receipt = _lr.surface_receipt(r, ran=tool, handed_to=handed)
     return {"tool": tool, "args": args, "ack": ack, "label": label,
             "question": r.question if r.decision == "ask" else "", "receipt": receipt}
 

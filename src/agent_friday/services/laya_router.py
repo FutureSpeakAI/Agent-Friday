@@ -1591,9 +1591,12 @@ def receipt(r: Route) -> dict:
 def surface_receipt(r: Route, *, ran: Optional[str] = None,
                     handed_to: Optional[str] = None) -> dict:
     """The receipt every surface carries for a routed turn: ``receipt`` plus
-    the tool that actually ran and where a deferred request went. Voice and
-    chat build theirs here, so the two cannot drift apart."""
-    return dict(receipt(r), ran=ran, handed_to=handed_to)
+    the tool that actually ran, where a deferred request went, and the Laya
+    contract receipt the decision was answered under (``laya_receipt_id``,
+    set by services/laya.route_turn; None for a bare route()). Voice and chat
+    build theirs here, so the two cannot drift apart."""
+    return dict(receipt(r), ran=ran, handed_to=handed_to,
+                laya_receipt=getattr(r, "laya_receipt_id", None))
 
 
 def log_path() -> Path:
