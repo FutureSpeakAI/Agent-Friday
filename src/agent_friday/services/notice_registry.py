@@ -301,6 +301,11 @@ _ALL = [
        "work_orders:failed:{order_id}", source="work_orders", pk="warning"),
     _e("WO4", "services/work_orders.py:_report_end:cancelled", "work_order_cancelled", NEEDS_YOU,
        "work_orders:cancelled:{order_id}", source="work_orders", pk="warning"),
+    # ── meetings: the approved summary written to the calendar event ─────────
+    _e("MC1", "services/meeting_calendar.py:_notify:added", "meeting_calendar_added", UPDATES,
+       "meeting-calendar:info", source="meetings", pk="info"),
+    _e("MC2", "services/meeting_calendar.py:_notify:held", "meeting_calendar_failed", NEEDS_YOU,
+       "meeting-calendar:warning", source="meetings", pk="warning"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),

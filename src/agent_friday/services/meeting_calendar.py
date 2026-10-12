@@ -89,10 +89,16 @@ def _card_id(detail: dict):
 
 
 def _notify(title: str, body: str, kind: str = "info") -> None:
+    # Two registered emitters (services/notice_registry): MC1 the summary was
+    # added, MC2 it was not (the owner has something to look at).
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title=title, body=body, priority="medium", kind=kind, source="meetings",
-                dedupe_key="meeting-calendar:" + kind)
+        if kind == "info":
+            ne.push(title=title, body=body, priority="medium", kind="info", source="meetings",
+                    emitter="MC1", dedupe_key="meeting-calendar:info")
+        else:
+            ne.push(title=title, body=body, priority="medium", kind="warning", source="meetings",
+                    emitter="MC2", dedupe_key="meeting-calendar:warning")
     except Exception as e:  # noqa: BLE001
         log.warning("could not notify (%s): %s", title, e)
 
