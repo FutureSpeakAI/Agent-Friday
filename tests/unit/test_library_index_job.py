@@ -464,6 +464,11 @@ def test_the_drafting_job_is_one_visible_deferrable_job_in_the_library_workspace
         progress(1, 2, 3)
         return {"state": "done", "done": 2, "total": 2, "proposed": 3}
     monkeypatch.setattr(staging, "run_pass", fake_pass)
+    # Nothing to draft opens no card, so this pass has something to draft: learning on, a local
+    # model installed, one eligible document. None of them may depend on the machine running the test.
+    monkeypatch.setattr(staging, "_learning_off", lambda: False)
+    monkeypatch.setattr(staging, "_local_model", lambda: "local-model")
+    monkeypatch.setattr(staging, "eligible", lambda store, scope=None: [{"id": 1}])
     from agent_friday.services.library import index_job
     staging.Stager("owner")._one("/scope", index_job)
     assert seen["kind"] == "library_stage" and seen["workspace"] == "library" and seen["deferrable"] is True
