@@ -710,7 +710,7 @@ def test_the_meeting_tool_is_on_demand_internal_and_local(monkeypatch):
     assert json.loads(mt.meeting({"action": "find", "query": "last"}))["meetings"][0]["title"] == "Launch planning"
     calls = []
     fake = types.SimpleNamespace(status=lambda: {"recording": True, "id": A["id"]},
-                                 pad_add=lambda mid, t: calls.append(("jot", mid, t)) or {"id": 1},
+                                 pad_add=lambda mid, t, by="": calls.append(("jot", mid, t, by)) or {"id": 1},
                                  expand_notes=lambda mid: calls.append(("expand", mid)) or {"status": "done", "lines": [1, 2], "left_out": 1},
                                  propose_memory=lambda mid: calls.append(("remember", mid)) or {"proposed": 3})
     monkeypatch.setattr(mt, "_manager", lambda: fake)
