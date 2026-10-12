@@ -395,11 +395,16 @@ def test_the_five_set3_misses_are_answered_by_the_trained_head(text, tool, args)
 def test_the_head_path_can_satisfy_all_five_given_a_head_that_gets_them_right(tmp_path, monkeypatch, text, tool, args):
     """The plumbing: a certified head that proposes the right tool and subject yields exactly the wanted
     route, including a clear-subject news search with ASK_BEFORE_GUESSING in force."""
+    import datetime
+    monkeypatch.setattr(lr, "_today", lambda: datetime.date(2026, 10, 14))
     head = FakeHead({"operation": tool, "args": args or None, "score": 0.98})
     _certify(tmp_path, monkeypatch, head)
     r = _route(text, "on")
     assert (r.decision, r.tool, r.layer) == ("tool", tool, "head")
-    assert {k: str(v).lower() for k, v in r.args.items()} == args
+    want = dict(args)
+    if tool == "query_calendar" and lr.spoken_day(text) is not None:
+        want["day"] = lr.spoken_day(text).isoformat()     # the day the words name, a declared argument
+    assert {k: str(v).lower() for k, v in r.args.items()} == want
 
 
 # ── the head is a visible CPU job, reads its setting rarely, and touches no sys.path ─────
