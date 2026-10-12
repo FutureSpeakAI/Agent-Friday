@@ -19,6 +19,7 @@ FRIDAY_AVATAR_CENTER_PROOFS names an existing directory outside the checkout.
 import json
 import os
 import pathlib
+import re
 import statistics
 import time
 
@@ -231,13 +232,24 @@ def test_reduced_motion_moves_more_gently_than_full_motion(browser):
     assert gentle < normal * .85, ("reduced motion has a lower peak speed", normal, gentle)
 
 
-STRUCTURE_COUNT = 13
+def _structure_ids_in_source():
+    """The structure ids declared in index.html's EVOLUTION_PATH, read at
+    collection time so a structure added to the page gets its own centring test."""
+    text = (pathlib.Path(__file__).resolve().parents[2] / "index.html").read_text(encoding="utf-8")
+    start = text.index("const EVOLUTION_PATH = [")
+    block = text[start:text.index("];", start)]
+    return re.findall(r"\{\s*id:\s*'([A-Z]+)'", block)
 
 
-def test_there_are_thirteen_structures_to_centre(browser):
+STRUCTURE_IDS = _structure_ids_in_source()
+STRUCTURE_COUNT = len(STRUCTURE_IDS)
+
+
+def test_the_page_lists_every_structure_declared_in_its_source(browser):
+    assert STRUCTURE_COUNT >= 13, STRUCTURE_IDS
     context, page = open_page(browser, "classic", width=1024, height=640)
     try:
-        assert page.evaluate("fridayVibe.getStructures().length") == STRUCTURE_COUNT
+        assert page.evaluate("fridayVibe.getStructures().map(s => s.id)") == STRUCTURE_IDS
     finally:
         context.close()
 
