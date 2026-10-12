@@ -844,7 +844,10 @@ def current_call(session_ctx: Optional[dict] = None) -> Optional[LiveLaya]:
 
 _IDEM: Dict[tuple, dict] = {}
 _IDEM_LOCK = threading.Lock()
-_UPPER_TAG = re.compile(r"^\s*(?:\[[A-Z][A-Z _-]{2,}|[A-Z][A-Z_]{3,}:)")
+#: A result that opens with a capitalised tag ("[NOT RUN]", "BLOCKED:", "NOT RECORDED:", "NOT DONE:") reports what
+#: happened instead of being the tool's answer. A refusal that rests on the owner's words must run again when he
+#: answers, so it is never handed back as the first result.
+_UPPER_TAG = re.compile(r"^\s*(?:\[[A-Z][A-Z _-]{2,}|[A-Z][A-Z_]{3,}:|[A-Z]{2,}(?: [A-Z]{2,})+:)")
 INFLIGHT_WAIT_S = 60.0
 
 

@@ -312,6 +312,24 @@ def test_a_failure_is_not_the_first_result(spy, monkeypatch):
     assert spy.count(READ) == 2
 
 
+@pytest.mark.parametrize("refusal", [
+    "NOT RECORDED: their own words did not approve it. Ask them directly whether to send it or not.",
+    "NOT DONE: nothing on their screen is a file.",
+])
+def test_a_refusal_that_rests_on_the_owners_words_runs_again_when_he_answers(spy, monkeypatch, refusal):
+    _window(monkeypatch)
+    # the verifier's own same-turn repeat cache of a read is not what is measured here
+    monkeypatch.setattr(call_verifier, "_settings", lambda: dict(
+        enabled=True, argument_sanity=True, repeat_cache=False, loop_breaker=True, loop_limit=3,
+        injection_flag=True, privacy_vote=True))
+    answers = iter([refusal, "Recorded: they approved it."])
+    spy.tool(READ, result=lambda inp: next(answers))
+    assert run(READ, {"query": "q"}) == refusal
+    assert run(READ, {"query": "q"}) == "Recorded: they approved it."
+    assert spy.count(READ) == 2
+    assert not live_laya._cacheable(refusal) and live_laya._cacheable("Recorded: they approved it.")
+
+
 def test_the_wrapper_sits_on_the_single_choke_point():
     assert getattr(agent._execute_tool, "__wrapped__", None) is not None
     src = (ROOT / "src" / "agent_friday" / "services" / "agent.py").read_text(encoding="utf-8")
