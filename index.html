@@ -56343,6 +56343,12 @@ function LocalVoiceReadiness({ s }) {
   const pollRef = useRef(null);
   const load = useCallback(() => fetch('/api/voice/local-readiness').then(r => r.json()).then(d => { if (d && d.status === 'ok') setSt(d); }).catch(() => {}), []);
   useEffect(() => { load(); }, [load, s.voice_engine, s.local_voice_switch_offer]);
+  // The Mode row asked "just this call, or always?" (or an answer moved the engine): look again.
+  useEffect(() => {
+    const again = () => load();
+    window.addEventListener('friday:cloud-voice-asked', again);
+    return () => window.removeEventListener('friday:cloud-voice-asked', again);
+  }, [load]);
   // While a job waits or runs, look again every few seconds so its progress is true.
   useEffect(() => {
     clearTimeout(pollRef.current);
@@ -56385,6 +56391,22 @@ function LocalVoiceReadiness({ s }) {
         E('div', { style: { marginBottom: 8 } }, offer.body),
         E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
           (offer.choices || []).map(c => E('button', { key: c.id, className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/local-readiness/offer', { choice: c.id }) }, c.label + (c.recommended ? ' (Recommended)' : ''))))),
+      st.cloud_choice && E('div', { 'data-cloud-choice': st.cloud_choice.scope, style: { fontSize: 11, opacity: 0.8, marginTop: 6 } },
+        (st.cloud_choice.scope === 'always' ? 'Cloud voice, always' : 'Cloud voice, just this call')
+          + (st.cloud_choice.reason_text ? ' (' + st.cloud_choice.reason_text + ')' : '')
+          + (st.cloud_choice.at ? ', since ' + new Date(st.cloud_choice.at * 1000).toLocaleString() : '')),
+      st.cloud_question && E('div', { 'data-cloud-voice-question': '1', style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, lineHeight: 1.5 } },
+        E('div', { style: { fontWeight: 600, marginBottom: 6 } }, st.cloud_question.question),
+        st.cloud_question.reason_text && E('div', { style: { fontSize: 11, opacity: 0.8, marginBottom: 6 } }, st.cloud_question.reason_text + '.'),
+        (st.cloud_question.choices || []).map(c => E('div', { key: c.id, style: { marginBottom: 8 } },
+          E('button', { className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/cloud-switch/answer', { choice: c.id }) }, c.label + (c.recommended ? ' (Recommended)' : '')),
+          E('div', { style: { fontSize: 11, opacity: 0.7, marginTop: 2 } }, c.detail))),
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/cloud-switch/answer', { choice: 'cancel' }) }, 'Stay on local voice')),
+      st.switch_back && E('div', { 'data-switch-back-offer': '1', style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, lineHeight: 1.5 } },
+        E('div', { style: { fontWeight: 600, marginBottom: 6 } }, st.switch_back.title),
+        E('div', { style: { marginBottom: 8 } }, st.switch_back.body),
+        E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          (st.switch_back.choices || []).map(c => E('button', { key: c.id, className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/local-readiness/switch-back', { choice: c.id }) }, c.label + (c.recommended ? ' (Recommended)' : ''))))),
       msg && E('div', { role: 'status', style: { fontSize: 11, opacity: 0.8, marginTop: 6 } }, msg)));
 }
 // ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
@@ -56446,7 +56468,7 @@ function VoiceModePicker({ s, save, mc }) {
         /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, marginBottom: 6 } }, "Before switching to ", pending.label),
         pending.lines.map(([k, v]) => /*#__PURE__*/React.createElement("div", { key: k, style: { marginBottom: 4 } }, /*#__PURE__*/React.createElement("b", null, k, ": "), v)),
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
-          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { save({ voice_engine: pending.id }); setPending(null); } }, "Switch to ", pending.label),
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { if (pending.id === 'gemini') { apiFetch('/api/voice/cloud-switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'settings' }) }).then(() => { try { window.dispatchEvent(new CustomEvent('friday:cloud-voice-asked')); } catch (_) {} }).catch(() => {}); } else { save({ voice_engine: pending.id }); } setPending(null); } }, pending.id === 'gemini' ? 'Continue: just this call or always?' : 'Switch to ' + pending.label),
           /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => setPending(null) }, "Keep ", cur)))));
 }
 // ── Settings → Voice → Local voice models ────────────────────────────────
