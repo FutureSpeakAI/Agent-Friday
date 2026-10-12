@@ -149,12 +149,9 @@ def settled(page, quiet=0.25, timeout=45):
         state = page.evaluate("__avc.state()")
         avatar = state["avatar"]
         point = avatar.get("focus") or (avatar.get("shown") and {"x": avatar["shown"]["x"], "y": avatar["shown"]["y"]})
-        # Simple also refits the avatar inside its stage after the stage stops
-        # (camera distance and fit ease on their own clocks): wait for the
-        # projected bounds too, or the centre is read mid-refit.
-        bounds = state.get("bounds")
-        if bounds and avatar.get("mode") == "simple":
-            point = dict(point, bx=bounds["x"] + bounds["w"] / 2, by=bounds["y"] + bounds["h"] / 2)
+        # "Settled" is judged on the frame (the stage, or the focal point), never on
+        # the projected bounds: a structure animates on its own, so its bounds
+        # keep moving with the frame fixed. Use envelope() to measure those.
         steady = point and previous and all(abs(point[k] - previous[k]) < .25 for k in point if k in previous)
         if not avatar["moving"] and steady:
             since = since or time.monotonic()
@@ -164,6 +161,26 @@ def settled(page, quiet=0.25, timeout=45):
             since = None
         previous, last = point, state
     raise AssertionError("the avatar never settled: %s" % json.dumps(last)[:600])
+
+
+def envelope(page, frames=24, timeout=60000):
+    """The union of the avatar's projected bounds over `frames` distinct rendered
+    frames: the structure's own idle animation breathes inside the frame, so
+    centring and margins are judged on the space it sweeps, not on one sample."""
+    box, last = None, page.evaluate("__avc.frame()")
+    for _ in range(frames):
+        page.wait_for_function("f => __avc.frame() > f", arg=last, timeout=timeout)
+        state = page.evaluate("__avc.state()")
+        last, b = state["frame"], state.get("bounds")
+        if not b:
+            continue
+        if box is None:
+            box = {"x0": b["x"], "y0": b["y"], "x1": b["x"] + b["w"], "y1": b["y"] + b["h"]}
+        else:
+            box = {"x0": min(box["x0"], b["x"]), "y0": min(box["y0"], b["y"]),
+                   "x1": max(box["x1"], b["x"] + b["w"]), "y1": max(box["y1"], b["y"] + b["h"])}
+    assert box, "the avatar never reported projected bounds"
+    return {"x": box["x0"], "y": box["y0"], "w": box["x1"] - box["x0"], "h": box["y1"] - box["y0"]}
 
 
 def region_of(page, extra=()):
@@ -194,8 +211,11 @@ def assert_centred(page, extra=(), note=""):
     assert avatar["mode"] == "classic", avatar
     region = region_of(page, extra)
     focus = avatar["focus"]
-    assert abs(focus["x"] - region["cx"]) <= FOCUS_TOLERANCE, (note, "x", focus, region, "tolerance %s px" % FOCUS_TOLERANCE)
-    assert abs(focus["y"] - region["cy"]) <= FOCUS_TOLERANCE, (note, "y", focus, region, "tolerance %s px" % FOCUS_TOLERANCE)
+    # `unshifted` is where the camera put the focal point before the layout offset;
+    # the offset is exact relative to it, so any gap shows up there.
+    why = (note, focus, region, "unshifted", avatar.get("unshifted"), "scale", avatar.get("scale"), "tolerance %s px" % FOCUS_TOLERANCE)
+    assert abs(focus["x"] - region["cx"]) <= FOCUS_TOLERANCE, ("x",) + why
+    assert abs(focus["y"] - region["cy"]) <= FOCUS_TOLERANCE, ("y",) + why
     return state, region
 
 

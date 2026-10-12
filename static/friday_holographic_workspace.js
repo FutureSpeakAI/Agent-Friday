@@ -614,7 +614,7 @@
         let stageSize = '', regionSize = '', shownStage = null, regionFrame = 0, regionKey = '', regionObserver = null, regionBody = null;
         let classicState = { region: null, applied: [], scale: 1, focus: null };
         const observedPieces = new Set();
-        let cardsButton = null, cardsLabelKey = '', chatBeforeCards = null, splitAsked = false;
+        let cardsButton = null, cardsLabelKey = '', chatBeforeCards = null, splitConfirmed = false, splitTries = 0;
         let trackingStatus = '';
         const tuner = trackingTuner(win, message => { trackingStatus = message; refreshTracking(); });
         const calibration = cameraCalibration(win, () => refreshTracking());
@@ -876,7 +876,7 @@
             }
             if (typeof win.fridayDesktopArea === 'function') win.fridayDesktopArea();
             applyLayout(!layoutMotion.active);
-            if (state.cards === 'hidden' && !splitAsked && cardsApply()) splitChat(false);
+            if (state.cards === 'hidden' && !splitConfirmed && cardsApply()) splitChat(false);
             scheduleRegion();
             for (const el of styled ? doc.querySelectorAll('.fwin-body,.chat-panel,.chat-win') : []) {
                 if (!tagged.has(el) && !el.hasAttribute('data-depth')) { tagged.set(el, null); el.setAttribute('data-depth', 'middle'); }
@@ -967,7 +967,7 @@
             if (destroyed) return;
             if (!classicApplies()) {
                 regionSpring.retarget(null); regionKey = ''; regionSize = '';
-                classicState = { region: null, applied: [], scale: 1, focus: null };
+                classicState = { region: null, applied: [], scale: 1, focus: null, unshifted: null };
                 return;
             }
             const viewport = { w: win.innerWidth, h: win.innerHeight };
@@ -1014,13 +1014,18 @@
             const region = regionSpring.current;
             if (!region || !classicApplies()) { classicState.focus = null; classicState.scale = 1; return null; }
             const width = win.innerWidth, height = win.innerHeight, fit = regionFit(region, { w: width, h: height });
+            const look = frameFit.look, canProject = !!(look && win.THREE);
+            const where = () => {
+                const point = (frameFit.focus || (frameFit.focus = new win.THREE.Vector3())).copy(look).project(camera);
+                return { x: (point.x + 1) * width / 2, y: (1 - point.y) * height / 2 };
+            };
+            // Where the camera put the focal point before the offset: the shift
+            // below is exact relative to this, whatever the camera's own aim.
+            const before = canProject ? where() : null;
             offsetProjection(camera, fit.scale, fit.dx, fit.dy, width, height);
             classicState.scale = fit.scale;
-            const look = frameFit.look;
-            if (look && win.THREE) {
-                const point = (frameFit.focus || (frameFit.focus = new win.THREE.Vector3())).copy(look).project(camera);
-                classicState.focus = { x: (point.x + 1) * width / 2, y: (1 - point.y) * height / 2 };
-            }
+            classicState.unshifted = before;
+            classicState.focus = canProject ? where() : null;
             return fit;
         }
 
@@ -1041,14 +1046,19 @@
         function splitChat(resize) {
             if (!doc.querySelector('.chat-panel')) return false;
             const now = chatNow();
-            if (!resize && now.open) { splitAsked = true; return true; }
-            chatBeforeCards = now;
+            if (!resize && now.open) { splitConfirmed = true; return true; }
+            // The app may not be listening yet when the page loads with the cards
+            // closed (its listener registers after Home first reports itself), so
+            // the ask repeats on the next layout change until the tray is seen
+            // open, a few times at most. A tray the owner closes afterwards stays closed.
+            if (splitTries >= 12) return false;
+            splitTries++;
+            if (!chatBeforeCards) chatBeforeCards = now;
             sendChat({ visible: true, size: 'half' });
-            splitAsked = true;
             return true;
         }
         function restoreChat() {
-            const before = chatBeforeCards; chatBeforeCards = null; splitAsked = false;
+            const before = chatBeforeCards; chatBeforeCards = null; splitConfirmed = false; splitTries = 0;
             if (!before) return;
             const detail = { visible: before.open };
             if (before.frac) detail.frac = before.frac; else if (before.width >= 300) detail.width = before.width;
@@ -1060,7 +1070,7 @@
             if (!simpleStyle()) return { applied: false, cards: state.cards, reason: 'classic' };
             if (value === state.cards) { if (value === 'hidden') splitChat(false); return { applied: true, cards: state.cards, changed: false }; }
             state.cards = value; persist();
-            if (value === 'hidden') splitChat(true); else restoreChat();
+            if (value === 'hidden') { splitConfirmed = false; splitTries = 0; chatBeforeCards = null; splitChat(true); } else restoreChat();
             updateLayout(); refreshPanel();
             return { applied: true, cards: state.cards, changed: true, shown: cardsApply() };
         }
@@ -1548,7 +1558,8 @@
                 return classicApplies()
                     ? { mode: 'classic', shown: copy(regionSpring.current), target: copy(regionSpring.target), moving: regionSpring.active,
                         region: classicState.region ? { ...classicState.region } : null, applied: classicState.applied.slice(),
-                        scale: classicState.scale, focus: classicState.focus ? { ...classicState.focus } : null }
+                        scale: classicState.scale, focus: classicState.focus ? { ...classicState.focus } : null,
+                        unshifted: classicState.unshifted ? { ...classicState.unshifted } : null }
                     : { mode: occupancy.stage ? 'simple' : 'none', shown: copy(shownStage), target: copy(occupancy.stage), moving: stageSpring.active };
             },
             get layoutRect() { return copyLayout(occupancy); },

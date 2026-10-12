@@ -190,8 +190,7 @@ def test_simple_keeps_the_avatar_in_the_middle_of_its_stage(simple):
     simple.evaluate("FridayHolographicWorkspace.setCards('shown')")
     simple.evaluate("__avc.tray(null, false)")
     state = settled(simple)
-    bounds, centre = state["bounds"], stage_centre(state)
-    assert bounds, state
+    bounds, centre = envelope(simple), stage_centre(state)
     middle = {"x": bounds["x"] + bounds["w"] / 2, "y": bounds["y"] + bounds["h"] / 2}
     assert abs(middle["x"] - centre["x"]) <= 3 * FOCUS_TOLERANCE and abs(middle["y"] - centre["y"]) <= 3 * FOCUS_TOLERANCE, (bounds, centre)
 
@@ -210,8 +209,8 @@ def test_closing_the_cards_gives_friday_one_half_and_the_chat_the_other(simple):
     # The avatar's half: the left half less the gutters, ending where the chat begins.
     assert stage["x"] <= 20 and abs((stage["x"] + stage["w"]) - (chat["x"] - 16)) <= 3, (stage, chat)
     assert abs(stage["w"] - (width / 2 - 32)) <= 3, stage
-    bounds = state["bounds"]
-    assert bounds and bounds["x"] >= stage["x"] - .5 and bounds["x"] + bounds["w"] <= stage["x"] + stage["w"] + .5
+    bounds = envelope(simple)
+    assert bounds["x"] >= stage["x"] - .5 and bounds["x"] + bounds["w"] <= stage["x"] + stage["w"] + .5
     # Fitted to the reserved frame with margins, not to the whole half: at least 24 px
     # inside every edge of it, and clear of the state caption beneath it.
     margin = 24

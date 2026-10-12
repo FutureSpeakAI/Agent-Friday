@@ -35,7 +35,7 @@ def step(page, ms=STEP_MS):
     return (wall milliseconds the step took, the page's state)."""
     before = page.evaluate("__avc.frame()")
     started = time.monotonic()
-    page.clock.run_for(ms)
+    page.clock.run_for(int(round(ms)))
     page.wait_for_function("f => __avc.frame() > f", arg=before, timeout=60000)
     wall = (time.monotonic() - started) * 1000
     return wall, page.evaluate("__avc.state()")
@@ -64,8 +64,7 @@ def steady(page, ms=STEP_MS, limit=300):
         _, state = step(page, ms)
         avatar = state["avatar"]
         point = avatar.get("focus") or avatar.get("shown")
-        bounds = state.get("bounds")
-        key = (point["x"], point["y"]) + ((bounds["x"] + bounds["w"] / 2, bounds["y"] + bounds["h"] / 2) if bounds and avatar["mode"] == "simple" else ())
+        key = (point["x"], point["y"])
         if not avatar["moving"] and last and all(abs(a - b) < .25 for a, b in zip(key, last)):
             held += 1
             if held >= 3:
