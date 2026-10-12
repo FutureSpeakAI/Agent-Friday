@@ -62,9 +62,11 @@ const GUARDED = /phone|twilio|texting|sms|voicemail|your cell|computer control|v
 /**
  * Whole groups the walk looks at and never changes: forms that create a standing permission or reach another
  * service (a scheduled job's grants, file and computer access, agent workspaces, local hosting, Google accounts, the
- * texting registration, and the Models browser, whose pickers filter a list and are not settings). Their pickers feed a button that is not pressed here, so changing one saves nothing by design.
+ * texting registration, the Models browser, whose pickers filter a list and are not settings, and Your knowledge,
+ * whose per-folder ticks choose what its Save button adds to the Library (/api/library/add) or grants to cloud models
+ * (/api/privacy/file-grants) and are cleared after the save). Their pickers feed a button that is not pressed here, so changing one saves nothing by design.
  */
-const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspaces|published pages|google accounts|texting registration|model browser|permission|grant/i;
+const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspaces|published pages|google accounts|texting registration|model browser|your knowledge|permission|grant/i;
 /** Sections that are accounts and phone lines from top to bottom: opened and listed, never changed. */
 const LOOK_ONLY_SECTIONS = new Set(['connections']);
 

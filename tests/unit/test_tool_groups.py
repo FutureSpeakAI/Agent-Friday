@@ -54,8 +54,28 @@ def test_a_tool_has_one_primary_and_at_most_one_secondary():
         assert len(set(gs)) == len(gs), name
 
 
+def _withheld(agent):
+    """Tools the capability preflight removed at import on this machine: the
+    computer-control tools where pyautogui is not installed (it ships in the
+    Windows extra only) or in kiosk mode. They are declared, then withheld."""
+    return set(agent._WITHHELD_TOOLS)
+
+
+def test_a_withheld_tool_is_absent_and_keeps_its_declared_ring(registry):
+    from agent_friday.services import capability_preflight as cp
+    withheld = _withheld(registry)
+    assert withheld == set(cp.missing_tools())
+    assert not withheld & _registered_names(registry), "withheld but still registered"
+    assert set(registry._WITHHELD_RINGS) == withheld
+    groups = tc.load_groups()["tools"]
+    for name in withheld:
+        assert name in groups, "a withheld tool still needs its group: " + name
+
+
 def test_the_json_names_no_tool_that_is_not_registered(registry):
-    stale = sorted(set(tc.load_groups()["tools"]) - _registered_names(registry))
+    # A name in the JSON is registered here, or declared and withheld here by the
+    # capability preflight; anything else is stale on every machine.
+    stale = sorted(set(tc.load_groups()["tools"]) - _registered_names(registry) - _withheld(registry))
     assert not stale, "groups for tools that are not registered: %s" % ", ".join(stale)
 
 
@@ -116,12 +136,12 @@ def test_every_tool_is_annotated_consistently_with_its_ring(registry):
 
 
 def test_annotation_overrides_name_registered_tools_and_change_something(registry):
-    names = _registered_names(registry)
+    names = _registered_names(registry) | _withheld(registry)
     data = tc.load_groups()
     for name, ov in data["annotation_overrides"].items():
         assert name in names, "override for an unregistered tool: " + name
         assert set(ov) <= set(HINTS), name
-        ring = registry.TOOL_RINGS.get(name, 2)
+        ring = tc._ring_of(name)
         derived = tc.annotations("zz_unreviewed_probe", ring=ring)
         assert any(derived[k] != v for k, v in ov.items()), "no-op override: " + name
 
