@@ -481,6 +481,17 @@ def _reset_local_queue() -> None:
         with bg._INTERACTIVE_LOCK:
             bg._INTERACTIVE.clear()
         bg._THRESHOLD_CACHE["at"] = 0.0
+    # The capability check is a scheduler source read from a state file in the
+    # shared test home: a re-assessment one test asked for (a model install
+    # calls note_event) is a waiting "local_capability:reassess" job in every
+    # later test's queue. The file and the in-memory job go together.
+    lvr = sys.modules.get("agent_friday.services.local_voice_readiness")
+    if lvr is not None:
+        lvr.reset_for_tests()
+        try:
+            lvr._state_path().unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @pytest.fixture(autouse=True)
@@ -489,6 +500,26 @@ def _fresh_local_queue():
     _reset_local_queue()
     yield
     _reset_local_queue()
+
+
+def _forget_the_current_turn() -> None:
+    """No turn is running. turn_plan names the running turn in a ContextVar,
+    and every test runs on pytest's main thread in one context: a chat turn a
+    test drove in-process (a route through the Flask test client, a reflex
+    turn) stays named in the next test, which then tags its rows with that
+    turn id and shares its call-verifier repeat cache."""
+    tp = sys.modules.get("agent_friday.services.turn_plan")
+    if tp is not None:
+        tp._current.set(None)
+        tp._current_version.set(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_turn_outlives_its_test():
+    """Each test starts outside any turn and leaves none named behind."""
+    _forget_the_current_turn()
+    yield
+    _forget_the_current_turn()
 
 
 def _forget_live_duplicates() -> None:

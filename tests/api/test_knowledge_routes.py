@@ -6,6 +6,7 @@ dialog: the subprocess is replaced before the request.
 """
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,17 @@ from tests.library_fixtures import isolate_library, release_library
 
 class RealDialogOpened(BaseException):
     pass
+
+
+_REAL_POPEN = subprocess.Popen
+
+
+def _is_acl_hardening(a, k) -> bool:
+    """credential_store.harden_permissions restricting a new key file with icacls: a console
+    tool with no window, run whenever this process mints its first ledger signing key. Every
+    other process a test here starts is refused as a real folder window."""
+    argv = a[0] if a else k.get("args")
+    return isinstance(argv, (list, tuple)) and bool(argv) and str(argv[0]).lower() == "icacls"
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +43,8 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setattr(kf, "_is_windows", lambda: True)
 
     def _no_real_dialog(*a, **k):
+        if _is_acl_hardening(a, k):
+            return _REAL_POPEN(*a, **k)
         raise RealDialogOpened("a test tried to start the real folder window")
     monkeypatch.setattr(kf.subprocess, "Popen", _no_real_dialog)
     yield home

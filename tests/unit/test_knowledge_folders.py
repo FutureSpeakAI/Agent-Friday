@@ -365,11 +365,13 @@ def test_a_notion_zip_is_suggested_but_cannot_be_added(_env):
     assert rows and rows[0]["can_add"] is False and "Unzip" in rows[0]["note"]
 
 
-def test_a_folder_already_in_the_library_says_so():
-    scopes = [{"path": r"C:\Notes", "type": "folder"}]
-    assert kf._covered_by_scope(r"C:\Notes", scopes) and kf._covered_by_scope(r"C:\Notes\sub", scopes)
-    assert not kf._covered_by_scope(r"C:\Notes2", scopes)
-    assert not kf._covered_by_scope(r"C:\Other", scopes)
+def test_a_folder_already_in_the_library_says_so(tmp_path):
+    # Paths in this OS's own form: a scope is recorded from a real path on this machine.
+    notes = tmp_path / "Notes"
+    scopes = [{"path": str(notes), "type": "folder"}]
+    assert kf._covered_by_scope(str(notes), scopes) and kf._covered_by_scope(str(notes / "sub"), scopes)
+    assert not kf._covered_by_scope(str(tmp_path / "Notes2"), scopes)
+    assert not kf._covered_by_scope(str(tmp_path / "Other"), scopes)
 
 
 # ── by voice ─────────────────────────────────────────────────────────────────

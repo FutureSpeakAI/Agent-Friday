@@ -502,6 +502,28 @@ def test_n2_a_forged_or_tampered_record_reads_as_off(settings_file, owner_record
     assert gs.owner_choice("laya_safe_writes", block=True) == "off" and sw.mode() == "off"
 
 
+def test_n2_a_same_size_tamper_inside_one_clock_tick_reads_as_off(settings_file, owner_record):
+    """A rewrite that keeps the verified file's size and mtime (two writes inside one filesystem
+    clock tick, as on a fast machine) is still a different record: it reads as off at once, not
+    as the verified "on" cached for the file it replaced."""
+    import json
+    import os
+    core = settings_file
+    core._save_settings({"laya_safe_writes": "on"}, owner_safe_writes_change=True)
+    assert sw.mode() == "on"
+    path = gs._record_path()
+    before = os.stat(path)
+    rec = json.loads(path.read_text(encoding="utf-8"))
+    mac = rec["laya_safe_writes"]["mac"]
+    rec["laya_safe_writes"]["mac"] = ("0" if mac[0] != "0" else "1") + mac[1:]        # same length, wrong
+    path.write_text(json.dumps(rec), encoding="utf-8")
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = os.stat(path)
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+    assert sw.mode() == "off", "a tampered record in the verified file's size and tick reads as off"
+    assert gs.owner_choice("laya_safe_writes", block=True) == "off"
+
+
 def test_n2_a_redeem_after_the_record_goes_is_refused(settings_file, owner_record):
     core = settings_file
     core._save_settings({"laya_safe_writes": "on"}, owner_safe_writes_change=True)
