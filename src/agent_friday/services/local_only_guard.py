@@ -178,6 +178,25 @@ def _reset_aliases_for_tests(state=None) -> tuple:
     return before
 
 
+def ollama_daemon_is_local(base_url=None) -> bool:
+    """Is the Ollama daemon a relay transport posts to on this machine or the
+    local network? ``base_url`` is the address the transport will actually
+    use; None means the configured ``model_routing.ollama_url``. Decided by the
+    same host rule as provider descriptors (`is_private_host`): loopback,
+    RFC1918, link-local and *.local names are local; a public address, or a
+    name that cannot be resolved to only private addresses, is not. Any
+    fault answers False, so an unverifiable daemon is treated as cloud."""
+    try:
+        url = str(base_url or "").strip()
+        if not url:
+            from agent_friday.services.local_call import ollama_url
+            url = ollama_url()
+        from agent_friday.routing.provider_descriptors import is_private_host
+        return bool(url) and bool(is_private_host(url))
+    except Exception:
+        return False
+
+
 def is_cloud_model_tag(model: str) -> bool:
     """An Ollama model the daemon relays to ollama.com rather than running:
     tag `cloud` or ending in `-cloud` (`glm-4.6:cloud`, `gpt-oss:120b-cloud`),

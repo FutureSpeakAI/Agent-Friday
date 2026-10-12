@@ -113,6 +113,23 @@ you hit something that is not here, please open an issue.
   read that card's line aloud in this conversation (naming the action is no
   substitute). On the page, a Laya card is approved with its Approve button; a typed yes does
   not approve it.
+- **Local only judges an Ollama model as cloud by its name and by the daemon's
+  inventory, so a cloud model that carries neither mark can pass as local.**
+  A model the Ollama daemon runs on ollama.com is recognised by a tag of
+  `cloud` or one ending in `-cloud` (`glm-4.6:cloud`, `gpt-oss:120b-cloud`),
+  or by the daemon's model list marking it with a remote host or remote model
+  (how `ollama cp x:cloud myname:latest` shows up). Any other naming Ollama
+  might adopt for a hosted model is treated as a model the daemon runs on this
+  PC. The daemon's own address must be on this PC or the local network, so a
+  daemon elsewhere is always treated as cloud whatever the model is called.
+- **An older Ollama daemon that does not report remote hosts in its model
+  list hides a renamed cloud model.** On such a daemon, a cloud model copied
+  under a plain name (`ollama cp glm-4.6:cloud myglm:latest`) looks local, and
+  only the original `cloud` tag is caught. On any daemon, the list is read
+  whenever Friday lists the installed models, and before the first call to the
+  daemon if it has not been read yet; a cloud alias created after the last
+  read is not seen until the next one. Update Ollama, and give cloud
+  models names that keep the `cloud` tag.
 
 ## 2a. Open in 1.0.2: local voice calls and the Local AI queue
 

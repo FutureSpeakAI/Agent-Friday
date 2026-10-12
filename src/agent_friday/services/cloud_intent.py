@@ -409,14 +409,54 @@ def opens_cloud(mode: str | None = None) -> bool:
 
 # ── the choke point ──────────────────────────────────────────────────────────
 
-#: The name the Ollama relay transports pass (`require("ollama", purpose, model)`):
-#: the daemon this machine talks to. It is not a registered provider (the built-in
-#: descriptor is `ollama-local`), so the seat-name rule alone would call every
-#: daemon model a cloud call and refuse a plain local model in a local mode.
+#: The name the Ollama relay transports pass (`require("ollama", purpose, model,
+#: base_url=...)`): the daemon a transport posts to. It is not a registered
+#: provider (the built-in descriptor is `ollama-local`), so the seat-name rule
+#: alone would call every daemon model a cloud call and refuse a plain local
+#: model in a local mode.
 _OLLAMA_RELAY = "ollama"
 
 
-def _is_local(provider, model: str) -> bool:
+def _relay_descriptor():
+    """A descriptor registered under the relay's own name, in any letter case,
+    or None. A registry that cannot be read has none: the relay is then judged
+    by its daemon address and its model alone, as the egress gate judges it."""
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        reg = get_provider_registry()
+        hit = reg.get_provider(_OLLAMA_RELAY)
+        if hit is not None:
+            return hit
+        for p in reg.list_providers() or ():
+            if isinstance(p, dict) and str(p.get("name") or "").strip().lower() == _OLLAMA_RELAY:
+                return p
+    except Exception:
+        return None
+    return None
+
+
+def _relay_is_local(model: str, base_url) -> bool:
+    """The Ollama relay stays on this machine only when ALL hold: the model is
+    not cloud-tagged; the daemon address is loopback or private; a descriptor
+    registered as "ollama" (any case), if there is one, is local; and the
+    daemon's inventory rules out a cloud alias (`local_call.relay_model_status`:
+    an inventory never read and unreadable now is unknown, which is not local
+    unless the model is one this PC serves from its own seat)."""
+    from agent_friday.services.local_only_guard import (
+        is_cloud_model_tag, ollama_daemon_is_local)
+    from agent_friday.services.seat_policy import is_local_descriptor
+    if is_cloud_model_tag(model):
+        return False
+    if not ollama_daemon_is_local(base_url):
+        return False
+    descriptor = _relay_descriptor()
+    if descriptor is not None and not is_local_descriptor(descriptor):
+        return False
+    from agent_friday.services.local_call import relay_model_status
+    return relay_model_status(model) == "local"
+
+
+def _is_local(provider, model: str, base_url=None) -> bool:
     try:
         from agent_friday.services.seat_policy import (
             is_local_descriptor, is_local_seat)
@@ -424,14 +464,7 @@ def _is_local(provider, model: str) -> bool:
         if isinstance(provider, dict):
             return (not is_cloud_model_tag(model)) and is_local_descriptor(provider)
         if str(provider or "").strip().lower() == _OLLAMA_RELAY:
-            # A cloud tag or an alias the daemon's inventory marks remote is a
-            # cloud call. Anything else is a model the daemon runs here, unless a
-            # descriptor registered under this very name says otherwise.
-            if is_cloud_model_tag(model):
-                return False
-            from agent_friday.services.provider_registry import get_provider_registry
-            descriptor = get_provider_registry().get_provider(_OLLAMA_RELAY)
-            return True if descriptor is None else is_local_descriptor(descriptor)
+            return _relay_is_local(model, base_url)
         return is_local_seat(provider, model)
     except Exception:
         return False
@@ -445,12 +478,14 @@ def _pin() -> str:
         return ""
 
 
-def require(provider, purpose: str, model: str = "") -> CloudToken:
+def require(provider, purpose: str, model: str = "", *, base_url=None) -> CloudToken:
     """Every cloud transport calls this FIRST. Returns a token or raises.
 
     ``provider`` is a provider name or a descriptor dict (as the transports take
     it). A provider that runs on this machine returns an intent-free ``local``
-    token. Otherwise:
+    token. ``base_url`` is the address an Ollama relay transport (provider
+    ``"ollama"``) will post to; None means the configured daemon address.
+    Otherwise:
 
     * a run the owner pinned to a cloud model carries ``scheduled_cloud``;
     * ``cloud_only`` and ``cloud_preferred`` carry the implicit ``cloud_mode``;
@@ -461,7 +496,7 @@ def require(provider, purpose: str, model: str = "") -> CloudToken:
     name = provider_name_of(provider) or "cloud"
     model = str(model or "")
     purpose = str(purpose or "model call")
-    if _is_local(provider, model):
+    if _is_local(provider, model, base_url):
         return CloudToken("local", name, purpose, model, "", "")
     mode = routing_mode()
     cur = current()

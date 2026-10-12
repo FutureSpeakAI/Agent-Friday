@@ -125,7 +125,8 @@ class OllamaAdapter(BaseAdapter):
         # local mode. A plain local model passes `require` untouched.
         try:
             from agent_friday.services import cloud_intent as _cloud_intent
-            _cloud_intent.require("ollama", "worker task (cloud-tagged model)", str(model or ""))
+            _cloud_intent.require("ollama", "worker task (cloud-tagged model)", str(model or ""),
+                                  base_url=_OLLAMA_BASE)
         except Exception as exc:
             with _JOBS_LOCK:
                 _JOBS[aid].update({
