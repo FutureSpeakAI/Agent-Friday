@@ -180,9 +180,20 @@ def _library_chunks() -> Iterable[dict]:
         from agent_friday.services.library import tree
         from agent_friday.services.library.store import OWNER, store_for
         st = store_for(OWNER)
+        from agent_friday.services import meeting_archive
         vis = tree.TreeBuilder(st, OWNER).visible_docs()
+        def is_meeting(doc) -> bool:
+            try:
+                return bool(meeting_archive.is_archive_doc(doc) or doc["scope"] == meeting_archive.SCOPE)
+            except Exception:
+                return True                    # an unreadable row is not read
+        # the archive's yes is to search; the graph learns from a meeting only through reviewed proposals,
+        # and whatever an earlier pass took from one goes
+        meeting_ids = [d["id"] for d in vis.values() if is_meeting(d)]
+        if meeting_ids:
+            purge_library_documents(meeting_ids)
         for doc in vis.values():
-            if doc["shelf"] != "open":
+            if doc["shelf"] != "open" or is_meeting(doc):
                 continue
             cloud_ok = bool((_load_settings() or {}).get("library_cloud_answers", False))
             sens = 1 if (cloud_ok and fg.check_grant(Path(doc["path"])).state == "active") else 2
