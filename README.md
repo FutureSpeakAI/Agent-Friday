@@ -62,7 +62,7 @@ it is meant to be tried, and it has rough edges. They are listed in
 
 ## Download
 
-1. Download `AgentFriday-Setup-1.1.0-beta.1.exe` (about ⟨SIZE⟩ MB) from the
+1. Download `AgentFriday-Setup-1.1.0-beta.1.exe` (about 675 MB) from the
    [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest).
 2. Check its SHA-256 against the one on the release page, then run it. The setup
    program is not code-signed yet, so Windows SmartScreen shows **Unknown

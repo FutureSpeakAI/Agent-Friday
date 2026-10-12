@@ -7,7 +7,7 @@ installing without the wizard. Install from source is in
 
 ## What setup does
 
-`AgentFriday-Setup-1.1.0-beta.1.exe` is one file of about ⟨SIZE⟩ MB. It installs
+`AgentFriday-Setup-1.1.0-beta.1.exe` is one file of about 675 MB. It installs
 for the current Windows account, needs no administrator rights, and sends
 nothing anywhere. It carries:
 

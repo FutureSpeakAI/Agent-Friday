@@ -21,7 +21,7 @@ your disk free after the download and hides any model that would use more.
 ## 1. Download
 
 Open the [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest)
-and download `AgentFriday-Setup-1.1.0-beta.1.exe` (about ⟨SIZE⟩ MB). The file
+and download `AgentFriday-Setup-1.1.0-beta.1.exe` (about 675 MB). The file
 carries its own copy of Python and every package Friday uses, so nothing else
 has to be installed first.
 

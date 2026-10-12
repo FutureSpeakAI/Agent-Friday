@@ -94,7 +94,7 @@ below.
 
 ## Download and install
 
-Download `AgentFriday-Setup-1.1.0-beta.1.exe` (about ⟨SIZE⟩ MB) from the assets
+Download `AgentFriday-Setup-1.1.0-beta.1.exe` (about 675 MB) from the assets
 below. The same hash is in the `.sha256` file beside it.
 
 **SHA-256:** `<SHA256 PLACEHOLDER: filled in when the release is published>`
