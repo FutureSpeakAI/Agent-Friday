@@ -37,20 +37,6 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[2]
 node = shutil.which("node")
 
-#: How far the avatar's focal point may be from the middle of the visible
-#: region, in CSS pixels, once everything has settled.
-FOCUS_TOLERANCE = 4.0
-#: The longest a frame may take while the avatar moves, relative to the frames
-#: of the same page standing still: the move must not add a stall. Software
-#: rendering runs far below 60 fps, so the bound is relative, with a floor.
-LONG_FRAME_FACTOR = 2.5
-LONG_FRAME_FLOOR_MS = 140.0
-#: A single rendered frame may carry at most this share of a move, unless the
-#: renderer itself stalled for longer than STALL_MS (a snap carries all of it).
-MAX_FRAME_SHARE = 0.65
-STALL_MS = 160.0
-
-
 # ── node: the maths and the controller ───────────────────────────────────────
 
 @pytest.mark.skipif(not node, reason="node is not on PATH")
@@ -90,179 +76,9 @@ def test_the_native_dock_and_its_idle_timer_are_not_read_by_the_region():
     assert ".dock" not in pieces
 
 
-# ── the browser ──────────────────────────────────────────────────────────────
-
-class _Handler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, *_args):
-        pass
-
-
-@pytest.fixture(scope="module")
-def browser():
-    sync_api = pytest.importorskip("playwright.sync_api", reason="playwright is not installed")
-    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", 0), functools.partial(_Handler, directory=str(REPO)))
-    httpd.daemon_threads = True
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    base = "http://127.0.0.1:%d/index.html" % httpd.server_address[1]
-    try:
-        with sync_api.sync_playwright() as pw:
-            try:
-                b = pw.chromium.launch(args=["--use-gl=angle", "--use-angle=swiftshader",
-                                             "--enable-unsafe-swiftshader"])
-            except Exception as exc:                            # pragma: no cover
-                pytest.skip("no chromium for playwright: %s" % exc)
-            yield b, base
-            b.close()
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-
-
-PROBE = r"""
-window.__avc = {
-  frame: () => __fridayRenderer.info.render.frame,
-  state: () => {
-    const holo = FridayHolographicWorkspace;
-    return {frame: __fridayRenderer.info.render.frame, avatar: holo.avatarFrame, spatial: holo.layoutRect,
-            bounds: holo.state.projectedAvatarBounds, cards: holo.state.cards,
-            target: fridayDebugScene().targetStructure, progress: fridayDebugScene().transitionProgress};
-  },
-  chat: () => {
-    const el = document.querySelector('.chat-panel');
-    const r = el && el.getBoundingClientRect();
-    return el && el.classList.contains('open') ? {x: r.x, y: r.y, w: r.width, h: r.height} : null;
-  },
-  barBottom: () => { const b = document.querySelector('.top-bar'); return b ? Math.ceil(b.getBoundingClientRect().bottom) : 0; },
-  tray: (size, visible) => window.dispatchEvent(new CustomEvent('friday:chat-tray', {detail: {size, visible}})),
-  dock: () => { const d = document.querySelector('.dock'); const r = d && d.getBoundingClientRect(); return d ? {hidden: d.classList.contains('hidden'), top: r.top} : null; },
-  record: (ms) => new Promise(resolve => {
-    const rows = [], t0 = performance.now();
-    function tick(t) {
-      const s = __avc.state();
-      rows.push({t, frame: s.frame, shown: s.avatar.shown, focus: s.avatar.focus || null, moving: s.avatar.moving});
-      if (t - t0 < ms) requestAnimationFrame(tick); else resolve(rows);
-    }
-    requestAnimationFrame(tick);
-  })
-};
-"""
-
-
-def open_page(browser_and_base, style, width=1280, height=800, reduced=False, storage=None):
-    browser, base = browser_and_base
-    context = browser.new_context(viewport={"width": width, "height": height},
-                                  reduced_motion="reduce" if reduced else "no-preference")
-    page = context.new_page()
-    init = "localStorage.setItem('friday.display-style.v1', %s);" % json.dumps(style)
-    for key, value in (storage or {}).items():
-        init += "localStorage.setItem(%s, %s);" % (json.dumps(key), json.dumps(value))
-    page.add_init_script(init)
-    page.route("**/api/settings**", lambda r: r.fulfill(status=200, content_type="application/json",
-                                                        body='{"status":"ok","settings":{}}'))
-    page.goto(base, wait_until="domcontentloaded")
-    page.wait_for_function("() => window.fridayDebugScene && !!fridayDebugScene().camera"
-                           " && !!window.FridayTracking && !!window.FridayHolographicWorkspace", timeout=60000)
-    page.evaluate(PROBE)
-    assert page.evaluate("FridayDisplayStyle.get()") == style
-    hold_dock(page, height)
-    wait_for_form(page)
-    if style == "classic":
-        hold_still(page)
-    return context, page
-
-
-def hold_dock(page, height):
-    """The dock's idle timer hides it after 30 s and changes the work area."""
-    page.mouse.move(1, height - 1)
-    page.wait_for_function("""() => {
-      const dock = document.querySelector('.dock');
-      if (!dock || dock.classList.contains('hidden')) return false;
-      const style = getComputedStyle(dock);
-      if (style.display === 'none') return true;
-      const rect = dock.getBoundingClientRect();
-      return rect.height > 0 && rect.top < innerHeight && style.transform === 'none';
-    }""", timeout=15000)
-
-
-def hold_still(page):
-    """The cinematic camera drifts: structures orbit and the look direction lags
-    the orbit by a few percent, so the focal point wanders around the middle of
-    the screen by design. A held, neutral head (the Window view's static pose)
-    stops that drift without adding any parallax, which is what a position
-    assertion needs."""
-    page.evaluate("FridayTracking.debugHead(0, 0, FridayTracking.head.baseline || .18)")
-
-
-def wait_for_form(page):
-    page.wait_for_function("() => __avc.state().progress >= .999", timeout=60000)
-
-
-def fresh_frames(page, count=3, timeout=30000):
-    """Wait for `count` distinct rendered frames."""
-    start = page.evaluate("__avc.frame()")
-    page.wait_for_function("f => __avc.frame() >= f", arg=start + count, timeout=timeout)
-
-
-def settled(page, quiet=0.25, timeout=45):
-    """The avatar frame has stopped, the camera has settled, and the position
-    is the same across fresh rendered frames for `quiet` seconds."""
-    deadline = time.monotonic() + timeout
-    previous, since, last = None, None, None
-    while time.monotonic() < deadline:
-        page.wait_for_function("f => __avc.frame() > f", arg=page.evaluate("__avc.frame()"), timeout=15000)
-        state = page.evaluate("__avc.state()")
-        avatar = state["avatar"]
-        point = avatar.get("focus") or (avatar.get("shown") and {"x": avatar["shown"]["x"], "y": avatar["shown"]["y"]})
-        if not avatar["moving"] and point and previous and abs(point["x"] - previous["x"]) < .25 and abs(point["y"] - previous["y"]) < .25:
-            since = since or time.monotonic()
-            if time.monotonic() - since >= quiet:
-                return state
-        else:
-            since = None
-        previous, last = point, state
-    raise AssertionError("the avatar never settled: %s" % json.dumps(last)[:600])
-
-
-def region_of(page, extra=()):
-    """What the page really drew: the desktop below the bar, less the tray and
-    anything in `extra` (rectangles {x,y,w,h,side}), computed here from the
-    rendered rectangles rather than read back from the controller."""
-    width, height = page.evaluate("[innerWidth, innerHeight]")
-    top = page.evaluate("__avc.barBottom()")
-    left, right, bottom = 0, width, height
-    chat = page.evaluate("__avc.chat()")
-    if chat:
-        if chat["x"] > width / 2:
-            right = min(right, chat["x"])
-        else:
-            left = max(left, chat["x"] + chat["w"])
-    for piece in extra:
-        if piece["side"] == "right":
-            right = min(right, piece["x"])
-        else:
-            left = max(left, piece["x"] + piece["w"])
-    return {"x": left, "y": top, "w": right - left, "h": bottom - top,
-            "cx": (left + right) / 2, "cy": (top + bottom) / 2}
-
-
-def assert_centred(page, extra=(), note=""):
-    state = settled(page)
-    avatar = state["avatar"]
-    assert avatar["mode"] == "classic", avatar
-    region = region_of(page, extra)
-    focus = avatar["focus"]
-    assert abs(focus["x"] - region["cx"]) <= FOCUS_TOLERANCE, (note, "x", focus, region, "tolerance %s px" % FOCUS_TOLERANCE)
-    assert abs(focus["y"] - region["cy"]) <= FOCUS_TOLERANCE, (note, "y", focus, region, "tolerance %s px" % FOCUS_TOLERANCE)
-    return state, region
-
-
-def inject(page, html):
-    page.evaluate("html => { const host = document.createElement('div'); host.innerHTML = html;"
-                  " document.body.appendChild(host.firstElementChild); }", html)
-
-
-def remove(page, selector):
-    page.evaluate("s => document.querySelectorAll(s).forEach(e => e.remove())", selector)
+from avatar_center_page import *  # noqa: F401,F403  (fixtures and measurements)
+from avatar_center_page import (FOCUS_TOLERANCE, assert_centred, browser, inject, open_page, remove, settled,  # noqa: F401
+                                fresh_frames, hold_still)
 
 
 # ── Classic ──────────────────────────────────────────────────────────────────
@@ -355,26 +171,11 @@ def test_the_window_view_keeps_the_offset_and_the_parallax(classic):
     assert abs(aside_half / aside_open - scale) < .2, (aside_open, aside_half, scale)
 
 
-def test_every_avatar_structure_is_centred_with_the_tray_open(browser):
-    context, page = open_page(browser, "classic")
-    try:
-        names = page.evaluate("fridayVibe.getStructures().map(s => s.id)")
-        assert len(names) >= 13
-        page.evaluate("__avc.tray('third', true)")
-        page.wait_for_function("() => __avc.chat() && __avc.chat().w > 100", timeout=15000)
-        for index, name in enumerate(names):
-            page.evaluate("i => fridayVibe.setStructure(i)", index)
-            page.wait_for_function("n => __avc.state().target === n && __avc.state().progress >= .999", arg=name, timeout=60000)
-            assert_centred(page, note=name)
-    finally:
-        context.close()
-
-
 # ── Simple ───────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
 def simple(browser):
-    context, page = open_page(browser, "simple", width=1920, height=1000)
+    context, page = open_page(browser, "simple", width=1600, height=900)
     page.evaluate("FridayHolographicWorkspace.setArrangement('companion')")
     yield page
     context.close()
@@ -436,9 +237,17 @@ def test_the_control_works_from_the_keyboard_and_keeps_focus(simple):
     settled(simple)
     button = simple.locator(".fr-cards-toggle")
     assert button.get_attribute("aria-label") == "Hide the cards"
-    button.focus()
-    shadow = simple.evaluate("getComputedStyle(document.activeElement).boxShadow")
-    assert shadow and shadow != "none", "the focus ring is visible"
+    # Reach it the way a keyboard user does, so :focus-visible applies.
+    simple.evaluate("document.activeElement && document.activeElement.blur()")
+    for _ in range(120):
+        simple.keyboard.press("Tab")
+        if simple.evaluate("document.activeElement.classList.contains('fr-cards-toggle')"):
+            break
+    else:
+        raise AssertionError("Tab never reached the cards control")
+    ring = simple.evaluate("(() => { const s = getComputedStyle(document.activeElement);"
+                           " return {outline: s.outlineStyle, width: parseFloat(s.outlineWidth), shadow: s.boxShadow}; })()")
+    assert (ring["outline"] != "none" and ring["width"] >= 2) or ring["shadow"] != "none", ("the focus ring is visible", ring)
     simple.keyboard.press("Enter")
     simple.wait_for_function("() => __avc.state().cards === 'hidden'", timeout=10000)
     assert simple.evaluate("document.activeElement.classList.contains('fr-cards-toggle')")
@@ -455,26 +264,10 @@ def test_showing_the_cards_puts_the_chat_back_as_it_was(simple):
     simple.evaluate("__avc.tray(null, false)")
     simple.wait_for_function("() => !__avc.chat()", timeout=15000)
     simple.evaluate("FridayHolographicWorkspace.setCards('hidden')")
-    simple.wait_for_function("() => __avc.chat() && __avc.chat().w > 800", timeout=15000)
+    simple.wait_for_function("() => __avc.chat() && __avc.chat().w > 700", timeout=15000)
     simple.evaluate("FridayHolographicWorkspace.setCards('shown')")
     simple.wait_for_function("() => !__avc.chat()", timeout=15000)
     settled(simple)
-
-
-def test_the_choice_is_remembered_across_a_reload(browser):
-    context, page = open_page(browser, "simple", width=1920, height=1000)
-    try:
-        page.evaluate("FridayHolographicWorkspace.setCards('hidden')")
-        saved = page.evaluate("localStorage.getItem('friday_holographic_workspace_v1')")
-        assert json.loads(saved)["cards"] == "hidden"
-        page.reload(wait_until="domcontentloaded")
-        page.wait_for_function("() => window.fridayDebugScene && !!fridayDebugScene().camera && !!window.FridayHolographicWorkspace", timeout=60000)
-        page.evaluate(PROBE)
-        page.wait_for_function("() => __avc.state().cards === 'hidden'", timeout=15000)
-        page.wait_for_function("() => __avc.chat() && __avc.chat().w > 800", timeout=30000)
-        page.evaluate("FridayHolographicWorkspace.setCards('shown')")
-    finally:
-        context.close()
 
 
 def test_classic_has_no_cards_to_close(classic):
@@ -483,183 +276,3 @@ def test_classic_has_no_cards_to_close(classic):
     assert classic.locator(".fr-cards-toggle").count() == 0
 
 
-# ── motion ───────────────────────────────────────────────────────────────────
-
-def idle_frame_ms(page, ms=1200):
-    rows = page.evaluate("ms => __avc.record(ms)", ms)
-    frames = [r for i, r in enumerate(rows) if i == 0 or r["frame"] != rows[i - 1]["frame"]]
-    deltas = [b["t"] - a["t"] for a, b in zip(frames, frames[1:])]
-    return statistics.median(deltas) if deltas else 100.0
-
-
-def rendered(rows):
-    """One row per rendered frame."""
-    out = []
-    for r in rows:
-        if not out or r["frame"] != out[-1]["frame"]:
-            out.append(r)
-    return out
-
-
-def move_and_record(page, start_js, ms=1600):
-    """Record every rendered frame for `ms` while `start_js` starts the move."""
-    page.evaluate("ms => { window.__avcRows = __avc.record(ms); }", ms)
-    page.evaluate(start_js)
-    return rendered(page.evaluate("() => window.__avcRows"))
-
-
-def series(rows, key):
-    """(time, x) for each rendered frame that has the value."""
-    if key == "focus":
-        return [(r["t"], r["focus"]["x"]) for r in rows if r["focus"]]
-    return [(r["t"], r["shown"]["x"]) for r in rows if r["shown"]]
-
-
-def assert_smooth(points, idle_ms, note):
-    assert len(points) >= 4, (note, "too few rendered frames to judge a move", len(points))
-    times, values = [p[0] for p in points], [p[1] for p in points]
-    total = abs(values[-1] - values[0])
-    assert total > 40, (note, "the avatar did not move", values[0], values[-1])
-    deltas = [b - a for a, b in zip(times, times[1:])]
-    bound = max(LONG_FRAME_FLOOR_MS, LONG_FRAME_FACTOR * idle_ms)
-    assert max(deltas) <= bound * 3, (note, "a frame stalled during the move", max(deltas), "bound", bound)
-    steps = [abs(b - a) for a, b in zip(values, values[1:])]
-    for step, dt in zip(steps, deltas):
-        if dt < STALL_MS:
-            assert step <= total * MAX_FRAME_SHARE, (note, "one frame carried most of the move", step, total, dt)
-    direction = 1 if values[-1] > values[0] else -1
-    back = [direction * (b - a) for a, b in zip(values, values[1:]) if direction * (b - a) < -1.0]
-    assert not back, (note, "the avatar moved backwards", back[:3])
-
-
-def test_classic_move_is_eased_and_does_not_stall_the_render_loop(classic):
-    classic.evaluate("__avc.tray(null, false)")
-    settled(classic)
-    idle = idle_frame_ms(classic)
-    rows = move_and_record(classic, "__avc.tray('half', true)")
-    assert_smooth(series(rows, "focus"), idle, "classic, chat opens")
-    settled(classic)
-    rows = move_and_record(classic, "__avc.tray(null, false)")
-    assert_smooth(series(rows, "focus"), idle, "classic, chat closes")
-
-
-def test_simple_move_is_eased_and_does_not_stall_the_render_loop(simple):
-    simple.evaluate("FridayHolographicWorkspace.setCards('shown')")
-    simple.evaluate("__avc.tray(null, false)")
-    simple.wait_for_function("() => !__avc.chat()", timeout=15000)
-    settled(simple)
-    idle = idle_frame_ms(simple)
-    rows = move_and_record(simple, "FridayHolographicWorkspace.setCards('hidden')")
-    assert_smooth(series(rows, "shown"), idle, "simple, cards close")
-    settled(simple)
-    rows = move_and_record(simple, "FridayHolographicWorkspace.setCards('shown')")
-    assert_smooth(series(rows, "shown"), idle, "simple, cards return")
-
-
-def test_a_change_in_mid_flight_bends_the_move_instead_of_snapping(classic):
-    classic.evaluate("__avc.tray(null, false)")
-    settled(classic)
-    classic.evaluate("ms => { window.__avcRows = __avc.record(ms); }", 1800)
-    classic.evaluate("__avc.tray('half', true)")
-    classic.wait_for_timeout(150)
-    classic.evaluate("__avc.tray('third', true)")
-    points = series(rendered(classic.evaluate("() => window.__avcRows")), "focus")
-    worst = 0.0
-    for (ta, a), (tb, b) in zip(points, points[1:]):
-        if tb - ta < STALL_MS:
-            worst = max(worst, abs(b - a))
-    # Open at half moves the focal point 320 px; a snap would carry that in one frame.
-    assert worst < 320 * MAX_FRAME_SHARE, ("one frame carried most of the move", worst)
-    settled(classic)
-    assert_centred(classic, note="after the change of mind")
-    classic.evaluate("__avc.tray(null, false)")
-
-
-def test_reduced_motion_moves_more_gently_than_full_motion(browser):
-    def peak(reduced):
-        context, page = open_page(browser, "classic", reduced=reduced)
-        try:
-            page.evaluate("__avc.tray(null, false)")
-            settled(page)
-            points = series(move_and_record(page, "__avc.tray('half', true)", ms=2200), "focus")
-            speeds = [abs(b - a) / max(1.0, tb - ta) for (ta, a), (tb, b) in zip(points, points[1:])]
-            assert len(set(round(v) for _, v in points)) >= 3, "it moves in steps, not in one jump"
-            settled(page)
-            return max(speeds)
-        finally:
-            context.close()
-    normal, gentle = peak(False), peak(True)
-    assert gentle < normal * .85, ("reduced motion has a lower peak speed", normal, gentle)
-
-
-# ── frames for a person to look at ───────────────────────────────────────────
-
-def _proofs_dir():
-    value = os.environ.get("FRIDAY_AVATAR_CENTER_PROOFS")
-    if not value:
-        pytest.skip("FRIDAY_AVATAR_CENTER_PROOFS is not set")
-    out = pathlib.Path(value)
-    if not out.is_absolute() or not out.is_dir() or out.resolve().is_relative_to(REPO):
-        raise ValueError("FRIDAY_AVATAR_CENTER_PROOFS must be an existing absolute directory outside the checkout")
-    return out.resolve()
-
-
-def _shot(page, directory, name):
-    (directory / name).write_bytes(page.screenshot())
-
-
-def _sequence(page, directory, prefix, trigger_js, frames=10, step_ms=40):
-    """A transition one fake-clock step at a time, so the frames are evenly
-    spaced however slowly the software renderer draws them."""
-    page.clock.install()
-    page.evaluate(trigger_js)
-    for index in range(frames):
-        page.clock.run_for(step_ms)
-        fresh = page.evaluate("__avc.frame()")
-        page.wait_for_function("f => __avc.frame() >= f", arg=fresh, timeout=15000)
-        _shot(page, directory, "%s-%02d.png" % (prefix, index))
-
-
-def test_write_the_frames_a_person_looks_at(browser):
-    out = _proofs_dir()
-    context, page = open_page(browser, "classic")
-    try:
-        page.evaluate("__avc.tray(null, false)")
-        settled(page); _shot(page, out, "classic-1-idle.png")
-        page.evaluate("__avc.tray('third', true)")
-        page.wait_for_function("() => __avc.chat() && __avc.chat().w > 100", timeout=15000)
-        settled(page); _shot(page, out, "classic-2-tray-third.png")
-        page.evaluate("__avc.tray('half', true)")
-        page.wait_for_timeout(600)
-        settled(page); _shot(page, out, "classic-3-tray-half.png")
-        page.evaluate("__avc.tray(null, false)")
-        page.wait_for_function("() => !__avc.chat()", timeout=15000)
-        inject(page, '<div class="fwin" id="avc-ws" style="left:0;top:60px;width:640px;height:640px"><div class="fwin-bar"><span class="fwin-title">Workspace</span></div></div>')
-        settled(page); _shot(page, out, "classic-4-workspace-left.png")
-        remove(page, "#avc-ws")
-        inject(page, '<div class="fwin" id="avc-ws" style="left:640px;top:60px;width:640px;height:640px"><div class="fwin-bar"><span class="fwin-title">Workspace</span></div></div>')
-        settled(page); _shot(page, out, "classic-5-workspace-right.png")
-        remove(page, "#avc-ws")
-        settled(page)
-        _sequence(page, out, "classic-seq-chat-opens", "__avc.tray('half', true)")
-    finally:
-        context.close()
-    context, page = open_page(browser, "simple", width=1920, height=1000)
-    try:
-        page.evaluate("FridayHolographicWorkspace.setCards('shown')")
-        page.evaluate("__avc.tray(null, false)")
-        settled(page); _shot(page, out, "simple-1-cards.png")
-        page.evaluate("__avc.tray('third', true)")
-        page.wait_for_function("() => __avc.chat() && __avc.chat().w > 100", timeout=15000)
-        settled(page); _shot(page, out, "simple-2-cards-and-chat.png")
-        page.evaluate("__avc.tray(null, false)")
-        page.wait_for_function("() => !__avc.chat()", timeout=15000)
-        settled(page)
-        _sequence(page, out, "simple-seq-cards-close", "FridayHolographicWorkspace.setCards('hidden')")
-        page.clock.resume()
-        settled(page); _shot(page, out, "simple-3-split.png")
-        button = page.locator(".fr-cards-toggle")
-        button.focus()
-        _shot(page, out, "simple-4-split-focus.png")
-    finally:
-        context.close()
