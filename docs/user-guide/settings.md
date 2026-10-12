@@ -141,6 +141,18 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
 ## Appearance
 
 - **Display style** for your desktop presentation.
+  - **Simple** keeps Home's cards beside Friday. **Hide cards**, on Friday's half
+    of the screen or under **Scene & depth**, closes them: Friday takes one half
+    of the screen and the chat the other. **Show cards** brings them back and puts
+    the chat back as it was. The choice stays in this browser.
+    Say "hide the cards" or "show the cards" to do it by voice or in chat.
+    On a narrow window the cards stay where they are. While a workspace is
+    open the screen is laid out for that workspace, and your choice is
+    waiting when you are back on Home.
+  - **Classic** keeps Friday centred in the part of the desktop nothing covers:
+    what is left beside the chat tray, a task tray, notifications, or a
+    workspace docked to one side. She glides there when that changes, and keeps
+    moving, only more gently, when your system asks for reduced motion.
 - **Dock.** Which workspaces the dock shows, and in what order.
 - **Start screen.** **Show my day**, and when your day shows over the scene.
 - **3D effects.** **3D dazzle** (full, subtle or off) controls glow, particles and

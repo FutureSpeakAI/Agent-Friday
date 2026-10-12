@@ -3587,7 +3587,12 @@ def _tool_set_chat_tray(inp):
         visible = {"true": True, "false": False}.get(visible.strip().lower())
     side = str(inp.get("side") or "").strip().lower()
     size = str(inp.get("size") or "").strip().lower().replace(" ", "_").replace("-", "_")
-    if visible is None and not side and not size:
+    # Simple's Home cards ("hide the cards"): the Laya router passes this; the
+    # tool's declared schema is unchanged, so the voice contract does not grow.
+    cards = str(inp.get("cards") or "").strip().lower()
+    if cards and cards not in ("hide", "show"):
+        return "CHAT_FAIL: the cards can be hidden or shown."
+    if visible is None and not side and not size and not cards:
         return "CHAT_FAIL: say whether to show or hide the chat, or where to put it."
     if side and side not in CHAT_TRAY_SIDES:
         return "CHAT_FAIL: the chat docks on the left or the right."
@@ -3601,10 +3606,20 @@ def _tool_set_chat_tray(inp):
         event["side"] = side
     if size:
         event["size"] = size
+    if cards:
+        event["cards"] = cards
     waiter = desktop_bus.expect(cid)
     sent = desktop_bus.broadcast(event, kind="chat")
     got = desktop_bus.wait(cid, waiter, CHAT_TRAY_ACK_S if sent else 0)
     ack = got.get("ack") or {}
+    if cards and got.get("acked") and not ack.get("applied"):
+        if ack.get("cards_reason") == "classic":
+            return "CHAT_FAIL: the cards belong to the Simple desktop; Classic has none to hide."
+        return "CHAT_FAIL: the cards could not be changed just now."
+    if cards and got.get("acked") and ack.get("applied"):
+        if ack.get("cards") == "hidden":
+            return "CHAT_OK — the cards are hidden; Friday and the chat share the screen."
+        return "CHAT_OK — the cards are back beside Friday."
     if got.get("acked") and ack.get("applied"):
         where = ack.get("side") or side or "right"
         if ack.get("shown"):

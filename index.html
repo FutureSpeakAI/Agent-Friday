@@ -69467,6 +69467,11 @@ function App() {
     showChat,
     setChatSide,
     placeTray,
+    // A width in pixels, with no remembered fraction: the tray as it was before the cards closed.
+    placeWidth: px => {
+      setChatFrac(0);
+      setChatW(clampChatW(Math.round(px)));
+    },
     remember: (side, frac) => snapDo.current.rememberTray && snapDo.current.rememberTray(side, frac)
   };
   useEffect(() => {
@@ -69482,7 +69487,8 @@ function App() {
       const t = trayDo.current;
       if (d.side === 'left' || d.side === 'right') t.setChatSide(d.side);
       let shown = t.open;
-      const frac = FRIDAY_TRAY_SIZES[d.size];
+      // The cards' restore hands back the chat's earlier width as a fraction.
+      const frac = FRIDAY_TRAY_SIZES[d.size] || (typeof d.frac === 'number' && d.frac > 0.1 && d.frac < 0.9 ? d.frac : 0);
       if (frac) {
         t.placeTray(d.side || t.side, frac);
         t.remember(d.side || t.side, frac);
@@ -69491,14 +69497,21 @@ function App() {
           shown = true;
         }
       }
+      if (typeof d.width === 'number' && d.width >= 300 && d.width < 4000) t.placeWidth(d.width);
       if (typeof d.visible === 'boolean') {
         t.showChat(d.visible);
         shown = d.visible;
       }
+      // "Hide the cards" / "show the cards": Simple's Home cards, through the same tool.
+      let cards;
+      if (d.cards === 'hide' || d.cards === 'show') {
+        const holo = window.FridayHolographicWorkspace;
+        cards = holo && holo.setCards ? holo.setCards(d.cards === 'hide' ? 'hidden' : 'shown') : { applied: false, reason: 'loading' };
+      }
       if (d.id) apiFetch('/api/desktop/ack', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: d.id, result: { applied: true, shown, side: d.side || t.side, size: frac ? d.size : undefined } })
+        body: JSON.stringify({ id: d.id, result: { applied: cards ? cards.applied : true, shown, side: d.side || t.side, size: frac ? d.size : undefined, cards: cards && cards.applied ? cards.cards : undefined, cards_reason: cards && !cards.applied ? cards.reason : undefined } })
       }).catch(() => {});
     };
     window.addEventListener('keydown', onKey);

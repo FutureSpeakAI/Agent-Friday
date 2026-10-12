@@ -77,3 +77,27 @@ body[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .fr
 @media (prefers-reduced-motion: reduce) {
     .fr-holo-dialog button { transition: none; }
 }
+/* The cards: closing them leaves Friday and the chat side by side. The cards
+ * fade rather than vanish, and leave the tab order once hidden. */
+.fr-cards-toggle {
+    position: fixed; z-index: 62; box-sizing: border-box; min-height: 32px; padding: 6px 12px;
+    color: var(--fr-text); font: 500 12px/1.4 var(--fr-font-body); letter-spacing: .01em; cursor: pointer;
+    background: var(--fr-glass); backdrop-filter: var(--fr-glass-blur); -webkit-backdrop-filter: var(--fr-glass-blur);
+    border: 1px solid var(--fr-glass-edge); border-radius: 6px;
+    transition: border-color .2s ease, background-color .2s ease;
+}
+.fr-cards-toggle:hover { border-color: color-mix(in srgb, var(--fr-cyan) 60%, transparent); background: color-mix(in srgb, var(--fr-cyan) 7%, var(--fr-glass)); }
+.fr-cards-toggle:focus-visible { outline: none; box-shadow: var(--fr-focus); }
+body.friday-experience-enabled[data-friday-cards="hidden"] :is(.fx-shell, .fx-selection-bar) {
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity var(--fr-reveal-time) ease, visibility 0s linear var(--fr-reveal-time) !important;
+}
+body.friday-experience-enabled[data-friday-cards="shown"] .fx-shell {
+    transition: opacity var(--fr-reveal-time) ease, visibility 0s linear 0s !important;
+}
+.fr-holo-subhead { margin-top: 18px !important; }
+@media (prefers-reduced-motion: reduce) {
+    .fr-cards-toggle { transition: none; }
+    body.friday-experience-enabled[data-friday-cards="hidden"] :is(.fx-shell, .fx-selection-bar) { transition: opacity 120ms ease, visibility 0s linear 120ms !important; }
+    body.friday-experience-enabled[data-friday-cards="shown"] .fx-shell { transition: opacity 120ms ease, visibility 0s linear 0s !important; }
+}

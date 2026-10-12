@@ -238,6 +238,15 @@
     function spatialLayout(area, options) {
         if (!options.enabled) return { layout: 'classic', content: { ...area }, stage: null };
         const gap = 16, content = { ...area };
+        // Cards closed: the avatar takes the whole work area, and the chat the
+        // other half of the screen. The cards' region shrinks to a hairline on
+        // the side the chat sits on, so every consumer still has a rectangle.
+        if (options.hideCards && !options.compact && !options.shortLandscape && options.viewportWidth >= 1100) {
+            const hairline = Math.min(1, area.w);
+            const stage = { x: options.rightChat ? area.x : area.x + hairline, y: area.y, w: Math.max(1, area.w - hairline), h: area.h };
+            return { layout: 'wide', cards: 'hidden', stage,
+                content: { x: options.rightChat ? area.x + area.w - hairline : area.x, y: area.y, w: hairline, h: area.h } };
+        }
         // A short landscape viewport has room beside the work, not above it.
         // Preserve useful avatar height while the work region stays scrollable.
         if (options.shortLandscape) {
@@ -411,6 +420,130 @@
         return position.copy(target).add(direction.normalize().multiplyScalar(distance));
     }
 
+    // ── Where the avatar stands ──────────────────────────────────────────────
+    // Classic keeps the full-desktop camera. The avatar's focal point is moved
+    // to the middle of the part of the desktop that nothing sits on, through
+    // the same projection offset the Simple stage uses.
+    const REGION_EDGE = 32, REGION_MIN_W = .3, REGION_MIN_H = .35;
+    function clipRect(rect, width, height) {
+        if (!rect || !['x', 'y', 'w', 'h'].every(key => Number.isFinite(rect[key]))) return null;
+        const x0 = Math.max(0, rect.x), y0 = Math.max(0, rect.y);
+        const x1 = Math.min(width, rect.x + rect.w), y1 = Math.min(height, rect.y + rect.h);
+        return x1 - x0 >= 1 && y1 - y0 >= 1 ? { ...rect, x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+    }
+    // One piece cuts at most one side. Wide, short pieces cut the top or the
+    // bottom; the rest cut the side they sit nearer. A piece that covers the
+    // whole region, or that sits in the middle of it, leaves the region alone.
+    function regionCut(region, piece) {
+        const left = region.x, right = region.x + region.w, top = region.y, bottom = region.y + region.h;
+        const x0 = Math.max(piece.x, left), x1 = Math.min(piece.x + piece.w, right);
+        const y0 = Math.max(piece.y, top), y1 = Math.min(piece.y + piece.h, bottom);
+        const w = x1 - x0, h = y1 - y0;
+        if (!(w > 8 && h > 8) || (w >= region.w * .85 && h >= region.h * .85)) return null;
+        const tall = h >= region.h * .5, wide = w >= region.w * .6;
+        const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, midX = left + region.w / 2, midY = top + region.h / 2;
+        const hugsLeft = x0 <= left + REGION_EDGE, hugsRight = x1 >= right - REGION_EDGE;
+        const hugsTop = y0 <= top + REGION_EDGE, hugsBottom = y1 >= bottom - REGION_EDGE;
+        const panel = piece.kind === 'panel';
+        // A tray hugging an edge counts however short it is; a window counts
+        // once it is tall enough to be the thing beside Friday.
+        if (w < region.w * .85 && Math.abs(cx - midX) >= region.w * .1 && (tall || (panel && (hugsLeft || hugsRight)))) {
+            return cx < midX ? { side: 'left', x: x1, y: top, w: right - x1, h: region.h }
+                : { side: 'right', x: left, y: top, w: x0 - left, h: region.h };
+        }
+        if (wide && !tall && Math.abs(cy - midY) >= region.h * .1 && (!panel || hugsTop || hugsBottom)) {
+            return cy < midY ? { side: 'top', x: left, y: y1, w: region.w, h: bottom - y1 }
+                : { side: 'bottom', x: left, y: top, w: region.w, h: y0 - top };
+        }
+        return null;
+    }
+    // viewport {w,h}; chrome {top,bottom}, the strips the desktop always keeps;
+    // pieces [{x,y,w,h,kind:'panel'|'window'}] are the real rendered rectangles
+    // of the tray, workspaces, chat and notifications. Panels are honoured
+    // before windows, and a cut that would leave the avatar too little room is
+    // skipped, so the result always has a usable size.
+    function visibleRegion(viewport, chrome, pieces) {
+        const width = Math.max(1, Number(viewport && viewport.w) || 1), height = Math.max(1, Number(viewport && viewport.h) || 1);
+        const top = Math.max(0, Math.min(height * .5, Number(chrome && chrome.top) || 0));
+        const bottom = Math.max(0, Math.min(height * .5, Number(chrome && chrome.bottom) || 0));
+        let region = { x: 0, y: top, w: width, h: Math.max(1, height - top - bottom) };
+        const applied = [];
+        const list = (pieces || []).map(piece => clipRect(piece, width, height)).filter(Boolean);
+        for (const kind of ['panel', 'window']) {
+            for (const piece of list.filter(item => (item.kind === 'panel' ? 'panel' : 'window') === kind)) {
+                const cut = regionCut(region, piece);
+                if (!cut || cut.w < width * REGION_MIN_W || cut.h < height * REGION_MIN_H) continue;
+                applied.push({ side: cut.side, kind: piece.kind || 'window', name: piece.name || '' });
+                region = { x: cut.x, y: cut.y, w: cut.w, h: cut.h };
+            }
+        }
+        return { ...region, applied };
+    }
+    // Full size while the region keeps three quarters of the desktop on its
+    // tighter axis; smaller in proportion below that, never under 60 percent.
+    function regionFit(region, viewport) {
+        const width = Math.max(1, viewport.w), height = Math.max(1, viewport.h);
+        const fit = Math.min(region.w / width, region.h / height);
+        return {
+            scale: Math.max(.6, Math.min(1, fit / .75)),
+            dx: region.x + region.w / 2 - width / 2,
+            dy: region.y + region.h / 2 - height / 2
+        };
+    }
+    // The projection offset the Simple stage already applies, shared so the
+    // Classic frame cannot drift from it: NDC' = NDC * scale + offset.
+    function offsetProjection(camera, scale, dx, dy, width, height) {
+        const elements = camera.projectionMatrix.elements;
+        for (let column = 0; column < 4; column++) {
+            const i = column * 4;
+            elements[i] = elements[i] * scale + (2 * dx / width) * elements[i + 3];
+            elements[i + 1] = elements[i + 1] * scale - (2 * dy / height) * elements[i + 3];
+        }
+        camera.projectionMatrixInverse?.copy(camera.projectionMatrix).invert();
+    }
+
+    // A critically damped spring on a rectangle. It keeps its velocity when the
+    // target moves, so a layout change in mid-flight bends the path instead of
+    // restarting it, and it settles in about 0.4 s without overshoot. Stepped
+    // from the render loop with the frame's own delta, it is frame-rate
+    // independent (the step is the exact solution, not an integration).
+    const FRAME_OMEGA = 15, FRAME_OMEGA_REDUCED = 10;
+    function createRectSpring() {
+        const KEYS = ['x', 'y', 'w', 'h'];
+        let current = null, goal = null, velocity = { x: 0, y: 0, w: 0, h: 0 }, active = false;
+        const snapshot = rect => rect && { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+        return {
+            retarget(next, immediate = false) {
+                if (!next || !KEYS.every(key => Number.isFinite(next[key]))) { current = goal = null; active = false; velocity = { x: 0, y: 0, w: 0, h: 0 }; return null; }
+                goal = snapshot(next);
+                if (!current || immediate) { current = snapshot(goal); velocity = { x: 0, y: 0, w: 0, h: 0 }; active = false; }
+                else {
+                    active = KEYS.some(key => Math.abs(goal[key] - current[key]) > .2 || Math.abs(velocity[key]) > 1.5);
+                    if (!active) { current = snapshot(goal); velocity = { x: 0, y: 0, w: 0, h: 0 }; }
+                }
+                return current;
+            },
+            step(seconds, omega = FRAME_OMEGA) {
+                if (!current || !goal || !active) return current;
+                const dt = Math.max(0, Math.min(.25, Number.isFinite(seconds) ? seconds : 1 / 60));
+                const decay = Math.exp(-omega * dt);
+                let moving = false;
+                for (const key of KEYS) {
+                    const offset = current[key] - goal[key], speed = velocity[key], carry = speed + omega * offset;
+                    const nextOffset = (offset + carry * dt) * decay;
+                    velocity[key] = (speed - omega * carry * dt) * decay;
+                    current[key] = goal[key] + nextOffset;
+                    if (Math.abs(nextOffset) > .2 || Math.abs(velocity[key]) > 1.5) moving = true;
+                }
+                current.w = Math.max(1, current.w); current.h = Math.max(1, current.h);
+                if (!moving) { current = snapshot(goal); velocity = { x: 0, y: 0, w: 0, h: 0 }; active = false; }
+                return current;
+            },
+            settle() { if (goal) current = snapshot(goal); velocity = { x: 0, y: 0, w: 0, h: 0 }; active = false; return current; },
+            get current() { return current; }, get target() { return goal; }, get active() { return active; }
+        };
+    }
+
     function trackingSession(vibe) {
         let lease = null, sequence = 0, busy = false;
         const state = () => vibe.getHologramState ? vibe.getHologramState() : { enabled: !!vibe.isHologramOn?.() };
@@ -453,12 +586,13 @@
         const doc = win.document, root = doc.documentElement;
         const esc = text => String(text == null ? '' : text).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         const upper = text => text[0].toUpperCase() + text.slice(1);
-        const state = { mode: 'balanced', source: 'off', arrangement: 'companion', motion: 'on', error: '', preferenceError: '', open: false };
+        const state = { mode: 'balanced', source: 'off', arrangement: 'companion', motion: 'on', cards: 'shown', error: '', preferenceError: '', open: false };
         try {
             const preferences = JSON.parse(win.localStorage.getItem('friday_holographic_workspace_v1') || '{}');
             if (MODES.includes(preferences.mode)) state.mode = preferences.mode;
             if (ARRANGEMENTS.includes(preferences.arrangement)) state.arrangement = preferences.arrangement;
             if (preferences.motion === 'off') state.motion = 'off';
+            if (preferences.cards === 'hidden') state.cards = 'hidden';
         } catch (_) { /* Display preferences are optional. Camera intent is never persisted. */ }
         let dialog = null, opener = null, depth = null, session = null, sessionVibe = null;
         let ownedPreview = null, timer = null, observer = null, destroyed = false, signature = '';
@@ -473,6 +607,14 @@
         let caption = null, captionSignature = '';
         const captionNodes = new Map();
         let fitBounds = null, fitKey = '', fitAt = 0, fittedDistance = 0, projectedBounds = null;
+        // The avatar's displayed frame. Simple eases the stage rectangle toward
+        // the layout's; Classic eases a visible-region rectangle toward the part
+        // of the desktop nothing covers. Both are stepped in the render loop.
+        const stageSpring = createRectSpring(), regionSpring = createRectSpring();
+        let stageSize = '', regionSize = '', shownStage = null, regionFrame = 0, regionKey = '', regionObserver = null, regionBody = null;
+        let classicState = { region: null, applied: [], scale: 1, focus: null };
+        const observedPieces = new Set();
+        let cardsButton = null, cardsLabelKey = '', chatBeforeCards = null, splitAsked = false;
         let trackingStatus = '';
         const tuner = trackingTuner(win, message => { trackingStatus = message; refreshTracking(); });
         const calibration = cameraCalibration(win, () => refreshTracking());
@@ -483,7 +625,7 @@
 
         function persist() {
             try {
-                win.localStorage.setItem('friday_holographic_workspace_v1', JSON.stringify({ mode: state.mode, arrangement: state.arrangement, motion: state.motion }));
+                win.localStorage.setItem('friday_holographic_workspace_v1', JSON.stringify({ mode: state.mode, arrangement: state.arrangement, motion: state.motion, cards: state.cards }));
                 state.preferenceError = '';
             } catch (_) { state.preferenceError = 'Applied for now. This browser could not save your layout preferences.'; }
         }
@@ -509,6 +651,8 @@
             // work after a keyboard user has focused its button.
             activityUntil = win.performance.now() + (event.type === 'input' || event.type === 'keydown' ? 420 : 180);
             scheduleLayout();
+            // A window dropped where it stays: the region follows it now.
+            if (event.type === 'pointerup' || event.type === 'mouseup') scheduleRegion();
         }
         function surfaceArea(kind) {
             return occupancy.stage ? (kind === 'chat' && occupancy.chat ? occupancy.chat : occupancy.content) : null;
@@ -618,7 +762,12 @@
             const rightChat = parseFloat(win.getComputedStyle(root).getPropertyValue('--fr-chat-dock')) || 0;
             const leftChat = parseFloat(win.getComputedStyle(root).getPropertyValue('--fr-chat-dock-left')) || 0;
             const enabled = simpleStyle() && doc.body.classList.contains('friday-experience-enabled') && !win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat';
-            const compact = enabled && (win.innerWidth < 1100 || area.w < 680);
+            const shortLandscape = win.innerHeight <= 500 && win.innerWidth > win.innerHeight;
+            // With the cards closed there is nothing to keep 680 px wide: the work
+            // area beside a half-width chat may be narrower than that and still
+            // holds the avatar.
+            const hideCards = enabled && state.cards === 'hidden' && doc.body.dataset.fridayHomeVisible === 'true' && win.innerWidth >= 1100 && !shortLandscape;
+            const compact = enabled && (win.innerWidth < 1100 || (area.w < 680 && !hideCards));
             const gutter = win.innerWidth < 760 ? 8 : 16;
             // A compact chat shares the work region beneath the stage. Its
             // former horizontal reservation must not squeeze that stage out.
@@ -640,14 +789,14 @@
                 }
                 ownedTopbar=false;
             }
-            const next = reserveCaption(spatialLayout(base, { enabled, compact, shortLandscape: win.innerHeight <= 500 && win.innerWidth > win.innerHeight, viewportWidth: win.innerWidth, arrangement: state.arrangement, rightChat: rightChat > 0 }));
+            const next = reserveCaption(spatialLayout(base, { enabled, compact, hideCards, shortLandscape, viewportWidth: win.innerWidth, arrangement: state.arrangement, rightChat: rightChat > 0 }));
             if (enabled && !compact && (rightChat || leftChat)) next.chat = {
                 x: leftChat ? 0 : win.innerWidth-rightChat, y:base.y,
                 w: leftChat || rightChat, h:base.h
             };
             // Chrome and newly opened chat already occupy their new pixels.
             // Reflow before paint rather than animate through those regions.
-            const viewport = [win.innerWidth,win.innerHeight,enabled,base.x,base.y,base.w,base.h,leftChat,rightChat].join('|');
+            const viewport = [win.innerWidth,win.innerHeight,enabled,hideCards,base.x,base.y,base.w,base.h,leftChat,rightChat].join('|');
             const immediate = viewport !== viewportKey || !enabled || doc.hidden;
             viewportKey = viewport;
             const changed = layoutMotion.request(next, win.performance.now(), {
@@ -682,6 +831,8 @@
                 else delete doc.body.dataset.fridaySpatialLayout;
                 if (styled) doc.body.dataset.fridayLayoutMotion = layoutMotion.active ? 'moving' : state.motion;
                 else delete doc.body.dataset.fridayLayoutMotion;
+                if (styled && stage) doc.body.dataset.fridayCards = occupancy.cards === 'hidden' ? 'hidden' : 'shown';
+                else delete doc.body.dataset.fridayCards;
                 const values = {
                     'content-left': stage && content ? content.x : 0,
                     'content-right': stage && content ? Math.max(0, win.innerWidth-content.x-content.w) : 0,
@@ -699,6 +850,7 @@
                     caption.style.width=box.w+'px'; caption.style.maxHeight=box.h+'px';
                 }
                 surfaces.forEach((_,element) => updateSurface(element));
+                ensureCardsButton();
                 const signature = JSON.stringify(occupancy);
                 win.dispatchEvent(new win.CustomEvent('friday:spatial-frame',{detail:copyLayout(occupancy)}));
                 if (announce && signature !== spatialSignature) {
@@ -724,6 +876,8 @@
             }
             if (typeof win.fridayDesktopArea === 'function') win.fridayDesktopArea();
             applyLayout(!layoutMotion.active);
+            if (state.cards === 'hidden' && !splitAsked && cardsApply()) splitChat(false);
+            scheduleRegion();
             for (const el of styled ? doc.querySelectorAll('.fwin-body,.chat-panel,.chat-win') : []) {
                 if (!tagged.has(el) && !el.hasAttribute('data-depth')) { tagged.set(el, null); el.setAttribute('data-depth', 'middle'); }
             }
@@ -736,10 +890,206 @@
             const tick=()=>{chromeFrame=0;if(destroyed||doc.hidden)return;const now=win.performance.now();if(now-last>=32){last=now;updateLayout();}if(now<chromeUntil)chromeFrame=win.requestAnimationFrame(tick);};
             chromeFrame=win.requestAnimationFrame(tick);
         }
-        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null, lean:null, structures:null };
+        // ── The avatar's displayed frame ──────────────────────────────────────
+        const frameOmega = () => reduced.matches ? FRAME_OMEGA_REDUCED : FRAME_OMEGA;
+        // The in-app Off switch asks for no arrangement motion at all. The
+        // system's reduced-motion setting asks for gentler motion, never none.
+        const frameEased = () => state.motion === 'on' && !doc.hidden;
+        // With the cards closed the stage is a whole half of the screen, so the
+        // height is what limits the avatar. Keep it off the top bar and the
+        // state caption by a real margin (the browser test asks for 24 px).
+        const stageMargin = () => occupancy.cards === 'hidden' ? 40 : 0;
+        const sizeNow = () => win.innerWidth + 'x' + win.innerHeight;
+        // Simple: the stage the camera is drawn into this frame. The layout's
+        // own motion already eases the stage, so the displayed frame follows it
+        // exactly while it runs and eases only what the layout jumps: the chat
+        // opening, the cards closing, a caption line appearing.
+        function stepAvatarFrame(seconds) {
+            const target = destroyed ? null : occupancy.stage;
+            if (!target) { stageSpring.retarget(null); stageSize = ''; shownStage = null; return null; }
+            const size = sizeNow();
+            const follow = layoutMotion.active || !frameEased() || size !== stageSize || !stageSpring.current;
+            stageSize = size;
+            stageSpring.retarget(target, follow);
+            shownStage = stageSpring.step(seconds, frameOmega());
+            return shownStage;
+        }
+
+        // Classic: the part of the desktop nothing covers. Measured from the
+        // real rendered rectangles when the layout changes, never on a timer.
+        const REGION_PIECES = [
+            ['.friday-shell-activity', 'panel', 'activity'], ['.settings-panel.open', 'panel', 'settings'],
+            ['.notif-dropdown', 'panel', 'notifications'], ['.task-tray', 'panel', 'tasks'],
+            ['.fwin:not(.closing)', 'window', 'workspace'], ['.chat-win', 'window', 'chat']
+        ];
+        // The docked chat is measured above; its slide is followed like the others.
+        const REGION_SELECTOR = REGION_PIECES.map(piece => piece[0]).concat('.chat-panel').join(',');
+        const REGION_MOTION = /^(transform|left|right|top|width|height|inset.*)$/;
+        let regionUntil = 0, regionTicking = 0;
+        function watchPiece(element) {
+            if (!regionObserver || observedPieces.has(element)) return;
+            observedPieces.add(element); regionObserver.observe(element);
+        }
+        function regionPieces(viewport, top) {
+            const pieces = [], style = win.getComputedStyle(root);
+            // A docked chat's width is published the moment it opens, so the
+            // region knows its final place while the tray is still sliding in.
+            let right = parseFloat(style.getPropertyValue('--fr-chat-dock')) || 0, left = parseFloat(style.getPropertyValue('--fr-chat-dock-left')) || 0;
+            // Big mode and other styles can make the tray wider than the width
+            // the app published; the part of it on screen is what covers.
+            const tray = doc.querySelector('.chat-panel.open'), trayBox = tray && tray.getBoundingClientRect();
+            if (trayBox && trayBox.width >= 1) {
+                const seen = Math.max(0, Math.min(viewport.w, trayBox.right) - Math.max(0, trayBox.left));
+                if (tray.classList.contains('left')) { if (left > 0) left = Math.max(left, seen); } else if (right > 0) right = Math.max(right, seen);
+            }
+            if (right > 0) pieces.push({ x: viewport.w - right, y: top, w: right, h: viewport.h - top, kind: 'panel', name: 'chat' });
+            if (left > 0) pieces.push({ x: 0, y: top, w: left, h: viewport.h - top, kind: 'panel', name: 'chat' });
+            for (const [selector, kind, name] of REGION_PIECES) {
+                for (const element of doc.querySelectorAll(selector)) {
+                    if (element.closest('[hidden]')) continue;
+                    watchPiece(element);
+                    const computed = win.getComputedStyle(element);
+                    if (computed.display === 'none' || computed.visibility === 'hidden') continue;
+                    const box = element.getBoundingClientRect();
+                    if (box.width >= 1 && box.height >= 1) pieces.push({ x: box.left, y: box.top, w: box.width, h: box.height, kind, name });
+                }
+            }
+            for (const element of Array.from(observedPieces)) {
+                if (!element.isConnected) { regionObserver?.unobserve(element); observedPieces.delete(element); }
+            }
+            return pieces;
+        }
+        function classicApplies() {
+            return !destroyed && !simpleStyle() && !win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat';
+        }
+        function measureRegion() {
+            regionFrame = 0;
+            if (destroyed) return;
+            if (!classicApplies()) {
+                regionSpring.retarget(null); regionKey = ''; regionSize = '';
+                classicState = { region: null, applied: [], scale: 1, focus: null };
+                return;
+            }
+            const viewport = { w: win.innerWidth, h: win.innerHeight };
+            const bar = doc.querySelector('.top-bar'), barBox = bar?.getBoundingClientRect();
+            const top = barBox && barBox.height > 0 && barBox.bottom > 0 ? Math.ceil(barBox.bottom) : 0;
+            const region = visibleRegion(viewport, { top }, regionPieces(viewport, top));
+            const key = [viewport.w, viewport.h, region.x, region.y, region.w, region.h].map(value => Math.round(value * 2)).join('|');
+            if (key === regionKey && regionSpring.target) return;
+            regionKey = key;
+            const size = sizeNow();
+            regionSpring.retarget(region, !frameEased() || size !== regionSize || !regionSpring.current);
+            regionSize = size;
+            classicState.applied = region.applied;
+            classicState.region = { x: region.x, y: region.y, w: region.w, h: region.h };
+        }
+        function scheduleRegion() {
+            if (destroyed || regionFrame || !classicApplies()) return;
+            regionFrame = win.requestAnimationFrame(measureRegion);
+        }
+        // A panel that slides in is followed for as long as it moves: a short,
+        // event-started run, not a standing timer.
+        function trackRegion(ms) {
+            regionUntil = Math.max(regionUntil, win.performance.now() + ms);
+            if (!regionTicking && !destroyed) regionTicking = win.requestAnimationFrame(tickRegion);
+        }
+        function tickRegion() {
+            regionTicking = 0;
+            if (destroyed || doc.hidden || !classicApplies()) return;
+            measureRegion();
+            if (win.performance.now() < regionUntil) regionTicking = win.requestAnimationFrame(tickRegion);
+        }
+        function onPieceMotion(event) {
+            const element = event.target;
+            if (!classicApplies() || !element?.matches?.(REGION_SELECTOR)) return;
+            if ((event.type === 'transitionrun' || event.type === 'transitionstart') && !REGION_MOTION.test(event.propertyName || '')) return;
+            if (event.type === 'transitionrun' || event.type === 'animationstart') trackRegion(650); else scheduleRegion();
+        }
+        function stepRegion(seconds) {
+            if (!classicApplies()) { if (regionSpring.current) regionSpring.retarget(null); return null; }
+            if (!regionSpring.current) measureRegion();
+            return regionSpring.step(seconds, frameOmega());
+        }
+        function applyClassicFrame(camera) {
+            const region = regionSpring.current;
+            if (!region || !classicApplies()) { classicState.focus = null; classicState.scale = 1; return null; }
+            const width = win.innerWidth, height = win.innerHeight, fit = regionFit(region, { w: width, h: height });
+            offsetProjection(camera, fit.scale, fit.dx, fit.dy, width, height);
+            classicState.scale = fit.scale;
+            const look = frameFit.look;
+            if (look && win.THREE) {
+                const point = (frameFit.focus || (frameFit.focus = new win.THREE.Vector3())).copy(look).project(camera);
+                classicState.focus = { x: (point.x + 1) * width / 2, y: (1 - point.y) * height / 2 };
+            }
+            return fit;
+        }
+
+        // ── Simple: the cards ─────────────────────────────────────────────────
+        // Closing the cards leaves Friday on one half of the screen and the
+        // chat on the other. The chat is opened through the tray's own event,
+        // and its previous size is put back when the cards return.
+        function chatNow() {
+            const panel = doc.querySelector('.chat-panel');
+            const open = !!panel && panel.classList.contains('open') && win.innerWidth > 768;
+            // The tray keeps its width while it is hidden; the owner's fraction, if
+            // they chose one, is what the app stored.
+            let stored = 0;
+            try { stored = parseFloat(win.localStorage.getItem('friday_chat_frac')) || 0; } catch (_) { /* The width is still read from the tray. */ }
+            return { open, frac: stored > .1 && stored < .9 ? stored : 0, width: panel ? Math.round(panel.getBoundingClientRect().width) : 0 };
+        }
+        function sendChat(detail) { win.dispatchEvent(new win.CustomEvent('friday:chat-tray', { detail })); }
+        function splitChat(resize) {
+            if (!doc.querySelector('.chat-panel')) return false;
+            const now = chatNow();
+            if (!resize && now.open) { splitAsked = true; return true; }
+            chatBeforeCards = now;
+            sendChat({ visible: true, size: 'half' });
+            splitAsked = true;
+            return true;
+        }
+        function restoreChat() {
+            const before = chatBeforeCards; chatBeforeCards = null; splitAsked = false;
+            if (!before) return;
+            const detail = { visible: before.open };
+            if (before.frac) detail.frac = before.frac; else if (before.width >= 300) detail.width = before.width;
+            sendChat(detail);
+        }
+        function cardsApply() { return simpleStyle() && doc.body?.dataset.fridayHomeVisible === 'true' && !win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat'; }
+        function setCards(value, userInitiated) {
+            if (destroyed || (value !== 'hidden' && value !== 'shown')) return { applied: false, cards: state.cards, reason: 'unknown' };
+            if (!simpleStyle()) return { applied: false, cards: state.cards, reason: 'classic' };
+            if (value === state.cards) { if (value === 'hidden') splitChat(false); return { applied: true, cards: state.cards, changed: false }; }
+            state.cards = value; persist();
+            if (value === 'hidden') splitChat(true); else restoreChat();
+            updateLayout(); refreshPanel();
+            return { applied: true, cards: state.cards, changed: true, shown: cardsApply() };
+        }
+        function ensureCardsButton() {
+            const wanted = simpleStyle() && occupancy.stage && occupancy.layout === 'wide' && doc.body?.dataset.fridayHomeVisible === 'true';
+            if (!wanted) { cardsButton?.remove(); cardsButton = null; cardsLabelKey = ''; return; }
+            if (!cardsButton) {
+                cardsButton = doc.createElement('button');
+                cardsButton.type = 'button'; cardsButton.className = 'fr-cards-toggle'; cardsButton.setAttribute('data-friday-cards-toggle', '');
+                cardsButton.addEventListener('click', () => { setCards(state.cards === 'hidden' ? 'shown' : 'hidden', true); });
+                doc.body.appendChild(cardsButton);
+            }
+            const hidden = state.cards === 'hidden', key = String(hidden);
+            if (key !== cardsLabelKey) {
+                cardsLabelKey = key;
+                cardsButton.textContent = hidden ? 'Show cards' : 'Hide cards';
+                cardsButton.setAttribute('aria-label', hidden ? 'Show the cards' : 'Hide the cards');
+                cardsButton.title = hidden ? 'Bring the cards back beside Friday' : 'Close the cards: Friday and the chat share the screen';
+            }
+            const frame = occupancy.stageFrame || occupancy.stage;
+            cardsButton.style.left = Math.round(frame.x + 8) + 'px'; cardsButton.style.top = Math.round(frame.y + 8) + 'px';
+        }
+
+        const frameFit = { pieces:[], scale:1, x:0, y:0, ready:false, delta:1/60, neutral:null, lean:null, structures:null, look:null, focus:null };
         function fitSceneCamera(sceneState) {
-            const stage = destroyed ? null : occupancy.stage;
             const { camera, scene, basePosition, targetLook, structures, keys, delta } = sceneState;
+            const stage = stepAvatarFrame(delta);
+            stepRegion(delta);
+            frameFit.look = targetLook;
             setStageScenery(structures, !!stage);
             frameFit.structures = structures;
             camera.aspect = stage ? stage.w / stage.h : win.innerWidth / win.innerHeight;
@@ -859,7 +1209,7 @@
             neutral.fov=camera.fov;neutral.aspect=camera.aspect;neutral.near=camera.near;neutral.far=camera.far;
             neutral.position.copy(basePosition);neutral.lookAt(targetLook);neutral.updateMatrixWorld(true);neutral.updateProjectionMatrix();
             const raw=projectedPieces(neutral,frameFit.pieces,stage.w,stage.h);
-            const pad=Math.max(8,Math.min(stage.w,stage.h)*.045);
+            const pad=Math.max(8,stageMargin(),Math.min(stage.w,stage.h)*.045);
             let desired=stageFill(raw,stage.w,stage.h,pad);
             if (tracking) {
                 // Reserve the pieces' actual extent at up to ten percent
@@ -869,7 +1219,7 @@
                 // lean. The untracked avatar retains its original full fit.
                 const gain = 1 / Math.max(.1, glass + (1-glass)*zoom);
                 const allowance = Math.min(1.10, Math.max(1, gain));
-                const inset = Math.min(12,stage.w/8,stage.h/8);
+                const inset = Math.max(stageMargin(), Math.min(12,stage.w/8,stage.h/8));
                 const active = stageFill(raw,stage.w,stage.h,inset,allowance);
                 if (raw && glass > 1 && allowance > 1) {
                     const lean = frameFit.lean || (frameFit.lean = neutral.clone());
@@ -891,13 +1241,15 @@
                 }
                 if (active.scale < desired.scale) desired = active;
             }
-            const follow=frameFit.ready?1-Math.exp(-frameFit.delta*3):1;
+            // While the stage itself eases, the fit follows it exactly: its own
+            // smoothing would stretch a 0.4 s move into a second.
+            const follow=frameFit.ready&&!stageSpring.active?1-Math.exp(-frameFit.delta*3):1;
             frameFit.scale+=(desired.scale-frameFit.scale)*follow;
             frameFit.x+=(desired.x-frameFit.x)*follow;frameFit.y+=(desired.y-frameFit.y)*follow;
             frameFit.ready=true;
         }
         function projectSceneStage(camera) {
-            const stage = destroyed ? null : occupancy.stage;
+            const stage = destroyed ? null : shownStage;
             let pointScale = stage && frameFit.ready ? frameFit.scale * stage.h / win.innerHeight : 1;
             // Neutral framing can enlarge as well as shrink. Keep it stable
             // while the head moves, then enforce only the stage's clear edge;
@@ -912,7 +1264,7 @@
             }
             const raw = stage && fitBounds ? projectedPieces(camera,frameFit.pieces,stage.w,stage.h) || projectedSphere(camera, fitBounds, stage.w, stage.h) : null;
             if (raw) {
-                const pad = Math.min(12, stage.w/8, stage.h/8);
+                const pad = Math.max(stageMargin(), Math.min(12, stage.w/8, stage.h/8));
                 const scale = Math.min(1, (stage.w-pad*2)/raw.w, (stage.h-pad*2)/raw.h);
                 pointScale *= scale;
                 const x = stage.w/2+(raw.x-stage.w/2)*scale, y = stage.h/2+(raw.y-stage.h/2)*scale;
@@ -926,6 +1278,8 @@
                 }
             }
             stageProjection(camera, stage, win.innerWidth, win.innerHeight);
+            // Classic: the same offset, from the visible region instead of a stage.
+            if (!stage) { const classic = applyClassicFrame(camera); pointScale = classic ? classic.scale : 1; }
             // Point sprites do not inherit projection-matrix magnification.
             // Match their authored light to the projected terrain, then restore
             // the native sizes when Classic owns the full desktop again.
@@ -935,7 +1289,7 @@
             projectedBounds = bounds ? { ...bounds, inside:bounds.x>=stage.x&&bounds.y>=stage.y&&bounds.x+bounds.w<=stage.x+stage.w&&bounds.y+bounds.h<=stage.y+stage.h, form:fitKey } : null;
         }
         function updateAmbientStage(material) {
-            ambientStageUniforms(material,destroyed?null:occupancy.stage,win.innerHeight,win.__fridayRenderer?.getPixelRatio?.()||1);
+            ambientStageUniforms(material,destroyed?null:shownStage,win.innerHeight,win.__fridayRenderer?.getPixelRatio?.()||1);
         }
         function sourceDescription(current) {
             if (state.error) return state.error;
@@ -962,6 +1316,7 @@
             dialog.querySelectorAll('[data-holo-source]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoSource === state.source)));
             dialog.querySelectorAll('[data-holo-arrangement]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoArrangement === state.arrangement)));
             dialog.querySelectorAll('[data-holo-motion]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoMotion === state.motion)));
+            dialog.querySelectorAll('[data-holo-cards]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.holoCards === state.cards)));
             const preferences = dialog.querySelector('[data-holo-preference-status]');
             if (preferences) preferences.textContent = state.preferenceError || (reduced.matches ? 'Your system’s reduced motion preference is active.' : 'Layout preferences stay in this browser.');
             dialog.querySelectorAll('[data-holo-form]').forEach(el => el.setAttribute('aria-pressed', String(Number(el.dataset.holoForm) === current.scene?.index)));
@@ -1032,6 +1387,7 @@
         }
         function resetLayout() {
             state.arrangement = 'companion'; state.motion = 'on';
+            if (state.cards === 'hidden') { state.cards = 'shown'; restoreChat(); }
             persist(); updateLayout(); refreshPanel();
         }
         function close() {
@@ -1055,6 +1411,7 @@
                     if (button.dataset.holoSource) void setSource(button.dataset.holoSource, event.isTrusted);
                     if (button.dataset.holoArrangement) setArrangement(button.dataset.holoArrangement);
                     if (button.dataset.holoMotion) setMotion(button.dataset.holoMotion);
+                    if (button.dataset.holoCards) setCards(button.dataset.holoCards, event.isTrusted);
                     if (button.hasAttribute('data-holo-reset-layout')) resetLayout();
                     if (button.dataset.holoForm !== undefined) {
                         const index = Number(button.dataset.holoForm), scenes = win.fridayVibe?.getStructures?.() || [];
@@ -1083,7 +1440,7 @@
                 <aside class="fr-holo-controls"><section><h3>Workspace depth</h3><div class="fr-holo-segment">${MODES.map(mode => `<button data-holo-mode="${mode}" aria-pressed="false">${upper(mode)}</button>`).join('')}</div><p>Depth changes the light and layers around your work. Text and controls stay steady.</p></section>
                 <section><h3>Motion source</h3><div class="fr-holo-sources"><button data-holo-source="off">Off</button><button data-holo-source="preview">Pointer preview</button><button data-holo-source="camera">Enable head tracking</button></div><p>Pointer preview uses no camera. Head tracking requests camera access through Friday’s original tracker.</p><div class="fr-holo-status" role="status" data-holo-status></div><p data-holo-reduced hidden>Reduced motion is on. Moving workspace decorations remain still.</p></section>
                 <section><h3>Head tracking comfort</h3><p>These controls change the avatar’s response. Workspace depth above changes only the surrounding layers.</p><div class="fr-holo-tracking">${TRACKING_DIALS.map(dial => `<label><span>${dial.label}<output data-holo-tracking-value="${dial.key}"></output></span><input type="range" data-holo-tracking="${dial.key}" aria-label="${dial.label}" min="${dial.min}" max="${dial.max}" step="${dial.step}"><small>${dial.help}</small></label>`).join('')}</div><p>Sit at your usual distance, then set the starting point for leaning in and out. Distance calibration stays with this camera in this browser.</p><button data-holo-calibrate>Calibrate distance</button><p data-holo-calibration-status></p><p role="status" data-holo-tracking-status></p></section>
-                <section><h3>Friday’s place in your work</h3><div class="fr-holo-arrangements">${[['companion','Companion','A place beside the work'],['present','Present','A generous holographic stage'],['focus','Focus','More room for the workspace']].map(([value, title, description]) => `<button data-holo-arrangement="${value}" aria-pressed="false"><strong>${title}</strong><small>${description}</small></button>`).join('')}</div><p>Applies to desktop workspaces. Your floating window sizes are kept for Restore.</p></section>
+                <section><h3>Friday’s place in your work</h3><div class="fr-holo-arrangements">${[['companion','Companion','A place beside the work'],['present','Present','A generous holographic stage'],['focus','Focus','More room for the workspace']].map(([value, title, description]) => `<button data-holo-arrangement="${value}" aria-pressed="false"><strong>${title}</strong><small>${description}</small></button>`).join('')}</div><p>Applies to desktop workspaces. Your floating window sizes are kept for Restore.</p>${simpleStyle() ? '<h3 class="fr-holo-subhead">Cards</h3><div class="fr-holo-arrangements fr-holo-cards">' + [['shown','Cards shown','Home’s cards beside Friday'],['hidden','Cards hidden','Friday on one half, the chat on the other']].map(([value, title, description]) => `<button data-holo-cards="${value}" aria-pressed="false"><strong>${title}</strong><small>${description}</small></button>`).join('') + '</div><p>Closing the cards opens the chat beside Friday. Showing them returns the chat to its size.</p>' : ''}</section>
                 <section><h3>Arrangement motion</h3><div class="fr-holo-segment"><button data-holo-motion="on" aria-pressed="false">Gentle</button><button data-holo-motion="off" aria-pressed="false">Off</button></div><p>Friday and the workspace move together. Motion pauses while you type, drag or target a control by hand. Camera tracking has its own controls above.</p><button data-holo-reset-layout>Reset layout</button><p role="status" data-holo-preference-status></p></section>${!win.__FRIDAY_STANDALONE__ && win.__FRIDAY_CHROME__ !== 'chat' ? '<section class="fr-holo-advanced"><button data-holo-details>More scene settings ↗</button><p>Evolution, hand tracking, timelapse and the original scene controls.</p></section>' : ''}</aside></div>`;
             state.open = true; doc.body.dataset.fridayHoloStudio = 'true';
             dialog.showModal(); refreshPanel(); dialog.querySelector('[data-holo-close]')?.focus();
@@ -1126,6 +1483,10 @@
             destroyed = true; selectSerial++; clearPreview(); void session?.release();
             restoreCaption();
             win.clearInterval(timer); observer?.disconnect(); chromeObserver?.disconnect(); win.cancelAnimationFrame(chromeFrame); win.cancelAnimationFrame(layoutFrame); depth?.destroy(); dialog?.remove();
+            regionObserver?.disconnect(); regionBody?.disconnect(); observedPieces.clear(); win.cancelAnimationFrame(regionFrame); win.cancelAnimationFrame(regionTicking);
+            for (const name of ['transitionrun','transitionend','animationstart','animationend']) doc.removeEventListener(name,onPieceMotion,true);
+            for (const name of ['friday:snapped','friday:fwin-max','friday:chat-tray']) win.removeEventListener(name, scheduleRegion);
+            cardsButton?.remove(); cardsButton = null; delete doc.body.dataset.fridayCards;
             surfaces.forEach((entry,element) => clearSurface(element,entry)); surfaces.clear(); interactionHolds.clear();
             for (const name of ['pointerdown','pointerup','pointercancel','lostpointercapture','mousedown','mouseup','keydown','input','compositionstart','compositionend']) doc.removeEventListener(name,onDirectInput,true);
             win.removeEventListener('blur',onDirectInput);
@@ -1149,12 +1510,16 @@
         }
         function start() {
             if (destroyed || timer !== null) return;
-            if(win.ResizeObserver)chromeObserver=new win.ResizeObserver(updateLayout);
+            if(win.ResizeObserver){chromeObserver=new win.ResizeObserver(updateLayout);regionObserver=new win.ResizeObserver(scheduleRegion);}
             ensureDepth(); cameraSession(); calibration.sync(); updateLayout();
             timer = win.setInterval(poll, 40);
             observer = new win.MutationObserver(updateLayout); observer.observe(doc.getElementById('ui-root') || doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
             doc.addEventListener('pointermove', onPointer, { passive: true }); doc.addEventListener('pointerleave', leavePointer); doc.addEventListener('visibilitychange', onVisibility);
             doc.addEventListener('transitionrun',onChromeTransition,true); doc.addEventListener('transitionend',onChromeTransition,true);
+            for (const name of ['transitionrun','transitionend','animationstart','animationend']) doc.addEventListener(name,onPieceMotion,true);
+            // Panels the page mounts on the body, outside the app root.
+            regionBody = new win.MutationObserver(scheduleRegion); regionBody.observe(doc.body, { childList: true });
+            for (const name of ['friday:snapped','friday:fwin-max','friday:chat-tray']) win.addEventListener(name, scheduleRegion);
             for (const name of ['pointerdown','pointerup','pointercancel','lostpointercapture','mousedown','mouseup','keydown','input','compositionstart','compositionend']) doc.addEventListener(name,onDirectInput,true);
             win.addEventListener('blur',onDirectInput);
             win.addEventListener('resize', updateLayout); win.addEventListener('friday:surface-changed', updateLayout); win.addEventListener('friday:chat-dock', updateLayout); win.addEventListener('friday:display-style', onDisplayStyle); win.addEventListener('pagehide', destroy); reduced.addEventListener?.('change', refreshReduced);
@@ -1165,7 +1530,7 @@
         // settings filtering can then resolve a restored binding immediately,
         // even if the existing camera was live before this module loaded.
         win.queueMicrotask?.(() => { if (!destroyed) calibration.sync(); });
-        return { open, close, setMode, setArrangement, setMotion, resetLayout, holdLayout, registerSurface, updateSurface, cameraCalibration:calibration,
+        return { open, close, setMode, setArrangement, setMotion, setCards, resetLayout, holdLayout, registerSurface, updateSurface, cameraCalibration:calibration,
             workspaceArea, fitSceneCamera, projectSceneStage, updateAmbientStage,
             constrainRect: rect => constrainSpatialRect(rect, occupancy.stage ? occupancy.content : null),
             getOverlayRect(rect, padding = 8) {
@@ -1175,11 +1540,23 @@
                 return constrainSpatialRect(rect,{x:area.x+pad,y:area.y+pad,w:area.w-pad*2,h:area.h-pad*2});
             },
             destroy, get stageRect() { return occupancy.stage ? { ...occupancy.stage } : null; },
+            // What the avatar is drawn into right now, and where it is heading.
+            // Simple reports its stage; Classic its visible region, the scale it
+            // fits at, and where the focal point lands on screen.
+            get avatarFrame() {
+                const copy = rect => rect ? { x: rect.x, y: rect.y, w: rect.w, h: rect.h } : null;
+                return classicApplies()
+                    ? { mode: 'classic', shown: copy(regionSpring.current), target: copy(regionSpring.target), moving: regionSpring.active,
+                        region: classicState.region ? { ...classicState.region } : null, applied: classicState.applied.slice(),
+                        scale: classicState.scale, focus: classicState.focus ? { ...classicState.focus } : null }
+                    : { mode: occupancy.stage ? 'simple' : 'none', shown: copy(shownStage), target: copy(occupancy.stage), moving: stageSpring.active };
+            },
             get layoutRect() { return copyLayout(occupancy); },
             get state() { return { ...state, moving:layoutMotion.active, layoutHeld:interactionHeld(), performanceFallback:win.performance.now()<layoutMotion.fallbackUntil,
                 ownsTracking: !!session?.owns, spatial: copyLayout(occupancy), projectedAvatarBounds: projectedBounds ? {...projectedBounds} : null }; } };
     }
     return { trackingSession, trackingTuner, cameraCalibration, TRACKING_DIALS, setStageScenery, prepareStageField, prepareStagePoints, scaleStagePoints,
+        visibleRegion, regionFit, offsetProjection, createRectSpring, FRAME_OMEGA, FRAME_OMEGA_REDUCED,
         spatialLayout, separatingSides, canAnimateLayout, interpolateLayout, createLayoutMotion, LAYOUT_MS,
         stageProjection, projectedSphere, projectedPieces, stageFill, ambientStageUniforms, constrainSpatialRect, fitRadialDistance, mount };
 });

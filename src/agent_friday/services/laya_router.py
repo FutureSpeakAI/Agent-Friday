@@ -219,6 +219,11 @@ def _pace_args(text: str, m=None) -> dict:
     return {"action": "set", "scope": "session", "depth": "detailed"}
 
 
+def _cards_args(text: str, m=None) -> dict:
+    hide = m is not None and m.groupdict().get("hide")
+    return {"cards": "hide" if hide else "show"}
+
+
 def _task_args(text: str, m=None) -> dict:
     q = _clean_query(m.group("q")) if m is not None and m.groupdict().get("q") else ""
     return {"op": "stop", "target": q}
@@ -242,6 +247,8 @@ TOOLS: Dict[str, Tuple[str, Callable, Optional[str]]] = {
     "podcast_play": ("on it", _player_args, None),
     "media_play": ("starting that", _media_args, None),
     "voice_preferences": ("adjusting how I talk", _pace_args, None),
+    # Simple's Home cards, through the chat-tray tool ("hide the cards").
+    "set_chat_tray": ("changing the screen", _cards_args, None),
     "task_control": ("stopping that", _task_args, None),
     "undo_action": ("undoing that", _no_args, None),
     "answer_card": ("recording your answer", _no_args, None),
@@ -409,6 +416,11 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
      _POLITE + r"(?:(?:speak|talk|go)\s+(?:a (?:bit|little)\s+)?(?:slower|more slowly|faster|quicker|slow down|speed up)|"
      r"slow down|speed up|(?:keep it|be)\s+(?:short|brief|briefer|concise)|"
      r"(?:give me\s+)?(?:shorter|longer|more detailed) answers|more detail)" + _END),
+    ("set_chat_tray",
+     _POLITE + r"(?:(?P<hide>hide|close|collapse|tuck away|get rid of)|(?P<show>show(?: me)?|bring up|bring back|open|reopen|unhide))"
+     r"\s+(?:all\s+)?(?:of\s+)?(?:the\s+|my\s+)?(?:dynamic\s+)?cards?(?:\s+(?:again|back|for now|away))?" + _END),
+    ("set_chat_tray",
+     _POLITE + r"bring\s+(?:the\s+|my\s+)?cards?\s+back" + _END),
     ("media_play", _POLITE + r"play\s+(?:me\s+)?(?:some\s+|the\s+|my\s+)?" + _Q + _END),
     ("navigate_to",
      _POLITE + r"(?:open|show(?: me)?|go to|switch to|bring up|take me to|pull up)\s+(?:up\s+)?(?:my\s+|the\s+)?"

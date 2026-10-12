@@ -424,7 +424,18 @@ window.__holo = {
   frame() { return window.__fridayRenderer.info.render.frame; },
   plain() {
     const cam = fridayDebugScene().camera;
-    return Array.from(new THREE.PerspectiveCamera(cam.fov, cam.aspect, cam.near, cam.far).projectionMatrix.elements);
+    const q = Array.from(new THREE.PerspectiveCamera(cam.fov, cam.aspect, cam.near, cam.far).projectionMatrix.elements);
+    // Classic then centres the avatar in the part of the desktop nothing covers (here: below the top bar), by the
+    // same projection offset the render loop applies after the window. With no head, that is the only difference.
+    const frame = FridayHolographicWorkspace.avatarFrame, r = frame && frame.shown;
+    if (!r) return q;
+    const W = innerWidth, H = innerHeight, fit = Math.min(r.w / W, r.h / H);
+    const s = Math.max(.6, Math.min(1, fit / .75)), dx = r.x + r.w / 2 - W / 2, dy = r.y + r.h / 2 - H / 2;
+    for (const i of [0, 4, 8, 12]) {
+      q[i] = q[i] * s + (2 * dx / W) * q[i + 3];
+      q[i + 1] = q[i + 1] * s - (2 * dy / H) * q[i + 3];
+    }
+    return q;
   },
   structures() { return window.fridayVibe.getStructures().map(s => s.id); },
   show(i) { window.fridayVibe.setStructure(i); },
