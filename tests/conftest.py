@@ -502,6 +502,26 @@ def _fresh_local_queue():
     _reset_local_queue()
 
 
+def _forget_the_current_turn() -> None:
+    """No turn is running. turn_plan names the running turn in a ContextVar,
+    and every test runs on pytest's main thread in one context: a chat turn a
+    test drove in-process (a route through the Flask test client, a reflex
+    turn) stays named in the next test, which then tags its rows with that
+    turn id and shares its call-verifier repeat cache."""
+    tp = sys.modules.get("agent_friday.services.turn_plan")
+    if tp is not None:
+        tp._current.set(None)
+        tp._current_version.set(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_turn_outlives_its_test():
+    """Each test starts outside any turn and leaves none named behind."""
+    _forget_the_current_turn()
+    yield
+    _forget_the_current_turn()
+
+
 def _forget_live_duplicates() -> None:
     """Empty the Live surface's duplicate-call window. It is keyed by
     conversation, tool and arguments for a few seconds, so a test that repeats
