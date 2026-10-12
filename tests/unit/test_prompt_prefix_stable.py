@@ -84,6 +84,6 @@ def test_every_per_message_section_is_below_the_marker(per_message):
                     "== PROJECT CONTEXT FILES", "== RECENT MEMORIES",
                     "== WIKI/BRIEFING DATA", "== SCREEN VISION"):
         assert heading not in head, "%s sits above the cache boundary" % heading
-    # Today's context is the same for every turn of the day: it stays above.
-    if "== TODAY'S CONTEXT ==" in p:
-        assert "== TODAY'S CONTEXT ==" in head
+    # Today's context changes daily and is sliceable on an opted-in cloud
+    # turn, so it opens the tail like the rest.
+    assert "== TODAY'S CONTEXT ==" not in head

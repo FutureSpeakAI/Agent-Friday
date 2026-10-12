@@ -4008,6 +4008,17 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     if _tools_text:
         add(_tools_text, _T1)
 
+    # The head ends here: the persona and the generated tool text are the
+    # same for every turn of every day. Today's context changes daily (a
+    # briefing lands, a countdown ticks over) and names the owner's people,
+    # so it opens the volatile tail: one changed byte in the head would
+    # re-read everything below it, and only the tail is where an opted-in
+    # cloud turn's slicer (services/slice_head) may hold a section back.
+    # What the owner's screen shows right now is not here either: it changes
+    # between turns, so the chat routes append it to the volatile tail
+    # (services/screen_stage.chat_tail).
+    _phase[0] = "volatile"
+
     # Layer 0: Always-on daily context (briefing headlines, career pipeline,
     # countdowns, trust circle, personality). The chat endpoint should never
     # answer cold — Friday is a personal agent, not a generic chatbot.
@@ -4023,12 +4034,6 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
             sources_consulted.append('daily_context')
     except Exception as _e:
         add(f"\n== TODAY'S CONTEXT ==\n(load failed: {_e})", _T1)
-
-    # Today's context is the same for every turn of the day; the workspace
-    # is the same for every turn of the conversation. Both stay in the head.
-    # What the owner's screen shows right now is not here: it changes between turns, so
-    # the chat routes append it to the volatile tail (services/screen_stage.chat_tail).
-    _phase[0] = "volatile"
 
     # Layer 2: Vault data (personality always included). Friday's own state is
     # not personal data about the user, so it stays public.

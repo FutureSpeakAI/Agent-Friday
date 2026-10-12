@@ -59,6 +59,18 @@ _log = logging.getLogger(__name__)
 #: ``services/clock.clock_context_block``.
 VOLATILE_MARKER = "== AUTHORITATIVE CLOCK =="
 
+
+def split_head_tail(prompt):
+    """(head, tail) of an assembled prompt, cut at ``VOLATILE_MARKER``.
+
+    The head is the same bytes on every turn; the tail is what this turn
+    chose. A prompt with no header (or one that opens with it) is all head.
+    """
+    prompt = prompt or ""
+    cut = prompt.find(VOLATILE_MARKER)
+    return (prompt[:cut], prompt[cut:]) if cut > 0 else (prompt, "")
+
+
 _EPHEMERAL = {"type": "ephemeral"}
 
 #: Anthropic will not cache a prefix shorter than this, per model. A breakpoint

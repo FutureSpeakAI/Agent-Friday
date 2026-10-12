@@ -150,7 +150,9 @@ def _prompt(monkeypatch, tmp_path, slicer=None, provider="cloud"):
     import agent_friday.services.voice_engine as ve
     monkeypatch.setattr(ve, "_load_live_context", lambda: "zz-today-echo")
     import agent_friday.services.clock as clock
-    monkeypatch.setattr(clock, "clock_context_block", lambda: "\n== CLOCK ==\n2026-01-01 00:00\n")
+    # The real clock header: it is prompt_cache.VOLATILE_MARKER, where the head ends.
+    monkeypatch.setattr(clock, "clock_context_block",
+                        lambda: "\n== AUTHORITATIVE CLOCK ==\n2026-01-01 00:00\n")
     from agent_friday.services import capability_state
     monkeypatch.setattr(capability_state, "describe_for_model", lambda: "")
     kw = {"slicer": slicer} if slicer is not None else {}
@@ -232,7 +234,7 @@ def test_the_floor_is_byte_present_and_the_head_and_policy_are_untouched(home, m
     assert mr.FRIDAY_SYSTEM_PROMPT in sliced
     assert split_head_tail(sliced)[0] == split_head_tail(full)[0]
     # Sections the head does not name (honesty rules, the clock) are never sliced.
-    assert "== CLOCK ==" in sliced
+    assert "== AUTHORITATIVE CLOCK ==" in sliced
     assert ("== HONESTY ==" in sliced) == ("== HONESTY ==" in full)
     sealed = seal_system_prompt(sliced)
     assert sealed.endswith(ACTION_PERMISSION_POLICY)
