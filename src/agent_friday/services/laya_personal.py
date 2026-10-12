@@ -1858,7 +1858,7 @@ def _purge_matching(profile: str, pats, rebuild_after: bool = True) -> int:
     _drop_artifacts_containing(profile, st, ids)
     _save_state(profile, st)
     refresh(profile)
-    scrub_memory()
+    scrub_memory(pats)                                    # only what names the person: other held turns stay
     if rebuild_after and learning_state(profile)["on"]:
         rebuild(profile, "forgot a person")
     return n

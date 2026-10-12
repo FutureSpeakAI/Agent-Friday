@@ -19171,7 +19171,7 @@ function SettingsTabPrivacy({s,save}){
       <StToggle label="Read documents while on battery" value={!!s.library_index_on_battery} onChange={()=>save({library_index_on_battery:!s.library_index_on_battery})} desc="Off, new and changed documents wait until the PC is plugged in."/>
       <StToggle label="Let the knowledge graph learn from Library documents" value={s.library_kg_learn==='on'} onChange={()=>save({library_kg_learn:s.library_kg_learn==='on'?'off':'on'})} desc="On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted. Forgetting a document removes what the graph learned only from it and clears the descriptions it contributed to; turning this off takes back everything learned from your documents."/>
     </StSection>
-    <StSection title="Meeting recordings" desc="How long Friday keeps what she records in Meetings. Nothing is chosen for you; until you choose, nothing is deleted on a timer. Deleting audio never touches the transcript or notes.">
+    <StSection title="Meeting recordings" desc={("How long " + fridayName() + " keeps what she records in Meetings. Nothing is chosen for you; until you choose, nothing is deleted on a timer. Deleting audio never touches the transcript or notes.")}>
       <StRow label="Audio" settingKey="meeting_audio_retention">
         <StSelect ariaLabel="How long to keep meeting audio" value={s.meeting_audio_retention||''} onChange={e=>save({meeting_audio_retention:e.target.value})}>
           <option value="" disabled>Choose…</option>
