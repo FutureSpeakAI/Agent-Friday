@@ -138,3 +138,9 @@ def test_a_remote_caller_gets_none_of_it(client):
                          ("get", "/api/meetings/archive"), ("post", "/api/meetings/%s/calendar" % A["id"])):
         r = getattr(client, method)(path, environ_overrides={"REMOTE_ADDR": "203.0.113.9"})
         assert r.status_code == 403, path
+
+
+def test_choosing_the_archive_on_a_plain_index_is_refused_in_plain_words(client, monkeypatch):
+    monkeypatch.setattr(ma, "set_choice", lambda c, **k: {"choice": "", "refused": ma.NOT_ENCRYPTED})
+    r = client.post("/api/meetings/archive", json={"choice": "on"})
+    assert r.status_code == 409 and r.get_json()["error"] == "Not available on this PC: the Library index isn't encrypted."

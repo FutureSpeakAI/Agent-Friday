@@ -125,6 +125,19 @@ def _has_library() -> bool:
         return False
 
 
+NOT_ENCRYPTED = "Not available on this PC: the Library index isn't encrypted."
+
+
+def unavailable(store=None) -> str:
+    """Why meetings cannot be indexed here, or "". A meeting's transcript is encrypted in its own store, so
+    the archive must not copy it into an index that is a plain file: it is allowed only when the Library
+    index is actually encrypted (sqlcipher present and keyed)."""
+    try:
+        return "" if bool(getattr(_store(store), "encrypted", False)) else NOT_ENCRYPTED
+    except Exception:  # noqa: BLE001 - an index that cannot be opened is not an encrypted one
+        return NOT_ENCRYPTED
+
+
 def _index_one(store, mid: str, part: str, title: str, blocks: list, force: bool = False) -> str:
     from agent_friday.services.library import structure, vectors, withhold
     from agent_friday.services.library.store import INDEX_VERSION
@@ -176,6 +189,9 @@ def index_meeting(m: dict, *, store=None, force: bool = False) -> dict:
     yes, and never while the meeting is still being recorded or transcribed."""
     if choice() != "on":
         return {"indexed": 0, "skipped": "not chosen"}
+    why = unavailable(store)
+    if why:
+        return {"indexed": 0, "skipped": why}
     if m.get("state") in ("recording", "transcribing"):
         return {"indexed": 0, "skipped": "still being recorded"}
     mid = str(m.get("id") or "")
@@ -263,6 +279,10 @@ def set_choice(value: str, *, store=None) -> dict:
     if value not in CHOICES:
         raise ValueError("unknown archive choice")
     from agent_friday.core import _save_settings
+    if value == "on":
+        why = unavailable(store)
+        if why:
+            return status(store=store) | {"refused": why}
     _save_settings({"meeting_archive": value})
     if value == "off":
         remove_all(store=store)
@@ -272,13 +292,12 @@ def set_choice(value: str, *, store=None) -> dict:
 def status(*, store=None) -> dict:
     n, encrypted = 0, None
     try:
-        if store is None and not _has_library():
-            raise LookupError("no Library index yet")
         st = _store(store)
         n = st.one("SELECT count(*) n FROM documents WHERE scope=? AND state='indexed'", (SCOPE,))["n"]
         encrypted = bool(getattr(st, "encrypted", False))
     except Exception:  # noqa: BLE001 - a Library that cannot be opened has no documents to count
         pass
     return {"choice": choice(), "documents": n, "scope": SCOPE, "index_encrypted": encrypted,
+            "available": encrypted is True, "unavailable_reason": "" if encrypted is True else NOT_ENCRYPTED,
             "options": [{"value": "on", "label": "Make my meetings searchable", "recommended": True},
                         {"value": "off", "label": "Not now", "recommended": False}]}

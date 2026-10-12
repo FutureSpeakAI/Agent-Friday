@@ -208,6 +208,10 @@ INTERNAL_TOOLS = frozenset({
     # or moves the owner's own screen (library_show). Adding, removing and
     # forgetting are file_access cards, decided on screen.
     "search_library", "library_status", "library_show",
+    # Recorded meetings (services/meeting_tool): finds a meeting, runs the local notes model, raises memory
+    # proposals that wait for the owner's yes, adds a bullet to the owner's own pad. Nothing leaves this PC,
+    # and it never starts a recording.
+    "meeting",
     # The one 3D file browser by voice: moves the owner's own screen only.
     "show_files_3d",
     # "Add my Obsidian vault": opens the owner's own folder window and speaks what

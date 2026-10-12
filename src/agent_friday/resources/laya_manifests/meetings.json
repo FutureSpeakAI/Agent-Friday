@@ -24,17 +24,14 @@
    "see_touch": {
     "publisher": "static/meetings_ws.js (rows marked by fridayRow; static/workspace_stages.js domList)",
     "facets": [
-     "audio",
-     "notes",
-     "state",
-     "when"
+     "kind"
     ],
     "filters": {},
     "fields": [
      "pad"
     ],
     "selectable": true,
-    "privacy": "titles"
+    "privacy": "counts_only"
    },
    "open": {
     "tool": "navigate_to",
@@ -315,6 +312,93 @@
    },
    "quiet_result": null,
    "eval": []
+  },
+  {
+   "id": "meetings.jot_note",
+   "action": "meetings.jot_note",
+   "group": "create",
+   "ui": {
+    "control": "jot a bullet in the notes pad"
+   },
+   "tool": "meeting",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 2,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "jot down that Priya owns the budget"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_the_meeting_tool_is_on_demand_internal_and_local"
+   ]
+  },
+  {
+   "id": "meetings.expand_notes",
+   "action": "meetings.expand_notes",
+   "group": "create",
+   "ui": {
+    "control": "write notes again / expand the bullets into notes"
+   },
+   "tool": "meeting",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 2,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "turn my bullets from that call into notes"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_the_meeting_tool_is_on_demand_internal_and_local"
+   ]
+  },
+  {
+   "id": "meetings.remember",
+   "action": "meetings.remember",
+   "group": "create",
+   "ui": {
+    "control": "propose people, decisions and projects to memory"
+   },
+   "tool": "meeting",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 2,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "suggest what to remember from that meeting"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_the_meeting_tool_is_on_demand_internal_and_local"
+   ]
   }
  ],
  "not_for_laya": [
@@ -332,24 +416,6 @@
    "action": "meetings.archive_choice",
    "kind": "by_design",
    "reason": "Whether meetings are searchable from the Library is a privacy choice only the owner makes on screen."
-  },
-  {
-   "action": "meetings.jot_note",
-   "kind": "gap",
-   "reason": "No tool writes into the notes pad; the owner types it, and live help in a call is MT-3.",
-   "wave": "MT-3"
-  },
-  {
-   "action": "meetings.expand_notes",
-   "kind": "gap",
-   "reason": "No tool turns the bullets into notes or writes them again; the button is the only door for now.",
-   "wave": "MT-3"
-  },
-  {
-   "action": "meetings.remember",
-   "kind": "gap",
-   "reason": "No tool proposes a meeting's people and decisions to memory; the button raises them for review.",
-   "wave": "MT-3"
   }
  ],
  "resolver_sources": [],

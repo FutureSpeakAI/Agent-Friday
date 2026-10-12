@@ -309,6 +309,8 @@ def meetings_archive():
         out = ma.set_choice(d.get("choice"))
     except (ValueError, TypeError):
         return jsonify(_BAD[0]), _BAD[1]
+    if out.get("refused"):
+        return jsonify({"status": "error", "code": "not_available", "error": out["refused"]}), 409
     if out["choice"] == "on":
         # reading each finished meeting into the Library takes a while: off the request's thread
         manager = mc.get_manager()

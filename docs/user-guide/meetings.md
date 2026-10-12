@@ -137,8 +137,10 @@ ask the same by voice. Saying no indexes nothing, and **Stop making them
 searchable** removes what was indexed. Deleting a meeting removes its Library
 documents in the same step, and so does a retention choice that deletes it.
 
-The Library's index is encrypted when its optional encryption component is
-installed and a plain file on this PC when it is not; the box says which. Meeting
+Meetings are encrypted in their own store, so they are read into the Library
+only when the Library's index is encrypted too (its optional encryption
+component installed and keyed). Otherwise the box says "Not available on this
+PC: the Library index isn't encrypted", and nothing is indexed. Meeting
 text in the Library is never offered to a cloud model, even with cloud answers
 for the Library switched on and a file permission in place. The setting is
 `meeting_archive`; see [Configuration](configuration.md).
@@ -151,14 +153,18 @@ for the Library switched on and a file permission in place. The setting is
   that meeting in the workspace. "Open the second one" means the second in the
   list on screen.
 - "Select these" and "tick the first two" tick meetings in the list, which only
-  shows them.
+  shows them. Friday sees meeting rows as a count and a position, never a title,
+  whoever is listening.
 - "Add those action items to my tasks", "draft a thank-you to everyone from that
   meeting" and "put the summary on the calendar event" go through the same
   tools, cards and approvals as everywhere else.
 - "Start recording" opens the start card. You press start and confirm.
 
-Turning bullets into notes, suggesting what to remember and deleting a meeting
-are buttons for now.
+Turning bullets into notes, suggesting what to remember and jotting a bullet
+are also one on-demand `meeting` tool: ask Friday ("turn my bullets from that
+call into notes") and she loads it. It stays on this PC, never starts a
+recording, and tells a cloud model counts, not titles. Deleting a meeting is a
+button.
 
 ## Keeping and deleting
 
@@ -210,8 +216,6 @@ records only a count of what was deleted.
 - Write notes without a local model. Notes and the expansion of your bullets
   need one running; without it they are skipped with the reason, and **Write
   notes again** is on the meeting.
-- Take Friday's voice for the buttons that change things. Turning bullets into
-  notes, suggesting what to remember and deleting a meeting are on screen.
 
 ## What it never does
 

@@ -1248,6 +1248,7 @@ _TOOL_NARRATION = {
     "search_files": "Looking for that file",
     "write_file": "Writing that file",
     "annotate_calendar_events": "Updating your calendar entries",
+    "meeting": "Looking at your meetings",
     "query_trust_graph": "Checking what I know about them",
     "open_url": "Opening that in your browser",
     "run_command": "Running that command",

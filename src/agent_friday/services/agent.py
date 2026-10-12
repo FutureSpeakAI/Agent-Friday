@@ -11157,6 +11157,13 @@ try:
 except Exception as _lbe:  # never let optional deps break the agent import
     print(f"  [LIBRARY] registration skipped: {_lbe}")
 
+# The meeting tool (find, expand_notes, remember, jot): on demand, local, reviewable. See services/meeting_tool.py.
+try:
+    from agent_friday.services import meeting_tool as _meeting_tool
+    _meeting_tool.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _mte:  # never let optional deps break the agent import
+    print(f"  [MEETINGS] registration skipped: {_mte}")
+
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
 # hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.
@@ -15979,6 +15986,7 @@ ON_DEMAND_TOOLS = (
     "search_library",        # the Library: labelled passages from the owner's documents
     "library_status",
     "library_show",
+    "meeting",               # recorded meetings: find, expand the notes pad, offer what to remember, jot a bullet
     "show_files_3d",         # the one 3D file browser: a lens and a lit search, on screen
     "add_knowledge",         # "add my Obsidian vault": the folder window and what to offer; a card adds
     "notifications",         # the tray: read, clear, mute

@@ -12186,8 +12186,8 @@ function CalendarWS(){
 // Nothing here starts a recording by itself: only the start card's own button
 // does, and it sends the owner's confirmation with it.
 function meetingsChanged(){try{window.dispatchEvent(new Event('friday-meetings'));}catch(_){}}
-// What a meeting row may say to the stage: its state, whether it has notes and kept audio, and when. Never a word of what was said.
-function meetingFacets(m){return {state:m.state==='recording'?'recording':'done',notes:m.summary_status||'pending',audio:!!m.keep_audio,when:fridayWhen(m.started_at)};}
+// A meeting row is counts-only on the stage: a kind and a position, never a title.
+function meetingFacets(m){return {kind:'meeting'};}
 function meetingClock(s){s=Math.max(0,Math.floor(s||0));const h=Math.floor(s/3600),m=Math.floor(s/60)%60,x=s%60;return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');}
 function useMeetingStatus(ms){
   const [st,setSt]=useState(null);

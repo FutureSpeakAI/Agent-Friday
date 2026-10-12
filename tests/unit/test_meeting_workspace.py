@@ -416,6 +416,8 @@ def lib(tmp_path, monkeypatch):
     state = {"choice": "on"}
     monkeypatch.setattr(ma, "_settings", lambda: {"meeting_archive": state["choice"]})
     monkeypatch.setattr(mc, "_root", lambda: tmp_path / "fh" / "meetings")
+    # the test environment may have no sqlcipher: stand in for an encrypted, keyed index (the other branch is tested below)
+    lstore.store_for("owner").encrypted = True
     yield state
     release_library(fg, lstore)
 
@@ -589,7 +591,7 @@ def _stage(n=3):
     ids = [A["id"], FIX[1]["id"], FIX[2]["id"], FIX[3]["id"]][:n]
     return ss.bound_stage({"workspace": "meetings", "rev": 1, "items": [
         {"ref": "meeting:" + i, "n": k + 1, "title": "Meeting %d" % (k + 1),
-         "facets": {"state": "done", "notes": "done", "audio": False, "when": "past", "transcript": "never published"}}
+         "facets": {"kind": "meeting", "state": "done", "transcript": "never published"}}
         for k, i in enumerate(ids)]}, now=time.time()), ids
 
 
@@ -598,7 +600,7 @@ def test_a_meeting_row_opens_by_pointing():
     st, ids = _stage()
     r = pa.plan("open the second one", stage=st, pointed=None, now=time.time())
     assert (r.decision, r.tool, r.args) == ("tool", "navigate_to", {"kind": "meeting", "id": ids[1]})
-    assert all(set(it["facets"]) <= {"state", "notes", "audio", "when"} for it in st["items"]), "only the allowed facets reach Friday"
+    assert all(it["facets"] == {"kind": "meeting"} and it["title"] == "" for it in st["items"]), "a kind and a position, no title"
 
 
 def test_meeting_rows_can_be_ticked_by_pointing():
@@ -614,7 +616,7 @@ def test_calendar_no_longer_claims_the_word_meetings():
     assert "meetings" not in wr.get("calendar")["aliases"] and "meetings" in wr.ids()
     assert wr.resolve("meetings") == wr.resolve("my meetings") == "meetings"
     assert wr.resolve("calendar") == wr.resolve("schedule") == "calendar"
-    assert "meetings: { prefix: 'meeting:', selectable: true }" in (ROOT / "static" / "workspace_stages.js").read_text(encoding="utf-8")
+    assert "meetings: { prefix: 'meeting:', selectable: true, counts_only: true }" in (ROOT / "static" / "workspace_stages.js").read_text(encoding="utf-8")
 
 
 # ── nothing leaves this PC ──────────────────────────────────────────────────
@@ -649,3 +651,68 @@ def test_the_workspace_flows_send_nothing_anywhere(rig, proposals, lib, monkeypa
     assert attempts == []
     out = mcal.request(record(fx, event_id=""))          # no event: nothing to write, no network
     assert out["status"] in ("nothing", "unlinked")
+
+
+def test_a_stage_summary_for_a_cloud_bound_reader_carries_no_meeting_title():
+    """The stage cannot tell a local reader from a cloud one, so meetings are counts-only for everyone."""
+    from agent_friday.services import screen_stage as ss
+    assert "meetings" in ss.PRIVATE_WORKSPACES
+    st, _ids = _stage()
+    for quiet in (True, False):
+        text = ss.summary(st, quiet=quiet) + ss.on_screen_block(st)
+        assert "meeting" in text.lower()
+        assert "Meeting 1" not in text and "Meeting 2" not in text
+    assert st["selection"]["label"] == ""
+
+
+def test_the_archive_is_offered_only_when_the_library_index_is_encrypted(lib, monkeypatch):
+    from agent_friday import core
+    from agent_friday.services.library.store import store_for
+    st = store_for("owner")
+    saved = []
+    monkeypatch.setattr(core, "_save_settings", lambda d: saved.append(d))
+    # encrypted and keyed: available, and the choice is saved
+    assert ma.status()["available"] is True and ma.unavailable() == ""
+    lib["choice"] = ""
+    assert "refused" not in ma.set_choice("on") and saved == [{"meeting_archive": "on"}]
+    # a plain index: nothing is offered, saved or indexed
+    saved.clear()
+    st.encrypted = False
+    out = ma.status()
+    assert out["available"] is False and out["unavailable_reason"] == ma.NOT_ENCRYPTED
+    assert ma.NOT_ENCRYPTED == "Not available on this PC: the Library index isn't encrypted."
+    lib["choice"] = ""
+    assert ma.set_choice("on")["refused"] == ma.NOT_ENCRYPTED and saved == []
+    lib["choice"] = "on"                       # even if it was chosen before the index lost its encryption
+    assert ma.index_meeting(full())["skipped"] == ma.NOT_ENCRYPTED
+    assert st.one("SELECT count(*) n FROM documents")["n"] == 0
+    st.encrypted = True
+    assert ma.index_meeting(full())["indexed"] == 2
+
+
+def test_the_meeting_tool_is_on_demand_internal_and_local(monkeypatch):
+    from agent_friday.governance import action_gate as ag
+    from agent_friday.services import agent, meeting_tool as mt, voice_engine as ve
+    from agent_friday.services.library import tools as lt
+    assert "meeting" in agent.ON_DEMAND_TOOLS and "meeting" in agent.CLAUDE_TOOL_HANDLERS
+    assert agent.TOOL_RINGS["meeting"] == 2 and ag.classify("meeting", {})[0] == ag.INTERNAL
+    assert '"meeting": [' in (ROOT / "src" / "agent_friday" / "resources" / "tool_groups.json").read_text(encoding="utf-8")
+    assert "meeting" not in {t[0] for t in ve._VOICE_LIVE_TOOLS} | set(ve._VOICE_SHARED_TOOLS), "not on the voice contract"
+    rows = [{"id": A["id"], "title": "Launch planning", "started_at": "2026-10-09T10:00:00", "summary_status": "done", "state": "done"}]
+    monkeypatch.setattr(mw, "recorded", lambda: rows)
+    monkeypatch.setattr(lt, "_loop_is_local", lambda: False)
+    out = json.loads(mt.meeting({"action": "find", "query": "launch"}))
+    assert out == {"matches": 1, "note": out["note"]} and "Launch planning" not in json.dumps(out), "a cloud loop hears counts only"
+    monkeypatch.setattr(lt, "_loop_is_local", lambda: True)
+    assert json.loads(mt.meeting({"action": "find", "query": "last"}))["meetings"][0]["title"] == "Launch planning"
+    calls = []
+    fake = types.SimpleNamespace(status=lambda: {"recording": True, "id": A["id"]},
+                                 pad_add=lambda mid, t: calls.append(("jot", mid, t)) or {"id": 1},
+                                 expand_notes=lambda mid: calls.append(("expand", mid)) or {"status": "done", "lines": [1, 2], "left_out": 1},
+                                 propose_memory=lambda mid: calls.append(("remember", mid)) or {"proposed": 3})
+    monkeypatch.setattr(mt, "_manager", lambda: fake)
+    assert json.loads(mt.meeting({"action": "jot", "text": "budget by Friday"})) == {"added": True, "bullet": 1}
+    assert json.loads(mt.meeting({"action": "expand_notes", "query": "last"}))["lines"] == 2
+    assert json.loads(mt.meeting({"action": "remember", "meeting_id": A["id"]}))["kept"] is False
+    assert [c[0] for c in calls] == ["jot", "expand", "remember"]
+    assert "start" not in mt.ACTIONS and mt.meeting({"action": "start"}).startswith("meeting needs action")

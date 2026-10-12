@@ -22,7 +22,7 @@ Open the workspace first. Friday sees the one on your screen.
 | News | yes | no | yes (category, sort) |
 | Files | yes | yes | no |
 | Calendar | yes | yes | no |
-| Meetings | yes | yes | no |
+| Meetings | counts only | yes | no |
 | Chat conversation list | yes | yes | no |
 | Workflows, People, Career, Trust, Sites, System | yes | no | no |
 | Health, Finance, Family | counts only | no | no |

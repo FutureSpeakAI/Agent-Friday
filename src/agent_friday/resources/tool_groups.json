@@ -318,6 +318,10 @@
   "learn_skill": [
    "workflows"
   ],
+  "meeting": [
+   "calendar",
+   "wiki_knowledge"
+  ],
   "library_show": [
    "wiki_knowledge",
    "files"

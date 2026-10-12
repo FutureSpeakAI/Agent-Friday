@@ -51,9 +51,9 @@ STAGE_FACETS: dict[str, frozenset[str]] = {
     # P7: the workspaces that were open-only. What a row may say about itself is a kind, a state, a day: never a
     # name, an amount, a diagnosis or a date of birth.
     "calendar": frozenset({"kind", "when", "recurring", "all_day", "has_guests"}),
-    # What a meeting row may say about itself: its state, whether notes and kept audio exist, and when. Never
-    # a word of what was said.
-    "meetings": frozenset({"state", "notes", "audio", "when"}),
+    # A meeting row is counts-only (see PRIVATE_WORKSPACES): a title can be sensitive, and the stage cannot tell
+    # a local reader from a cloud one.
+    "meetings": frozenset({"kind"}),
     "workflows": frozenset({"status", "scheduled", "steps"}),
     "contacts": frozenset({"kind", "has_follow_up"}),
     "career": frozenset({"kind", "stage"}),
@@ -68,9 +68,9 @@ STAGE_FACETS: dict[str, frozenset[str]] = {
 
 #: Workspaces whose rows are about the owner's body, money or family. Their rows reach Friday as a kind and a
 #: position only: no title, no name, no figure, whatever the page sends.
-PRIVATE_WORKSPACES = frozenset({"health", "finance", "family"})
+PRIVATE_WORKSPACES = frozenset({"health", "finance", "family", "meetings"})
 #: The kinds a private workspace's row may be; any other word the page sends is dropped.
-PRIVATE_KINDS = frozenset({"medication", "appointment", "vehicle", "position", "perk", "countdown"})
+PRIVATE_KINDS = frozenset({"medication", "appointment", "vehicle", "position", "perk", "countdown", "meeting"})
 
 #: The most rows Friday outlines with a numbered badge at once; the rest are counted ("and N more").
 POINT_CAP = 12
