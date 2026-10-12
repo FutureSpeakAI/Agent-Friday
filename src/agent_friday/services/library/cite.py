@@ -192,27 +192,42 @@ def turn_used_library(tool_trace, conversation_id: str | None = None) -> bool:
     return bool(used_library(tool_trace) or read)
 
 
+def quotes_a_meeting(text) -> bool:
+    """Does this saved reply cite a passage of a meeting's transcript or notes (a footnote [lib:<doc>#<block>] of an
+    archive document)? Such a reply never rides a later cloud turn, whatever the Library cloud setting says."""
+    try:
+        ids = {int(i) for i in re.findall(r"lib:(\d+)#\d+", str(text or ""))}
+        if not ids:
+            return False
+        from agent_friday.services import meeting_archive
+        from agent_friday.services.library.store import store_for
+        st = store_for("owner")
+        return any(meeting_archive.is_archive_doc(st.get_document(i)) for i in ids)
+    except Exception:
+        return False
+
+
 def elide_for_cloud(messages: list, settings: dict | None) -> int:
     """Before history goes to a cloud model, an earlier assistant turn that quoted the
     Library is replaced by a one-line stand-in, unless the owner allows cloud answers
     from the Library. Returns how many turns were replaced. In place, like the PII
     scrub that follows it (a message with block content gets a new list, so shared
     blocks are not touched)."""
-    if (settings or {}).get("library_cloud_answers"):
-        return 0
+    allowed = bool((settings or {}).get("library_cloud_answers"))      # a setting for the owner's files, never for a meeting
     n = 0
     for m in messages:
         if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
         c = m.get("content")
         if isinstance(c, str):
-            if is_library_reply(c):
+            if is_library_reply(c) and (not allowed or quotes_a_meeting(c)):
                 m["content"] = ELIDED
                 n += 1
         elif isinstance(c, list):
             blocks, changed = [], False
             for blk in c:
-                if isinstance(blk, dict) and blk.get("type") == "text" and is_library_reply(blk.get("text")):
+                if (isinstance(blk, dict) and blk.get("type") == "text" and is_library_reply(blk.get("text"))
+                        and (not allowed or quotes_a_meeting(blk.get("text")))):
                     blocks.append(dict(blk, text=ELIDED))
                     changed = True
                     n += 1
