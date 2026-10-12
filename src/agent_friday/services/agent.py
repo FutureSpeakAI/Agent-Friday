@@ -5840,6 +5840,15 @@ def local_queue_run_now(job_id):
         return False
 
 
+def local_queue_pause(job_id, paused=True):
+    """The owner's Pause (or Resume) for one Local AI queue job."""
+    try:
+        sup = _seat_supervisor()
+        return sup.pause(job_id) if paused else sup.resume(job_id)
+    except Exception:
+        return False
+
+
 def local_queue_cancel(job_id):
     """Cancel from the queue. A queued task becomes `cancelled` and never
     starts; a running one stops before its next model call."""

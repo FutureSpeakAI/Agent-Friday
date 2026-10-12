@@ -403,7 +403,7 @@ class SeatSupervisor:
         gives the seat to that job and waits at the head of the line, resuming
         when the queue promotes it again. If nothing behind it could run, it
         keeps the seat, so its prompt prefix stays the seat's cache."""
-        from agent_friday.services.background_gate import JobCancelled, REASON_INTERACTIVE
+        from agent_friday.services.background_gate import JobCancelled, REASON_INTERACTIVE, REASON_PAUSED
         while True:
             yielded_now = False
             with self._lock:
@@ -438,8 +438,9 @@ class SeatSupervisor:
                     # A paused job must not stand in front of the person it is
                     # waiting for: it lends its slot in the turn queue (the 1.1
                     # admission queue) and keeps its seat here, and its prompt
-                    # cache with it.
-                    if reason == REASON_INTERACTIVE:
+                    # cache with it. A job the owner paused holds nobody back
+                    # either: its slot goes back until they resume it.
+                    if reason in (REASON_INTERACTIVE, REASON_PAUSED):
                         lend = getattr(self.queue, "lend_slot", None)
                         if lend is not None:
                             lend(task_id)
@@ -490,6 +491,31 @@ class SeatSupervisor:
         self.pump()
         return True
 
+    def pause(self, task_id: str) -> bool:
+        """The owner's Pause for one job. A queued job is not started until
+        Resume; a running one waits at its next model call (it lets the next
+        job in line have the seat while it waits). Nothing mid-call is cut."""
+        return self._set_paused(task_id, True)
+
+    def resume(self, task_id: str) -> bool:
+        """Undo Pause: the job takes its place in line again."""
+        return self._set_paused(task_id, False)
+
+    def _set_paused(self, task_id: str, paused: bool) -> bool:
+        with self._lock:
+            record = self._records.get(task_id)
+            if record is None or _is_terminal(record.get("status")):
+                return False
+            for rec in (record, self.queue.get(task_id)):
+                if rec is None:
+                    continue
+                if paused:
+                    rec["user_paused"] = True
+                else:
+                    rec.pop("user_paused", None)
+        self.pump()
+        return True
+
     def cancel(self, task_id: str,
                on_cancel: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
         """Cancel a job: a queued one leaves the queue at once; a running one
@@ -532,6 +558,7 @@ class SeatSupervisor:
                    "state": state, "why": why, "seat": rec.get("seat"),
                    "deferrable": bool(rec.get("deferrable")),
                    "run_now": bool(rec.get("run_now")),
+                   "paused_by_you": bool(rec.get("user_paused")),
                    "queued_at": rec.get("queued_at"),
                    "merged": int(rec.get("merged") or 0),
                    # Work a person is waiting on (services/visible_jobs): the

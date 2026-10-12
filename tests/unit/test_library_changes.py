@@ -203,7 +203,7 @@ def test_notes_not_yet_made_by_laya_are_a_reason_for_a_pass_that_reads_no_file(t
 def test_the_idle_sweep_looks_only_while_the_pc_is_idle_and_not_more_than_every_fifteen_minutes(monkeypatch):
     from agent_friday.services.library import runtime
     looked = []
-    monkeypatch.setattr(runtime, "resweep", lambda p=None: looked.append(p) or 0)
+    monkeypatch.setattr(runtime, "resweep", lambda p=None, **kw: looked.append((p, kw.get("settle_s"))) or 0)
     monkeypatch.setattr(runtime, "purge_uncovered", lambda p=None: 0)
     monkeypatch.setattr(runtime.grants, "active_scopes", lambda p: [{"path": "x"}])
     runtime._indexers["owner"] = types.SimpleNamespace(stop=lambda: None)
@@ -211,8 +211,32 @@ def test_the_idle_sweep_looks_only_while_the_pc_is_idle_and_not_more_than_every_
     assert runtime._sweep_once(0.0) == 0.0 and looked == [], "the owner is here"
     monkeypatch.setattr(runtime, "_owner_idle", lambda: True)
     t = runtime._sweep_once(0.0)
-    assert t > 0 and looked == ["owner"]
-    assert runtime._sweep_once(t) == t and looked == ["owner"], "not again within the interval"
+    assert t > 0 and looked == [("owner", runtime.changes.SETTLE_S)], "the idle sweep debounces"
+    assert runtime._sweep_once(t) == t and len(looked) == 1, "not again within the interval"
+
+
+def test_the_idle_sweep_leaves_a_file_still_being_written_for_a_later_sweep(tmp_path, monkeypatch):
+    """Friday writes her own folders in bursts (an episode's audio, captions and notes). A file saved in the
+    last ten minutes is not read yet: it is read once, settled, not once per save."""
+    from agent_friday.services.library import changes, procrun, runtime
+    root, ev = _read_folder(tmp_path, 3)
+    (root / "episode.txt").write_text(_text(40), encoding="utf-8")            # just written
+    (root / "n1.txt").write_text(_text(1, "Saved again a moment ago."), encoding="utf-8")
+    old = time.time() - 2 * changes.SETTLE_S
+    (root / "n2.txt").write_text(_text(2, "Edited an hour ago."), encoding="utf-8")
+    os.utime(root / "n2.txt", (old, old))                                     # settled
+    d = changes.detect(_store(), root, settle_s=changes.SETTLE_S)
+    assert d["new"] == [] and [Path(x).name for x in d["changed"]] == ["n2.txt"] and d["gone"] == []
+    later = time.time() + changes.SETTLE_S + 1
+    d = changes.detect(_store(), root, settle_s=changes.SETTLE_S, now=later)
+    assert [Path(x).name for x in d["new"]] == ["episode.txt"]
+    assert sorted(Path(x).name for x in d["changed"]) == ["n1.txt", "n2.txt"]
+    # Adding a folder, Resume and a direct look still see every file at once.
+    assert [Path(x).name for x in changes.detect(_store(), root)["new"]] == ["episode.txt"]
+    monkeypatch.setattr(procrun, "run_task", lambda *a, **k: pytest.fail("a fresh file was read"))
+    for p in ("episode.txt", "n1.txt", "n2.txt"):
+        os.utime(root / p, None)                                              # all fresh now
+    assert changes.queue("owner", runtime.indexer_for("owner"), ev, _store(), settle_s=changes.SETTLE_S) == 0
 
 
 def test_resweep_stats_instead_of_reading_every_file_again(tmp_path, monkeypatch):

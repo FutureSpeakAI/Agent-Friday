@@ -59,6 +59,7 @@ POLL_S = 0.5
 REASON_INTERACTIVE = "waits for your chat to finish"
 REASON_IDLE = "waits for idle"
 REASON_SEAT = "waits for the local model"
+REASON_PAUSED = "paused by you"
 
 #: An open voice call, as opposed to a voice TURN in progress ("voice"). A
 #: call means the owner is here: deferrable work waits for it to end. Only a
@@ -331,6 +332,9 @@ def block_reason(record: Dict[str, Any]) -> str:
     """
     if not record.get("seat_is_local"):
         return ""
+    if record.get("user_paused"):
+        # The owner's Pause on this job (seat_supervisor.pause): it holds even work they asked for.
+        return REASON_PAUSED
     if record.get("foreground"):
         # Work the person (or a turn of theirs) is waiting on, launched from a
         # workspace button or from a tool inside a chat turn

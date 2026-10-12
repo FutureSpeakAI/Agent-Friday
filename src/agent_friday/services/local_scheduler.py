@@ -461,21 +461,31 @@ def gate(t: _tq.Ticket) -> str:
     why = _gate_core(t)
     if why:
         return why
-    # One background job at a time (1.0.2): another background job holding a
-    # seat, on any model, goes first. (Everything above is about WHEN and on
-    # WHICH model; this is the owner's cap on how much runs at once.)
+    # One background job at a time (1.0.2), per lane: another background job
+    # holding a seat in the same lane goes first. (Everything above is about
+    # WHEN and on WHICH model; this is the owner's cap on how much runs at
+    # once.) CPU work (seat "cpu/...", the Library reading folders) and model
+    # work are separate lanes: neither uses the other's hardware, so a folder
+    # being read never holds a model job back, and a model job never holds a
+    # folder back. The memory floor still guards both.
     if t.cls == "background":
         # (The seat queue asking "could a task start here" is already one job to
         # a seat, so a job on its own seat, which may be about to yield it, is
         # not a reason to wait.)
         probe = t.id == _tq.PROBE_ID
+        lane = _lane(t.seat)
         try:
             if any(r.cls == "background" and r.id != t.id and not (probe and r.seat == t.seat)
-                   for r in _tq.all_running()):
+                   and _lane(r.seat) == lane for r in _tq.all_running()):
                 return "waiting for the background job that is already running"
         except Exception:
             pass
     return ""
+
+
+def _lane(seat: Any) -> str:
+    """"cpu" for work that runs on the processor and loads no model, else "model"."""
+    return "cpu" if str(seat or "").startswith("cpu/") else "model"
 
 
 def _hardware_in_play() -> bool:
@@ -529,6 +539,9 @@ def _gate_core(t: _tq.Ticket) -> str:
         running = _tq.all_running()
     except Exception:
         return ""
+    if not str(t.seat or "").startswith("cpu/"):
+        # CPU work loads no model, so it never decides which model is loaded next.
+        waiting = [w for w in waiting if not str(w.seat or "").startswith("cpu/")]
     interactive = ([w for w in waiting if w.cls in INTERACTIVE]
                    + [r for r in running if r.cls in INTERACTIVE])
     if t.cls == "user_job":

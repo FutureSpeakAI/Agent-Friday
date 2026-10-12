@@ -600,7 +600,22 @@ def stop_after_step(task_id):
         return jsonify({"error": "task is not running", "status": t.get('status')}), 409
     _tj.request_stop(task_id)
     _tj.steer("stop after this step", source="user", task_id=task_id)
+    _stop_waiting_queue_job(task_id, t)
     return jsonify({"ok": True, "task_id": task_id, "stop_requested": True})
+
+
+def _stop_waiting_queue_job(task_id, record) -> bool:
+    """A workspace job (services/visible_jobs) that is waiting for its turn in the Local AI queue, or for
+    idle or memory while it runs, waits inside the queue and reads the queue's own cancel there, not the
+    task card's stop flag. Tell the queue as well, so Stop works in every state. A task with a worker
+    thread of its own reads the stop flag at its next step, as before."""
+    if not (record or {}).get("inline_job"):
+        return False
+    try:
+        from agent_friday.services.agent import local_queue_cancel
+        return bool(local_queue_cancel(task_id))
+    except Exception:
+        return False
 
 
 @tasks_bp.route('/api/tasks/<task_id>/resumable')
@@ -860,13 +875,26 @@ def cancel_process(pid):
                 stopped.append("video sampling")
         except Exception:
             pass
+    elif proc.get("task_id"):
+        # The orb of a task or workspace job (the Library reading a folder, a wiki distill): stop the task
+        # itself, wherever it is waiting. It holds no GPU lease of its own, so the lease below is never
+        # taken from whichever job does hold it.
+        from agent_friday.services import task_journal as _tj
+        tid = proc["task_id"]
+        with TASKS_LOCK:
+            t = dict(TASKS.get(tid) or {})
+        if t and t.get("status") in ("queued", "running"):
+            _tj.request_stop(tid)
+            stopped.append("the job")
+            _stop_waiting_queue_job(tid, t)
 
     # 2. The lease. The generation releases it itself on the way out, which is
     #    the tidier path because it also stops ComfyUI in the right order — so
     #    only step in if the job did not, and give it a moment to.
+    task_orb = bool(proc.get("task_id")) and not str(pid).startswith(("image-", "video-"))
     try:
         from agent_friday.services.residency_arbiter import get_arbiter
-        arb = get_arbiter()
+        arb = None if task_orb else get_arbiter()
         if arb is not None and arb.lease:
             _deadline = _time.time() + 8
             while arb.lease and _time.time() < _deadline:

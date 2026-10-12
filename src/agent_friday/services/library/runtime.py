@@ -167,10 +167,11 @@ def _archive_unknown(row) -> bool:
         return False
 
 
-def resweep(principal: str = OWNER) -> int:
+def resweep(principal: str = OWNER, *, settle_s: float = 0) -> int:
     """Look at every active consent for new, changed and deleted files (a stat of each file, no reading),
     queue ONE job per folder that has any, and purge documents no consent covers any more. Returns the
-    folders queued."""
+    folders queued. The idle sweep passes `settle_s` (changes.SETTLE_S): a file still being written waits
+    for a later sweep."""
     if grants.suspended():
         return 0          # an unverifiable ledger trusts no consent, and purging would delete a whole index
     st = prepare(principal)
@@ -188,7 +189,8 @@ def resweep(principal: str = OWNER) -> int:
     for a in grants.active_scopes(principal):
         if a.get("type") == grants.TRACKED:
             continue
-        n += changes.queue(principal, ix, a, st, allowed=lambda p, pr=principal: grants.allowed(pr, p))
+        n += changes.queue(principal, ix, a, st, allowed=lambda p, pr=principal: grants.allowed(pr, p),
+                           settle_s=settle_s)
     return n
 
 
@@ -263,7 +265,7 @@ def _sweep_once(last: float) -> float:
         last = time.time()
         for p in list(_indexers) or [OWNER]:
             if grants.active_scopes(p):
-                resweep(p)
+                resweep(p, settle_s=changes.SETTLE_S)
     return last
 
 

@@ -179,6 +179,22 @@ def _process_rows(known: set) -> List[dict]:
     return rows
 
 
+def _mark_pausable(rows: List[dict]) -> None:
+    """Pause only where it works: a job in the Local AI queue's own line (services/seat_supervisor) waits at
+    its next model call, or is not started, until it is resumed (POST /api/local-queue/<id>/pause|resume).
+    Cloud work, a process orb and a row the scheduler only lists have no such checkpoint, so no Pause."""
+    try:
+        from agent_friday.services import local_scheduler
+        snap = local_scheduler._supervisor_snapshot()
+        mine = {str(j.get("id")): bool(j.get("paused_by_you")) for j in snap.get("jobs") or []}
+    except Exception:
+        mine = {}
+    for r in rows:
+        live = r.get("status") in ("running", "queued", "paused")
+        r["pausable"] = bool(live and str(r.get("id")) in mine)
+        r["paused_by_you"] = bool(r["pausable"] and mine.get(str(r.get("id"))))
+
+
 def activity(now: Optional[float] = None) -> Dict[str, Any]:
     """Every task: running first, then queued in order, then recently finished."""
     now = time.time() if now is None else now
@@ -187,6 +203,7 @@ def activity(now: Optional[float] = None) -> Dict[str, Any]:
     rows += _queue_rows(known, sum(1 for r in rows if r["status"] == "queued"))
     known |= {r["id"] for r in rows}
     rows += _process_rows(known)
+    _mark_pausable(rows)
     rank = {"running": 0, "paused": 1, "queued": 2, "interrupted": 3}
     rows.sort(key=lambda r: (rank.get(r["status"], 9),
                              r["queue_position"] or 0, -(float(r.get("ended") or r.get("started") or 0))))
