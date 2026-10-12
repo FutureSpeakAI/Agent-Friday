@@ -145,6 +145,13 @@ redistribute any of them. Each is governed by its publisher's license:
   faster-whisper (Systran) ............ MIT (OpenAI Whisper weights)
   Piper voice en_US-amy-medium ........ see the rhasspy/piper-voices model card
   Kokoro-82M (optional) ............... Apache License 2.0
+  sherpa-onnx (local voice ear) ....... Apache License 2.0
+  Qwen3-4B / Qwen3-1.7B GGUF
+  (local voice front) ................. Apache License 2.0
+  Ternary Bonsai 1.7B / 8B (PrismML) .. Apache License 2.0
+  faster-whisper large-v3-turbo ....... MIT (OpenAI Whisper weights)
+  Nemotron 3.5 streaming ASR, int8
+  (local voice ear) ................... NVIDIA OpenMDW-1.1
   RapidOCR / PP-OCR models ........... Apache License 2.0
   NVIDIA Nemotron ASR, NeMo TTS
   (optional GPU voice) ................ NVIDIA model licenses
