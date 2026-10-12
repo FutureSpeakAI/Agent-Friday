@@ -155,6 +155,9 @@ def _editorial_degraded(result):
     return None
 
 
+_CLOUD_SKIP_LOGGED: set = set()
+
+
 def _resolve_local_seat():
     """The local model actually serving right now, or None.
 
@@ -205,6 +208,11 @@ def _resolve_local_seat():
             # daemon but run on ollama.com: never a local seat, whatever
             # route the dispatch table reports for it.
             if is_cloud_model_tag(name):
+                if name not in _CLOUD_SKIP_LOGGED:
+                    _CLOUD_SKIP_LOGGED.add(name)
+                    _log.info("local seat: %s is a cloud-relayed model "
+                              "(ollama.com), so it is not used as a local seat",
+                              name)
                 continue
             try:
                 d = describe_dispatch(name) or {}

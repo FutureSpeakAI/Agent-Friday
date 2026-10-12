@@ -1720,8 +1720,11 @@ def _check_seat_installed(new_settings):
         installed = []
     if not installed:
         return None
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
     for key, model, prov in wanted:
-        if model in installed:
+        # A cloud-relayed tag is not a local model: the installed check does
+        # not apply (seat_policy covers it under local-only).
+        if model in installed or is_cloud_model_tag(model):
             continue
         return {
             "status": "error",

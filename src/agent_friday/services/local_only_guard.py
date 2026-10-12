@@ -123,13 +123,37 @@ def provider_name_of(provider) -> str:
     return str(provider or "").strip()
 
 
+# Names the daemon's own inventory marks as remote (`remote_host` /
+# `remote_model` on a /api/tags row), e.g. `ollama cp x:cloud myglm:latest`.
+# Replaced wholesale by each successful inventory read; never fetched here.
+_REMOTE_ALIASES: frozenset = frozenset()
+
+
+def note_remote_aliases(rows) -> None:
+    """Record which daemon /api/tags rows are relayed to a remote host.
+
+    Called by the code that already reads the inventory, so classifying a
+    model never costs a network call."""
+    global _REMOTE_ALIASES
+    names = set()
+    for r in rows or ():
+        if isinstance(r, dict) and (r.get("remote_host") or r.get("remote_model")):
+            n = str(r.get("name") or r.get("model") or "").strip().lower()
+            if n:
+                names.add(n)
+    _REMOTE_ALIASES = frozenset(names)
+
+
 def is_cloud_model_tag(model: str) -> bool:
     """An Ollama model the daemon relays to ollama.com rather than running:
     tag `cloud` or ending in `-cloud` (`glm-4.6:cloud`, `gpt-oss:120b-cloud`),
-    or an untagged name ending in `-cloud`."""
+    or an untagged name ending in `-cloud`; or an alias the daemon's last
+    inventory read marked as remote."""
     m = str(model or "").strip().lower()
     if not m:
         return False
+    if m in _REMOTE_ALIASES:
+        return True
     tag = m.rsplit(":", 1)[1] if ":" in m else m
     return tag == "cloud" or tag.endswith("-cloud")
 

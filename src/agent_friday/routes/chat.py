@@ -1560,7 +1560,13 @@ def chat():
                     # cloud id keeps the catalogue as its authority, because it
                     # is not "installed" anywhere and absence from a local
                     # inventory says nothing about it.
-                    if local_seats._is_local_name(_want):
+                    from agent_friday.services.local_only_guard import (
+                        is_cloud_model_tag as _is_cloud_tag_chat)
+                    if _is_cloud_tag_chat(_want):
+                        # Relayed to ollama.com: not an on-device model, and
+                        # absent from the local inventory by design.
+                        _known = True
+                    elif local_seats._is_local_name(_want):
                         _known = any(n == _want
                                      for n, _ in local_seats.installed())
                         if not _known:

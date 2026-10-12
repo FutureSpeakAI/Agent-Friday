@@ -164,6 +164,8 @@ def _daemon_tags() -> set:
     try:
         with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=4) as r:
             rows = (_json.loads(r.read().decode()) or {}).get("models") or []
+        from agent_friday.services.local_only_guard import note_remote_aliases
+        note_remote_aliases(rows)
         return {m.get("name") for m in rows if m.get("name")}
     except Exception:
         return set()
@@ -286,11 +288,17 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     # before anything is queued or sent. Outside one it continues to the
     # daemon path below, where gate_ollama_body seals it like any cloud payload.
     from agent_friday.services.local_only_guard import (
-        CloudRefused, is_cloud_model_tag, refuse_if_active)
+        CloudRefused, is_cloud_model_tag, refuse_if_active, routing_mode)
     _cloud_tagged = is_cloud_model_tag(model)
     if _cloud_tagged:
         try:
             refuse_if_active("ollama", model)
+            # The owner's global Local only mode holds too, not only the
+            # per-thread mark of a local-only job.
+            if routing_mode() == "local_only":
+                raise CloudRefused(
+                    "routing mode is local_only, so it will not call the "
+                    "cloud-relayed model %s" % model)
         except CloudRefused as e:
             _log.warning("local_call refused cloud-relayed model %s: %s", model, e)
             return ""

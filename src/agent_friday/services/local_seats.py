@@ -258,6 +258,8 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
             raise OSError("no Ollama daemon listening at %s" % base)
         with urllib.request.urlopen(f"{base}/api/tags", timeout=4) as r:
             raw = json.loads(r.read().decode()).get("models", [])
+        from agent_friday.services.local_only_guard import note_remote_aliases
+        note_remote_aliases(raw)
         for m in raw:
             n = m.get("name")
             if not n:
@@ -746,6 +748,10 @@ def _is_local_name(model: str) -> bool:
     Cloud ids must never be touched: they are not in `ollama list` and
     "not installed" says nothing about whether they work.
     """
+    # A cloud-relayed tag is cloud, whatever the ":" in it suggests.
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    if is_cloud_model_tag(model):
+        return False
     try:
         from agent_friday.routing.model_router import provider_family
         return provider_family(model) == "local"
