@@ -215,11 +215,17 @@ def _store_nonce(nonce: bytes) -> None:
 
 
 def _stamp() -> tuple:
+    """What the cached verdict is keyed on: each file's mtime, size and content digest. The digest
+    is what tells a same-size rewrite inside one filesystem clock tick (a tampered "at") from the
+    file that was verified; mtime and size alone read it as unchanged."""
+    import hashlib
     out = []
     for p in (_record_path(), _nonce_path()):
         try:
             st = os.stat(p)
-            out.append((st.st_mtime_ns, st.st_size))
+            with open(p, "rb") as f:
+                digest = hashlib.sha256(f.read()).hexdigest()
+            out.append((st.st_mtime_ns, st.st_size, digest))
         except OSError:
             out.append(None)
     return tuple(out)
