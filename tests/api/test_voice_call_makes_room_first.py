@@ -260,7 +260,8 @@ def test_the_call_parks_the_brain_before_it_admits_the_ear_and_the_mouth(call):
     assert served["mouth"] == "kokoro@cuda" and served["ear"].endswith("@cuda"), served
     assert served["brain"] == "parked (voice call)" and not served["degraded"]
     status = [f.get("text") for f in frames if f.get("type") == "status"]
-    assert status.index("making room for the voice") < status.index("Warming up the voice")
+    warming = [i for i, t in enumerate(status) if str(t).startswith("Warming up the voice")]
+    assert warming and status.index("making room for the voice") < warming[0]
 
 
 def test_the_park_is_given_back_when_the_call_ends(call):
@@ -314,7 +315,10 @@ def test_the_cpu_kokoro_fallback_never_loads_onto_cuda(monkeypatch):
     assert kokoro_voice.KokoroTTS("af_heart", allow_cpu=True,
                                   cpu_only=True)._resolve_device() == "cpu"
     from agent_friday.services import voice_workers as vw
-    assert vw.KokoroCpuMouth("af_heart")._tts.cpu_only is True
+    # The CPU Kokoro is its own process with no lease and no VRAM: nothing for
+    # this process to put on the card, and nothing left in it afterwards.
+    w = vw.KokoroCpuMouth("af_heart")._worker
+    assert w.engine == "kokoro-cpu" and w._want_lease is False
 
 
 def test_the_call_waits_for_the_parked_brain_to_free_the_card(call):
@@ -390,14 +394,26 @@ def test_a_refused_front_moves_the_engines_off_the_card_before_the_brain_returns
     assert "local_voice_front_refused" in codes, codes
 
 
+def assert_every_stage_stops_before_the_unpark(log, stages):
+    """The invariant of a call's end: every stage the call started is stopped
+    (once) before the brain's park is given back, and the unpark is the last
+    thing that happens. The order AMONG the stops is not part of it: the ear
+    and the mouth load concurrently, so the order they were held in, and so the
+    order they are stopped in, follows whichever finished first."""
+    unparks = [i for i, e in enumerate(log) if e == ("unpark", "voice_call")]
+    assert len(unparks) == 1, "the park is given back exactly once: %s" % (log,)
+    unpark = unparks[0]
+    assert unpark == len(log) - 1, "the unpark is last: %s" % (log,)
+    stops = [e[1] for e in log[:unpark] if e[0] == "stop"]
+    assert sorted(stops) == sorted(stages), "each stage stops once before the unpark: %s" % (log,)
+
+
 def test_a_call_that_parked_the_brain_ends_by_clearing_the_card_before_the_restore(call):
     frames = call.run()
     served, = [f for f in frames if f.get("type") == "served_by"]
     assert served["ear"].endswith("@cuda") and served["mouth"] == "kokoro@cuda"
     log = call.card.log
-    end = log[-4:]
-    assert end == [("stop", "front"), ("stop", "ear"), ("stop", "mouth"),
-                   ("unpark", "voice_call")], end
+    assert_every_stage_stops_before_the_unpark(log, {"front", "ear", "mouth"})
     # Back where it started: the brain restored and nothing of the voice left.
     assert not call.card.parked and call.card.taken == 0
     assert call.card.free_mib() == FREE_WITH_BRAIN_MIB
@@ -411,3 +427,36 @@ def test_a_call_that_did_not_park_keeps_the_idle_unload(call, monkeypatch):
     log = call.card.log
     assert ("unpark", "voice_call") not in log and ("park", "voice_call") not in log
     assert ("stop", "ear") not in log and ("stop", "mouth") not in log, log
+
+
+_STARTED = [("park", "voice_call"), ("front", BONSAI), ("gpu", "ear"), ("gpu", "mouth")]
+
+
+@pytest.mark.parametrize("stops", [("front", "ear", "mouth"), ("front", "mouth", "ear"),
+                                   ("mouth", "ear", "front"), ("ear", "front", "mouth")])
+def test_the_end_of_call_check_accepts_the_stops_in_any_order(stops):
+    log = _STARTED + [("stop", s) for s in stops] + [("unpark", "voice_call")]
+    assert_every_stage_stops_before_the_unpark(log, {"front", "ear", "mouth"})
+
+
+def test_the_old_exact_order_assertion_fails_on_the_ci_sequence():
+    ci = [("stop", "front"), ("stop", "mouth"), ("stop", "ear"), ("unpark", "voice_call")]
+    assert ci != [("stop", "front"), ("stop", "ear"), ("stop", "mouth"),
+                  ("unpark", "voice_call")], "the order the old test pinned"
+    assert_every_stage_stops_before_the_unpark(_STARTED + ci, {"front", "ear", "mouth"})
+
+
+@pytest.mark.parametrize("log,why", [
+    (_STARTED + [("stop", "front"), ("stop", "ear"), ("unpark", "voice_call"),
+                 ("stop", "mouth")], "a stop after the unpark"),
+    (_STARTED + [("unpark", "voice_call"), ("stop", "front"), ("stop", "ear"),
+                 ("stop", "mouth")], "the unpark before the stops"),
+    (_STARTED + [("stop", "front"), ("stop", "ear"), ("unpark", "voice_call")],
+     "a stage never stopped"),
+    (_STARTED + [("stop", "front"), ("stop", "ear"), ("stop", "ear"), ("stop", "mouth"),
+                 ("unpark", "voice_call")], "a stage stopped twice"),
+    (_STARTED + [("stop", "front"), ("stop", "ear"), ("stop", "mouth")], "no unpark"),
+])
+def test_the_end_of_call_check_still_fails_when_the_invariant_is_broken(log, why):
+    with pytest.raises(AssertionError):
+        assert_every_stage_stops_before_the_unpark(log, {"front", "ear", "mouth"})

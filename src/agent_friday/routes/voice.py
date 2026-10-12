@@ -1717,6 +1717,55 @@ def _record_warm_seconds(seconds) -> None:
         pass
 
 
+LOW_MEMORY_TEXT = ("Warming up the voice - this PC is low on memory, so it may take a "
+                   "minute or two")
+
+
+def _warm_up_text(selection, room, plan, *, timing_file=None) -> str:
+    """What the page says while the stages load. It names a time only when it
+    can keep it: the stages that will really run this time, each started the
+    way it will be (prepared during the park, on a warm worker, or cold), with
+    the SLOWEST of that path's last measured totals, rounded up to 5 s. No
+    record for a stage's path, no number. Short of memory, no number either:
+    a PC that is swapping cannot promise one."""
+    import math
+    try:
+        from agent_friday.services import voice_start_profile as _vsp
+        from agent_friday.services import voice_workers as _vw
+        free = _vw._free_ram_mb()
+        if free is not None and free < _vw.WARM_MIN_FREE_RAM_MB:
+            return LOW_MEMORY_TEXT
+        sel = selection or {}
+        prepared = set((plan or {}).get("prepared") or [])
+        warm = bool((plan or {}).get("warm"))
+        stages = []
+        ear = sel.get("ear") or {}
+        if (str(ear.get("device_policy") or "if_free") != "never"
+                and not isinstance(_vw.held("ear"), _vw.WorkerEar)):
+            stages.append(("ear", "prepared" if "ear" in prepared else "cold"))
+        mouth = sel.get("mouth") or {}
+        voice = str(mouth.get("voice") or "af_heart")
+        cur = _vw.held("mouth")
+        if (str(mouth.get("engine") or "") == "kokoro"
+                and str(mouth.get("device_policy") or "preferred") != "never"
+                and not (isinstance(cur, _vw.WorkerMouth) and getattr(cur, "voice", None) == voice)):
+            p = ("prepared+warm" if warm else "prepared") if "mouth" in prepared else                 ("warm" if warm else "cold")
+            stages.append(("mouth", p))
+        if _front_reserve_mib(room) > 0:
+            stages.append(("front", "cold"))
+        worst = 0.0
+        for stage, path in stages:
+            totals = _vsp.recent_totals(stage, path, file=timing_file)
+            if not totals:
+                return "Warming up the voice"
+            worst = max(worst, max(totals))
+        if worst <= 0:
+            return "Warming up the voice"
+        return "Warming up the voice - about %d s" % (int(math.ceil(worst / 5.0)) * 5)
+    except Exception:
+        return "Warming up the voice"
+
+
 def _warming_text(seconds) -> str:
     if not seconds:
         return "Warming up the voice"
@@ -2094,11 +2143,16 @@ def _begin_prepare(settings, selection) -> None:
     OS file cache. The card is asked for only afterwards, by each stage's own
     admission, so the display reserve is held exactly as before. Never raises;
     not under test (it spawns processes)."""
+    plan = {"prepared": [], "warm": False}
     if os.environ.get("FRIDAY_TESTING") or os.environ.get("FRIDAY_NO_PREWARM"):
-        return
+        return plan
     try:
         from agent_friday.services import voice_workers as _vw
-        _vw.prepare_for_selection(selection)
+        # A warm kokoro worker the mouth is about to take (read before the
+        # prepare takes it).
+        w = _vw._WARM.get("kokoro-cuda")
+        plan["warm"] = bool(w is not None and w["proc"].poll() is None)
+        plan["prepared"] = list(_vw.prepare_for_selection(selection) or [])
     except Exception:
         pass
 
@@ -2114,6 +2168,7 @@ def _begin_prepare(settings, selection) -> None:
         except Exception:
             pass
     threading.Thread(target=_read_front, name="voice-prefetch-front", daemon=True).start()
+    return plan
 
 
 def _prewarm_voice(settings, reason: str) -> None:
@@ -4054,7 +4109,7 @@ if sock is not None:
         # Make room FIRST: when this call parks the brain, the park happens
         # before the ear and mouth ask the card, so they are admitted against
         # the room the park frees, not refused against the resident brain.
-        _begin_prepare(settings, _sel)
+        _plan = _begin_prepare(settings, _sel)
         try:
             _room = _make_room_for_voice(settings, _sel, progress=_prog, holder=_vsession)
         except Exception as _re:
@@ -4074,7 +4129,7 @@ if sock is not None:
         # stage against a card that has not yet felt the others. The page says
         # what is happening, with the last measured duration when there is one.
         _warm_say = lambda m: _vlog.info("voice start: %s", m)  # noqa: E731
-        _prog(_warming_text(_last_warm_seconds()))
+        _prog(_warm_up_text(_sel, _room, _plan))
         _claim_front_room(_room)
         _front_run = _StageRun("front", lambda: _arm_voice_front(
             settings, progress=_warm_say, holder=_vsession, room=_room))
@@ -4107,6 +4162,7 @@ if sock is not None:
             except _vw.GpuRefused as _ge:
                 # Only the ear can land here (its `required` policy).
                 _vw.release_prepared("start refused")
+                _vw.release_cpu_engines("start refused")
                 _front_gone()
                 _release_voice_front(_room)
                 from agent_friday.services import reasoning_trace as _rt_v
@@ -4115,6 +4171,7 @@ if sock is not None:
                 return
             except Exception as _le:
                 _vw.release_prepared("start failed")
+                _vw.release_cpu_engines("start failed")
                 _front_gone()
                 _release_voice_front(_room)
                 _vlog.error("session aborted: engine load failed: %s: %s",
@@ -4184,6 +4241,7 @@ if sock is not None:
                 finally:
                     _unclaim_front_room(_room)
             except Exception as _fe:
+                _vw.release_cpu_engines("voice front failed")
                 _vlog.error("session refused: voice front failed: %s: %s",
                             type(_fe).__name__, _fe)
                 _send({"type": "error", "error": "voice_front_unavailable",
@@ -4200,6 +4258,7 @@ if sock is not None:
         except BaseException:
             _front_gone()
             _release_voice_front(_room)
+            _vw.release_cpu_engines("start aborted")
             raise
         _record_warm_seconds(_time.monotonic() - _warm0)
         # Notices raised while arming (a front that did not fit).
@@ -4534,6 +4593,7 @@ if sock is not None:
             # The front seat and the brain's park end with the call; then the
             # deep questions that waited for it run on the brain.
             _release_voice_front(_front)
+            _vw.release_cpu_engines("call ended")
             _prewarm_voice(settings, "call ended")
             _run_after_call(list(_tool_session.get("after_call") or []),
                             _tool_session.get("conversation_id"))

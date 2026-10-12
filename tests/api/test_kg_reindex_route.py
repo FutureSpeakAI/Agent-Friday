@@ -2,6 +2,8 @@
 
 import pytest
 
+from kg_index_settle import _no_tier_b_index_outlives_its_test  # noqa: F401  (autouse)
+
 
 @pytest.fixture
 def seeded_wiki():

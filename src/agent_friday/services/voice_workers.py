@@ -944,6 +944,9 @@ class CpuWhisperEar(EarEngine):
     def describe(self) -> dict:
         return {"engine": self.name, "device": "cpu", "model": self.model}
 
+    def close(self) -> None:
+        self._asr.unload()
+
 
 class WorkerEar(EarEngine):
     name = "faster-whisper"
@@ -991,33 +994,40 @@ class PiperMouth(MouthEngine):
         return {"engine": "piper", "device": "cpu", "model": self.voice, "voice": self.voice,
                 "degraded": self.degraded}
 
+    def close(self) -> None:
+        self._tts.unload()
+
 
 class KokoroCpuMouth(MouthEngine):
     name = "kokoro"
     device = "cpu"
 
     def __init__(self, voice: str = "af_heart"):
-        from agent_friday.services.kokoro_voice import KokoroTTS
-        # The CPU fallback runs on the CPU: this process loading Kokoro onto
-        # CUDA would take the card admission just refused, unleased.
-        self._tts = KokoroTTS(voice, allow_cpu=True, cpu_only=True)
+        # Kokoro on the processor, in its OWN process (the kokoro-cpu worker),
+        # holding no lease and no VRAM. Run in the server it kept torch,
+        # transformers and the model resident after the call: the model unloads,
+        # the ~1.4 GB of imported libraries do not. A process that exits gives
+        # all of it back.
         self.voice = voice
+        self._worker = VoiceWorker("kokoro-cpu", "mouth", lease=False, idle_s=_idle_s(),
+                                   args={"voice": voice}, on_evicted=_on_evicted)
 
     def load(self, progress=None):
-        self._tts.load(progress=progress)
-        self.device = self._tts._device or "cpu"
+        self._worker.start(progress=progress)
+        self.device = "cpu"
 
     def synthesize_stream(self, text: str, cancel=None):
-        pcm = self._tts.synthesize(text)
-        step = 9600
-        for off in range(0, len(pcm), step):
-            if cancel is not None and cancel.is_set():
-                return
-            yield pcm[off:off + step]
+        return self._worker.synth_stream(text, cancel)
+
+    def alive(self) -> bool:
+        return self._worker.alive()
 
     def describe(self) -> dict:
         return {"engine": "kokoro", "device": self.device, "model": "kokoro-82M",
                 "voice": self.voice, "degraded": self.degraded}
+
+    def close(self) -> None:
+        self._worker.stop("closed")
 
 
 class WorkerMouth(MouthEngine):
@@ -1090,6 +1100,47 @@ def release_gpu_engines(reason: str = "released") -> list:
         except Exception as ex:  # noqa: BLE001
             log.warning("voice %s worker did not stop (%s): %s", k, reason, ex)
     return [k for k, _e in items]
+
+
+def _rss_mib():
+    try:
+        import psutil
+        return int(psutil.Process().memory_info().rss // (1024 * 1024))
+    except Exception:
+        return None
+
+
+def release_cpu_engines(reason: str = "call ended") -> dict:
+    """End the in-process CPU engines a call built or reused (the CPU ear, the
+    CPU Kokoro, Piper) and forget them. They live in the SERVER process: a
+    Kokoro pipeline is ~1.8 GB there, the whisper model hundreds of MiB, and
+    left held they stay resident after the call. The next call rebuilds what it
+    needs. One log line records the server's RSS before and after."""
+    import gc
+    before = _rss_mib()
+    with _HELD_LOCK:
+        items = [(k, e) for k, e in _HELD.items()
+                 if isinstance(e, (CpuWhisperEar, KokoroCpuMouth, PiperMouth))]
+        for k, _e in items:
+            _HELD.pop(k, None)
+    names = []
+    for k, e in items:
+        names.append("%s(%s)" % (k, type(e).__name__))
+        try:
+            e.close()
+        except Exception as ex:  # noqa: BLE001
+            log.warning("voice %s engine did not unload (%s): %s", k, reason, ex)
+    del items
+    gc.collect()
+    try:
+        from agent_friday.services.hardware_profile import empty_cuda_cache
+        empty_cuda_cache()
+    except Exception:
+        pass
+    after = _rss_mib()
+    log.info("voice call ended (%s): released in-process engines %s; server RSS %s -> %s MiB",
+             reason, ", ".join(names) or "none", before, after)
+    return {"released": names, "rss_before_mib": before, "rss_after_mib": after}
 
 
 def release_own_gpu(reason: str = "released") -> dict:

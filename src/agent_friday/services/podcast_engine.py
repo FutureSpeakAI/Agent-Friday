@@ -1903,7 +1903,7 @@ def produce(eid: str, *, should_stop=None, script_only: bool = False) -> dict:
                     _orb(orb, "progress", ep, 0.4 + 0.5 * i / n)))
         pcm, timings = _speak_then_release(
             eid, _render, speak, len(ep["lines"]),
-            sum(len(ln["text"].split()) for ln in ep["lines"]))
+            sum(len(ln["text"].split()) for ln in ep["lines"]), should_stop=stop)
         d = _dir(eid)
         wav = d / "audio.wav"
         render.write_wav(pcm, wav)
@@ -1979,20 +1979,83 @@ def _room_to_speak() -> bool:
     return head is None or head >= VOICE_HEADROOM_MB
 
 
-def _speak_then_release(eid: str, run, speak, n_lines: int, words: int = 0):
+def _speak_then_release(eid: str, run, speak, n_lines: int, words: int = 0,
+                        should_stop=None):
     """Speak the episode; whatever the outcome, the speaking voice leaves the
-    card (its process ends, cached CUDA blocks go back)."""
+    card (its process ends, cached CUDA blocks go back), and after local
+    speech a brain that nothing holds down is asked back."""
     try:
-        return run() if speak is not None else _speak_with_room(eid, run, n_lines, words)
+        if speak is not None:
+            return run()
+        return _speak_with_room(eid, run, n_lines, words, should_stop=should_stop)
     finally:
         render.release_tts_gpu()
+        if speak is None:
+            _brain_back_after_speaking(eid)
 
 
-def _speak_with_room(eid: str, run, n_lines: int, words: int = 0):
+#: After the speaking lease parks the brain, how long the speak stage waits
+#: for the memory it held to come back to the machine, and how often it looks.
+ROOM_SETTLE_S = 30.0
+ROOM_POLL_S = 1.0
+_room_sleep = time.sleep
+
+
+def _wait_for_room(should_stop=None, settle_s: float | None = None) -> bool:
+    """True once there is room to speak; False when `settle_s` passes without
+    it. A stop while waiting raises RenderError("cancelled")."""
+    settle_s = ROOM_SETTLE_S if settle_s is None else settle_s
+    deadline = time.monotonic() + settle_s
+    while True:
+        if should_stop is not None and should_stop():
+            raise render.RenderError("cancelled", "stopped while making room to speak")
+        if _room_to_speak():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        _room_sleep(ROOM_POLL_S)
+
+
+def _no_room(why: str) -> str:
+    """The owner's sentence for a speak stage that found no room: the plain
+    reason, no figures, and that it will be tried again."""
+    return NO_ROOM_TO_SPEAK.replace(" right now.", " right now: %s." % why, 1)
+
+
+def _why_no_room(hj: dict) -> str:
+    """A plain reason, from the arbiter's heavy-job result, for a speak stage
+    that found no room."""
+    exc = hj.get("exception")
+    if isinstance(exc, MemoryError):
+        return "the computer ran short of memory while speaking"
+    if hj.get("status") == "timeout":
+        return "speaking did not finish in the time it was given"
+    if hj.get("status") == "refused":
+        err = str(hj.get("error") or "")
+        rule = (hj.get("refused") or {}).get("rule_id") or ""
+        if rule == "R-DISPLAY-RESERVE":
+            return "the graphics card has no room to spare for the display"
+        if rule == "R-DISK-SYSTEM":
+            return "the system drive is nearly full"
+        if "already held" in err:
+            return "another job is using the local models"
+        if err.startswith("arbiter is"):
+            return "the local models are changing over"
+        if "not Friday's" in err:
+            return "another program is holding the graphics card"
+        return "the local models could not be set aside"
+    if not hj.get("displaced"):
+        return "there was no local model to set aside, and memory is still short"
+    return "memory is still short with the main model set aside"
+
+
+def _speak_with_room(eid: str, run, n_lines: int, words: int = 0, should_stop=None):
     """Speak the episode, making room first when the machine is short: the
-    arbiter parks the brain for the speaking job (heavy_job) and puts it back
-    afterwards, verified. When even that leaves no room, or the arbiter cannot
-    take the job, the episode waits and tries again: `low_memory`, retryable."""
+    arbiter parks the brain for the speaking job (heavy_job), the stage waits
+    (bounded) for the memory to settle, speaks, and the arbiter puts the brain
+    back afterwards, verified. When even that leaves no room, or the arbiter
+    cannot take the job, the episode waits and tries again: `low_memory`,
+    retryable, with the reason said."""
     if _room_to_speak():
         return run()
     try:
@@ -2001,12 +2064,13 @@ def _speak_with_room(eid: str, run, n_lines: int, words: int = 0):
     except Exception:
         arbiter = None
     if arbiter is None:
-        raise render.RenderError("low_memory", NO_ROOM_TO_SPEAK)
+        log.warning("podcast %s: short of room to speak and no arbiter to make it", eid)
+        raise render.RenderError("low_memory", _no_room("nothing could be set aside to make it"))
     _update(eid, stage_detail="making room to speak on this computer")
 
     def job():
-        # The brain is parked now; the voice gets its room or the job says so.
-        if not _room_to_speak():
+        # The brain is parked now; its memory comes back within seconds.
+        if not _wait_for_room(should_stop):
             raise render.RenderError("low_memory", NO_ROOM_TO_SPEAK)
         try:
             pcm, timings = run()
@@ -2014,15 +2078,64 @@ def _speak_with_room(eid: str, run, n_lines: int, words: int = 0):
             return {"pcm": pcm, "timings": timings}
         finally:
             render.release_speaker()            # the room goes back before the brain does
-    hj = arbiter.heavy_job("podcast_voice", job, timeout_s=speak_budget_s(n_lines, words),
-                           expect_files=False)
+    try:
+        hj = arbiter.heavy_job("podcast_voice", job, timeout_s=speak_budget_s(n_lines, words),
+                               expect_files=False)
+    finally:
+        _give_back_speaking_lease(arbiter, eid)
     if hj.get("ok") and isinstance(hj.get("result"), dict):
         return hj["result"]["pcm"], hj["result"]["timings"]
     exc = hj.get("exception")
-    if isinstance(exc, render.RenderError):
+    if isinstance(exc, render.RenderError) and exc.code != "low_memory":
         raise exc
-    log.warning("podcast %s: the arbiter could not make room to speak: %s", eid, hj.get("error"))
-    raise render.RenderError("low_memory", NO_ROOM_TO_SPEAK)
+    if exc is not None and not isinstance(exc, (render.RenderError, MemoryError)):
+        raise exc
+    why = _why_no_room(hj)
+    log.warning("podcast %s: no room to speak: %s (arbiter: %s; set aside: %s)",
+                eid, why, hj.get("error"), hj.get("displaced"))
+    raise render.RenderError("low_memory", _no_room(why))
+
+
+def _give_back_speaking_lease(arbiter, eid: str) -> None:
+    """The speaking lease is the arbiter's to give back when its heavy job
+    ends; one still held here (the job's call itself failed) is given back
+    now, so the brain is never left parked by the speak stage."""
+    try:
+        lease = getattr(arbiter, "lease", None)
+        if isinstance(lease, dict) and lease.get("kind") == "podcast_voice":
+            log.warning("podcast %s: the speaking lease outlived its job; giving it back", eid)
+            arbiter.release(kind="podcast_voice")
+    except Exception as e:  # noqa: BLE001 - the episode's outcome stands
+        log.error("podcast %s: could not give the speaking lease back: %s", eid, e)
+
+
+def _in_background(fn) -> None:
+    """Reloading a 27B takes a minute; the episode does not wait on it."""
+    threading.Thread(target=fn, daemon=True, name="podcast-brain-back").start()
+
+
+def _brain_back_after_speaking(eid: str) -> None:
+    """After local speech the brain serves again unless something holds it
+    down (a lease, a stand-down, build hours, another program's GPU): one
+    left parked is said in the log and the arbiter is asked to restore it."""
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arbiter = get_arbiter()
+    except Exception:
+        arbiter = None
+    if arbiter is None or not hasattr(arbiter, "restore_unheld_seats"):
+        return
+
+    def _restore():
+        try:
+            got = arbiter.restore_unheld_seats("after podcast %s" % eid)
+        except Exception as e:  # noqa: BLE001
+            log.error("podcast %s: could not ask for the brain back: %s", eid, e)
+            return
+        if got.get("restored") or got.get("missing"):
+            log.warning("podcast %s: the brain was not serving after speaking; restore: %s",
+                        eid, got)
+    _in_background(_restore)
 
 
 def _retry_or_fail(eid: str, orb: str, ep: dict, e: "render.RenderError") -> dict:

@@ -3063,6 +3063,11 @@ routed through the existing cLaws governance + egress gate.
 
 ## [Unreleased]
 
+### Fixed
+
+- Small text models Friday uses for privacy checks and tool choice now run on the
+  processor, so they no longer take graphics memory the voice and brain need.
+
 ### Removed
 
 - **Removed a personal workspace and its monitoring skill from the public

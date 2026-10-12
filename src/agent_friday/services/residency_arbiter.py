@@ -2639,7 +2639,7 @@ class Arbiter:
                     # outside the plan, so nothing is loaded here. The brain's
                     # model goes even when it also serves the sidekick (the
                     # front keeps Friday speaking; see _evict_pinned).
-                    displaced = self._evict_pinned(for_voice_call=True)
+                    displaced = self._evict_pinned(park_brain=True)
                     self.lease = {"kind": kind, "role": "voice",
                                   "model_id": None,
                                   "displaced": displaced,
@@ -2648,7 +2648,11 @@ class Arbiter:
                     # An episode spoken by the out-of-process voice on the
                     # processor: the pinned seats are parked so its memory
                     # fits, nothing is loaded, and release restores them.
-                    displaced = self._evict_pinned()
+                    # The brain's model goes even when it also serves the
+                    # sidekick: on a one-model plan it is the only memory
+                    # there is to free, and the lease is bounded by the
+                    # speaking budget and restored, verified, when it ends.
+                    displaced = self._evict_pinned(park_brain=True)
                     self.lease = {"kind": kind, "role": "podcast_voice",
                                   "model_id": None,
                                   "displaced": displaced,
@@ -2792,6 +2796,53 @@ class Arbiter:
             return self.release()
         return {"ok": True, "note": "not due"}
 
+    def restore_unheld_seats(self, reason=""):
+        """Bring the pinned seats back when nothing holds them down.
+
+        A seat may be down on purpose: a lease has it, a stand-down or build
+        hours own the card, another program holds the GPU, or a transition is
+        under way. Otherwise a pinned seat that is not serving was left
+        parked, and it is restored through the same verified retry a lease's
+        release uses. Returns what was found and done; never raises.
+        """
+        log = __import__("logging").getLogger("friday.residency")
+        if self._build_hours_active():
+            return {"ok": True, "note": "build hours own the brain"}
+        try:
+            from agent_friday.services import stand_down
+            if stand_down.is_active_now():
+                return {"ok": True, "note": "Friday is stood down"}
+        except Exception:
+            pass
+        with self._lock:
+            if self.lease is not None:
+                return {"ok": True, "note": "lease %s holds the seats"
+                        % self.lease.get("kind")}
+            if self.state not in (STATE_DEFAULT, STATE_DEGRADED):
+                return {"ok": True, "note": "arbiter is %s" % self.state}
+            why = self.gpu_not_ours()
+            if why:
+                return {"ok": True, "note": "the GPU is not Friday's: %s" % why}
+            try:
+                served = set(self.llama.procs) | set(self.ollama.resident() or [])
+            except Exception:
+                served = set(self.llama.procs)
+            down = [(r, s["model_id"]) for r, s in self._pinned_llama_seats()
+                    if s["model_id"] not in served]
+            if not down:
+                return {"ok": True, "note": "serving"}
+            log.warning("[arbiter] %s: %s not serving and nothing holds it "
+                        "down; restoring", reason or "check",
+                        ", ".join("%s (%s)" % (m, r) for r, m in down))
+            t0 = time.time()
+            missing = self._restore_with_retry([r for r, _m in down])
+            self.state = STATE_DEGRADED if missing else STATE_DEFAULT
+            self._record("restore-unheld", reason or "check",
+                         ",".join(m for _r, m in down), round(time.time() - t0, 2))
+            return {"ok": not missing, "restored": [m for _r, m in down
+                                                    if (_r, m) not in missing],
+                    "missing": [m for _r, m in missing]}
+
     # ── heavy jobs: the deterministic swap ──────────────────────────────────
 
     HEAVY_JOB_TIMEOUT_S = 900.0
@@ -2848,6 +2899,7 @@ class Arbiter:
             out["receipt"] = self._write_heavy_receipt(job_id, out, steps)
             return out
         displaced = (lease.get("lease") or {}).get("displaced")
+        out["displaced"] = list(displaced or [])
         step("evict-and-grant", ok=True, displaced=displaced,
              transition_s=lease.get("transition_s"))
 
@@ -3463,11 +3515,11 @@ class Arbiter:
             return emb
         return None
 
-    def _displaceable_seats(self, for_voice_call=False):
+    def _displaceable_seats(self, park_brain=False):
         """``[(role, seat)]`` that `_evict_pinned` stands down: the pinned GPU
         seats (and a GPU embedder) the lease may take, R10 applied."""
         keep_models = self._retained_models()
-        if for_voice_call:
+        if park_brain:
             brain = ((self.plan or {}).get("seats") or {}).get("interactive_brain") or {}
             keep_models = keep_models - {brain.get("model_id")}
         cands = [(r, s) for r, s in self._pinned_llama_seats()]
@@ -3489,6 +3541,10 @@ class Arbiter:
     #: nothing, so the VRAM those seats hold counts toward the display reserve.
     _PARKING_LEASES = ("voice_call", "podcast_voice")
 
+    #: Leases that park the brain's model even when it also serves the
+    #: retained sidekick (see `_evict_pinned`).
+    _BRAIN_PARKING_LEASES = ("voice_call", "podcast_voice")
+
     def _lease_frees_mib(self, kind) -> int:
         """VRAM, in MiB, the `kind` lease's own transition gives back before it
         loads anything: the resident seats it parks, once per model process.
@@ -3502,7 +3558,8 @@ class Arbiter:
             except Exception:
                 ollama_live = {}
             seen, total = set(), 0
-            for _role, seat in self._displaceable_seats(kind == "voice_call"):
+            for _role, seat in self._displaceable_seats(
+                    kind in self._BRAIN_PARKING_LEASES):
                 mid = seat.get("model_id")
                 if mid in seen or (mid not in live and mid not in ollama_live):
                     continue
@@ -3515,7 +3572,7 @@ class Arbiter:
         except Exception:
             return 0
 
-    def _evict_pinned(self, for_voice_call=False):
+    def _evict_pinned(self, park_brain=False):
         """Stand down the seats a lease may take. R10 says which it may not.
 
         Every pinned llama.cpp seat on the card is displaceable whatever its
@@ -3530,16 +3587,19 @@ class Arbiter:
         Friday is always alive." A model that also serves the sidekick is
         retained with it.
 
-        ``for_voice_call``: the one exception. During a local voice call
-        Friday is not mute (the voice front is a live local model), so the
-        model that is the interactive brain is displaced even when it also
-        serves the sidekick; on a one-model plan (every role on the brain's
-        model) the call would otherwise park nothing and its voice would
-        never fit. The sidekick ROLE is still never displaced by name, and
-        every other lease keeps R10 exactly.
+        ``park_brain``: the exception, for the leases in
+        `_BRAIN_PARKING_LEASES`. The model that is the interactive brain is
+        displaced even when it also serves the sidekick; on a one-model plan
+        (every role on the brain's model) the lease would otherwise park
+        nothing and the voice it exists for would never fit. During a local
+        voice call Friday is not mute (the voice front is a live local
+        model); a podcast's speaking lease is bounded by its speaking budget
+        and its release restores the brain, verified. The sidekick ROLE is
+        still never displaced by name, and every other lease keeps R10
+        exactly.
         """
         displaced = []
-        for role, seat in self._displaceable_seats(for_voice_call):
+        for role, seat in self._displaceable_seats(park_brain):
             t0 = time.time()
             self.llama.evict(seat["model_id"])
             self.ollama.evict(seat["model_id"])
