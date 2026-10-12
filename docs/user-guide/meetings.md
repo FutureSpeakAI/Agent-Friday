@@ -30,7 +30,7 @@ start card and waits for you. She does not start anything by voice.
 - The start button. It reads "I've told everyone, start recording". If you
   changed **Consent mode** to **owner decides** (the setting
   `meeting_consent_mode`), it reads "I've checked what applies, start
-  recording". Either way, recording starts only when you press it.
+  recording". Either way, recording starts only from the Start card in the Friday window: the request must come from that page with its session token. That proves a page, not a physical click, so a program on this PC that forges those browser headers could ask for a start.
 
 "Your call is starting. Take notes?" may appear for a calendar event. It shows
 at most once per event, and switches itself off after you say **Not now** twice
@@ -56,8 +56,7 @@ and keeps recording your microphone.
 While Friday records, a red dot, **REC**, the elapsed time, and **Stop** are on
 screen, in every workspace. It says "both sides" when the other side is being
 captured, and what the indicator says is what is really being recorded, not what
-you asked for. The tray icon's tooltip says the same. It has no dismiss
-control and nothing can hide it. Until the microphone delivers its first sound,
+you asked for. The tray icon shows a red dot and a tooltip with the same words; they drop after two polls in a row fail to reach Friday (about ten seconds), so a Friday that cannot answer is the one case where the tray goes quiet. The indicator in the Friday window has no dismiss control. Until the microphone delivers its first sound,
 it reads "Starting microphone...".
 
 A recording stops by itself at its maximum length, when the computer sleeps,
@@ -68,8 +67,7 @@ fails. The meeting says why it stopped.
 
 - Background work waits. The Local AI queue says "waits for your meeting to
   finish". See [Scheduled jobs](scheduled-jobs.md).
-- Speech is turned into text on this PC, by the local voice, on the graphics
-  card when it is free and on the processor otherwise.
+- Speech is turned into text on this PC, by the local voice's ear. That ear is the same one a live voice conversation uses, so a voice turn during a meeting can wait behind a piece being turned into text; it uses the graphics card when it is free and the processor otherwise.
 - If the streaming speech recogniser is installed, live words appear as you
   talk. They are shown, never stored.
 - Audio is cut into pieces of about thirty seconds. Once a piece is turned into
@@ -80,8 +78,7 @@ fails. The meeting says why it stopped.
 While you record, the workspace shows **Your notes pad**: a line to jot short
 bullets in ("Priya: budget by Friday"), each stamped with how far into the call
 you wrote it. Press Enter or **Add**; the **x** takes a bullet away. The pad is
-also a field Friday can fill when you ask her to, and she never adds the bullet
-for you. Bullets stay with the meeting, encrypted like the transcript. You can
+also a field Friday can fill when you ask her to. Friday's on-demand `meeting` tool can also add a bullet without a card (it is the owner's own pad and stays on this PC); a bullet she added is marked "added by Friday" and is not yours until you keep it. Bullets stay with the meeting, encrypted like the transcript. You can
 add more after the call too.
 
 ## Notes from your bullets
@@ -90,8 +87,7 @@ After the call, **Turn my bullets into notes** asks a model on this PC to read
 the transcript and expand each bullet into a sentence or two. Every line comes
 with the transcript line it rests on, shown as `line 12 · 00:03:20`; click it
 to read that line. The model runs in the work queue as your own job, not as
-background work, and Friday does not use a cloud model for it, whatever your
-routing mode.
+background work. Friday refuses a model whose name is cloud-tagged (`name:cloud`, `name-cloud`), whatever your routing mode. That is a check of the name only: a local alias that you built from a cloud model under a plain name is not recognised.
 
 A line is shown only if it cites a transcript line that exists and says nothing
 that the transcript and your bullet do not. A name, number, date or place that
@@ -104,8 +100,7 @@ which is why every line shows the transcript line to read beside it.
 
 When the recording ends, a local model writes the notes, the decisions and the
 action items. If no local model is running, the notes are skipped with the
-reason, and **Write notes again** is on the meeting. Notes are never written by
-a cloud model.
+reason, and **Write notes again** is on the meeting. Friday does not send the transcript to a model whose name is cloud-tagged (see above); the check is of the name.
 
 - **Add selected to Tasks** turns the action items you tick into tasks. Nothing
   is added unless you tick it. If an action item cannot be found in the
@@ -129,7 +124,7 @@ a cloud model.
 ## Ask your meetings
 
 The first time, Meetings asks whether to **Make my meetings searchable**
-(labelled Recommended, and not chosen for you). If you say yes, each finished
+(neither choice is recommended or chosen for you). If you say yes, each finished
 meeting's transcript and notes are read into your Library, in a scope of their
 own, on this PC. Then **Ask your meetings** answers "what did we decide about
 the budget?" with footnotes that open the exact transcript line, and you can
@@ -166,8 +161,7 @@ meetings. The setting is
   that meeting in the workspace. "Open the second one" means the second in the
   list on screen.
 - "Select these" and "tick the first two" tick meetings in the list, which only
-  shows them. Friday sees meeting rows as a count and a position, never a title,
-  whoever is listening.
+  shows them. Friday sees meeting rows as a count and a position, and the Library list shows a meeting's document without its title, whoever is listening; a title is named only to a local model speaking on this PC.
 - "Add those action items to my tasks", "draft a thank-you to everyone from that
   meeting" and "put the summary on the calendar event" go through the same
   tools, cards and approvals as everywhere else.
@@ -208,11 +202,7 @@ records only a count of what was deleted.
 - **Where it is kept.** One folder for each meeting under
   `%USERPROFILE%\.friday\meetings`. The transcript and notes are encrypted with
   Friday's keystore, and so is any audio you keep.
-- **Nothing leaves this PC.** Speech recognition and notes run on local models.
-  Meeting content has no route to a cloud model in this release: a meeting
-  cannot be sent to the cloud, even in Cloud only mode, and a test holds that
-  line. The only thing that can leave is a follow-up email, and only after you
-  approve its card.
+- **What stays on this PC, and what can leave.** Speech recognition and notes run on local models, and Friday holds the Library passages of a meeting, its titles and its notes back from a cloud model, from a cloud voice call and from a local model whose answer a cloud voice reads out. Meeting content can still leave in four ways you approve or choose: a follow-up email after you approve its card; the calendar summary, after you approve its card, to your calendar account; a suggestion you keep, which then joins what Friday knows about you and may be told to a cloud model like anything else she knows about you; and a local model that is really a cloud model under a plain name, which no name check can see. The tests cover the cloud-tag name check, the stage and the titles; they use a fake model.
 - **Other people.** A transcript holds what other people said. That is why the
   default is to ask everyone, why you see the consent line every time, and why
   it is your press that starts the recording. Friday does not tell anyone on
@@ -234,8 +224,8 @@ records only a count of what was deleted.
 
 - Start a recording on its own, or from a suggestion, or by voice alone.
 - Hide the indicator.
-- Send audio, a transcript or notes to a cloud model.
-- Write straight into memory or the knowledge graph from a meeting, or write to
+- Send audio, a transcript or notes to a cloud model on purpose. See "What stays on this PC, and what can leave" above.
+- Write straight into memory or the knowledge graph from a meeting (a suggestion waits for your click on the screen, and the graph does not read the archive), or write to
   your calendar without a card you approved.
 - Post the consent line into another app.
 - Delete a meeting unless you, or a retention choice you made, say so.
