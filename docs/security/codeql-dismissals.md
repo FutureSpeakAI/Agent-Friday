@@ -677,3 +677,60 @@ Test: `tests/api/test_codeql_beta_alerts.py`.
 | 998 | py/clear-text-storage-sensitive-data | notifications_engine.py:139 | FALSE_POSITIVE | Notification queue and dismissal ledger: ordinary local app state. |
 | 997, 996 | py/clear-text-storage-sensitive-data | services/conversations.py:312, :76 | FALSE_POSITIVE | The conversation store is the owner's own chat history in Friday's data folder, which is what the feature stores. |
 | 995 | py/clear-text-storage-sensitive-data | services/codebases.py:101 | FALSE_POSITIVE | The codebase record holds labels, providers and caps only; a guest key's secret goes to the credential store (`add_guest_key`). |
+
+## Beta 1.1 release candidate (PR #49, alerts 13 and 1039 to 1076)
+
+Every alert open on the pull-request merge ref on 12 October 2026. Line numbers are the ones CodeQL reported for that merge commit. Alerts 13, 1039, 1040, 1041, 1042 and 1044 are also open on `refs/heads/main` (marked "main"); the rest are new with this pull request. As above, a **FIX** row that stays open after CodeQL re-runs is dismissed as a false positive naming the guard.
+
+### Regular expressions (polynomial-redos)
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 1064, 1063 | py/polynomial-redos | services/laya_router.py:1407 | FIX | Real: `_YES` and `_NO` had two `[\s,.!]*` runs around an optional word, so "yes" followed by 20,000 tabs (or " ." pairs, which survive the router's whitespace collapsing) and a letter took about 3 s. The punctuation after the optional word now belongs to that word's group, so there is one way to match; the language is unchanged (fuzzed against the old pattern). |
+| 1068 | py/polynomial-redos | services/live_laya.py:1036 | FIX | The same `_YES`, on the owner's words before normalising; closed by the pattern change above. |
+| 1062, 1061 | py/polynomial-redos | services/laya_router.py:637, :627 | FIX | Real: `_SMALL_TALK`'s lazy `[^?]*?`, an optional phrase and `[\s,.!?]*$` were quadratic (3.0 s for "hi" and 20,000 tabs). It is now `[^?]*(?:\?[\s,.!?]*)?$`: anything up to the first "?", then only spaces and punctuation, which is the language it always matched (fuzzed identical). |
+| 1070 | py/polynomial-redos | services/point_act.py:137 | FIX | The flagged `\s+(?:please\|...)$` reads single-spaced text (`normalize` collapses blanks first), but the loop around it re-scanned the whole utterance once per trailing courtesy word (0.86 s at 20,000 characters of " please now"). `_strip_tail` drops the same words in one pass from the end, longest first; fuzzed identical. |
+| 1069, 1066 | py/polynomial-redos | services/live_session_plan.py:382, :212 | FIX | Real: `_HEADER` (a lazy middle before `[ \t]*\1`) and the ASIMOV header scan in `safety_ok` were quadratic in one long line (2.3 s and 3.3 s at 20,000 tabs). Headers are read line by line. `_HEADER` runs only on lines that start with "==" and are at most 200 characters; a longer line is body text. `_asimov_headers` reads every line, however long, as a greedy name up to the first "=" and then trims it, so no ASIMOV header escapes the safety check. |
+| 1058, 1057 | py/polynomial-redos | services/calendar_quickadd.py:85, :82 | FIX | Real: `_EMAIL_RE` retried a run of address characters from each of its characters (1.1 s at 20,000 "+"). It now starts with `(?<![\w.+-])`, so a run is tried once. Ordinary text gives the same addresses; two addresses glued together with no separator now give only the first. CodeQL does not model the look-behind (as 980). |
+| 1060 | py/polynomial-redos | services/laya_router.py:532 | FALSE_POSITIVE | `_FILLER_TAIL` starts with `\s*`, which retries a run of blanks from each blank. `_clean_query` only reads text that `route`, `rules_route`, `rule_route` or `laya_router_head.candidate_spans` has already reduced with `" ".join(text.split())`, so every run is one space. Timed through `rules_route` with two 50,000-blank runs: under 0.02 s. |
+| 1059 | py/polynomial-redos | services/laya_router.py:342 | FALSE_POSITIVE | `_CLAUSE_SPLIT`, the same leading `\s*`. `_clauses` is reached only with the router's normalised text and with `live_laya.write_intent`'s `" ".join(str(text).split())`. |
+| 1067, 1065 | py/polynomial-redos | services/live_laya.py:972, :959 | FALSE_POSITIVE | `_CLAUSES.split(t)`, the same leading `\s*`; `t` is `write_intent`'s `" ".join(str(text).split())`. |
+
+Tests: `tests/unit/test_regex_linear_time.py` (`test_card_answers_and_small_talk`, `test_clause_split_and_query_fillers_read_collapsed_whitespace`, `test_point_act_trailing_courtesy_words`, `test_calendar_quickadd_addresses`, `test_live_instruction_headers`): 50,000-character hostile input under half a second through the real call path, and the same answers on ordinary input.
+
+### Stack-trace exposure
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 1056 | py/stack-trace-exposure | routes/chat.py:419 | FIX | Real: the "open the X" reflex (`reflex_chat._run_command`) ran `str()` on the tool's result, which drops the `ExceptionText` mark a raising handler's "Tool error (...)" carries, and its refused or unconfirmed reply quoted that result's first line; `_instant_response` ran `str()` on the reply again. Both now keep a `str` as it is, the reply carries the result's mark (`user_errors.keep_mark`), and `public_result` swaps the trace and the reply. Test: `tests/api/test_route_errors_hidden_everywhere.py::test_an_instant_open_whose_tool_raises_hides_the_text_from_the_page`. CodeQL does not model `public_result`. |
+
+### Path injection
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 1055, 1054, 1053, 1052, 1051 | py/path-injection | services/library/staging.py:284, :142, :142, :141, :139 | FALSE_POSITIVE | `review` builds the path only after `re.fullmatch(r"lib-[0-9]+-[0-9a-z]+-(summary\|fact)(-[0-9]+)?", item_id)` (staging.py:279): no separator, "..", drive or colon can pass, so the file is always `staging_dir() / (id + ".json")`. `_write_atomic` (139 to 142) is reached on this flow only with that path. |
+| 1050 | py/path-injection | services/laya_personal_store.py:598 | FALSE_POSITIVE | `laya_personal.rollback` reads an artifact only when `target` is in the profile's own `history` list (laya_personal.py:2181), which holds ids Friday wrote into the vault-sealed state; the profile folder is `root() / _safe(profile)`. The route also requires a click on Friday's own page (`_screen_only`). |
+| 1049 | py/path-injection | services/knowledge_folders.py:319 | FALSE_POSITIVE | The typed-path fallback of the folder picker: the owner names a folder on their own PC to have it described, so there is no fixed root by design (as 63 and 792). `check_path` refuses UNC, device, URL and relative paths (`file_grants.unsafe_path_reason`) before `resolve()`, then requires a folder that is not a drive root or the whole home folder; the route is login-required and same-origin. `describe_folder` returns a description and records no grant. |
+
+### Server-side request forgery
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 1048, 1047 | js/request-forgery | ui_parts/app.html:156, index.html:11496 | FIX (hardening) | The URL came from a `cloud_switch` offer on Friday's own `/ws/live` socket, and the server only ever sends `_CLOUD_SWITCH_OFFER["endpoint"]`, the same-origin path `/api/voice/cloud-switch` (routes/voice.py), so no outside URL reached `fetch`. The page now posts to that constant itself in both UI files. Test: `tests/unit/test_cloud_voice_scope.py::test_the_page_posts_a_failure_offer_only_to_the_ask_route`. |
+
+### Sensitive data (clear-text logging and storage, weak hashing)
+
+Nine of these (1039, 1040, 1041, 1042, 1044 and 1072 to 1075) share one source. The setup-research job record is kept encrypted with `credential_store.write_secret` and read back with `read_secret` (setup_research.py:384), so CodeQL treats every field of it as a secret. The field that travels is the reader's `model`, a model id, through `setup_reader.call_json`, `local_call.call` and `egress_gate.gate_ollama_body` into spend_guard, cloud_intent and the egress ledger.
+
+| n | rule | path:line | disposition | reason |
+|---|---|---|---|---|
+| 1076 | py/weak-sensitive-data-hashing | services/interruption_policy.py:184 | FALSE_POSITIVE (marked) | `_k` keys the hour's interruption count by a 16-hex SHA-1 of Friday's own task ids and dedupe keys (the flagged sources are a uuid4 task id, a workflow uuid5, a behavioural-monitor session id and a platform name), so the state file holds no raw key. No signature, password or secret depends on the digest; it is now `usedforsecurity=False`, with the same output. |
+| 1075 | py/clear-text-logging-sensitive-data | notifications_engine.py:453 | FALSE_POSITIVE | The tainted value is the model id inside spend_guard's halt notification title ("... <model> cloud model call"). |
+| 1074, 1073 | py/clear-text-logging-sensitive-data | services/local_call.py:336, :390 | FALSE_POSITIVE | The local reader's model id, with a `CloudRefused` sentence naming the model or a requests exception for the loopback daemon. |
+| 1072 | py/clear-text-logging-sensitive-data | services/cloud_intent.py:508 | FALSE_POSITIVE | Purpose, provider name, model id and routing mode. Sensitive subsystem; unchanged. |
+| 1044 (main) | py/clear-text-logging-sensitive-data | services/spend_guard.py:243 | FALSE_POSITIVE | The halt line: the call description (the model id plus schedule, workspace and task labels), provider and dollar figures. |
+| 1041 (main) | py/clear-text-storage-sensitive-data | services/spend_guard.py:227 | FALSE_POSITIVE | The same fields as a row of the spend-halt ledger. |
+| 1042, 1040 (main) | py/clear-text-logging-sensitive-data, py/clear-text-storage-sensitive-data | services/egress_gate.py:629, :636 | FALSE_POSITIVE | `record_binary_egress` logs and appends provider, field, byte count and the reason "cloud-tagged Ollama model <id>; images cannot be gated"; the image bytes themselves are dropped and never written. Sensitive subsystem; unchanged. |
+| 1039 (main) | py/clear-text-storage-sensitive-data | services/model_router.py:2186 | FALSE_POSITIVE | The opt-in payload dump (as 719): written only when the owner creates `runtime/diag/payload-dump`, and documented as holding the prompt. |
+| 1071 | py/clear-text-storage-sensitive-data | setup_wizard.py:282 | FALSE_POSITIVE | `_save_config` removes `_SECRET_CONFIG_KEYS` (`anthropic_api_key`, `gemini_api_key`, `vault_password`) at line 269 before either file is written; `guarded_settings.clamp_for_write` only narrows the guarded settings keys. The passphrase CodeQL follows lands in `vault_password`, which is removed. |
+| 13 (main) | py/clear-text-storage-sensitive-data | routes/voice.py:4755 | FALSE_POSITIVE | `_vlog` writes `voice_debug.log` only when `FRIDAY_VOICE_DEBUG` is set. The key-resolution line holds the key's source label, `valid` and the validation detail (an HTTP status or Google's error body; the key travels in the `x-goog-api-key` header, never in the URL), not the key. |
