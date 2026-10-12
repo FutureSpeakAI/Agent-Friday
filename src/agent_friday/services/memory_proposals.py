@@ -646,7 +646,7 @@ def _name_rows(conn, names) -> List[str]:
     wanted = [n for n in {" ".join(str(x or "").split()).lower() for x in (names or [])} if len(n) >= 3]
     if not wanted:
         return []
-    pats = [re.compile(r"" + r"s+".join(re.escape(w) for w in n.split(" ")) + r"", re.IGNORECASE) for n in wanted]
+    pats = [re.compile(r"\b" + r"\s+".join(re.escape(w) for w in n.split(" ")) + r"\b", re.IGNORECASE) for n in wanted]
     out = []
     for fid, text, evidence in conn.execute("SELECT fact_id, text, evidence FROM proposed_facts").fetchall():
         hay = "%s %s" % (_open(text), _open(evidence))

@@ -145,7 +145,7 @@ def test_the_lane_styles_use_tokens_amber_only_for_needs_you_and_nothing_moves(p
 def test_the_classes_do_not_collide_with_the_mail_lanes_view(page):
     """The Messages lanes view owns .lane-tab, .lane-tabs, .lane-count and .lane-dot; these classes are place-*."""
     b = _block(page)
-    assert not re.findall(r"className: '[^']*lane-", b)
+    assert not re.findall(r"className: '[^']*\blane-", b)
     for cls in ("place-tabs", "place-tab", "place-count", "place-badge", "place-dot", "place-card"):
         assert cls in b, cls
 
