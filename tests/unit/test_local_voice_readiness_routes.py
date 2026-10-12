@@ -62,6 +62,7 @@ def _client(monkeypatch, *, engine="gemini", settings=None, snap=UNKNOWN_SNAP):
     monkeypatch.setattr(rv, "get_local_voice_engine", lambda: (_ for _ in ()).throw(AssertionError("probed the voice engine")))
     monkeypatch.setattr(rv._vm, "get_manifest", lambda: _Manifest())
     app = Flask(__name__)
+    app.secret_key = "test"                 # login_required keeps a session on loopback
     app.register_blueprint(rv.voice_bp)
     return app.test_client(), data, writes
 
