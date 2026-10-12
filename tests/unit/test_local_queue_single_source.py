@@ -297,3 +297,19 @@ def test_time_bound_and_nested_calls_are_not_wrapped(world, monkeypatch):
     with bg.background_job(kind="scheduled", key="k", label="a job", deferrable=False):
         bg.before_local_model_call("default")
         assert ls.admit("local_call.call", model="default", cls="background").nested
+
+
+def test_a_registered_source_does_not_hide_the_queues_own_rows(world):
+    """Work orders register a source of their own the first time one is submitted; the
+    queue's tasks (and podcasts, leases, the Library) must stay in the list beside it."""
+    sup, _away = world
+    sup.wire_spawn(_job("a"))
+    ls.register_source("work_orders", lambda: [{"id": "work_order:x", "source": "work_orders",
+                                                 "state": "waiting", "class": "background",
+                                                 "interactive": False, "label": "a work order",
+                                                 "kind": "work_order", "model": "", "needs": "",
+                                                 "reason": "", "waited_s": 0.0, "cancellable": True}],
+                       lambda job_id: False)
+    ids = [j["id"] for j in ls.jobs()]
+    assert "a" in ids and "work_order:x" in ids
+    assert {"task", "podcast", "lease", "work_orders"} <= set(ls._active_sources())

@@ -352,8 +352,12 @@ class TurnQueue:
         try:
             return str(g(t) or "")
         except Exception:
-            _log.debug("turn_queue: gate failed", exc_info=True)
-            return ""
+            # A job the owner asked for is never held by a broken check; background
+            # work is (fail closed, bounded by background_gate's drain cap).
+            if t.cls != "background":
+                _log.debug("turn_queue: gate failed", exc_info=True)
+                return ""
+            return _failed_check_words("turn_queue.gate")
 
     def _enqueue_locked(self, t: Ticket, *, head: bool = False) -> None:
         t.seq = next(self._seq)
@@ -956,6 +960,17 @@ def cloud_offer_hook(ticket: Ticket, waited_s: float, position: int):
 # ─────────────────────────────────────────────────────────────────────────────
 #  The background bridge (seat_queue.SeatQueue is the `background` class)
 # ─────────────────────────────────────────────────────────────────────────────
+def _failed_check_words(where: str) -> str:
+    """Why background work waits when the scheduler's gate raised (call from an
+    except block): "waiting for you to be idle" until background_gate's drain cap
+    has passed, then "". Interactive turns never reach a gate."""
+    try:
+        from agent_friday.services import background_gate as _bg
+        return _bg.failed_check_reason(where, "waiting for you to be idle")
+    except Exception:
+        return "waiting for you to be idle"
+
+
 def attach_seat_queue(seat_queue, on_idle: Optional[Callable[[str], None]] = None) -> None:
     """Make ``seat_queue`` (a ``SeatQueue``) the background class.
 
@@ -995,7 +1010,7 @@ def attach_seat_queue(seat_queue, on_idle: Optional[Callable[[str], None]] = Non
         try:
             return not g(_probe(seat, rec))
         except Exception:
-            return True
+            return not _failed_check_words("turn_queue.seat_gate")
 
     def started(seat, task_id, rec=None):
         rec = rec if isinstance(rec, dict) else {}
@@ -1023,7 +1038,7 @@ def attach_seat_queue(seat_queue, on_idle: Optional[Callable[[str], None]] = Non
         try:
             return str(g(_probe(seat, rec)) or "")
         except Exception:
-            return ""
+            return _failed_check_words("turn_queue.seat_why")
 
     # `gate` on the SeatQueue is the Local AI queue's own rule for one job
     # (services/background_gate.block_reason); this bridge sets the seat-level

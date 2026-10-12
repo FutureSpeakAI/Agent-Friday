@@ -55,7 +55,7 @@ def _settled(root):
                     index_job.folders("owner").get(str(root), {}).get("state") in ("done", "stopped", "failed"))
 
 
-def test_a_folder_is_one_job_on_its_own_seat_with_the_queues_rules(tmp_path, _env):
+def test_a_folder_is_one_job_on_its_own_seat_with_the_queues_rules(tmp_path, _env, monkeypatch):
     from agent_friday.services import background_gate as bg
     from agent_friday.services.library import index_job
     root = _folder(tmp_path)
@@ -68,15 +68,14 @@ def test_a_folder_is_one_job_on_its_own_seat_with_the_queues_rules(tmp_path, _en
     assert spec["deferrable"] is True and spec["memory_floor"] is True
     assert spec["label"].startswith("Indexing ")
     assert _env.ended == [("job-1", "completed")]
-    # the queue's own rule, applied to this record: waits for idle, runs when idle
+    # the queue's own rule, applied to this record: waits for idle, runs when idle.
+    # monkeypatch puts the real idle_state back: deleting the attribute removed the
+    # module's own function for every later test in the process.
     idle = {"idle": True, "idle_s": 9999, "threshold_s": 600, "os_readable": True}
-    try:
-        bg.idle_state = lambda: dict(idle, idle=False)
-        assert bg.block_reason(spec) == bg.REASON_IDLE
-        bg.idle_state = lambda: idle
-        assert bg.block_reason(dict(spec, memory_floor=False)) == ""
-    finally:
-        del bg.idle_state
+    monkeypatch.setattr(bg, "idle_state", lambda: dict(idle, idle=False))
+    assert bg.block_reason(spec) == bg.REASON_IDLE
+    monkeypatch.setattr(bg, "idle_state", lambda: idle)
+    assert bg.block_reason(dict(spec, memory_floor=False)) == ""
 
 
 def test_the_folders_counts_are_the_checkpoint_the_chip_shows(tmp_path, _env):
