@@ -650,7 +650,11 @@ def test_local_only_refuses_by_voice_with_the_reason(monkeypatch):
     ("always", "always"), ("Always.", "always"), ("from now on", "always"),
     ("switch back", "switch_back"), ("go back to local", "switch_back"), ("yes, switch back", "switch_back"),
     ("keep cloud", "keep_cloud"), ("keep the cloud", "keep_cloud"), ("stay on cloud", "keep_cloud"),
-    ("never mind", "cancel"), ("stay on local", "cancel"),
+    ("never mind", None), ("cancel", None), ("stay on local", "cancel"),
+    # a retraction or a correction anywhere, or someone else's words, is not an answer
+    ("always, no, wait", None), ("Always. No.", None), ("just this call, no", None),
+    ("always wait", None), ("actually always", None), ("she said always", None),
+    ("he says switch back", None), ("\"always\"", None), ("switch back never mind", None),
     ("always, no, just this call", None), ("", None), ("what is the weather", None),
     # a negation just before the phrase is a doubt, never the answer
     ("no, not always", None), ("not always", None), ("don't switch back", None), ("do not switch back", None),
@@ -910,9 +914,10 @@ def test_a_restart_in_the_middle_of_just_this_call_goes_back_at_boot(monkeypatch
     lvr.ask_cloud_switch(source="settings")
     lvr.answer_cloud_switch("call")
     assert store.data["voice_engine"] == "gemini"
+    lvr.note_cloud_call_started()                               # a call really used it
     assert lvr.reconcile_at_boot() is True
     assert store.data["voice_engine"] == "local" and store.data[lvr.CHOICE_KEY] == {}
-    assert len(p.of("LV9")) == 1, "said, not silent"
+    assert len(p.of("LV9")) == 1 and "restarted during a cloud call" in p.of("LV9")[0]["body"]
     assert lvr.reconcile_at_boot() is False
 
 
@@ -1017,3 +1022,100 @@ def test_both_ui_files_wire_the_failure_offer_the_ids_and_the_refusal():
         assert "m.offer.kind === 'cloud_switch'" in html and "m.offer.endpoint" in html, name
         assert "id: st.cloud_question.id" in html and "id: st.switch_back.id" in html, name
         assert "data-cloud-voice-refused" in html and "setRefusal(" in html, name
+
+
+# ── 10. the re-review's findings ─────────────────────────────────────────────
+
+def _with_tool_ctx(ctx):
+    from agent_friday.services import agent
+    return agent._CURRENT_TOOL_CONTEXT, agent._CURRENT_TOOL_CONTEXT.set(ctx)
+
+
+@pytest.mark.parametrize("ctx,local", [
+    ({"surface": "voice-live-relay", "voice_owner_local": False}, False),
+    ({"surface": "voice-live-relay"}, False),
+    ({"surface": "voice-local", "owner_local": False}, False),
+    ({"surface": "voice-live-relay", "voice_owner_local": True}, True),
+    ({"surface": "voice-local", "owner_local": True}, True),
+    ({"surface": "chat"}, True),
+])
+def test_a_voice_call_that_is_not_this_pcs_own_cannot_ask_or_answer(monkeypatch, ctx, local):
+    store = Store(monkeypatch)
+    Pushes(monkeypatch)
+    var, tok = _with_tool_ctx(ctx)
+    try:
+        out = _tool(action="cloud")
+        if local:
+            assert out["kind"] == "asked"
+        else:
+            assert out["kind"] == "not_local" and "this PC's own screen" in out["spoken"]
+            assert lvr.cloud_question_card() is None
+        lvr.ask_cloud_switch(source="settings")
+        w = Words(monkeypatch).say("always")
+        out = _tool(action="answer", choice="always")
+        if local:
+            assert out["kind"] == "answered"
+        else:
+            assert out["kind"] == "not_local" and store.engine_writes() == []
+    finally:
+        var.reset(tok)
+
+
+def test_the_voice_sessions_know_whether_they_are_the_owners_own_call():
+    vs = (ROOT / "src" / "agent_friday" / "routes" / "voice.py").read_text(encoding="utf-8")
+    assert '"owner_local": bool(_owner_voice)' in vs and '"owner_local": _owner_local_live' in vs
+    assert "_owner_local_live = bool(_is_local_request())" in vs
+    ve = (ROOT / "src" / "agent_friday" / "services" / "voice_engine.py").read_text(encoding="utf-8")
+    assert ve.count('"voice_owner_local": bool((session or {}).get("owner_local"))') == 2
+    assert 'ctx["owner_local"] = bool(session.get("owner_local"))' in ve
+
+
+def test_a_choice_made_at_setup_is_not_undone_at_first_boot(monkeypatch, env):
+    store = Store(monkeypatch, engine="gemini", **{lvr.CHOICE_KEY: {
+        "scope": "call", "engine": "gemini", "previous": "local", "at": T0, "reason": "your_choice",
+        "source": "setup"}})
+    p = Pushes(monkeypatch)
+    env[0] = T0 + 60
+    assert lvr.reconcile_at_boot() is False
+    assert store.data["voice_engine"] == "gemini" and p.cards == [] and store.engine_writes() == []
+    lvr.note_cloud_call_started()
+    assert store.data[lvr.CHOICE_KEY]["call_seen"] is True
+    assert lvr.reconcile_at_boot() is True and store.data["voice_engine"] == "local"
+
+
+def test_an_expired_unused_call_choice_goes_back_at_boot_with_an_honest_message(monkeypatch, env):
+    store = Store(monkeypatch, engine="gemini", **{lvr.CHOICE_KEY: {
+        "scope": "call", "engine": "gemini", "previous": "local", "at": T0, "source": "setup"}})
+    p = Pushes(monkeypatch)
+    env[0] = T0 + lvr.CALL_SCOPE_TTL_S + 5
+    assert lvr.reconcile_at_boot() is True
+    body = p.of("LV9")[0]["body"]
+    assert "No cloud call was started" in body and "restarted" not in body
+
+
+def test_the_live_session_tells_the_record_a_call_used_it():
+    vs = (ROOT / "src" / "agent_friday" / "routes" / "voice.py").read_text(encoding="utf-8")
+    assert "_lvr_start.note_cloud_call_started()" in vs
+
+
+def test_a_non_local_owner_is_told_where_to_choose(monkeypatch):
+    store = Store(monkeypatch)
+    gate = lvr.gate_settings_write({"voice_engine": "gemini"})
+    assert "this PC's own screen" in gate["body"]["message"]
+    import agent_friday.routes.voice as rv
+    assert "this PC's own screen" in rv._NOT_THE_PAGE[0]["message"] and rv._NOT_THE_PAGE[1] == 403
+    for name in ("index.html", "ui_parts/app.html"):
+        html = (ROOT / name).read_text(encoding="utf-8")
+        assert "d.status === 'refused' || d.status === 'error'" in html, name
+
+
+def test_the_cloud_calls_last_words_are_cleared_at_the_end_of_each_turn():
+    vs = (ROOT / "src" / "agent_friday" / "routes" / "voice.py").read_text(encoding="utf-8")
+    flush = vs[vs.index("def _flush_turn(conversation_id=None):"):]
+    flush = flush[:flush.index("user_text = ''.join(in_buf).strip()") + 2000]
+    assert '_voice_session["owner_text"] = ""' in flush and '_voice_session["owner_text_at"] = 0.0' in flush
+
+
+def test_the_lv7_registry_site_names_both_offers():
+    from agent_friday.services import notice_registry as reg
+    assert "maybe_offer_switch_back" in reg.get("LV7").where
