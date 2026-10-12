@@ -294,8 +294,10 @@ def test_a_path_from_a_web_page_stops_at_a_card_with_its_provenance(files, launc
     warn = [f for f in card["provenance"]["flags"] if f["severity"] == "warn"]
     assert warn and warn[0]["role"] == "open_target"
     assert warn[0]["source"] == "a web page on shop.example.com"
+    # The card keeps the requesting conversation and task, so a later approval
+    # replays the action under the authority that asked for it.
     assert card["payload"] == {"tool": "open_path", "input": inp,
-                               "conversation_id": ""}
+                               "conversation_id": "", "task_id": ""}
 
     # A yes in chat is not a decision on content the model may be repeating.
     out = agent._execute_tool("open_path", inp, session_ctx=_turn("yes"))

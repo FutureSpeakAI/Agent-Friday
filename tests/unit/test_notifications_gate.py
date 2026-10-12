@@ -175,6 +175,7 @@ def test_the_lanes_route_writes_the_notice_and_the_ledger_line_too(monkeypatch):
     from agent_friday.routes import lanes
     monkeypatch.setattr(core, "_save_settings", lambda d, **k: None)
     app = Flask("q")
+    app.secret_key = "test"                 # login_required keeps a session when a remote key is set
     app.register_blueprint(lanes.lanes_bp)
     assert app.test_client().post("/api/lanes/quiet", json={"until_morning": True}).status_code == 200
     assert [c for c in ne.list_notifications(limit=20) if c.get("kind") == "quiet_on"

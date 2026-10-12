@@ -409,13 +409,29 @@ def opens_cloud(mode: str | None = None) -> bool:
 
 # ── the choke point ──────────────────────────────────────────────────────────
 
+#: The name the Ollama relay transports pass (`require("ollama", purpose, model)`):
+#: the daemon this machine talks to. It is not a registered provider (the built-in
+#: descriptor is `ollama-local`), so the seat-name rule alone would call every
+#: daemon model a cloud call and refuse a plain local model in a local mode.
+_OLLAMA_RELAY = "ollama"
+
+
 def _is_local(provider, model: str) -> bool:
     try:
         from agent_friday.services.seat_policy import (
             is_local_descriptor, is_local_seat)
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
         if isinstance(provider, dict):
-            from agent_friday.services.local_only_guard import is_cloud_model_tag
             return (not is_cloud_model_tag(model)) and is_local_descriptor(provider)
+        if str(provider or "").strip().lower() == _OLLAMA_RELAY:
+            # A cloud tag or an alias the daemon's inventory marks remote is a
+            # cloud call. Anything else is a model the daemon runs here, unless a
+            # descriptor registered under this very name says otherwise.
+            if is_cloud_model_tag(model):
+                return False
+            from agent_friday.services.provider_registry import get_provider_registry
+            descriptor = get_provider_registry().get_provider(_OLLAMA_RELAY)
+            return True if descriptor is None else is_local_descriptor(descriptor)
         return is_local_seat(provider, model)
     except Exception:
         return False
