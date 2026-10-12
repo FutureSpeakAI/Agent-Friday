@@ -21,6 +21,7 @@ import hmac
 import json
 import os
 import threading
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -280,7 +281,10 @@ def push(
         return pulled
     t = _pol.tier_for(kind, source, priority, tier)
     place = _reg.place_of(kind, source, emitter, t)
-    if not approval and (t == _pol.LOG_ONLY or _pol.is_muted(kind, source)):
+    # An Activity-place notice (a routine run, a heartbeat, a background start)
+    # is visible in Activity, not as a tray card.
+    activity = place == _reg.ACTIVITY and not safety
+    if not approval and (t == _pol.LOG_ONLY or activity or _pol.is_muted(kind, source)):
         logged = {"title": "Off the record" if private else title,
                   "kind": kind, "source": source, "priority": priority,
                   "tier": _pol.LOG_ONLY, "logged": True, "place": place,
@@ -701,6 +705,13 @@ def upsert_status(
     from agent_friday.services import notice_registry as _reg
     em = _reg.resolve(kind, source, emitter)
     place = _reg.place_of(kind, source, emitter)
+    if place == _reg.ACTIVITY and not _reg.is_safety_critical(kind, emitter, source):
+        # A heartbeat's "last ran" lives in Activity and the schedule's history.
+        entry = {"title": title, "kind": kind, "source": source, "priority": priority,
+                 "tier": "log_only", "logged": True, "place": place,
+                 "emitter": em.id if em else None, "created_at": _now_iso()}
+        _log_only(entry)
+        return entry
     _notice_line(em, kind, place, True, False)
     with _LOCK:
         items = _load()
@@ -765,7 +776,8 @@ def list_notifications(
             _save(items, ledger)
     items = [n for n in items if not n.get("held")]
     if not include_dismissed:
-        items = [n for n in items if not n.get("dismissed") and not _hidden(n, ledger)]
+        items = [n for n in items if not n.get("dismissed") and not _hidden(n, ledger)
+                 and _in_tray(n)]
     items = [dict(n, group=_pol.group_key(n)) for n in items]
     # Priority, then newest first. created_at has one-second resolution, so
     # two notifications in the same second tie; new entries are appended, so
@@ -861,7 +873,31 @@ def unread_count() -> int:
             _save(items, ledger)
     return sum(1 for n in items if not n.get("read") and not n.get("dismissed")
                and not n.get("held") and n.get("tier", "needs_you") != "fyi"
-               and not _hidden(n, ledger))
+               and not _hidden(n, ledger) and _in_tray(n))
+
+
+#: An FYI card (a finished briefing, a podcast, a task result) leaves the tray
+#: after this long; it is still in its workspace and in Activity.
+FYI_TTL_S = 24 * 3600
+
+
+def _in_tray(n: Dict[str, Any], now: Optional[float] = None) -> bool:
+    """The tray holds what needs the owner and the results of things the owner
+    started. Activity-place notices (routine runs, heartbeats, background
+    starts) live in Activity, and an FYI card expires after FYI_TTL_S. An
+    approval and a safety-critical notice are always in the tray."""
+    from agent_friday.services import notification_policy as _pol
+    from agent_friday.services import notice_registry as _reg
+    kind, source, emitter = n.get("kind"), n.get("source"), n.get("emitter")
+    if _pol.is_approval(kind) or _reg.is_safety_critical(kind, emitter, source):
+        return True
+    place = n.get("place") or _reg.place_of(kind, source, emitter, n.get("tier"))
+    if place == _reg.ACTIVITY:
+        return False
+    if (n.get("tier") or _pol.NEEDS_YOU) == _pol.FYI:
+        age = (now if now is not None else time.time()) - _utc_ts(n.get("created_at", ""))
+        return age <= FYI_TTL_S
+    return True
 
 
 # ────────────────────────────────────────────────────────────────────────

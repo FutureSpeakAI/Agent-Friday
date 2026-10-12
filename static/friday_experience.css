@@ -104,7 +104,6 @@ body.friday-experience-enabled .fx-nav-button[aria-current="page"] {
   border-color: color-mix(in srgb, var(--fr-cyan) 24%, transparent);
   color: var(--fr-cyan);
 }
-body.friday-experience-enabled .fx-nav-badge { position: absolute; top: 3px; right: 2px; display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--fr-warn) 45%, transparent); border-radius: 9px; color: var(--fr-warn); background: var(--fr-surface); font: 600 10px/1 var(--fr-font-body); }
 
 body.friday-experience-enabled .fx-main {
   position: relative;
