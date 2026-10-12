@@ -263,13 +263,15 @@ def parse(text: Any) -> Optional[Parsed]:
     obj = obj.strip()
     if not obj:
         return None
+    if _ALL.match(obj):
+        # "all of them" / "all of it" is every row on screen (what _ALL_SCREEN calls pointing), not
+        # "them": checked before the deictic, whose optional "all of" lead would otherwise claim it.
+        return Parsed(verb, obj, dest, "all")
     m = _DEICTIC.match(obj)
     if m:
         w, h = m.group("w"), m.group("h") or ""
         plural = w in ("these", "those", "them") or h in _PLURAL_HEAD
         return Parsed(verb, obj, dest, "deictic", {"kind": "these" if plural else "this"})
-    if _ALL.match(obj):
-        return Parsed(verb, obj, dest, "all")
     o = _ordinals(obj)
     if o:
         return Parsed(verb, obj, dest, "ordinals", o)

@@ -55,9 +55,19 @@ def test_a_description_is_not_referential(text):
 
 
 @pytest.mark.parametrize("text", ["open the second one", "select these", "archive these", "show me the first three",
-                                  "star the ones from Mara", "all of them", "tick that"])
+                                  "star the ones from Mara", "archive all of them", "tick that"])
 def test_words_that_point_at_the_screen_are_referential(text):
     assert pa.is_referential(pa.parse(text)), text
+
+
+@pytest.mark.parametrize("text", ["all of them", "all of it"])
+def test_all_of_them_after_a_verb_is_every_row_on_screen_and_alone_is_no_request(text):
+    """N1: "all of them" points at the screen: every row on it, not the ticked "them" (the deictic's optional
+    "all of" lead used to claim it). Only the owner's words pick the verb, so the words alone are no request."""
+    p = pa.parse("archive " + text)
+    assert (p.verb, p.kind) == ("archive", "all") and pa.is_referential(p)
+    assert pa.parse(text) is None and not pa.looks_like(text)
+    assert pa.parse("select all of these").kind == "deictic"            # "these" still means the pointed rows
 
 
 def test_a_pointing_phrase_still_reaches_the_screen_on_the_trusted_path():
@@ -233,7 +243,7 @@ def test_a_pointing_word_inside_a_description_does_not_point(text, tool, monkeyp
 
 @pytest.mark.parametrize("text", [
     "open these", "open this one", "open that email", "select them", "tick the first one", "open the first",
-    "star the ones from Mara", "select the unread ones", "tick three of them", "all of them", "select everything",
+    "star the ones from Mara", "select the unread ones", "tick three of them", "tick all of them", "select everything",
     "tick all of the ones on screen", "select all of these", "open the one from Dana", "show me the two from Mara",
     "open those", "select those emails"])
 def test_a_pointing_word_as_the_head_of_the_object_points(text):
