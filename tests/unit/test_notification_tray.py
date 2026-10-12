@@ -64,7 +64,7 @@ def test_tiers_route_housekeeping_to_the_log_and_fyi_away_from_the_badge(_clean)
     ne.push(title="Back online", source="network", kind="info", priority="low")
     ne.push(title="Retired: The Friday Edition", source="scheduler", kind="schedule_retired")
     assert _cards() == [] and len(_clean) == 2, "log-only items reached the tray"
-    ne.push(title="Daily creation ran", source="scheduler", kind="scheduled_task", priority="low")
+    ne.push(title="Daily creation ran", source="daily-creation", kind="creation", priority="low")
     fyi = _cards()[0]
     assert fyi["tier"] == pol.FYI and fyi["read"] is True
     assert ne.unread_count() == 0, "an FYI item bumped the badge"
@@ -82,10 +82,10 @@ def test_different_approvals_are_never_collapsed():
 
 def test_an_approval_is_never_muted_or_demoted(monkeypatch, _clean):
     monkeypatch.setattr(pol, "muted_kinds", lambda: {"approval_pending|approvals",
-                                                    "scheduled_task|scheduler"})
+                                                    "creation|daily-creation"})
     ne.push(title="Approval needed: send email", source="approvals", kind="approval_pending",
             dedupe_key="appr:9", tier=pol.LOG_ONLY)
-    ne.push(title="Daily creation ran", source="scheduler", kind="scheduled_task")
+    ne.push(title="Daily creation ran", source="daily-creation", kind="creation")
     cards = _cards()
     assert [c["kind"] for c in cards] == ["approval_pending"], cards
     assert cards[0]["tier"] == pol.NEEDS_YOU
@@ -94,15 +94,15 @@ def test_an_approval_is_never_muted_or_demoted(monkeypatch, _clean):
 
 def test_mute_is_reversible_through_settings():
     """Through the settings file, as the Settings list and the voice tool do."""
-    ne.mute("scheduled_task", "scheduler")
-    assert pol.is_muted("scheduled_task", "scheduler")
-    ne.unmute("scheduled_task", "scheduler")
-    assert not pol.is_muted("scheduled_task", "scheduler")
+    ne.mute("creation", "daily-creation")
+    assert pol.is_muted("creation", "daily-creation")
+    ne.unmute("creation", "daily-creation")
+    assert not pol.is_muted("creation", "daily-creation")
 
 
 def test_quiet_mid_conversation_holds_cards_but_approvals_still_arrive():
     pol.note_owner_turn()
-    ne.push(title="Daily creation ran", source="scheduler", kind="scheduled_task")
+    ne.push(title="Daily creation ran", source="daily-creation", kind="creation")
     ne.push(title="Approval needed: send email", source="approvals", kind="approval_pending",
             dedupe_key="appr:2", proactive_chat=True)
     cards = _cards()
@@ -111,11 +111,11 @@ def test_quiet_mid_conversation_holds_cards_but_approvals_still_arrive():
         "an approval interrupted mid-sentence")
     pol._LAST_TURN[0] = 0.0                                 # the conversation is over
     kinds = sorted(c["kind"] for c in _cards())
-    assert kinds == ["approval_pending", "scheduled_task"], "held cards were not delivered"
+    assert kinds == ["approval_pending", "creation"], "held cards were not delivered"
 
 
 def test_clear_all_keeps_pending_approvals():
-    ne.push(title="Daily creation ran", source="scheduler", kind="scheduled_task")
+    ne.push(title="Daily creation ran", source="daily-creation", kind="creation")
     ne.push(title="Front Page failed", source="scheduler", kind="scheduled_failure", priority="high")
     ne.push(title="Approval needed: send email", source="approvals", kind="approval_pending",
             dedupe_key="appr:3")
@@ -142,7 +142,7 @@ def test_a_job_failing_three_times_is_one_card_and_its_next_success_resolves_it(
     s._notify_run(rec, "complete", "ok")
     kinds = [c["kind"] for c in _cards()]
     assert "scheduled_failure" not in kinds, "the failure did not resolve on success"
-    assert kinds == ["scheduled_task"]
+    assert kinds == [], "a routine success is in Activity, not the tray"
 
 
 def test_a_retired_schedule_goes_to_the_activity_log_only(monkeypatch, _clean):
@@ -154,13 +154,13 @@ def test_a_retired_schedule_goes_to_the_activity_log_only(monkeypatch, _clean):
 
 def test_the_voice_and_chat_tool_summarises_clears_and_mutes():
     from agent_friday.services import notification_tools as nt
-    ne.push(title="Daily creation ran", source="scheduler", kind="scheduled_task")
+    ne.push(title="Daily creation ran", source="daily-creation", kind="creation")
     ne.push(title="Approval needed: send email", source="approvals", kind="approval_pending",
             dedupe_key="appr:7")
     said = nt.handle({"action": "summary"})
     assert "need you" in said and "send email" in said
     said = nt.handle({"action": "mute"})
-    assert "Muted 1 kind" in said and pol.is_muted("scheduled_task", "scheduler")
+    assert "Muted 1 kind" in said and pol.is_muted("creation", "daily-creation")
     assert not pol.is_muted("approval_pending", "approvals")
     said = nt.handle({"action": "clear"})
     assert "approval" in said and [c["kind"] for c in _cards()] == ["approval_pending"]

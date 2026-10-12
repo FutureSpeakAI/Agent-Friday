@@ -1,6 +1,6 @@
 """Both copies of the UI show the tray as designed: approvals survive "Clear
-all" and have no mute button, repeats show their count, FYI never bumps the
-badge, and muted kinds are listed in Settings to unmute."""
+all" and have no mute button, repeats show their count, the bell has no
+count, and muted kinds are listed in Settings to unmute."""
 from __future__ import annotations
 
 import re
@@ -20,7 +20,7 @@ def test_the_tray_ui(ui):
     assert "notif-mute" in text and "n.kind!=='approval_pending'&&" in flat, (
         f"{ui}: the mute button is missing or offered on approvals")
     assert "notif-count" in text and "n.count>1" in flat, f"{ui}: repeats do not show their count"
-    assert "!n.read&&n.tier!=='fyi'" in flat, f"{ui}: FYI cards bump the badge"
+    assert "bellBadgeCount" not in flat, f"{ui}: the bell shows a count (tests/unit/test_no_count_badges.py)"
     assert "functionSettingsNotificationMutes()" in flat and "createElement(SettingsNotificationMutes" in flat, (
         f"{ui}: muted kinds are not listed in Settings")
     # The old per-item dismiss loop that cleared approvals is gone.

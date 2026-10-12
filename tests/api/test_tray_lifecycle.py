@@ -213,7 +213,8 @@ def test_every_finished_card_has_a_dismiss_control(rel):
         f"{rel}: no per-card dismiss"
     assert "Dismiss this card. The record and its journal are kept." in text, \
         f"{rel}: dismiss does not say that it keeps the record"
-    assert "/api/tasks/dismiss-all" in text, f"{rel}: no clear-finished control"
+    # Task cards are in Activity, not the tray, and finished rows leave the
+    # lane by themselves (services/activity_lane.FINISHED_VISIBLE_S).
 
 
 @pytest.mark.parametrize("rel", HTML_FILES)
