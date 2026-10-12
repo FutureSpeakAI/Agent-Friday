@@ -491,6 +491,38 @@ def _fresh_local_queue():
     _reset_local_queue()
 
 
+def _forget_live_duplicates() -> None:
+    """Empty the Live surface's duplicate-call window. It is keyed by
+    conversation, tool and arguments for a few seconds, so a test that repeats
+    another test's call (a parametrized pair, the same synthetic conversation)
+    would otherwise get that test's result back without running anything."""
+    ll = sys.modules.get("agent_friday.services.live_laya")
+    if ll is not None:
+        ll.reset_idempotency()
+
+
+@pytest.fixture(autouse=True)
+def _laya_writes_finish_inside_their_test():
+    """Laya's writer thread appends rows after the turn. A row an earlier test
+    queued is written before this test starts, and this test's rows are written
+    before it ends, so none lands in another test's home or fake writer."""
+    laya = sys.modules.get("agent_friday.services.laya")
+    if laya is not None:
+        laya.flush()
+    yield
+    laya = sys.modules.get("agent_friday.services.laya")
+    if laya is not None:
+        laya.flush()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_live_duplicate_window():
+    """Each test starts with no remembered Live call and leaves none behind."""
+    _forget_live_duplicates()
+    yield
+    _forget_live_duplicates()
+
+
 _EPISODE_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}-[0-9a-f]{6}")
 
 

@@ -641,7 +641,7 @@ def test_an_abandoned_worker_writes_no_router_log_row(monkeypatch, tmp_path):
     gate = threading.Event()
     rows = []
     monkeypatch.setattr(laya, "RULE_ALLOWANCE_MS", 0)
-    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None: rows.append((r.decision, r.layer)))
+    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None, path=None: rows.append((r.decision, r.layer)))
 
     def slow(text, **k):
         gate.wait(5)
@@ -659,7 +659,7 @@ def test_an_abandoned_worker_writes_no_router_log_row(monkeypatch, tmp_path):
 
 def test_a_used_answer_writes_the_router_log_row_once(monkeypatch):
     rows = []
-    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None: rows.append(r.tool))
+    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None, path=None: rows.append(r.tool))
     monkeypatch.setattr(lr, "route", lambda text, **k: lr.Route("tool", tool="check_email", layer="rule"))
     laya.route_turn("check my email")
     assert laya.flush() and rows == ["check_email"]
@@ -746,7 +746,7 @@ def test_the_writer_queue_is_flushed_at_graceful_exit(monkeypatch):
 
 def test_the_router_row_keeps_the_time_the_decision_was_taken(monkeypatch, tmp_path):
     rows = []
-    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None: rows.append(at))
+    monkeypatch.setattr(lr, "_write", lambda text, r, surface, at=None, path=None: rows.append(at))
     monkeypatch.setattr(lr, "route", lambda text, **k: lr.Route("tool", tool="check_email", layer="rule"))
     real = laya.time.strftime
     stamps = iter(["2026-10-11T10:00:00"] + ["2026-10-11T10:59:59"] * 20)
@@ -754,3 +754,22 @@ def test_the_router_row_keeps_the_time_the_decision_was_taken(monkeypatch, tmp_p
     laya.route_turn("check my email")
     time.sleep(0.2)
     assert laya.flush() and rows and rows[0] == "2026-10-11T10:00:00"       # not a later writer-side stamp
+
+
+def test_the_router_row_lands_in_the_log_of_the_turn_that_decided_it(monkeypatch, tmp_path):
+    # The writer thread appends later; by then the log the process points at may be another one
+    # (in a suite, the next test's home). The row goes to the log that was current at decision.
+    current = {"log": tmp_path / "turn" / "router.jsonl"}
+    monkeypatch.setattr(lr, "log_path", lambda: current["log"])
+    monkeypatch.setattr(lr, "route", lambda text, **k: lr.Route("tool", tool="check_email", layer="rule"))
+    gate = threading.Event()
+    assert laya.flush()
+    assert laya.enqueue_write(lambda: gate.wait(2))                 # the writer is busy while the turn decides
+    try:
+        laya.route_turn("check my email")
+        current["log"] = tmp_path / "later" / "router.jsonl"
+    finally:
+        gate.set()
+    assert laya.flush()
+    assert (tmp_path / "turn" / "router.jsonl").exists()
+    assert not (tmp_path / "later" / "router.jsonl").exists()

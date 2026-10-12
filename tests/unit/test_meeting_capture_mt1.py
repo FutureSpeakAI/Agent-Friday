@@ -449,6 +449,11 @@ def test_a_recording_meeting_is_a_voice_class_ticket_that_blocks_background_admi
     finally:
         hold.release()
     assert not tq.people_active_anywhere()
+    # The meeting no longer holds background work back, but the owner was just in it:
+    # the idle clock counts from the meeting's end (a voice ticket's release restarts it).
+    assert ls.gate(_bg()) == "waiting for you to be idle"
+    from agent_friday.services import work_queue as wq
+    wq.mark_active(time.time() - 86400.0)            # and once the owner has been away again
     assert ls.gate(_bg()) == ""
 
 
