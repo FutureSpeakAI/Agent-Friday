@@ -95,4 +95,12 @@ def test_the_encoder_runs_offline_with_telemetry_off():
     import os
     from agent_friday.services.library import embed  # noqa: F401  (importing it sets the offline flag)
     assert os.environ.get("HF_HUB_OFFLINE") == "1"
-    assert "disable_telemetry_events" in (PKG / "embed.py").read_text(encoding="utf-8")
+    # The Library holds no encoder session of its own: it asks the one shared
+    # MiniLM session (services/laya2_encoder), and that session is the one that
+    # turns onnxruntime's telemetry off before it is built.
+    from agent_friday.services import laya2_encoder
+    assert embed.laya2_encoder is laya2_encoder
+    assert "InferenceSession" not in (PKG / "embed.py").read_text(encoding="utf-8")
+    src = Path(laya2_encoder.__file__).read_text(encoding="utf-8")
+    assert "disable_telemetry_events()" in src
+    assert src.index("disable_telemetry_events()") < src.index("InferenceSession(")

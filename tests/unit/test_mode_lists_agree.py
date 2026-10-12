@@ -32,6 +32,9 @@ SPECIAL = {
         "the local modes plus the old smart spelling",
     ("services/setup_reader.py", frozenset({"cloud_only", "cloud_preferred", "local_preferred"})):
         "modes under which a cloud reader may even be offered (local_only never offers one)",
+    ("services/work_order_returns.py", frozenset({"cloud_only", "cloud_preferred", "local_preferred"})):
+        "modes in which a work order may return a free-text (P2) summary; local_only "
+        "returns at most an aggregate, and an unknown mode falls to the stricter class",
 }
 
 

@@ -625,10 +625,11 @@ def key_check(name, prov=None, use_cache=True) -> dict | None:
     """Does a paid provider accept its key? Asks for its model list, never to think.
 
     The models list is free and proves the key is live, which is all a status
-    light needs. In a local routing mode nothing is sent at all: the answer is
-    that a key is present, and the owner can run the Providers panel's own
-    check to go further. Returns None for a provider that is not a paid cloud
-    one.
+    light needs. In a local routing mode nothing is sent at all: the status is
+    "unknown" (the provider was not asked, so it is neither up nor down), the
+    configuration is "ok" because a key is present, and the owner can run the
+    Providers panel's own check to go further. Returns None for a provider that
+    is not a paid cloud one.
     """
     prov = prov if prov is not None else _provider(name)
     if not prov or not _is_cloud_provider(prov):
@@ -647,7 +648,9 @@ def key_check(name, prov=None, use_cache=True) -> dict | None:
 
     from agent_friday.services import cloud_mode_policy as _cmp
     if _cmp.is_local_mode():
-        return _result("ok", "key present (not contacted: you are in a local mode)")
+        # Not "ok": an uncontacted provider must not count toward "Friday can
+        # think" in the health sweep. config stays "ok"; the key is there.
+        return _result("unknown", "key present (not contacted: you are in a local mode)")
     try:
         if ptype == "anthropic":
             from agent_friday.core import get_anthropic_client

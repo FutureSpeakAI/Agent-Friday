@@ -183,6 +183,7 @@ class LoopbackSource:
         self._stop = threading.Event()
         self._ready = threading.Event()
         self.error = ""
+        self._open_error = ""
         self.format = None
         self.delivered = 0
         self.active = False
@@ -191,14 +192,18 @@ class LoopbackSource:
         self._stop.clear()
         self._ready.clear()
         self.error = ""
+        self._open_error = ""
         self._thread = threading.Thread(target=self._run, args=(on_pcm,),
                                         name="meeting-loopback", daemon=True)
         self._thread.start()
         if not self._ready.wait(OPEN_TIMEOUT_S):
             self._stop.set()
             raise RuntimeError("the system audio device did not open in time")
-        if self.error:
-            raise RuntimeError(self.error)
+        # Only a device that did not open fails the start. One that opened and
+        # died straight after is a recording that stopped: `error` says why and
+        # the recorder's watch ends it, as for a device lost later on.
+        if self._open_error:
+            raise RuntimeError(self._open_error)
 
     def _run(self, on_pcm) -> None:
         backend = self._backend or _WasapiBackend()
@@ -206,7 +211,7 @@ class LoopbackSource:
             self.format = backend.open()
             rs = Resampler(self.format["rate"], RATE)
         except Exception as e:
-            self.error = str(e) or type(e).__name__
+            self.error = self._open_error = str(e) or type(e).__name__
             log.warning("loopback did not open: %s", self.error)
             self._ready.set()
             try:

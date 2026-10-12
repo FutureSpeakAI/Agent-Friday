@@ -14,6 +14,12 @@ from agent_friday.services import local_call as lc
 
 CLOUD = ["fixture-model:cloud", "fixture-model:8b-cloud", "fixture-model-cloud"]
 
+# The real function, taken at collection time: tests/conftest.py's autouse
+# _no_local_seat_is_serving replaces scheduler._resolve_local_seat with a stub
+# that always answers None, which would make every assertion below vacuous.
+from agent_friday.services import scheduler as _scheduler  # noqa: E402
+_resolve_local_seat = _scheduler._resolve_local_seat
+
 
 @pytest.fixture(autouse=True)
 def _no_endpoint_cache():
@@ -38,8 +44,18 @@ def test_describe_dispatch_still_reports_plain_local_models(monkeypatch):
 
 
 def _resolve_env(monkeypatch, settings, installed, routes):
+    import urllib.request
     import agent_friday.core as core
     from agent_friday.services import local_seats
+    from agent_friday.services import residency_arbiter as ra
+
+    def _no_daemon(*a, **k):
+        raise OSError("no daemon in tests")
+    # The real resolver adopts live seats and reads the daemon's inventory
+    # first: neither may reach this machine. A test that needs an inventory
+    # replaces urlopen after this.
+    monkeypatch.setattr(ra, "adopt_live_seats", lambda: [])
+    monkeypatch.setattr(urllib.request, "urlopen", _no_daemon)
     monkeypatch.setattr(core, "_load_settings", lambda: settings)
     monkeypatch.setattr(local_seats, "installed",
                         lambda force=False: [(n, 1.0) for n in installed])
@@ -50,7 +66,6 @@ def _resolve_env(monkeypatch, settings, installed, routes):
 
 @pytest.mark.parametrize("model", CLOUD)
 def test_resolve_local_seat_never_returns_a_cloud_tag(monkeypatch, model):
-    from agent_friday.services.scheduler import _resolve_local_seat
     # Even a dispatch table that (wrongly) calls it a daemon model must not win.
     _resolve_env(monkeypatch,
                  {"capability_routing": {"reasoning": {"model": model}},
@@ -60,7 +75,6 @@ def test_resolve_local_seat_never_returns_a_cloud_tag(monkeypatch, model):
 
 
 def test_resolve_local_seat_skips_the_cloud_tag_for_a_real_seat(monkeypatch):
-    from agent_friday.services.scheduler import _resolve_local_seat
     cloud = CLOUD[0]
     _resolve_env(monkeypatch,
                  {"capability_routing": {"reasoning": {"model": cloud}}},
@@ -141,7 +155,14 @@ def test_call_sends_a_cloud_tag_through_the_egress_gate_outside_local_only(monke
     monkeypatch.setattr(egress_gate, "gate_ollama_body", fake_gate)
     monkeypatch.setattr(requests, "post",
                         lambda url, json=None, timeout=None: posted.append(url) or _R())
-    assert lc.call("sys", "text", CLOUD[0]) == "ok"
+    from agent_friday.services import cloud_intent
+    # local_preferred is a local mode: a cloud relay with no recorded intent is
+    # refused before the gate and before any request.
+    assert lc.call("sys", "text", CLOUD[0]) == ""
+    assert gated == [] and posted == []
+    # With the owner's explicit intent the relay is allowed, and it is sealed.
+    with cloud_intent.intent_scope("user_explicit", source="fixture"):
+        assert lc.call("sys", "text", CLOUD[0]) == "ok"
     assert gated == [CLOUD[0]]
     assert len(posted) == 1
     # Never to a llama.cpp seat endpoint, even if one is recorded for the name.
@@ -264,7 +285,6 @@ def test_log_dispatch_table_names_a_cloud_relay(monkeypatch, caplog):
 
 def test_a_skipped_cloud_role_is_logged_once(monkeypatch, caplog):
     from agent_friday.services import scheduler
-    from agent_friday.services.scheduler import _resolve_local_seat
     scheduler._CLOUD_SKIP_LOGGED.discard(CLOUD[0])
     _resolve_env(monkeypatch, {"model_routing": {"local_model": CLOUD[0]}},
                  installed=[], routes={})
@@ -294,7 +314,6 @@ def test_a_body_without_models_does_not_wipe_the_alias_set(monkeypatch, _aliases
 
 
 def test_resolve_local_seat_refreshes_aliases_before_its_loop(monkeypatch, _aliases):
-    from agent_friday.services.scheduler import _resolve_local_seat
     _resolve_env(monkeypatch, {"model_routing": {"local_model": "myglm:latest"}},
                  installed=[], routes={"myglm:latest": "daemon"})
     _inventory(monkeypatch, {"models": [{"name": "myglm:latest",
