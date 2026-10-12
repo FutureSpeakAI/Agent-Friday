@@ -271,7 +271,7 @@ def test_the_upgrade_job_proves_every_previous_release():
     a manual run may name a single base. The release waits for every leg."""
     upgrade = WORKFLOW[WORKFLOW.index("  upgrade:"):WORKFLOW.index("  release:")]
     assert "matrix:" in upgrade and "fail-fast: false" in upgrade
-    assert '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1"]' in upgrade, "all three bases are the default"
+    assert '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1","v1.0.2-beta.1"]' in upgrade, "all four bases are the default"
     assert "github.event.inputs.previous" in upgrade, "the manual input still overrides to a single base"
     assert "-BaseExe" in upgrade and "-BaseZip" in upgrade
     assert "AgentFriday-Setup-*.exe" in upgrade and "AgentFriday-Setup-*.zip" in upgrade
