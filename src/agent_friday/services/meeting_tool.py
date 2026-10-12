@@ -37,7 +37,7 @@ RINGS = {"meeting": 2}
 def _local() -> bool:
     try:
         from agent_friday.services.library import tools as lt
-        return bool(lt._loop_is_local())
+        return bool(lt._meetings_reader_ok())
     except Exception:
         return False
 
@@ -96,7 +96,7 @@ def meeting(inp: dict) -> str:
                 mid = st.get("id") if st.get("recording") else ""
             if not text or not mid:
                 return "jot needs the bullet's text and a meeting being recorded (or a meeting_id)."
-            item = _manager().pad_add(mid, text)
+            item = _manager().pad_add(mid, text, by="friday")
             return json.dumps({"added": True, "bullet": item["id"]})
         mid, why = _pick(inp)
         if why:

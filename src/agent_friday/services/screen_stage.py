@@ -140,6 +140,13 @@ def _ref(v: Any) -> str | None:
     return s if _REF.match(s) else None
 
 
+def _no_meeting_title(text: str) -> str:
+    """A Library row that is a meeting's transcript or notes ("Meeting transcript: <title> (<day>)") reaches a model
+    as a position only: the stage cannot tell a local reader from a cloud one, and a meeting's title can be sensitive."""
+    t = str(text or "")
+    return "" if t.lstrip().lower().startswith(("meeting transcript:", "meeting notes:")) else t
+
+
 def bound_stage(raw: Any, now: float | None = None) -> dict | None:
     """The page's stage, cut to the contract (S1). None when it is not a stage."""
     if not isinstance(raw, dict):
@@ -169,12 +176,12 @@ def bound_stage(raw: Any, now: float | None = None) -> dict | None:
         except (TypeError, ValueError):
             n = len(items) + 1
         items.append({"ref": ref, "n": n, "facets": facets,
-                      "title": "" if private else _clip(it.get("title")), "who": "" if private else _clip(it.get("who"))})
+                      "title": "" if private else _no_meeting_title(_clip(it.get("title"))), "who": "" if private else _clip(it.get("who"))})
     sel = raw.get("selection") if isinstance(raw.get("selection"), dict) else {}
     refs = [r for r in (_ref(x) for x in (sel.get("refs") or [])[:MAX_REFS]) if r]
     source = sel.get("source") if sel.get("source") in ("friday", "owner", "mixed") else ""
     selection = {"id": _clip(sel.get("id"), 40), "refs": refs, "count": len(refs),
-                 "label": "" if private else _clip(sel.get("label"), 40), "source": source,
+                 "label": "" if private else _no_meeting_title(_clip(sel.get("label"), 40)), "source": source,
                  "beyond_loaded": max(0, int(sel.get("beyond_loaded") or 0))
                  if isinstance(sel.get("beyond_loaded"), (int, float)) else 0}
     filters = []

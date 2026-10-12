@@ -3300,11 +3300,19 @@ def _tool_navigate_to(inp):
     inp = inp or {}
     from agent_friday.services.desktop_targets import open_on_desktop
     new_tab = bool(inp.get('new_tab'))
+    name_items = not _cloud_voice()
+    if name_items and str(inp.get('kind') or '').strip().lower() == 'meeting':
+        # a meeting's title is named only to a reader that may hear the meetings (a local loop speaking here)
+        try:
+            from agent_friday.services.library import tools as _lt
+            name_items = bool(_lt._meetings_reader_ok())
+        except Exception:
+            name_items = False
     r = open_on_desktop(inp.get('kind') or '', query=inp.get('query') or '',
                         id=inp.get('id') or '', workspace=inp.get('workspace') or '',
                         section=inp.get('section') or '', new_tab=new_tab,
                         maximize=bool(inp.get('max', new_tab)),
-                        name_items=not _cloud_voice())
+                        name_items=name_items)
     return r['text']
 
 

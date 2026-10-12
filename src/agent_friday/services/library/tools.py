@@ -173,10 +173,21 @@ MEETINGS_STAY = ("Passages of the user's meetings stay on this PC: a cloud model
                  "get them. Open the Meetings workspace, or ask with the local voice.")
 
 
+def _model_is_cloud_tagged() -> bool:
+    """The running loop's model is an Ollama tag the daemon relays to ollama.com (`glm-4.6:cloud`): a cloud
+    reader whatever its provider is called."""
+    try:
+        from agent_friday.services import agent
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        return bool(is_cloud_model_tag(agent._CURRENT_MODEL.get() or ""))
+    except Exception:
+        return True                       # unknown is not private
+
+
 def _meetings_reader_ok() -> bool:
     """Meeting words are read only by a loop KNOWN to be local that is not relaying its answer to a cloud
     voice. In cloud_only mode the loop is a cloud model, so this is False and no meeting passage is spoken."""
-    return _loop_is_local() and not _relays_to_cloud_voice()
+    return _loop_is_local() and not _relays_to_cloud_voice() and not _model_is_cloud_tagged()
 
 
 def _without_meetings(ev: list[dict], principal: str) -> tuple[list[dict], str | None]:
@@ -279,8 +290,8 @@ def library_status(inp: dict) -> str:
     if grants.suspended():
         return "The Library is paused: the permissions ledger could not be verified. Nothing is read until it is resolved in Settings."
     scopes = grants.active_scopes(principal)
-    if not scopes:
-        return "The Library is empty. Nothing has been added."
+    if not scopes and not c["indexed"] and not c["queued"] and not c["failed"]:
+        return "The Library is empty. Nothing has been added."          # meetings the owner made searchable count
     # a meeting's title is named only to a reader that may hear the meetings (see _meetings_reader_ok)
     bad = [r for r in st.list_documents("failed")
            if _meetings_reader_ok() or not meeting_archive.is_archive_doc(r)][:5]
