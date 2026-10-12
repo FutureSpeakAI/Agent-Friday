@@ -45,6 +45,16 @@ def _speaking() -> bool:
 REMOTE_ORIGINS = frozenset({"phone", "channel"})
 
 
+def _relays_to_cloud_voice() -> bool:
+    """True while a local model is answering a question relayed from a cloud voice session (ask_friday): its
+    answer is read out by the cloud model, so it is cloud-bound whatever model wrote it."""
+    try:
+        from agent_friday.services import agent
+        return str(agent._CURRENT_SURFACE.get() or "") == "voice-live-relay"
+    except Exception:
+        return True                       # unknown is not private
+
+
 def _loop_is_local() -> bool:
     """True only when the running loop is KNOWN to be a local model; unknown is not local."""
     try:
@@ -159,6 +169,32 @@ def _cloud_evidence(ev: list[dict], principal: str, settings: dict) -> tuple[lis
     return keep, (" ".join(notes) or None)
 
 
+MEETINGS_STAY = ("Passages of the user's meetings stay on this PC: a cloud model, or a cloud voice call, does not "
+                 "get them. Open the Meetings workspace, or ask with the local voice.")
+
+
+def _meetings_reader_ok() -> bool:
+    """Meeting words are read only by a loop KNOWN to be local that is not relaying its answer to a cloud
+    voice. In cloud_only mode the loop is a cloud model, so this is False and no meeting passage is spoken."""
+    return _loop_is_local() and not _relays_to_cloud_voice()
+
+
+def _without_meetings(ev: list[dict], principal: str) -> tuple[list[dict], str | None]:
+    """(the evidence this reader may have, a note when some was held back). Whatever a file grant, a
+    library_cloud_answers setting or the egress gate would say, a meeting's transcript or notes never
+    reach a reader that is not this PC's own."""
+    if not ev or _meetings_reader_ok():
+        return ev, None
+    st = store_for(principal)
+    keep = []
+    for e in ev:
+        doc = st.get_document(e["doc_id"]) if e.get("doc_id") else None
+        if doc is not None and meeting_archive.is_archive_doc(doc):
+            continue
+        keep.append(e)
+    return (ev, None) if len(keep) == len(ev) else (keep, MEETINGS_STAY)
+
+
 def record_use(principal: str, doc_id: int, block_id: int, res: dict | None = None) -> None:
     """Note that the conversation this tool call belongs to has read a passage. A chat reply
     records its footnotes again on the way out; a spoken, phoned or scheduled answer carries
@@ -198,6 +234,9 @@ def search_library(inp: dict) -> str:
         return res["error"]
     ev = res["evidence"]
     cloud_note = None
+    ev, meetings_note = _without_meetings(ev, principal)
+    if meetings_note and not ev:
+        return meetings_note
     if ev and not _loop_is_local():
         ev, cloud_note = _cloud_evidence(ev, principal, s)
         if not ev:
@@ -210,7 +249,7 @@ def search_library(inp: dict) -> str:
     meta = {"stamp": res.get("stamp"), "receipt": res.get("receipt"),
             "refs": {e["label"]: e["ref"] for e in ev if e.get("ref")},
             "searched": res["searched"], "found": bool(ev) and res["searched"].get("fallback") != "brain",
-            "notes": (res.get("notes") or []) + ([cloud_note] if cloud_note else [])}
+            "notes": (res.get("notes") or []) + ([n for n in (cloud_note, meetings_note) if n])}
     if res.get("stats"):
         return json.dumps({**meta, "answer": res["stats"]["answer"], "method": res["stats"]["method"]})
     if not ev:
@@ -242,7 +281,9 @@ def library_status(inp: dict) -> str:
     scopes = grants.active_scopes(principal)
     if not scopes:
         return "The Library is empty. Nothing has been added."
-    bad = [r for r in st.list_documents("failed")][:5]
+    # a meeting's title is named only to a reader that may hear the meetings (see _meetings_reader_ok)
+    bad = [r for r in st.list_documents("failed")
+           if _meetings_reader_ok() or not meeting_archive.is_archive_doc(r)][:5]
     out = "%d documents read, %d being read, %d couldn't be read" % (c["indexed"], c["queued"], c["failed"])
     if bad:
         out += ": " + "; ".join("%s (%s)" % (envelope.title_text(r["title"]),

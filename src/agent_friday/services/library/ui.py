@@ -13,6 +13,24 @@ VIEWS = {"list": "list", "3d": "shelves", "shelves": "shelves", "tree": "tree"}
 LENSES = {"library": "library", "media": "media", "files": "studio"}
 
 
+def _meeting_doc(principal: str, doc_id) -> bool:
+    try:
+        from agent_friday.services import meeting_archive
+        return bool(meeting_archive.is_archive_doc(store_for(principal).get_document(doc_id)))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _told(principal: str, doc_id, title) -> str:
+    """A document's title as the reader of this tool result may be told it: a meeting's title (which can be
+    sensitive) only to a reader that may hear the meetings, never to a cloud model or a cloud voice call."""
+    if _meeting_doc(principal, doc_id):
+        from agent_friday.services.library import tools
+        if not tools._meetings_reader_ok():
+            return "a meeting"
+    return envelope.title_text(title)
+
+
 def _resolve(principal: str, target: str, page) -> tuple[dict | None, str]:
     """(what to open, plain words for it) or (None, why not)."""
     last = search.last_result(principal)
@@ -23,13 +41,13 @@ def _resolve(principal: str, target: str, page) -> tuple[dict | None, str]:
         step = 1 if t.startswith("next") else -1
         last["cursor"] = (last["cursor"] + step) % len(last["evidence"])
         e = last["evidence"][last["cursor"]]
-        return _of(e), "passage %s of %s" % (e["label"], envelope.title_text(e["doc"]))
+        return _of(e), "passage %s of %s" % (e["label"], _told(principal, e.get("doc_id"), e["doc"]))
     m = re.fullmatch(r"\[?(\d+(?:\.\d+)?)\]?", t)
     if m and last:
         for i, e in enumerate(last["evidence"]):
             if e["label"] == m.group(1):
                 last["cursor"] = i
-                return _of(e), "passage %s of %s" % (e["label"], envelope.title_text(e["doc"]))
+                return _of(e), "passage %s of %s" % (e["label"], _told(principal, e.get("doc_id"), e["doc"]))
         return None, "no passage is labelled %s in the last search" % m.group(1)
     if t:
         hits = cards.find_documents(principal, t)
@@ -37,13 +55,13 @@ def _resolve(principal: str, target: str, page) -> tuple[dict | None, str]:
             out = {"doc": hits[0]["doc_id"]}
             if page:
                 out["page"] = int(page)
-            return out, envelope.title_text(hits[0]["title"])
+            return out, _told(principal, hits[0]["doc_id"], hits[0]["title"])
         if hits:
-            return None, "several documents match: " + "; ".join(envelope.title_text(h["title"]) for h in hits[:5])
+            return None, "several documents match: " + "; ".join(_told(principal, h["doc_id"], h["title"]) for h in hits[:5])
         return None, "nothing in the Library matches %r" % target
     if page and last and last["evidence"]:
         e = last["evidence"][last["cursor"]]
-        return {"doc": e["doc_id"], "page": int(page)}, "page %d of %s" % (int(page), envelope.title_text(e["doc"]))
+        return {"doc": e["doc_id"], "page": int(page)}, "page %d of %s" % (int(page), _told(principal, e["doc_id"], e["doc"]))
     return {}, "the Library"
 
 
