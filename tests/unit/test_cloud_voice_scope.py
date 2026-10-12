@@ -167,6 +167,19 @@ def test_the_ask_route_and_the_answer_routes_exist_and_need_login():
         assert fn.__name__ and getattr(fn, "__wrapped__", None) is not None, "login_required"
 
 
+def test_the_page_posts_a_failure_offer_only_to_the_ask_route():
+    """A cloud_switch offer arrives on the voice socket; the page posts to the one fixed ask
+    route and never to a URL the message names (both UI files)."""
+    import agent_friday.routes.voice as rv
+    assert rv._CLOUD_SWITCH_OFFER["endpoint"] == "/api/voice/cloud-switch"
+    root = Path(__file__).resolve().parents[2]
+    for rel in ("index.html", "ui_parts/app.html"):
+        src = (root / rel).read_text(encoding="utf-8", errors="replace")
+        assert "m.offer.endpoint" not in src, rel
+        assert ("m.offer.kind === 'cloud_switch') { try { apiFetch('/api/voice/cloud-switch', {"
+                in src), rel
+
+
 def _url_rules(rv):
     from flask import Flask
     app = Flask(__name__)
