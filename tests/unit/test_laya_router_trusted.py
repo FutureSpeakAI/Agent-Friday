@@ -91,11 +91,28 @@ def test_a_change_that_runs_without_a_card_carries_no_rows(text):
     assert "refs" not in r.args and "intent" not in r.args
 
 
-@pytest.mark.parametrize("text", ["archive all of them", "trash all of them", "move all of them to travel"])
+@pytest.mark.parametrize("text", ["archive the first two", "trash the second one", "move the third one to travel"])
 def test_a_change_that_always_raises_a_card_carries_its_rows(text):
     r = lr.route(text, log=False, budget_ms=50, trusted=True, stage=_stage(), pointed=None)
     assert r.decision == "defer" and not r.tool
     assert r.args.get("refs") and r.args["intent"] in pa.CARDED_INTENTS
+
+
+def _big_stage(n=40, ticked=(3, 7, 11)):
+    return ss.bound_stage({"workspace": "messages", "rev": 1, "items": [
+        {"ref": "mail:a@x:t%d" % i, "n": i, "title": "Subject %d" % i, "facets": {"from": "Sender %d" % i}}
+        for i in range(1, n + 1)], "selection": {"refs": ["mail:a@x:t%d" % i for i in ticked], "source": "owner"}},
+        now=NOW)
+
+
+@pytest.mark.parametrize("text", ["archive all of them", "trash all of them", "move all of them to travel"])
+def test_all_of_them_for_a_carded_change_goes_to_the_deeper_mind_with_no_rows(text):
+    """Every row on screen, the ticked ones or the "them" of the conversation: no rule picks among those
+    readings, so the words go alone, whether or not rows are ticked."""
+    for stage in (_stage(), _big_stage()):
+        r = lr.route(text, log=False, budget_ms=50, trusted=True, stage=stage, pointed=None)
+        assert r.decision == "defer" and not r.tool, (text, r)
+        assert not r.args.get("refs") and "intent" not in r.args, (text, r.args)
 
 
 def test_what_a_model_pointed_at_is_never_what_these_means_for_a_change(monkeypatch):
@@ -127,6 +144,25 @@ def test_rows_for_a_carded_change_go_only_to_a_local_deeper_mind():
     import agent_friday.routes.voice as rv
     assert "mail:owner@example.test:t1" in rv._deferred_request("archive these", _defer("archive"), local=True)
     assert rv._deferred_request("archive these", _defer("archive"), local=False) == "archive these"
+
+
+@pytest.mark.parametrize("n", [1, 30, 31, 40, 120])
+def test_the_rows_note_lists_every_id_it_counts_or_none(n):
+    """A note that says N rows names all N ids; when they do not fit, the owner's words go alone. A cut list
+    would have the card built from rows the deeper mind cannot see."""
+    import re
+    import agent_friday.routes.voice as rv
+    refs = ["mail:owner@example.test:thread%03d" % i for i in range(n)]
+    r = lr.Route("defer", args={"intent": "archive", "refs": refs, "workspace": "messages", "count": n},
+                 layer="point_act")
+    out = rv._deferred_request("archive these", r, local=True)
+    if n <= 40:
+        assert out != "archive these", "forty short ids fit: the rows go along"
+    if out == "archive these":
+        return
+    claimed = int(re.search(r"archive (\d+) row\(s\)", out).group(1))
+    listed = re.findall(r"mail:owner@example\.test:thread\d{3}", out)
+    assert claimed == n and sorted(listed) == sorted(refs), (claimed, len(listed))
 
 
 # ── the trusted rungs are bounded and never queue ─────────────────────────────────────
