@@ -372,7 +372,9 @@ class TestQueue:
         mine = [j for j in ls.jobs() if j.get("id") == "work_order:" + out["order_id"]]
         assert mine and mine[0]["class"] == "user_job" and mine[0]["cancellable"]
         assert ls.cancel("work_order:" + out["order_id"])["ok"]
-        assert wo.status(out["order_id"], CONV)["status"] == "cancelled"
+        assert wo.get(out["order_id"])["status"] == "cancelled"
+        # The cloud hears every ended state as "finished" (the uniform status grid).
+        assert wo.status(out["order_id"], CONV)["status"] == "finished"
 
     def test_a_rejected_order_is_not_queued(self, mode):
         mode("cloud_only")

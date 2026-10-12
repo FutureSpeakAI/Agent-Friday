@@ -361,6 +361,9 @@
   "local_voice_readiness": [
    "settings"
   ],
+  "local_work": [
+   "settings"
+  ],
   "make_podcast": [
    "media",
    "news"

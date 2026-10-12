@@ -200,7 +200,10 @@ class TestTheSwitchStopsWork:
 
         res = ex.run(oid, tool_fn=tools, model_fn=lambda t, g, d: model_calls.append(t) or "x")
         assert res["status"] == "cancelled" and model_calls == []
-        assert [c["verb"] for c in wo.get(oid)["checkpoints"]][-1] == "read"      # nothing after the read ran
+        # The read step checks the switch before each document: the second read never ran, and
+        # no step after the read did either.
+        assert reads == ["read_wiki"]
+        assert {c["verb"] for c in wo.get(oid)["checkpoints"]} <= {"resolve", "read"}
 
     def test_a_when_idle_wait_ends_when_the_switch_goes_off(self, monkeypatch, switch):
         ls = pytest.importorskip("agent_friday.services.local_scheduler",
