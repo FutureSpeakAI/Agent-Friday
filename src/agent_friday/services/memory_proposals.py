@@ -448,7 +448,7 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
             span = c.get("span") if isinstance(c.get("span"), dict) else None
             if len(text) < 4 or cat not in MEETING_CATEGORIES or not span:
                 continue
-            if _already_proposed(conn, text):
+            if _already_proposed(conn, text) or _already_from_meeting(conn, str(meeting_id), text):
                 continue
             executing = str(c.get("model") or model)
             prov = json.dumps({"meeting_id": str(meeting_id),
@@ -458,8 +458,8 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
                 "INSERT INTO proposed_facts (fact_id, ts, day, category, "
                 "text, evidence, confidence, model, status, provenance) "
                 "VALUES (?,?,?,?,?,?,?,?,'pending',?)",
-                (uuid.uuid4().hex[:16], time.time(), str(day), cat, text,
-                 str(c.get("evidence") or "")[:400], MODEL_CONFIDENCE, executing, prov))
+                (uuid.uuid4().hex[:16], time.time(), str(day), cat, _seal(text),
+                 _seal(str(c.get("evidence") or "")[:400]), MODEL_CONFIDENCE, executing, prov))
             stored += 1
         conn.commit()
     finally:
@@ -487,6 +487,7 @@ def pending(day: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]
     out = []
     for r in rows:
         d = dict(zip(cols, r[:8]))
+        d["text"], d["evidence"] = _open(d.get("text")), _open(d.get("evidence"))
         if r[8]:
             try:
                 d["provenance"] = json.loads(r[8])
@@ -513,6 +514,7 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
             f"SELECT fact_id, day, category, text, provenance FROM proposed_facts "
             f"WHERE fact_id IN ({marks}) AND status='pending'", ids).fetchall()
         for fact_id, day, category, text, prov in rows:
+            text = _open(text)
             origin = f"proposed:{day}"
             if prov:
                 try:
@@ -537,6 +539,9 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
                 pass
             conn.execute("UPDATE proposed_facts SET status='approved', "
                          "decided_ts=? WHERE fact_id=?", (time.time(), fact_id))
+            if _meeting_id_of(prov):
+                # a kept fact lives on in what Friday knows, under its own protection: the row keeps no copy
+                conn.execute("UPDATE proposed_facts SET text='', evidence='' WHERE fact_id=?", (fact_id,))
             promoted.append({"fact_id": fact_id, "category": category,
                              "text": text})
         conn.commit()
@@ -557,6 +562,8 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
             f"UPDATE proposed_facts SET status='rejected', decided_ts=? "
             f"WHERE fact_id IN ({marks}) AND status='pending'",
             [time.time(), *ids])
+        conn.execute(f"UPDATE proposed_facts SET text='', evidence='' WHERE fact_id IN ({marks}) "
+                     f"AND status='rejected' AND provenance IS NOT NULL AND provenance != ''", ids)   # a decided meeting suggestion keeps no text
         conn.commit()
         return {"ok": True, "rejected": cur.rowcount}
     finally:
@@ -581,6 +588,29 @@ def state() -> Dict[str, Any]:
             "scheduled": False,
             "note": "Manual only. Nothing here runs unattended, and nothing "
                     "reaches durable memory without being approved."}
+
+
+_SEALED = "enc:"
+
+
+def _seal(text: str) -> str:
+    """A meeting's suggestion is meeting content: it sits in this plain-file table only sealed with the same keystore
+    the meeting's own record uses."""
+    import base64
+    from agent_friday.services import credential_store as cs
+    blob, _method = cs.protect(str(text or "").encode("utf-8"))
+    return _SEALED + base64.b64encode(blob).decode("ascii")
+
+
+def _open(text) -> str:
+    if not isinstance(text, str) or not text.startswith(_SEALED):
+        return text if isinstance(text, str) else ""
+    try:
+        import base64
+        from agent_friday.services import credential_store as cs
+        return cs.unprotect(base64.b64decode(text[len(_SEALED):])).decode("utf-8")
+    except Exception:  # noqa: BLE001 - what cannot be opened is shown as nothing
+        return ""
 
 
 # ── Meeting proposals leave with their meeting ───────────────────────────────
@@ -613,15 +643,24 @@ def purge_meeting(meeting_id: Optional[str] = None) -> int:
 
 
 def _name_rows(conn, names) -> List[str]:
-    wanted = [n for n in {str(x or "").strip().lower() for x in (names or [])} if len(n) >= 3]
+    wanted = [n for n in {" ".join(str(x or "").split()).lower() for x in (names or [])} if len(n) >= 3]
     if not wanted:
         return []
+    pats = [re.compile(r"" + r"s+".join(re.escape(w) for w in n.split(" ")) + r"", re.IGNORECASE) for n in wanted]
     out = []
     for fid, text, evidence in conn.execute("SELECT fact_id, text, evidence FROM proposed_facts").fetchall():
-        hay = ("%s %s" % (text or "", evidence or "")).lower()
-        if any(n in hay for n in wanted):
+        hay = "%s %s" % (_open(text), _open(evidence))
+        if any(p.search(hay) for p in pats):
             out.append(fid)
     return out
+
+
+def _already_from_meeting(conn, meeting_id: str, text: str) -> bool:
+    for fid, t, prov in conn.execute("SELECT fact_id, text, provenance FROM proposed_facts "
+                                     "WHERE provenance IS NOT NULL AND provenance != ''").fetchall():
+        if _meeting_id_of(prov) == meeting_id and _open(t).strip().lower() == text.strip().lower():
+            return True
+    return False
 
 
 def people_find(names, emails) -> int:
