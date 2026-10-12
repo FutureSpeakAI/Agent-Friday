@@ -152,7 +152,7 @@ an undo. Google sign-in always completes on `localhost`.
 The dock at the bottom opens workspaces, grouped as:
 
 - **Life:** News, Messages, Calendar, Family, Health, Finance
-- **Work:** Career, People, Crew, Code, Sites, Media, Library
+- **Work:** Career, People, Crew, Code, Sites, Media, Library, Meetings
 - **System:** Knowledge, Trust, Workflows, System, Settings
 
 A fresh install may show only the core set of workspaces. **Settings >

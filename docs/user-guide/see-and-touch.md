@@ -22,6 +22,7 @@ Open the workspace first. Friday sees the one on your screen.
 | News | yes | no | yes (category, sort) |
 | Files | yes | yes | no |
 | Calendar | yes | yes | no |
+| Meetings | yes | yes | no |
 | Chat conversation list | yes | yes | no |
 | Workflows, People, Career, Trust, Sites, System | yes | no | no |
 | Health, Finance, Family | counts only | no | no |
@@ -30,6 +31,7 @@ Friday can write into these fields, and only these:
 
 - the Message Center reply and compose boxes (To, Subject, message)
 - the Calendar quick-add line and its follow-up message
+- the Meetings notes pad (she fills the line; you press Add)
 - the Workflows editor (name, description, each step) and the "Describe it" box
 - the box that steers a running task in System
 

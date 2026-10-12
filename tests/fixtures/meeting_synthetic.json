@@ -1,0 +1,156 @@
+{
+ "_note": "Synthetic meetings for the Meetings workspace evals (MT-2). Names, places and numbers are invented. `model_lines` is what a mocked local model answers for the owner's bullets (some of it deliberately wrong: no citation, an invented name or number, a bullet that does not exist); `model_actions` is what a mocked model answers for action items (one invented, one that is a decision). `keep` lists the model_lines that must survive the faithfulness check, by position.",
+ "meetings": [
+  {
+   "id": "a1a1a1a1a1a1",
+   "title": "Launch planning",
+   "lines": [
+    [5, "You", "Okay, thanks for joining. The launch date question first."],
+    [20, "Them", "Marta says engineering can ship on the 14th if the payment review finishes by Monday."],
+    [45, "You", "Then we agree on the 14th. Devon, can you confirm the payment review with Priya?"],
+    [70, "Them", "I will ask Priya today and send you the answer by Friday."],
+    [90, "You", "Good. Budget next. We have forty thousand dollars for the Lisbon event."],
+    [115, "Them", "Jonas wants to cut the Lisbon budget to thirty thousand."],
+    [140, "You", "No, we keep forty thousand. I will write that into the plan."],
+    [160, "Them", "Fine. I will draft the Lisbon invitation list next week."]
+   ],
+   "pad": [
+    {"id": 1, "t": 30, "text": "launch date 14th"},
+    {"id": 2, "t": 60, "text": "Devon: payment review with Priya"},
+    {"id": 3, "t": 100, "text": "Lisbon budget"},
+    {"id": 4, "t": 150, "text": "venue contract"}
+   ],
+   "model_lines": [
+    {"bullet": "b1", "text": "The launch is set for the 14th, provided the payment review is done by Monday.", "spans": [1, 2]},
+    {"bullet": "b2", "text": "Devon will check the payment review with Priya and report back by Friday.", "spans": [2, 3]},
+    {"bullet": "b3", "text": "The Lisbon budget stays at forty thousand dollars; Jonas's proposal to cut it to thirty thousand was turned down.", "spans": [4, 5, 6]},
+    {"bullet": "b1", "text": "The launch moves to the 21st after the Osaka review.", "spans": [1]},
+    {"bullet": "b3", "text": "The team agreed the budget.", "spans": []},
+    {"bullet": "b2", "text": "Devon is also leading the Berlin roadshow.", "spans": [3]},
+    {"bullet": "b9", "text": "A bullet nobody wrote.", "spans": [3]},
+    {"bullet": "b4", "text": "The venue contract was signed.", "spans": [40]}
+   ],
+   "keep": [0, 1, 2],
+   "decisions": ["Launch on the 14th", "Keep the Lisbon budget at forty thousand"],
+   "model_actions": [
+    {"task": "Confirm the payment review with Priya and send the answer by Friday", "owner": "Devon", "due": "Friday"},
+    {"task": "Write the forty thousand dollar Lisbon budget into the plan", "owner": "You"},
+    {"task": "Draft the Lisbon invitation list next week", "owner": null},
+    {"task": "Book a venue in Osaka"}
+   ],
+   "gold_actions": [
+    "Confirm the payment review with Priya and send the answer by Friday",
+    "Write the Lisbon budget into the plan",
+    "Draft the Lisbon invitation list next week"
+   ],
+   "people": [{"name": "Priya", "role": null, "line": 2}, {"name": "Jonas", "line": 5}, {"name": "Rowan", "line": 5}],
+   "projects": [{"name": "Lisbon event", "line": 4}]
+  },
+  {
+   "id": "b2b2b2b2b2b2",
+   "title": "Hiring sync",
+   "lines": [
+    [4, "You", "Quick sync on hiring."],
+    [15, "Them", "We have three engineering roles open and two candidates in the final round."],
+    [40, "You", "I will send the offer to Lena by Wednesday."],
+    [62, "Them", "Jonas will schedule the last interview with the second candidate."],
+    [85, "You", "Also someone has to update the job posting on the careers page."],
+    [100, "Them", "I can update the job posting tomorrow."],
+    [125, "You", "We decided to pause the design hire until January."],
+    [140, "Them", "Agreed. Nothing else from me."]
+   ],
+   "pad": [
+    {"id": 1, "t": 20, "text": "3 roles open, 2 finalists"},
+    {"id": 2, "t": 90, "text": "design hire paused"}
+   ],
+   "model_lines": [
+    {"bullet": "b1", "text": "Three engineering roles are open and two candidates are in the final round.", "spans": [1]},
+    {"bullet": "b2", "text": "The design hire is paused until January.", "spans": [6]},
+    {"bullet": "b2", "text": "The design hire is paused until March, per the Harbor Group budget.", "spans": [6]}
+   ],
+   "keep": [0, 1],
+   "decisions": ["Pause the design hire until January"],
+   "model_actions": [
+    {"task": "Send the offer to Lena by Wednesday", "owner": "You", "due": "Wednesday"},
+    {"task": "Schedule the final interview with the second candidate", "owner": "Jonas"},
+    {"task": "Update the job posting on the careers page", "owner": null},
+    {"task": "Order new laptops for the team"},
+    {"task": "Pause the design hire until January"}
+   ],
+   "gold_actions": [
+    "Send the offer to Lena by Wednesday",
+    "Schedule the last interview with the second candidate",
+    "Update the job posting on the careers page"
+   ],
+   "people": [{"name": "Lena", "line": 2}, {"name": "Jonas", "line": 3}],
+   "projects": []
+  },
+  {
+   "id": "c3c3c3c3c3c3",
+   "title": "Vendor review",
+   "lines": [
+    [8, "You", "Let's go through the two storage vendors."],
+    [30, "Them", "Brightwater quoted twelve thousand a year with a two year term."],
+    [55, "You", "And Cobalt wants nine thousand but no support on weekends."],
+    [80, "Them", "I will ask Cobalt whether weekend support can be added."],
+    [105, "You", "We decided to go with Brightwater if Cobalt says no."],
+    [125, "Them", "Then I will email Brightwater a draft contract on Thursday."],
+    [150, "You", "Please also share the comparison sheet with Marta."]
+   ],
+   "pad": [
+    {"id": 1, "t": 35, "text": "Brightwater 12k / 2yr"},
+    {"id": 2, "t": 60, "text": "Cobalt 9k no weekend support"}
+   ],
+   "model_lines": [
+    {"bullet": "b1", "text": "Brightwater quoted twelve thousand a year on a two year term.", "spans": [1]},
+    {"bullet": "b2", "text": "Cobalt wants nine thousand a year, with no weekend support.", "spans": [2]},
+    {"bullet": "b2", "text": "Cobalt wants nine thousand a year and offered a 30 day trial.", "spans": [2]}
+   ],
+   "keep": [0, 1],
+   "decisions": ["Go with Brightwater if Cobalt says no"],
+   "model_actions": [
+    {"task": "Ask Cobalt whether weekend support can be added"},
+    {"task": "Email Brightwater a draft contract on Thursday"},
+    {"task": "Share the comparison sheet with Marta"},
+    {"task": "Negotiate a discount with Brightwater"}
+   ],
+   "gold_actions": [
+    "Ask Cobalt whether weekend support can be added",
+    "Email Brightwater a draft contract on Thursday",
+    "Share the comparison sheet with Marta"
+   ],
+   "people": [{"name": "Marta", "line": 6}],
+   "projects": [{"name": "storage vendors", "line": 0}]
+  },
+  {
+   "id": "d4d4d4d4d4d4",
+   "title": "Offsite logistics",
+   "lines": [
+    [6, "You", "The offsite is the first week of November in Porto."],
+    [28, "Them", "Flights are the main cost, about four hundred dollars each."],
+    [52, "You", "Lena, will you collect the dietary requirements this week?"],
+    [74, "Them", "Yes, I will send the form on Monday."],
+    [96, "You", "I will book the conference room at the hotel."],
+    [118, "Them", "Nothing else is open from my side."]
+   ],
+   "pad": [
+    {"id": 1, "t": 10, "text": "Porto, first week Nov"}
+   ],
+   "model_lines": [
+    {"bullet": "b1", "text": "The offsite is in Porto in the first week of November.", "spans": [0]}
+   ],
+   "keep": [0],
+   "decisions": [],
+   "model_actions": [
+    {"task": "Send the dietary requirements form on Monday", "owner": "Lena"},
+    {"task": "Book the conference room at the hotel", "owner": "You"}
+   ],
+   "gold_actions": [
+    "Send the dietary requirements form on Monday",
+    "Book the conference room at the hotel"
+   ],
+   "people": [{"name": "Lena", "line": 2}],
+   "projects": [{"name": "offsite", "line": 0}]
+  }
+ ]
+}

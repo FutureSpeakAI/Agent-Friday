@@ -293,6 +293,7 @@ Workflows workspace. See [scheduled jobs](scheduled-jobs.md).
 | `meeting_audio_retention` | `""` | Nothing is chosen until you choose. `delete_after_notes` (the Recommended choice), `30_days` or `keep`. Deleting audio never touches the transcript or notes. Empty deletes nothing on a timer. |
 | `meeting_text_retention` | `""` | Transcripts and notes: `keep`, or `days` (deletes the whole meeting after `meeting_text_retention_days`). Empty deletes nothing on a timer. |
 | `meeting_text_retention_days` | `90` | Used only when `meeting_text_retention` is `days`. |
+| `meeting_archive` | `""` | Whether your meetings are searchable from the Library. Nothing is chosen until you choose. `on` indexes each meeting's transcript and notes on this PC, in a Library scope of their own, so "what did we decide about the budget?" is answered with citations. `off` indexes nothing and removes what was indexed. Meeting text never goes to a cloud model from the Library. |
 | `voice_interruption_mode` | `"auto"` | What talking over Friday does on the local voice. `auto`: she stops once you are clearly louder than her own voice coming back through the mic. `no-barge`: Esc only. Esc stops her in every mode. Gemini Live reads it too (below). |
 | `voice_local_barge_sustain_ms` | `170` | How long you must talk over her before she stops (two of the local voice's ~85 ms mic frames). |
 | `voice_ear_gpu`, `voice_mouth_gpu` | `"if_free"` | GPU use for listening and speaking: `never`, `if_free` or `required`. |

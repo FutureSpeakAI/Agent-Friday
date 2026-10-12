@@ -349,7 +349,7 @@ def test_the_news_adapter_reads_and_writes_the_ticks_and_draws_them(page):
 def test_the_page_scripts_that_mark_rows_agree_with_the_manifests():
     js = (ROOT / "static" / "workspace_stages.js").read_text(encoding="utf-8")
     found = re.findall(r"(\w+): \{ prefix: '(\w+):'((?:[^}]*))\}", js)
-    assert len(found) == 11
+    assert len(found) == 12
     by_kind = {o["kind"]: o for _, o in OBJECTS}
     for sw, prefix, rest in found:
         o = by_kind[prefix]

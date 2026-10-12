@@ -49,16 +49,18 @@ def _imports(path: Path):
     return out
 
 
-@pytest.mark.parametrize("rel", ["services/meeting_capture.py", "services/meeting_audio.py",
-                                 "services/meeting_policy.py", "routes/meetings.py"])
+MEETING_MODULES = ("services/meeting_capture.py", "services/meeting_audio.py", "services/meeting_policy.py",
+                   "services/meeting_workspace.py", "services/meeting_archive.py", "routes/meetings.py")
+
+
+@pytest.mark.parametrize("rel", list(MEETING_MODULES))
 def test_no_meeting_module_imports_a_network_library(rel):
     bad = [m for m in _imports(SRC / rel) if m.split(".")[0] in NETWORK_MODULES]
     assert bad == [], (rel, bad)
 
 
 def test_meeting_code_never_names_a_cloud_provider_or_a_url():
-    for rel in ("services/meeting_capture.py", "services/meeting_audio.py",
-                "services/meeting_policy.py", "routes/meetings.py"):
+    for rel in MEETING_MODULES:
         text = (SRC / rel).read_text(encoding="utf-8-sig")
         assert "http://" not in text and "https://" not in text, rel
         for name in ("openai", "anthropic", "gemini", "elevenlabs"):

@@ -31,6 +31,7 @@ document it is.
 | [Mail](user-guide/mail.md) | Messages and Gmail: connecting, what Friday can do, how sending is approved. |
 | [Career](user-guide/career.md) | The walkthrough, setup files, job actions, reports, approval cards, and the manual Career search workflow. |
 | [Calendar](user-guide/calendar.md) | Google Calendar and Tasks, and which changes ask first. |
+| [Meetings](user-guide/meetings.md) | Record a meeting or a call on this PC, both sides, with consent. A notes pad, notes with the transcript lines they came from, a searchable archive, and retention you choose. |
 | [Voice](user-guide/voice.md) | Voice engines, local voice models, and push-to-transcribe (Alt+T). |
 | [Documents](user-guide/documents.md) | Word, Excel and PowerPoint files through OfficeCLI. |
 | [Scheduled jobs](user-guide/scheduled-jobs.md) | Where jobs run, local-only defaults, and grants. |

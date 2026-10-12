@@ -28,13 +28,22 @@ def test_the_indicator_is_mounted_beside_the_top_bar():
     assert len(re.findall(r"\{shellMeeting\}\s*\{shellTopBar\}", APP)) == 2
 
 
-def test_the_panel_lives_in_the_calendar():
+def test_the_panel_lives_in_the_meetings_workspace_and_calendar_keeps_a_link():
+    # MT-2: the recorder moved out of Calendar into the Meetings workspace; Calendar keeps a link to it.
     cal = INDEX[INDEX.index("function CalendarWS()"):]
     cal = cal[:cal.index("\nfunction ", 10)]
-    assert cal.count("React.createElement(MeetingsPanel, null)") == 1
+    assert "MeetingsPanel" not in cal and cal.count("React.createElement(MeetingsLink, null)") == 1
     cal_jsx = APP[APP.index("function CalendarWS(){"):]
     cal_jsx = cal_jsx[:cal_jsx.index("\nfunction ", 10)]
-    assert cal_jsx.count("<MeetingsPanel/>") == 1
+    assert "MeetingsPanel" not in cal_jsx and cal_jsx.count("<MeetingsLink/>") == 1
+    ws = INDEX[INDEX.index("function MeetingsWS()"):]
+    ws = ws[:ws.index("\nfunction ", 10)]
+    assert ws.count("React.createElement(MeetingsPanel, {") == 1 and "inWorkspace: true" in ws
+    ws_jsx = APP[APP.index("function MeetingsWS(){"):]
+    ws_jsx = ws_jsx[:ws_jsx.index("\nfunction ", 10)]
+    assert ws_jsx.count("<MeetingsPanel inWorkspace/>") == 1
+    assert "meetings: /*#__PURE__*/React.createElement(MeetingsWS, null)" in INDEX
+    assert "meetings:<MeetingsWS/>" in APP
 
 
 def test_consent_text_comes_from_the_server():
@@ -159,7 +168,10 @@ def test_the_calendar_manifest_declares_the_start_key_and_keeps_recording_by_des
     path = ROOT / "src" / "agent_friday" / "resources" / "laya_manifests" / "calendar.json"
     m = json.loads(path.read_text(encoding="utf-8"))
     assert "start" in m["nav"]["keys"]
-    nfl = {n["action"]: n for n in m["not_for_laya"]}
-    rec = nfl["calendar.record_meeting"]
+    # the recording controls moved to the Meetings manifest with the panel
+    meet = json.loads((ROOT / "src" / "agent_friday" / "resources" / "laya_manifests" / "meetings.json")
+                      .read_text(encoding="utf-8"))
+    nfl = {n["action"]: n for n in meet["not_for_laya"]}
+    rec = nfl["meetings.start_recording"]
     assert rec["kind"] == "by_design" and "start recording" in rec["reason"]
     assert "\n" not in rec["reason"] and len(rec["reason"]) <= 160

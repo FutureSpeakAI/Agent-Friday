@@ -32,8 +32,8 @@ def _clean(tmp_path, monkeypatch):
 
 
 def test_the_registrar_covers_every_open_only_workspace():
-    assert set(MAP) == {"calendar", "chat", "workflows", "contacts", "career", "trust", "futurespeak", "system",
-                        "health", "finance", "family"}, MAP
+    assert set(MAP) == {"calendar", "meetings", "chat", "workflows", "contacts", "career", "trust", "futurespeak",
+                        "system", "health", "finance", "family"}, MAP
 
 
 def test_every_registered_workspace_is_allow_listed_by_the_server():

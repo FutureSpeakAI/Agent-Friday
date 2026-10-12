@@ -64,7 +64,9 @@ block of `settings.json`; see [Configuration](configuration.md).
 
 ## Recording a meeting
 
-Meetings in Calendar records, transcribes and takes notes on this computer.
+Meetings records, transcribes and takes notes on this computer. It has its own
+workspace in the dock, and Calendar keeps a link to it. The full page is
+[Meetings](meetings.md); this is the short version.
 Nothing is recorded unless you press start on screen and confirm; Friday never
 starts a recording by herself. If you say "start recording", she opens the same
 start card and waits for you.
