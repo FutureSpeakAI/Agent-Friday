@@ -508,13 +508,18 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
         return {"ok": True, "approved": 0, "facts": []}
     conn = _connect()
     promoted = []
+    unopened: List[str] = []
     try:
         marks = ",".join("?" * len(ids))
         rows = conn.execute(
             f"SELECT fact_id, day, category, text, provenance FROM proposed_facts "
             f"WHERE fact_id IN ({marks}) AND status='pending'", ids).fetchall()
         for fact_id, day, category, text, prov in rows:
+            sealed = isinstance(text, str) and text.startswith(_SEALED)
             text = _open(text)
+            if sealed and not text.strip():
+                unopened.append(fact_id)          # the keystore cannot open it: never an empty fact, never a blanked row
+                continue
             origin = f"proposed:{day}"
             if prov:
                 try:
@@ -547,7 +552,12 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
         conn.commit()
     finally:
         conn.close()
-    return {"ok": True, "approved": len(promoted), "facts": promoted}
+    out = {"ok": True, "approved": len(promoted), "facts": promoted}
+    if unopened:
+        out.update(ok=bool(promoted), refused=unopened,
+                   message="This suggestion cannot be opened on this PC right now (its key is not available), "
+                           "so it was not kept. Nothing was changed.")
+    return out
 
 
 def reject(fact_ids: List[str]) -> Dict[str, Any]:

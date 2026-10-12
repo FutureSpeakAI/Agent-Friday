@@ -337,12 +337,14 @@ def remove_meeting(mid: str, *, store=None) -> int:
         return 0
 
 
-def remove_all(*, store=None) -> int:
+def remove_all(*, store=None, stop=None) -> int:
     if store is None and not _has_library():
         return 0
     st = _store(store)
     n = 0
     for row in st.q("SELECT id, path, scope FROM documents WHERE scope=?", (SCOPE,)):
+        if stop is not None and stop():
+            break
         if is_archive_path(row["path"]):
             try:
                 from agent_friday.services.library import forget
@@ -431,7 +433,11 @@ def _clear_after_off(store=None) -> None:
     """Take the archive out of the Library and its suggestions out of memory proposals: one visible job."""
     with visible_job("Removing your meetings from search", kind="meeting_archive", workspace="meetings", queued=False,
                      deferrable=False, key=JOB_KIND + ":off"):
-        remove_all(store=store)
+        if choice() == "on":
+            return                              # said yes again before this ran: the archive is rebuilt, not cleared
+        remove_all(store=store, stop=lambda: choice() == "on")
+        if choice() == "on":
+            return
         try:
             from agent_friday.services import memory_proposals
             memory_proposals.purge_meeting(None)      # suggestions made from meetings go with the archive

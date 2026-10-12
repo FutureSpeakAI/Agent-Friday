@@ -788,8 +788,10 @@ class MeetingManager:
         """A person the owner asked Friday to forget is not written back into a record: a meeting that was
         recording or being transcribed when forget-person ran is redacted when it first saves in a settled state."""
         try:
-            from agent_friday.services import forget_person
-            pat = _name_pattern(forget_person.forgotten_names())
+            # Only the names that were forgotten while THIS meeting was being made, stored against its id: a
+            # name like "Will" or "May" must never rewrite a meeting that was recorded later.
+            names = _pending_forget_take(m.get("id"))
+            pat = _name_pattern(names)
             if pat is None:
                 return
             new, n = _redact_value(m, pat)
@@ -2106,6 +2108,49 @@ def _redact_value(v, pat):
     return v, 0
 
 
+_PENDING_LOCK = threading.Lock()
+
+
+def _pending_path() -> Path:
+    return _root() / "_forget_pending.json"
+
+
+def _pending_read() -> dict:
+    try:
+        d = json.loads(_pending_path().read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _pending_write(d: dict) -> None:
+    p = _pending_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(d), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _pending_forget_add(mid: str, names) -> None:
+    """Names forgotten while this meeting was being recorded or transcribed, kept against its id."""
+    with _PENDING_LOCK:
+        d = _pending_read()
+        d[mid] = sorted(set(d.get(mid) or []) | {str(n) for n in names or ()})
+        _pending_write(d)
+
+
+def _pending_forget_take(mid) -> list:
+    """The names waiting for this meeting (and forgotten from the list)."""
+    if not mid:
+        return []
+    with _PENDING_LOCK:
+        d = _pending_read()
+        names = d.pop(mid, None)
+        if names:
+            _pending_write(d)
+    return list(names or [])
+
+
 def _meetings_naming(names, redact: bool) -> int:
     pat = _name_pattern(names)
     if pat is None:
@@ -2114,7 +2159,11 @@ def _meetings_naming(names, redact: bool) -> int:
     hits = 0
     for row in mgr.list():
         mid = row.get("id")
-        if not mid or row.get("state") in ("recording", "transcribing", "unreadable"):
+        if mid and row.get("state") in ("recording", "transcribing"):
+            if redact:
+                _pending_forget_add(mid, names)      # redacted when this meeting first saves settled
+            continue
+        if not mid or row.get("state") == "unreadable":
             continue
         try:
             with mgr._io:

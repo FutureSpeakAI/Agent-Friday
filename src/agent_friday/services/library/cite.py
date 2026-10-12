@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 from collections import OrderedDict
@@ -159,7 +160,7 @@ def _digest(text: str) -> str:
 
 
 _MEETING_FILE_LOCK = threading.Lock()
-_MEETING_REPLIES: "set[str] | None" = None
+_MEETING_REPLIES: "dict[str, None] | None" = None      # insertion-ordered: the oldest go first
 _THREAD = threading.local()
 
 
@@ -168,27 +169,37 @@ def _meeting_file() -> Path:
     return paths.friday_home() / "library" / "meeting_replies.enc"
 
 
-def _load_meeting_replies() -> set:
+def _load_meeting_replies() -> dict:
     global _MEETING_REPLIES
     if _MEETING_REPLIES is None:
-        out: set = set()
+        out: dict = {}
         try:
             from agent_friday.services import credential_store as cs
-            out = set(json.loads(cs.unprotect(_meeting_file().read_bytes()).decode("utf-8")))
+            out = dict.fromkeys(json.loads(cs.unprotect(_meeting_file().read_bytes()).decode("utf-8")))
         except Exception:
-            out = set()
+            out = {}
         _MEETING_REPLIES = out
     return _MEETING_REPLIES
+
+
+def _remember_meeting_digest(d: str) -> None:
+    reps = _load_meeting_replies()
+    reps.pop(d, None)
+    reps[d] = None                          # newest last
+    while len(reps) > 4000:
+        reps.pop(next(iter(reps)))          # evict the oldest, never an arbitrary one
 
 
 def _save_meeting_replies() -> None:
     try:
         from agent_friday.services import credential_store as cs
-        keep = sorted(_MEETING_REPLIES or ())[-4000:]
+        keep = list(_MEETING_REPLIES or ())[-4000:]
         blob, _m = cs.protect(json.dumps(keep).encode("utf-8"))
         p = _meeting_file()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(blob)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_bytes(blob)
+        os.replace(tmp, p)                  # atomic: a crash leaves the old file, never half of one
     except Exception:
         pass                               # memory still holds it for this run
 
@@ -210,7 +221,7 @@ def remember_library_reply(text) -> None:
     if getattr(_THREAD, "meeting", False):
         _THREAD.meeting = False
         with _MEETING_FILE_LOCK:
-            _load_meeting_replies().add(_digest(text))
+            _remember_meeting_digest(_digest(text))
             _save_meeting_replies()
 
 
