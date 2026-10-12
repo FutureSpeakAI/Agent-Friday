@@ -178,8 +178,8 @@ def _model_is_cloud_tagged() -> bool:
     reader whatever its provider is called."""
     try:
         from agent_friday.services import agent
-        from agent_friday.services.local_only_guard import is_cloud_model_tag
-        return bool(is_cloud_model_tag(agent._CURRENT_MODEL.get() or ""))
+        from agent_friday.services.local_only_guard import reader_model_is_cloud
+        return bool(reader_model_is_cloud(agent._CURRENT_MODEL.get() or ""))
     except Exception:
         return True                       # unknown is not private
 

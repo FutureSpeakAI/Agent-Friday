@@ -40,8 +40,8 @@ def loop_is_local(provider: Optional[str]) -> bool:
         # A cloud-tagged Ollama model (`glm-4.6:cloud`) is served by the local daemon and run on ollama.com:
         # the provider is "ollama", the loop is not local.
         from agent_friday.services import agent as _agent
-        from agent_friday.services.local_only_guard import is_cloud_model_tag
-        if is_cloud_model_tag(_agent._CURRENT_MODEL.get() or ""):
+        from agent_friday.services.local_only_guard import reader_model_is_cloud
+        if reader_model_is_cloud(_agent._CURRENT_MODEL.get() or ""):
             return False
     except Exception:
         pass

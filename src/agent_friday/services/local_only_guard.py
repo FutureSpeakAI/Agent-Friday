@@ -128,6 +128,7 @@ def provider_name_of(provider) -> str:
 # Replaced wholesale by each successful inventory read; never fetched here.
 _REMOTE_ALIASES: frozenset = frozenset()
 _ALIASES_FILLED = False
+_ALIAS_RETRY_AT = 0.0
 
 
 def aliases_filled() -> bool:
@@ -163,6 +164,40 @@ def is_cloud_model_tag(model: str) -> bool:
         return True
     tag = m.rsplit(":", 1)[1] if ":" in m else m
     return tag == "cloud" or tag.endswith("-cloud")
+
+
+def reader_model_is_cloud(model: str) -> bool:
+    """True when a READER's model is one the daemon relays to ollama.com, by its tag or by an alias.
+
+    The alias set (names the daemon's inventory marks remote_host/remote_model, e.g.
+    `ollama cp x:cloud myglm:latest`) is filled by the code that reads the inventory. A meeting's
+    words and titles go only to a reader that is local, so this decision must not be taken on a set
+    that was never filled: when it has not been, and the model is not a seat of this PC's own, the
+    daemon inventory is read once now (at most every 30 seconds while the read keeps failing).
+    A daemon that cannot be read cannot be relaying an alias either, so a failed read leaves the
+    answer to the tag check, as local_call does outside local-only mode.
+    """
+    m = str(model or "").strip()
+    if not m:
+        return False
+    if is_cloud_model_tag(m):
+        return True
+    global _ALIAS_RETRY_AT
+    if _ALIASES_FILLED:
+        return False
+    try:
+        import time
+        from agent_friday.services import local_call
+        if local_call.seat_endpoint(m):
+            return False
+        if time.monotonic() < _ALIAS_RETRY_AT:
+            return False
+        local_call._daemon_tags()
+        if not _ALIASES_FILLED:
+            _ALIAS_RETRY_AT = time.monotonic() + 30.0
+    except Exception:
+        return False
+    return is_cloud_model_tag(m)
 
 
 def refuse_if_active(provider, model: str = "") -> None:
