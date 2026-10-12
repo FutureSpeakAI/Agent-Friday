@@ -18447,14 +18447,14 @@ function LocalVoiceReadiness({ s }) {
         E('div', { style: { fontWeight: 600, marginBottom: 6 } }, st.cloud_question.question),
         st.cloud_question.reason_text && E('div', { style: { fontSize: 11, opacity: 0.8, marginBottom: 6 } }, st.cloud_question.reason_text + '.'),
         (st.cloud_question.choices || []).map(c => E('div', { key: c.id, style: { marginBottom: 8 } },
-          E('button', { className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/cloud-switch/answer', { choice: c.id }) }, c.label + (c.recommended ? ' (Recommended)' : '')),
+          E('button', { className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/cloud-switch/answer', { choice: c.id, id: st.cloud_question.id }) }, c.label + (c.recommended ? ' (Recommended)' : '')),
           E('div', { style: { fontSize: 11, opacity: 0.7, marginTop: 2 } }, c.detail))),
-        E('button', { className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/cloud-switch/answer', { choice: 'cancel' }) }, 'Stay on local voice')),
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/cloud-switch/answer', { choice: 'cancel', id: st.cloud_question.id }) }, 'Stay on local voice')),
       st.switch_back && E('div', { 'data-switch-back-offer': '1', style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, lineHeight: 1.5 } },
         E('div', { style: { fontWeight: 600, marginBottom: 6 } }, st.switch_back.title),
         E('div', { style: { marginBottom: 8 } }, st.switch_back.body),
         E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-          (st.switch_back.choices || []).map(c => E('button', { key: c.id, className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/local-readiness/switch-back', { choice: c.id }) }, c.label + (c.recommended ? ' (Recommended)' : ''))))),
+          (st.switch_back.choices || []).map(c => E('button', { key: c.id, className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/local-readiness/switch-back', { choice: c.id, id: st.switch_back.id }) }, c.label + (c.recommended ? ' (Recommended)' : ''))))),
       msg && E('div', { role: 'status', style: { fontSize: 11, opacity: 0.8, marginTop: 6 } }, msg)));
 }
 // ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
@@ -18466,6 +18466,7 @@ function LocalVoiceReadiness({ s }) {
 function VoiceModePicker({ s, save, mc }) {
   const [providers, setProviders] = useState([]);
   const [pending, setPending] = useState(null);   // {id, label, lines}
+  const [refusal, setRefusal] = useState('');       // why cloud voice was refused (local-only mode)
   useEffect(() => {
     fetch('/api/voice/cloud/providers').then(r => r.json()).then(d => setProviders(d && d.providers || [])).catch(() => {});
   }, []);
@@ -18512,11 +18513,12 @@ function VoiceModePicker({ s, save, mc }) {
       }, o.label))),
       rows.filter(o => o.id === cur).map(o => /*#__PURE__*/React.createElement("div", { key: 'cur', style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, o.desc)),
       rows.filter(o => o.off && o.reason).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.label, " unavailable:"), " ", o.reason)),
+      refusal && /*#__PURE__*/React.createElement("div", { role: "status", 'data-cloud-voice-refused': '1', style: { fontSize: 11, opacity: 0.85, marginTop: 6, lineHeight: 1.45 } }, refusal),
       pending && /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
         /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, marginBottom: 6 } }, "Before switching to ", pending.label),
         pending.lines.map(([k, v]) => /*#__PURE__*/React.createElement("div", { key: k, style: { marginBottom: 4 } }, /*#__PURE__*/React.createElement("b", null, k, ": "), v)),
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
-          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { if (pending.id === 'gemini') { apiFetch('/api/voice/cloud-switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'settings' }) }).then(() => { try { window.dispatchEvent(new CustomEvent('friday:cloud-voice-asked')); } catch (_) {} }).catch(() => {}); } else { save({ voice_engine: pending.id }); } setPending(null); } }, pending.id === 'gemini' ? 'Continue: just this call or always?' : 'Switch to ' + pending.label),
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { if (pending.id === 'gemini') { apiFetch('/api/voice/cloud-switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'settings' }) }).then(r => r.json()).then(d => { setRefusal(d && d.status === 'refused' ? (d.message || 'Cloud voice is not allowed in this mode.') : ''); try { window.dispatchEvent(new CustomEvent('friday:cloud-voice-asked')); } catch (_) {} }).catch(() => {}); } else { save({ voice_engine: pending.id }); } setPending(null); } }, pending.id === 'gemini' ? 'Continue: just this call or always?' : 'Switch to ' + pending.label),
           /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => setPending(null) }, "Keep ", cur)))));
 }
 // ── Settings → Voice → Local voice models ────────────────────────────────
@@ -25703,6 +25705,7 @@ function App(){
           voiceKeepRef.current.fatalTs=Date.now();
           // m.detail carries the actionable text (install command, key fix,
           // model fix) — the bare error code alone left users stranded.
+          if (m.offer && m.offer.kind === 'cloud_switch') { try { apiFetch(m.offer.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: m.offer.source || 'failure' }) }).then(() => { try { window.dispatchEvent(new CustomEvent('friday:cloud-voice-asked')); } catch (_) {} }).catch(() => {}); } catch (_) {} }
           setVoiceStatus('error: '+(m.detail||m.error||'unknown'));
         }
       }
