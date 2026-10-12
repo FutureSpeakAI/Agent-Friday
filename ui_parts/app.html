@@ -10690,7 +10690,7 @@ function LegacyCodeWS({only, navTarget}){
   const[tab,setTab]=useState(only||'repos');
   const[selectedRepo,setSelectedRepo]=useState(undefined);
   const[repos,setRepos]=useState([]);const[repoLoading,setRepoLoading]=useState(true);
-  const[logs,setLogs]=useState([]);const[unseen,setUnseen]=useState(0);const[srcFilter,setSrcFilter]=useState('');
+  const[logs,setLogs]=useState([]);const[srcFilter,setSrcFilter]=useState('');
   const logBoxRef=useRef(null);
   // Deep-link: a notification target {workspace:'code', tab:'logs'|'repos'|...}.
   useEffect(()=>{if(navTarget&&navTarget.tab)setTab(navTarget.tab)},[navTarget]);
@@ -10703,12 +10703,12 @@ function LegacyCodeWS({only, navTarget}){
     seed();
     try{
       es=new EventSource('/api/logs/stream');
-      es.onmessage=(e)=>{try{const evt=JSON.parse(e.data);setLogs(p=>{const next=[...p,evt];return next.slice(-600)});setUnseen(u=>u+1)}catch(x){}};
+      es.onmessage=(e)=>{try{const evt=JSON.parse(e.data);setLogs(p=>{const next=[...p,evt];return next.slice(-600)})}catch(x){}};
       es.onerror=()=>{};
     }catch(x){}
     return()=>{try{es&&es.close()}catch(x){}};
   },[]);
-  useEffect(()=>{if(tab==='logs'){setUnseen(0);if(logBoxRef.current)logBoxRef.current.scrollTop=logBoxRef.current.scrollHeight}},[tab,logs.length]);
+  useEffect(()=>{if(tab==='logs'){if(logBoxRef.current)logBoxRef.current.scrollTop=logBoxRef.current.scrollHeight}},[tab,logs.length]);
   const lvlColor=(l)=>({info:'#9ad',warn:'#f59e0b',error:'#ff5a7a'}[l]||'#9aa');
   const sources=Array.from(new Set(logs.map(l=>l.source))).slice(0,12);
   const shown=srcFilter?logs.filter(l=>l.source===srcFilter):logs;
@@ -10717,7 +10717,6 @@ function LegacyCodeWS({only, navTarget}){
     <div style={{display:only?'none':'flex',gap:4,marginBottom:12,flexWrap:'wrap',borderBottom:'1px solid rgba(255,255,255,0.06)',paddingBottom:8}}>
       {TABS.map(t=><button key={t.id} className={'btn '+(tab===t.id?'active':'')} style={{fontSize:11,position:'relative'}} onClick={()=>setTab(t.id)}>
         {t.ico} {t.label}
-        {t.id==='logs'&&unseen>0&&tab!=='logs'&&<span style={{position:'absolute',top:-6,right:-6,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:'#ff0080',color:'#fff',fontSize:9,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 10px rgba(255,0,128,0.8)',animation:'pulse 1.4s infinite'}}>{unseen>99?'99+':unseen}</span>}
       </button>)}
     </div>
     {tab==='repos'&&<DevRepos repos={repos} loading={repoLoading} onScan={scanRepos} onPick={r=>{setSelectedRepo(r.name);setTab('git')}}/>}
@@ -15461,69 +15460,6 @@ function RtTrayCard({
       padding: 0
     }
   }, "open full tree ↗")));
-}
-
-/* The tray's REASONING section: every live root trace (running first,
-   then those finished in the last ten minutes). */
-function ReasoningTraySection({
-  onOpenViewer
-}) {
-  const snap = useTraceStore(s => [s.ready(), s.error()].concat(s.roots()), true);
-  const ready = snap[0],
-    err = snap[1],
-    roots = snap.slice(2);
-  const [open, setOpen] = useState({});
-  const runningN = roots.filter(t => t.status === 'running').length;
-  const MAX = 6;
-  return rtEl(React.Fragment, null, rtEl("div", {
-    className: "notif-section-header"
-  }, rtEl("span", null, "REASONING", runningN ? ' · ' + runningN + ' LIVE' : ''), onOpenViewer && rtEl("button", {
-    onClick: onOpenViewer,
-    title: "Browse, search and verify every recorded reasoning trace",
-    style: {
-      background: 'rgba(0,212,255,0.06)',
-      border: '1px solid rgba(0,212,255,0.25)',
-      color: '#00d4ff',
-      cursor: 'pointer',
-      fontSize: 9,
-      fontFamily: 'JetBrains Mono',
-      borderRadius: 4,
-      padding: '1px 6px'
-    }
-  }, "💭 Traces")), rtEl("div", {
-    style: {
-      padding: '6px 10px 2px'
-    }
-  }, !ready ? rtMuted(err ? 'reasoning feed unavailable — ' + err : 'loading reasoning…', err ? {
-    color: '#f87171'
-  } : null) : roots.length === 0 ? rtEl("div", {
-    className: "notif-empty",
-    style: {
-      padding: '8px 4px'
-    }
-  }, "No reasoning in the last 10 minutes") : roots.slice(0, MAX).map(t => rtEl(RtTrayCard, {
-    key: t.trace_id,
-    trace: t,
-    open: !!open[t.trace_id],
-    onToggle: () => setOpen(o => Object.assign({}, o, {
-      [t.trace_id]: !o[t.trace_id]
-    }))
-  })), ready && roots.length > MAX && rtEl("button", {
-    onClick: onOpenViewer,
-    style: {
-      background: 'none',
-      border: 'none',
-      color: 'rgba(0,212,255,0.75)',
-      cursor: 'pointer',
-      fontSize: 9,
-      fontFamily: RT_MONO,
-      padding: '0 0 6px'
-    }
-  }, "+", roots.length - MAX, " more — open Traces"), ready && err && rtMuted('feed interrupted — ' + err + ' (retrying)', {
-    color: '#f59e0b'
-  })), rtEl("div", {
-    className: "notif-section-divider"
-  }));
 }
 
 /* Collapsible "Reasoning" above a Friday reply that carries a trace_id.
@@ -24577,28 +24513,6 @@ function App(){
   // Keep within viewport when the window is resized.
   useEffect(()=>{const on=()=>{let f=0;try{f=parseFloat(localStorage.getItem('friday_chat_frac'))||0}catch(_){}setChatW(w=>clampChatW(f>0.1&&f<0.9?Math.round(vw()*f):w));setChatH(h=>h?clampChatH(h):0)};addEventListener('resize',on);return()=>removeEventListener('resize',on)},[]);
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
-  const[wikiPending,setWikiPending]=useState(0);
-  const[msgActionable,setMsgActionable]=useState(0);
-  // Content pipeline dock badge — HELD + FAILED counts (spec §10.3). Gated on
-  // the connector-health bus: only servers that actually expose the content
-  // pipeline connector get polled, so older builds see zero 404 noise.
-  const[contentAlerts,setContentAlerts]=useState(0);
-  useEffect(()=>{
-    let cancelled=false;
-    const pull=()=>{
-      if(!(window.__fridayConnByWs&&window.__fridayConnByWs.content))return;
-      fetch('/api/content/queue').then(r=>r.ok?r.json():null).then(d=>{
-        if(!d||cancelled)return;
-        const c=d.counts||{};
-        if(c.held!=null||c.failed!=null){setContentAlerts((c.held||0)+(c.failed||0));return}
-        const held=(d.held||[]).length;
-        const failed=((d.upcoming||[]).concat(d.history||[])).filter(x=>String(x.status||x.outcome||'').toUpperCase()==='FAILED').length;
-        setContentAlerts(held+failed);
-      }).catch(()=>{});
-    };
-    pull();const iv=setInterval(pull,60000);
-    return()=>{cancelled=true;clearInterval(iv)};
-  },[]);
   // Predictive workspaces — ids Friday predicts you'll want now (dock glow).
   const[suggestedWs,setSuggestedWs]=useState(new Set());
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
@@ -26208,20 +26122,13 @@ function App(){
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages.map(m=>({...m,time:m.time||(m.timestamp?new Date(m.timestamp).toLocaleTimeString():'')})))}).catch(()=>{})},[]);
   const dismissedNotifIds=useRef(new Set());
   const _notifPost=(url,id)=>{if(!id)return;try{fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).catch(()=>{})}catch(_){}};
-  /* In-flight work, shown in the tray ABOVE the finished notifications.
-     Same object at two moments of its life: a process while it runs, a
-     conclusion when it ends. The tray's progress bar belongs here — one
-     place that answers both "what is happening"
-     and "what finished". */
-  const[liveProcs,setLiveProcs]=useState([]);
-  const[failedProcs,setFailedProcs]=useState([]);
   const[orbiting,setOrbiting]=useState([]);
   const[clearingOrbs,setClearingOrbs]=useState(false);
   const clearOrbs=()=>{
     setClearingOrbs(true);
     const ids=[...new Set([...orbiting,...(window.fridayGetOrbs?.()||[])].filter(p=>window.fridayOrbFinished(p)).map(p=>p.id))];
     ids.forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}});
-    setFailedProcs([]);setOrbiting(o=>o.filter(p=>!window.fridayOrbFinished(p)));
+    setOrbiting(o=>o.filter(p=>!window.fridayOrbFinished(p)));
     apiFetch('/api/orbs/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope:'finished'})})
       .then(r=>r.json()).then(d=>{[...(d.ids||[]),...(d.orphan_ids||[])].forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}})})
       .catch(()=>{}).finally(()=>setClearingOrbs(false));
@@ -26229,22 +26136,11 @@ function App(){
   useEffect(()=>{let on=true;
     const tick=()=>apiFetch('/api/processes').then(r=>r.json()).then(d=>{
       if(!on)return;
-      setLiveProcs((d.processes||[]).filter(p=>p.status==='running'));
-      setFailedProcs((d.processes||[]).filter(p=>p.orb_failed&&!p.dismissed));
       const visible=(d.processes||[]).filter(p=>p.orb_visible&&!p.dismissed);
       const known=new Set((d.processes||[]).map(p=>p.id));
       setOrbiting([...visible,...(window.fridayGetOrbs?.()||[]).filter(p=>!known.has(p.id))]);
     }).catch(()=>{});
     tick();const iv=setInterval(tick,1500);return()=>{on=false;clearInterval(iv)}},[]);
-  const cancelProc=(id)=>{apiFetch('/api/processes/'+encodeURIComponent(id)+'/cancel',{method:'POST'})
-    .then(()=>setLiveProcs(p=>p.filter(x=>x.id!==id))).catch(()=>{})};
-  // Acknowledging a failure removes it from the ring immediately rather than on
-  // the next 1.5s poll — a dismiss that visibly lags feels like it did nothing.
-  const dismissProc=(id)=>{setFailedProcs(p=>p.filter(x=>x.id!==id));try{window.fridayRemoveOrb?.(id)}catch(_){}
-    apiFetch('/api/processes/'+encodeURIComponent(id)+'/dismiss',{method:'POST'}).catch(()=>{})};
-  const dismissAllFailed=()=>{const ids=failedProcs.map(p=>p.id);setFailedProcs([]);
-    ids.forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}});
-    apiFetch('/api/processes/dismiss-failed',{method:'POST'}).catch(()=>{})};
   const clearNotif=(id)=>{if(id){dismissedNotifIds.current.add(id);_notifPost('/api/notifications/dismiss',id)}setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
   // Clear all keeps pending approvals; "Mute this kind" sends a kind to the activity log.
   const muteNotifKind=n=>{apiFetch('/api/notifications/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:n.kind||'',source:n.source||''})}).catch(()=>{});setNotifs(prev=>prev.filter(x=>!(x.kind===n.kind&&x.source===n.source)))};
@@ -26311,8 +26207,6 @@ function App(){
   });
   const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n));_notifPost('/api/notifications/read',id)};
   useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
-  useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
-  useEffect(()=>{const pull=()=>fetch('/api/messages/stats').then(r=>r.json()).then(d=>setMsgActionable(d.actionable||0)).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
   // Predictive workspaces — refresh the "Suggested" set Friday glows on the dock.
   useEffect(()=>{const pull=()=>fetch('/api/workspace/predictions?top=4').then(r=>r.json()).then(d=>{
     const strong=(d.predictions||[]).filter(p=>(p.score||0)>=0.12).map(p=>fridayWorkspaceId(p.workspace));
@@ -27022,10 +26916,6 @@ function App(){
   // A bundle workspace (installed from the salon) has no React component of its own: its body is the sandboxed bundle frame (static/friday_bundles.js).
 const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id].bundle)?<window.FridayBundleFrame wsId={id}/>:<div>Coming soon</div>;
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
-  const unread=notifs.filter(n=>!n.read&&n.tier!=='fyi').length;
-  const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
-  const bellBadgeCount=runningTaskCount>0?runningTaskCount:unread;
-  const sortedBgTasks=[...bgTasks].sort((a,b)=>(b.created||0)-(a.created||0));
   const noWindows=openWins.size===0;
 
   const structures=window.fridayVibe?.getStructures?.()??[];
@@ -27714,11 +27604,9 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
         <span className="top-bar-clock" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
         {!shellChat&&(<button ref={bellRef} onClick={toggleNotifs}
           style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#ddd',cursor:'pointer',fontSize:14,position:'relative'}}
-          title={runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications'}
-          aria-label={runningTaskCount>0?`${runningTaskCount} tasks running, open notifications`:'Open notifications'}>
+          title="Notifications"
+          aria-label="Open notifications">
           <span style={{fontSize:13}}>&#x1F514;</span>
-          {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
-            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0e1a',fontWeight:700,fontFamily:'Orbitron, sans-serif'}}>{bellBadgeCount}</span>}
         </button>)}
         {!shellChat&&(<button onClick={toggleQuickDraft}
           style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
@@ -27828,83 +27716,19 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
       </div>}
     </div>;
   const shellNotifs = notifOpen&&<div ref={notifPanelRef} className="notif-dropdown" style={{top:notifAnchor.top,right:notifAnchor.right}}>
-      <ReasoningTraySection onOpenViewer={()=>{setActivityTab('traces');setActivityOpen(true);setNotifOpen(false)}}/>
-      <div className="notif-section-header">
-        <span>TASKS{runningTaskCount>0?` · ${runningTaskCount} LIVE`:''}</span>
-        <button onClick={()=>{setActivityTab('activity');setActivityOpen(true);setNotifOpen(false)}} title="Open the global activity ledger — every model action, subagent spawn, and tool call"
-          style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.25)',color:'#00d4ff',cursor:'pointer',fontSize:9,fontFamily:'JetBrains Mono',borderRadius:4,padding:'1px 6px',marginLeft:8}}>📒 Ledger</button>
-        {sortedBgTasks.some(t=>t.status!=='running'&&t.status!=='queued')&&<button
-          onClick={()=>{fetch('/api/tasks/dismiss-all',{method:'POST'}).catch(()=>{})
-            .then(()=>setBgTasks(p=>p.filter(x=>x.status==='running'||x.status==='queued'||(x.status==='interrupted'&&x.resumable))))}}
-          title="Hide finished cards. Records are kept, and anything that can still be resumed stays."
-          style={{background:'none',border:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:9,fontFamily:'JetBrains Mono',padding:0,marginLeft:8}}>CLEAR FINISHED</button>}
-        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.7)',letterSpacing:'0.04em'}}>{sortedBgTasks.length||0}</span>
+      <div className="notif-activity-link" data-testid="notif-activity-link" title="Running work, reasoning and finished tasks are in Activity"
+        style={{display:'flex',alignItems:'center',gap:8,padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.55)'}}>
+        <span style={{flex:1}}>Tasks and reasoning are in Activity.</span>
+        <button onClick={()=>{setActivityTab('activity');setActivityOpen(true);setNotifOpen(false)}} className="ws-tab-link">Activity</button>
+        <button onClick={()=>{setActivityTab('traces');setActivityOpen(true);setNotifOpen(false)}} className="ws-tab-link">Reasoning</button>
       </div>
-      {sortedBgTasks.length===0
-        ?<div className="notif-empty">No active tasks</div>
-        :sortedBgTasks.slice(0,8).map(t=><TaskCard key={t.task_id} task={t}
-          expanded={!!notifCardExpanded[t.task_id]}
-          onToggle={()=>setNotifCardExpanded(e=>({...e,[t.task_id]:!e[t.task_id]}))}
-          onCancel={()=>cancelBgTask(t.task_id)}
-          onChanged={()=>setBgTasks(p=>p.filter(x=>x.task_id!==t.task_id))}
-          onView={()=>viewBgTaskResult(t)}/>)}
       <div className="notif-section-divider"/>
       <div className="notif-section-header">
         <span>NOTIFICATIONS</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
           {notifs.length>0&&<button onClick={clearAllNotifs} style={{background:'none',border:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:0}}>CLEAR ALL</button>}
         </div>
       </div>
-      {/* Failed orbs — persistent, but now clearable.
-          They were kept past the 30s success timer so a failure could not
-          vanish before the user looked at it. Nothing could acknowledge one, so
-          "persistent" became "permanent" and they accumulated around the
-          avatar. Each one leaves individually; the header clears them all. */}
-      {failedProcs.length>0&&<div style={{padding:'6px 10px 2px'}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-          <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:'rgba(255,179,71,0.75)',letterSpacing:'.1em',flex:1}}>
-            FAILED · {failedProcs.length}
-          </div>
-          <button onClick={dismissAllFailed} style={{background:'none',border:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:0}}>CLEAR ALL</button>
-        </div>
-        {failedProcs.slice(0,8).map(p=><div key={p.id} style={{display:'flex',alignItems:'center',gap:7,padding:'3px 0',fontSize:10,color:'rgba(255,255,255,0.7)'}}>
-          <span aria-hidden="true">⚠</span>
-          <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.label||p.name}>{p.label||p.name||'Task'}</span>
-          <button aria-label="Dismiss this failure" onClick={()=>dismissProc(p.id)} title="Dismiss this failure"
-            style={{background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:11,padding:'0 2px'}}>✕</button>
-        </div>)}
-      </div>}
-      {/* Running now — real progress, an honest estimate, and a way out. */}
-      {liveProcs.length>0&&<div style={{padding:'6px 10px 2px'}}>
-        <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.35)',letterSpacing:'.1em',marginBottom:6}}>RUNNING NOW</div>
-        {liveProcs.map(p=>{
-          const pct=Math.round((p.progress||0)*100);
-          const el=p.elapsed||0;const eta=p.eta_s||0;
-          /* Overrun is SAID, not hidden. A bar that parks at 99% and waits is
-             worse than one that admits it is taking longer than usual. */
-          const over=eta>0&&el>eta*1.25;
-          const bar=over?'#f59e0b':'#00d4ff';
-          const when=over?('longer than usual — '+el+'s so far')
-            :(eta>0?(Math.max(0,eta-el)+'s left of ~'+eta+'s'):(el+'s'));
-          return <div key={p.id} style={{marginBottom:8,padding:'7px 9px',borderRadius:7,background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)'}}>
-            <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <span style={{fontSize:12}}>{p.icon||'⚡'}</span>
-              <span style={{flex:1,fontSize:11,color:'rgba(255,255,255,0.85)',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.label||p.name}</span>
-              {p.model&&<span style={{fontSize:9,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.4)'}}>{p.model}</span>}
-              <button onClick={()=>cancelProc(p.id)} title="Stop this and hand the GPU back"
-                style={{background:'none',border:'1px solid rgba(255,84,112,0.3)',color:'#ff5470',borderRadius:4,cursor:'pointer',fontSize:9,padding:'1px 6px',fontFamily:'JetBrains Mono'}}>stop</button>
-            </div>
-            <div style={{height:4,borderRadius:2,background:'rgba(255,255,255,0.08)',marginTop:6,overflow:'hidden'}}>
-              <div style={{height:'100%',width:Math.max(2,Math.min(100,pct))+'%',background:bar,transition:'width .4s ease'}}/>
-            </div>
-            <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:over?'#f59e0b':'rgba(255,255,255,0.35)',marginTop:3}}>
-              {pct}% · {when}
-            </div>
-            <TraceExpander traceId={p.trace_id} taskId={p.task_id}/>
-          </div>;
-        })}
-      </div>}
       {notifs.length>0&&notifGroupCards(notifs)}
       {notifs.length===0
         ?<div className="notif-empty">No new notifications</div>
@@ -28227,9 +28051,6 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           <div className="dock-group-btns">
             {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?('Suggested — ' + fridayName() + ' predicts you’ll want this'):undefined} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
-              {w.id==='knowledge'&&wikiPending>0&&<span title={wikiPending+' wiki update'+(wikiPending===1?'':'s')+' waiting for your approval'} style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
-              {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
-              {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0e1a',fontSize:9,fontWeight:700,fontFamily:'Orbitron, sans-serif',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}
             </button>)}
           </div>
           {g.name&&<div className="dock-group-label">{g.name}</div>}

@@ -1227,7 +1227,7 @@ def _notify_status(rec, summary):
             key=f"sched-status:{rec.get('id')}",
             title=f"💓 {rec.get('name')} — last ran {when}",
             body=body[:300], source="scheduler", kind="scheduled_status",
-            priority="low",
+            priority="low", emitter="E08",
             target={"workspace": "system", "tab": "schedules"})
     except Exception as e:
         print(f"  [scheduler] status update failed: {e}")
