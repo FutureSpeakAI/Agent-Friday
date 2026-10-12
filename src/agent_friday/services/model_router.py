@@ -950,6 +950,13 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
     # cloud call, refused inside a local-only run before anything is sent.
     from agent_friday.services.local_only_guard import refuse_if_active as _refuse_cloud
     _refuse_cloud(pinned or "ollama-local", str(model or ""))
+    # The owner's global Local only mode holds for a cloud-relayed tag too.
+    from agent_friday.services.local_only_guard import (
+        CloudRefused as _CloudRefused, routing_mode as _routing_mode)
+    if _is_cloud_model_tag(str(model or "")) and _routing_mode() == "local_only":
+        raise _CloudRefused(
+            "routing mode is local_only, so it will not call the "
+            "cloud-relayed model %s" % model)
 
     # There is deliberately NO seat gate here. A gate that re-checks every
     # tool-using dispatch and, on a red/ungated model, silently substitutes a

@@ -127,6 +127,12 @@ def provider_name_of(provider) -> str:
 # `remote_model` on a /api/tags row), e.g. `ollama cp x:cloud myglm:latest`.
 # Replaced wholesale by each successful inventory read; never fetched here.
 _REMOTE_ALIASES: frozenset = frozenset()
+_ALIASES_FILLED = False
+
+
+def aliases_filled() -> bool:
+    """True once a daemon inventory read has filled the alias set."""
+    return _ALIASES_FILLED
 
 
 def note_remote_aliases(rows) -> None:
@@ -134,7 +140,7 @@ def note_remote_aliases(rows) -> None:
 
     Called by the code that already reads the inventory, so classifying a
     model never costs a network call."""
-    global _REMOTE_ALIASES
+    global _REMOTE_ALIASES, _ALIASES_FILLED
     names = set()
     for r in rows or ():
         if isinstance(r, dict) and (r.get("remote_host") or r.get("remote_model")):
@@ -142,6 +148,7 @@ def note_remote_aliases(rows) -> None:
             if n:
                 names.add(n)
     _REMOTE_ALIASES = frozenset(names)
+    _ALIASES_FILLED = True
 
 
 def is_cloud_model_tag(model: str) -> bool:

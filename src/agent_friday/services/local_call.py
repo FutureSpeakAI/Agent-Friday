@@ -163,9 +163,13 @@ def _daemon_tags() -> set:
     import urllib.request
     try:
         with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=4) as r:
-            rows = (_json.loads(r.read().decode()) or {}).get("models") or []
-        from agent_friday.services.local_only_guard import note_remote_aliases
-        note_remote_aliases(rows)
+            body = _json.loads(r.read().decode()) or {}
+        rows = body.get("models") or []
+        # A body without a `models` key (an error object) is not an
+        # inventory: it must not replace the known alias set.
+        if isinstance(body, dict) and "models" in body:
+            from agent_friday.services.local_only_guard import note_remote_aliases
+            note_remote_aliases(rows)
         return {m.get("name") for m in rows if m.get("name")}
     except Exception:
         return set()
@@ -192,10 +196,12 @@ def describe_dispatch(model: str, daemon_tags: set | None = None) -> dict:
     # on ollama.com. It is its own route, so nothing that means "local"
     # (route in ("seat", "daemon")) can ever accept it.
     from agent_friday.services.local_only_guard import is_cloud_model_tag
+    # Read the inventory FIRST: it is what tells the alias set which names
+    # the daemon relays to a remote host.
+    tags = _daemon_tags() if daemon_tags is None else daemon_tags
     if is_cloud_model_tag(model):
         return {"model": model, "route": "cloud_relay",
                 "endpoint": ollama_url(), "answering": None}
-    tags = _daemon_tags() if daemon_tags is None else daemon_tags
     base = seat_endpoint(model)
     if base:
         return {"model": model, "route": "seat", "endpoint": base,
@@ -288,17 +294,29 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     # before anything is queued or sent. Outside one it continues to the
     # daemon path below, where gate_ollama_body seals it like any cloud payload.
     from agent_friday.services.local_only_guard import (
-        CloudRefused, is_cloud_model_tag, refuse_if_active, routing_mode)
+        CloudRefused, aliases_filled, is_cloud_model_tag, refuse_if_active,
+        routing_mode)
     _cloud_tagged = is_cloud_model_tag(model)
-    if _cloud_tagged:
+    # A daemon-routed model could be an alias of a cloud model. Make sure the
+    # alias set has been filled at least once in this process; when that read
+    # fails the answer is unknown, and unknown fails safe under local-only.
+    _unknown = False
+    if not _cloud_tagged and not aliases_filled() and not seat_endpoint(model):
+        _daemon_tags()
+        _cloud_tagged = is_cloud_model_tag(model)
+        _unknown = not _cloud_tagged and not aliases_filled()
+    if _cloud_tagged or _unknown:
         try:
-            refuse_if_active("ollama", model)
+            if _cloud_tagged:
+                refuse_if_active("ollama", model)
             # The owner's global Local only mode holds too, not only the
             # per-thread mark of a local-only job.
             if routing_mode() == "local_only":
                 raise CloudRefused(
-                    "routing mode is local_only, so it will not call the "
-                    "cloud-relayed model %s" % model)
+                    "routing mode is local_only, so it will not call %s "
+                    "(%s)" % (model, "a cloud-relayed model" if _cloud_tagged
+                              else "the daemon inventory could not be read to "
+                                   "rule out a cloud relay"))
         except CloudRefused as e:
             _log.warning("local_call refused cloud-relayed model %s: %s", model, e)
             return ""

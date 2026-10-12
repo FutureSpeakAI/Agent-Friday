@@ -197,14 +197,16 @@ def test_call_refuses_a_cloud_tag_under_global_local_only_mode(monkeypatch):
 @pytest.fixture
 def _aliases():
     from agent_friday.services import local_only_guard as g
-    before = g._REMOTE_ALIASES
+    before = (g._REMOTE_ALIASES, g._ALIASES_FILLED)
+    g._REMOTE_ALIASES, g._ALIASES_FILLED = frozenset(), False
     yield g
-    g._REMOTE_ALIASES = before
+    g._REMOTE_ALIASES, g._ALIASES_FILLED = before
 
 
 def test_an_alias_marked_remote_by_the_daemon_is_cloud(_aliases):
     g = _aliases
     assert not g.is_cloud_model_tag("myglm:latest")
+    assert not g.aliases_filled()
     g.note_remote_aliases([{"name": "MyGLM:latest", "remote_host": "https://ollama.com"},
                            {"name": "plain:7b"}])
     assert g.is_cloud_model_tag("myglm:latest")
@@ -272,3 +274,70 @@ def test_a_skipped_cloud_role_is_logged_once(monkeypatch, caplog):
     hits = [r for r in caplog.records if CLOUD[0] in r.getMessage()
             and "cloud-relayed" in r.getMessage()]
     assert len(hits) == 1
+
+
+# ── ordering, fail-safe and no-wipe (spot-check conditions) ───────────────────
+def _inventory(monkeypatch, body):
+    import io
+    import json
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: io.BytesIO(json.dumps(body).encode()))
+
+
+def test_a_body_without_models_does_not_wipe_the_alias_set(monkeypatch, _aliases):
+    g = _aliases
+    g.note_remote_aliases([{"name": "myglm:latest", "remote_host": "h"}])
+    _inventory(monkeypatch, {"error": "busy"})
+    lc._daemon_tags()
+    assert g.is_cloud_model_tag("myglm:latest")
+
+
+def test_resolve_local_seat_refreshes_aliases_before_its_loop(monkeypatch, _aliases):
+    from agent_friday.services.scheduler import _resolve_local_seat
+    _resolve_env(monkeypatch, {"model_routing": {"local_model": "myglm:latest"}},
+                 installed=[], routes={"myglm:latest": "daemon"})
+    _inventory(monkeypatch, {"models": [{"name": "myglm:latest",
+                                         "remote_host": "https://h"}]})
+    assert _resolve_local_seat() is None
+
+
+def test_call_fills_the_alias_set_and_refuses_an_alias_in_local_only(monkeypatch, _aliases):
+    import requests
+    from agent_friday.services.local_only_guard import local_only
+    _call_env(monkeypatch)
+    monkeypatch.setattr(lc, "seat_endpoint", lambda m: None)
+    _inventory(monkeypatch, {"models": [{"name": "myglm:latest", "remote_model": "x"}]})
+    monkeypatch.setattr(requests, "post", _Posted())
+    with local_only("fixture job"):
+        assert lc.call("s", "u", "myglm:latest") == ""
+
+
+def test_call_fails_safe_under_local_only_when_the_inventory_is_unreadable(
+        monkeypatch, _aliases):
+    import requests
+    import urllib.request
+    from agent_friday.services.local_only_guard import local_only
+    _call_env(monkeypatch)
+    monkeypatch.setattr(lc, "seat_endpoint", lambda m: None)
+
+    def down(*a, **k):
+        raise OSError("daemon down")
+
+    monkeypatch.setattr(urllib.request, "urlopen", down)
+    monkeypatch.setattr(requests, "post", _Posted())
+    with local_only("fixture job"):
+        assert lc.call("s", "u", "fixture-local:7b") == ""
+
+
+def test_router_leg_refuses_a_cloud_tag_under_global_local_only(monkeypatch):
+    import requests
+    from agent_friday import core
+    from agent_friday.services import model_router
+    from agent_friday.services.local_only_guard import CloudRefused
+    cfg = {"model_routing": {"mode": "local_only"}}
+    monkeypatch.setattr(core, "_load_settings", lambda: cfg)
+    monkeypatch.setattr(model_router, "_load_settings", lambda: cfg, raising=False)
+    monkeypatch.setattr(requests, "post", _Posted())
+    with pytest.raises(CloudRefused):
+        model_router._call_ollama([{"role": "user", "content": "hi"}], model=CLOUD[0])

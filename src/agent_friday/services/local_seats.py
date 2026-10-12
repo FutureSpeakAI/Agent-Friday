@@ -257,9 +257,11 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
         if not _daemon_port_open(base):
             raise OSError("no Ollama daemon listening at %s" % base)
         with urllib.request.urlopen(f"{base}/api/tags", timeout=4) as r:
-            raw = json.loads(r.read().decode()).get("models", [])
-        from agent_friday.services.local_only_guard import note_remote_aliases
-        note_remote_aliases(raw)
+            _body = json.loads(r.read().decode()) or {}
+            raw = _body.get("models", [])
+        if "models" in _body:       # an error body is not an inventory
+            from agent_friday.services.local_only_guard import note_remote_aliases
+            note_remote_aliases(raw)
         for m in raw:
             n = m.get("name")
             if not n:

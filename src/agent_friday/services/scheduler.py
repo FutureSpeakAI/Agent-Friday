@@ -201,6 +201,12 @@ def _resolve_local_seat():
                 candidates.append(name)
         candidates += [n for n, _ in (local_seats.installed() or [])]
         from agent_friday.services.local_only_guard import is_cloud_model_tag
+        # One inventory read refreshes the remote-alias set for the whole loop.
+        try:
+            from agent_friday.services.local_call import _daemon_tags
+            _daemon_tags()
+        except Exception:
+            pass
         for name in candidates:
             if not name:
                 continue
