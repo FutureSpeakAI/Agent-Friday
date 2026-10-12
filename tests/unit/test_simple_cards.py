@@ -52,7 +52,7 @@ def test_other_phrases_do_not_touch_the_cards(phrase):
 
 def test_the_cards_phrases_are_not_taken_for_a_change_to_the_owners_things():
     for phrase in HIDE + SHOW:
-        assert not lr._has_write_intent(phrase), phrase
+        assert not lr._ACT.search(phrase), phrase
 
 
 def test_the_voice_contract_gains_no_tool_and_no_argument_for_it():
