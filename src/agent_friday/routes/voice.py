@@ -3469,7 +3469,8 @@ def _note_local_voice_failed():
 
 
 _NOT_THE_PAGE = ({"status": "error", "error": "not_on_screen",
-                  "message": "Cloud voice is chosen on Friday's own page, in Settings, Voice."}, 403)
+                  "message": ("Choose cloud voice on this PC's own screen (Settings, Voice). "
+                              "It cannot be chosen from another device, a tunnel or a script.")}, 403)
 
 
 def _owner_page_only():
@@ -4319,6 +4320,7 @@ if sock is not None:
             _tool_session = {"engine": "local", "conversation_id": _open_cid[0],
                              "_crew_host_origin": _crew_call_origin,
                              "owner_text": "", "user_spoke_at": 0.0,
+                             "owner_local": bool(_owner_voice),
                              "async_routing": settings.get("voice_async_routing")
                              or "local_only",
                              "after_call": [], "news_offered": [], "spoken": []}
@@ -4776,6 +4778,7 @@ if sock is not None:
                 return
         _ui_t = request.args.get('t', '')
         _ui_tok_ok = _api_token_valid(_ui_t)
+        _owner_local_live = bool(_is_local_request())     # a tunnel or a paired phone is not the owner's own voice here
         if not _ws_auth_ok(_ui_tok_ok):
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
@@ -5377,11 +5380,17 @@ if sock is not None:
             _user_words_ts = [0.0]
             _turn_timed = [True]
             _turn_tools = []
+            try:
+                from agent_friday.services import local_voice_readiness as _lvr_start
+                _lvr_start.note_cloud_call_started()      # "just this call" is now in use
+            except Exception:
+                pass
             # What this call has offered and said, for the voice tools
             # (services/voice_engine.py): the news tools skip stories Friday
             # has already told instead of reading the same five again.
             _voice_session = {"news_offered": [], "spoken": [],
                               "conversation_id": _call_cid(), "owner_text": "",
+                              "owner_local": _owner_local_live,
                               "card_watch": _LiveCardWatch(),
                               "_crew_host_origin": _crew_call_origin,
                               # What he cares about now, how much to say, what is
@@ -5610,6 +5619,8 @@ if sock is not None:
                 in_buf.clear()
                 out_buf.clear()
                 _live_laya.for_call(_voice_session).on_turn_end(user_text)
+                _voice_session["owner_text"] = ""        # a relay in the next turn cannot carry this one's words
+                _voice_session["owner_text_at"] = 0.0
                 if not user_text and not agent_text:
                     return
                 if agent_text and not _crew[0]:

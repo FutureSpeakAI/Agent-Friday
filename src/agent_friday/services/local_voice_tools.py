@@ -107,6 +107,24 @@ def _owner_words() -> str:
     return _owner_words_at()[0]
 
 
+REMOTE_VOICE_SAYS = ("Cloud voice is chosen on this PC's own screen, in Settings, Voice. "
+                     "I cannot take that answer from a call that does not come from this PC "
+                     "(a paired phone or a tunnel), so nothing has changed.")
+
+
+def _remote_voice() -> bool:
+    """True for a voice call that is not the owner's own call on this PC (a paired phone, a tunnel,
+    a relay): the same bar the page routes set. A typed turn is not a call and is not judged here."""
+    try:
+        from agent_friday.services import agent
+        ctx = agent._CURRENT_TOOL_CONTEXT.get() or {}
+        if not str(ctx.get("surface") or "").startswith("voice"):
+            return False
+        return not (ctx.get("owner_local") or ctx.get("voice_owner_local"))
+    except Exception:
+        return True
+
+
 def _pending_kind(lvr) -> str:
     """Which question is waiting: `scope` (just this call / always), `switch_back`, or ''."""
     if lvr.cloud_question_card() is not None:
@@ -167,6 +185,8 @@ def _tool_local_voice_readiness(inp=None):
                   "not run during a call, and it changes nothing about how you talk to me. "
                   "Ask again afterwards." % _minutes(ls.idle_window_s()))
         return json.dumps({"spoken": spoken, "kind": "measure_queued"})
+    if action in ("cloud", "answer") and _remote_voice():
+        return json.dumps({"spoken": REMOTE_VOICE_SAYS, "kind": "not_local"})
     if action == "cloud":
         res = lvr.ask_cloud_switch(source="voice", words=_owner_words())
         if res.get("refused"):

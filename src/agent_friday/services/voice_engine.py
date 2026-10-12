@@ -796,6 +796,7 @@ def _ask_friday_local(question: str, session: dict) -> str:
                              # the owner's own answer (local_voice_readiness); not `owner_text`.
                              "voice_owner_words": str((session or {}).get("owner_text") or "")[:600],
                              "voice_owner_at": (session or {}).get("owner_text_at"),
+                             "voice_owner_local": bool((session or {}).get("owner_local")),
                              "_crew_host_origin": (session or {}).get("_crew_host_origin"),
                              "conversation_id": (session or {}).get("conversation_id"),
                              "pin_to_seat": True},
@@ -861,6 +862,7 @@ def _tool_ask_friday(inp, session=None):
                              "is_voice": True, "surface": "voice-live-relay",
                              "voice_owner_words": str((session or {}).get("owner_text") or "")[:600],
                              "voice_owner_at": (session or {}).get("owner_text_at"),
+                             "voice_owner_local": bool((session or {}).get("owner_local")),
                              "_crew_host_origin": (session or {}).get("_crew_host_origin"),
                              "conversation_id": (session or {}).get("conversation_id"),
                              # The prompt is gated for the LOCAL seat: a dead
@@ -1592,6 +1594,7 @@ def _voice_ctx(session=None) -> dict:
         if session.get("owner_text"):
             ctx["owner_text"] = session["owner_text"]
             ctx["owner_text_at"] = session.get("owner_text_at")
+        ctx["owner_local"] = bool(session.get("owner_local"))
         if session.get("voiced_cards"):
             ctx["voiced_cards"] = list(session["voiced_cards"])
         if session.get("turn_id"):

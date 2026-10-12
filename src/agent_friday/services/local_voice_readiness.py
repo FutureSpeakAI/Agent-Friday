@@ -870,7 +870,7 @@ def gate_settings_write(new_settings: dict) -> Optional[dict]:
         return {"http": 409, "body": {"status": "refused", "reason": out["reason"],
                                       "message": out["message"]}}
     return {"http": 409, "body": {"status": "needs_choice",
-                                  "message": QUESTION + " Nothing has changed. Choose in Settings, Voice.",
+                                  "message": QUESTION + " Nothing has changed. Choose cloud voice on this PC's own screen, in Settings, Voice.",
                                   "question": out.get("question")}}
 
 
@@ -943,19 +943,37 @@ def _revert_call_scope(rec: dict, said: str) -> bool:
     return True
 
 
+def note_cloud_call_started() -> None:
+    """A cloud voice call has begun. If it is covered by "just this call", the record
+    remembers that a call really used it (so a restart in the middle of one is told
+    apart from a choice made at setup that no call has used yet). Never raises."""
+    try:
+        s = _settings()
+        rec = _record(s)
+        if rec.get("scope") == SCOPE_CALL and _is_cloud(s.get("voice_engine")) and not rec.get("call_seen"):
+            _save({CHOICE_KEY: dict(rec, call_seen=True)})
+    except Exception:
+        pass
+
+
 def reconcile_at_boot() -> bool:
-    """At start-up, a "just this call" left from before (a crash or a restart in the
-    middle of a cloud call) goes back to the engine it was, and says so: no call can
-    still be open, so nothing is left for it to cover. A question that ran out while
-    Friday was off is closed. Never raises."""
+    """At start-up, a "just this call" that a live call used (so the server stopped in the
+    middle of it) goes back to the engine it was, and says so; one that has run out goes
+    back too. One that no call has used yet (chosen at setup, say) is left for its call.
+    A question that ran out while Friday was off is closed. Never raises."""
     try:
         drop_stale_question()
         s = _settings()
         rec = _record(s)
         if rec.get("scope") != SCOPE_CALL or not _is_cloud(s.get("voice_engine")):
             return False
-        return _revert_call_scope(
-            rec, "Friday restarted during a cloud call, so voice is back on local, as you chose.")
+        if rec.get("call_seen"):
+            return _revert_call_scope(
+                rec, "Friday restarted during a cloud call, so voice is back on local, as you chose.")
+        if _now() - float(rec.get("at") or _now()) >= CALL_SCOPE_TTL_S:
+            return _revert_call_scope(
+                rec, "No cloud call was started, so voice is back on local, as you chose.")
+        return False
     except Exception as e:  # pragma: no cover - defensive
         _log.debug("boot reconcile skipped: %s", e)
         return False
@@ -1130,43 +1148,46 @@ _PHRASES = {
                     ("switch", "to", "local")),
     "keep_cloud": (("keep", "cloud"), ("keep", "the", "cloud"), ("keep", "it", "on", "cloud"),
                    ("stay", "on", "cloud"), ("stay", "on", "the", "cloud"), ("stay", "with", "cloud")),
-    "cancel": (("never", "mind"), ("nevermind",), ("cancel",), ("stay", "on", "local"),
-               ("keep", "local"), ("stay", "local")),
+    "cancel": (("stay", "on", "local"), ("keep", "local"), ("stay", "local")),
 }
-#: A negation within NEG_WINDOW words before a phrase turns it from an answer into a doubt.
+#: A negation, a correction or a retraction ANYWHERE in the utterance, or a sign that someone
+#: else's words are being repeated, makes it a doubt or a quote, never an answer. ("Never mind"
+#: and "cancel" are corrections too: they give no answer, and Friday asks again.)
 _NEGATIONS = frozenset({"no", "not", "dont", "never", "nope", "nah", "cant", "cannot", "wont", "without",
-                        "isnt", "arent", "didnt", "doesnt", "shouldnt", "wouldnt", "stop", "stopped"})
+                        "isnt", "arent", "didnt", "doesnt", "shouldnt", "wouldnt", "stop", "stopped",
+                        "wait", "actually", "hold", "cancel", "nevermind", "sorry", "correction",
+                        "instead", "rather", "mistake", "oops", "undo",
+                        "said", "says", "say", "told", "tells", "asked", "quote", "unquote", "quoted"})
 #: Words that make a sentence a thought or a question rather than an answer.
 _HEDGES = frozenset({"if", "maybe", "perhaps", "unless", "whether", "should", "would", "could", "might",
                      "wonder", "what", "why", "how", "who", "when", "which", "where"})
-NEG_WINDOW = 4
+_QUOTES = ('"', "“", "”", "‘", "«", "»")
 MAX_ANSWER_WORDS = 8
 
 
 def classify_answer(words: str) -> Optional[str]:
     """Which answer the owner's words give: `call`, `always`, `switch_back`,
-    `keep_cloud` or `cancel`. Strict: whole words only, a short utterance, no
-    question, no hedge, and no negation just before the phrase ("no, not always"
-    and "don't switch back" are never `always` or `switch_back`). Anything that
-    gives no single answer, or two, is None, and Friday asks again. Matched on the
-    owner's own utterance, never on a model's paraphrase."""
+    `keep_cloud` or `cancel`. Strict: whole words only and a short, clean utterance.
+    Nothing is an answer if it holds a question mark, a quote, a hedge, or any
+    negation, correction or retraction word anywhere ("no, not always", "always, no,
+    wait", "don't switch back", "she said always"), or gives two answers. Then Friday
+    asks again. Matched on the owner's own utterance, never on a model's paraphrase."""
     raw = str(words or "")
-    if not raw.strip() or "?" in raw:
+    if not raw.strip() or "?" in raw or any(q in raw for q in _QUOTES):
         return None
     flat = raw.lower().replace("'", "").replace("’", "")
     toks = "".join(ch if ch.isalnum() else " " for ch in flat).split()
-    if not toks or len(toks) > MAX_ANSWER_WORDS or any(t in _HEDGES for t in toks):
+    if not toks or len(toks) > MAX_ANSWER_WORDS:
+        return None
+    if any(t in _HEDGES or t in _NEGATIONS for t in toks):
         return None
     hits = set()
     for cid, phrases in _PHRASES.items():
         for ph in phrases:
             n = len(ph)
             for i in range(len(toks) - n + 1):
-                if tuple(toks[i:i + n]) != ph:
-                    continue
-                if any(t in _NEGATIONS for t in toks[max(0, i - NEG_WINDOW):i]):
-                    return None                    # negated: a doubt, not an answer
-                hits.add(cid)
+                if tuple(toks[i:i + n]) == ph:
+                    hits.add(cid)
     return next(iter(hits)) if len(hits) == 1 else None
 
 

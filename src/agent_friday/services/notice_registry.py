@@ -254,7 +254,7 @@ _ALL = [
     # (services/local_voice_readiness: maybe_offer_switch for an owner with no recorded choice, once,
     # declined means never again; maybe_offer_switch_back after an "always", once until readiness has
     # changed). Both go through this emitter and this key, so there is one card at a time.
-    _e("LV7", "services/local_voice_readiness.py:maybe_offer_switch", "local_voice_switch_offer",
+    _e("LV7", "services/local_voice_readiness.py:maybe_offer_switch+maybe_offer_switch_back", "local_voice_switch_offer",
        NEEDS_YOU, "local-voice-switch-offer", source="local-voice"),
     # Cloud voice is asked, never assumed: the question "just this call, or always?" when a switch
     # to cloud voice starts from the voice or after a local voice failure (the screen card; the
