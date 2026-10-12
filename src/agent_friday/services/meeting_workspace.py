@@ -230,6 +230,12 @@ def parse_expansion(raw) -> list:
     return out
 
 
+def _owners_words(bullet) -> str:
+    """The text of a bullet that widens what the notes may name: only the owner's own. A bullet Friday's tool added
+    (`by: friday`) is not the owner's word, and could carry text a cloud loop was handed by a poisoned page."""
+    return "" if not bullet or bullet.get("by") == "friday" else bullet.get("text") or ""
+
+
 def validate_expansion(items: list, lines: list, bullets: list, transcript: str = "") -> tuple:
     """(kept, left_out) for parsed lines. A kept line has at least one real span, names a real
     bullet when it names one, and introduces no entity absent from the transcript and its bullet.
@@ -250,7 +256,7 @@ def validate_expansion(items: list, lines: list, bullets: list, transcript: str 
         elif it["bullet"] is not None and bid is None:
             reason = "no such bullet"
         else:
-            extra = unknown_entities(it["text"], transcript, by_id[bid]["text"] if bid is not None else "")
+            extra = unknown_entities(it["text"], transcript, _owners_words(by_id[bid]) if bid is not None else "")
             if extra:
                 reason = "not in the transcript: " + ", ".join(extra[:4])
         key = it["text"].lower()
@@ -274,7 +280,7 @@ def check_polished(polished_lines: list, lines: list, bullets: list) -> list:
             if span_of(lines, sp.get("i")) is None:
                 problems.append((pl.get("text"), "bad span %r" % (sp,)))
         b = by_id.get(pl.get("bullet"))
-        extra = unknown_entities(pl.get("text") or "", transcript, b["text"] if b else "")
+        extra = unknown_entities(pl.get("text") or "", transcript, _owners_words(b))
         if extra:
             problems.append((pl.get("text"), "entity not in transcript: " + ", ".join(extra)))
     return problems
@@ -507,7 +513,9 @@ def notes_blocks(m: dict) -> list:
     pol = m.get("polished") or {}
     if pol.get("status") == "done" and pol.get("lines"):
         add("heading", "Notes from the owner's bullets")
+        by_friday = {b.get("id") for b in (m.get("pad") or []) if b.get("by") == "friday"}
         for pl in pol["lines"]:
             cites = ", ".join("line %d at %s" % (sp["i"], clock(sp["t"])) for sp in pl.get("spans") or [])
-            add("paragraph", pl["text"] + (" (transcript %s)" % cites if cites else ""))
+            lead = "From a bullet Friday added: " if pl.get("bullet") in by_friday else ""
+            add("paragraph", lead + pl["text"] + (" (transcript %s)" % cites if cites else ""))
     return out

@@ -784,6 +784,21 @@ class MeetingManager:
         self._last_stop: dict | None = None
 
     # -- persistence -------------------------------------------------------
+    def _apply_forgotten(self, m: dict) -> None:
+        """A person the owner asked Friday to forget is not written back into a record: a meeting that was
+        recording or being transcribed when forget-person ran is redacted when it first saves in a settled state."""
+        try:
+            from agent_friday.services import forget_person
+            pat = _name_pattern(forget_person.forgotten_names())
+            if pat is None:
+                return
+            new, n = _redact_value(m, pat)
+            if n:
+                m.clear()
+                m.update(new)
+        except Exception as e:  # noqa: BLE001 - never blocks a save
+            log.info("meeting %s: forgotten names not applied (%s)", m.get("id"), type(e).__name__)
+
     def _save(self, m: dict) -> None:
         with self._io:
             if m["id"] in self._deleted:
@@ -792,6 +807,8 @@ class MeetingManager:
             if gone:
                 m["keep_audio"] = False
                 m["audio_deleted_at"] = gone
+            if m.get("state") not in ("recording", "transcribing"):
+                self._apply_forgotten(m)
             _write_enc(_dir(m["id"]) / "meeting.json.enc",
                        json.dumps(m, ensure_ascii=False).encode("utf-8"))
 
@@ -2097,7 +2114,7 @@ def _meetings_naming(names, redact: bool) -> int:
     hits = 0
     for row in mgr.list():
         mid = row.get("id")
-        if not mid or row.get("state") in ("recording", "unreadable"):
+        if not mid or row.get("state") in ("recording", "transcribing", "unreadable"):
             continue
         try:
             with mgr._io:
