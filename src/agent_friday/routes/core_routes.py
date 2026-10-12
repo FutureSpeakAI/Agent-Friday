@@ -1785,6 +1785,10 @@ def api_settings():
     try:
         data = request.get_json(silent=True) or {}
         new_settings = data.get('settings') or {}
+        if isinstance(new_settings, dict) and 'meeting_archive' in new_settings:
+            # Whether meetings are searchable is chosen only at /api/meetings/archive (on, from the
+            # Friday window); the generic settings write is not a way to say yes for the owner.
+            new_settings = {k: v for k, v in new_settings.items() if k != 'meeting_archive'}
 
         # Laya's safe writes widen only on the owner's own click on this server's page: a
         # same-origin browser request that carries the page's rotating token (the check the

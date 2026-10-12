@@ -36,7 +36,7 @@
     POST   /api/meetings/<id>/memory       propose people, decisions, projects (nothing is kept)
     POST   /api/meetings/<id>/calendar     ask to add the summary to the calendar event (a card)
     GET    /api/meetings/archive           whether meetings are searchable from the Library
-    POST   /api/meetings/archive           {choice: on|off}
+    POST   /api/meetings/archive           {choice: on|off}  (on only from the Friday window)
 
 LOCAL ONLY. Starting a recording turns on this machine's microphone, and a
 transcript holds what other people said. Both stay with the person sitting at
@@ -305,6 +305,12 @@ def meetings_archive():
     if request.method == 'GET':
         return jsonify({"status": "ok"} | ma.status())
     d = request.get_json(silent=True) or {}
+    if d.get("choice") == "on" and not screen_click.screen_session(request):
+        # The yes that makes transcripts and notes searchable is the owner's, on screen. Saying no is
+        # always allowed, from anywhere.
+        return jsonify({"status": "error", "code": "screen_only",
+                        "error": "Making meetings searchable is chosen only from the Meetings view "
+                                 "in the Friday window."}), 403
     try:
         out = ma.set_choice(d.get("choice"))
     except (ValueError, TypeError):
