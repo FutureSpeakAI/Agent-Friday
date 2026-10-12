@@ -33,10 +33,13 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import logging
 import sys
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
+
+_log = logging.getLogger(__name__)
 
 #: The Settings default for ``background_idle_minutes``.
 DEFAULT_IDLE_MINUTES = 10
@@ -162,8 +165,66 @@ def idle_state() -> Dict[str, Any]:
 
 
 def idle_seconds() -> float:
-    """The combined idle time (the minimum of the readable signals)."""
-    return float(idle_state()["idle_s"])
+    """The combined idle time (the minimum of the readable signals); 0 when it
+    cannot be read (see ``safe_idle_state``)."""
+    return float(safe_idle_state()["idle_s"])
+
+
+# ── A check that fails holds background work (fail closed) ────────────────────
+#
+# An idle check that raises must never let background work start while the
+# owner may be at the keyboard. Every caller that decides whether background
+# work may run reads the idle state through ``safe_idle_state`` or answers a
+# failed gate with ``failed_check_reason``: the work waits, the failure is
+# logged once per place, and DRAIN_CAP_S still bounds the wait (Friday's own
+# clock, the same cap an unreadable OS clock gets). Interactive turns, voice
+# and work a person is waiting on (``foreground``, ``user_job``) are never
+# held by a failed check: their callers decide them before asking.
+
+_FAILED_CHECKS: set = set()
+_FAILED_CHECKS_LOCK = threading.Lock()
+
+
+def note_failed_check(where: str) -> None:
+    """Log, once per place, that an idle check raised (call from an except block)."""
+    with _FAILED_CHECKS_LOCK:
+        first = where not in _FAILED_CHECKS
+        _FAILED_CHECKS.add(where)
+    if first:
+        _log.warning("background gate: the idle check in %s failed; background work "
+                     "waits until it reads again", where, exc_info=True)
+
+
+def drained_after_failure() -> bool:
+    """The drain cap for a failed check: Friday has seen nobody for DRAIN_CAP_S."""
+    try:
+        return float(friday_idle_seconds()) >= DRAIN_CAP_S
+    except Exception:
+        return False
+
+
+def failed_check_reason(where: str, words: str = REASON_IDLE) -> str:
+    """The reason background work waits after the check at ``where`` raised:
+    ``words`` until the drain cap has passed, then "" (call from an except block)."""
+    note_failed_check(where)
+    return "" if drained_after_failure() else words
+
+
+def safe_idle_state() -> Dict[str, Any]:
+    """``idle_state()``, or a NOT-idle state when it raises (idle once the drain
+    cap has passed). Never raises."""
+    try:
+        return idle_state()
+    except Exception:
+        note_failed_check("idle_state")
+    drained = drained_after_failure()
+    try:
+        fri = float(friday_idle_seconds())
+    except Exception:
+        fri = 0.0
+    return {"idle": drained, "idle_s": fri if drained else 0.0, "os_idle_s": None,
+            "friday_idle_s": fri, "threshold_s": DEFAULT_IDLE_MINUTES * 60.0,
+            "os_readable": False, "drain_cap_s": DRAIN_CAP_S, "failed": True}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -282,7 +343,7 @@ def block_reason(record: Dict[str, Any]) -> str:
         return REASON_INTERACTIVE
     if record.get("deferrable") and not record.get("run_now"):
         # An open call is not idle, even when nobody has touched a key.
-        if KIND_VOICE_CALL in kinds or not idle_state()["idle"]:
+        if KIND_VOICE_CALL in kinds or not safe_idle_state()["idle"]:
             return REASON_IDLE
     if record.get("memory_floor"):
         # CPU work that holds memory while it runs (the Library reading folders) keeps the same

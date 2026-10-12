@@ -389,7 +389,7 @@ class SeatSupervisor:
         try:
             return str(self.gate(record) or "")
         except Exception:
-            return ""
+            return _seat_queue_mod.failed_gate_reason(record, "seat_supervisor.running_block_reason")
 
     def wait_while_blocked(self, task_id: str) -> None:
         """The cooperative yield, called before each of a running job's local

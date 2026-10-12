@@ -212,3 +212,42 @@ def test_a_row_the_scheduler_cannot_cancel_gets_no_cancel_in_activity(monkeypatc
     assert rows["lease-1"]["stoppable"] is False and rows["lease-1"]["stop"] is None
     assert rows["call-1"]["stoppable"] is True
     assert rows["call-1"]["stop"]["url"] == "/api/local-queue/call-1/cancel"
+
+
+def test_a_failed_idle_check_holds_background_work_but_never_a_job_the_owner_asked_for(
+        world, monkeypatch, caplog):
+    """Fail closed: when the idle check raises, background work waits as if the owner were
+    here (the failure is logged once), work a person is waiting on still runs, and the
+    drain cap still bounds the wait."""
+    import logging
+    sup, away = world
+    away[0] = 5.0                                    # Friday saw the owner seconds ago
+
+    def broken():
+        raise RuntimeError("idle clock unreadable")
+    monkeypatch.setattr(bg, "idle_state", broken)
+    monkeypatch.setattr(bg, "_FAILED_CHECKS", set())
+    caplog.set_level(logging.WARNING, logger=bg.__name__)
+
+    # The scheduler's gate: a background ticket waits; a job the owner asked for does not.
+    background = tq.Ticket("bg-1", "background", "brain", model="brain", kind="task")
+    asked_for = tq.Ticket("uj-1", "user_job", "brain", model="brain", kind="image_job")
+    assert ls.gate(background) == "waiting for you to be idle"
+    assert ls.gate(asked_for) == ""
+    assert ls.owner_idle_s() == 0.0, "an unreadable clock means the owner may be here"
+
+    # The Local AI queue: deferrable work queues for idle; the button they pressed runs.
+    assert sup.wire_spawn(_job("wiki", deferrable=True)) == "queued-for-seat"
+    assert sup.queue.get("wiki")["wait_reason"] == bg.REASON_IDLE
+    assert sup.wire_spawn(_job("button", foreground=True)) == "running"
+    sup.on_task_end("button")
+    sup.pump()
+    assert sup.queue.get("wiki")["status"] == "queued-for-seat", "still held after the seat frees"
+
+    failed = [r for r in caplog.records if "idle_state" in r.getMessage()]
+    assert len(failed) == 1, "the failure is logged once, not on every poll"
+
+    # The drain cap still bounds the wait: six quiet hours on Friday's own clock.
+    away[0] = bg.DRAIN_CAP_S + 1
+    assert ls.gate(background) == ""
+    assert bg.block_reason(dict(_job("wiki", deferrable=True), seat_is_local=True)) == ""

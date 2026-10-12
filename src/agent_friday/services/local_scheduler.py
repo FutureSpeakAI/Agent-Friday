@@ -274,6 +274,12 @@ def owner_idle_s() -> float:
         from agent_friday.services import background_gate as _bg
         return float(_bg.idle_seconds())
     except Exception:
+        # Fail closed: an unreadable clock means the owner may be here.
+        try:
+            from agent_friday.services import background_gate as _bg
+            _bg.note_failed_check("local_scheduler.owner_idle_s")
+        except Exception:
+            pass
         return 0.0
 
 
@@ -497,14 +503,19 @@ def idle_block() -> str:
         from agent_friday.services import background_gate as _bg
         if _bg.KIND_VOICE_CALL in _bg.interactive_kinds():
             return "waiting for you to be idle"
-        st = _bg.idle_state()
-        # An unreadable OS clock counts as not idle until the gate's drain cap
-        # (``idle_state()["idle"]``); otherwise the owner's window decides.
+        st = _bg.safe_idle_state()
+        # An unreadable OS clock (or a check that failed) counts as not idle until
+        # the gate's drain cap (``["idle"]``); otherwise the owner's window decides.
         idle = (float(st["idle_s"]) >= idle_window_s()) if st["os_readable"] else bool(st["idle"])
         if not idle:
             return "waiting for you to be idle"
     except Exception:
-        return ""
+        # Fail closed: a broken check never lets background work in while the owner may be here.
+        try:
+            from agent_friday.services import background_gate as _bg
+            return _bg.failed_check_reason("local_scheduler.idle_block", "waiting for you to be idle")
+        except Exception:
+            return "waiting for you to be idle"
     return ""
 
 

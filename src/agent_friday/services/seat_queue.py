@@ -93,6 +93,21 @@ def _needs_now(assess) -> bool:
     return "now" in sig.parameters
 
 
+def failed_gate_reason(rec, where: str) -> str:
+    """The reason a task waits when its gate raised (call from an except block).
+
+    Fail closed: background work never takes a seat on a broken check while the
+    owner may be here, until background_gate's drain cap has passed. Work a
+    person is waiting on (``foreground``) is never held by it."""
+    if isinstance(rec, dict) and rec.get("foreground"):
+        return ""
+    try:
+        from agent_friday.services import background_gate as _bg
+        return _bg.failed_check_reason(where)
+    except Exception:
+        return "waits for idle"
+
+
 class SeatQueue:
     """Serializes task submission per local seat; FIFO-queues the rest.
 
@@ -151,8 +166,9 @@ class SeatQueue:
         try:
             return str(self.gate(rec) or "")
         except Exception:
-            # Fail open: a broken gate must never strand background work.
-            return ""
+            # Fail closed, bounded by the drain cap: a broken gate never lets
+            # background work in while the owner may be here.
+            return failed_gate_reason(rec, "seat_queue.gate")
 
     def _notify(self, hook, *args) -> None:
         if hook is None:
