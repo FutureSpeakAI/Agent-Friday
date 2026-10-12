@@ -49,7 +49,8 @@ def cloud_only(monkeypatch):
 
 # ── the template set ─────────────────────────────────────────────────────────────────
 
-SLOTS = dict(provider="Anthropic", question="Which one?", what="archive 3 conversations")
+SLOTS = dict(provider="Anthropic", question="Which one?", what="archive 3 conversations",
+             shown="Go-live checklist", detail="ERROR no", said="Opened 2 messages")
 
 
 def test_every_template_renders_with_its_receipt():
@@ -179,7 +180,10 @@ def _open(monkeypatch, tool_result, res):
     stub = _Agent(tool_result)
     monkeypatch.setattr(services, "agent", stub, raising=False)
     monkeypatch.setattr(rc, "_record_plan", lambda *a, **k: None)
-    out = rc.open_turn("open the go-live checklist", {}, session_id="s", conversation_id="c",
+    # The page's own source: without it the line is not the owner's typed turn (trusted_surface) and
+    # open_turn returns None, the ordinary (cloud model's) turn, before the resolver is asked.
+    out = rc.open_turn("open the go-live checklist", {"source": rc.PAGE_SOURCE},
+                       session_id="s", conversation_id="c",
                        turn_id="t", settings={"reflex_open_enabled": True}, local=True,
                        resolve=lambda text: res)
     return out, stub

@@ -145,6 +145,11 @@ def test_without_the_page_session_or_the_page_source_a_yes_is_not_a_reflex(clien
     cid, ran = pending
     client.post("/api/chat", json={"message": "yes", "conversation_id": cid})                 # no source
     assert reflex_chat.stats().get("approval_untrusted_surface") == 1
+    # Not a reflex, so the ordinary turn took the yes (prepare_confirmation_ctx / resume, as before the
+    # reflex existed) and spent the card. Ask the same question again for the second surface.
+    ctx = agent.prepare_confirmation_ctx(SID, "run this", {"authenticated": True, "conversation_id": cid})
+    assert "CONFIRMATION REQUIRED" in agent._execute_tool(
+        "run_command", {"command": "Write-Output first"}, session_ctx=ctx)
     from agent_friday.services import screen_click
     monkeypatch.setattr(screen_click, "screen_session", lambda request: False)               # no page session
     client.post("/api/chat", json={**PAGE, "message": "yes", "conversation_id": cid})

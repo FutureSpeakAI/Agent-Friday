@@ -101,7 +101,10 @@ def test_a_local_read_request_runs_via_the_governed_runner_and_the_model_sees_it
     _route_to(monkeypatch, "local")
     ran, seen = _spy_runner(monkeypatch), _spy_model(monkeypatch, "_call_ollama")
     body = _post(client, ASK, turn_id="turn-da0-a")
-    assert [r["name"] for r in ran] == ["query_calendar"] and ran[0]["args"] == {}
+    # The router names the day the words ask about ("today" is an ISO date: laya_router._calendar_args,
+    # pinned in test_voice_calendar_day); the runner gets exactly the router's arguments.
+    assert [r["name"] for r in ran] == ["query_calendar"] and ran[0]["args"] == lr._calendar_args(ASK)
+    assert ran[0]["args"].get("day") == lr._today().isoformat()
     assert ran[0]["ctx"]["chosen_by"] == "laya_router:rule"
     assert len(seen) == 1
     last = _text(seen[0]["messages"][-1]["content"])
