@@ -18,13 +18,12 @@ Because model_routing is both in _SYNC_SAFE_KEYS and _DEEP_MERGED_BLOCKS
     offline state could get baked permanently into its real settings.json
     by any incoming sync, regardless of what the sender sent.
 
-This probe proves both call sites read the real persisted settings
+This probe proves the send side reads the real persisted settings
 (_load_settings_raw()) rather than the overlaid view (_load_settings()) by
 making the two functions return distinguishably-tagged dicts and checking
-which tag survives to the outbound envelope / the _save_settings() call.
-
-Must be RED before the fix (both sites use _load_settings()) and GREEN
-after (both use _load_settings_raw()).
+which tag survives to the outbound envelope. The receive side saves only the
+peer's safe delta, so neither tag may reach its _save_settings() call:
+_save_settings merges the delta onto the file itself.
 """
 from __future__ import annotations
 
@@ -136,13 +135,14 @@ class TestSettingsSyncReceiveUsesRawSettings:
         result = fedroutes._handle_federation_message(
             "SETTINGS_SYNC", payload, "some-sender-pubkey-hex")
 
+        # The receiver saves the peer's safe delta and nothing else:
+        # _save_settings merges it onto the file itself, so no local read
+        # (overlaid, or degraded by a failed read) reaches the write.
         assert saved, "_save_settings() was never called"
-        assert saved.get("model_routing", {}).get("_tag") == "RAW", (
-            f"SETTINGS_SYNC receive handler merged onto "
-            f"{saved.get('model_routing')!r} -- it used the receiving "
-            "device's own transient offline-routing overlay "
-            "(_load_settings()) as the merge base instead of the real "
-            "persisted settings (_load_settings_raw())"
+        assert saved == {"voice_engine": "piper"}, (
+            f"SETTINGS_SYNC receive handler saved {saved!r} -- it persisted "
+            "local settings it read (the transient offline overlay, or a "
+            "failed read's defaults) alongside the peer's delta"
         )
         assert result["applied"] == ["voice_silence_ms"]
         assert result["count"] == 1

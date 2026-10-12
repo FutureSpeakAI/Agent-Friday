@@ -761,10 +761,8 @@ def _set_room_approvals_require_name(require: bool) -> None:
     can still set it in Settings > Voice.
     """
     try:
-        from agent_friday.core import _load_settings, _save_settings
-        s = dict(_load_settings() or {})
-        s["voice_room_approvals_require_name"] = bool(require)
-        _save_settings(s)
+        from agent_friday.core import _save_settings
+        _save_settings({"voice_room_approvals_require_name": bool(require)})
     except Exception as e:  # noqa: BLE001
         _log.warning("setup could not save the room-approval choice: %s: %s",
                      type(e).__name__, e)
@@ -801,11 +799,9 @@ def _on_brain_warm(st, transcript, value, text):
 def _set_keep_brain_warm(keep: bool) -> None:
     """Write the one key. A failure leaves the default and setup finishable."""
     try:
-        from agent_friday.core import _load_settings, _save_settings
+        from agent_friday.core import _save_settings
         from agent_friday.services.residency_arbiter import KEEP_WARM_SETTING
-        s = dict(_load_settings() or {})
-        s[KEEP_WARM_SETTING] = bool(keep)
-        _save_settings(s)
+        _save_settings({KEEP_WARM_SETTING: bool(keep)})
     except Exception as e:  # noqa: BLE001
         _log.warning("setup could not save the brain-warm choice: %s: %s",
                      type(e).__name__, e)

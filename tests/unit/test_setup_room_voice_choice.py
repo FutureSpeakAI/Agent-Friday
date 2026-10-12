@@ -115,6 +115,7 @@ def test_the_writer_sets_only_its_own_key(monkeypatch):
     monkeypatch.setattr(core, "_save_settings",
                         lambda d, **k: written.update(d))
     sc._set_room_approvals_require_name(False)
-    assert written.get(KEY) is False
-    assert written.get("unrelated") == "keep me", (
-        "the rest of settings must survive the write")
+    # Only its key: _save_settings merges a delta onto the file, so the rest
+    # of settings survives without the writer carrying copies of it.
+    assert written == {KEY: False}, (
+        "the writer must save its own key and nothing it read")
