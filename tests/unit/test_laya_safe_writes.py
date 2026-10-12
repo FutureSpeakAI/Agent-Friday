@@ -9,6 +9,7 @@ Everything is synthetic and needs no model, no network and no real mailbox.
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import random
 import re
@@ -397,7 +398,27 @@ def test_the_module_holds_no_way_to_approve_run_or_skip_a_card():
         elif isinstance(n, ast.alias):
             names.update(n.name.split("."))
     assert not (names & FORBIDDEN_NAMES), names & FORBIDDEN_NAMES
+    # The approvals module itself is never bound (no `import approvals`, no `approvals.x`): the one name the module
+    # may take from it is the narrow door that expires Laya's own pending cards and can approve or run nothing.
     assert "approvals" not in names and "action_journal" not in names
+    from_approvals = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom):
+            mod = str(n.module or "")
+            assert not mod.endswith("action_journal"), mod
+            if mod.endswith("approvals"):
+                from_approvals.update(a.name for a in n.names)
+            elif any(a.name in ("approvals", "action_journal") for a in n.names):
+                raise AssertionError("the approvals or journal module is bound from %s" % mod)
+    assert from_approvals <= {"expire_laya_cards"}, from_approvals
+    # ...and that door is what it says: it takes nothing and matches only cards Laya raised
+    door = ast.parse(inspect.getsource(ap.expire_laya_cards))
+    fn = door.body[0]
+    assert not fn.args.args and not fn.args.kwonlyargs and not fn.args.vararg and not fn.args.kwarg
+    called = {c.func.id if isinstance(c.func, ast.Name) else getattr(c.func, "attr", "")
+              for c in ast.walk(door) if isinstance(c, ast.Call)}
+    assert "expire_matching" in called and not (called & FORBIDDEN_NAMES), called
+    assert "laya_safe_write" in inspect.getsource(ap.expire_laya_cards)
 
 
 def test_the_only_card_route_is_the_exact_call_of_a_live_proposal(gmail, monkeypatch):
@@ -672,12 +693,19 @@ def test_the_executed_set_is_the_card_set_on_a_thousand_random_stages(gmail, mon
 def test_end_to_end_the_card_the_run_and_the_receipt_name_the_same_rows(gmail, monkeypatch):
     rng = random.Random(11)
     Page(monkeypatch)
+    carded = 0
     for n in range(12):
         rows = sorted(rng.sample(range(1, 7), rng.randint(1, 6)))
         stage = _stage(selected=rows, rev=n + 1)
         report(stage)
         gmail.calls.clear()
         text = rng.choice(["archive these", "star these", "mark these as read"])
+        if len(rows) == 1:
+            # "these" that finds one row is asked, never carded (FN-mn-5): no card, nothing run
+            r = _route(text, stage)
+            assert (r.decision, r.layer, r.question) == ("ask", "safe_write", sw.ONE_ROW_QUESTION) and not r.args
+            assert not [c for c in gmail.calls if c[0] in ("apply", "modify")]
+            continue
         r, out = _go(text, stage)
         card = [c for c in _pending() if c["payload"]["refs"] == [ref(i) for i in rows]][-1]
         ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
@@ -686,20 +714,32 @@ def test_end_to_end_the_card_the_run_and_the_receipt_name_the_same_rows(gmail, m
         tids = sorted(t for c in done for t in c[2])
         assert tids == sorted("t%d" % i for i in rows) == sorted(card["payload"]["accounts"]["acct_work"])
         assert [i["id"] for i in rec["items"]] and sorted(i["id"] for i in rec["items"]) == tids
+        carded += 1
+    assert carded >= 6, "most draws are several rows, so the card-run-receipt check is not vacuous"
 
 
 # ── undo round trip, every allowed verb, through the real mailbox code ────────
 
 class _Mail:
-    """An in-memory Gmail behind the real gmail_mailbox code: labels per thread."""
+    """An in-memory Gmail behind the real gmail_mailbox code: labels per MESSAGE, two messages per conversation
+    (the newer one may be unread or starred while the older one is not), keyed (account, thread, message). The
+    real code reads conversations message by message, binds a card to message ids, changes messages in batches
+    and undoes per message, so the fake answers exactly those calls."""
 
     def __init__(self):
-        self.labels = {("acct_work", "t%d" % i): ({"INBOX", "UNREAD", "STARRED"} if i == 1 else
-                                                    {"INBOX", "UNREAD"} if i % 2 else {"INBOX"}) for i in range(1, 7)}
+        self.labels = {}
+        for i in range(1, 7):
+            newest = {"INBOX", "UNREAD", "STARRED"} if i == 1 else {"INBOX", "UNREAD"} if i % 2 else {"INBOX"}
+            self.labels[("acct_work", "t%d" % i, "m_t%d_1" % i)] = {"INBOX"}         # an older, read message
+            self.labels[("acct_work", "t%d" % i, "m_t%d_2" % i)] = set(newest)
         self.user = [{"id": "Label_7", "name": "Receipts", "type": "user"}]
 
     def svc(self, acct):
         return _Svc(self, acct)
+
+    def apply(self, acct, mid, body):
+        (key,) = [k for k in self.labels if k[0] == acct and k[2] == mid]
+        self.labels[key] = (self.labels[key] | set(body.get("addLabelIds") or [])) - set(body.get("removeLabelIds") or [])
 
 
 class _Svc:
@@ -709,30 +749,51 @@ class _Svc:
     def users(self):
         return self
 
-    def threads(self):
-        return self
-
     def labels(self):
-        return self
+        m = self.m
 
-    def list(self, userId):
-        return lambda: {"labels": list(self.m.user)}
+        class L:
+            def list(self, userId=None):                                        # noqa: N803
+                return lambda: {"labels": list(m.user)}
+        return L()
 
-    def get(self, userId, id, format):
-        return lambda: {"messages": [{"labelIds": sorted(self.m.labels[(self.a, id)])}]}
+    def threads(self):
+        m, a = self.m, self.a
 
-    def modify(self, userId, id, body):
-        def run():
-            cur = self.m.labels[(self.a, id)]
-            cur.update(body.get("addLabelIds") or [])
-            cur.difference_update(body.get("removeLabelIds") or [])
-        return run
+        class T:
+            def get(self, userId=None, id=None, format=None, metadataHeaders=None):   # noqa: A002,N803
+                return lambda: {"id": id, "messages": [
+                    {"id": k[2], "threadId": id, "labelIds": sorted(v), "internalDate": "1000",
+                     "payload": {"headers": [{"name": "From", "value": "Sender <sender@example.test>"}]}}
+                    for k, v in sorted(m.labels.items()) if k[0] == a and k[1] == id]}
+
+            def modify(self, userId=None, id=None, body=None):                  # noqa: A002,N803
+                raise AssertionError("an exact change never falls back to a whole-conversation modify")
+        return T()
+
+    def messages(self):
+        m, a = self.m, self.a
+
+        class M:
+            def batchModify(self, userId=None, body=None):                      # noqa: N802,N803
+                def run():
+                    for mid in body["ids"]:
+                        m.apply(a, mid, body)
+                    return {}
+                return run
+
+            def modify(self, userId=None, id=None, body=None):                  # noqa: A002,N803
+                def run():
+                    m.apply(a, id, body)
+                    return {}
+                return run
+        return M()
 
 
 @pytest.fixture
 def mail(gmail, tmp_path, monkeypatch):
     m = _Mail()
-    for name in ("apply_action", "modify_threads", "undo", "list_labels"):
+    for name in ("apply_action", "modify_threads", "undo", "list_labels", "snapshot_messages"):
         monkeypatch.setattr(gm, name, getattr(_REAL, name))
     monkeypatch.setattr(gm, "_svc", lambda acct: m.svc(acct))
     monkeypatch.setattr(gm, "_read_svc", lambda acct: m.svc(acct))
@@ -740,7 +801,8 @@ def mail(gmail, tmp_path, monkeypatch):
     return m
 
 
-_REAL = type("Real", (), {n: getattr(gm, n) for n in ("apply_action", "modify_threads", "undo", "list_labels")})
+_REAL = type("Real", (), {n: getattr(gm, n) for n in ("apply_action", "modify_threads", "undo", "list_labels",
+                                                      "snapshot_messages")})
 
 
 @pytest.mark.parametrize("text,action,label", ON_CASES, ids=[c[1] for c in ON_CASES])
@@ -975,7 +1037,7 @@ def test_m1_row_ids_reach_the_deeper_mind_only_when_it_runs_on_this_pc(gmail, mo
                                         owner_voice=True, conversation_id=CONV)
     monkeypatch.setattr(ve, "_voice_local_only", lambda: False)
     monkeypatch.setattr(ve, "_async_routing", lambda s: "follow_model_routing")      # the deeper mind may be a cloud model
-    assert plan()["args"] == {"request": "star these"}, "a cloud-capable deeper mind gets the owner's words only"
+    assert plan()["args"] == {"request": "archive these"}, "a cloud-capable deeper mind gets the owner's words only"
     monkeypatch.setattr(ve, "_async_routing", lambda s: "local_only")
     req = plan()["args"]["request"]
     assert ref(1) in req and ref(2) in req, "a deeper mind on this PC is told which rows"
