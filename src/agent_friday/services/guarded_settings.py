@@ -260,6 +260,9 @@ def _verify2(key: str):
         if anchor is None or rec.get("counter") != anchor:
             return narrowest, False             # an old pair of files carries an old counter
         value, at, counter, mac = rec.get("value"), rec.get("at"), rec.get("counter"), rec.get("mac")
+        tomb = _read_tomb().get(key)
+        if isinstance(tomb, int) and isinstance(counter, int) and counter <= tomb:
+            return narrowest, False             # a record that was removed and has been put back
         if (not isinstance(value, str) or value not in GUARDED[key]
                 or not isinstance(at, (int, float)) or not isinstance(counter, int)
                 or not isinstance(mac, str)
@@ -311,8 +314,14 @@ def record_owner_choice(key: str, value: Any) -> bool:
     then the record is removed and the key reads as off (fail closed)."""
     if key not in GUARDED or not isinstance(value, str) or value not in GUARDED[key]:
         return False
-    with _WRITE_LOCK:
+    if not _WRITE_LOCK.acquire(timeout=LOCK_TIMEOUT_S):
+        _log.error("guarded setting %s: the record lock is held (a hung keychain?); the click is not recorded "
+                   "and the setting reads as off", key)
+        return False                            # fail closed: no settings stall behind a stuck keychain read
+    try:
         return _record_owner_choice_locked(key, value)
+    finally:
+        _WRITE_LOCK.release()
 
 
 def _record_owner_choice_locked(key: str, value: str) -> bool:
@@ -379,9 +388,42 @@ def owner_choice(key: str, block: bool = False) -> str:
     return narrowest
 
 
+def _tomb_path() -> Path:
+    return _dir() / "owner_enable.removed.json"
+
+
+def _read_tomb() -> dict:
+    try:
+        d = json.loads(_tomb_path().read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:       # noqa: BLE001
+        return {}
+
+
+def _retire_counter(key: str) -> None:
+    """A record is being removed: its counter must never verify again, even if a backup puts the file back.
+    Advance the anchor past it; if the keychain will not answer, leave a tombstone that does the same job."""
+    rec = _read_records().get(key)
+    counter = rec.get("counter") if isinstance(rec, dict) and isinstance(rec.get("counter"), int) else 0
+    try:
+        anchored = _anchor_get(key)
+        _anchor_set(key, max(anchored or 0, counter) + 1)
+        return
+    except Exception:       # noqa: BLE001
+        pass
+    try:
+        tomb = _read_tomb()
+        tomb[key] = max(int(tomb.get(key) or 0), counter)
+        _dir().mkdir(parents=True, exist_ok=True)
+        _tomb_path().write_text(json.dumps(tomb), encoding="utf-8")
+    except Exception:       # noqa: BLE001
+        pass
+
+
 def _remove_record(key: str) -> bool:
     """Take the record away (the key then reads as off). False, and off in this process, if it cannot be."""
     try:
+        _retire_counter(key)
         _record_path().unlink()
     except FileNotFoundError:
         pass
@@ -419,6 +461,7 @@ def narrow_record(key: str, value: Any) -> bool:
 
 
 _WRITE_LOCK = _threading.RLock()
+LOCK_TIMEOUT_S = 3.0
 
 
 def _marker(key: str):

@@ -804,6 +804,8 @@ async def _live_card_tool(fname, fargs, send, session, runner=None):
     if fname == "answer_card":
         said = str((session or {}).get("owner_text") or "").strip()
         card = str((fargs or {}).get("card_id") or "")
+        if _item_actions.is_laya_card(card):
+            return _item_actions.LAYA_CARD_NOT_ON_LIVE      # never the line, a subject or a sender, to the cloud voice
         if watch.verified(card) and (not _item_actions.is_laya_card(card)
                                      or _item_actions.card_in_conversation(card, cid)):
             if session is not None:
@@ -816,7 +818,7 @@ async def _live_card_tool(fname, fargs, send, session, runner=None):
     result = await _voice_tool_with_limit(fname, fargs, send, session, runner=runner)
     if isinstance(result, str) and "card_id=" in result:
         ids, line = _sealed_card_line(result, cid)
-        if ids:
+        if ids and not any(_item_actions.is_laya_card(i) for i in ids):
             watch.arm(ids, line)
             result += _LIVE_CARD_ASK + line
     return result
@@ -3078,6 +3080,7 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
     screen or says the card's action."""
     _cid = tool_session.get("conversation_id")
     tool_session.pop("history_text", None)      # (set below for THIS turn only)
+    tool_session["turn_id"] = "voice-" + uuid.uuid4().hex[:12]     # the turn receipt id for a change made this turn
     sealed = tool_session.pop("sealed_card", None) or {}
     try:
         sess = session() if session else None
@@ -3109,6 +3112,7 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
     if (plan.get("tool") and plan["tool"] != "delegate_to_friday" and plan.get("args") is not None
             and plan["receipt"].get("layer") != "safe_write"):     # a safe write's single-use ticket is not kept
         tool_session["last_route"] = {"tool": plan["tool"], "args": dict(plan["args"]), "age": 0}
+    plan["receipt"].setdefault("turn_id", tool_session["turn_id"])
     send({"type": "route", **plan["receipt"]})
     _carried = {"ids": [], "line": ""}
 

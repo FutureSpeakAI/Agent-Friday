@@ -1587,6 +1587,8 @@ def _voice_ctx(session=None) -> dict:
             ctx["owner_text"] = session["owner_text"]
         if session.get("voiced_cards"):
             ctx["voiced_cards"] = list(session["voiced_cards"])
+        if session.get("turn_id"):
+            ctx["turn_id"] = str(session["turn_id"])
     return ctx
 
 

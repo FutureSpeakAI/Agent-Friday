@@ -279,6 +279,17 @@ def undo(account_id: str, changed: dict) -> dict:
     return {"failed": failed}
 
 
+def delete_label_if_empty(account_id: str, label_id: str) -> bool:
+    """Delete a USER label that one of our changes created, but only when nothing is in it. True when it was
+    deleted. Never touches a system label, never deletes mail."""
+    svc = _svc(account_id)
+    lab = gmail_api.execute(svc.users().labels().get(userId="me", id=label_id))
+    if lab.get("type") != "user" or int(lab.get("messagesTotal") or 0) or int(lab.get("threadsTotal") or 0):
+        return False
+    gmail_api.execute(svc.users().labels().delete(userId="me", id=label_id))
+    return True
+
+
 def _read_svc(account_id: str):
     """Reading needs only gmail.readonly: browsing by label works on an
     account that has not allowed changes."""

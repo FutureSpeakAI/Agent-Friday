@@ -33,8 +33,11 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   `laya_safe_writes` (`off`, `shadow`, `on`).
 - **Card-free mail changes are recorded and pinned.** Star, unstar, label, take a
   label off, mark read and mark unread still run with no card when a model asks
-  (your rule). Each now appears in the turn receipt by tool, action, count and
-  message ids (no subjects), can be undone exactly, and a test pins the list.
+  (your rule). Each now appears in the Undo list and in a turn receipt (chat
+  turn, spoken turn, Live tool call or background task) by tool, action, count
+  and message ids (no subjects). A conversation that cannot be read message by
+  message is refused rather than changed inexactly, a label such a change creates
+  is removed again by Undo when it is empty, and a test pins the list.
   A spoken "yes" approves a card Laya raised only if Friday read that card's line
   aloud in this conversation.
 - **Voice history keeps no card details.** When a local voice call reads an

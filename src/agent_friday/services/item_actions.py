@@ -692,11 +692,14 @@ def run_email(detail: dict, approval_id: str | None = None, card_free: bool = Fa
     gm_action, _ask, past = EMAIL_ACTIONS[action]
     label = detail.get("label") or ""
     preview = {(p.get("account_id"), p.get("id")): p for p in detail.get("preview") or []}
-    items, changed_all, created = [], {}, []
+    items, changed_all, created, created_ids = [], {}, [], {}
     for acct, tids in (detail.get("accounts") or {}).items():
         laya = detail.get("origin") == "laya_safe_write"
-        # A card Laya raised changes only the messages it listed and only what it can put back exactly.
-        exact = ({"only": (detail.get("messages") or {}).get(acct) or {}, "exact_only": True} if laya else {})
+        # A card Laya raised changes only the messages it listed and only what it can put back exactly. A change
+        # made with no card is held to the same exactness: a conversation that cannot be read message by message
+        # first is refused, never run in a way Undo could not reverse.
+        exact = ({"only": (detail.get("messages") or {}).get(acct) or {}, "exact_only": True} if laya
+                 else ({"exact_only": True} if card_free else {}))
         try:
             if action in _LABEL_ACTIONS:
                 # A card Laya raised never makes a label (a label that vanished while it waited fails).
@@ -704,6 +707,7 @@ def run_email(detail: dict, approval_id: str | None = None, card_free: bool = Fa
                                                            and detail.get("origin") != "laya_safe_write"))
                 if made:
                     created.append(label)
+                    created_ids[acct] = lid
                 if lid is None:
                     raise Refused("there is no label called \u201c%s\u201d" % label)
                 if action == "unlabel":
@@ -736,14 +740,18 @@ def run_email(detail: dict, approval_id: str | None = None, card_free: bool = Fa
     if created:
         summary += "; made the label \u201c%s\u201d" % created[0]
     extra = {"query": detail.get("query") or "", "said": said, **_laya_receipt(detail)}
+    undo_rec = {"email": changed_all} if changed_all else {}
+    if created_ids:
+        undo_rec["created_labels"] = created_ids
     if card_free:
         extra["card_free"] = True
+        extra["labels_created"] = list(created)
         extra["turn_id"] = _current_turn_id()
         extra["count"] = ok
         extra["message_ids"] = {acct: {tid: sorted((ch.get("messages") or {}).keys())
                                        for tid, ch in per.items()} for acct, per in changed_all.items()}
     return journal.record("organize_email", action, "email", items=items, summary=summary + ".",
-                          status=status, undo={"email": changed_all} if changed_all else {},
+                          status=status, undo=undo_rec,
                           approval_id=approval_id, conversation_id=detail.get("conversation_id"),
                           extra=extra)
 
@@ -787,6 +795,14 @@ def undo_email(receipt: dict, approval_id: str | None = None) -> dict:
         tail = "; %d could not be" % failed_n
         if inexact_n:
             tail += " (%d can't be undone exactly)" % inexact_n
+    # A label that change created goes with it when nothing is left in it; one that still holds mail stays,
+    # and the owner is told.
+    for acct, lid in ((receipt.get("undo") or {}).get("created_labels") or {}).items():
+        try:
+            gone = bool(gm.delete_label_if_empty(acct, lid))
+        except Exception:
+            gone = False
+        tail += "; removed the label it created" if gone else "; the label it created was left in place"
     journal.update(receipt["receipt_id"], undone=failed_n == 0, undone_at=time.time(),
                    undo_failed=failed_n)
     return journal.record("undo_action", "undo", "email",
@@ -2246,6 +2262,18 @@ def _not_recorded(want: str, room_mode: bool) -> dict:
 
 
 #: What a spoken approval of a card whose question was not voiced is told.
+UNVOICED_LAYA_CARD = ("I have not read that card out to you in this conversation, so I cannot take a yes for it. "
+                      "Press Approve on it on your screen, or ask me to read it again and answer after I have.")
+LAYA_CARD_NOT_ON_LIVE = ("That card is approved on your screen with its Approve button; it is not read out or "
+                         "approved on this call.")
+
+
+def unvoiced_text(card_id: str) -> str:
+    """What a refused unheard yes says: a Laya card cannot be approved by naming its action, so the owner is
+    told what does work."""
+    return UNVOICED_LAYA_CARD if is_laya_card(card_id) else UNVOICED_CARD
+
+
 UNVOICED_CARD = ("NOT RECORDED: Friday has not been heard asking that card's question in full, "
                  "so a bare yes or no cannot decide it. Ask the user to confirm on screen, or "
                  "to say what the card does (for example, 'yes, archive them').")

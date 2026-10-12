@@ -142,10 +142,13 @@ you hit something that is not here, please open an issue.
 
 - **Star, unstar, label, mark read and mark unread run with no card when a model
   asks.** This is your rule (2026-10), not a defect: they are instantly
-  undoable and take nothing out of the inbox. Each one is recorded in the turn
-  receipt (tool, action, count and message ids, no subject) and can be undone
-  exactly from Undo; a test pins the list. Archive, move, Trash, Spam and restore
-  always raise a card.
+  undoable and take nothing out of the inbox. Each one is recorded (tool, action,
+  count and message ids, no subject) in the Undo list and in a turn receipt: the
+  chat turn's, the spoken turn's `voice-…`, a Live call's `live-…` or a task's
+  `task-<id>`. Undo is exact: a conversation Friday cannot read message by
+  message is refused, and a label the change created is removed again when it is
+  empty (otherwise it stays and Undo says so). A test pins the list. Archive,
+  move, Trash, Spam and restore always raise a card.
 
 - **`local_only` refuses rather than falls back.** With no local model
   serving, a chat turn is refused with an offer to answer in the cloud.

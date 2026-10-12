@@ -4222,10 +4222,10 @@ def _tool_answer_card(inp):
         voiced = {str(i) for i in ((_CURRENT_TOOL_CONTEXT.get() or {}).get("voiced_cards") or [])}
         if cid not in voiced and _ia.unvoiced_card_approval_blocked(
                 cid, _CURRENT_OWNER_TEXT.get(), _voice_room()):
-            return _ia.UNVOICED_CARD
+            return _ia.unvoiced_text(cid)
         if cid in voiced and _ia.is_laya_card(cid) and not _ia.card_in_conversation(
                 cid, _CURRENT_CONVERSATION.get()):
-            return _ia.UNVOICED_CARD        # a line read in another conversation does not count here
+            return _ia.unvoiced_text(cid)   # a line read in another conversation does not count here
     tok = _ia.QUIET.set(_cloud_voice())
     try:
         res = _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
@@ -12381,6 +12381,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         pass
 
     _learn = None
+    _turn_tok = None
     try:
         # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
         # tool that spawns background work had no way to say where that work
@@ -12413,6 +12414,19 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # (salon spec §4.7).
         _kp_tok = _CURRENT_KEY_PROFILE.set(str(_sc.get("key_profile") or ""))
         _origin_tok = _CURRENT_ORIGIN.set(str(_sc.get("origin") or ""))
+        # The turn this call belongs to, for the turn receipt. A typed turn already named itself
+        # (turn_plan.begin_turn). A spoken turn carries its id in the call's context, a Live tool call gets
+        # one of its own, and a background task is "task-<id>": none of them is left without a receipt id.
+        try:
+            from agent_friday.services import off_record as _off_rec
+            from agent_friday.services import turn_plan as _tp_mod
+            if not _tp_mod.current_turn_id() and not _off_rec.active():
+                _tid = (_sc.get("turn_id") or (("task-%s" % _sc["task_id"]) if _sc.get("task_id") else None)
+                        or (("live-" + uuid.uuid4().hex[:12]) if _sc.get("surface") == "voice-live" else None))
+                if _tid:
+                    _turn_tok = _tp_mod._current.set(str(_tid))
+        except Exception:
+            _turn_tok = None
         # The loop that is running knows what it talks to; the session's
         # provider is the ROUTED intent, built once and stale after a
         # local-to-cloud fallback. The loop wins; the session only fills in
@@ -12437,6 +12451,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _CURRENT_SURFACE.reset(_surface_tok)
             _CURRENT_KEY_PROFILE.reset(_kp_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
+            if _turn_tok is not None:
+                try:
+                    _tp_mod._current.reset(_turn_tok)
+                except ValueError:
+                    pass
             _gate_mod.DECIDED.reset(_dtok)
             _taint_mod.CURRENT_KEY.reset(_ktok)
             _taint_mod.CURRENT.reset(_ttok)

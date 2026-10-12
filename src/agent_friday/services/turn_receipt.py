@@ -142,9 +142,12 @@ def _card_free_changes(turn_id: str) -> List[dict]:
     out = []
     for r in _aj.recent(200):
         if r.get("card_free") and r.get("turn_id") == turn_id:
+            em = (r.get("undo") or {}).get("email") or {}
+            inexact = any(c.get("inexact") for per in em.values() for c in per.values())
             out.append({"receipt_id": r.get("receipt_id"), "tool": r.get("tool"), "action": r.get("action"),
                         "count": r.get("count"), "message_ids": r.get("message_ids") or {},
-                        "status": r.get("status"), "undoable": bool(r.get("undo"))})
+                        "status": r.get("status"), "labels_created": r.get("labels_created") or [],
+                        "undoable": bool(em) and not inexact and not r.get("undone")})
     return out
 
 

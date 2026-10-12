@@ -72062,7 +72062,8 @@ function App() {
               // card, where every path it would allow is listed; the caption
               // never offers it.
               var list = ((d && d.approvals) || []).filter(function (x) {
-                return CAPTION_NEVER_DECIDES.indexOf(x && x.kind) < 0;
+                return CAPTION_NEVER_DECIDES.indexOf(x && x.kind) < 0
+                  && !(x && x.payload && x.payload.origin === 'laya_safe_write');
               });
               var a = list[0];
               body.classList.toggle('has-approval', !!a);

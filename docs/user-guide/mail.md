@@ -139,11 +139,22 @@ no numbers on screen she counts from the top of your list and the card says so.
 When a model asks, star, unstar, label (and take a label off), mark read and
 mark unread run at once with no card. That is your rule for changes that are
 instantly undoable and take nothing out of your inbox; archive, move to a label,
-Trash, Spam and restore always raise one card per batch. Each card-free change is
-still recorded: the receipt lists the tool, the action, the count and the message
-ids (never a subject) for that turn, and the change appears under Undo, which puts
-back exactly the labels it changed, message by message. A test pins that list so
+Trash, Spam and restore always raise one card per batch. A test pins that list so
 no other change can join it without being noticed.
+
+Each card-free change is recorded: its receipt lists the tool, the action, the
+count and the message ids (never a subject), and it appears in the Undo list on
+every path. It also appears in a turn receipt: for a typed chat turn, that turn's
+receipt; for a spoken turn on the local voice, the receipt named `voice-…` (its id
+is in that turn's route frame); for a Gemini Live tool call, a receipt of its own
+named `live-…`; for a delegated or background task, `task-<id>`.
+
+Undo puts back exactly the labels the change added or took off, message by
+message, and the receipt says whether that is still possible. To keep that true,
+a conversation Friday cannot read message by message is refused: it is not
+changed, and the reply says so. When "label these as X" names a label that does
+not exist, Friday creates it; Undo then removes the new label too if nothing is
+left in it, and if it still holds mail it stays and Undo says so.
 
 ## Privacy
 

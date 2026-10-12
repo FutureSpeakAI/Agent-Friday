@@ -669,6 +669,19 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     return out, True
 
 
+def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
+    """Why this decision cannot be taken, in words for the page, or '' when nothing stops it. Today: a card Laya
+    raised is approved only from its own Approve button or by the owner's voice."""
+    if decision != "approve":
+        return ""
+    rec = get_approval(approval_id) or {}
+    if (rec.get("status") == "pending" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
+            and decided_by not in LAYA_CARD_APPROVERS):
+        return ("A card Laya raised is approved with its own Approve button in the app, where you see which "
+                "conversations. It cannot be approved from here.")
+    return ""
+
+
 def expire_matching(match, by: str, note: str = "") -> int:
     """Move every PENDING card for which ``match(record)`` is true to 'expired' (never approves anything) and
     fire the card hooks. Used when what raised the cards is switched off. Returns how many."""

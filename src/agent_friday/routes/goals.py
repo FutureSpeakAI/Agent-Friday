@@ -222,9 +222,11 @@ def decide_approval_route(approval_id):
     decision = (data.get("decision") or "").strip().lower()
     if decision not in ("approve", "deny"):
         return jsonify({"ok": False, "error": "decision must be 'approve' or 'deny'"}), 400
-    rec, won = _approvals.decide_with_outcome(
-        approval_id, decision, decided_by=_screen_click.decided_by(request, data.get("decided_by", "owner")),
-        note=data.get("note", ""))
+    by = _screen_click.decided_by(request, data.get("decided_by", "owner"))
+    why = _approvals.refusal_for(approval_id, decision, by)
+    if why:
+        return jsonify({"ok": False, "error": "needs_approve_button", "message": why}), 403
+    rec, won = _approvals.decide_with_outcome(approval_id, decision, decided_by=by, note=data.get("note", ""))
     if not rec:
         return jsonify({"ok": False, "error": "not found"}), 404
     # `won` is False when the card was already decided (in another tab, by
