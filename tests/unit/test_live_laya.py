@@ -352,6 +352,23 @@ def test_a_quantifier_after_a_point_verb_never_switches_the_mutation_guard_off(w
     assert live_laya.write_intent("star these") is True and live_laya.write_intent("junk the ones from Mara") is True
 
 
+@pytest.mark.parametrize("words", ["archive them", "delete these", "please trash those", "star that one",
+                                   "ok, archive them"])
+def test_a_change_verb_pointing_at_the_screen_is_a_request(words):
+    """Fails on 7dd342b5c: the router reads a change verb with a bare pronoun at the end as a fragment ("cancel
+    that"), so the owner's "archive them" with rows ticked was held as "your last words did not ask me to change
+    anything". Point-and-act reads those words as a change to the rows they point at, and so does the guard."""
+    assert live_laya.write_intent(words) is True, words
+    out = pre(EVENT, {"title": "Dentist", "start": "2026-10-12T10:00:00-05:00"}, dict(VOICE, owner_text=words))
+    assert not any(code == "laya_mutation" for code, _ in out.escalate), (words, out)
+
+
+@pytest.mark.parametrize("words", ["cancel that", "move on", "select those", "open it", "don't archive them",
+                                   "should I archive them later"])
+def test_a_fragment_or_a_non_change_still_asks(words):
+    assert live_laya.write_intent(words) is False, words
+
+
 def test_a_bare_yes_is_not_judged_by_the_mutation_guard():
     out = pre(EVENT, {"title": "Dentist", "start": "2026-10-12T10:00:00-05:00"},
               dict(VOICE, owner_text="yes go ahead"))

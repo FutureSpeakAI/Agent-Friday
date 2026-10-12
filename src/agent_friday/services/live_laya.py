@@ -959,11 +959,29 @@ def _has_write_intent(lr, t: str) -> bool:
     return False
 
 
+def _points_at_a_change(t: str) -> bool:
+    """A point-and-act change verb whose whole object is a pointing word: "archive them", "delete these",
+    "star that one". The router's verb list reads a change verb with a bare pronoun at the end as a fragment
+    ("cancel that"), so on its own it says the owner asked for nothing; point-and-act reads exactly these words
+    as a change to the rows they point at. Only that one shape is added: a quantifier ("bin every Thursday")
+    or a description is not a pointing word, and a verb point-and-act does not know is not counted."""
+    from agent_friday.services import point_act
+    for c in [t] + [c.strip() for c in _CLAUSES.split(t) if c and c.strip()]:
+        try:
+            p = point_act.parse(c)
+        except Exception:
+            p = None
+        if p is not None and p.kind == "deictic" and p.verb in point_act.WRITE_VERBS:
+            return True
+    return False
+
+
 def write_intent(text: str) -> bool:
     """Laya's mutation guard on the owner's words: a change anywhere in the turn."""
     from agent_friday.services import laya_router as lr
     t = " ".join(str(text or "").split())
-    return bool(t) and _has_write_intent(lr, t) and not lr._NOT_A_REQUEST.search(t)
+    return (bool(t) and (_has_write_intent(lr, t) or _points_at_a_change(t))
+            and not lr._NOT_A_REQUEST.search(t))
 
 
 def _is_mutation(name: str, args: dict, sc: dict) -> bool:
