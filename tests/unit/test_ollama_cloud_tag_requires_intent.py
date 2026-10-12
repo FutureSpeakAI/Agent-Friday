@@ -179,3 +179,128 @@ class TestTheInventoryNeverMakesAPlainModelCloud:
         mode("local_only")
         with pytest.raises(ci.NoCloudIntent):
             ci.require("ollama", "Ollama chat", LOCAL_MODEL)
+
+
+PUBLIC_DAEMON = "http://8.8.8.8:11434"       # an IP literal: judged without DNS, never dialled
+
+
+class TestADaemonOffThisMachineIsCloud:
+    """local_only blocks all egress: a plain model on a daemon at a public
+    address leaves the machine, so the mode gate and the egress gate both
+    treat it as cloud."""
+
+    @pytest.mark.parametrize("m", ["local_only", "local_preferred"])
+    def test_require_refuses_a_plain_model_on_a_public_base_url(self, mode, m):
+        mode(m)
+        with pytest.raises(ci.NoCloudIntent):
+            ci.require("ollama", "Ollama chat", LOCAL_MODEL, base_url=PUBLIC_DAEMON)
+        assert ci.require("ollama", "Ollama chat", LOCAL_MODEL,
+                          base_url="http://127.0.0.1:11434").intent == "local"
+
+    def test_require_reads_the_configured_daemon_address(self, mode, monkeypatch):
+        from agent_friday.services import local_call
+        monkeypatch.setattr(local_call, "ollama_url", lambda: PUBLIC_DAEMON)
+        mode("local_only")
+        with pytest.raises(ci.NoCloudIntent):
+            ci.require("ollama", "Ollama chat", LOCAL_MODEL)
+
+    def test_the_manager_sends_nothing_to_a_public_daemon_in_local_only(self, mode, monkeypatch):
+        from agent_friday.routing import ollama_manager
+        sent = []
+        mgr = ollama_manager.OllamaManager(PUBLIC_DAEMON)
+        monkeypatch.setattr(mgr, "_post", lambda path, body, timeout=None: sent.append(path))
+        import agent_friday.services.gpu_headroom as gh
+        monkeypatch.setattr(gh, "display_at_risk", lambda *a, **k: {"at_risk": False})
+        mode("local_only")
+        with pytest.raises(ci.NoCloudIntent):
+            mgr.chat_completion([{"role": "user", "content": "hi"}], LOCAL_MODEL)
+        assert sent == []
+
+    def test_the_egress_gate_seals_a_plain_model_bound_for_a_public_daemon(self, monkeypatch):
+        from agent_friday.services import egress_gate as eg
+        from agent_friday.services import local_call
+        sealed = []
+
+        def seal(body, *, base_url, provider="ollama", log_path=None, model=""):
+            sealed.append(base_url)
+            return {"sealed": True}
+        monkeypatch.setattr(eg, "gate_worker_payload", seal)
+        body = {"model": LOCAL_MODEL, "prompt": "owner text"}
+        assert eg.gate_ollama_body(body, LOCAL_MODEL, base_url=PUBLIC_DAEMON) == {"sealed": True}
+        monkeypatch.setattr(local_call, "ollama_url", lambda: PUBLIC_DAEMON)
+        assert eg.gate_ollama_body(body, LOCAL_MODEL) == {"sealed": True}
+        assert sealed == [PUBLIC_DAEMON, PUBLIC_DAEMON]
+        # The same plain model on this machine's daemon passes untouched.
+        assert eg.gate_ollama_body(body, LOCAL_MODEL, base_url="http://localhost:11434") is body
+
+
+class TestAnInventoryNeverReadIsNotLocal:
+    """Every relay transport fills the alias set before its first daemon call;
+    when the inventory cannot be read, a plainly named model may be an alias of
+    a cloud model, so it is not local unless this PC serves it from a seat."""
+
+    @pytest.fixture
+    def unread(self, monkeypatch):
+        from agent_friday.services import local_call
+        from agent_friday.services import local_only_guard as g
+        before = g._reset_aliases_for_tests(None)
+        reads = []
+        monkeypatch.setattr(local_call, "_daemon_tags", lambda: reads.append(1) or set())
+        monkeypatch.setattr(local_call, "seat_endpoint", lambda model: None)
+        yield reads
+        g._reset_aliases_for_tests(before)
+
+    @pytest.mark.parametrize("m", ["local_only", "local_preferred"])
+    def test_an_unreadable_inventory_refuses_a_plain_model(self, mode, manager, unread, m):
+        mgr, rec = manager
+        mode(m)
+        with pytest.raises(ci.NoCloudIntent):
+            mgr.chat_completion([{"role": "user", "content": "hi"}], LOCAL_MODEL)
+        assert rec.sent == [] and unread, "the inventory was asked for before refusing"
+
+    def test_a_model_this_pc_serves_from_a_seat_is_local_in_local_preferred(
+            self, mode, manager, unread, monkeypatch):
+        from agent_friday.services import local_call
+        monkeypatch.setattr(local_call, "seat_endpoint", lambda model: "http://127.0.0.1:8090")
+        mgr, rec = manager
+        mode("local_preferred")
+        mgr.chat_completion([{"role": "user", "content": "hi"}], LOCAL_MODEL)
+        assert rec.sent
+
+    def test_a_read_that_fills_the_set_decides(self, mode, manager, unread, monkeypatch):
+        from agent_friday.services import local_call
+        from agent_friday.services import local_only_guard as g
+
+        def read():
+            g.note_remote_aliases([{"name": LOCAL_MODEL},
+                                   {"name": "fixture-myglm:latest", "remote_host": "https://h"}])
+            return {LOCAL_MODEL, "fixture-myglm:latest"}
+        monkeypatch.setattr(local_call, "_daemon_tags", read)
+        mgr, rec = manager
+        mode("local_only")
+        mgr.chat_completion([{"role": "user", "content": "hi"}], LOCAL_MODEL)
+        assert rec.sent
+        with pytest.raises(ci.NoCloudIntent):
+            ci.require("ollama", "Ollama chat", "fixture-myglm:latest")
+
+    def test_the_residency_arbiter_load_asks_too(self, mode, unread, monkeypatch):
+        from agent_friday.services import residency_arbiter as ra
+        posted = []
+        monkeypatch.setattr(ra, "_post", lambda url, body, *a, **k: posted.append(url))
+        mode("local_only")
+        with pytest.raises(ci.NoCloudIntent):
+            ra.OllamaBackend("http://127.0.0.1:1").load(LOCAL_MODEL, 2048)
+        assert posted == [] and unread
+
+
+def test_a_descriptor_named_ollama_in_any_case_is_honoured(mode, monkeypatch):
+    from types import SimpleNamespace
+    from agent_friday.services import provider_registry
+    cloud = {"name": "Ollama", "type": "ollama", "classification": "cloud",
+             "base_url": "http://localhost:11434"}
+    reg = SimpleNamespace(get_provider=lambda n: cloud if n == "Ollama" else None,
+                          list_providers=lambda: [cloud])
+    monkeypatch.setattr(provider_registry, "get_provider_registry", lambda: reg)
+    mode("local_only")
+    with pytest.raises(ci.NoCloudIntent):
+        ci.require("ollama", "Ollama chat", LOCAL_MODEL)

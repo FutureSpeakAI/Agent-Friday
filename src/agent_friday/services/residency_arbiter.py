@@ -411,7 +411,8 @@ class OllamaBackend:
         # Loading a cloud-tagged id would be a call to Ollama's cloud: a local
         # mode needs a recorded intent for it (a plain local model passes).
         from agent_friday.services import cloud_intent as _cloud_intent
-        _cloud_intent.require("ollama", "model load (cloud-tagged model)", str(model_id or ""))
+        _cloud_intent.require("ollama", "model load (cloud-tagged model)", str(model_id or ""),
+                              base_url=self.base_url)
         _post(self.base_url + "/api/generate", body)
 
     def evict(self, model_id):

@@ -277,6 +277,29 @@ def log_dispatch_table(models, expect_up=None) -> list:
     return rows
 
 
+def relay_model_status(model: str) -> str:
+    """Whether a model reached through the Ollama daemon stays on this machine.
+
+    ``"cloud"``: a cloud tag, or an alias the daemon's inventory marks remote.
+    ``"local"``: neither, judged on an inventory read at least once in this
+    process, or a model this PC serves from its own seat.
+    ``"unknown"``: the alias set was never filled and reading the inventory
+    now failed, so a plainly named alias of a cloud model cannot be ruled out.
+
+    Every relay transport asks this (local_call directly, the others through
+    cloud_intent.require), so the alias set is filled before the first daemon
+    call whichever transport makes it."""
+    from agent_friday.services.local_only_guard import aliases_filled, is_cloud_model_tag
+    if is_cloud_model_tag(model):
+        return "cloud"
+    if aliases_filled() or seat_endpoint(model):
+        return "local"
+    _daemon_tags()
+    if is_cloud_model_tag(model):
+        return "cloud"
+    return "local" if aliases_filled() else "unknown"
+
+
 @_admitted("local_call.call", on_cancel=lambda: "")
 def call(system: str, user: str, model: str, *, json_mode: bool = False,
          max_tokens: int = 2048, timeout: int = DEFAULT_TIMEOUT_S,
@@ -294,17 +317,9 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     # before anything is queued or sent. Outside one it continues to the
     # daemon path below, where gate_ollama_body seals it like any cloud payload.
     from agent_friday.services.local_only_guard import (
-        CloudRefused, aliases_filled, is_cloud_model_tag, refuse_if_active,
-        routing_mode)
-    _cloud_tagged = is_cloud_model_tag(model)
-    # A daemon-routed model could be an alias of a cloud model. Make sure the
-    # alias set has been filled at least once in this process; when that read
-    # fails the answer is unknown, and unknown fails safe under local-only.
-    _unknown = False
-    if not _cloud_tagged and not aliases_filled() and not seat_endpoint(model):
-        _daemon_tags()
-        _cloud_tagged = is_cloud_model_tag(model)
-        _unknown = not _cloud_tagged and not aliases_filled()
+        CloudRefused, refuse_if_active, routing_mode)
+    _relay = relay_model_status(model)
+    _cloud_tagged, _unknown = _relay == "cloud", _relay == "unknown"
     if _cloud_tagged or _unknown:
         try:
             if _cloud_tagged:
@@ -355,13 +370,17 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     if json_mode:
         payload["format"] = "json"
     try:
-        # A cloud-tagged Ollama model is relayed to ollama.com: seal it like
-        # any cloud payload. A plain local model is returned untouched.
+        # A cloud-tagged Ollama model is relayed to ollama.com, and a daemon
+        # that is not on this machine or the local network is itself the
+        # cloud: both are sealed like any cloud payload. A plain local model on
+        # a local daemon is returned untouched.
+        daemon = ollama_url()
         from agent_friday.services import cloud_intent as _cloud_intent
-        _cloud_intent.require("ollama", "local_call (cloud-tagged model)", str(model or ""))
+        _cloud_intent.require("ollama", "local_call (cloud-tagged model)", str(model or ""),
+                              base_url=daemon)
         from agent_friday.services.egress_gate import gate_ollama_body
-        payload = gate_ollama_body(payload, model)
-        r = requests.post(f"{ollama_url()}/api/chat", json=payload, timeout=timeout)
+        payload = gate_ollama_body(payload, model, base_url=daemon)
+        r = requests.post(f"{daemon}/api/chat", json=payload, timeout=timeout)
         if r.status_code >= 400:
             _log.warning("local_call HTTP %s from %s: %s", r.status_code, model,
                          r.text[:200])

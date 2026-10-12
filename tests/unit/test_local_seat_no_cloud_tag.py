@@ -142,7 +142,7 @@ def test_call_sends_a_cloud_tag_through_the_egress_gate_outside_local_only(monke
                         lambda: {"model_routing": {"mode": "local_preferred"}})
     gated, posted = [], []
 
-    def fake_gate(body, model="", provider="ollama"):
+    def fake_gate(body, model="", provider="ollama", **_kw):
         gated.append(model)
         return body
 

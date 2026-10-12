@@ -1506,28 +1506,57 @@ def gate_worker_payload(
 
 
 def gate_ollama_body(body: dict[str, Any], model: str = "",
-                     provider: str = "ollama") -> dict[str, Any]:
+                     provider: str = "ollama", *, base_url: str | None = None) -> dict[str, Any]:
     """The egress entry point for a request body bound for an Ollama daemon.
 
-    A plain local model passes through untouched and cheaply. A model the
-    daemon relays to ollama.com (tag `cloud` / suffix `-cloud`) is sealed like
-    any cloud provider's payload, fail-closed: a gate that cannot verify
-    itself raises rather than letting the body out. Works on the native
-    ``/api/chat`` (``messages``) and ``/api/generate`` (``prompt``) shapes.
+    A plain local model on a daemon at a loopback or private address passes
+    through untouched and cheaply. Two things make the body a cloud payload,
+    sealed like any cloud provider's, fail-closed (a gate that cannot verify
+    itself raises rather than letting the body out):
+
+    * a model the daemon relays to ollama.com (tag `cloud` / suffix `-cloud`,
+      or an alias its inventory marks remote);
+    * a daemon that is not on this machine or the local network: ``base_url``
+      (the address the transport posts to; None means the configured
+      ``model_routing.ollama_url``), judged by `ollama_daemon_is_local`, the
+      same host rule `cloud_intent.require` applies to the relay.
+
+    Works on the native ``/api/chat`` (``messages``) and ``/api/generate``
+    (``prompt``) shapes.
     """
+    from agent_friday.services.local_only_guard import ollama_daemon_is_local
     model = model or (str(body.get("model") or "") if isinstance(body, dict) else "")
-    if not is_cloud_model_tag(model):
+    cloud_tagged = is_cloud_model_tag(model)
+    if not cloud_tagged and ollama_daemon_is_local(base_url):
         return body
-    # The owner's spending cap holds for a model that runs in Ollama's cloud.
-    try:
-        from agent_friday.services import spend_guard as _sg
-    except ImportError:
-        _sg = None
-    if _sg is not None:
-        _sg.check(provider, what="%s cloud model call" % model, model=model)
+    if cloud_tagged:
+        # The owner's spending cap holds for a model that runs in Ollama's cloud.
+        try:
+            from agent_friday.services import spend_guard as _sg
+        except ImportError:
+            _sg = None
+        if _sg is not None:
+            _sg.check(provider, what="%s cloud model call" % model, model=model)
     body = _withhold_ollama_images(body, provider, model)
-    return gate_worker_payload(body, base_url="http://localhost", provider=provider,
-                               model=model)
+    # gate_worker_payload seals a cloud-tagged model whatever the address (the
+    # model decides too); a plain model is sealed because its daemon address
+    # is not local, so the real address goes in.
+    if cloud_tagged:
+        seal_at = "http://localhost"
+    else:
+        seal_at = str(base_url or "").strip()
+        if not seal_at:
+            try:
+                from agent_friday.services.local_call import ollama_url
+                seal_at = ollama_url()
+            except Exception:
+                seal_at = ""
+        if not seal_at:
+            # An empty address reads as in-process (local) to the host rule;
+            # an address that cannot be named is never let through.
+            raise RuntimeError("Egress gate: the Ollama daemon address could not be "
+                               "verified as local; the send is blocked.")
+    return gate_worker_payload(body, base_url=seal_at, provider=provider, model=model)
 
 
 _IMAGE_PART_TYPES = ("image_url", "input_image", "image")
