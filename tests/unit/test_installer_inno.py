@@ -52,10 +52,10 @@ def test_the_app_id_is_a_fixed_guid():
 
 
 def test_the_name_the_version_and_the_output_file():
-    assert '#define ReleaseName "Agent Friday Beta 1.0.2"' in SCRIPT
+    assert '#define ReleaseName "Agent Friday Beta 1.1"' in SCRIPT
     assert setup_value("AppName") == "{#ReleaseName}"
     assert setup_value("OutputBaseFilename") == "AgentFriday-Setup-{#AppTag}"
-    assert release.RELEASE_NAME == "Agent Friday Beta 1.0.2"
+    assert release.RELEASE_NAME == "Agent Friday Beta 1.1"
 
 
 def test_the_rocket_icon_is_used_everywhere():
@@ -250,8 +250,10 @@ def test_the_old_zip_path_is_gone():
 
 def test_the_tag_check_accepts_the_beta_tag_against_the_pep440_version():
     assert "(a|b|rc)" in WORKFLOW and "-$word.$($m.Groups[3].Value)" in WORKFLOW
-    # the same normalisation, run: 1.0.2b1 -> v1.0.2-beta.1
-    m = re.match(r"^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$", "1.0.2b1")
+    # the same normalisation, run on pyproject's version: 1.1.0b1 -> v1.1.0-beta.1
+    import tomllib
+    version = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    m = re.match(r"^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$", version)
     word = {"a": "alpha", "b": "beta", "rc": "rc"}[m.group(2)]
     assert "v%s-%s.%s" % (m.group(1), word, m.group(3)) == release.RELEASE_TAG
 
@@ -290,7 +292,7 @@ def test_the_release_job_publishes_the_latest_release_not_a_draft():
     assert "PLACEHOLDER" in rel and "a placeholder is left in the notes" in rel, \
         "the notes get the installer's real SHA-256, and a leftover placeholder stops the release"
     assert 'needs: [fresh-install, upgrade]' in rel
-    assert "--title \"Agent Friday Beta 1.0.2\"" in rel and "--notes-file" in rel
+    assert "--title \"Agent Friday Beta 1.1\"" in rel and "--notes-file" in rel
     assert ".exe.sha256" in rel and "AgentFriday-Setup-*.exe" in rel
     assert "Build sequence" in rel, "the notes carry the line the updater orders releases by"
 
