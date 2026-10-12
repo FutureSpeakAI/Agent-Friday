@@ -144,12 +144,38 @@ def note_remote_aliases(rows) -> None:
     global _REMOTE_ALIASES, _ALIASES_FILLED
     names = set()
     for r in rows or ():
-        if isinstance(r, dict) and (r.get("remote_host") or r.get("remote_model")):
+        if isinstance(r, dict) and (_names_a_remote(r.get("remote_host"))
+                                    or _names_a_remote(r.get("remote_model"))):
             n = str(r.get("name") or r.get("model") or "").strip().lower()
             if n:
                 names.add(n)
     _REMOTE_ALIASES = frozenset(names)
     _ALIASES_FILLED = True
+
+
+def _names_a_remote(value) -> bool:
+    """A `remote_host` / `remote_model` field that actually names somewhere.
+
+    A model the daemon runs here has neither key, or an empty one; a blank or
+    whitespace string is the same absence. Any other present value (a host, a
+    model, or a shape this code does not know) counts as remote, so an
+    unexpected inventory format fails toward cloud, never toward local."""
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return bool(value)
+
+
+def _reset_aliases_for_tests(state=None) -> tuple:
+    """Put the alias set back to ``state`` (from a previous call) or to the
+    state a fresh process starts in; returns the state it replaced. The set is
+    process-wide, so one test's inventory must not decide the next one's."""
+    global _REMOTE_ALIASES, _ALIASES_FILLED, _ALIAS_RETRY_AT
+    before = (_REMOTE_ALIASES, _ALIASES_FILLED, _ALIAS_RETRY_AT)
+    _REMOTE_ALIASES, _ALIASES_FILLED, _ALIAS_RETRY_AT = (
+        state if state is not None else (frozenset(), False, 0.0))
+    return before
 
 
 def is_cloud_model_tag(model: str) -> bool:

@@ -135,3 +135,47 @@ class TestLocalCall:
         mode("local_preferred")
         assert local_call.call("sys", "hi", CLOUD_TAGGED[0]) == ""
         assert sent == []
+
+
+class TestTheInventoryNeverMakesAPlainModelCloud:
+    """The remote-alias set holds only rows the daemon marks with a non-empty
+    `remote_host` or `remote_model`; a model it runs here stays local."""
+
+    @pytest.fixture
+    def aliases(self):
+        from agent_friday.services import local_only_guard as g
+        before = g._reset_aliases_for_tests(None)
+        yield g
+        g._reset_aliases_for_tests(before)
+
+    def test_a_plain_local_model_in_the_inventory_is_never_cloud(self, aliases, mode):
+        g = aliases
+        g.note_remote_aliases([
+            {"name": LOCAL_MODEL, "model": LOCAL_MODEL},
+            {"name": "fixture-blank:7b", "remote_host": "", "remote_model": ""},
+            {"name": "fixture-space:7b", "remote_host": "  ", "remote_model": None},
+            {"name": "fixture-myglm:latest", "remote_host": "https://ollama.com",
+             "remote_model": "glm-4.6"},
+        ])
+        assert g.aliases_filled()
+        for plain in (LOCAL_MODEL, "fixture-blank:7b", "fixture-space:7b"):
+            assert not g.is_cloud_model_tag(plain), plain
+        for m in ("local_only", "local_preferred"):
+            mode(m)
+            assert ci.require("ollama", "Ollama chat", LOCAL_MODEL).intent == "local"
+            # A real remote alias is still a cloud call: the egress rule holds.
+            assert g.is_cloud_model_tag("fixture-myglm:latest")
+            with pytest.raises(ci.NoCloudIntent):
+                ci.require("ollama", "Ollama chat", "fixture-myglm:latest")
+
+    def test_a_descriptor_registered_as_ollama_that_declares_cloud_is_not_local(
+            self, mode, monkeypatch):
+        from types import SimpleNamespace
+        from agent_friday.services import provider_registry
+        public = {"name": "ollama", "type": "ollama", "classification": "cloud",
+                  "base_url": "http://localhost:11434"}
+        monkeypatch.setattr(provider_registry, "get_provider_registry",
+                            lambda: SimpleNamespace(get_provider=lambda n: public))
+        mode("local_only")
+        with pytest.raises(ci.NoCloudIntent):
+            ci.require("ollama", "Ollama chat", LOCAL_MODEL)

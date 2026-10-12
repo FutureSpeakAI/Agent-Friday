@@ -531,3 +531,13 @@ def _interruption_state_per_test(tmp_path):
     _ip.set_state_path(tmp_path / "interruptions.json")
     yield
     _ip.set_state_path(None)
+
+
+@pytest.fixture(autouse=True)
+def _remote_alias_set_per_test():
+    """The daemon's remote-alias set (local_only_guard) is process-wide: an
+    inventory one test feeds in must not make the next test's model cloud."""
+    from agent_friday.services import local_only_guard as _g
+    before = (_g._REMOTE_ALIASES, _g._ALIASES_FILLED, _g._ALIAS_RETRY_AT)
+    yield
+    _g._reset_aliases_for_tests(before)
