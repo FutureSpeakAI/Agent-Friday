@@ -92,6 +92,16 @@ def _gone_ids(idx: dict | None = None) -> set:
     return out
 
 
+def _is_meeting(row) -> bool:
+    """Is this one of a meeting's archive documents (its transcript or notes)? The archive's yes is to search
+    them: a draft for the wiki is never made from one, whatever else covers the path. Unreadable means yes."""
+    try:
+        from agent_friday.services import meeting_archive as ma
+        return row["scope"] == ma.SCOPE or ma.is_archive_path(row["path"])
+    except Exception:  # noqa: BLE001 - a row that cannot be read is not drafted from
+        return True
+
+
 def _still_ok(store, doc, principal: str, blocks=None) -> bool:
     """Is this document still one a draft may be made from? The row exists with the same bytes, indexed on the
     open shelf, the owner's consent still covers it (read live; an unverifiable ledger covers nothing), it is
@@ -102,6 +112,8 @@ def _still_ok(store, doc, principal: str, blocks=None) -> bool:
             return False
         row = store.get_document(doc["id"])
         if row is None or row["state"] != "indexed" or row["shelf"] != "open":
+            return False
+        if _is_meeting(row):
             return False
         if (row["sha256"] or "") != (doc["sha256"] or ""):
             return False
@@ -376,7 +388,7 @@ def eligible(store, scope: str | None = None) -> list:
         sql += " AND d.scope=?"
         args.append(scope)
     rows = store.q(sql + " ORDER BY d.mtime DESC", args)
-    return [d for d in rows if seen.get(str(d["id"])) != (d["sha256"] or "")][:MAX_DOCS_PER_PASS]
+    return [d for d in rows if not _is_meeting(d) and seen.get(str(d["id"])) != (d["sha256"] or "")][:MAX_DOCS_PER_PASS]
 
 
 def _blocks(store, doc) -> list[tuple[int, str]]:
@@ -393,6 +405,8 @@ def _prompt_text(blocks: list[tuple[int, str]]) -> str:
 def draft_document(store, doc, model: str, complete=None, principal: str = lstore.OWNER) -> list[str]:
     """Ask the local model about one document; stage what survives the span check. `complete(system, user,
     model)` is the model call (local_call.call_json by default)."""
+    if _is_meeting(doc):
+        return []                          # a meeting's words are never read by a drafting model
     if complete is None:
         from agent_friday.services import local_call
         complete = lambda system, user, m: local_call.call_json(system, user, m, max_tokens=1500)  # noqa: E731
