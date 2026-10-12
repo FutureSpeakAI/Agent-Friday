@@ -16999,7 +16999,6 @@ function ConversationWindow({
       turn_id: 'turn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
     };
     if (opts.routeMode) body.route_mode = opts.routeMode;
-    if (opts.confirmCloudOnce) body.confirm_cloud_once = true;
     if (opts.privacyOverride) body.privacy_layer3_override = true;
     setMsgs(p => [...p, { role: 'friday', text: '', streaming: true, time: stamp() }]);
     try {
