@@ -481,6 +481,17 @@ def _reset_local_queue() -> None:
         with bg._INTERACTIVE_LOCK:
             bg._INTERACTIVE.clear()
         bg._THRESHOLD_CACHE["at"] = 0.0
+    # The capability check is a scheduler source read from a state file in the
+    # shared test home: a re-assessment one test asked for (a model install
+    # calls note_event) is a waiting "local_capability:reassess" job in every
+    # later test's queue. The file and the in-memory job go together.
+    lvr = sys.modules.get("agent_friday.services.local_voice_readiness")
+    if lvr is not None:
+        lvr.reset_for_tests()
+        try:
+            lvr._state_path().unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @pytest.fixture(autouse=True)
