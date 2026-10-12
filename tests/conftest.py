@@ -18,6 +18,7 @@ Unit only (fast): pytest tests/unit -q
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -458,6 +459,60 @@ def _no_local_seat_is_serving(monkeypatch):
         from agent_friday.services import scheduler
         monkeypatch.setattr(scheduler, "_resolve_local_seat", lambda: None)
     yield
+
+
+def _reset_local_queue() -> None:
+    """Forget every seat queue, ticket, scheduler source, lease waiter and
+    interactive registration this process holds. The Local AI queue
+    (turn_queue, local_scheduler, background_gate) is process-wide, and an
+    xdist worker runs many files in one process: a ticket, a podcast row or a
+    voice registration one test left behind is a foreign job in the next
+    test's queue. Only modules already imported are touched."""
+    tq = sys.modules.get("agent_friday.services.turn_queue")
+    if tq is not None:
+        tq.reset_for_tests()
+        tq.HELD.set(())
+        tq.CURRENT.set(None)
+    ls = sys.modules.get("agent_friday.services.local_scheduler")
+    if ls is not None:
+        ls.reset_for_tests()        # also re-installs the scheduler's gate on turn_queue
+    bg = sys.modules.get("agent_friday.services.background_gate")
+    if bg is not None:
+        with bg._INTERACTIVE_LOCK:
+            bg._INTERACTIVE.clear()
+        bg._THRESHOLD_CACHE["at"] = 0.0
+
+
+@pytest.fixture(autouse=True)
+def _fresh_local_queue():
+    """Each test starts with an empty Local AI queue and leaves one behind."""
+    _reset_local_queue()
+    yield
+    _reset_local_queue()
+
+
+_EPISODE_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}-[0-9a-f]{6}")
+
+
+@pytest.fixture(autouse=True)
+def _no_podcast_episode_outlives_its_test():
+    """An episode a test queued in the shared test home is removed when the
+    test ends. The scheduler lists every pending episode on disk as a
+    "podcast" job, so one left behind by a route test (a Front Page generate
+    queues its episode) appears in every later test's queue in that process.
+    A test that points FRIDAY_DIR at its own tmp_path is untouched."""
+    core = sys.modules.get("agent_friday.core")
+    shows = Path(core.FRIDAY_DIR) / "podcasts" if core is not None else None
+
+    def _episodes():
+        try:
+            return {p.name for p in shows.iterdir() if p.is_dir() and _EPISODE_ID_RE.fullmatch(p.name)}
+        except (OSError, AttributeError):
+            return set()
+    before = _episodes()
+    yield
+    for name in _episodes() - before:
+        shutil.rmtree(shows / name, ignore_errors=True)
 
 
 def _settings_file() -> Path:

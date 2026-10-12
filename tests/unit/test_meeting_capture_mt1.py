@@ -421,6 +421,13 @@ def sched(monkeypatch):
     monkeypatch.setattr(ls, "model_need_gb", lambda model: 0.0)
     ls.set_ram_probe(lambda: 64.0)
     ls.set_residency_probe(lambda model: True)
+    # The owner has been away all day: background work waits for idle on a loaded
+    # model too, so "nobody busy" must not hang on the clock of the machine running the test.
+    from agent_friday.services import background_gate as bg
+    from agent_friday.services import work_queue as wq
+    monkeypatch.setattr(bg, "OS_IDLE_READER", lambda: 1e9)
+    monkeypatch.setattr(bg, "idle_threshold_s", lambda: 600.0)
+    monkeypatch.setattr(wq, "_LAST_ACTIVITY", [time.time() - 86400.0])
     yield
     tq.reset_for_tests()
     ls.reset_for_tests()
@@ -521,13 +528,16 @@ def test_the_tool_executor_is_a_checkpoint_for_background_jobs(sched):
 
 def test_the_seat_queue_does_not_start_a_background_task_during_a_meeting(sched):
     class SQ:
-        gate = on_run = on_done = None
+        # The bridge sets the seat-level gate beside the queue's own per-job `gate`.
+        gate = seat_gate = seat_why = on_run = on_done = None
     sq = SQ()
     tq.attach_seat_queue(sq)
-    assert sq.gate("default") is True
+    assert sq.gate is None, "the queue's own rule is left alone"
+    assert sq.seat_gate("default") is True
     tq.request_background_pause("meeting:x", "you are in a meeting")
     try:
-        assert sq.gate("default") is False
+        assert sq.seat_gate("default") is False
+        assert sq.seat_why("default") == "waits for your meeting to finish"
     finally:
         tq.clear_background_pause("meeting:x")
 

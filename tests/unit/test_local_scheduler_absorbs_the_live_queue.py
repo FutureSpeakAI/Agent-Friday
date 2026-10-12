@@ -195,6 +195,20 @@ def test_the_chip_words_the_new_rows_in_both_ui_files():
         text = (root / name).read_text(encoding="utf-8")
         assert "background_call: 'background AI work'" in text, name
         assert "model_call: 'model call'" in text and "gpu_lease: 'GPU turn'" in text, name
-        assert "j.cancellable !== false && " in text, name
+        # The queue rows are listed in Activity (NA-3): Cancel is drawn only for a row the lane
+        # marks stoppable, and the lane marks a queue row stoppable only when it is cancellable.
+        assert "t.stoppable && t.stop ? h('button'" in text, name
         assert text.count("data-testid\": \"local-ai-queue-chip\"") == 1, "one indicator, not two"
         assert "local-work-chip" not in text, "no second chip"
+
+
+def test_a_row_the_scheduler_cannot_cancel_gets_no_cancel_in_activity(monkeypatch):
+    """The rule the chip used to draw itself lives in the Activity lane's rows now."""
+    from agent_friday.services import activity_lane, agent
+    monkeypatch.setattr(agent, "local_queue_snapshot", lambda: {"jobs": [
+        {"id": "lease-1", "kind": "lease:gpu_lease", "state": "queued", "cancellable": False},
+        {"id": "call-1", "kind": "background_call", "state": "queued", "cancellable": True}]})
+    rows = {r["id"]: r for r in activity_lane._queue_rows(set())}
+    assert rows["lease-1"]["stoppable"] is False and rows["lease-1"]["stop"] is None
+    assert rows["call-1"]["stoppable"] is True
+    assert rows["call-1"]["stop"]["url"] == "/api/local-queue/call-1/cancel"

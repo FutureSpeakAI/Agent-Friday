@@ -1382,7 +1382,12 @@ def _default_sources() -> Dict[str, Tuple[Callable, Callable]]:
 
 
 def _active_sources() -> Dict[str, Tuple[Callable, Callable]]:
-    return _SOURCES if _SOURCES else _default_sources()
+    """The built-in sources plus every registered one (a registered name replaces
+    the built-in of that name). Registering a source never hides the others: the
+    queue's own tasks, podcasts and leases stay listed once work orders register."""
+    out = _default_sources()
+    out.update(_SOURCES)
+    return out
 
 
 def jobs(*, include_running: bool = True) -> List[dict]:
