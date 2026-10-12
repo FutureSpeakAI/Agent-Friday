@@ -135,12 +135,31 @@ OPEN_STATES = ("queued", "running", "waiting_for_model", "waiting_for_idle")
 def _is_local_provider(provider, model: str) -> bool:
     """True when the turn's model is local. Any error reads as local, so the turn is
     refused: ``cloud_intent._is_local`` swallows its own errors and answers "cloud", so the
-    policy is asked here directly."""
+    policy is asked here directly.
+
+    The Ollama relay (provider ``"ollama"``, ``cloud_intent._OLLAMA_RELAY``) is judged by
+    the destination, as ``cloud_intent`` judges it: a cloud-tagged model or a remote alias
+    in the daemon's inventory, a daemon that is not on this machine or the local network,
+    or an "ollama" descriptor classified cloud is a cloud turn. Any other relay model is
+    local here, including one whose inventory cannot be read: ``cloud_intent`` holds that
+    case to a cloud intent (fail closed for egress), and a work order refuses it (fail
+    closed for admission). So a turn admitted here is always one ``cloud_intent`` calls
+    cloud."""
     try:
         from agent_friday.services.seat_policy import is_local_descriptor, is_local_seat
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
         if isinstance(provider, dict):
-            from agent_friday.services.local_only_guard import is_cloud_model_tag
             return (not is_cloud_model_tag(model)) and is_local_descriptor(provider)
+        from agent_friday.services import cloud_intent
+        if str(provider or "").strip().lower() == cloud_intent._OLLAMA_RELAY:
+            from agent_friday.services.local_call import relay_model_status
+            from agent_friday.services.local_only_guard import ollama_daemon_is_local
+            if relay_model_status(model) == "cloud":
+                return False
+            if not ollama_daemon_is_local(None):
+                return False
+            descriptor = cloud_intent._relay_descriptor()
+            return descriptor is None or is_local_descriptor(descriptor)
         return is_local_seat(provider, model)
     except Exception:
         return True
@@ -302,8 +321,11 @@ def validate(order, conversation_id: str, *, provider: str = "", model: str = ""
         if k in order:
             notes.append("%s is set by Friday; the order's value was ignored" % k)
 
-    goal = _clean_text(order.get("goal"), GOAL_MAX + 1)
-    if not goal:
+    goal_raw = order.get("goal")
+    goal = _clean_text(goal_raw, GOAL_MAX + 1) if isinstance(goal_raw, str) else ""
+    if goal_raw is not None and not isinstance(goal_raw, str):
+        errors.append("goal must be text.")
+    elif not goal:
         errors.append("goal is required.")
     elif len(goal) > GOAL_MAX:
         errors.append("goal is over %d characters." % GOAL_MAX)
