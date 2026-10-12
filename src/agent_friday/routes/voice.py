@@ -3453,6 +3453,74 @@ def voice_local_readiness_offer():
         return api_error(e, "Couldn't record your answer")
 
 
+#: What a local voice failure offers: the same question every switch to cloud voice asks.
+_CLOUD_SWITCH_OFFER = {"kind": "cloud_switch", "label": "Use cloud voice",
+                       "endpoint": "/api/voice/cloud-switch", "source": "failure"}
+
+
+def _note_local_voice_failed():
+    """Remember that local voice just failed to start, so a switch to cloud voice
+    can say why. Never raises."""
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        _lvr.note_local_voice_failed()
+    except Exception:
+        pass
+
+
+@voice_bp.route('/api/voice/cloud-switch', methods=['POST'])
+@login_required
+def voice_cloud_switch():
+    """Ask to move voice to the cloud. Nothing moves: this raises the question
+    "just this call, or always?" (two choices, one marked Recommended, nothing
+    preselected). Local-only mode refuses with its reason."""
+    data = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        res = _lvr.ask_cloud_switch(source=str(data.get("source") or "settings"),
+                                    reason=str(data.get("reason") or ""))
+        if res.get("refused"):
+            return jsonify({"status": "refused", "reason": res.get("reason"),
+                            "message": res.get("message"), **_lvr.panel_status()}), 409
+        return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't ask about cloud voice")
+
+
+@voice_bp.route('/api/voice/cloud-switch/answer', methods=['POST'])
+@login_required
+def voice_cloud_switch_answer():
+    """The owner's answer to the question: `call` (just this call), `always` or
+    `cancel`. Only a waiting question can be answered; this and the voice answer
+    are the only ways the engine moves to the cloud."""
+    data = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        res = _lvr.answer_cloud_switch(data.get("choice"))
+        if not res.get("ok"):
+            return jsonify({"status": "refused" if res.get("refused") else "error",
+                            "message": res.get("message")}), 409
+        return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't record your answer")
+
+
+@voice_bp.route('/api/voice/local-readiness/switch-back', methods=['POST'])
+@login_required
+def voice_switch_back_answer():
+    """The owner's answer to the one switch-back offer: `switch_back` or
+    `keep_cloud`. No answer leaves everything as it was."""
+    data = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        res = _lvr.decide_switch_back(data.get("choice"))
+        if not res.get("ok"):
+            return jsonify({"status": "error", "message": res.get("message")}), 409
+        return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't record your answer")
+
+
 @voice_bp.route('/api/voice/arm', methods=['GET', 'POST'])
 @login_required
 def voice_arm():
@@ -4116,9 +4184,12 @@ if sock is not None:
             _vw.release_prepared("no room for the voice")
             _vlog.error("session refused: no room for the voice: %s: %s",
                         type(_re).__name__, _re)
+            _note_local_voice_failed()
             _send({"type": "error", "error": "voice_front_unavailable",
                    "detail": f"Friday's local voice could not start: {_re}. "
-                             f"Try again, or switch to cloud voice."})
+                             f"Try again, or switch to cloud voice (I will ask whether that is "
+                             f"for just this call or always).",
+                   "offer": _CLOUD_SWITCH_OFFER})
             return
         # Whatever leaves this span by an exception, from the park to the
         # armed front, gives the room back (an arm failure has already
@@ -4244,9 +4315,12 @@ if sock is not None:
                 _vw.release_cpu_engines("voice front failed")
                 _vlog.error("session refused: voice front failed: %s: %s",
                             type(_fe).__name__, _fe)
+                _note_local_voice_failed()
                 _send({"type": "error", "error": "voice_front_unavailable",
                        "detail": f"Friday's local voice could not start: {_fe}. "
-                                 f"Try again, or switch to cloud voice."})
+                                 f"Try again, or switch to cloud voice (I will ask whether that is "
+                                 f"for just this call or always).",
+                       "offer": _CLOUD_SWITCH_OFFER})
                 return
             if _front is None and _room.get("front_refused"):
                 # The main model answers. Its park is given back, but only
@@ -6800,6 +6874,12 @@ if sock is not None:
                 pass
             try:
                 ws.close()
+            except Exception:
+                pass
+            try:
+                # "Just this call" for cloud voice ends with the call: back to the engine it was.
+                from agent_friday.services import local_voice_readiness as _lvr_end
+                _lvr_end.call_ended()
             except Exception:
                 pass
             _vlog('=== WS handler done ===')

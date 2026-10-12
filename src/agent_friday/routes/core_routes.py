@@ -1516,6 +1516,20 @@ def _check_voice_enums(new_settings):
     return None
 
 
+def _check_cloud_voice_switch(new_settings):
+    """A settings write that would move `voice_engine` from local to cloud voice
+    (Gemini) is not applied: it raises the question "just this call, or always?"
+    (services/local_voice_readiness.ask_cloud_switch) and answers 409
+    `needs_choice`; local-only mode answers 409 `refused` with its reason. None
+    when the write is not that switch. Cloud synthesis providers are a different
+    mode (the reply text only) and keep their own disclosure."""
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr_g
+        return _lvr_g.gate_settings_write(new_settings)
+    except Exception:
+        return None
+
+
 def _check_background_idle_minutes(new_settings):
     """`background_idle_minutes` is a whole number of minutes in the range the
     Local AI queue accepts (services/background_gate). An error dict, or None.
@@ -1792,6 +1806,12 @@ def api_settings():
             # Whether meetings are searchable is chosen only at /api/meetings/archive (on, from the
             # Friday window); the generic settings write is not a way to say yes for the owner.
             new_settings = {k: v for k, v in new_settings.items() if k != 'meeting_archive'}
+        if isinstance(new_settings, dict) and ('voice_engine_choice' in new_settings
+                                               or 'voice_switch_back' in new_settings):
+            # The record of a cloud voice choice and its switch-back offer are written only by the
+            # question and its answer (services/local_voice_readiness), never by a settings write.
+            new_settings = {k: v for k, v in new_settings.items()
+                            if k not in ('voice_engine_choice', 'voice_switch_back')}
 
         # Laya's safe writes widen only on the owner's own click on this server's page: a
         # same-origin browser request that carries the page's rotating token (the check the
@@ -1827,6 +1847,12 @@ def api_settings():
         if enum_error is not None:
             return jsonify(enum_error), 400
 
+        # Moving voice from local to the cloud is never a silent write: it becomes the question
+        # "just this call, or always?" (and local-only mode refuses it, with its reason).
+        cloud_gate = _check_cloud_voice_switch(new_settings)
+        if cloud_gate is not None:
+            return jsonify(cloud_gate["body"]), cloud_gate["http"]
+
         idle_error = _check_background_idle_minutes(new_settings)
         if idle_error is not None:
             return jsonify(idle_error), 400
@@ -1848,6 +1874,12 @@ def api_settings():
             new_settings,
             owner_routing_change=(data.get('owner_action') == 'routing_mode'),
             owner_safe_writes_change=_sw_owner)
+        if isinstance(new_settings, dict) and 'voice_engine' in new_settings:
+            try:
+                from agent_friday.services import local_voice_readiness as _lvr_w
+                _lvr_w.note_engine_written(new_settings.get('voice_engine'))
+            except Exception:
+                pass
 
         # A seat change must reach the PLAN, not just dispatch.
         #

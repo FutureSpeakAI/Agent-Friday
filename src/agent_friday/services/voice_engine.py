@@ -792,6 +792,9 @@ def _ask_friday_local(question: str, session: dict) -> str:
                 max_tokens=max_tokens,
                 session_ctx={"authenticated": True, "provider": "local",
                              "is_voice": True, "surface": "voice-local-deep",
+                             # The caller's last spoken words, for the one tool that must hear
+                             # the owner's own answer (local_voice_readiness); not `owner_text`.
+                             "voice_owner_words": str((session or {}).get("owner_text") or "")[:600],
                              "_crew_host_origin": (session or {}).get("_crew_host_origin"),
                              "conversation_id": (session or {}).get("conversation_id"),
                              "pin_to_seat": True},
@@ -855,6 +858,7 @@ def _tool_ask_friday(inp, session=None):
                 max_tokens=max_tokens,
                 session_ctx={"authenticated": True, "provider": "local",
                              "is_voice": True, "surface": "voice-live-relay",
+                             "voice_owner_words": str((session or {}).get("owner_text") or "")[:600],
                              "_crew_host_origin": (session or {}).get("_crew_host_origin"),
                              "conversation_id": (session or {}).get("conversation_id"),
                              # The prompt is gated for the LOCAL seat: a dead
