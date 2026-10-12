@@ -66,8 +66,30 @@ def step(page, ms=STEP_MS):
 
 
 def freeze(page):
-    """Take over the page's clock from here, after a real-time settle."""
+    """Take over the page's clock from here, after a real-time settle.
+
+    install() alone leaves the fake clock running in step with the wall clock
+    until it is paused, so the renderer keeps drawing between steps with the
+    wall time each step costs as its delta (up to the scene's 0.1 s cap): a
+    0.4 s move then shows up in three to five reads, a few frames apart, and
+    reads as a snap. Pausing just ahead of the page's own time makes each
+    step() exactly STEP_MS of page time, drawn in one or two frames."""
     page.clock.install()
+    error = None
+    for _ in range(3):
+        now_ms = page.evaluate("Date.now()")
+        try:
+            page.clock.pause_at((now_ms + 250) / 1000)      # seconds; the clock may not jump backwards
+            break
+        except Exception as exc:                             # the page's time passed the mark first
+            error = exc
+    else:
+        raise error
+    # The page's time must stand still between steps, or every reading below
+    # measures the wall clock instead of the move.
+    held = page.evaluate("performance.now()")
+    time.sleep(.15)
+    assert page.evaluate("performance.now()") == held, "the page clock kept running after freeze()"
 
 
 def step_until(page, done, limit=240, ms=STEP_MS):

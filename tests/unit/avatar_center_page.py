@@ -102,8 +102,7 @@ def open_page(browser_and_base, style, width=1280, height=800, reduced=False, st
     assert page.evaluate("FridayDisplayStyle.get()") == style
     hold_dock(page, height)
     wait_for_form(page)
-    if style == "classic":
-        hold_still(page)
+    hold_still(page)
     return context, page
 
 
@@ -125,8 +124,58 @@ def hold_still(page):
     the orbit by a few percent, so the focal point wanders around the middle of
     the screen by design. A held, neutral head (the Window view's static pose)
     stops that drift without adding any parallax, which is what a position
-    assertion needs."""
+    assertion needs.
+
+    Holding the head does not stop the camera at once: it glides to its resting
+    pose (the eye at a rate of 0.8 per second of scene time, the aim following
+    at 2), and the gap between aim and eye puts the focal point several pixels
+    off the middle while it glides. The glide slows exponentially, so on a
+    software renderer its per-frame change drops under any "settled" threshold
+    while the focal point is still well off its rest. So the camera is waited
+    on until it has actually stopped (camera_at_rest)."""
     page.evaluate("FridayTracking.debugHead(0, 0, FridayTracking.head.baseline || .18)")
+    camera_at_rest(page)
+
+
+#: The camera's pose as six numbers: where the eye is and where it looks.
+CAMERA_POSE = """() => {
+  const camera = fridayDebugScene().camera, look = new THREE.Vector3();
+  camera.getWorldDirection(look);
+  return [camera.position.x, camera.position.y, camera.position.z, look.x, look.y, look.z];
+}"""
+#: Per drawn frame, at rest: the aim turns by less than this (radians, near
+#: enough for a unit vector), and the eye moves sideways by less than this many
+#: world units. Simple's fit may move the eye along its aim (the framing
+#: distance follows the form's breathing); that changes the size, never the
+#: centre, so it is not counted. At these bounds the focal point is under a
+#: pixel from its rest at any frame rate (60 degree field of view).
+CAMERA_REST_TURN = 2e-5
+CAMERA_REST_SLIDE = 2e-4
+
+
+def camera_at_rest(page, frames=6, timeout=90):
+    """Wait until the camera's aim and its sideways position hold still across
+    `frames` consecutive fresh rendered frames."""
+    deadline = time.monotonic() + timeout
+    previous, held, last = None, 0, None
+    while time.monotonic() < deadline:
+        page.wait_for_function("f => __avc.frame() > f", arg=page.evaluate("__avc.frame()"), timeout=15000)
+        pose = page.evaluate(CAMERA_POSE)
+        if previous is not None:
+            look = pose[3:]
+            move = [a - b for a, b in zip(pose[:3], previous[:3])]
+            along = sum(m * d for m, d in zip(move, look))
+            slide = sum((m - along * d) ** 2 for m, d in zip(move, look)) ** .5
+            turn = sum((a - b) ** 2 for a, b in zip(look, previous[3:])) ** .5
+            last = (turn, slide)
+            if turn < CAMERA_REST_TURN and slide < CAMERA_REST_SLIDE:
+                held += 1
+                if held >= frames:
+                    return pose
+            else:
+                held = 0
+        previous = pose
+    raise AssertionError("the camera never came to rest within %d s (last turn, sideways move per frame: %s)" % (timeout, last))
 
 
 def wait_for_form(page):
