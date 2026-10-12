@@ -719,6 +719,9 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
                 and str(a.get("group") or a.get("kind") or "").strip().lower() not in ("off", "end", "stop")
                 and (ctx or {}).get("owner_utterance") is True):
             return INTERNAL, "the owner asked for quiet until morning, which only holds back interruptions"
+        if str(a.get("action") or "").strip().lower() in ("summary", "groups", "read_group"):
+            # Reading the tray out changes nothing in it.
+            return INTERNAL, "it only reads the notifications out"
         return OUTWARD, "it can clear, mute or change what reaches the owner"
     if tool_name == "office":
         # By argument, like run_command: the verb and the target decide.
