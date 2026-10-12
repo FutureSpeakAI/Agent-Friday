@@ -38,11 +38,14 @@ of that story (Laya in every mode addendum, section 4, LV-7):
 * **Switch back, offered once.** After an "always", when a later re-assessment
   finds local voice capable again with measured numbers, ONE card offers to
   switch back (emitter LV7). It is remembered (`voice_switch_back`) and is not
-  made again until readiness has changed again; no answer changes nothing. In
-  cloud_only mode there is no local to go back to, so nothing is offered.
+  made again until readiness has changed again (two readings in a row that are not
+  capable); no answer changes nothing. It is offered in every mode but local_only,
+  cloud_only (the factory default) included, because local voice is still an engine
+  the owner can choose there.
 * **Voice answers.** The `local_voice_readiness` tool asks the question and takes
   the answers ("just this call", "always", "switch back", "keep cloud"), only on
-  the owner's own words in the turn (services/local_voice_tools).
+  the owner's own words, spoken after the question and matched strictly
+  (services/local_voice_tools).
 
 Nothing here measures anything itself: `_measure_voice` is the one call to
 `footprint_measure`, run only inside the idle job. Nothing leaves the machine.
@@ -54,6 +57,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 _log = logging.getLogger("friday.local_voice_readiness")
@@ -520,6 +524,7 @@ def tick(now: Optional[float] = None) -> dict:
         request_reassess(r)
     try:
         expire_unused_call_scope(now)
+        drop_stale_question()
     except Exception as e:  # pragma: no cover - defensive
         _log.debug("call scope expiry skipped: %s", e)
     return run_pending()
@@ -535,11 +540,12 @@ def _watching_for_switch_back() -> bool:
     offer has been made yet."""
     s = _settings()
     return (_record(s).get("scope") == SCOPE_ALWAYS and _is_cloud(s.get("voice_engine"))
-            and not _record(s, SWITCHBACK_KEY) and _mode_of(s) not in ("cloud_only", "local_only"))
+            and not _record(s, SWITCHBACK_KEY) and _mode_of(s) != "local_only")
 
 
 def loop(interval_s: float = 300.0, busy_interval_s: float = 20.0) -> None:  # pragma: no cover - thread body
     """The server's thread: tick, sleep short while a job waits, long otherwise."""
+    reconcile_at_boot()                  # a "just this call" left by a crash or restart goes back now
     time.sleep(90.0)                     # let the server settle before the first look
     while True:
         wait = interval_s
@@ -647,6 +653,20 @@ def decide_offer(choice: str) -> dict:
 
 # ── cloud voice: asked, never assumed ────────────────────────────────────────
 
+#: A cloud voice question that has waited this long is gone (its card is closed).
+QUESTION_TTL_S = 600.0
+#: A spoken answer to the switch-back offer must come this soon after it was made.
+SWITCH_BACK_VOICE_TTL_S = 24 * 3600.0
+#: Owner words older than this are not an answer (a relay may carry an earlier utterance).
+OWNER_WORDS_MAX_AGE_S = 120.0
+#: Readings in a row that are not capable before a past switch-back offer is forgotten.
+FLAP_READINGS = 2
+
+#: Reads the question and applies its answer as one step, so a card click and a spoken
+#: answer racing each other cannot both apply.
+_ANSWER_LOCK = threading.RLock()
+
+
 def _is_cloud(engine: Any) -> bool:
     return str(engine or "").strip().lower() in CLOUD_ENGINES
 
@@ -665,6 +685,10 @@ def _mode_of(s: dict) -> str:
 
 def _now() -> float:
     return time.time()
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex[:12]
 
 
 def _save(patch: dict) -> None:
@@ -697,9 +721,8 @@ def note_local_voice_failed() -> None:
         pass
 
 
-def _switch_reason(requested: str = "") -> str:
-    if requested in SWITCH_REASONS:
-        return requested
+def _switch_reason() -> str:
+    """Why voice is moving to the cloud, decided here and never taken from a caller."""
     failed = _load_state().get("local_failed_at")
     if failed is not None and _now() - float(failed) <= FAILURE_WINDOW_S:
         return "local_voice_failed"
@@ -733,15 +756,50 @@ def local_only_refusal() -> dict:
                         "allowed. Change the routing mode in Settings first if you want it.")}
 
 
+def _question(now: Optional[float] = None) -> Optional[dict]:
+    """The waiting cloud voice question, or None when there is none or it has run out."""
+    q = _load_state().get("cloud_question")
+    if not isinstance(q, dict):
+        return None
+    now = _now() if now is None else float(now)
+    if now > float(q.get("expires_at") or 0):
+        return None
+    return q
+
+
 def cloud_question_card(settings: Optional[dict] = None) -> Optional[dict]:
     """The question the panel renders while one is waiting, else None."""
     s = settings if settings is not None else _settings()
-    q = _load_state().get("cloud_question")
-    if not isinstance(q, dict) or _is_cloud(s.get("voice_engine")) or _mode_of(s) == "local_only":
+    q = _question()
+    if q is None or _is_cloud(s.get("voice_engine")) or _mode_of(s) == "local_only":
         return None
-    return {"question": QUESTION, "choices": scope_choices(), "preselected": None,
+    return {"id": q.get("id"), "question": QUESTION, "choices": scope_choices(), "preselected": None,
             "reason": q.get("reason"), "reason_text": SWITCH_REASONS.get(q.get("reason"), ""),
-            "source": q.get("source"), "asked_at": q.get("asked_at")}
+            "source": q.get("source"), "asked_at": q.get("asked_at"),
+            "expires_at": q.get("expires_at")}
+
+
+def drop_stale_question() -> bool:
+    """Take away a question that has run out, or that the mode or the engine has
+    made moot, and close its screen card. Never raises."""
+    try:
+        with _ANSWER_LOCK:
+            q = _load_state().get("cloud_question")
+            if not isinstance(q, dict):
+                return False
+            s = _settings()
+            gone = (_now() > float(q.get("expires_at") or 0) or _is_cloud(s.get("voice_engine"))
+                    or _mode_of(s) == "local_only")
+            if not gone:
+                return False
+            with _LOCK:
+                st = _load_state()
+                st.pop("cloud_question", None)
+                _save_state(st)
+        _resolve_card(SCOPE_DEDUPE_KEY)
+        return True
+    except Exception:  # pragma: no cover - defensive
+        return False
 
 
 def _digest(words: str) -> str:
@@ -753,18 +811,20 @@ def asked_in_these_words(words: str) -> bool:
     """True when the waiting cloud voice question was asked in this very
     utterance. An answer must be a LATER thing the owner says: "use cloud voice
     for this call" asks, it does not answer."""
-    q = _load_state().get("cloud_question")
+    q = _question()
     d = _digest(words)
-    return bool(isinstance(q, dict) and d and q.get("words") == d)
+    return bool(q is not None and d and q.get("words") == d)
 
 
-def ask_cloud_switch(source: str = "settings", reason: str = "", words: str = "") -> dict:
+def ask_cloud_switch(source: str = "settings", words: str = "") -> dict:
     """Start a switch to cloud voice: ask, do not switch. Whatever the source
     (Settings, the voice, the offer after a local voice failure) the answer is
     the owner's "just this call" or "always". Local-only mode refuses with its
-    reason. A screen card is raised for the sources that do not already have the
-    panel in front of the owner. `words` is the utterance that started it, if
-    any (see `asked_in_these_words`)."""
+    reason. The reason is worked out here, never taken from the caller. A screen
+    card is raised for the sources that do not already have the panel in front of
+    the owner. `words` is the utterance that started it, if any (see
+    `asked_in_these_words`). The question has an id and runs out after
+    QUESTION_TTL_S."""
     s = _settings()
     if _mode_of(s) == "local_only":
         return local_only_refusal()
@@ -772,12 +832,14 @@ def ask_cloud_switch(source: str = "settings", reason: str = "", words: str = ""
         return {"ok": True, "asked": False, "already": True,
                 "message": "Voice is already on the cloud."}
     src = source if source in ("settings", "voice", "failure") else "settings"
-    why = _switch_reason(reason)
-    with _LOCK:
-        st = _load_state()
-        st["cloud_question"] = {"source": src, "reason": why, "asked_at": _now(),
-                                "words": _digest(words)}
-        _save_state(st)
+    why = _switch_reason()
+    now = _now()
+    with _ANSWER_LOCK:
+        with _LOCK:
+            st = _load_state()
+            st["cloud_question"] = {"id": _new_id(), "source": src, "reason": why, "asked_at": now,
+                                    "expires_at": now + QUESTION_TTL_S, "words": _digest(words)}
+            _save_state(st)
     if src != "settings":
         try:
             import agent_friday.notifications_engine as ne
@@ -812,32 +874,42 @@ def gate_settings_write(new_settings: dict) -> Optional[dict]:
                                   "question": out.get("question")}}
 
 
-def answer_cloud_switch(choice: str) -> dict:
+def answer_cloud_switch(choice: str, question_id: Optional[str] = None,
+                        spoken_at: Optional[float] = None) -> dict:
     """The owner's answer: `call`, `always` or `cancel`. Only a waiting question
-    can be answered. This (with the settings write it replaces) is the only code
-    that moves the engine to the cloud."""
+    can be answered. `question_id` (the page sends it) must be that question's;
+    `spoken_at` (a spoken answer) must be after the question was asked. The
+    question is read and the answer applied as one step. This (with the settings
+    write it replaces) is the only code that moves the engine to the cloud."""
     choice = str(choice or "").strip().lower()
     if choice not in (SCOPE_CALL, SCOPE_ALWAYS, "cancel"):
         return {"ok": False, "message": "Say just this call, or always."}
-    s = _settings()
-    q = _load_state().get("cloud_question")
-    if not isinstance(q, dict):
-        return {"ok": False, "message": "There is no cloud voice question waiting."}
-    with _LOCK:
-        st = _load_state()
-        st.pop("cloud_question", None)
-        _save_state(st)
-    _resolve_card(SCOPE_DEDUPE_KEY)
-    if _mode_of(s) == "local_only":
-        return local_only_refusal()
-    if choice == "cancel":
-        return {"ok": True, "choice": "cancel", "message": "Staying on local voice."}
-    prev = str(s.get("voice_engine") or "local").strip() or "local"
-    if _is_cloud(prev):
-        prev = "local"
-    rec = {"scope": choice, "engine": "gemini", "previous": prev, "at": _now(),
-           "reason": q.get("reason") or "your_choice", "source": q.get("source") or "settings"}
-    _save({"voice_engine": "gemini", CHOICE_KEY: rec, SWITCHBACK_KEY: {}})
+    with _ANSWER_LOCK:
+        s = _settings()
+        q = _question()
+        if q is None:
+            drop_stale_question()
+            return {"ok": False, "message": "There is no cloud voice question waiting."}
+        if question_id is not None and str(question_id) != str(q.get("id")):
+            return {"ok": False, "message": "That question has gone. Ask again."}
+        if spoken_at is not None and not float(spoken_at) > float(q.get("asked_at") or 0):
+            return {"ok": False, "stale": True,
+                    "message": "I need your answer after I ask, not before."}
+        with _LOCK:
+            st = _load_state()
+            st.pop("cloud_question", None)
+            _save_state(st)
+        _resolve_card(SCOPE_DEDUPE_KEY)
+        if _mode_of(s) == "local_only":
+            return local_only_refusal()
+        if choice == "cancel":
+            return {"ok": True, "choice": "cancel", "message": "Staying on local voice."}
+        prev = str(s.get("voice_engine") or "local").strip() or "local"
+        if _is_cloud(prev):
+            prev = "local"
+        rec = {"scope": choice, "engine": "gemini", "previous": prev, "at": _now(),
+               "reason": q.get("reason") or "your_choice", "source": q.get("source") or "settings"}
+        _save({"voice_engine": "gemini", CHOICE_KEY: rec, SWITCHBACK_KEY: {}})
     if choice == SCOPE_CALL:
         msg = "Cloud voice for this call. I will go back to local voice when it ends."
     else:
@@ -871,6 +943,24 @@ def _revert_call_scope(rec: dict, said: str) -> bool:
     return True
 
 
+def reconcile_at_boot() -> bool:
+    """At start-up, a "just this call" left from before (a crash or a restart in the
+    middle of a cloud call) goes back to the engine it was, and says so: no call can
+    still be open, so nothing is left for it to cover. A question that ran out while
+    Friday was off is closed. Never raises."""
+    try:
+        drop_stale_question()
+        s = _settings()
+        rec = _record(s)
+        if rec.get("scope") != SCOPE_CALL or not _is_cloud(s.get("voice_engine")):
+            return False
+        return _revert_call_scope(
+            rec, "Friday restarted during a cloud call, so voice is back on local, as you chose.")
+    except Exception as e:  # pragma: no cover - defensive
+        _log.debug("boot reconcile skipped: %s", e)
+        return False
+
+
 def expire_unused_call_scope(now: Optional[float] = None) -> bool:
     """A "just this call" that no cloud call ever used must not hold the engine
     on the cloud for good: after CALL_SCOPE_TTL_S, with no voice session open, it
@@ -893,8 +983,10 @@ def expire_unused_call_scope(now: Optional[float] = None) -> bool:
 
 def note_engine_written(engine: Any) -> None:
     """The owner set the engine by hand. A move off the cloud ends the record of
-    a cloud choice (and its switch-back offer): there is nothing to go back to."""
+    a cloud choice (and its switch-back offer): there is nothing to go back to.
+    A question the write has made moot is closed."""
     try:
+        drop_stale_question()
         if _is_cloud(engine):
             return
         s = _settings()
@@ -918,7 +1010,8 @@ def switch_back_card(settings: Optional[dict] = None) -> Optional[dict]:
     if said:
         body += ". Measured here: " + said
     body += ". Switch back? Your call; nothing changes until you say."
-    return {"title": "Local voice is ready again", "body": body, "numbers": nums, "preselected": None,
+    return {"id": sb.get("id"), "title": "Local voice is ready again", "body": body, "numbers": nums,
+            "preselected": None, "made_at": sb.get("made_at"),
             "choices": [{"id": "switch_back", "label": "Switch back to local voice", "recommended": True},
                         {"id": "keep_cloud", "label": "Keep cloud voice", "recommended": False}]}
 
@@ -928,13 +1021,15 @@ def maybe_offer_switch_back(snapshot: Optional[dict] = None, *,
     """Offer, ONCE, to switch back to local voice. Never raises, never switches.
 
     Due when: the owner chose "always" for cloud voice; the engine is still on
-    the cloud; the routing mode is not cloud_only (no local to go back to) and
-    not local_only; a re-assessment AFTER that choice finds local voice capable
-    with measured numbers; and no offer has been made since readiness last
-    changed. The state is set to pending BEFORE the push, so a second pass finds
-    it taken. When readiness drops out of capable, a past offer is forgotten, so
-    the next time it is capable again it is offered once more. No answer leaves
-    everything as it was."""
+    the cloud; the routing mode is not local_only (cloud_only, the factory
+    default, still allows local voice, so it is offered there too); a
+    re-assessment AFTER that choice finds local voice capable with measured
+    numbers; and no offer has been made since readiness last changed. The state
+    is set to pending BEFORE the push, so a second pass finds it taken. A past
+    offer is forgotten only after FLAP_READINGS readings in a row that are not
+    capable, so one failed or stale measurement does not repeat it. No answer
+    leaves everything as it was. The offer is one tray card; it is not also said
+    into a call."""
     try:
         with _OFFER_LOCK:
             s = _settings()
@@ -946,16 +1041,22 @@ def maybe_offer_switch_back(snapshot: Optional[dict] = None, *,
                 _save({CHOICE_KEY: {}, SWITCHBACK_KEY: {}})       # the owner already moved
                 _resolve_card(OFFER_DEDUPE_KEY)
                 return False
-            if _mode_of(s) in ("cloud_only", "local_only"):
+            if _mode_of(s) == "local_only":
                 return False
             snap_state = voice_state(snapshot)
             if snap_state != CAPABLE:
                 if sb:
-                    _save({SWITCHBACK_KEY: {}})                  # readiness changed: a later "capable" is news again
-                    if sb.get("state") == SB_PENDING:
-                        _resolve_card(OFFER_DEDUPE_KEY)
+                    flaps = int(sb.get("flaps") or 0) + 1
+                    if flaps >= FLAP_READINGS:
+                        _save({SWITCHBACK_KEY: {}})              # readiness changed: a later "capable" is news again
+                        if sb.get("state") == SB_PENDING:
+                            _resolve_card(OFFER_DEDUPE_KEY)
+                    else:
+                        _save({SWITCHBACK_KEY: dict(sb, flaps=flaps)})
                 return False
             if sb:
+                if sb.get("flaps"):
+                    _save({SWITCHBACK_KEY: dict(sb, flaps=0)})
                 return False
             when = assessed_at if assessed_at is not None else _load_state().get("assessed_at")
             if when is None or float(when) <= float(rec.get("at") or 0):
@@ -963,7 +1064,8 @@ def maybe_offer_switch_back(snapshot: Optional[dict] = None, *,
             nums = measured_numbers()
             if not nums.get("measured"):
                 return False
-            _save({SWITCHBACK_KEY: {"state": SB_PENDING, "made_at": _now(), "choice_at": rec.get("at")}})
+            _save({SWITCHBACK_KEY: {"id": _new_id(), "state": SB_PENDING, "made_at": _now(),
+                                    "choice_at": rec.get("at"), "flaps": 0}})
             body = switch_back_card(_settings())
         text = (body or {}).get("body") or "Local voice is ready again. Switch back?"
         try:
@@ -976,71 +1078,96 @@ def maybe_offer_switch_back(snapshot: Optional[dict] = None, *,
                     target={"workspace": "settings", "tab": "voice"})
         except Exception as e:
             _log.warning("switch-back offer card not pushed: %s", e)
-        _say_in_calls(text + " Say switch back, or keep cloud.")
         return True
     except Exception as e:  # pragma: no cover - defensive
         _log.debug("switch-back offer skipped: %s", e)
         return False
 
 
-def _say_in_calls(text: str) -> None:
-    """Hand the offer to any open voice session, so a call hears it too."""
-    try:
-        from agent_friday.services import notice_registry as nr
-        from agent_friday.services import voice_live_channel as vlc
-        for cid in list(getattr(vlc, "_CHANNELS", {}) or {}):
-            nr.voice_say("LV7", cid, text, kind="offer")
-    except Exception:
-        pass
-
-
-def decide_switch_back(choice: str) -> dict:
+def decide_switch_back(choice: str, question_id: Optional[str] = None,
+                       spoken_at: Optional[float] = None) -> dict:
     """The owner's answer to the switch-back card: `switch_back` or `keep_cloud`.
-    Only a pending offer can be answered. Keeping cloud leaves the offer made, so
-    it is not asked again until readiness has changed."""
+    Only a pending offer can be answered. `question_id` (the page sends it) must be
+    that offer's; `spoken_at` (a spoken answer) must be after the offer was made
+    and within SWITCH_BACK_VOICE_TTL_S of it. Keeping cloud leaves the offer made,
+    so it is not asked again until readiness has changed."""
     choice = str(choice or "").strip().lower()
     if choice not in ("switch_back", "keep_cloud"):
         return {"ok": False, "message": "Say switch back, or keep cloud."}
-    s = _settings()
-    sb = _record(s, SWITCHBACK_KEY)
-    if sb.get("state") != SB_PENDING:
-        return {"ok": False, "message": "There is no switch-back offer waiting."}
-    rec = _record(s)
-    if choice == "switch_back":
-        prev = str(rec.get("previous") or "local")
-        _save({"voice_engine": prev, CHOICE_KEY: {},
-               SWITCHBACK_KEY: dict(sb, state=SB_SWITCHED, answered_at=_now())})
-        msg = "Switched back to local voice."
-    else:
-        _save({SWITCHBACK_KEY: dict(sb, state=SB_KEPT, answered_at=_now())})
-        msg = "Keeping cloud voice. I will not ask again unless local voice changes."
+    with _ANSWER_LOCK:
+        s = _settings()
+        sb = _record(s, SWITCHBACK_KEY)
+        if sb.get("state") != SB_PENDING:
+            return {"ok": False, "message": "There is no switch-back offer waiting."}
+        if question_id is not None and str(question_id) != str(sb.get("id")):
+            return {"ok": False, "message": "That offer has gone."}
+        if spoken_at is not None:
+            made = float(sb.get("made_at") or 0)
+            if not (made < float(spoken_at) <= made + SWITCH_BACK_VOICE_TTL_S):
+                return {"ok": False, "stale": True,
+                        "message": "I need your answer after I offer, not before."}
+        rec = _record(s)
+        if choice == "switch_back":
+            prev = str(rec.get("previous") or "local")
+            _save({"voice_engine": prev, CHOICE_KEY: {},
+                   SWITCHBACK_KEY: dict(sb, state=SB_SWITCHED, answered_at=_now())})
+            msg = "Switched back to local voice."
+        else:
+            _save({SWITCHBACK_KEY: dict(sb, state=SB_KEPT, answered_at=_now())})
+            msg = "Keeping cloud voice. I will not ask again unless local voice changes."
     _resolve_card(OFFER_DEDUPE_KEY)
     return {"ok": True, "choice": choice, "message": msg}
 
 
 # ── the owner's words, for the voice answers ─────────────────────────────────
 
-_ANSWER_WORDS = (
-    ("keep_cloud", ("keep cloud", "keep the cloud", "stay on cloud", "stay on the cloud", "stay with cloud",
-                    "keep it on cloud", "not yet")),
-    ("switch_back", ("switch back", "go back to local", "back to local", "switch to local", "use local")),
-    (SCOPE_CALL, ("just this call", "this call only", "only this call", "for this call", "just for this call",
-                  "this call")),
-    (SCOPE_ALWAYS, ("always", "permanently", "from now on", "every call")),
-    ("cancel", ("never mind", "nevermind", "cancel", "stay on local", "keep local", "stay local")),
-)
+#: Whole-word phrases. A phrase counts only as whole words, never inside a longer one.
+_PHRASES = {
+    SCOPE_CALL: (("just", "this", "call"), ("just", "for", "this", "call"), ("only", "this", "call"),
+                 ("only", "for", "this", "call"), ("this", "call", "only"), ("for", "this", "call")),
+    SCOPE_ALWAYS: (("always",), ("permanently",), ("from", "now", "on"), ("every", "call")),
+    "switch_back": (("switch", "back"), ("go", "back", "to", "local"), ("back", "to", "local"),
+                    ("switch", "to", "local")),
+    "keep_cloud": (("keep", "cloud"), ("keep", "the", "cloud"), ("keep", "it", "on", "cloud"),
+                   ("stay", "on", "cloud"), ("stay", "on", "the", "cloud"), ("stay", "with", "cloud")),
+    "cancel": (("never", "mind"), ("nevermind",), ("cancel",), ("stay", "on", "local"),
+               ("keep", "local"), ("stay", "local")),
+}
+#: A negation within NEG_WINDOW words before a phrase turns it from an answer into a doubt.
+_NEGATIONS = frozenset({"no", "not", "dont", "never", "nope", "nah", "cant", "cannot", "wont", "without",
+                        "isnt", "arent", "didnt", "doesnt", "shouldnt", "wouldnt", "stop", "stopped"})
+#: Words that make a sentence a thought or a question rather than an answer.
+_HEDGES = frozenset({"if", "maybe", "perhaps", "unless", "whether", "should", "would", "could", "might",
+                     "wonder", "what", "why", "how", "who", "when", "which", "where"})
+NEG_WINDOW = 4
+MAX_ANSWER_WORDS = 8
 
 
 def classify_answer(words: str) -> Optional[str]:
     """Which answer the owner's words give: `call`, `always`, `switch_back`,
-    `keep_cloud` or `cancel`. None when the words give none, or give two ("always,
-    no, just this call"): then Friday asks again rather than guess. Matched on the
+    `keep_cloud` or `cancel`. Strict: whole words only, a short utterance, no
+    question, no hedge, and no negation just before the phrase ("no, not always"
+    and "don't switch back" are never `always` or `switch_back`). Anything that
+    gives no single answer, or two, is None, and Friday asks again. Matched on the
     owner's own utterance, never on a model's paraphrase."""
-    t = " ".join(str(words or "").lower().replace(",", " ").replace(".", " ").split())
-    if not t:
+    raw = str(words or "")
+    if not raw.strip() or "?" in raw:
         return None
-    hits = [cid for cid, needles in _ANSWER_WORDS if any(n in t for n in needles)]
-    return hits[0] if len(hits) == 1 else None
+    flat = raw.lower().replace("'", "").replace("’", "")
+    toks = "".join(ch if ch.isalnum() else " " for ch in flat).split()
+    if not toks or len(toks) > MAX_ANSWER_WORDS or any(t in _HEDGES for t in toks):
+        return None
+    hits = set()
+    for cid, phrases in _PHRASES.items():
+        for ph in phrases:
+            n = len(ph)
+            for i in range(len(toks) - n + 1):
+                if tuple(toks[i:i + n]) != ph:
+                    continue
+                if any(t in _NEGATIONS for t in toks[max(0, i - NEG_WINDOW):i]):
+                    return None                    # negated: a doubt, not an answer
+                hits.add(cid)
+    return next(iter(hits)) if len(hits) == 1 else None
 
 
 # ── one status for the panel, the tool and session-info ──────────────────────

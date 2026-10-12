@@ -80,10 +80,15 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   marked Recommended because it keeps local voice your default, nothing
   preselected. Just this call returns to local voice when the call ends;
   always is kept with the time and the reason. After an always, when local
-  voice is measured and ready again, Friday offers once to switch back; no
-  answer changes nothing, and nothing switches silently in either direction.
-  You can answer by voice ("just this call", "always", "switch back", "keep
-  cloud"). Local-only mode refuses the switch and says why.
+  voice is measured and ready again, Friday offers once to switch back, in
+  every mode except local-only (cloud-only, the default, included); no answer
+  changes nothing, and nothing switches silently in either direction. If Friday
+  restarts in the middle of a "just this call", voice is back on local. You can
+  answer by voice ("just this call", "always", "switch back", "keep cloud")
+  when the local model is loaded, otherwise on the card; a spoken answer counts
+  only as your own words, said after the question, and "no, not always" is not
+  one. Local-only mode refuses the switch and says why, and a peer device can
+  no longer push cloud voice to this one.
 - **What Laya learns about you** (on by default; Settings > Privacy & Data).
   When you correct her, or answer a question she asks, in a local voice call on
   this PC, or typed on Friday's own page while Laya picks the tool for typed chat

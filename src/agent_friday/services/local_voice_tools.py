@@ -36,7 +36,7 @@ TOOLS = [
          "(default) says whether local voice is measured and runs well ('can you run voice locally "
          "now?'); action=measure queues the measurement for when the owner is away ('measure local "
          "voice'); action=cloud asks 'just this call, or always?' ('use cloud voice'); action=answer "
-         "takes the owner's answer to that or to the switch-back offer (choice=call, always, "
+         "takes the owner's answer to that or to the switch-back offer (choice required, exactly what they said: call, always, "
          "switch_back, keep_cloud), only from their own words. Say the `spoken` sentence as it is. "
          "Never choose for them."),
      "input_schema": {"type": "object", "properties": {
@@ -72,25 +72,39 @@ def _status_sentence() -> str:
     return "Not yet%s.%s" % ((": " + why) if why else "", waiting)
 
 
-def _owner_words() -> str:
-    """The owner's own words for this turn, or "" when there are none to trust.
+def _owner_words_at():
+    """(the owner's own words, when they were said) for this turn, or ("", None) when
+    there are none to trust.
 
-    A typed turn and a voice tool call carry `owner_text`; a question relayed
-    through ask_friday carries the caller's last words as `voice_owner_words`.
-    A turn that has read untrusted content (a page, a mail, a tool result) has no
-    owner words for this purpose, whatever text it holds."""
+    A typed turn carries `owner_text` (said now). A voice call carries its last
+    words stamped with when they were heard (`owner_text_at`, or, through an
+    ask_friday relay, `voice_owner_words` and `voice_owner_at`); words with no
+    stamp, or older than OWNER_WORDS_MAX_AGE_S, are not an answer. A turn that has
+    read untrusted content (a page, a mail, a tool result) has no owner words for
+    this purpose, whatever text it holds."""
     try:
-        from agent_friday.services import agent, slice_head
+        from agent_friday.services import agent, local_voice_readiness as lvr, slice_head
         if slice_head.is_tainted(agent._taint_mod.CURRENT_KEY.get()):
-            return ""
+            return "", None
+        ctx = agent._CURRENT_TOOL_CONTEXT.get() or {}
+        voice = str(ctx.get("surface") or "").startswith("voice")
         words = str(agent._CURRENT_OWNER_TEXT.get() or "")
+        at = ctx.get("owner_text_at")
+        if not words and voice:
+            words, at = str(ctx.get("voice_owner_words") or ""), ctx.get("voice_owner_at")
         if not words:
-            ctx = agent._CURRENT_TOOL_CONTEXT.get() or {}
-            if str(ctx.get("surface") or "").startswith("voice"):
-                words = str(ctx.get("voice_owner_words") or "")
-        return words
+            return "", None
+        if not voice:
+            return words, lvr._now()
+        if not at or lvr._now() - float(at) > lvr.OWNER_WORDS_MAX_AGE_S:
+            return "", None
+        return words, float(at)
     except Exception:
-        return ""
+        return "", None
+
+
+def _owner_words() -> str:
+    return _owner_words_at()[0]
 
 
 def _pending_kind(lvr) -> str:
@@ -111,26 +125,33 @@ def _ask_again(lvr, kind: str) -> str:
 
 
 def _answer(inp: dict) -> dict:
+    """Carry out the owner's answer to the question that is waiting. Nothing changes unless
+    the model names the choice AND the owner's own words, spoken after the question, give
+    exactly that same answer."""
     from agent_friday.services import local_voice_readiness as lvr
     kind = _pending_kind(lvr)
     if not kind:
         return {"spoken": "There is no cloud voice question waiting.", "kind": "no_question"}
-    words = _owner_words()
+    words, at = _owner_words_at()
     heard = lvr.classify_answer(words)
     claimed = str(inp.get("choice") or "").strip().lower()
     if kind == "scope" and lvr.asked_in_these_words(words):
         heard = None                 # the same breath that asked is not the answer
-    if heard is None or (claimed and claimed != heard):
-        # Not the owner's words, or words that give no single answer: nothing changes, and it is asked again.
+    if heard is None or not claimed or claimed != heard or at is None:
+        # Not the owner's words, no choice named, or words that give no single answer: nothing changes,
+        # and it is asked again.
         return {"spoken": "I did not catch which. " + _ask_again(lvr, kind), "kind": "asked_again",
                 "pending": kind}
     if kind == "scope" and heard in (lvr.SCOPE_CALL, lvr.SCOPE_ALWAYS, "cancel"):
-        res = lvr.answer_cloud_switch(heard)
+        res = lvr.answer_cloud_switch(heard, spoken_at=at)
     elif kind == "switch_back" and heard in ("switch_back", "keep_cloud"):
-        res = lvr.decide_switch_back(heard)
+        res = lvr.decide_switch_back(heard, spoken_at=at)
     else:
         return {"spoken": "That answer is for the other question. " + _ask_again(lvr, kind),
                 "kind": "asked_again", "pending": kind}
+    if res.get("stale"):
+        return {"spoken": "I did not catch which. " + _ask_again(lvr, kind), "kind": "asked_again",
+                "pending": kind}
     return {"spoken": res.get("message") or "Done.", "kind": "answered" if res.get("ok") else "refused",
             "choice": res.get("choice")}
 

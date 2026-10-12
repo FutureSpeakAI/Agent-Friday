@@ -11237,8 +11237,10 @@ try:
 except Exception as _llte:  # never let optional deps break the agent import
     print(f"  [LAYA-LEARNING] registration skipped: {_llte}")
 
-# Can voice run locally, and measure it (local_voice_readiness): the spoken side
-# of Settings > Voice > Local voice. Loaded on demand. See
+# Can voice run locally, measure it, and the cloud voice choice (local_voice_readiness):
+# status, measure, ask "just this call, or always?" and take the answers (just this call,
+# always, switch back, keep cloud) on the owner's own words; the spoken side of
+# Settings > Voice > Local voice. Loaded on demand. See
 # services/local_voice_tools.py and services/local_voice_readiness.py.
 try:
     from agent_friday.services import local_voice_tools as _local_voice_tools
@@ -16037,7 +16039,7 @@ ON_DEMAND_TOOLS = (
     "hand_cursor",           # the hand cursor and big mode, by voice
     "big_mode",
     "hologram_window",       # the hologram window's depth, by voice
-    "local_voice_readiness",  # can voice run locally; measure it when idle (never switches)
+    "local_voice_readiness",  # can voice run locally; measure it when idle; ask and take the cloud voice answers (only on the owner's own words)
     "laya_learning",         # what Laya learned from the owner's corrections; forget, reset, roll back
 )
 WORKSPACE_TOOLS.setdefault("on_demand", []).extend(

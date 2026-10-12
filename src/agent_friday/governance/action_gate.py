@@ -245,7 +245,8 @@ INTERNAL_TOOLS = frozenset({
     # came from, like any instruction): it only ends or redirects Friday's own background work.
     "task_control",
     # Can voice run locally, and queue the measurement for an idle moment
-    # (services/local_voice_tools). It never changes the voice engine.
+    # (services/local_voice_tools). It moves the voice engine only to carry out the owner's own
+    # answer to "just this call, or always?" / the switch-back offer (their words, after the question).
     "local_voice_readiness",
     # a setting change holds itself for the owner's Yes on its own card (services/setting_proposals)
     "set_setting",
