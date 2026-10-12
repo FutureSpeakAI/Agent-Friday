@@ -339,6 +339,19 @@ def test_a_change_the_owners_words_did_not_ask_for_is_a_question(monkeypatch):
     assert live_laya.write_intent("what's the best way to set up a calendar?") is False
 
 
+@pytest.mark.parametrize("words", ["bin every Thursday, right?", "the newsletter is fine and spam every day is killing me",
+                                   "junk each morning is the worst"])
+def test_a_quantifier_after_a_point_verb_never_switches_the_mutation_guard_off(words):
+    """Fails on 3869afe37: the router's widened _ACT (star/bin/junk/spam + every/each/everything) made these a
+    write intent, so a Live change the owner never asked for went through without the laya_mutation question."""
+    assert live_laya.write_intent(words) is False, words
+    out = pre(EVENT, {"title": "Dentist", "start": "2026-10-12T10:00:00-05:00"}, dict(VOICE, owner_text=words))
+    assert any(code == "laya_mutation" for code, _ in out.escalate), (words, out)
+    # the router keeps its wider reading: such words are handed on, never read as a statement
+    assert laya_router._has_write_intent("star everything but the unread")
+    assert live_laya.write_intent("star these") is True and live_laya.write_intent("junk the ones from Mara") is True
+
+
 def test_a_bare_yes_is_not_judged_by_the_mutation_guard():
     out = pre(EVENT, {"title": "Dentist", "start": "2026-10-12T10:00:00-05:00"},
               dict(VOICE, owner_text="yes go ahead"))

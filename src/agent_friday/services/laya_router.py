@@ -298,8 +298,7 @@ _POLITE = (r"^(?:(?:um+|uh+|so|okay|ok|hey|friday|please|and|can you|could you|w
            r"will you|go ahead and|i want you to|i need you to|i'd like you to|also|just|then|now|"
            r"kindly|quickly|i want to|i need to|i have to|i'd like to|i would like to|i gotta)[\s,]+)*")
 
-_ACT = re.compile(
-    _POLITE +
+_ACT_HEAD = (
     r"(?:send|reply|respond|forward|delete|remove|trash|archive|move|rename|copy|"
     r"schedule|book|cancel|reschedule|add|create|make|write|draft|post|publish|"
     r"buy|pay|order|unsubscribe|mark|turn (?:on|off)|switch (?:on|off)|enable|"
@@ -312,12 +311,25 @@ _ACT = re.compile(
     r"label|snooze|flag|tag|pin|unpin|mute|unmute|block|dismiss|reserve|rsvp|sign up|"
     # Point-and-act's own change verbs, so the router and the pointing rung agree on what a change is
     # ("star these", "junk the ones from X"; a bare "star wars" or "spam folder" is not one).
-    r"(?:star|unstar|bin|junk|spam|favou?rite|categori[sz]e|undelete)"
-    r"(?=\s+(?:these|those|them|this|that|it|the|all|both|each|every|everything)\b))\b"
+    r"(?:star|unstar|bin|junk|spam|favou?rite|categori[sz]e|undelete)")
+#: What may follow a point-and-act verb for it to be a change. The router also takes a quantifier ("star
+#: everything but the unread" is handed on, never read as a statement).
+_POINT_OBJECTS = r"these|those|them|this|that|it|the|all"
+_ACT_TAIL = (
     # A fragment or an idiom is not a request to change anything: "cancel
     # that", "move on", "make sense?", "set?" carry no object to act on.
-    r"(?!\s*(?:that|it|this|them)?\s*[?.!]*$)(?!\s+(?:on|sense|up)\b\s*[?.!]*$)",
-    re.I)
+    r"(?!\s*(?:that|it|this|them)?\s*[?.!]*$)(?!\s+(?:on|sense|up)\b\s*[?.!]*$)")
+
+
+def _act_pattern(objects: str) -> re.Pattern:
+    return re.compile(_POLITE + _ACT_HEAD + r"(?=\s+(?:" + objects + r")\b))\b" + _ACT_TAIL, re.I)
+
+
+_ACT = _act_pattern(_POINT_OBJECTS + r"|both|each|every|everything")
+#: Gemini Live's "you did not ask me to change anything" guard (services/live_laya) is SWITCHED OFF by a write
+#: intent, so it keeps the narrower list: "bin every Thursday, right?" or "and spam every day" must not count
+#: as asking for a change there. Widening the router's _ACT never loosens that guard.
+_ACT_LIVE = _act_pattern(_POINT_OBJECTS)
 
 #: Where one request holds several: "look up the meeting time and put it on my
 #: calendar". Any clause after the first that is an imperative which changes
@@ -333,6 +345,11 @@ def _clauses(text: str):
 def _has_write_intent(text: str) -> bool:
     """True when any clause of ``text``, not only the first, is a change."""
     return bool(_ACT.search(text)) or any(_ACT.search(c) for c in _clauses(text))
+
+
+def _has_live_write_intent(text: str) -> bool:
+    """``_has_write_intent`` with the narrower ``_ACT_LIVE``: for a guard that a write intent switches off."""
+    return bool(_ACT_LIVE.search(text)) or any(_ACT_LIVE.search(c) for c in _clauses(text))
 
 
 #: A request whose result is TEXT the owner will send or keep (an email, a
