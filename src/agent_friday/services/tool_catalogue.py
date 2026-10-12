@@ -571,10 +571,14 @@ def tools_in_group(group: str) -> list:
 
 def _ring_of(name: str):
     """The tool's privilege ring, with the same fallback `_execute_tool`
-    uses for a name no ring table knows (ring 2)."""
+    uses for a name no ring table knows (ring 2). A tool the capability
+    preflight withheld on this machine keeps the ring it was declared with,
+    so its hints are the same everywhere."""
     try:
-        from agent_friday.services.agent import TOOL_RINGS
-        return int(TOOL_RINGS.get(name, 2))
+        from agent_friday.services import agent
+        if name in agent.TOOL_RINGS:
+            return int(agent.TOOL_RINGS[name])
+        return int(getattr(agent, "_WITHHELD_RINGS", {}).get(name, 2))
     except Exception:
         return 2
 

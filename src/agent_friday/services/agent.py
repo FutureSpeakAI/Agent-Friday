@@ -11070,6 +11070,12 @@ TOOL_RINGS.update({"plan_first": 1, "plan_approve": 1, "plan_milestone": 1})
 # services/capability_preflight.py owns the declared inventory and the reason
 # each entry exists. Optional-by-design capabilities (Presidio, torch) never
 # reach missing_tools() — they withhold nothing.
+#
+# _WITHHELD_RINGS keeps the ring each withheld tool was declared with. It
+# grants nothing (the tool has no handler and no TOOL_RINGS entry); it lets
+# tool_catalogue describe the tool the same way on every machine, so a ring-3
+# tool is never described as a harmless ring-2 one where it is withheld.
+_WITHHELD_RINGS: dict[str, int] = {}
 try:
     from agent_friday.services import capability_preflight as _cap_preflight
     _WITHHELD_TOOLS = _cap_preflight.missing_tools()
@@ -11078,7 +11084,9 @@ try:
                            if t.get("name") not in _WITHHELD_TOOLS]
         for _wt in _WITHHELD_TOOLS:
             CLAUDE_TOOL_HANDLERS.pop(_wt, None)
-            TOOL_RINGS.pop(_wt, None)
+            _wr = TOOL_RINGS.pop(_wt, None)
+            if _wr is not None:
+                _WITHHELD_RINGS[_wt] = _wr
         print("  [CAPABILITY] withheld %d tool(s) with missing dependencies: %s"
               % (len(_WITHHELD_TOOLS), ", ".join(sorted(_WITHHELD_TOOLS))))
     for _line in _cap_preflight.report():
