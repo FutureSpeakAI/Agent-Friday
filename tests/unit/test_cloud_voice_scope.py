@@ -1033,7 +1033,9 @@ def test_the_stale_descriptions_are_corrected():
 def test_both_ui_files_wire_the_failure_offer_the_ids_and_the_refusal():
     for name in ("index.html", "ui_parts/app.html"):
         html = (ROOT / name).read_text(encoding="utf-8")
-        assert "m.offer.kind === 'cloud_switch'" in html and "m.offer.endpoint" in html, name
+        assert "m.offer.kind === 'cloud_switch'" in html, name
+        # The offer posts to the one fixed ask route; a URL carried in the message is never followed.
+        assert "apiFetch('/api/voice/cloud-switch'" in html and "m.offer.endpoint" not in html, name
         assert "id: st.cloud_question.id" in html and "id: st.switch_back.id" in html, name
         assert "data-cloud-voice-refused" in html and "setRefusal(" in html, name
 
