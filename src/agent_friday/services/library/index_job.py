@@ -322,13 +322,6 @@ class FolderJob:
         """The visible job (Activity card) this pass runs under."""
         self.vj = vj
         self.progress.set(self.scope, card_id=vj.id)       # a held folder is listed under the card's own id
-        try:
-            # The card's Stop works: `before()` checks it ahead of every file and the held wait checks it
-            # every second, so the Activity row offers it (services/activity_lane reads `stoppable`).
-            from agent_friday.services import agent as _agent
-            _agent._task_set(vj.id, stoppable=True)
-        except Exception:  # noqa: BLE001 - visibility never stops the work
-            pass
         return self
 
     def _log(self, line: str) -> None:
