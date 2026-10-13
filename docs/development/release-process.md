@@ -49,9 +49,18 @@ The full matrix, with what each path can and cannot do, is in
    backup to exist, and the shortcuts to land. The release waits for every leg. Both jobs upload their evidence.
    Certificate trust raises a Windows security dialog and is checked by hand on
    a real machine.
-5. Commit, tag `v<version>`, and push the tag by name (never `--tags`). The
+5. **Hard gate: every GitHub check is green on the exact commit to be
+   tagged.** That is pytest on all four runners (ubuntu-latest and
+   windows-latest, Python 3.11 and 3.12), the app specs, CodeQL (no open
+   alert introduced by the release), the package build and the repository
+   guards, plus the `installer` workflow run of step 4 on that same commit.
+   A check is never relaxed, skipped, re-labelled or marked optional to get
+   there; a red check is fixed at its cause, and a rerun counts only for a
+   failure shown to be the runner's, not the code's. Any later commit resets
+   the gate.
+6. Commit, tag `v<version>`, and push the tag by name (never `--tags`). The
    tag must match `pyproject.toml`; the workflow refuses a mismatch.
-6. The tag runs the same workflow. When both verification jobs pass, the
+7. The tag runs the same workflow. When both verification jobs pass, the
    release job (the only job with write permission) publishes the **latest
    release** (not a pre-release, so the README's download link lands on it)
    titled "Agent Friday Beta 1.1" carrying the exe, its SHA-256 and
