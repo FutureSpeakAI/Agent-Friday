@@ -4798,6 +4798,75 @@ def _restore_tasks_from_journal(announce=True, limit=200):
         TASKS_RESTORED.set()
 
 
+#: A task younger than this is never judged orphaned: its worker may still be
+#: on its way to starting.
+ORPHAN_GRACE_S = 120
+#: A task with no worker thread of its own (an inline workspace job, a quick
+#: draft) is orphaned once nothing has touched it for this long.
+OWNERLESS_STALE_S = 3600
+ORPHAN_REASON = "Its worker stopped without recording an end; the task reconciler closed it."
+
+
+def reconcile_orphan_tasks(now=None):
+    """Close every task that says it is still going but whose work has ended.
+
+    A finished task always leaves "running": the worker's own exit writes the
+    end, and this pass catches the exits that did not (an exception that
+    escaped, a worker that returned before its finally, a cancel that changed
+    only the cache). Orphaned means: its worker thread started and is gone, or
+    it has no thread of its own and nothing has touched it in
+    OWNERLESS_STALE_S. A task whose record on disk already ended takes that
+    status; anything else ends as interrupted with ORPHAN_REASON. The end is
+    journaled through _task_set and the seat it held is freed. Returns the ids
+    closed. Never raises."""
+    now = _time.time() if now is None else now
+    closed = []
+    try:
+        with TASKS_LOCK:
+            items = [(tid, dict(t)) for tid, t in TASKS.items()]
+            threads = dict(TASK_THREADS)
+        with _PENDING_TASK_THREADS_LOCK:
+            pending = set(_PENDING_TASK_THREADS)
+        sup = _SEAT_SUPERVISOR
+        waiting_inline = set(getattr(sup, "_inline_events", {}) or {}) if sup else set()
+        tj = _journal()
+        for tid, t in items:
+            status = t.get('status')
+            if _is_terminal_status(status) or status == 'deleted':
+                continue
+            if now - float(t.get('created') or now) < ORPHAN_GRACE_S:
+                continue
+            if tid in pending or tid in waiting_inline:
+                continue
+            th = threads.get(tid)
+            if th is not None:
+                if th.ident is None or th.is_alive():
+                    continue                    # not started yet, or still working
+            else:
+                seen = max(float(t.get(k) or 0) for k in ('last_seen', 'started', 'created'))
+                if now - seen < OWNERLESS_STALE_S:
+                    continue
+            disk = tj.read_state(tid) or {}
+            if _is_terminal_status(disk.get('status')):
+                fields = {k: disk[k] for k in ('status', 'result', 'ended') if disk.get(k)}
+            else:
+                fields = {'status': 'interrupted', 'ended': t.get('ended') or now,
+                          'status_reason': ORPHAN_REASON,
+                          'result': t.get('result') or '[Interrupted] ' + ORPHAN_REASON}
+            _task_set(tid, **fields)
+            if sup is not None:
+                try:
+                    sup.on_task_end(tid, status=fields['status'])
+                except Exception:
+                    pass
+            closed.append(tid)
+    except Exception as e:
+        _log.warning("task reconciler pass failed: %s", e)
+    if closed:
+        _log.info("task reconciler closed %d orphaned task(s): %s", len(closed), closed[:10])
+    return closed
+
+
 #: How long the worker waits for a local grade. The task's own status is already
 #: set when the evaluator starts, but its completion notice waits for the grade,
 #: so a cold or busy seat must not hold that notice for the local-call default.
@@ -5686,6 +5755,7 @@ def _seat_supervisor():
                 thread_factory=_start_pending_task_thread,
                 reclaim_seat=None,
                 on_queued_wait=_offer_cloud_while_waiting,
+                on_assess=reconcile_orphan_tasks,
                 # The background work queue's one rule: no start (and no next
                 # model call) during an interactive turn; deferrable work
                 # waits for idle (services/background_gate).
