@@ -8,6 +8,10 @@ from pathlib import Path
 
 import pytest
 
+# Imported at collection, as tests/api/conftest.py does: the server registers its
+# blueprints on import, and Flask refuses that once any earlier test in the same
+# process has sent a request through the shared app.
+from agent_friday import server
 from agent_friday.services import desktop_targets as dt
 from agent_friday.services import setting_proposals as sp
 
@@ -77,7 +81,6 @@ def test_the_outline_is_the_reticles_look_in_tokens_and_goes_on_the_next_input()
 
 
 def test_the_changes_route_lists_a_row_and_the_owners_undo_works_once(tmp_path, monkeypatch, friday_dir):
-    from agent_friday import server
     from agent_friday.core import _load_settings, _save_settings
     monkeypatch.setattr(sp, "_store", lambda: tmp_path / "setting_changes.json")
     _save_settings({"big_mode": "off"})
