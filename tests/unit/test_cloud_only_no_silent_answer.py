@@ -198,16 +198,18 @@ CMD = {"tool": "navigate_to", "input": {"kind": "email", "id": "t-1"}}
     ("PENDING card", "card",
      "Opening Go-live checklist is waiting on an approval card. Nothing was opened yet."),
     ("ERROR no", "refused",
-     "I did not open Go-live checklist: ERROR no (instant, no model; nothing ran)."),
+     "I did not open Go-live checklist: the action failed (error <id>) (instant, no model; nothing ran)."),
     ("something odd", "not_confirmed",
-     "I could not confirm Go-live checklist opened: something odd (instant, no model)."),
+     "I could not confirm Go-live checklist opened: the desktop did not confirm it (instant, no model)."),
 ])
 def test_in_cloud_only_a_reflex_confirmation_is_a_receipted_template(
         monkeypatch, tool_result, outcome, expect):
+    import re
     assert ci.routing_mode() == "cloud_only"
     out, stub = _open(monkeypatch, tool_result, _Res("command", command=CMD, chosen=_Chosen()))
     assert out["outcome"] == outcome
-    assert out["reply"] == expect                       # fixed words, no model
+    # fixed words, no model; a failure names its log entry by an 8-hex error id
+    assert re.sub(r"\(error [0-9a-f]{8}\)", "(error <id>)", out["reply"]) == expect
     assert out["laya"]["laya"] is True                  # the "Laya" receipt
     assert out["laya"]["template"] and out["laya"]["kind"] in lt.KINDS
     assert stub.ran == ["navigate_to"]                  # she acted; she did not compose

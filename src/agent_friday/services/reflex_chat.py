@@ -444,11 +444,11 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
         hist = _lt.line("open_card", shown="that").text
     elif status in ("deny", "error"):
         outcome = "refused"
-        reply = _lt.line("open_refused", shown=shown, detail=_page_detail(status, result))
+        reply = _lt.line("open_refused", shown=shown, detail=_page_detail(status, result, tool))
         hist = _lt.line("open_refused", shown="that", detail=hist_detail).text
     else:
         outcome = "not_confirmed"
-        reply = _lt.line("open_unconfirmed", shown=shown, detail=_page_detail(status, result))
+        reply = _lt.line("open_unconfirmed", shown=shown, detail=_page_detail(status, result, tool))
         hist = _lt.line("open_unconfirmed", shown="that", detail=hist_detail).text
     count("open_" + outcome)
     _record_plan(turn_id, shape="reflex_open", reason="resolver: one sealed command",
@@ -457,15 +457,16 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
             "laya": reply.receipt(), "history_text": hist}
 
 
-def _page_detail(status: str, result: str) -> str:
+def _page_detail(status: str, result: str, tool: str) -> str:
     """Why an instant open did not land, in words fixed here. A tool error's own text is logged
     under an error id, which the phrase names; it never reaches the page."""
     if status == "deny":
         return "a rule on this PC held it"
     if status == "error":
         from agent_friday.user_errors import log_text
-        return "the action failed (error %s)" % log_text("Instant open failed", result)
-    _log.info("instant open not confirmed: %s", _first_line(result, 120))
+        return "the action failed (error %s)" % log_text("Instant %s failed" % tool, result)
+    # The unconfirmed text can name what was on screen (a title, a sender): only its size is logged.
+    _log.info("instant %s not confirmed: status %s, %d characters", tool, status, len(result or ""))
     return "the desktop did not confirm it"
 
 
