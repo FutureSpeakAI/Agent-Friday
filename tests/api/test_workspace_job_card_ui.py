@@ -187,6 +187,9 @@ def test_the_briefing_task_is_on_the_desktop_with_its_model_and_an_openable_trac
 
             # 3. Its row in Activity says who is working and what it is doing.
             pg.locator("[data-testid=local-ai-queue-chip]").click()
+            # The chip opens on "Needs you" when anything waits on the owner
+            # (approvals other tests left behind count); Activity is one click.
+            pg.locator("[data-testid=lane-tab-activity]").click()
             row = pg.locator("[data-testid=lane-task][data-task-id='%s']" % tid)
             row.wait_for()
             meta = row.locator("[data-testid=lane-task-meta]").inner_text()
