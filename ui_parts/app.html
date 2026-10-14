@@ -19989,7 +19989,8 @@ function MemoryCardPanel() {
   const from = src => (String(src || '').indexOf('dream') === 0 ? 'nightly dreaming'
     : src === 'review' ? 'the background review' : src === 'friday' ? fridayName() : 'an older note');
   const file = t => {
-    const f = rep.card[t];
+    // The owner's own words for the two files (the server's titles are written for the prompt).
+    const f = Object.assign({}, rep.card[t], {title: t === 'user' ? 'About you' : 'Working with you (' + fridayName() + '’s own lessons)'});
     const pct = f.cap ? Math.min(100, Math.round(100 * f.used / f.cap)) : 0;
     return E('div', {key: t, 'data-core-memory': t},
       E('div', {style: head}, f.title),
