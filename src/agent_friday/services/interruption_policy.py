@@ -181,9 +181,10 @@ def focus_on(s: Optional[dict] = None) -> bool:
 
 def _k(key: Any) -> str:
     """What an item is remembered under: a hash, so the state file holds no id, title or dedupe key.
-    The digest is a short lookup key over Friday's own task ids and dedupe keys; no signature,
-    password or secret depends on it, so SHA-1 is declared not used for security."""
-    return hashlib.sha1(str(key).encode("utf-8"), usedforsecurity=False).hexdigest()[:16] if key else ""
+    SHA-256, cut to 20 hex characters. A state file written with the earlier 16-character keys
+    still loads: those entries simply match nothing and leave within the hour (WINDOW_S), so an
+    item judged just before an upgrade may be judged once more; the hour's count is unchanged."""
+    return hashlib.sha256(str(key).encode("utf-8")).hexdigest()[:20] if key else ""
 
 
 def set_state_path(path: Any) -> None:

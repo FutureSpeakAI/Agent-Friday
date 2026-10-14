@@ -328,6 +328,24 @@ def test_the_state_file_holds_hashes_and_timestamps_never_an_id_or_a_title():
     assert ip.held("approval:appr_private", NOON) is False
 
 
+def test_a_state_file_with_the_earlier_short_keys_still_loads_and_still_counts():
+    import hashlib
+    import json
+    assert ip._k("approval:x") == hashlib.sha256(b"approval:x").hexdigest()[:20]
+    legacy = hashlib.sha1(b"approval:x").hexdigest()[:16]  # the earlier key form
+    ip._path().write_text(json.dumps({"events": [[NOON, legacy]], "seen": {legacy: [NOON, False, ip.BUDGET]},
+                                      "seq": 3}), encoding="utf-8")
+    path = ip._path()
+    ip.set_state_path(path)                               # drop what is in memory; reload from the file
+    try:
+        assert ip.used_this_hour(NOON + 1) == 1           # the earlier event still counts this hour
+        v = ip.verdict("approval_pending", source="approvals", key="approval:x", now=NOON + 2, settings={})
+        assert v.counted and ip.used_this_hour(NOON + 3) == 2   # judged afresh under the new key
+        assert ip.used_this_hour(NOON + 3601) == 0         # and the earlier entry leaves with the hour
+    finally:
+        ip.set_state_path(None)
+
+
 def test_an_off_the_record_card_leaves_no_trace_of_its_words_in_the_state(monkeypatch):
     monkeypatch.setattr(ne, "_off_record_now", lambda: True)
     ne.push(title="Secret plan failed", source="scheduler", kind="scheduled_failure", priority="high")
