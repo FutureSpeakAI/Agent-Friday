@@ -504,3 +504,58 @@ def test_shadow_runs_in_one_visible_job_per_burst_not_one_card_per_turn(tmp_path
             break
         time.sleep(0.05)
     assert len(tops) == 2
+
+
+def test_a_runner_still_closing_its_card_leaves_the_next_bursts_rows_alone(tmp_path, monkeypatch):
+    """A runner whose idle window has ended has handed the queue on. While it is still closing its card,
+    the next burst's runner owns the queue: the old runner's clean-up neither drops those rows nor marks
+    the new runner gone (which would start a second runner and a second card)."""
+    import threading
+    import time
+    from agent_friday.services import visible_jobs as vj
+    for _ in range(200):
+        with lh._shadow_cv:
+            if not lh._shadow_runner:
+                break
+            lh._shadow_cv.notify_all()
+        time.sleep(0.02)
+    assert not lh._shadow_runner, "a runner from an earlier test is still draining"
+    closing, release, closers = threading.Event(), threading.Event(), []
+
+    class SlowToClose(vj.visible_job):
+        def __exit__(self, *a):
+            out = super().__exit__(*a)
+            if self._kw["name"] == "Laya tool head (shadow)" and not closing.is_set():
+                closers.append(threading.current_thread())
+                closing.set()
+                release.wait(5)                 # the first runner's card is still closing
+            return out
+    monkeypatch.setattr(vj, "visible_job", SlowToClose)
+    monkeypatch.setattr(lh, "SHADOW_IDLE_WINDOW_S", 0.05)
+    gate = threading.Event()
+    head = FakeHead(lambda case: ((gate.wait(5) if case["user"].startswith("second") else None),
+                                  {"operation": "none", "args": None, "score": 0.9})[1])
+    _certify(tmp_path, monkeypatch, head)
+    final = lr.Route("no_tool")
+    try:
+        assert lh.shadow("first", final, None, "voice") is True
+        assert closing.wait(5), "the first runner never reached the end of its idle window"
+        assert not lh._shadow_runner                     # handed on: the next shadow() starts a runner
+        assert all(lh.shadow("second %d" % i, final, None, "voice") for i in range(lh.MAX_SHADOW_BACKLOG))
+        for _ in range(200):                             # the second runner is inside its first row
+            if len(head.cases) == 2:
+                break
+            time.sleep(0.01)
+        assert len(head.cases) == 2
+    finally:
+        release.set()
+    closers[0].join(5)
+    assert not closers[0].is_alive()
+    assert lh._shadow_runner, "the closing runner marked the working one gone"
+    assert lh._shadow_pending == lh.MAX_SHADOW_BACKLOG
+    gate.set()
+    for _ in range(200):
+        if lh._shadow_pending == 0 and not lh._shadow_runner:
+            break
+        time.sleep(0.05)
+    assert [c["user"] for c in head.cases] == ["first"] + ["second %d" % i for i in range(lh.MAX_SHADOW_BACKLOG)]

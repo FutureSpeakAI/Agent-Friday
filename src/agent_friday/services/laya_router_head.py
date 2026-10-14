@@ -531,8 +531,13 @@ def _shadow_job(text, final, proto, surface, profile):
 
 
 def _shadow_runner_loop(profile):
-    """The runner thread: one visible job for the whole burst, then it closes."""
+    """The runner thread: one visible job for the whole burst, then it closes.
+
+    When its idle window ends with nothing queued it hands the queue on (``_shadow_runner`` cleared under
+    the lock) and owns nothing more: the next shadow() may start a new runner while this one is still
+    closing its card, and that runner's rows and flag are never this one's to clear."""
     global _shadow_runner, shadow_jobs_opened
+    handed_on = False
     try:
         from agent_friday.services import visible_jobs as _vj
         # queued=False: the head makes no local-model call, so it never needs a place in the Local AI queue.
@@ -546,17 +551,19 @@ def _shadow_runner_loop(profile):
                         _shadow_cv.wait(SHADOW_IDLE_WINDOW_S)
                     if not _shadow_q:
                         _shadow_runner = False          # decided under the lock: the next shadow() starts a new runner
+                        handed_on = True
                         return
                     item = _shadow_q.popleft()
                 _shadow_job(*item)
     except Exception as e:  # noqa: BLE001
         _log.debug("shadow runner stopped: %s", type(e).__name__)
     finally:
-        with _shadow_lock:
-            _shadow_runner = False
-            while _shadow_q:                            # nothing is left queued behind a dead runner
-                _shadow_q.popleft()
-                globals()["_shadow_pending"] -= 1
+        if not handed_on:
+            with _shadow_lock:
+                _shadow_runner = False
+                while _shadow_q:                        # nothing is left queued behind a dead runner
+                    _shadow_q.popleft()
+                    globals()["_shadow_pending"] -= 1
 
 
 def shadow(text: str, final, proto, surface: str, profile: str = DEFAULT_PROFILE, *, sync: bool = False) -> bool:
