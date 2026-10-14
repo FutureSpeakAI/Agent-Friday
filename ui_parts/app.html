@@ -9975,6 +9975,15 @@ function WorkflowsWS() {
     catch (e) { if (alive.current) setError(e.message); }
     finally { mutation.current = false; if (alive.current) setBusy(''); }
   };
+  // The owner's per-job choice to hear when a routine finishes; saved on the
+  // schedule (finish_notice), so every later run follows it.
+  const toggleFinish = async r => {
+    if (mutation.current) return;
+    mutation.current = true; ++epoch.current; setBusy(r.schedule_id); setError('');
+    try { await apiFetch('/api/schedules/' + encodeURIComponent(r.schedule_id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ finish_notice: !r.finish_notice }) }).then(res => res.json().then(d => { if (!res.ok || d.status === 'error') throw new Error(d.message || d.error || 'Could not change the routine.'); })); await load(); }
+    catch (e) { if (alive.current) setError(e.message); }
+    finally { mutation.current = false; if (alive.current) setBusy(''); }
+  };
   const remove = async w => {
     if (mutation.current || !confirm('Delete “' + w.name + '” and its schedule?')) return;
     mutation.current = true; ++epoch.current; setBusy(w.id); setError('');
@@ -10011,7 +10020,7 @@ function WorkflowsWS() {
       {focusedSlug && <button type="button" className="wfx-link" onClick={() => setFocusedSlug('')}>Show other workflows</button>}
       {!wfs.length && <p className="wfx-quiet">{projectFilter || focusedSlug ? 'No workflows match this view. Create one above or choose another project.' : 'Begin with one useful result. You can run it once, then make it a routine.'}</p>}
       {wfs.map(w => <WfCard key={w.id || w.slug} w={w} busy={!!busy} onAction={action} onToggle={toggle} onDelete={remove} onEdit={setEditing} />)}
-      {routines.length > 0 && <details className="wfx-disclosure" open={showRoutines} onToggle={e => setShowRoutines(e.currentTarget.open)}><summary>{fridayName()}'s built-in routines · {routines.filter(r => r.enabled).length} on</summary>{routines.map(r => <div key={r.schedule_id} className="wfx-row wfx-routine"><div className="wfx-grow"><strong>{r.name}</strong><div className="wfx-quiet">{r.when_text}</div></div><WfSwitch disabled={!!busy} on={r.enabled} label={'Run ' + r.name} onChange={() => toggle(r)} /></div>)}</details>}
+      {routines.length > 0 && <details className="wfx-disclosure" open={showRoutines} onToggle={e => setShowRoutines(e.currentTarget.open)}><summary>{fridayName()}'s built-in routines · {routines.filter(r => r.enabled).length} on</summary>{routines.map(r => <div key={r.schedule_id} className="wfx-row wfx-routine"><div className="wfx-grow"><strong>{r.name}</strong><div className="wfx-quiet">{r.when_text}</div></div>{r.announces_finish && <span className="wfx-quiet" aria-hidden="true">Tell me when it finishes</span>}{r.announces_finish && <WfSwitch disabled={!!busy} on={r.finish_notice} label={'Tell me when ' + r.name + ' finishes'} onChange={() => toggleFinish(r)} />}<WfSwitch disabled={!!busy} on={r.enabled} label={'Run ' + r.name} onChange={() => toggle(r)} /></div>)}</details>}
     </>}
   </div>;
 }
@@ -24514,7 +24523,6 @@ function App(){
   useEffect(()=>{const on=()=>{let f=0;try{f=parseFloat(localStorage.getItem('friday_chat_frac'))||0}catch(_){}setChatW(w=>clampChatW(f>0.1&&f<0.9?Math.round(vw()*f):w));setChatH(h=>h?clampChatH(h):0)};addEventListener('resize',on);return()=>removeEventListener('resize',on)},[]);
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   // Predictive workspaces — ids Friday predicts you'll want now (dock glow).
-  const[suggestedWs,setSuggestedWs]=useState(new Set());
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
   const[notifOpen,setNotifOpen]=useState(false);
@@ -26206,12 +26214,16 @@ function App(){
                    fontSize: 10, padding: '0 2px', lineHeight: 1 }, title: "Dismiss" }, "\u2715"))));
   });
   const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n));_notifPost('/api/notifications/read',id)};
-  useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
-  // Predictive workspaces — refresh the "Suggested" set Friday glows on the dock.
-  useEffect(()=>{const pull=()=>fetch('/api/workspace/predictions?top=4').then(r=>r.json()).then(d=>{
-    const strong=(d.predictions||[]).filter(p=>(p.score||0)>=0.12).map(p=>fridayWorkspaceId(p.workspace));
-    setSuggestedWs(new Set(strong));
-  }).catch(()=>{});pull();const iv=setInterval(pull,120000);return()=>clearInterval(iv)},[]);
+  const noticeSeenIds=useRef(new Set());
+  useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read,seen:!!n.seen||noticeSeenIds.current.has(n.id)}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
+  // A workspace's dock icon is highlighted only while a card Friday raised
+  // inside it is unseen. Opening the workspace, by any route, marks its
+  // cards seen; dismissing a card takes it out of the list.
+  const noticeWorkspaceOf=n=>{const t=(n&&n.target&&n.target.workspace)||(Array.isArray(n&&n.actions)&&n.actions[0]&&n.actions[0].workspace)||(n&&n.workspace);return t?fridayWorkspaceId(t):''};
+  const noticeWs=new Set(notifs.filter(n=>!n.seen&&!n.dismissed).map(noticeWorkspaceOf).filter(Boolean));
+  useEffect(()=>{const ids=notifs.filter(n=>n.id&&!n.seen&&openWins.has(noticeWorkspaceOf(n))).map(n=>n.id);if(!ids.length)return;
+    ids.forEach(id=>noticeSeenIds.current.add(id));setNotifs(prev=>prev.map(n=>ids.includes(n.id)?{...n,seen:true}:n));
+    apiFetch('/api/notifications/seen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}).catch(()=>{})},[openWins,notifs]);
   // Ambient awareness — let the holographic scene breathe with the user's state.
   // Stores an UPPERCASE system mood the 1s scene loop adopts when otherwise idle.
   useEffect(()=>{const pull=()=>fetch('/api/ambient/state').then(r=>r.json()).then(d=>{
@@ -27792,6 +27804,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
               </div>
               {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
               {!hasDetail&&tgt&&<span aria-hidden="true" title={notifTargetLabel(tgt)} style={{fontSize:12,color:'#00d4ff',marginTop:1}}>{tgt.url&&!tgt.workspace?'↗':'→'}</span>}
+              {n.id&&n.meta&&n.meta.schedule_id&&(n.kind==='scheduled_task'||n.kind==='scheduled_status')&&<button aria-label="Don't tell me when this finishes" className="notif-finish-optout" onClick={e=>{e.stopPropagation();apiFetch('/api/schedules/'+encodeURIComponent(n.meta.schedule_id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({finish_notice:false})}).then(r=>{if(r.ok)clearNotif(n.id)}).catch(()=>{})}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.45)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Don't tell me when this finishes (turn it back on under Workflows, built-in routines)">Don't tell me</button>}
               {n.id&&n.kind&&n.kind!=='approval_pending'&&<button aria-label="Mute this kind" className="notif-mute" onClick={e=>{e.stopPropagation();muteNotifKind(n)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Mute this kind (unmute in Settings > General)">&#x1F515;</button>}
               {n.id&&<button aria-label="Dismiss" onClick={e=>{e.stopPropagation();clearNotif(n.id)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Dismiss">&#x2715;</button>}
             </div>
@@ -28049,7 +28062,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?('Suggested — ' + fridayName() + ' predicts you’ll want this'):undefined} style={{position:'relative'}}>
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(noticeWs.has(w.id)&&!openWins.has(w.id))?'has-notice':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(noticeWs.has(w.id)&&!openWins.has(w.id))?(fridayName() + ' left you something here'):undefined} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
             </button>)}
           </div>

@@ -546,18 +546,10 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .dock-btn.active .dot { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
 
-        /* Predictive "Suggested" glow — Friday thinks you'll want this workspace
-           right now. A soft amber pulse, distinct from the cyan active state. */
-        @keyframes dockSuggestPulse {
-            0%,100% { box-shadow: 0 0 10px rgba(245,158,11,0.18), inset 0 0 10px rgba(245,158,11,0.05); border-color: rgba(245,158,11,0.28); }
-            50%     { box-shadow: 0 0 18px rgba(245,158,11,0.42), inset 0 0 14px rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.55); }
-        }
-        .dock-btn.suggested {
-            color: rgba(255,225,170,0.92);
-            border-color: rgba(245,158,11,0.3);
-            animation: dockSuggestPulse 2.8s ease-in-out infinite;
-        }
-        .dock-btn.suggested .dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+        /* A card Friday raised inside this workspace is waiting: one quiet
+           dot under the label, no count and no pulse. It clears when the
+           workspace is opened or the card is dismissed. */
+        .dock-btn.has-notice .dot { background: #00d4ff; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
@@ -32107,6 +32099,34 @@ function WorkflowsWS() {
       if (alive.current) setBusy('');
     }
   };
+  // The owner's per-job choice to hear when a routine finishes; saved on the
+  // schedule (finish_notice), so every later run follows it.
+  const toggleFinish = async r => {
+    if (mutation.current) return;
+    mutation.current = true;
+    ++epoch.current;
+    setBusy(r.schedule_id);
+    setError('');
+    try {
+      await apiFetch('/api/schedules/' + encodeURIComponent(r.schedule_id), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          finish_notice: !r.finish_notice
+        })
+      }).then(res => res.json().then(d => {
+        if (!res.ok || d.status === 'error') throw new Error(d.message || d.error || 'Could not change the routine.');
+      }));
+      await load();
+    } catch (e) {
+      if (alive.current) setError(e.message);
+    } finally {
+      mutation.current = false;
+      if (alive.current) setBusy('');
+    }
+  };
   const remove = async w => {
     if (mutation.current || !confirm('Delete “' + w.name + '” and its schedule?')) return;
     mutation.current = true;
@@ -32297,7 +32317,15 @@ function WorkflowsWS() {
     className: "wfx-grow"
   }, /*#__PURE__*/React.createElement("strong", null, r.name), /*#__PURE__*/React.createElement("div", {
     className: "wfx-quiet"
-  }, r.when_text)), /*#__PURE__*/React.createElement(WfSwitch, {
+  }, r.when_text)), r.announces_finish && /*#__PURE__*/React.createElement("span", {
+    className: "wfx-quiet",
+    "aria-hidden": "true"
+  }, "Tell me when it finishes"), r.announces_finish && /*#__PURE__*/React.createElement(WfSwitch, {
+    disabled: !!busy,
+    on: r.finish_notice,
+    label: 'Tell me when ' + r.name + ' finishes',
+    onChange: () => toggleFinish(r)
+  }), /*#__PURE__*/React.createElement(WfSwitch, {
     disabled: !!busy,
     on: r.enabled,
     label: 'Run ' + r.name,
@@ -65293,7 +65321,6 @@ function App() {
   const [structureName, setStructureName] = useState('Genesis Lattice');
   const [notifs, setNotifs] = useState([]);
   // Predictive workspaces — ids Friday predicts you'll want now (dock glow).
-  const [suggestedWs, setSuggestedWs] = useState(new Set());
   const [countdowns, setCountdowns] = useState([]);
   const [promptText, setPromptText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -67776,6 +67803,7 @@ function App() {
     } : n));
     _notifPost('/api/notifications/read', id);
   };
+  const noticeSeenIds = useRef(new Set());
   useEffect(() => {
     const pull = () => fetch('/api/notifications').then(r => r.json()).then(d => {
       const items = (d.items || []).filter(n => !dismissedNotifIds.current.has(n.id));
@@ -67783,7 +67811,8 @@ function App() {
         const readMap = new Map(prev.map(n => [n.id, n.read]));
         return items.map(n => ({
           ...n,
-          read: readMap.has(n.id) ? readMap.get(n.id) : !!n.read
+          read: readMap.has(n.id) ? readMap.get(n.id) : !!n.read,
+          seen: !!n.seen || noticeSeenIds.current.has(n.id)
         }));
       });
     }).catch(() => {});
@@ -67791,16 +67820,32 @@ function App() {
     const iv = setInterval(pull, 30000);
     return () => clearInterval(iv);
   }, []);
-  // Predictive workspaces — refresh the "Suggested" set Friday glows on the dock.
+  // A workspace's dock icon is highlighted only while a card Friday raised
+  // inside it is unseen. Opening the workspace, by any route, marks its
+  // cards seen; dismissing a card takes it out of the list.
+  const noticeWorkspaceOf = n => {
+    const t = n && n.target && n.target.workspace || Array.isArray(n && n.actions) && n.actions[0] && n.actions[0].workspace || n && n.workspace;
+    return t ? fridayWorkspaceId(t) : '';
+  };
+  const noticeWs = new Set(notifs.filter(n => !n.seen && !n.dismissed).map(noticeWorkspaceOf).filter(Boolean));
   useEffect(() => {
-    const pull = () => fetch('/api/workspace/predictions?top=4').then(r => r.json()).then(d => {
-      const strong = (d.predictions || []).filter(p => (p.score || 0) >= 0.12).map(p => fridayWorkspaceId(p.workspace));
-      setSuggestedWs(new Set(strong));
+    const ids = notifs.filter(n => n.id && !n.seen && openWins.has(noticeWorkspaceOf(n))).map(n => n.id);
+    if (!ids.length) return;
+    ids.forEach(id => noticeSeenIds.current.add(id));
+    setNotifs(prev => prev.map(n => ids.includes(n.id) ? {
+      ...n,
+      seen: true
+    } : n));
+    apiFetch('/api/notifications/seen', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ids
+      })
     }).catch(() => {});
-    pull();
-    const iv = setInterval(pull, 120000);
-    return () => clearInterval(iv);
-  }, []);
+  }, [openWins, notifs]);
   // Ambient awareness — let the holographic scene breathe with the user's state.
   // Stores an UPPERCASE system mood the 1s scene loop adopts when otherwise idle.
   useEffect(() => {
@@ -70674,7 +70719,21 @@ function App() {
         color: '#00d4ff',
         marginTop: 1
       }
-    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && n.kind && n.kind !== 'approval_pending' && /*#__PURE__*/React.createElement("button", {
+    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && n.meta && n.meta.schedule_id && (n.kind === 'scheduled_task' || n.kind === 'scheduled_status') && /*#__PURE__*/React.createElement("button", {
+      "aria-label": "Don't tell me when this finishes",
+      className: "notif-finish-optout",
+      onClick: e => {
+        e.stopPropagation();
+        apiFetch('/api/schedules/' + encodeURIComponent(n.meta.schedule_id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ finish_notice: false })
+        }).then(r => { if (r.ok) clearNotif(n.id); }).catch(() => {});
+      },
+      style: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)', cursor: 'pointer',
+               fontSize: 10, padding: '0 2px', lineHeight: 1 },
+      title: "Don't tell me when this finishes (turn it back on under Workflows, built-in routines)"
+    }, "Don't tell me"), n.id && n.kind && n.kind !== 'approval_pending' && /*#__PURE__*/React.createElement("button", {
       "aria-label": "Mute this kind",
       className: "notif-mute",
       onClick: e => {
@@ -71484,7 +71543,7 @@ function App() {
     className: "dock-group-btns"
   }, g.items.map(w => /*#__PURE__*/React.createElement("button", {
     key: w.id,
-    className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${suggestedWs.has(w.id) && !openWins.has(w.id) ? 'suggested' : ''}`,
+    className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${noticeWs.has(w.id) && !openWins.has(w.id) ? 'has-notice' : ''}`,
     "data-ws": w.id,
     // Ctrl/Cmd-click or middle-click: the workspace in a new BACKGROUND tab,
     // the way a link would -- the person chose to stay here. A plain click
@@ -71504,7 +71563,7 @@ function App() {
       }
     },
     onMouseDown: e => { if (e.button === 1) e.preventDefault(); },
-    title: suggestedWs.has(w.id) && !openWins.has(w.id) ? ('Suggested — ' + fridayName() + ' predicts you’ll want this') : w.blurb ? w.label + ' — ' + w.blurb : undefined,
+    title: noticeWs.has(w.id) && !openWins.has(w.id) ? (fridayName() + ' left you something here') : w.blurb ? w.label + ' — ' + w.blurb : undefined,
     style: {
       position: 'relative'
     }

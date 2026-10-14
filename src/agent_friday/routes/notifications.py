@@ -77,6 +77,15 @@ def mark_notification_read():
     return jsonify({"status": "ok", "id": nid})
 
 
+@notif_bp.route('/api/notifications/seen', methods=['POST'])
+def mark_notifications_seen():
+    """The workspace these cards are about was opened: its dock highlight goes."""
+    data = request.get_json(silent=True) or {}
+    ids = [str(i) for i in (data.get('ids') or []) if i][:200]
+    n = _notif_engine.mark_seen(ids) if (_notif_engine and ids) else 0
+    return jsonify({"status": "ok", "marked": n})
+
+
 @notif_bp.route('/api/notifications/dismiss', methods=['POST'])
 def dismiss_notification():
     data = request.get_json(silent=True) or {}
