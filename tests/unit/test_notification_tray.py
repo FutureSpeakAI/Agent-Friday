@@ -142,7 +142,7 @@ def test_a_job_failing_three_times_is_one_card_and_its_next_success_resolves_it(
     s._notify_run(rec, "complete", "ok")
     kinds = [c["kind"] for c in _cards()]
     assert "scheduled_failure" not in kinds, "the failure did not resolve on success"
-    assert kinds == [], "a routine success is in Activity, not the tray"
+    assert kinds == ["scheduled_task"], "the success announces the finish (on by default)"
 
 
 def test_a_retired_schedule_goes_to_the_activity_log_only(monkeypatch, _clean):

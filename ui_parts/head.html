@@ -458,18 +458,10 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .dock-btn.active .dot { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
 
-        /* Predictive "Suggested" glow — Friday thinks you'll want this workspace
-           right now. A soft amber pulse, distinct from the cyan active state. */
-        @keyframes dockSuggestPulse {
-            0%,100% { box-shadow: 0 0 10px rgba(245,158,11,0.18), inset 0 0 10px rgba(245,158,11,0.05); border-color: rgba(245,158,11,0.28); }
-            50%     { box-shadow: 0 0 18px rgba(245,158,11,0.42), inset 0 0 14px rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.55); }
-        }
-        .dock-btn.suggested {
-            color: rgba(255,225,170,0.92);
-            border-color: rgba(245,158,11,0.3);
-            animation: dockSuggestPulse 2.8s ease-in-out infinite;
-        }
-        .dock-btn.suggested .dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+        /* A card Friday raised inside this workspace is waiting: one quiet
+           dot under the label, no count and no pulse. It clears when the
+           workspace is opened or the card is dismissed. */
+        .dock-btn.has-notice .dot { background: #00d4ff; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
