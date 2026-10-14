@@ -5,7 +5,9 @@ a model that read something hostile could use it to silence the popup, the text 
 schedules. So turning quiet on is internal ONLY when the owner's own words did it (the router's rule
 on their typed or spoken line, which sets ctx["owner_utterance"]) or they clicked on the page (a
 separate route behind the page session). A model's tool call, with the same arguments, keeps the class
-the whole tool had before: outward, a confirmation or a card. Every other action is unchanged.
+the whole tool had before: outward, a confirmation or a card. Reading the tray out (summary, groups,
+read_group) changes nothing in it and is internal, for anyone ("No Pestering": a lookup raises no
+card). Every action that clears, mutes or ends quiet is outward.
 """
 from __future__ import annotations
 
@@ -20,13 +22,15 @@ from agent_friday.services import interruption_policy as ip
 
 OWNER = {"owner_utterance": True, "chosen_by": "laya_router:rule"}
 STILL_OUTWARD = [
-    {}, {"action": "summary"}, {"action": "clear"}, {"action": "mute", "kind": "info"},
-    {"action": "unmute", "kind": "info"}, {"action": "groups"}, {"action": "read_group", "group": "memory"},
+    {}, {"action": "clear"}, {"action": "mute", "kind": "info"},
+    {"action": "unmute", "kind": "info"},
     {"action": "clear_group", "group": "scheduler"}, {"action": "quiet", "group": "off"},
     {"action": "quiet", "kind": "end"}, {"action": "quiet", "group": "stop"}, {"action": "bogus"},
     {"action": None}, {"action": "QUIET ", "group": "off"},
 ]
 QUIET_ON = [{"action": "quiet"}, {"action": " Quiet "}, {"action": "quiet", "group": ""}]
+READ_ONLY = [{"action": "summary"}, {"action": "groups"}, {"action": "read_group", "group": "memory"},
+             {"action": " Summary "}]
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +44,12 @@ def _clean(friday_dir):
 @pytest.mark.parametrize("ctx", [None, {}, OWNER], ids=["no ctx", "model", "owner"])
 def test_every_action_but_quiet_on_keeps_the_class_the_tool_had_even_for_the_owner(args, ctx):
     assert ag.classify("notifications", args, ctx)[0] == ag.OUTWARD
+
+
+@pytest.mark.parametrize("args", READ_ONLY, ids=[str(a) for a in READ_ONLY])
+@pytest.mark.parametrize("ctx", [None, {}, OWNER], ids=["no ctx", "model", "owner"])
+def test_reading_the_tray_out_is_internal_for_anyone(args, ctx):
+    assert ag.classify("notifications", args, ctx)[0] == ag.INTERNAL
 
 
 @pytest.mark.parametrize("args", QUIET_ON, ids=[str(a) for a in QUIET_ON])
@@ -92,7 +102,8 @@ def test_the_handler_turns_quiet_on_exactly_when_the_gate_would_call_the_call_in
     monkeypatch.setattr(nt, "_quiet", lambda on: called.append(on) or "ok")
     nt.handle(dict(args))
     on_by_handler = called == [True]
-    on_by_gate = ag.classify("notifications", args, OWNER)[0] == ag.INTERNAL
+    on_by_gate = (ag.classify("notifications", args, OWNER)[0] == ag.INTERNAL
+                  and str(args.get("action") or "").strip().lower() == "quiet")
     assert on_by_handler == on_by_gate, args
 
 
