@@ -20,6 +20,7 @@ from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
 from agent_friday.services import memory_proposals as mp
+from agent_friday.services import screen_click
 from agent_friday.routes._errors import api_error, public_result
 
 memory_proposals_bp = Blueprint("memory_proposals", __name__)
@@ -53,6 +54,11 @@ def api_memory_proposals_pending():
 @login_required
 def api_memory_proposals_approve():
     data = request.get_json(silent=True) or {}
+    if mp.any_from_meeting(data.get("fact_ids") or []) and not screen_click.screen_session(request):
+        # What a meeting suggested becomes part of what Friday knows about the owner, and so of what a cloud
+        # model may later be told: only a click on the screen keeps it.
+        return jsonify({"ok": False, "reason": "A suggestion from a meeting is kept only from the Meetings view in the "
+                                              "Friday window."}), 403
     try:
         return jsonify(mp.approve(data.get("fact_ids") or []))
     except Exception as e:

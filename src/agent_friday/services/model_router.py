@@ -77,6 +77,7 @@ from agent_friday.services.wiki_engine import (
     wiki_write_text,
 )  # noqa: E501
 from agent_friday.services import visible_jobs as _vj
+from agent_friday.services.local_scheduler import admitted as _sched_admitted
 
 # Re-export routing helpers so callers can use a single import location.
 # Canonical source is routing/model_router.py — import from there when you only
@@ -99,6 +100,9 @@ class RoutedRefusal(str):
 def is_refusal(text) -> bool:
     """True when `text` is a refusal the router returned, not generated text."""
     return isinstance(text, RoutedRefusal)
+
+
+from agent_friday.services import cloud_intent as _cloud_intent
 
 
 def _seal_or_block(payload, provider, model=""):
@@ -217,6 +221,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
         refuse_if_active("anthropic", str(model or ""))
     except ImportError:
         pass
+    # The choke point: a local mode reaches the cloud only with a recorded intent.
+    _cloud_intent.require("anthropic", "model call (Claude)", str(model or ""))
     # A scheduled job allowed onto the cloud runs on the model the owner chose
     # for it, whatever the caller or a fallback leg asked for.
     from agent_friday.services.local_only_guard import apply_pin
@@ -413,7 +419,16 @@ def _mode_filtered_attempts(attempts, routing_cfg, *, vault_access=False):
     except ImportError:
         pass
     mode = str(((routing_cfg or {}).get("mode") or "")).lower()
-    if mode == "cloud_only":
+    if _cloud_intent.is_local_mode(mode) and not _cloud_intent.opens_cloud(mode):
+        # A local mode with no cloud intent: the ladder has no cloud legs at all,
+        # the head included. A local failure is a LocalUnavailable the caller
+        # turns into an offer or a retry, never a quiet walk to the cloud.
+        local = [a for a in attempts if a[0] in _LOCAL_LEGS]
+        if not local:
+            raise _cloud_intent.LocalUnavailable(
+                "no local model was lined up for this call", mode=mode)
+        return local[:1]
+    if mode in ("cloud_only", "cloud_preferred"):
         banned = _LOCAL_LEGS
     elif mode == "local_only":
         banned = _CLOUD_LEGS
@@ -423,8 +438,12 @@ def _mode_filtered_attempts(attempts, routing_cfg, *, vault_access=False):
     return head + [a for a in tail if a[0] not in banned]
 
 
-def _health_order(attempts, routed_provider_name=None):
+def _health_order(attempts, routed_provider_name=None, mode=None):
     """Stable-sort a provider-attempt ladder so 'down' providers go last.
+
+    In a local mode the demotion stays inside a leg's own class: an open local
+    breaker never puts a cloud leg ahead of a local one. The answer to a down
+    local seat is a local retry or an offer, not the cloud first.
 
     `attempts` is [(name, fn, model), …] where name ∈ {cloud, openai, local}.
     Health is measured per REGISTRY provider (provider_health.record from every
@@ -444,6 +463,14 @@ def _health_order(attempts, routed_provider_name=None):
                 return 1 if _ph.availability(reg_name) == 'down' else 0
             except Exception:
                 return 0
+        if mode is None:
+            mode = _cloud_intent.routing_mode()
+        if _cloud_intent.is_local_mode(mode):
+            local = [a for a in attempts if a[0] in _LOCAL_LEGS]
+            cloud = [a for a in attempts if a[0] not in _LOCAL_LEGS]
+            if attempts and attempts[0][0] in _LOCAL_LEGS:
+                return sorted(local, key=_down) + sorted(cloud, key=_down)
+            return sorted(cloud, key=_down) + sorted(local, key=_down)
         return sorted(attempts, key=_down)  # stable: preserves order within tiers
     except Exception:
         return attempts
@@ -477,6 +504,31 @@ def _schema_refused(exc) -> bool:
     text = str(exc).lower()
     return any(k in text for k in ("output_config", "response_format", "json_schema",
                                    "schema", "format", "400", "422"))
+
+
+def _no_route_must_stay_local(messages, routing_cfg) -> bool:
+    """When the router raised, is the request still bound to this machine?
+
+    A router that cannot answer must not become a way around local_only or the
+    vault. local_only mode keeps its promise outright. With vault gating on, the
+    request is classified here; if even that cannot be done, fail closed, as
+    privacy.vault_policy does for every failure path.
+    """
+    if str((routing_cfg or {}).get("mode") or "").lower() == "local_only":
+        return True
+    _mode = str((routing_cfg or {}).get("mode") or "").lower()
+    if _cloud_intent.is_local_mode(_mode) and not _cloud_intent.opens_cloud(_mode):
+        return True
+    try:
+        if not _vault_local_only():
+            return False
+    except Exception:
+        return True
+    try:
+        from agent_friday.routing.model_router import get_router
+        return bool(get_router(routing_cfg).needs_vault_access(messages, {}))
+    except Exception:
+        return True
 
 
 def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
@@ -568,6 +620,12 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # legs below, silently defeating vault_cloud_fallback's "deny"/"warn"
     # contract for every one of this function's many callers (briefings,
     # digests, KG summarization, calendar/message drafting, wiki bootstrap).
+    if route.get('implied_intent') and not _cloud_intent.current():
+        _cloud_intent.set_intent(route['implied_intent'], source='task_override')
+    if route.get('local_unavailable'):
+        raise _cloud_intent.LocalUnavailable(
+            "no local model is serving", purpose="text",
+            mode=str(routing_cfg.get('mode') or ''))
     if route.get('refuse'):
         return RoutedRefusal(
             route.get('warning')
@@ -697,6 +755,13 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
         _rt_ex.set_reason(_exhausted)
     except Exception:
         pass
+    # A local mode with no cloud intent: the failure is typed, and the caller
+    # turns it into an offer or a retry. Nothing was sent to a cloud model.
+    _mode_now = str(routing_cfg.get('mode') or '').lower()
+    if _cloud_intent.is_local_mode(_mode_now) and not _cloud_intent.opens_cloud(_mode_now):
+        raise _cloud_intent.LocalUnavailable(
+            "; ".join(str(e) for e in errors[-2:]) or "no reply",
+            purpose="text", model=str(routed_model or ''), mode=_mode_now)
     raise RuntimeError(_exhausted)
 
 # Keeps its own name and docstring; __wrapped__ carries the real signature.
@@ -711,7 +776,7 @@ def _generate_text(*args, **kwargs):
     """
     from agent_friday.services import reasoning_trace as _rt_scope
     _label = kwargs.get("orb_label") or kwargs.get("workspace") or "Background model call"
-    with _rt_scope.scope("background", str(_label)):
+    with _cloud_intent.preserve_scope(), _rt_scope.scope("background", str(_label)):
         return _generate_text_untraced(*args, **kwargs)
 
 
@@ -801,6 +866,8 @@ def _served_ctx(model):
     return _plan_num_ctx(model)
 
 
+@_sched_admitted("model_router.ollama", model_fallback=lambda: (
+    (_load_settings().get('model_routing') or {}).get('local_model')))
 def _call_ollama(messages, system=None, model=None, max_tokens=None,
                  # An orb's icon should say what the WORK is, not what
                  # transport carried it. A house default here makes every
@@ -883,6 +950,13 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
     # cloud call, refused inside a local-only run before anything is sent.
     from agent_friday.services.local_only_guard import refuse_if_active as _refuse_cloud
     _refuse_cloud(pinned or "ollama-local", str(model or ""))
+    # The owner's global Local only mode holds for a cloud-relayed tag too.
+    from agent_friday.services.local_only_guard import (
+        CloudRefused as _CloudRefused, routing_mode as _routing_mode)
+    if _is_cloud_model_tag(str(model or "")) and _routing_mode() == "local_only":
+        raise _CloudRefused(
+            "routing mode is local_only, so it will not call the "
+            "cloud-relayed model %s" % model)
 
     # There is deliberately NO seat gate here. A gate that re-checks every
     # tool-using dispatch and, on a red/ungated model, silently substitutes a
@@ -1181,6 +1255,7 @@ _TOOL_NARRATION = {
     "search_files": "Looking for that file",
     "write_file": "Writing that file",
     "annotate_calendar_events": "Updating your calendar entries",
+    "meeting": "Looking at your meetings",
     "query_trust_graph": "Checking what I know about them",
     "open_url": "Opening that in your browser",
     "run_command": "Running that command",
@@ -1526,6 +1601,26 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None,
     return out
 
 
+def _openai_leg_is_local(bound):
+    """True when an OpenAI-compatible call is aimed at a local provider (a
+    llama.cpp seat, LM Studio, vLLM on this PC or LAN): those legs wait for the
+    local work scheduler. A cloud leg never does."""
+    prov = bound.get('provider')
+    if prov is None:
+        return False
+    try:
+        from agent_friday.routing.provider_descriptors import (
+            adapter_of, classification_of, LOCAL_CAPABLE_ADAPTERS)
+        if not isinstance(prov, dict):
+            from agent_friday.services.provider_registry import get_provider_registry
+            prov = get_provider_registry().get_provider(str(prov))
+        return (bool(prov) and classification_of(prov) == 'local'
+                and adapter_of(prov) in LOCAL_CAPABLE_ADAPTERS)
+    except Exception:
+        return False
+
+
+@_sched_admitted("model_router.openai", local=_openai_leg_is_local)
 def _call_openai(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='☁️',
                  tools=None, pii_lookup=None, session_ctx=None,
@@ -1584,6 +1679,10 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
         refuse_if_active(provider if provider else "openai", str(model or ""))
     except ImportError:
         pass
+    # The choke point. A local provider returns an intent-free token, so the
+    # local seat legs of this transport are unaffected.
+    _cloud_intent.require(provider if provider else "openai",
+                          "model call (OpenAI-compatible)", str(model or ""))
     # The pinned model of a scheduled cloud run (see _call_claude). The legacy
     # single slot pointed at OpenRouter is OpenRouter for this purpose.
     from agent_friday.services.local_only_guard import apply_pin, pinned_model
@@ -2469,6 +2568,19 @@ def _current_session_id():
 
 
 def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
+    """The end of a chat or voice turn: index it, then let the turn's one
+    embedding of the message go (services/turn_vector)."""
+    try:
+        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library)
+    finally:
+        try:
+            from agent_friday.services import turn_vector as _tv
+            _tv.end_turn(text=message)
+        except Exception:
+            pass
+
+
+def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
@@ -2800,7 +2912,15 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         mem = _get_conversation_memory()
         if not mem.available():
             return live_block
-        hits = mem.search(message, n=n)
+        # The turn's one embedding of this message (services/turn_vector), when
+        # there is one; the store checks it is the same model and width.
+        try:
+            from agent_friday.services import turn_vector as _tv
+            _qvec = _tv.compute(message)
+        except Exception:
+            _qvec = None
+        hits = (mem.search(message, n=n, query_embedding=_qvec)
+                if _qvec is not None else mem.search(message, n=n))
         kept = []
         for h in hits:
             rel = h.get("relevance")
@@ -3832,8 +3952,13 @@ def _payload_dump_dir():
 
 def _build_context_prompt(message, workspace='', vision_description=None, provider='cloud',
                           vault_control=None, vault_fallback='redact', pilot=None,
-                          tools_block=True, model=''):
+                          tools_block=True, model='', slicer=None):
     """Build an enriched system prompt with all relevant context layers.
+
+    `slicer` (services/slice_head) is the slice-need head's plan for this turn.
+    It reads the sections that exist and, only when the owner chose to send
+    cloud models just what a turn needs and `provider` is cloud, drops or stubs
+    sections of the volatile tail. It never adds, and never touches the head.
 
     When `vault_control` is provided, each context section is tagged with a
     sensitivity tier and gated for `provider`: a local model sees everything,
@@ -3883,6 +4008,17 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     if _tools_text:
         add(_tools_text, _T1)
 
+    # The head ends here: the persona and the generated tool text are the
+    # same for every turn of every day. Today's context changes daily (a
+    # briefing lands, a countdown ticks over) and names the owner's people,
+    # so it opens the volatile tail: one changed byte in the head would
+    # re-read everything below it, and only the tail is where an opted-in
+    # cloud turn's slicer (services/slice_head) may hold a section back.
+    # What the owner's screen shows right now is not here either: it changes
+    # between turns, so the chat routes append it to the volatile tail
+    # (services/screen_stage.chat_tail).
+    _phase[0] = "volatile"
+
     # Layer 0: Always-on daily context (briefing headlines, career pipeline,
     # countdowns, trust circle, personality). The chat endpoint should never
     # answer cold — Friday is a personal agent, not a generic chatbot.
@@ -3898,12 +4034,6 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
             sources_consulted.append('daily_context')
     except Exception as _e:
         add(f"\n== TODAY'S CONTEXT ==\n(load failed: {_e})", _T1)
-
-    # Today's context is the same for every turn of the day; the workspace
-    # is the same for every turn of the conversation. Both stay in the head.
-    # What the owner's screen shows right now is not here: it changes between turns, so
-    # the chat routes append it to the volatile tail (services/screen_stage.chat_tail).
-    _phase[0] = "volatile"
 
     # Layer 2: Vault data (personality always included). Friday's own state is
     # not personal data about the user, so it stays public.
@@ -4190,16 +4320,24 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     # Stable first, then the clock header (the cache boundary), then what
     # this message chose.
     sections = _stable + ([_clock_section] if _clock_section else []) + _volatile
+    _ledger_sections, _plan_info = sections, None
+    if slicer is not None:
+        try:
+            sections, _plan_info = slicer.apply_sections(
+                sections, len(_stable) + (1 if _clock_section else 0))
+        except Exception:
+            sections, _plan_info = _ledger_sections, None
     try:
         from agent_friday.services import retrieval_ledger as _rl
         from agent_friday.services.egress_gate import is_local_provider as _is_local
         _rl.record_assembly(
-            sections,
+            _ledger_sections,
             turn_id=_rl.new_turn_id(),
             destination_class=("cloud" if _is_cloud_model_tag(model)
                                else "local" if _is_local(provider) else provider),
             gated=vault_control is not None,
             policy_source=_vault_policy().source,
+            plan_info=_plan_info,
         )
     except Exception:
         pass

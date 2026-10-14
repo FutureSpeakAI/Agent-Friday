@@ -1,0 +1,226 @@
+{
+ "schema": 1,
+ "id": "settings",
+ "label": "Settings",
+ "group": "system",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": "tab", "keys": ["tab", "section", "row"], "sections": null},
+ "objects": [],
+ "verbs": [
+  {
+   "id": "settings.open_section",
+   "action": "settings.open_section",
+   "group": "navigate",
+   "ui": {"control": "open section"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open the privacy settings"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "settings.toggle_setting",
+   "action": "settings.toggle_setting",
+   "group": "settings",
+   "ui": {"control": "toggle / set a setting (meeting retention is owner-only)"},
+   "tool": "set_setting",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["turn off the morning briefing"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "settings.model_provider",
+   "action": "settings.model_provider",
+   "group": "settings",
+   "ui": {"control": "model / provider"},
+   "tool": "switch_model",
+   "also_tools": ["local_model_status"],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["switch to the local model"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "settings.voice_pace",
+   "action": "settings.voice_pace",
+   "group": "settings",
+   "ui": {"control": "voice pace / depth"},
+   "tool": "voice_preferences",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["speak a little slower", "keep it brief"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"]
+  },
+  {
+   "id": "settings.cards_layout",
+   "action": "settings.cards_layout",
+   "group": "settings",
+   "ui": {"control": "Hide cards / Show cards (Simple desktop)"},
+   "tool": "set_chat_tray",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["hide the cards", "show the cards"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_simple_cards.py::test_the_router_hides_and_shows_the_cards_through_the_chat_tray_tool"]
+  }
+ ],
+ "jobs": [
+  {
+   "id": "settings.seat_gate",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "seat_gate",
+   "activity_label": "Seat conformance check",
+   "entry": "agent_friday.services.model_seat_gate:run_conformance_gate"
+  },
+  {
+   "id": "settings.persona_eval",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "persona_eval",
+   "activity_label": "Persona evaluation",
+   "entry": "agent_friday.services.persona_eval:run_live_eval"
+  },
+  {
+   "id": "settings.channel_reply",
+   "trigger": "idle",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "channel_reply",
+   "activity_label": "Channel reply",
+   "entry": "agent_friday.services.channels.manager:handle_incoming"
+  },
+  {
+   "id": "settings.laya_personal_refit",
+   "trigger": "idle",
+   "also": ["schedule", "button"],
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "laya_personal_refit",
+   "activity_label": "Learning from your corrections",
+   "entry": "agent_friday.services.laya_personal_fit:run_scheduled",
+   "schedule_ref": "laya_personal_refit"
+  },
+  {
+   "id": "settings.laya_personal_rebuild",
+   "trigger": "voice",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "laya_personal_rebuild",
+   "activity_label": "Applying your correction",
+   "entry": "agent_friday.services.laya_personal:rebuild"
+  },
+  {
+   "id": "settings.laya_personal_embed",
+   "trigger": "voice",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "laya_personal_embed",
+   "activity_label": "Laya learning",
+   "entry": "agent_friday.services.laya_personal:_persist_batch"
+  }
+ ],
+ "not_for_laya": [
+  {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
+  {
+   "action": "settings.local_voice_measure",
+   "kind": "by_design",
+   "reason": "Measure now runs the PC hard, so it is the owner's press in Settings > Voice; by voice, ask_friday queues it for when the owner is away."
+  },
+  {
+   "action": "settings.local_voice_status",
+   "kind": "by_design",
+   "reason": "Not a router tool: local_voice_readiness is outside the full voice contract, and a test pins it out of the router. Voice asks it through ask_friday."
+  },
+  {
+   "action": "settings.local_voice_switch_offer",
+   "kind": "by_design",
+   "reason": "Switch back or keep cloud, once: the owner's own answer, on the card or by voice (ask_friday, local_voice_readiness answer); not a router tool."
+  },
+  {
+   "action": "settings.cloud_voice_scope",
+   "kind": "by_design",
+   "reason": "Just this call or always: asked at every switch to cloud voice; by voice via ask_friday, local_voice_readiness, on the owner's own words only."
+  },
+  {
+   "action": "settings.interruptions",
+   "kind": "by_design",
+   "reason": "The interruption limit, quiet-hour times and Focus Assist are the owner's to loosen; by voice Laya can only quiet things (quiet until morning)."
+  },
+  {
+   "action": "settings.laya_report",
+   "kind": "by_design",
+   "reason": "The report card shows the owner's own words and is served to the owner only; by voice, 'what have you learned?' is the laya_learning summary."
+  },
+  {
+   "action": "settings.laya_item",
+   "kind": "by_design",
+   "reason": "Undo or forget of one learned item is the owner's control over their own data; Laya never runs it, and the voice 'forget that' needs the owner's own words."
+  },
+  {
+   "action": "settings.laya_reset",
+   "kind": "by_design",
+   "reason": "Reset, roll back and wipe of what Laya learned are the owner's controls (voice: 'reset', 'go back to last week'); a wipe is a card only a screen click approves."
+  },
+  {
+   "action": "settings.laya_confirm",
+   "kind": "by_design",
+   "reason": "Only the owner can confirm a choice the deeper mind made; Laya never confirms her own teacher (decision 3)."
+  },
+  {
+   "action": "settings.laya_refit",
+   "kind": "by_design",
+   "reason": "Learn now starts a visible Local AI queue job the owner asked for; it also runs by itself when idle, on AC power, with the vault open."
+  },
+  {
+   "action": "settings.laya_loosen",
+   "kind": "by_design",
+   "reason": "Loosening a learned threshold is the owner's decision, per head, by a click on the screen card (decision 15); Laya can never loosen herself."
+  },
+  {
+   "action": "settings.laya_notice",
+   "kind": "by_design",
+   "reason": "Seeing the notice that Laya learns from corrections is the owner's own acknowledgement."
+  }
+ ],
+ "notes": [
+  {
+   "id": "meeting_retention",
+   "text": "Meeting retention (meeting_audio_retention, meeting_text_retention, meeting_text_retention_days) and whether meetings are searchable from the Library (meeting_archive) are the owner's own choices, set in Privacy & Data and the Meetings view; none is a voice-settable key or has a verb, and the archive's yes is taken only from a click on the screen."
+  },
+  {
+   "id": "voice_live_trim",
+   "text": "The Gemini Live options row 'Trim what each call carries' sets voice_live_trim (off, shadow, on). It is a settings-panel row, not one of the audited UI actions, so it has no verb here. Laya reaches it by voice through the call's own tools: 'use fewer tools' and 'give me everything' are in resources/voice_session_phrasings.json (more_tools, internal gate, ring 1). Changing the mode itself stays the owner's choice in the panel.",
+   "verbs": ["voice_session.fewer_tools", "voice_session.everything"]
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": "settings", "pools": []}
+}

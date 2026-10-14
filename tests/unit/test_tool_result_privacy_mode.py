@@ -6,7 +6,7 @@ import types
 import pytest
 
 from agent_friday import core
-from agent_friday.services import agent, egress_gate as eg, tool_hooks
+from agent_friday.services import agent, cloud_intent, egress_gate as eg, tool_hooks
 
 
 @pytest.fixture
@@ -93,11 +93,14 @@ def test_native_sonnet_legacy_input_redaction_obeys_recorded_consent(monkeypatch
     monkeypatch.setattr(agent, "_register_agent_orb", lambda *a, **k: None)
     # Isolate the extra redactor before the separately tested outbound gate.
     monkeypatch.setattr(agent, "_seal_or_block", lambda payload, provider: payload)
-    agent._call_claude_agent(
-        [{"role": "user", "content": "Discuss Private appointment"}],
-        system="Context: Private appointment", model="claude-sonnet-5-5",
-        pii_lookup=None, session_ctx={},
-    )
+    # local_preferred sends to a cloud model only on an explicit request (cloud_intent); the
+    # owner asked here, so the call reaches the redactor this test is about.
+    with cloud_intent.intent_scope("user_explicit", source="test"):
+        agent._call_claude_agent(
+            [{"role": "user", "content": "Discuss Private appointment"}],
+            system="Context: Private appointment", model="claude-sonnet-5-5",
+            pii_lookup=None, session_ctx={},
+        )
     assert len(seen) == 1
     sent = json.dumps({"messages": seen[0]["messages"], "system": seen[0]["system"]})
     if choice == "cloud_unrestricted":

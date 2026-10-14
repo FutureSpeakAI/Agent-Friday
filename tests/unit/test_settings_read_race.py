@@ -220,11 +220,16 @@ def test_the_whole_dict_callers_save_only_their_keys(owned, monkeypatch):
     import agent_friday.routes.federation as fedroutes
     from agent_friday.services import federation as fed
     monkeypatch.setattr(fed, "get_peer", lambda agent_id: None)
+    # `voice_engine` is no longer a synced key (LV-7b: moving voice is the
+    # owner's answer on this device, never a peer's push), so the peer's
+    # delta carries a key that still syncs, and the voice key is refused.
     fedroutes._handle_federation_message(
-        "SETTINGS_SYNC", {"settings": {"voice_engine": "piper"}}, "peer-pubkey")
+        "SETTINGS_SYNC", {"settings": {"cite_sources": True, "voice_engine": "piper"}},
+        "peer-pubkey")
     disk = _on_disk()
     assert disk["agent_name"] == OWNER_NAME
-    assert disk["voice_engine"] == "piper"
+    assert disk["cite_sources"] is True
+    assert disk.get("voice_engine") != "piper"
 
 
 def test_a_binding_delta_carries_only_what_changed():

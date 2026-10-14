@@ -229,7 +229,11 @@ def test_dispatcher_reuses_ticket_across_local_to_cloud_fallback(monkeypatch, lo
         return "Done.", []
     monkeypatch.setattr(ag, "_call_ollama", local)
     monkeypatch.setattr(ag, "_call_claude_agent", cloud)
-    text, _ = ag._generate_agent_untraced([{"role": "user", "content": "Explain this"}], session_ctx=ctx)
+    # A local mode falls over to the cloud only with a recorded intent (the owner's
+    # word); without one the local failure is a LocalUnavailable and nothing is sent.
+    from agent_friday.services import cloud_intent
+    with cloud_intent.intent_scope("user_explicit", source="test"):
+        text, _ = ag._generate_agent_untraced([{"role": "user", "content": "Explain this"}], session_ctx=ctx)
     assert text == "Done."
     assert seen == [ticket, ticket]
     assert ticket.counts["model_rounds"] == 2

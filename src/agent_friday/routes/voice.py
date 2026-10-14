@@ -28,6 +28,7 @@ from pathlib import Path
 from collections import deque as _deque
 from agent_friday.services import voice_live_channel as _voice_live_channel
 from agent_friday.services import voice_conversation_state as _vcs
+from agent_friday.services import live_laya as _live_laya
 from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
@@ -803,7 +804,10 @@ async def _live_card_tool(fname, fargs, send, session, runner=None):
     if fname == "answer_card":
         said = str((session or {}).get("owner_text") or "").strip()
         card = str((fargs or {}).get("card_id") or "")
-        if watch.verified(card):
+        if _item_actions.is_laya_card(card):
+            return _item_actions.LAYA_CARD_NOT_ON_LIVE      # never the line, a subject or a sender, to the cloud voice
+        if watch.verified(card) and (not _item_actions.is_laya_card(card)
+                                     or _item_actions.card_in_conversation(card, cid)):
             if session is not None:
                 session["voiced_cards"] = [card]       # the one rule, applied in agent
         elif _item_actions.unvoiced_card_approval_blocked(card, said, _live_room_mode()):
@@ -814,7 +818,7 @@ async def _live_card_tool(fname, fargs, send, session, runner=None):
     result = await _voice_tool_with_limit(fname, fargs, send, session, runner=runner)
     if isinstance(result, str) and "card_id=" in result:
         ids, line = _sealed_card_line(result, cid)
-        if ids:
+        if ids and not any(_item_actions.is_laya_card(i) for i in ids):
             watch.arm(ids, line)
             result += _LIVE_CARD_ASK + line
     return result
@@ -855,7 +859,7 @@ def _discard_voice_orb(orb_id):
 LOCAL_TOOL_RESULT_CHARS = 8000
 
 
-def _local_voice_tool(fname, fargs, send, session, cut=True):
+def _local_voice_tool(fname, fargs, send, session, cut=True, owner_call=False):
     """One tool call from the LOCAL voice front, with the cloud path's manners
     (local voice spec P3 parity): the owner's time limit, a process orb as the
     execution receipt, a slow-call warning, and the late-result label when
@@ -873,7 +877,12 @@ def _local_voice_tool(fname, fargs, send, session, cut=True):
         pass
     orb_id, t0 = _voice_orb_start(fname), _time.time()
     try:
-        result = _run_voice_tool_bounded(fname, fargs, send, session)
+        # `owner_call` (the router's rule call on the owner's words) rides in this one call's own
+        # context, through a runner made for it; it is never put on the shared session.
+        result = _run_voice_tool_bounded(
+            fname, fargs, send, session,
+            runner=(lambda f, a, s, sess: _voice_tool_run(f, a, s, sess, owner_utterance=True))
+            if owner_call else None)
     except Exception as e:  # noqa: BLE001
         refusal = _crew_admission_agent._host_action_denial(fname, session)
         if refusal:
@@ -2094,6 +2103,11 @@ def _arm_voice_front(settings, progress=None, holder="session", room=None):
                 _lr.warm()
             except Exception:
                 pass
+            try:                         # its own try: a Laya import failure never skips the router warm
+                from agent_friday.services import laya as _laya_warm
+                _laya_warm.warm()        # versions, calibration table: first-use cost off the turn
+            except Exception:
+                pass
         else:
             prompt = _build_front_system_prompt(settings, contract, label)
             seat.prefill(prompt, contract)
@@ -2218,8 +2232,7 @@ def _run_after_call(items, conversation_id, wait_s=None, poll_s=10.0) -> None:
             try:
                 _persist_voice_turn(
                     "", "I couldn't get to what you asked during our call: my "
-                        "deeper mind didn't come back. Ask me again when it's up: "
-                    + "; ".join(i["request"] for i in items),
+                        "deeper mind didn't come back. Ask me again when it's up.",
                     conversation_id=conversation_id, provider="local")
             except Exception:
                 pass
@@ -2496,6 +2509,11 @@ def _resolve_voice_engine(settings=None):
         if engine == "local":
             label = ("Local GPU (NeMo, private)" if tier == "gpu"
                      else "Local (private, on-device)")
+            # In a cloud mode a local voice is the owner's own engine choice,
+            # not something the mode picked; the panel says so.
+            from agent_friday.services import cloud_intent as _ci_label
+            label = _ci_label.local_voice_label(
+                (settings.get('model_routing') or {}).get('mode'), label, tier=tier)
             return {"engine": "local", "ws_url": "/ws/voice-local",
                     "label": label, "tier": tier,
                     "models_ready": models_ready,
@@ -2934,23 +2952,77 @@ def _lr_follow_turns() -> int:
     return _lr.FOLLOW_UP_TURNS
 
 
+def _deferred_request(user_text, r, local=False) -> str:
+    """What the deeper mind is handed for a deferred turn: the owner's words,
+    and, when point-and-act already resolved the rows they named on screen AND
+    the deeper mind runs on this PC (``local``), which rows (ids and counts
+    only: the stage's text is never repeated). A deeper mind that may be a
+    cloud model gets the owner's words and nothing more: row ids carry the
+    mailbox account, and they leave this PC only with the owner's own words."""
+    text = str(user_text)[:3500]
+    refs = [x for x in (r.args.get("refs") or []) if re.fullmatch(r"[a-z]+:[A-Za-z0-9_.@:+=-]{1,120}", str(x))]
+    from agent_friday.services import point_act as _pa
+    if not local or r.args.get("intent") not in _pa.CARDED_INTENTS or not refs:
+        return text[:4000]
+    note = ("[Resolved on the owner's screen by rules, not by you: %s %d row(s) in %s%s. Row ids: %s. "
+            "Nothing has been changed yet; raise the one card for it.]"
+            % (r.args["intent"], len(refs), str(r.args.get("workspace") or "the list")[:24],
+               " (say the count back)" if r.args.get("say_count") else "", ", ".join(refs)))
+    out = text + chr(10) * 2 + note
+    if len(out) > 4000:
+        # Every row id the count claims, or none: a cut list would have the card built from rows the
+        # deeper mind cannot see. Too many to hand over: the owner's words alone.
+        return text[:4000]
+    return out
+
+
+def _deeper_mind_is_local(session=None) -> bool:
+    """True when work handed to the deeper mind stays on this PC (the same test
+    voice_engine._tool_delegate_to_friday applies before it spawns the task)."""
+    try:
+        from agent_friday.services import voice_engine as _ve
+        return bool(_ve._voice_local_only() or _ve._async_routing(session) == "local_only")
+    except Exception:
+        return False
+
+
+def _voice_room_now() -> bool:
+    """Room mode (or cannot tell): names stay out of the router's questions."""
+    try:
+        from agent_friday.services import agent as _agent_room
+        return bool(_agent_room._voice_room())
+    except Exception:
+        return True
+
+
 def _voice_route_plan(user_text, held, *, pending_card=None, route_fn=None,
-                      last_route=None) -> dict:
+                      last_route=None, owner_voice=False, quiet=False, conversation_id=None,
+                      session=None) -> dict:
     """What a routed voice turn does: services/laya_router's decision, with
     this surface's policy for "defer" (a change goes to delegate_to_friday,
     a governed background task whose own gates and cards decide it, exactly
-    as in text mode). Returns {tool, args, ack, question, label, receipt}."""
+    as in text mode). Returns {tool, args, ack, question, label, receipt}.
+
+    ``owner_voice`` is the owner's own voice on this PC (authenticated and a local
+    request; a paired phone, a tunnel or a relay is not), in a conversation. Only then
+    is the turn trusted: the router points at on-screen rows or opens an item by name,
+    and the turn is offered to Laya's personal learning (services/laya_personal) under
+    the call's conversation. Any other caller passes the router nothing new."""
+    from agent_friday.services import laya as _laya
     from agent_friday.services import laya_router as _lr
     kw = {"last_route": last_route} if last_route else {}
-    r = (route_fn or _lr.route)(user_text, tools=list(held), surface="voice",
+    if owner_voice and conversation_id:
+        kw.update(trusted=True, quiet=bool(quiet), conversation_id=str(conversation_id))
+    r = (route_fn or _laya.route_turn)(user_text, tools=list(held), surface="voice",
                                 pending_card=pending_card, **kw)
     tool, args = (r.tool, dict(r.args)) if r.decision == "tool" else (None, None)
     ack, label = _lr.acknowledgement(r), r.label
     handed = None
     if r.decision == "defer" and "delegate_to_friday" in held:
-        tool, args = "delegate_to_friday", {"request": str(user_text)[:4000]}
+        tool, args = "delegate_to_friday", {"request": _deferred_request(
+            user_text, r, local=_deeper_mind_is_local(session))}
         ack, label, handed = DEFER_ACK, "handed to the deeper mind", "delegate_to_friday"
-    receipt = dict(_lr.receipt(r), ran=tool, handed_to=handed)
+    receipt = _lr.surface_receipt(r, ran=tool, handed_to=handed)
     return {"tool": tool, "args": args, "ack": ack, "label": label,
             "question": r.question if r.decision == "ask" else "", "receipt": receipt}
 
@@ -2982,6 +3054,16 @@ def _cards_carried(results, conversation_id) -> list:
 
 #: The count-only sentence for a card whose own fields cannot make the
 #: email readback. It names no private content.
+_NEUTRAL_QUESTION = "I asked which one you meant; the choices were on your screen."
+
+
+def _persist_local_turn(tool_session, user_text, agent_text, conversation_id):
+    """Save a completed local voice turn. A turn that read a card aloud or asked a question built from the
+    owner's screen keeps only a neutral line in the conversation (set by ``_run_routed_front_turn``): the
+    words were spoken, but a later typed turn on a cloud model reads this history."""
+    neutral = tool_session.pop("history_text", None)
+    saved = _persist_voice_turn(user_text, neutral or agent_text, conversation_id=conversation_id, provider="local")
+    return neutral or saved       # the session logs the neutral line for the end-of-call summary too
 _CARD_LINE_FALLBACK = ("I have a change waiting for your OK; the details are on your screen. "
                        "Shall I go ahead?")
 
@@ -3016,6 +3098,14 @@ def _sealed_card_line(result, conversation_id):
     return [str(c["approval_id"]) for c in cards], " ".join(lines)
 
 
+def _voice_cloud_model(settings):
+    """The cloud model a spoken "ask Claude" runs on: the routing setting's cloud
+    default, never an id from the local seat."""
+    from agent_friday.core import ANTHROPIC_MODEL_DEFAULT
+    return ((settings.get("model_routing") or {}).get("default_cloud_model")
+            or ANTHROPIC_MODEL_DEFAULT)
+
+
 def _pending_voice_card(spoken_ids, conversation_id):
     """The card a bare spoken yes or no may answer, or None.
 
@@ -3036,7 +3126,7 @@ def _pending_voice_card(spoken_ids, conversation_id):
 
 
 def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_turn,
-                           send, session):
+                           send, session, owner_voice=False):
     """One routed local voice turn: system one decides, the governed runner
     executes, the front speaks (laya_router_addendum_2026-10-09).
 
@@ -3048,6 +3138,8 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
     turn. If that cannot be shown, no bare yes counts: the owner answers on
     screen or says the card's action."""
     _cid = tool_session.get("conversation_id")
+    tool_session.pop("history_text", None)      # (set below for THIS turn only)
+    tool_session["turn_id"] = "voice-" + uuid.uuid4().hex[:12]     # the turn receipt id for a change made this turn
     sealed = tool_session.pop("sealed_card", None) or {}
     try:
         sess = session() if session else None
@@ -3073,9 +3165,13 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
             _prev = None
     plan = _voice_route_plan(user_text, list(front["contract"].get("names") or []),
                              pending_card=_pending_voice_card(spoken, _cid),
-                             last_route=_prev)
-    if plan.get("tool") and plan["tool"] != "delegate_to_friday" and plan.get("args") is not None:
+                             last_route=_prev, owner_voice=bool(owner_voice),
+                             quiet=_voice_room_now() if owner_voice else False,
+                             conversation_id=_cid, session=tool_session)
+    if (plan.get("tool") and plan["tool"] != "delegate_to_friday" and plan.get("args") is not None
+            and plan["receipt"].get("layer") != "safe_write"):     # a safe write's single-use ticket is not kept
         tool_session["last_route"] = {"tool": plan["tool"], "args": dict(plan["args"]), "age": 0}
+    plan["receipt"].setdefault("turn_id", tool_session["turn_id"])
     send({"type": "route", **plan["receipt"]})
     _carried = {"ids": [], "line": ""}
 
@@ -3085,10 +3181,17 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
             _carried.update(ids=ids, line=line)
         return line
 
+    # The router's own rule-layer call on the owner's voice, once, is their utterance; any other call in
+    # the turn is the model's and carries no such mark.
+    _owner_call = [bool(owner_voice) and plan["receipt"].get("layer") == "rule"]
+
     def _run_tool(n, a):
         # Whole: a list is spoken from its parsed records, and a cut JSON
         # would not parse (routed_turn cuts what the model reads).
-        return _local_voice_tool(n, a, send, tool_session, cut=False)
+        mine = _owner_call[0] and n == plan["tool"] and a == plan["args"]
+        if mine:
+            _owner_call[0] = False
+        return _local_voice_tool(n, a, send, tool_session, cut=False, owner_call=mine)
     _said = ""
     try:
         _said = seat_turn(user_text, on_delta, plan, _run_tool, _card_line)
@@ -3099,6 +3202,13 @@ def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_tur
         if _said:
             tool_session.setdefault("spoken", []).append(str(_said))
             del tool_session["spoken"][:-60]
+        # What the conversation keeps of this turn names no row: the spoken card line (subjects and senders)
+        # and a question built from the owner's screen are said aloud, but a later typed turn on a cloud model
+        # reads the history.
+        if _carried["line"]:
+            tool_session["history_text"] = _CARD_LINE_FALLBACK
+        elif plan["question"] and plan["receipt"].get("layer") in ("point_act", "resolver", "safe_write"):
+            tool_session["history_text"] = _NEUTRAL_QUESTION
         # The card line this turn spoke is the last question asked; the
         # router's own question, or none, clears it. A barged turn may not
         # have voiced it. Delivery is confirmed at the next turn.
@@ -3293,7 +3403,149 @@ def voice_session_info():
         info["manifest"] = m.snapshot()
     except Exception as e:
         info["manifest"] = {"error": error_text(e, "Couldn't read the voice manifest")}
+    # Why the voice is on the cloud, when it is: your choice / local not ready /
+    # local not measured (which carries the Measure now action).
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        info["why_cloud"] = _lvr.why_cloud(engine=info.get("engine"))
+    except Exception as e:
+        info["why_cloud"] = {"on_cloud": None,
+                             "error": error_text(e, "Couldn't read why the voice is on the cloud")}
     return jsonify({"status": "ok", **info})
+
+
+@voice_bp.route('/api/voice/local-readiness', methods=['GET'])
+def voice_local_readiness():
+    """Whether local voice is measured and runs well on this PC, why Friday is on
+    cloud voice when she is, the idle measuring job's progress, and the one-time
+    switch offer when it is pending. Read-only; stored values, nothing measured."""
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        return jsonify({"status": "ok", **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't read local voice readiness")
+
+
+@voice_bp.route('/api/voice/local-readiness/measure', methods=['POST'])
+@login_required
+def voice_local_readiness_measure():
+    """Measure now: queue the voice measurement and re-assessment as an idle
+    background job. It starts once the owner has been away for the scheduler's
+    idle window, never during a call, and never changes the voice engine."""
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        _lvr.request_measure("owner")
+        return jsonify({"status": "ok", **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't queue the measurement")
+
+
+@voice_bp.route('/api/voice/local-readiness/offer', methods=['POST'])
+@login_required
+def voice_local_readiness_offer():
+    """The owner's answer to the one-time switch card: `switch` or `stay`.
+    Only a pending offer can be answered, and only this route (from the owner's
+    click) moves the voice engine."""
+    data = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        res = _lvr.decide_offer(data.get("choice"))
+        if not res.get("ok"):
+            return jsonify({"status": "error", "message": res.get("message")}), 409
+        return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't record your answer")
+
+
+#: What a local voice failure offers: the same question every switch to cloud voice asks.
+_CLOUD_SWITCH_OFFER = {"kind": "cloud_switch", "label": "Use cloud voice",
+                       "endpoint": "/api/voice/cloud-switch", "source": "failure"}
+
+
+def _note_local_voice_failed():
+    """Remember that local voice just failed to start, so a switch to cloud voice
+    can say why. Never raises."""
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        _lvr.note_local_voice_failed()
+    except Exception:
+        pass
+
+
+_NOT_THE_PAGE = ({"status": "error", "error": "not_on_screen",
+                  "message": ("Choose cloud voice on this PC's own screen (Settings, Voice). "
+                              "It cannot be chosen from another device, a tunnel or a script.")}, 403)
+
+
+def _owner_page_only():
+    """None for the owner's own page on this PC (a click of this server's page with the page's
+    session token); else the refusal. A local script or a CLI holding no page is not the owner."""
+    from agent_friday.services import screen_click
+    if not screen_click.screen_session(request) or not _is_local_request():
+        return jsonify(_NOT_THE_PAGE[0]), _NOT_THE_PAGE[1]
+    return None
+
+
+@voice_bp.route('/api/voice/cloud-switch', methods=['POST'])
+@login_required
+def voice_cloud_switch():
+    """Ask to move voice to the cloud. Nothing moves: this raises the question
+    "just this call, or always?" (two choices, one marked Recommended, nothing
+    preselected). Local-only mode refuses with its reason. Only the owner's page may
+    ask; the reason shown is worked out on the server, never taken from the request."""
+    no = _owner_page_only()
+    if no is not None:
+        return no
+    data = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        res = _lvr.ask_cloud_switch(source=str(data.get("source") or "settings"))
+        if res.get("refused"):
+            return jsonify({"status": "refused", "reason": res.get("reason"),
+                            "message": res.get("message"), **_lvr.panel_status()}), 409
+        return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't ask about cloud voice")
+
+
+@voice_bp.route('/api/voice/cloud-switch/answer', methods=['POST'])
+@login_required
+def voice_cloud_switch_answer():
+    """The owner's click on the question: `call` (just this call), `always` or
+    `cancel`, with the question's id. Only a waiting question can be answered, and
+    only from the owner's page; the spoken answer goes through the voice tool."""
+    no = _owner_page_only()
+    if no is not None:
+        return no
+    data = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        res = _lvr.answer_cloud_switch(data.get("choice"), question_id=data.get("id"))
+        if not res.get("ok"):
+            return jsonify({"status": "refused" if res.get("refused") else "error",
+                            "message": res.get("message")}), 409
+        return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't record your answer")
+
+
+@voice_bp.route('/api/voice/local-readiness/switch-back', methods=['POST'])
+@login_required
+def voice_switch_back_answer():
+    """The owner's click on the one switch-back offer: `switch_back` or
+    `keep_cloud`, with the offer's id. No answer leaves everything as it was."""
+    no = _owner_page_only()
+    if no is not None:
+        return no
+    data = request.get_json(silent=True) or {}
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        res = _lvr.decide_switch_back(data.get("choice"), question_id=data.get("id"))
+        if not res.get("ok"):
+            return jsonify({"status": "error", "message": res.get("message")}), 409
+        return jsonify({"status": "ok", "message": res.get("message"), **_lvr.panel_status()})
+    except Exception as e:
+        return api_error(e, "Couldn't record your answer")
 
 
 @voice_bp.route('/api/voice/arm', methods=['GET', 'POST'])
@@ -3768,16 +4020,36 @@ def _meter_gemini_live_chunk(chunk, model_name: str) -> bool:
     names, try/except structure) instead of exercising real behavior.
     Never raises -- a metering failure must not break the live voice
     bridge, exactly as the original inline try/except guaranteed.
+
+    Semantics: each usage_metadata message describes ONE model turn (the
+    prompt re-read for that turn and that turn's output), not a running
+    session total, so every message is its own row and the rows are summed.
+    Neither the SDK types nor Google's Live API reference states this; it is
+    read from the stored rows: within a session the prompt count only grows
+    (context accrues) while the response count rises and falls about equally
+    often, which no running total could do. tools/voice_cost_audit.py repeats
+    that check against a ledger. The modality split, the cached share and the
+    tool-use prompt ride along as new nullable columns; they never change the
+    price of the row.
     """
     _um = getattr(chunk, "usage_metadata", None)
     if _um is None:
         return False
     try:
         from agent_friday.services import cost_meter as _cm
-        _cm.meter("gemini", model_name, {
+        _usage = {
             "input_tokens": getattr(_um, "prompt_token_count", 0) or 0,
             "output_tokens": getattr(_um, "response_token_count", 0) or 0,
-        }, kind="voice")
+        }
+        _audio, _text = _cm.modality_split(getattr(_um, "prompt_tokens_details", None))
+        for _key, _val in (
+                ("prompt_audio_tokens", _audio),
+                ("prompt_text_tokens", _text),
+                ("cached_prompt_tokens", getattr(_um, "cached_content_token_count", None)),
+                ("tool_use_prompt_tokens", getattr(_um, "tool_use_prompt_token_count", None))):
+            if _val is not None:
+                _usage[_key] = _val
+        _cm.meter("gemini", model_name, _usage, kind="voice")
         return True
     except Exception:
         return False
@@ -3852,6 +4124,9 @@ if sock is not None:
         _ws_authenticated = _ws_auth_ok(_ui_tok_ok)
         from agent_friday.services import crew_runtime as _crew_host_runtime
         _crew_call_origin = _crew_host_runtime.capture_host_origin()
+        # The owner's own voice on this PC (a paired phone or a tunnel is not): only then may the
+        # router's rule-layer call carry the owner mark (notifications "quiet until morning").
+        _owner_voice = bool(_ws_authenticated) and bool(_is_local_request())
 
         done = threading.Event()
 
@@ -3936,9 +4211,12 @@ if sock is not None:
             _vw.release_prepared("no room for the voice")
             _vlog.error("session refused: no room for the voice: %s: %s",
                         type(_re).__name__, _re)
+            _note_local_voice_failed()
             _send({"type": "error", "error": "voice_front_unavailable",
                    "detail": f"Friday's local voice could not start: {_re}. "
-                             f"Try again, or switch to cloud voice."})
+                             f"Try again, or switch to cloud voice (I will ask whether that is "
+                             f"for just this call or always).",
+                   "offer": _CLOUD_SWITCH_OFFER})
             return
         # Whatever leaves this span by an exception, from the park to the
         # armed front, gives the room back (an arm failure has already
@@ -4046,6 +4324,7 @@ if sock is not None:
             _tool_session = {"engine": "local", "conversation_id": _open_cid[0],
                              "_crew_host_origin": _crew_call_origin,
                              "owner_text": "", "user_spoke_at": 0.0,
+                             "owner_local": bool(_owner_voice),
                              "async_routing": settings.get("voice_async_routing")
                              or "local_only",
                              "after_call": [], "news_offered": [], "spoken": []}
@@ -4064,9 +4343,12 @@ if sock is not None:
                 _vw.release_cpu_engines("voice front failed")
                 _vlog.error("session refused: voice front failed: %s: %s",
                             type(_fe).__name__, _fe)
+                _note_local_voice_failed()
                 _send({"type": "error", "error": "voice_front_unavailable",
                        "detail": f"Friday's local voice could not start: {_fe}. "
-                                 f"Try again, or switch to cloud voice."})
+                                 f"Try again, or switch to cloud voice (I will ask whether that is "
+                                 f"for just this call or always).",
+                       "offer": _CLOUD_SWITCH_OFFER})
                 return
             if _front is None and _room.get("front_refused"):
                 # The main model answers. Its park is given back, but only
@@ -4147,7 +4429,7 @@ if sock is not None:
                 return _run_routed_front_turn(
                     user_text, on_delta, front=_front, tool_session=_tool_session,
                     seat_turn=_routed_front_seat_turn, send=_send,
-                    session=lambda: sess)
+                    session=lambda: sess, owner_voice=_owner_voice)
 
             def _routed_front_seat_turn(user_text, on_delta, plan, _run_tool, card_line=None):
                 return _front["seat"].routed_turn(
@@ -4166,6 +4448,7 @@ if sock is not None:
 
             def _front_turn(user_text, on_delta):
                 _tool_session["owner_text"] = str(user_text or "")[:4000]
+                _tool_session["owner_text_at"] = _time.time()
                 if _front.get("speaker"):
                     try:
                         return _routed_front_turn(user_text, on_delta)
@@ -4187,7 +4470,7 @@ if sock is not None:
                 finally:
                     _vol["text"] = None        # the next utterance gets a fresh clock
 
-            def _generate(user_text, on_delta, cancel):
+            def _generate_turn(user_text, on_delta, cancel, cloud_once=False):
                 # A spoken turn is the owner in conversation: cards that are
                 # not decisions wait until it ends (notification_policy).
                 from agent_friday.services import notification_policy as _pol_v
@@ -4202,10 +4485,22 @@ if sock is not None:
                 _ctok = TURN_CANCEL.set(cancel)
                 # A local voice turn is Friday's own: her presence label.
                 from agent_friday.services import presence as _presence
-                if _front:
+                if _front and not cloud_once:
                     try:
                         with _presence.acting_as(_presence.FRIDAY):
                             return _front_turn(user_text, on_delta)
+                    except Exception as _fe:
+                        # The local front seat failed: say so as a typed local
+                        # failure, which the caller speaks as an offer.
+                        if cancel.is_set():
+                            raise
+                        from agent_friday.services.cloud_intent import LocalUnavailable as _LU
+                        if isinstance(_fe, _LU):
+                            raise
+                        raise _LU(str(_fe)[:200], purpose="voice",
+                                  model=str(_front.get("model") or ""),
+                                  mode=str((settings.get("model_routing") or {}).get("mode") or ""),
+                                  cause=_fe) from _fe
                     finally:
                         TURN_CANCEL.reset(_ctok)
                         TIMINGS_SINK.reset(_tok)
@@ -4229,7 +4524,9 @@ if sock is not None:
                             _local_voice_messages(_tool_session.get("conversation_id"),
                                                   user_text, settings),
                             system=system_prompt,
-                            model=_brain,
+                            model=(None if cloud_once else _brain),
+                            conversation_seat=(
+                                {"model": _voice_cloud_model(settings)} if cloud_once else None),
                             max_tokens=_voice_reply_cap(settings, user_text),
                             temperature=settings.get("temperature"),
                             # The owner's own words for this turn, and that they were
@@ -4242,9 +4539,10 @@ if sock is not None:
                                          "is_voice": True,
                                          "surface": "voice-local",
                                          "owner_text": str(user_text or "")[:4000],
+                                         "owner_text_at": _time.time(),
                                          # The local mind or an honest failure,
                                          # never a cloud leg answering for it.
-                                         "pin_to_seat": True,
+                                         "pin_to_seat": not cloud_once,
                                          "turn_shape": _turn_shape},
                             workspace=settings.get("active_workspace") or "",
                             on_text_delta=on_delta,
@@ -4253,6 +4551,36 @@ if sock is not None:
                     TURN_CANCEL.reset(_ctok)
                     TIMINGS_SINK.reset(_tok)
                 return reply
+
+            def _generate(user_text, on_delta, cancel):
+                # A local failure is an OFFER, spoken, never a cloud call. A bare
+                # yes answers it only under the voice card rules: this call's
+                # offer, voiced in the previous turn, exactly one pending
+                # (services/local_offer, the twin of _pending_voice_card).
+                from agent_friday.services import cloud_intent as _ci
+                from agent_friday.services import local_offer as _lo
+                _cid = _tool_session.get("conversation_id")
+                _spoken = _tool_session.pop("spoken_offers", None) or []
+                _choice, _orig = _lo.take_reply(_cid, user_text, _spoken)
+                if _choice == "decline":
+                    return "Okay. I'll leave it."
+                if _choice in ("retry_local", "send_claude") and _orig:
+                    user_text = _orig
+                with _ci.owner_turn():
+                    try:
+                        if _choice == "send_claude":
+                            with _ci.intent_scope("user_explicit", source="voice_offer",
+                                                  confirmed=True):
+                                return _generate_turn(user_text, on_delta, cancel,
+                                                      cloud_once=True)
+                        return _generate_turn(user_text, on_delta, cancel)
+                    except _ci.LocalUnavailable as _lu:
+                        if cancel.is_set():
+                            raise
+                        offer = _lo.build(_lu, model=_lu.model, mode=_lu.mode)
+                        _lo.remember(_cid, offer, user_text)
+                        _tool_session["spoken_offers"] = [offer["id"]]
+                        return offer["spoken"]
 
             def _receipt():
                 try:
@@ -4266,8 +4594,7 @@ if sock is not None:
                     return None
 
             hooks = {
-                "persist": lambda u, a, cid: _persist_voice_turn(u, a, conversation_id=cid,
-                                                                 provider="local"),
+                "persist": lambda u, a, cid: _persist_local_turn(_tool_session, u, a, cid),
                 "distill": _spawn_voice_distill,
                 "actions": _voice_actions_for,
                 "receipt": _receipt,
@@ -4455,6 +4782,7 @@ if sock is not None:
                 return
         _ui_t = request.args.get('t', '')
         _ui_tok_ok = _api_token_valid(_ui_t)
+        _owner_local_live = bool(_is_local_request())     # a tunnel or a paired phone is not the owner's own voice here
         if not _ws_auth_ok(_ui_tok_ok):
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
@@ -4800,6 +5128,15 @@ if sock is not None:
                 ws.send(json.dumps({"type": "error", "error": "crew_room_unavailable",
                                     "detail": "Open an enabled Crew room before starting a Crew call."}))
                 return
+        # CV-A (services/live_session_plan): the capped voice-only instruction,
+        # the Laya-chosen tool kit and the call's budget. Subtracts only; the
+        # egress gate below still judges whatever is left.
+        from agent_friday.services import live_session_plan as _lsp
+        sys_text, _lsp_plan = _lsp.plan_session(
+            sys_text, live_settings,
+            _voice_tool_names if live_settings.get("voice_tools", True) else [],
+            workspace=str(request.args.get('workspace') or ''),
+            opening=str(request.args.get('opening') or ''))
         sys_text = _gate_voice_system_instruction(sys_text)
         # Hard spending cap (services/spend_guard): a NEW live session is a
         # new paid stream, so it is refused when the cap has tripped. A
@@ -4834,9 +5171,7 @@ if sock is not None:
         if live_proactive:
             live_cfg_kwargs["proactivity"] = types.ProactivityConfig(proactive_audio=True)
         if live_context_compression:
-            live_cfg_kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
-                sliding_window=types.SlidingWindow(),
-            )
+            live_cfg_kwargs["context_window_compression"] = _lsp_plan.compression_config(types)
 
         # Agentic voice: hand the Live model a real tool surface (search the news
         # feed, search the web, open a source in the browser with a highlight,
@@ -4854,7 +5189,7 @@ if sock is not None:
         # given -- not from a comment about them. The client keeps it on
         # screen for the session; it is not a transient status.
         try:
-            _reach_names = list(_voice_tool_names()) if live_voice_tools else []
+            _reach_names = list(_lsp_plan.declared_names()) if live_voice_tools else []
         except Exception:
             _reach_names = []
         try:
@@ -4891,12 +5226,12 @@ if sock is not None:
             pass
         if live_voice_tools:
             try:
-                _vtools = _build_voice_live_tools(types)
+                _vtools = _build_voice_live_tools(types, kit=_lsp_plan.kit_arg())
                 if _vtools:
                     live_cfg_kwargs["tools"] = _vtools
                     # Log the RESOLVED names, not the native table's length --
                     # an undercount here is how a surface drifts unnoticed.
-                    _vnames = _voice_tool_names()
+                    _vnames = _lsp_plan.declared_names()
                     _vlog(f'voice tools enabled: {len(_vnames)} declarations')
                     _log.info("voice live tools enabled: %d declarations (%s)",
                               len(_vnames), ", ".join(_vnames))
@@ -4999,6 +5334,8 @@ if sock is not None:
             _clients = {}
             def _client_for(api_version):
                 if api_version not in _clients:
+                    from agent_friday.services import cloud_intent as _voice_ci
+                    _voice_ci.require_owner_engine("google-gemini", "Gemini Live voice call")
                     if api_version:
                         _clients[api_version] = genai.Client(
                             api_key=core.GEMINI_API_KEY, http_options={"api_version": api_version})  # pragma: allowlist secret
@@ -5047,16 +5384,23 @@ if sock is not None:
             _user_words_ts = [0.0]
             _turn_timed = [True]
             _turn_tools = []
+            try:
+                from agent_friday.services import local_voice_readiness as _lvr_start
+                _lvr_start.note_cloud_call_started()      # "just this call" is now in use
+            except Exception:
+                pass
             # What this call has offered and said, for the voice tools
             # (services/voice_engine.py): the news tools skip stories Friday
             # has already told instead of reading the same five again.
             _voice_session = {"news_offered": [], "spoken": [],
                               "conversation_id": _call_cid(), "owner_text": "",
+                              "owner_local": _owner_local_live,
                               "card_watch": _LiveCardWatch(),
                               "_crew_host_origin": _crew_call_origin,
                               # What he cares about now, how much to say, what is
                               # open (services/voice_conversation_state).
                               "conv_state": _vcs.new_state()}
+            _voice_session["lsp"] = _lsp_plan
             from agent_friday.services.voice_delivery import initialize_session_preferences
             initialize_session_preferences(_voice_session, live_settings)
 
@@ -5096,7 +5440,7 @@ if sock is not None:
                 while _crew_receipts:
                     row = _crew_receipts.popleft()
                     try:
-                        from agent_friday.services import conversations as _crew_cv
+                        from agent_friday.services import notice_registry as _nr
                         from agent_friday.services import conversation_provenance as _crew_prov
                         meta = _crew_prov.turn_meta(row.get("provider"), row["off_record"])
                         meta.update({"kind": ("crew_speech" if row["speaker_id"] == "friday"
@@ -5121,7 +5465,7 @@ if sock is not None:
                             # Private speech never enters ordinary call buffers;
                             # its temporary transcript belongs to off_record.end().
                             continue
-                        _crew_cv.append(row["conversation_id"], message)
+                        _nr.transcript_add("E79", row["conversation_id"], message)
                         if (body and row["status"] == "finished"
                                 and row["conversation_id"] == _voice_session["conversation_id"]):
                             _voice_session["spoken"].append(body)
@@ -5278,6 +5622,9 @@ if sock is not None:
                 agent_text = ''.join(out_buf).strip()
                 in_buf.clear()
                 out_buf.clear()
+                _live_laya.for_call(_voice_session).on_turn_end(user_text)
+                _voice_session["owner_text"] = ""        # a relay in the next turn cannot carry this one's words
+                _voice_session["owner_text_at"] = 0.0
                 if not user_text and not agent_text:
                     return
                 if agent_text and not _crew[0]:
@@ -5372,7 +5719,7 @@ if sock is not None:
                 if (per_model_kwargs.get("tools")
                         and _model_requires_non_blocking_tools(model_name)):
                     try:
-                        _nb_tools = _build_voice_live_tools(types, behavior="NON_BLOCKING")
+                        _nb_tools = _build_voice_live_tools(types, behavior="NON_BLOCKING", kit=_lsp_plan.kit_arg())
                         if _nb_tools:
                             per_model_kwargs["tools"] = _nb_tools
                     except Exception as _nbe:
@@ -5477,6 +5824,7 @@ if sock is not None:
                             # failure) is invisible after the fact.
                             _log.info("voice tool call: %s(%s)", fname, fargs)
                             _turn_tools.append(fname)
+                            _live_laya.for_call(_voice_session).on_gemini_call(fname, fargs)
                             _safe_send({"type": "status", "text": f"⚙ {fname}"})
                             # PROCESS ORB -- the execution receipt. Every text
                             # tool call registers one (services/agent.py
@@ -5512,6 +5860,8 @@ if sock is not None:
                                 return refused
                             if not isinstance(result, str):
                                 result = str(result)
+                            result = _live_laya.for_call(_voice_session).shape_result(
+                                fname, fargs, result, _voice_session.get("owner_text") or "")
                             result = result[:8000]
                             # Tool results are CLOUD EGRESS: emails, wiki
                             # excerpts, calendar attendees ship to Google here.
@@ -5524,6 +5874,7 @@ if sock is not None:
                             # NeverSendBlocked verdict fall through to the
                             # ungated result).
                             result = _gate_voice_tool_result(result, fname)
+                            _live_laya.for_call(_voice_session).note_sent(fname, result)
                             refused = _refused_crew_response(fname, fid, _orb_id)
                             if refused is not None:
                                 return refused
@@ -5760,13 +6111,15 @@ if sock is not None:
                                         # real, billed call and must be metered like any
                                         # other (PRICING carries rates for this exact
                                         # model). usage_metadata arrives
-                                        # per-chunk on the live stream (cumulative for the
-                                        # session so far, per the API's own semantics) —
+                                        # once per model turn on the live stream (a
+                                        # per-turn figure, not a session running total; see
+                                        # _meter_gemini_live_chunk) —
                                         # metered as its own row every time it shows up
                                         # rather than only once at teardown, since a leg can
                                         # end (GoAway, error, disconnect) without a clean
                                         # close. _meter_gemini_live_chunk() never raises.
                                         _meter_gemini_live_chunk(chunk, model_name)
+                                        _lsp_plan.on_usage(chunk)
                                         # GoAway: Gemini is about to retire this session
                                         # (connection lifetime / context cap). Don't cut a
                                         # response mid-word: if Friday is speaking, drain
@@ -5814,9 +6167,12 @@ if sock is not None:
                                                 if not in_buf:
                                                     _voice_session["card_watch"].owner_turn()
                                                 in_buf.append(in_tr.text)
+                                                _lsp_plan.on_input_text(in_tr.text)   # CV-A: local prefetch only
                                                 _voice_session["owner_text"] = ''.join(in_buf)[-600:]
+                                                _voice_session["owner_text_at"] = _time.time()
                                                 _safe_send({"type": "input_transcript", "text": in_tr.text})
                                                 _user_words_ts[0] = _time.time()
+                                                _live_laya.for_call(_voice_session).on_input(in_tr.text)
                                                 _turn_timed[0] = False
                                             mt = getattr(sc, 'model_turn', None)
                                             if mt and getattr(mt, 'parts', None):
@@ -5902,6 +6258,11 @@ if sock is not None:
                                                     _voiced_turns[0] += 1
                                                     _repin = persona_due(_voiced_turns[0])
                                                 _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
+                                                _bud = _lsp_plan.on_turn_complete(model_name)   # CV-A: one soft-budget heads-up, panel totals
+                                                if _bud["note"]:
+                                                    _inject_q.append((_bud["note"], "notice"))
+                                                if _bud["frame"]:
+                                                    _safe_send(_bud["frame"])
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
                                                 # The conversation so far, when it
@@ -5982,6 +6343,13 @@ if sock is not None:
                                                 (not _model_speaking[0] and _tool_inflight[0] == 0)
                                                 or _time.time() >= _goaway_drain_deadline[0]):
                                             _vlog('GoAway drain complete — ending leg for renewal')
+                                            sdone.set()
+                                            return
+                                        # CV-A: more_tools widened the set; renew the leg
+                                        # (same handle, new tools) once nothing is mid-flight.
+                                        if (_lsp_plan.reconnect_due(resume_handle[0] is not None)
+                                                and not _model_speaking[0] and _tool_inflight[0] == 0):
+                                            _vlog('more_tools: ending leg to declare the widened tool set')
                                             sdone.set()
                                             return
                                     except Exception as e:
@@ -6148,6 +6516,16 @@ if sock is not None:
                                                 "window or tab"})
                             done.set()
                             break
+                        # CV-A: tools change only here, at a leg boundary. A
+                        # more_tools call widened the set; the instruction's
+                        # tool-surface note is re-made and re-gated with it.
+                        _wt = _lsp_plan.tools_for_leg(
+                            types, _model_requires_non_blocking_tools(model_name))
+                        if _wt is not None:
+                            per_model_kwargs["tools"] = _wt
+                            per_model_kwargs["system_instruction"] = types.Content(parts=[types.Part(
+                                text=_gate_voice_system_instruction(_lsp_plan.instruction_for_leg()))])
+                            per_model_cfg = types.LiveConnectConfig(**per_model_kwargs)
                         _use_handle = (resume_handle[0]
                                        if (_supports_resumption
                                            and resume_handle[0] is not None
@@ -6217,6 +6595,15 @@ if sock is not None:
 
                         _leg_started = _time.time()
                         _cur_sess[0] = session_ai
+                        try:
+                            _live_laya.for_call(
+                                _voice_session, send=_safe_send,
+                                run_tool=lambda _n, _a: _voice_tool_run(_n, _a, _safe_send, _voice_session),
+                                trusted=bool(session.get("authenticated")) and bool(_is_local_request())
+                                and _voice_room_mode(live_settings) != "room",
+                            ).attach(session_ai, _cfg_try, asyncio.get_running_loop())
+                        except Exception as _lle:
+                            _vlog(f'live_laya attach skipped: {_lle}')
                         _leg_bytes_at_start = _audio_bytes_to_gemini
                         _record_mic_audio_egress("open")
                         # F6: name the provider receiving the microphone, on
@@ -6401,6 +6788,8 @@ if sock is not None:
                                 _vlog(f'leg close error (ignored): {_xe}')
                             _leg_bytes = max(0, _audio_bytes_to_gemini - _leg_bytes_at_start)
                             _record_mic_audio_egress("close", byte_len=_leg_bytes)
+                            _live_laya.for_call(_voice_session).close_leg(
+                                _audio_bytes_to_gemini, final=done.is_set())
                             # F6: the receipt names the byte count. Cumulative
                             # for the session so a renewed leg does not reset
                             # what the user is told left the machine.
@@ -6525,6 +6914,12 @@ if sock is not None:
                 pass
             try:
                 ws.close()
+            except Exception:
+                pass
+            try:
+                # "Just this call" for cloud voice ends with the call: back to the engine it was.
+                from agent_friday.services import local_voice_readiness as _lvr_end
+                _lvr_end.call_ended()
             except Exception:
                 pass
             _vlog('=== WS handler done ===')

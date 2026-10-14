@@ -78,21 +78,48 @@ class FakeGmail:
         self.found = {"acct_work": ["t1", "t2", "t3", "t4", "t5", "t6"]}
         self.labels = {"acct_work": [{"id": "Label_7", "name": "Receipts"}]}
         self.calls = []
+        self.messages = {}            # thread id -> message ids (default: two per conversation)
+        self.senders = {}             # message id -> From header (default: Sender <sender@example.test>)
+        self.ts = {}                  # message id -> arrival time in ms (default: long ago)
+        self.last_kw = {}
+        self.label_empty = True       # whether a label this fake created is empty when Undo asks to delete it
+
+    def delete_label_if_empty(self, acct, label_id):
+        self.calls.append(("delete_label", acct, label_id))
+        if not self.label_empty:
+            return False
+        self.labels[acct] = [l for l in self.labels.get(acct, []) if l.get("id") != label_id]
+        return True
+
+    def snapshot_messages(self, acct, tids):
+        self.calls.append(("snapshot", acct, tuple(tids)))
+        return {t: [{"id": m, "from": self.senders.get(m, "Sender <sender@example.test>"), "ts": self.ts.get(m, 1000)}
+                    for m in (self.messages.get(t) or ["m_%s_1" % t, "m_%s_2" % t])] for t in tids}
 
     def search(self, acct, q, limit):
         self.calls.append(("search", acct, q))
         return list(self.found.get(acct, []))[:limit], False
 
     def heads(self, acct, tids):
-        return {t: {"subject": "Subject %s" % t, "sender": "Sender", "date": ""} for t in tids}
+        return {t: {"subject": "Subject %s" % t, "sender": "Sender", "address": "sender@example.test", "date": ""}
+                for t in tids}
 
-    def apply_action(self, acct, tids, action):
+    def _changed(self, tids, add, remove, only):
+        self.last_kw = {"only": only}
+        if only is None:
+            return {"changed": {t: {"added": list(add), "removed": list(remove)} for t in tids}, "failed": {}}
+        changed = {t: {"added": list(add), "removed": list(remove),
+                       "messages": {m: {"added": list(add), "removed": list(remove)} for m in only[t]}}
+                   for t in tids if t in only}
+        return {"changed": changed, "failed": {t: "not in the batch" for t in tids if t not in only}}
+
+    def apply_action(self, acct, tids, action, only=None, exact_only=False):
         self.calls.append(("apply", acct, tuple(tids), action))
-        return {"changed": {t: {"added": [], "removed": ["INBOX"]} for t in tids}, "failed": {}}
+        return self._changed(tids, [], ["INBOX"], only)
 
-    def modify_threads(self, acct, tids, add=(), remove=(), _allow=()):
+    def modify_threads(self, acct, tids, add=(), remove=(), _allow=(), only=None, exact_only=False):
         self.calls.append(("modify", acct, tuple(tids), tuple(add), tuple(remove)))
-        return {"changed": {t: {"added": list(add), "removed": list(remove)} for t in tids}, "failed": {}}
+        return self._changed(tids, add, remove, only)
 
     def undo(self, acct, changed):
         self.calls.append(("undo", acct, dict(changed)))
@@ -124,7 +151,8 @@ def install_fake_gmail(tmp_path, monkeypatch):
     monkeypatch.setattr(gm, "can_modify", lambda acct: True)
     monkeypatch.setattr(ia, "_search_threads", fake.search)
     monkeypatch.setattr(ia, "_thread_heads", fake.heads)
-    for name in ("apply_action", "modify_threads", "undo", "list_labels", "create_label"):
+    for name in ("apply_action", "modify_threads", "undo", "list_labels", "create_label", "snapshot_messages",
+                 "delete_label_if_empty"):
         monkeypatch.setattr(gm, name, getattr(fake, name))
     monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")

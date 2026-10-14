@@ -195,12 +195,13 @@ class ConversationMemory:
                 return False
 
     def _build_embedding_function(self):
-        """Reuse all-MiniLM-L6-v2 — the same model context_pruner.py loads.
+        """Reuse all-MiniLM-L6-v2 — the one shared model (services/minilm).
 
-        Prefer the sentence-transformers backend (already a hard dependency and
-        almost certainly already cached on disk from the context pruner), so we
-        don't trigger ChromaDB's separate ONNX model download. Fall back to
-        ChromaDB's default embedder if that path is unavailable.
+        That is the pinned ONNX session when it is on disk, else the one shared
+        sentence-transformers model (already a hard dependency and almost
+        certainly already cached on disk), so we don't trigger ChromaDB's
+        separate ONNX model download and never load a copy of our own. Fall
+        back to ChromaDB's default embedder if that path is unavailable.
 
         Either way the embedder runs on the inference thread
         (services/inference_executor.py), whichever thread Chroma calls it on.
@@ -208,9 +209,11 @@ class ConversationMemory:
         from chromadb.utils import embedding_functions
         from agent_friday.services.inference_executor import routed
         try:
-            from agent_friday.services import embedder_cache
+            from agent_friday.services import embedder_cache, minilm
             if self.model_name == embedder_cache.MODEL:
-                embedder_cache.ensure_available("conversation memory")
+                return routed(minilm.chroma_embedding_function_class())(
+                    minilm.model("conversation memory"))
+            embedder_cache.ensure_available("conversation memory")
             return routed(embedding_functions.SentenceTransformerEmbeddingFunction)(
                 model_name=self.model_name, device="cpu"
             )
@@ -332,10 +335,27 @@ class ConversationMemory:
                 "topic_keywords": kw_str,
                 "char_len": len(text),
             }
+            # The user's turn was embedded once for the turn (services/
+            # turn_vector); store that vector rather than embedding the same
+            # words again. Only for a message that fits in 256 tokens (where it
+            # is exactly what embedding the text would give) and only into a
+            # collection built with this model; anything else embeds as before.
+            vec = None
+            if role_norm == "user" and self._shared_query_ok():
+                try:
+                    from agent_friday.services import turn_vector
+                    vec = turn_vector.peek_full(text)
+                except Exception:
+                    vec = None
             with self._lock:
                 # upsert → re-indexing the same msg_id updates rather than dupes.
-                self._collection.upsert(
-                    ids=[doc_id], documents=[text], metadatas=[metadata])
+                if vec is not None:
+                    self._collection.upsert(
+                        ids=[doc_id], documents=[text], metadatas=[metadata],
+                        embeddings=[list(vec)])
+                else:
+                    self._collection.upsert(
+                        ids=[doc_id], documents=[text], metadatas=[metadata])
             return doc_id
         except Exception as e:  # best-effort: never raise into the chat path
             print(f"  [MEMORY] index failed (non-fatal): {e}")
@@ -364,7 +384,7 @@ class ConversationMemory:
 
     # ── reads ────────────────────────────────────────────────────────
     def search(self, query, n=5, session_id=None, roles=None,
-               include_superseded=False):
+               include_superseded=False, query_embedding=None):
         """Semantic search over past turns.
 
         Returns a list (most-relevant first) of dicts:
@@ -380,6 +400,10 @@ class ConversationMemory:
                             a superseded turn must not come back as evidence.
                             get_session()/recent() are the HISTORY paths and
                             always return everything, flagged.
+        query_embedding     the query's all-MiniLM-L6-v2 vector, when the turn
+                            already has one (services/turn_vector). Used only
+                            if this collection is built with that same model
+                            and width; otherwise Chroma embeds `query` itself.
         """
         query = (query or "").strip()
         if not query or not self._ensure():
@@ -413,8 +437,10 @@ class ConversationMemory:
                 # than over-fetching a few rows.
                 want = max(1, int(n))
                 fetch = want if include_superseded else min(count, want * 4)
+                _qe = query_embedding if self._shared_query_ok() else None
                 res = self._collection.query(
-                    query_texts=[query],
+                    **({"query_embeddings": [list(_qe)]} if _qe is not None
+                       else {"query_texts": [query]}),
                     n_results=max(1, min(fetch, count)),
                     where=where,
                     include=["documents", "metadatas", "distances"],
@@ -453,6 +479,24 @@ class ConversationMemory:
         except Exception as e:
             print(f"  [MEMORY] search failed (non-fatal): {e}")
             return []
+
+    def _shared_query_ok(self):
+        """May a turn's shared MiniLM vector stand in for Chroma's own query
+        embedding? Only when this collection was built with all-MiniLM-L6-v2
+        at 384 dimensions, the width the shared encoder produces. Anything
+        unstamped or different embeds the query itself, as before."""
+        ok = getattr(self, "_shared_ok", None)
+        if ok is not None:
+            return ok
+        ok = False
+        try:
+            model, dim = self._recorded_dimension()
+            ok = (self.model_name == EMBED_MODEL and model == EMBED_MODEL
+                  and dim == 384)
+        except Exception:
+            ok = False
+        self._shared_ok = ok
+        return ok
 
     # ── supersession ─────────────────────────────────────────────────
     # NEVER DELETE. A stored turn is a record of something the user or Friday

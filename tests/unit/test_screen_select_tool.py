@@ -134,7 +134,7 @@ def test_messages_that_is_not_open_is_opened_first(monkeypatch):
 
 
 def test_only_the_message_center_can_show_ticks_so_far(monkeypatch):
-    assert _call(op="select", workspace="news", match={"category": "x"}).startswith("SELECT_FAIL")
+    assert _call(op="select", workspace="career", match={"category": "x"}).startswith("SELECT_FAIL")
 
 
 def test_cloud_voice_hears_counts_and_kinds_never_names(monkeypatch):

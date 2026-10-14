@@ -107,6 +107,15 @@ def record(tool: str, action: str, domain: str, *, items: list, summary: str,
         _load()
         _MEM[rec["receipt_id"]] = rec
         _append(rec)
+    if tool == "undo_action":
+        try:  # an undo shortly after a routed turn is a correction (router DAgger)
+            from agent_friday.services import laya_router_learn
+            from agent_friday.services import slice_head, taint
+            laya_router_learn.note_undo(
+                conversation_id=conversation_id,
+                tainted=lambda: slice_head.is_tainted(taint.CURRENT_KEY.get()))
+        except Exception:
+            pass
     return rec
 
 

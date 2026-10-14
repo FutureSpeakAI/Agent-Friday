@@ -57,6 +57,10 @@ def _stub_network(monkeypatch, server_module):
     # _gather_front_page_pool returns (pool, stats_dict)
     monkeypatch.setattr(server_module, "_gather_front_page_pool",
                         lambda *a, **kw: (list(_FAKE_ARTICLES), {}), raising=False)
+    # A generated edition queues its podcast episode in the shared test home, where the
+    # local scheduler lists it as a waiting job in every later test of this process.
+    from agent_friday.services import news_engine
+    monkeypatch.setattr(news_engine, "_queue_podcast", lambda *a, **k: None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

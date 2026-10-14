@@ -292,8 +292,8 @@ def _commit(document, generation):
 
 def _changed():
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "desktop_cards_changed"}, kind="desktop")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "desktop_cards_changed"}, kind="desktop")
     except Exception:
         _log.exception("Could not notify the desktop about saved Home cards")
 

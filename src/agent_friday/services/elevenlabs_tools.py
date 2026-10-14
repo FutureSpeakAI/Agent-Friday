@@ -90,6 +90,11 @@ _NO_KEY = (
 def _request(method, path, *, key, json_body=None, stream=False):
     """Thin HTTP wrapper. Returns (response, error_string)."""
     import requests
+    from agent_friday.services import cloud_intent as _cloud_intent
+    try:
+        _cloud_intent.require_owner_engine("elevenlabs", "ElevenLabs speech tool")
+    except _cloud_intent.NoCloudIntent as e:
+        return None, str(e)
     url = API_ROOT + path
     try:
         resp = requests.request(

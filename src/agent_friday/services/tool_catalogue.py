@@ -517,3 +517,90 @@ def savings(tools: list, opening=None) -> dict:
         "saved_pct": round(100.0 * (full - opening) / max(1, full), 1),
         "resident": list(ALWAYS_RESIDENT),
     }
+
+
+# ── Tool groups and annotations ──────────────────────────────────────────────
+#
+# resources/tool_groups.json puts every registered tool in one primary group
+# (and optionally one secondary), and lists the reviewed exceptions to the
+# annotation hints derived from the privilege rings. Groups describe tools;
+# they grant nothing and change no gate: `_execute_tool` and the ring check
+# still decide what runs.
+
+_GROUPS_CACHE: dict = {}
+
+
+def load_groups() -> dict:
+    """The parsed tool_groups.json (cached). `{}` when it cannot be read."""
+    if "data" not in _GROUPS_CACHE:
+        try:
+            from pathlib import Path
+            p = Path(__file__).resolve().parent.parent / "resources" / "tool_groups.json"
+            _GROUPS_CACHE["data"] = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            _GROUPS_CACHE["data"] = {}
+    return _GROUPS_CACHE["data"]
+
+
+def groups_of(name: str) -> list:
+    """`[primary]` or `[primary, secondary]` for a tool; `[]` when ungrouped.
+
+    A tool registered at runtime from a connector takes its group from the
+    name prefix (`prefix_groups`)."""
+    data = load_groups()
+    hit = (data.get("tools") or {}).get(str(name or ""))
+    if hit:
+        return list(hit)
+    for prefix, group in (data.get("prefix_groups") or {}).items():
+        if str(name or "").startswith(prefix):
+            return [group]
+    return []
+
+
+def group_of(name: str):
+    """The primary group of a tool, or None."""
+    g = groups_of(name)
+    return g[0] if g else None
+
+
+def tools_in_group(group: str) -> list:
+    """Names whose primary or secondary group is `group`, sorted."""
+    data = load_groups()
+    return sorted(n for n, gs in (data.get("tools") or {}).items() if group in gs)
+
+
+def _ring_of(name: str):
+    """The tool's privilege ring, with the same fallback `_execute_tool`
+    uses for a name no ring table knows (ring 2). A tool the capability
+    preflight withheld on this machine keeps the ring it was declared with,
+    so its hints are the same everywhere."""
+    try:
+        from agent_friday.services import agent
+        if name in agent.TOOL_RINGS:
+            return int(agent.TOOL_RINGS[name])
+        return int(getattr(agent, "_WITHHELD_RINGS", {}).get(name, 2))
+    except Exception:
+        return 2
+
+
+def annotations(name: str, ring=None) -> dict:
+    """MCP-vocabulary hints for a tool: readOnlyHint, destructiveHint,
+    openWorldHint.
+
+    Derived from the ring, then the reviewed override for that tool is
+    merged over it:
+      ring 0  read-only, local
+      ring 1  writes local state, reversible, local
+      ring 2  reaches the network or other agents
+      ring 3  OS-level control, treated as destructive
+    The hints describe a tool for prefetch and the verifier. They are not an
+    authority: the ring check and the approval cards decide what runs.
+    """
+    r = _ring_of(name) if ring is None else int(ring)
+    a = {
+        "readOnlyHint": r == 0,
+        "destructiveHint": r >= 3,
+        "openWorldHint": r == 2,
+    }
+    a.update((load_groups().get("annotation_overrides") or {}).get(str(name), {}))
+    return a

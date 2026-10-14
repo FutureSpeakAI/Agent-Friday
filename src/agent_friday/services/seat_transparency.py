@@ -62,6 +62,9 @@ _SCANNER_MEANING = {
 
 _MODE_MEANING = {
     "cloud_only": "all turns go to the cloud orchestrator",
+    "cloud_preferred": "all turns go to the cloud orchestrator; if the cloud "
+                       "cannot be reached, the local model may answer and the "
+                       "reply says so",
     "local_only": "ALL turns go to the local seat — the cloud orchestrator "
                   "is not consulted",
     # `smart` reads as local_preferred: it is no longer offered in the picker
@@ -130,10 +133,18 @@ def _read_state():
         return None
 
 
-def _write_state(snap: dict):
+def _side(settings) -> str:
+    """'local' or 'cloud': which side of the cloud line answers turns now."""
+    try:
+        return effective_seat(settings)[1]
+    except Exception:
+        return ""
+
+
+def _write_state(snap: dict, side: str = ""):
     try:
         _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _STATE_FILE.write_text(json.dumps({"seats": snap, "ts": time.time()}),
+        _STATE_FILE.write_text(json.dumps({"seats": snap, "side": side, "ts": time.time()}),
                                encoding="utf-8")
     except Exception:
         pass
@@ -162,16 +173,20 @@ def observe_seats(settings) -> list:
     push a notification, and return the change events. First observation
     seeds silently. Returns [] when nothing changed."""
     snap = _snapshot(settings)
+    side = _side(settings)
     with _LOCK:
         state = _read_state()
         if state is None or "seats" not in state:
-            _write_state(snap)
+            _write_state(snap, side)
             return []
         prev = state["seats"]
+        prev_side = state.get("side") or ""
         changed = [k for k in snap if snap.get(k) != prev.get(k)]
         if not changed:
+            if side != prev_side:
+                _write_state(snap, side)
             return []
-        _write_state(snap)
+        _write_state(snap, side)
 
     events = []
     for key in changed:
@@ -205,12 +220,19 @@ def observe_seats(settings) -> list:
     try:
         from agent_friday.notifications_engine import push
         _only_gate = all(e["key"].startswith("decision_") for e in events)
-        push(title=("Approval gate changed" if _only_gate
-                    else "Model seat changed"),
-             body=summary,
-             priority="high", source="seat_transparency",
-             kind="seat_change",
-             dedupe_key=f"seat_change:{json.dumps(snap, sort_keys=True)}")
+        # A seat that moves answering between this PC and the cloud changes where
+        # data goes: that reaches the owner. A swap on the same side is a receipt.
+        crossed = bool(prev_side and side and prev_side != side)
+        if _only_gate or crossed:
+            push(title=("Approval gate changed" if _only_gate
+                        else "Answering moved between this PC and the cloud"),
+                 body=summary,
+                 priority="high", source="seat_transparency",
+                 kind="seat_change", emitter="E30",
+                 dedupe_key=f"seat_change:{json.dumps(snap, sort_keys=True)}")
+        else:
+            from agent_friday.services import notice_registry as _nr
+            _nr.note("X02", False)       # a receipt: the chat line above, never a card
     except Exception:
         pass
 

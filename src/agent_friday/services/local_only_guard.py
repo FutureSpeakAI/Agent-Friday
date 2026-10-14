@@ -59,15 +59,16 @@ def routing_mode() -> str:
 
     The user's model_routing.mode (the offline overlay is folded in by
     `_load_settings`), or "local_only" while a local-only run is active.
-    An unreadable setting fails CLOSED to "local_only": the cloud is reached
-    only on an affirmative read.
+    `smart` reads as `local_preferred`. A blank mode is unset and behaves as
+    the factory default, `cloud_only` (one reading, `cloud_intent.routing_mode`,
+    which this delegates to). An unreadable setting fails CLOSED to
+    "local_only": the cloud is reached only on an affirmative read.
     """
     if is_active():
         return "local_only"
     try:
-        from agent_friday import core
-        return str(((core._load_settings() or {}).get("model_routing") or {})
-                   .get("mode") or "smart").lower()
+        from agent_friday.services import cloud_intent as _ci
+        return _ci.normalize_mode(_ci.routing_mode())
     except Exception:
         return "local_only"
 
@@ -122,15 +123,126 @@ def provider_name_of(provider) -> str:
     return str(provider or "").strip()
 
 
+# Names the daemon's own inventory marks as remote (`remote_host` /
+# `remote_model` on a /api/tags row), e.g. `ollama cp x:cloud myglm:latest`.
+# Replaced wholesale by each successful inventory read; never fetched here.
+_REMOTE_ALIASES: frozenset = frozenset()
+_ALIASES_FILLED = False
+_ALIAS_RETRY_AT = 0.0
+
+
+def aliases_filled() -> bool:
+    """True once a daemon inventory read has filled the alias set."""
+    return _ALIASES_FILLED
+
+
+def note_remote_aliases(rows) -> None:
+    """Record which daemon /api/tags rows are relayed to a remote host.
+
+    Called by the code that already reads the inventory, so classifying a
+    model never costs a network call."""
+    global _REMOTE_ALIASES, _ALIASES_FILLED
+    names = set()
+    for r in rows or ():
+        if isinstance(r, dict) and (_names_a_remote(r.get("remote_host"))
+                                    or _names_a_remote(r.get("remote_model"))):
+            n = str(r.get("name") or r.get("model") or "").strip().lower()
+            if n:
+                names.add(n)
+    _REMOTE_ALIASES = frozenset(names)
+    _ALIASES_FILLED = True
+
+
+def _names_a_remote(value) -> bool:
+    """A `remote_host` / `remote_model` field that actually names somewhere.
+
+    A model the daemon runs here has neither key, or an empty one; a blank or
+    whitespace string is the same absence. Any other present value (a host, a
+    model, or a shape this code does not know) counts as remote, so an
+    unexpected inventory format fails toward cloud, never toward local."""
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return bool(value)
+
+
+def _reset_aliases_for_tests(state=None) -> tuple:
+    """Put the alias set back to ``state`` (from a previous call) or to the
+    state a fresh process starts in; returns the state it replaced. The set is
+    process-wide, so one test's inventory must not decide the next one's."""
+    global _REMOTE_ALIASES, _ALIASES_FILLED, _ALIAS_RETRY_AT
+    before = (_REMOTE_ALIASES, _ALIASES_FILLED, _ALIAS_RETRY_AT)
+    _REMOTE_ALIASES, _ALIASES_FILLED, _ALIAS_RETRY_AT = (
+        state if state is not None else (frozenset(), False, 0.0))
+    return before
+
+
+def ollama_daemon_is_local(base_url=None) -> bool:
+    """Is the Ollama daemon a relay transport posts to on this machine or the
+    local network? ``base_url`` is the address the transport will actually
+    use; None means the configured ``model_routing.ollama_url``. Decided by the
+    same host rule as provider descriptors (`is_private_host`): loopback,
+    RFC1918, link-local and *.local names are local; a public address, or a
+    name that cannot be resolved to only private addresses, is not. Any
+    fault answers False, so an unverifiable daemon is treated as cloud."""
+    try:
+        url = str(base_url or "").strip()
+        if not url:
+            from agent_friday.services.local_call import ollama_url
+            url = ollama_url()
+        from agent_friday.routing.provider_descriptors import is_private_host
+        return bool(url) and bool(is_private_host(url))
+    except Exception:
+        return False
+
+
 def is_cloud_model_tag(model: str) -> bool:
     """An Ollama model the daemon relays to ollama.com rather than running:
     tag `cloud` or ending in `-cloud` (`glm-4.6:cloud`, `gpt-oss:120b-cloud`),
-    or an untagged name ending in `-cloud`."""
+    or an untagged name ending in `-cloud`; or an alias the daemon's last
+    inventory read marked as remote."""
     m = str(model or "").strip().lower()
     if not m:
         return False
+    if m in _REMOTE_ALIASES:
+        return True
     tag = m.rsplit(":", 1)[1] if ":" in m else m
     return tag == "cloud" or tag.endswith("-cloud")
+
+
+def reader_model_is_cloud(model: str) -> bool:
+    """True when a READER's model is one the daemon relays to ollama.com, by its tag or by an alias.
+
+    The alias set (names the daemon's inventory marks remote_host/remote_model, e.g.
+    `ollama cp x:cloud myglm:latest`) is filled by the code that reads the inventory. A meeting's
+    words and titles go only to a reader that is local, so this decision must not be taken on a set
+    that was never filled: when it has not been, and the model is not a seat of this PC's own, the
+    daemon inventory is read once now (at most every 30 seconds while the read keeps failing).
+    A daemon that cannot be read cannot be relaying an alias either, so a failed read leaves the
+    answer to the tag check, as local_call does outside local-only mode.
+    """
+    m = str(model or "").strip()
+    if not m:
+        return False
+    if is_cloud_model_tag(m):
+        return True
+    global _ALIAS_RETRY_AT
+    if _ALIASES_FILLED:
+        return False
+    try:
+        import time
+        from agent_friday.services import local_call
+        if local_call.seat_endpoint(m):
+            return False
+        if time.monotonic() < _ALIAS_RETRY_AT:
+            return False
+        local_call._daemon_tags()
+        if not _ALIASES_FILLED:
+            _ALIAS_RETRY_AT = time.monotonic() + 30.0
+    except Exception:
+        return False
+    return is_cloud_model_tag(m)
 
 
 def refuse_if_active(provider, model: str = "") -> None:

@@ -121,6 +121,7 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | pdf.js (pdfjs-dist, legacy build with its character maps, standard fonts, image-decoder modules and colour profile), used by the Library's Reader | 6.4.299 | in installer zip | Apache-2.0 | Copyright Mozilla and individual contributors; its LICENSE is vendored beside it |
 | sqlcipher3-wheels (Python binding with SQLCipher community edition 4.12.0 and OpenSSL 3.6.0 built in; encrypts the Library's index when installed) | 0.5.7 (pinned `==0.5.7`; wheel `cp313-win_amd64` sha256 `3cd95c309984e01fa456417058dec87ca8baf01ec419ed5eaa734fed2d22ec53`) | installed by installer (documents) | zlib/libpng (binding; text below), BSD-style (SQLCipher; text below), Apache-2.0 (OpenSSL 3.6.0) | Copyright Charles Leifer and laggykiller (binding); Copyright Zetetic LLC (SQLCipher) |
 | rapidocr-onnxruntime (bundled PP-OCR detection, classification and recognition models) | 1.2.3 | installed by installer (documents) | Apache-2.0 | Copyright RapidAI; models from PaddleOCR, Copyright PaddlePaddle Authors |
+| sherpa-onnx (with sherpa-onnx-core) | 1.13.8 | runtime (pip, fetched on first voice setup when the local ear is chosen) | Apache-2.0 | Copyright the sherpa-onnx development team (Next-gen Kaldi) |
 | aiosignal | 1.4.0 | installed by installer (recommended/memory) | Apache-2.0 | Copyright aio-libs contributors |
 | bcrypt | 5.0.0 | installed by installer (memory) | Apache-2.0 | Copyright (c) The Python Cryptographic Authority developers (from package Author metadata) |
 | chromadb | 1.5.9 | installed by installer (memory) | Apache-2.0 | Copyright (c) Jeff Huber (from package Author metadata) |
@@ -435,6 +436,12 @@ either by the installer or on first use, and are governed by their own terms.
 | Silero VAD | runtime (only if silero-vad is installed) | MIT |
 | hexgrad/Kokoro-82M + voices | runtime (optional engine=kokoro) | Apache-2.0 |
 | nvidia/nemotron-3.5-asr-streaming-0.6b | runtime (optional GPU voice tier) | OpenMDW-1.1 per docs - unverified |
+| Nemotron 3.5 streaming ASR, int8 (sherpa-onnx repackaging, k2-fsa/sherpa-onnx GitHub release asr-models) | runtime (local voice ear, fetched on first voice setup) | OpenMDW-1.1 (NVIDIA model card) |
+| faster-whisper large-v3-turbo int8 (CTranslate2 export) | runtime (optional accuracy lane; not offered until its source is pinned) | MIT (OpenAI Whisper weights) |
+| unsloth/Qwen3-4B-Instruct-2507-GGUF (Q4_K_M) | runtime (local voice front, offered download) | Apache-2.0 (Qwen3) |
+| ggml-org/Qwen3-1.7B-GGUF (Q4_K_M) | runtime (local voice front beside the brain, offered download) | Apache-2.0 (Qwen3) |
+| prism-ml/Ternary-Bonsai-1.7B-gguf (PQ2_0) | runtime (default local voice front, offered download) | Apache-2.0 |
+| prism-ml/Ternary-Bonsai-8B-gguf (PQ2_0) | runtime (offered on the model shortlist) | Apache-2.0 |
 | nvidia/tts_en_fastpitch + nvidia/tts_hifigan | runtime (optional GPU voice tier) | NVIDIA NeMo model terms (CC-BY-4.0 on NGC cards) - unverified |
 | spaCy en_core_web_lg (Presidio NER) | runtime (Presidio needs one; installer does not fetch it explicitly - confirm) | MIT |
 | Ternary-Bonsai-2-27B (PTQ1_0) + mmproj | no (operator-provisioned) | mmproj GGUF says apache-2.0; main GGUF has no license key (Qwen3.5 base) - unverified |

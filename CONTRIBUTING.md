@@ -195,6 +195,31 @@ and every executor call site and fails on an unclassified tool or a bypass. An
 unknown tool is treated as outward at runtime, so forgetting step 4 makes the
 tool ask for approval rather than run silently, but the test still fails.
 
+## Laya in every workspace
+
+If you add or change a workspace or a UI action, update its Laya manifest in
+`src/agent_friday/resources/laya_manifests/`. CI checks it
+(`tests/test_laya_workspace_contracts.py`).
+
+- A new UI action needs a manifest verb (tool, argument template, gate class,
+  phrasings, undo, eval case) or a `not_for_laya` entry with a one-line reason.
+  Add it to `tests/fixtures/laya_ws_ui_actions.json` too.
+- The gate class in a manifest must equal the one `action_gate` gives the tool;
+  the manifest never loosens a gate.
+- A new row kind needs a place in `services/screen_stage.py`, an `open` entry in
+  the manifest (a `navigate_to` kind the desktop has, or the reason it has none)
+  and, if it can be ticked, a place in `_TICKABLE` in `services/agent.py`.
+- A button, schedule or idle job that starts model work goes behind
+  `visible_job` (see [visible jobs](docs/development/visible-jobs.md)) and is
+  declared in the manifest's `jobs` with that call's kind and label. The test
+  fails on a `visible_job` kind no manifest declares.
+- Coverage can only go up, on two counts: the verbs at a Laya tier and their share of
+  the Laya-eligible actions (everything except `by_design` not-for-Laya entries). Raise
+  the floor in `tests/fixtures/laya_coverage_floor.json` in the same change. A new
+  owner-only control is listed with a `by_design` reason and does not lower coverage;
+  a `gap` names the package that closes it (any declared id in `laya_manifests.PACKAGE_IDS`).
+- Design guidance: [Laya in every workspace](docs/design/hig/README.md#11-laya-in-every-workspace).
+
 ## Engineering invariants
 
 These are the rules the hooks and guards exist to enforce. Each is stated as

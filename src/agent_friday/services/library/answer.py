@@ -32,6 +32,16 @@ def seat_model() -> str | None:
         return None
 
 
+def _reads_a_meeting(evidence) -> bool:
+    try:
+        from agent_friday.services import meeting_archive
+        from agent_friday.services.library.store import store_for
+        st = store_for("owner")
+        return any(e.get("doc_id") and meeting_archive.is_archive_doc(st.get_document(e["doc_id"])) for e in evidence)
+    except Exception:
+        return True                       # unreadable evidence is treated as a meeting
+
+
 def write(question: str, evidence: list[dict], *, model: str | None = None, stamp: dict | None = None,
           receipt: str | None = None) -> dict:
     """{"ok": True, "text"} with footnote tokens, or {"ok": False, "reason"}."""
@@ -40,6 +50,11 @@ def write(question: str, evidence: list[dict], *, model: str | None = None, stam
         return {"ok": False, "reason": "no local model is loaded to write it"}
     if not evidence:
         return {"ok": False, "reason": "nothing to answer from"}
+    if _reads_a_meeting(evidence):
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        if is_cloud_model_tag(model):
+            # a cloud-tagged Ollama seat runs on ollama.com: it never writes an answer from a meeting
+            return {"ok": False, "reason": "the model chosen for local work is a cloud model, so your meetings are not sent to it"}
     from agent_friday.services import local_call
     user = envelope.wrap(evidence) + "\n\nQuestion: " + question.strip()[:600]
     text = local_call.call(SYSTEM, user, model, max_tokens=MAX_TOKENS, timeout=240)

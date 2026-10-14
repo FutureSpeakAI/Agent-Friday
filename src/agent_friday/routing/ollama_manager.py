@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 
 from agent_friday.user_errors import ExceptionText
+from agent_friday.services.local_scheduler import admitted as _admitted
 
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
@@ -511,6 +512,9 @@ class OllamaManager:
         if disable_thinking:
             body["think"] = False
         try:
+            from agent_friday.services import cloud_intent as _cloud_intent
+            _cloud_intent.require("ollama", "health probe (cloud-tagged model)", str(model or ""),
+                                  base_url=getattr(self, "base_url", None))
             resp = self._post("/api/generate", body, timeout=timeout) or {}
         except Exception as e:
             return {"ok": False, "error": ExceptionText("%s: %s" % (type(e).__name__, e)),
@@ -533,6 +537,7 @@ class OllamaManager:
         return bool(self.probe_generate(
             model, disable_thinking=disable_thinking).get("ok"))
 
+    @_admitted("ollama_manager.chat")
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
                         max_tokens=4096, num_ctx=None, timeout=120,
                         think=None, keep_alive=None, format=None):
@@ -607,11 +612,18 @@ class OllamaManager:
         # A model the daemon relays to ollama.com (`glm-4.6:cloud`,
         # `gpt-oss:120b-cloud`) leaves this machine whatever the host in
         # base_url says. This is the one place every Ollama chat turn passes
-        # through, so the privacy gate sits here: a plain local model is
-        # returned untouched, a cloud-tagged one is sealed (or the send is
-        # refused when the gate cannot run).
+        # through, so the privacy gate sits here: a plain local model on a
+        # daemon at a loopback or private base_url is returned untouched; a
+        # cloud-tagged model, or any model on a daemon elsewhere, is sealed (or
+        # the send is refused when the gate cannot run). The same relay is a
+        # cloud call for the routing mode: it needs a recorded intent in a local
+        # mode, as does a model whose daemon inventory could not be read to rule
+        # out a cloud alias (unless this PC serves it from its own seat).
+        from agent_friday.services import cloud_intent as _cloud_intent
+        _cloud_intent.require("ollama", "Ollama chat (cloud-tagged model)", str(model or ""),
+                              base_url=getattr(self, "base_url", None))
         from agent_friday.services.egress_gate import gate_ollama_body
-        native = gate_ollama_body(native, model)
+        native = gate_ollama_body(native, model, base_url=getattr(self, "base_url", None))
         resp = self._post("/api/chat", native, timeout=timeout)
 
         # ── The reserve is a guard here, not a gauge. ──

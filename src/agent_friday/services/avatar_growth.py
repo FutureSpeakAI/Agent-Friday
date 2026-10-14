@@ -127,7 +127,16 @@ def due(*, now=None) -> bool:
 #  Availability of the chosen author
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _consent_allows_cloud():
+def _consent_allows_cloud(explicit=False):
+    """(ok, reason): the routing mode and the owner's cloud consent both allow it.
+
+    `explicit` is True when the owner chose a cloud author by name; the default
+    frontier author is Friday's pick, so it never counts as the owner's ask.
+    """
+    from agent_friday.services import cloud_mode_policy as _cmp
+    if not _cmp.cloud_allowed("avatar growth", explicit=explicit):
+        return False, ("your routing mode is %s, so no cloud model writes "
+                       "Friday's look" % _cmp.current_mode().replace("_", " "))
     try:
         from agent_friday.privacy import cloud_consent as cc
         s = cc.resolve()
@@ -160,7 +169,7 @@ def _frontier_available():
 
 
 def _cloud_available(provider):
-    ok, why = _consent_allows_cloud()
+    ok, why = _consent_allows_cloud(explicit=True)
     if not ok:
         return False, why
     try:
@@ -217,7 +226,9 @@ def availability(author):
             fixes.append("choose_another")
         return ok, why, fixes
     if not ok:
-        fixes.append("connect_cloud")
+        from agent_friday.services import cloud_mode_policy as _cmp
+        if not _cmp.is_local_mode():
+            fixes.append("connect_cloud")
         seat = _local_seat()
         if seat:
             fixes.append("use_local:" + seat)
@@ -544,7 +555,7 @@ def _notify(title, body, key):
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=title, body=body, priority="low", source="avatar", kind="avatar",
-                dedupe_key=key, target={"workspace": "desktop"})
+                emitter="E54", dedupe_key=key, target={"workspace": "desktop"})
     except Exception as e:
         _log.debug("avatar notice not sent: %s", e)
 

@@ -1,0 +1,708 @@
+{
+ "_note": "Dev sets 1-3 of the Laya router, copied from tests/fixtures. Synthetic, written by the build. Personal learning (services/laya_personal) re-scores a new phrasing against these; the sealed set 5 and the spent set 4 are never here.",
+ "sets": {
+  "laya_router_eval.json": [
+   {
+    "text": "What's on my calendar this afternoon?",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "do I have anything tomorrow morning",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "when's my next meeting",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "am I free at three today?",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "what does my day look like",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "Any appointments I should know about today?",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "Any urgent emails?",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "check my email",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "did anyone email me?",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "anything new in my inbox",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "do I have any important messages waiting",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "how many unread emails have I got",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "Search my email for the invoice from Acme.",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "find the email about the dentist appointment",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "look in my inbox for the flight confirmation",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "did the landlord send me anything about the lease",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "pull up the email from the school about the field trip",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "What's the latest news about the Artemis moon mission?",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "what's in the news today",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "any headlines about the election",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "tell me the top stories",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "what's happening with interest rates in the news",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "is there any news on the hurricane",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "Search the web for the Louvre's opening hours.",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "look up the best way to clean a cast iron pan",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "google how tall the Eiffel Tower is",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "can you find online what time the hardware store closes",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "search for reviews of the new electric bike",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "Give me my morning briefing.",
+    "decision": "tool",
+    "tool": "get_briefing"
+   },
+   {
+    "text": "brief me",
+    "decision": "tool",
+    "tool": "get_briefing"
+   },
+   {
+    "text": "what's my daily briefing say",
+    "decision": "tool",
+    "tool": "get_briefing"
+   },
+   {
+    "text": "run through today's briefing",
+    "decision": "tool",
+    "tool": "get_briefing"
+   },
+   {
+    "text": "Find the file on my computer called budget.",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "where's my tax spreadsheet",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "find the document named project proposal",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "do I have a file about the kitchen renovation",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "locate the photos from the beach trip on my computer",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "Search my wiki for the page about the garden project.",
+    "decision": "tool",
+    "tool": "search_wiki"
+   },
+   {
+    "text": "what do my notes say about the book club",
+    "decision": "tool",
+    "tool": "search_wiki"
+   },
+   {
+    "text": "check my wiki for anything on the car loan",
+    "decision": "tool",
+    "tool": "search_wiki"
+   },
+   {
+    "text": "look in my notes for the recipe ideas",
+    "decision": "tool",
+    "tool": "search_wiki"
+   },
+   {
+    "text": "What did I say about the roof repair in an earlier conversation?",
+    "decision": "tool",
+    "tool": "search_past_conversations"
+   },
+   {
+    "text": "remind me what we talked about regarding the vacation",
+    "decision": "tool",
+    "tool": "search_past_conversations"
+   },
+   {
+    "text": "didn't we discuss the new laptop last week",
+    "decision": "tool",
+    "tool": "search_past_conversations"
+   },
+   {
+    "text": "what did you tell me earlier about the warranty",
+    "decision": "tool",
+    "tool": "search_past_conversations"
+   },
+   {
+    "text": "Good morning, how are you today?",
+    "decision": "no_tool"
+   },
+   {
+    "text": "Thanks, that's all for now.",
+    "decision": "no_tool"
+   },
+   {
+    "text": "tell me something interesting about octopuses",
+    "decision": "no_tool"
+   },
+   {
+    "text": "how should I think about refinancing right now",
+    "decision": "no_tool"
+   },
+   {
+    "text": "you're funny",
+    "decision": "no_tool"
+   },
+   {
+    "text": "what's the difference between a crocodile and an alligator",
+    "decision": "no_tool"
+   },
+   {
+    "text": "I had a really long day",
+    "decision": "no_tool"
+   },
+   {
+    "text": "can you explain how a mortgage works",
+    "decision": "no_tool"
+   },
+   {
+    "text": "okay",
+    "decision": "no_tool"
+   },
+   {
+    "text": "what do you think I should cook tonight",
+    "decision": "no_tool"
+   },
+   {
+    "text": "never mind",
+    "decision": "no_tool"
+   },
+   {
+    "text": "give me a motivational quote",
+    "decision": "no_tool"
+   },
+   {
+    "text": "that's great news",
+    "decision": "no_tool"
+   },
+   {
+    "text": "who wrote pride and prejudice",
+    "decision": "no_tool"
+   },
+   {
+    "text": "send an email to my sister saying I'll be late",
+    "decision": "defer"
+   },
+   {
+    "text": "delete the budget file",
+    "decision": "defer"
+   },
+   {
+    "text": "schedule a meeting with the plumber tomorrow at ten",
+    "decision": "defer"
+   },
+   {
+    "text": "reply to the landlord and say yes",
+    "decision": "defer"
+   },
+   {
+    "text": "cancel my three o'clock",
+    "decision": "defer"
+   },
+   {
+    "text": "archive all the newsletters in my inbox",
+    "decision": "defer"
+   },
+   {
+    "text": "move the tax spreadsheet into the finance folder",
+    "decision": "defer"
+   },
+   {
+    "text": "turn off the notifications",
+    "decision": "defer"
+   }
+  ],
+  "laya_router_holdout2.json": [
+   {
+    "text": "um, what have I got on today",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "is my afternoon clear",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "what time's the dentist again",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "anything on the calendar for Friday",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "my calendar is such a mess this week",
+    "decision": "no_tool"
+   },
+   {
+    "text": "so did I get any mail",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "has anything urgent come in",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "go through my inbox real quick",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "don't check my email right now",
+    "decision": "no_tool"
+   },
+   {
+    "text": "email is exhausting",
+    "decision": "no_tool"
+   },
+   {
+    "text": "can you find the message where the bank mentioned the overdraft",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "search my mail for anything from the gym",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "did the travel agent email me about the hotel",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "what's going on with the strike at the port",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "any news today",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "catch me up on the headlines",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "I read some news about whales yesterday",
+    "decision": "no_tool"
+   },
+   {
+    "text": "look up how long to boil an egg",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "search online for train times to the city",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "can you google the symptoms of a sprained ankle",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "what's the briefing today",
+    "decision": "tool",
+    "tool": "get_briefing"
+   },
+   {
+    "text": "can I hear my briefing",
+    "decision": "tool",
+    "tool": "get_briefing"
+   },
+   {
+    "text": "where did I put the insurance pdf",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "find the spreadsheet called monthly expenses",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "is there a document about the wedding on my laptop",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "what's in my notes about the garden",
+    "decision": "tool",
+    "tool": "search_wiki"
+   },
+   {
+    "text": "pull up my wiki page on the move",
+    "decision": "tool",
+    "tool": "search_wiki"
+   },
+   {
+    "text": "what did I tell you about my sister's birthday",
+    "decision": "tool",
+    "tool": "search_past_conversations"
+   },
+   {
+    "text": "we talked about a podcast last week, what was it",
+    "decision": "tool",
+    "tool": "search_past_conversations"
+   },
+   {
+    "text": "can you read my email",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "are you able to look things up online",
+    "decision": "no_tool"
+   },
+   {
+    "text": "hey, how's it going",
+    "decision": "no_tool"
+   },
+   {
+    "text": "thanks, you're a lifesaver",
+    "decision": "no_tool"
+   },
+   {
+    "text": "what's the capital of Australia",
+    "decision": "no_tool"
+   },
+   {
+    "text": "I'm feeling a bit anxious about tomorrow",
+    "decision": "no_tool"
+   },
+   {
+    "text": "how do I make my sourdough rise more",
+    "decision": "no_tool"
+   },
+   {
+    "text": "good night Friday",
+    "decision": "no_tool"
+   },
+   {
+    "text": "hmm let me think",
+    "decision": "no_tool"
+   },
+   {
+    "text": "forward the invoice to my accountant",
+    "decision": "defer"
+   },
+   {
+    "text": "put lunch with Sam on my calendar for Tuesday",
+    "decision": "defer"
+   },
+   {
+    "text": "please remove the duplicate photos",
+    "decision": "defer"
+   },
+   {
+    "text": "mark all my email as read",
+    "decision": "defer"
+   },
+   {
+    "text": "write a note in my wiki about the plumber",
+    "decision": "defer"
+   },
+   {
+    "text": "could you book me a haircut",
+    "decision": "defer"
+   }
+  ],
+  "laya_router_holdout3.json": [
+   {
+    "text": "what's happening on my calendar later",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "do I have a meeting with the accountant this week",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "how packed is tomorrow",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "when am I seeing the doctor",
+    "decision": "tool",
+    "tool": "query_calendar"
+   },
+   {
+    "text": "is there anything important in my email",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "what's new in my mail",
+    "decision": "tool",
+    "tool": "check_email"
+   },
+   {
+    "text": "any messages from work",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "look through my email for the parking ticket",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "find the email with the concert tickets",
+    "decision": "tool",
+    "tool": "search_email"
+   },
+   {
+    "text": "what's the latest on the wildfires",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "read me the headlines",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "any sports news",
+    "decision": "tool",
+    "tool": "search_news"
+   },
+   {
+    "text": "search the web for a good hiking trail near me",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "look up what time sunset is today",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "find out online if the museum is open on Mondays",
+    "decision": "tool",
+    "tool": "search_web"
+   },
+   {
+    "text": "give me today's briefing please",
+    "decision": "tool",
+    "tool": "get_briefing"
+   },
+   {
+    "text": "what's in my briefing",
+    "decision": "tool",
+    "tool": "get_briefing"
+   },
+   {
+    "text": "find my notes file called groceries",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "where's the lease agreement document",
+    "decision": "tool",
+    "tool": "search_files"
+   },
+   {
+    "text": "search my wiki for the camping checklist",
+    "decision": "tool",
+    "tool": "search_wiki"
+   },
+   {
+    "text": "what did we say about the budget last time",
+    "decision": "tool",
+    "tool": "search_past_conversations"
+   },
+   {
+    "text": "remind me what you said about my sleep",
+    "decision": "tool",
+    "tool": "search_past_conversations"
+   },
+   {
+    "text": "hello there",
+    "decision": "no_tool"
+   },
+   {
+    "text": "that makes sense",
+    "decision": "no_tool"
+   },
+   {
+    "text": "I'm going to make some tea",
+    "decision": "no_tool"
+   },
+   {
+    "text": "what would you do if you were me",
+    "decision": "no_tool"
+   },
+   {
+    "text": "how many legs does a spider have",
+    "decision": "no_tool"
+   },
+   {
+    "text": "the news has been so depressing lately",
+    "decision": "no_tool"
+   },
+   {
+    "text": "I love my new calendar app",
+    "decision": "no_tool"
+   },
+   {
+    "text": "tell me a story about a dragon",
+    "decision": "no_tool"
+   },
+   {
+    "text": "can you help me think through a decision",
+    "decision": "no_tool"
+   },
+   {
+    "text": "wow",
+    "decision": "no_tool"
+   },
+   {
+    "text": "that's enough for today, thanks",
+    "decision": "no_tool"
+   },
+   {
+    "text": "reply to my mom and tell her I'll call tonight",
+    "decision": "defer"
+   },
+   {
+    "text": "delete the email from the spammer",
+    "decision": "defer"
+   },
+   {
+    "text": "add dentist on Friday at two to my calendar",
+    "decision": "defer"
+   },
+   {
+    "text": "save this as a note",
+    "decision": "defer"
+   },
+   {
+    "text": "change my wake up alarm to seven",
+    "decision": "defer"
+   },
+   {
+    "text": "please send the report to the team",
+    "decision": "defer"
+   },
+   {
+    "text": "set a reminder to water the plants",
+    "decision": "defer"
+   }
+  ]
+ }
+}

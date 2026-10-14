@@ -38,6 +38,8 @@ import os
 import threading
 import time
 import urllib.request
+
+from agent_friday.services import cloud_intent as _cloud_intent
 from collections import deque
 from agent_friday.user_errors import ExceptionText
 
@@ -291,7 +293,14 @@ def _check(name, deep=False) -> dict:
 
     if deep:
         # Decision D1: a key is CONFIGURATION, not health. Prove inference.
-        probed = inference_probe(name, prov=prov)
+        # `deep` is a request from the Providers panel (or a Test button), so
+        # it is the owner's explicit ask for a paid probe. In a local mode the
+        # cloud opens only under a recorded intent, so the ask is recorded
+        # here, for this one fixed probe and nothing else: the scope ends with
+        # the call. Nothing else reaches `deep`; status polls stay shallow.
+        with _cloud_intent.intent_scope("user_explicit", source="providers_panel_check",
+                                        confirmed=True):
+            probed = inference_probe(name, prov=prov, explicit=True)
         if probed is not None:
             return probed
 
@@ -342,8 +351,14 @@ def _check(name, deep=False) -> dict:
 # every health surface Friday exposed, because the check was `bool(key)`. The
 # probe below sends a genuine one-token generation and reports what actually
 # came back.
-_PROBE_TTL_S = 60.0        # probes cost tokens; /api/health is polled often
+_PROBE_TTL_S = 60.0        # local seats: free, but /api/health is polled often
+# A paid provider is probed only when the owner asks (Providers panel, Test
+# button), and an answer stays good for this long before another ask spends
+# tokens again.
+_CLOUD_PROBE_TTL_S = 15 * 60.0
+_KEYCHECK_TTL_S = 5 * 60.0   # a models-list key check is free; this just spares the network
 _PROBE_CACHE: dict = {}    # provider -> (ts, result)
+_KEYCHECK_CACHE: dict = {}  # provider -> (ts, result)
 _PROBE_PROMPT = "hi"
 # A ONE-token budget cannot reliably prove inference works: /api/health can
 # report `anthropic: down — empty completion` while Anthropic is serving chat
@@ -595,24 +610,104 @@ def _prove_local_seat(base: str, model: str):
                   % where, True)
 
 
-def inference_probe(name, prov=None, use_cache=True) -> dict | None:
+def _is_cloud_provider(prov) -> bool:
+    """True when a call to this provider leaves the machine and may be billed."""
+    ptype = (prov or {}).get("type", "")
+    if ptype in ("anthropic", "google"):
+        return True
+    if ptype != "openai-compatible":
+        return False
+    if (prov or {}).get("classification") == "local":
+        return False
+    try:
+        from agent_friday.routing.provider_descriptors import is_private_host
+        return not is_private_host((prov.get("base_url") or "").rstrip("/"))
+    except Exception:
+        return True
+
+
+def key_check(name, prov=None, use_cache=True) -> dict | None:
+    """Does a paid provider accept its key? Asks for its model list, never to think.
+
+    The models list is free and proves the key is live, which is all a status
+    light needs. In a local routing mode nothing is sent at all: the status is
+    "unknown" (the provider was not asked, so it is neither up nor down), the
+    configuration is "ok" because a key is present, and the owner can run the
+    Providers panel's own check to go further. Returns None for a provider that
+    is not a paid cloud one.
+    """
+    prov = prov if prov is not None else _provider(name)
+    if not prov or not _is_cloud_provider(prov):
+        return None
+    if use_cache:
+        hit = _KEYCHECK_CACHE.get(name)
+        if hit and (time.time() - hit[0]) < _KEYCHECK_TTL_S:
+            return hit[1]
+    ptype = prov.get("type", "")
+
+    def _result(status, detail):
+        res = {"provider": name, "status": status, "detail": detail,
+               "config": "ok", "proved_inference": False, "classification": "cloud"}
+        _KEYCHECK_CACHE[name] = (time.time(), res)
+        return res
+
+    from agent_friday.services import cloud_mode_policy as _cmp
+    if _cmp.is_local_mode():
+        # Not "ok": an uncontacted provider must not count toward "Friday can
+        # think" in the health sweep. config stays "ok"; the key is there.
+        return _result("unknown", "key present (not contacted: you are in a local mode)")
+    try:
+        if ptype == "anthropic":
+            from agent_friday.core import get_anthropic_client
+            client = get_anthropic_client()
+            if client is None:
+                return _result("missing", "no client")
+            client.models.list(limit=1)
+        elif ptype == "google":
+            from agent_friday.core import get_genai_client
+            client = get_genai_client()
+            if client is None:
+                return _result("missing", "no client")
+            next(iter(client.models.list()), None)
+        else:
+            import requests
+            from agent_friday.routing.provider_descriptors import (
+                auth_headers, provider_api_key)
+            base = (prov.get("base_url") or "").rstrip("/")
+            if not base:
+                return _result("down", "no base_url")
+            r = requests.get(f"{base}/models", timeout=6,
+                             headers=auth_headers(prov, provider_api_key(prov)))
+            if r.status_code >= 400:
+                return _result("down", f"HTTP {r.status_code}")
+    except Exception as e:
+        return _result("down", ExceptionText(f"{type(e).__name__}: {str(e)[:100]}"))
+    return _result("ok", "key accepted (model list only; no inference was run)")
+
+
+def inference_probe(name, prov=None, use_cache=True, explicit=False) -> dict | None:
     """Send a one-token generation and report whether inference actually works.
 
     Returns a check dict, or None when this provider type has no probe (the
-    caller then falls back to its previous behaviour). Results are cached for
-    `_PROBE_TTL_S` because every probe spends real tokens and `/api/health` is
-    polled by the tray watchdog.
+    caller then falls back to its previous behaviour). A paid provider is
+    probed only when `explicit` is true, meaning the owner asked (Providers
+    panel, Test button); otherwise it gets `key_check`, which spends nothing.
+    A paid answer is cached for `_CLOUD_PROBE_TTL_S`, a local one for
+    `_PROBE_TTL_S` because `/api/health` is polled by the tray watchdog.
 
     Never raises: a probe that blows up is a `down`, not a 500.
     """
-    if use_cache:
-        hit = _PROBE_CACHE.get(name)
-        if hit and (time.time() - hit[0]) < _PROBE_TTL_S:
-            return hit[1]
-
     prov = prov if prov is not None else _provider(name)
     if not prov:
         return None
+    paid = _is_cloud_provider(prov)
+    if paid and not explicit:
+        return key_check(name, prov=prov, use_cache=use_cache)
+    if use_cache:
+        hit = _PROBE_CACHE.get(name)
+        if hit and (time.time() - hit[0]) < (_CLOUD_PROBE_TTL_S if paid else _PROBE_TTL_S):
+            return hit[1]
+
     ptype = prov.get("type", "")
     model = resident_model_for(prov)
 
@@ -655,6 +750,7 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             client = get_anthropic_client()
             if client is None:
                 return _result("missing", "no client", False)
+            _cloud_intent.require("anthropic", "health probe", model or "")
             resp = client.messages.create(
                 model=model, max_tokens=_PROBE_MAX_TOKENS,
                 messages=[{"role": "user", "content": _PROBE_PROMPT}])
@@ -687,6 +783,7 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             client = get_genai_client()
             if client is None:
                 return _result("missing", "no client", False)
+            _cloud_intent.require("google-gemini", "health probe", model or "")
             resp = client.models.generate_content(
                 model=model or "gemini-3.5-flash", contents=_PROBE_PROMPT)
             ms = int((time.time() - t0) * 1000)
@@ -741,6 +838,7 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             # a 1-token ceiling makes a healthy one look empty (measured on
             # gemma4 via llama-server: 200 OK, content='').
             budget = 64 if _thinking(model) else _PROBE_MAX_TOKENS
+            _cloud_intent.require(prov, "health probe", model or "")
             payload = {"model": model, "max_tokens": budget,
                        "messages": [{"role": "user",
                                      "content": _PROBE_PROMPT}]}
@@ -768,6 +866,11 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             if slow:
                 return _result("unhealthy", slow, True)
             return _result("ok", f"generated in {ms}ms", True)
+    except _cloud_intent.NoCloudIntent:
+        # A local mode spends no tokens on a status light. Not "down": nothing was
+        # asked, so nothing is known.
+        return _result("unknown", "Not checked: local mode sends nothing to the cloud "
+                                  "unless you ask", False)
     except Exception as e:
         return _result("down", ExceptionText(f"{type(e).__name__}: {str(e)[:100]}"), False)
 
@@ -777,17 +880,22 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
 def reset_probe_cache(provider=None):
     """Clear probe results (tests, and after a key/provider change)."""
     if provider is None:
+        _KEYCHECK_CACHE.clear()
         _PROBE_CACHE.clear()
     else:
+        _KEYCHECK_CACHE.pop(provider, None)
         _PROBE_CACHE.pop(provider, None)
 
 
-def inference_health(providers=None) -> dict:
+def inference_health(providers=None, owner_requested=False) -> dict:
     """Aggregate probe verdict across the providers that matter for chat.
 
     Returns {"status": ok|degraded|down, "providers": [...]}.
     `down` means every probed provider failed — Friday cannot currently think.
     `degraded` means at least one, but not all, failed.
+
+    Paid providers get a key check (a model list, nothing generated) unless
+    `owner_requested` is true, which is the owner asking for the real probe.
     """
     try:
         from agent_friday.services.provider_registry import get_provider_registry
@@ -830,7 +938,7 @@ def inference_health(providers=None) -> dict:
     from agent_friday.services import machine_probe as _mp
 
     def _one(pname, prov):
-        return lambda: inference_probe(pname, prov=prov)
+        return lambda: inference_probe(pname, prov=prov, explicit=owner_requested)
 
     swept = _mp.probe_all({n: _one(n, p) for n, p in wanted},
                           timeout=_mp.DEFAULT_PROBE_TIMEOUT_S)

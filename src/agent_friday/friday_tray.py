@@ -25,6 +25,7 @@ import pystray
 from PIL import Image
 
 from agent_friday import brand
+from agent_friday.services import notice_registry as _notice_registry
 from agent_friday.paths import clear_server_port, friday_home, server_port
 
 # No console windows from anything this process spawns. The tray outlives the
@@ -330,6 +331,22 @@ class PushToTranscribe:
         return "Push-to-Transcribe: %s" % self.detail
 
 
+def recording_icon(base: Image.Image) -> Image.Image:
+    """The tray icon with a red recording dot (white ring) in its lower right
+    corner, drawn over the normal icon. A tooltip alone is not an indicator;
+    this shows without hovering."""
+    from PIL import ImageDraw
+    img = base.convert("RGBA").copy()
+    w, h = img.size
+    r = max(4, min(w, h) // 4)
+    x1, y1 = w - 1, h - 1
+    x0, y0 = x1 - 2 * r, y1 - 2 * r
+    d = ImageDraw.Draw(img)
+    d.ellipse((x0 - 2, y0 - 2, x1 + 1, y1 + 1), fill=(255, 255, 255, 255))
+    d.ellipse((x0, y0, x1 - 1, y1 - 1), fill=(220, 38, 38, 255))
+    return img
+
+
 class FridayTray:
     def __init__(self) -> None:
         self.server_proc: subprocess.Popen | None = None
@@ -564,7 +581,8 @@ class FridayTray:
                     continue
                 if crashed and self.icon is not None:
                     try:
-                        self.icon.notify(
+                        _notice_registry.tray_balloon(
+                            "E66", self.icon,
                             "Friday's server stopped unexpectedly. "
                             "It has NOT been restarted automatically — "
                             "open the tray menu to restart it, or check "
@@ -592,7 +610,7 @@ class FridayTray:
             threading.Thread(target=self.restart_server, daemon=True).start()
         if self.icon is not None:
             try:
-                self.icon.notify(msg, brand.PRODUCT_NAME)
+                _notice_registry.tray_balloon("E67", self.icon, msg, brand.PRODUCT_NAME)
             except Exception:
                 pass
 
@@ -612,6 +630,22 @@ class FridayTray:
         except Exception:
             return {}
 
+    def _show_recording_icon(self, recording: bool) -> None:
+        """Swap the tray image to the recording variant while a meeting records,
+        and back when it stops. Does nothing before the icon image is known."""
+        base = getattr(self, "_base_image", None)
+        if self.icon is None or base is None:
+            return
+        if bool(getattr(self, "_icon_recording", False)) == recording:
+            return
+        try:
+            if recording and getattr(self, "_rec_image", None) is None:
+                self._rec_image = recording_icon(base)
+            self.icon.icon = self._rec_image if recording else base
+            self._icon_recording = recording
+        except Exception:
+            pass
+
     def _update_meeting_title(self) -> None:
         """While a meeting is recording, the tray tooltip says so, with the time.
 
@@ -627,6 +661,17 @@ class FridayTray:
             tip = tray_tooltip(self._meeting_status()) if self.running else None
         except Exception:
             tip = None
+        # The dot comes on at once and goes off only after two polls in a row
+        # say "not recording", so one slow or failed status poll cannot hide it
+        # while a recording is still going. (The tooltip follows each poll.)
+        if tip:
+            self._not_recording_polls = 0
+            self._show_recording_icon(True)
+        else:
+            n = int(getattr(self, "_not_recording_polls", 0)) + 1
+            self._not_recording_polls = n
+            if n >= 2:
+                self._show_recording_icon(False)
         if not tip and self.running:
             try:
                 from agent_friday.services.seat_supervisor import tray_tooltip as _queue_tip
@@ -642,6 +687,9 @@ class FridayTray:
 
     def run(self) -> None:
         image = Image.open(ICON_PATH)
+        self._base_image = image
+        self._rec_image = None
+        self._icon_recording = False
         self.icon = pystray.Icon(
             "friday_desktop",
             image,
@@ -699,7 +747,7 @@ class FridayTray:
     def _notify(self, message: str) -> None:
         if self.icon is not None:
             try:
-                self.icon.notify(message, brand.PRODUCT_NAME)
+                _notice_registry.tray_balloon("E68", self.icon, message, brand.PRODUCT_NAME)
             except Exception:
                 pass
 

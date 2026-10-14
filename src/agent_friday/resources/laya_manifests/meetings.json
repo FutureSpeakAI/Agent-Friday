@@ -1,0 +1,460 @@
+{
+ "schema": 1,
+ "id": "meetings",
+ "label": "Meetings",
+ "group": "work",
+ "held": null,
+ "spoken_words": {
+  "router_extra": []
+ },
+ "nav": {
+  "key": null,
+  "keys": [
+   "meeting_id",
+   "start"
+  ],
+  "sections": []
+ },
+ "objects": [
+  {
+   "kind": "meeting",
+   "stage_workspace": "meetings",
+   "noun": "meetings",
+   "ref_template": "meeting:{id}",
+   "see_touch": {
+    "publisher": "static/meetings_ws.js (rows marked by fridayRow; static/workspace_stages.js domList)",
+    "facets": [
+     "kind"
+    ],
+    "filters": {},
+    "fields": [
+     "pad"
+    ],
+    "selectable": true,
+    "privacy": "counts_only"
+   },
+   "open": {
+    "tool": "navigate_to",
+    "kind": "meeting",
+    "args": {
+     "id": "{id}"
+    },
+    "row_level": true
+   },
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "meetings.open_meeting",
+   "action": "meetings.open_meeting",
+   "group": "navigate",
+   "ui": {
+    "control": "open a meeting"
+   },
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 1,
+    "card": "none"
+   },
+   "laya_tier": "point_act_tool",
+   "phrasings": [
+    "open the first one",
+    "open the third one"
+   ],
+   "deictic": [
+    "ordinal",
+    "these",
+    "description"
+   ],
+   "undo": null,
+   "voice": {
+    "live": true,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_a_meeting_row_opens_by_pointing"
+   ],
+   "point_verb": "open"
+  },
+  {
+   "id": "meetings.open_latest",
+   "action": "meetings.open_latest",
+   "group": "navigate",
+   "ui": {
+    "control": "open the latest meeting"
+   },
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 1,
+    "card": "none"
+   },
+   "laya_tier": "router_rule",
+   "phrasings": [
+    "open my last meeting",
+    "show me the latest call"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": true,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_open_my_last_meeting_goes_to_the_meeting_not_the_calendar"
+   ]
+  },
+  {
+   "id": "meetings.select_meetings",
+   "action": "meetings.select_meetings",
+   "group": "select",
+   "ui": {
+    "control": "tick meetings"
+   },
+   "tool": "screen_select",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 1,
+    "card": "none"
+   },
+   "laya_tier": "point_act_tool",
+   "phrasings": [
+    "select these",
+    "tick the first two"
+   ],
+   "deictic": [
+    "these",
+    "ordinal",
+    "facet"
+   ],
+   "undo": null,
+   "voice": {
+    "live": true,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_meeting_rows_can_be_ticked_by_pointing"
+   ],
+   "point_verb": "select"
+  },
+  {
+   "id": "meetings.ask_meetings",
+   "action": "meetings.ask_meetings",
+   "group": "read",
+   "ui": {
+    "control": "ask your meetings"
+   },
+   "tool": "search_library",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 0,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "what did we decide about the budget",
+    "what are my action items from the Marta call"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": true
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_a_question_about_meetings_is_a_library_search_in_the_meetings_scope"
+   ]
+  },
+  {
+   "id": "meetings.read_notes",
+   "action": "meetings.read_notes",
+   "group": "read",
+   "ui": {
+    "control": "open a meeting by name / read its notes"
+   },
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 1,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "open the Marta call",
+    "show me the notes from yesterday's standup"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": true,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "meetings.make_tasks",
+   "action": "meetings.make_tasks",
+   "group": "create",
+   "ui": {
+    "control": "add action items to Tasks"
+   },
+   "tool": "create_task",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 2,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "add those action items to my tasks"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "meetings.follow_up_draft",
+   "action": "meetings.follow_up_draft",
+   "group": "create",
+   "ui": {
+    "control": "draft thank-you / follow-up"
+   },
+   "tool": "draft_email",
+   "also_tools": [],
+   "gate": {
+    "class": "self_gated",
+    "ring": 2,
+    "card": "own_card"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "draft a thank-you to everyone from that meeting"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "meetings.attach_to_event",
+   "action": "meetings.attach_to_event",
+   "group": "organize",
+   "ui": {
+    "control": "add the summary to the calendar event"
+   },
+   "tool": "annotate_calendar_events",
+   "also_tools": [],
+   "gate": {
+    "class": "outward",
+    "ring": 2,
+    "card": "required"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "put the summary on the calendar event"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_attaching_the_summary_waits_for_a_card_and_writes_nothing_before_it"
+   ]
+  },
+  {
+   "id": "meetings.copy_notes",
+   "action": "meetings.copy_notes",
+   "group": "read",
+   "ui": {
+    "control": "copy the notes"
+   },
+   "tool": "write_clipboard",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 1,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "copy the notes from that meeting"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "meetings.jot_note",
+   "action": "meetings.jot_note",
+   "group": "create",
+   "ui": {
+    "control": "jot a bullet in the notes pad"
+   },
+   "tool": "meeting",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 2,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "jot down that Priya owns the budget"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_the_meeting_tool_is_on_demand_internal_and_local"
+   ]
+  },
+  {
+   "id": "meetings.expand_notes",
+   "action": "meetings.expand_notes",
+   "group": "create",
+   "ui": {
+    "control": "write notes again / expand the bullets into notes"
+   },
+   "tool": "meeting",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 2,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "turn my bullets from that call into notes"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_the_meeting_tool_is_on_demand_internal_and_local"
+   ]
+  },
+  {
+   "id": "meetings.remember",
+   "action": "meetings.remember",
+   "group": "create",
+   "ui": {
+    "control": "propose people, decisions and projects to memory"
+   },
+   "tool": "meeting",
+   "also_tools": [],
+   "gate": {
+    "class": "internal",
+    "ring": 2,
+    "card": "none"
+   },
+   "laya_tier": "model_only",
+   "phrasings": [
+    "suggest what to remember from that meeting"
+   ],
+   "deictic": [],
+   "undo": null,
+   "voice": {
+    "live": false,
+    "shared": false
+   },
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_meeting_workspace.py::test_the_meeting_tool_is_on_demand_internal_and_local"
+   ]
+  }
+ ],
+ "jobs": [
+  {
+   "id": "meetings.transcript",
+   "trigger": "button",
+   "model_class": "speech",
+   "helper": "visible_job",
+   "task_kind": "meeting_transcript",
+   "activity_label": "Meeting transcript",
+   "entry": "agent_friday.services.meeting_capture:_default_transcriber"
+  },
+  {
+   "id": "meetings.notes",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "meeting_notes",
+   "activity_label": "Meeting notes",
+   "entry": "agent_friday.services.meeting_capture:_default_notes_call"
+  },
+  {
+   "id": "meetings.archive",
+   "trigger": "button",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "meeting_archive",
+   "activity_label": "Making meetings searchable",
+   "entry": "agent_friday.services.meeting_archive:reindex_all"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "meetings.start_recording",
+   "kind": "by_design",
+   "reason": "Recording is the owner's own press and confirm; \"start recording\" by voice only opens the on-screen start card."
+  },
+  {
+   "action": "meetings.delete_meeting",
+   "kind": "by_design",
+   "reason": "Deleting a meeting or its audio is a real deletion the owner confirms on screen; Laya never does it."
+  },
+  {
+   "action": "meetings.archive_choice",
+   "kind": "by_design",
+   "reason": "Whether meetings are searchable from the Library is a privacy choice only the owner makes on screen."
+  }
+ ],
+ "resolver_sources": [],
+ "tool_groups": [
+  "calendar",
+  "tasks",
+  "wiki_knowledge"
+ ],
+ "workspace_tools": {
+  "key": null,
+  "pools": []
+ }
+}

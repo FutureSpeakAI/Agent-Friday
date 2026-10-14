@@ -2,26 +2,66 @@
 
     GET    /api/meetings/status            recording state for the indicator
     GET    /api/meetings/suggest           a title from the calendar event now
-    POST   /api/meetings/start             {consent_ack, consent_version, title,
-                                            event_id, keep_audio, max_duration_s}
+    POST   /api/meetings/start-card        the consent statement, its version, the
+                                           jurisdiction note and a single-use token
+    POST   /api/meetings/start             {consent_ack, nonce, consent_version,
+                                            title, event_id, keep_audio,
+                                            max_duration_s, system_audio,
+                                            speak_consent, consent_line}
     POST   /api/meetings/stop
+    GET    /api/meetings/live              live partial text while recording
+    GET    /api/meetings/consent           the editable consent line and note
+    POST   /api/meetings/consent           {line, mode, speak}
+    GET    /api/meetings/retention         the choices, nothing preselected
+    POST   /api/meetings/retention         {audio, text, days}
+    GET    /api/meetings/suggestion        a "take notes?" card, at most once per event
+    POST   /api/meetings/suggestion        {action: accept|decline}
+    POST   /api/meetings/suggestion/reset  turn suggestions back on
     GET    /api/meetings                   past meetings (no transcript)
     GET    /api/meetings/<id>              one meeting: transcript and notes
     DELETE /api/meetings/<id>              removes transcript, notes and audio
+    DELETE /api/meetings/<id>/audio        removes the audio only
     POST   /api/meetings/<id>/notes        write the notes again (local model)
     POST   /api/meetings/<id>/tasks        {items: [index, ...]}
     GET    /api/meetings/<id>/follow-up    ?kind=thank_you|follow_up -> a draft
     POST   /api/meetings/<id>/follow-up    {to, subject, body} -> approval card
     GET    /api/meetings/<id>/audio        WAV, only when the owner kept audio
+    GET    /api/meetings/<id>/lines        the numbered transcript (the spans notes cite)
+    GET    /api/meetings/<id>/actions      each action item and the transcript line it traces to
+    GET    /api/meetings/<id>/pad          the owner's shorthand bullets
+    POST   /api/meetings/<id>/pad          {text} -> one more bullet (also while recording)
+    DELETE /api/meetings/<id>/pad/<n>      take one bullet away
+    POST   /api/meetings/<id>/polish       expand the bullets into notes (local model only)
+    GET    /api/meetings/<id>/memory       what was proposed from this meeting and is waiting
+    POST   /api/meetings/<id>/memory       propose people, decisions, projects (nothing is kept)
+    POST   /api/meetings/<id>/calendar     ask to add the summary to the calendar event (a card)
+    GET    /api/meetings/archive           whether meetings are searchable from the Library
+    POST   /api/meetings/archive           {choice: on|off}  (only from the Friday window)
 
 LOCAL ONLY. Starting a recording turns on this machine's microphone, and a
 transcript holds what other people said. Both stay with the person sitting at
 this machine: a remote session or an observer credential is refused.
+
+NEVER AUTO-STARTED. `meetings_start` is the only caller of
+MeetingManager.start. It forwards `consent_ack` and the start card's `nonce`
+exactly as the page sent them; the manager refuses anything but True for the
+first and a token it handed out a moment ago, once, for the second. A
+`confirm` in the body is ignored. The suggestion routes only ever offer a card;
+accepting one opens the start card and starts nothing.
 """
+
+import hashlib
 
 from flask import Blueprint, Response, jsonify, request
 
+import threading
+
+from agent_friday.services import meeting_archive as ma
+from agent_friday.services import meeting_calendar as mcal
 from agent_friday.services import meeting_capture as mc
+from agent_friday.services import screen_click
+from agent_friday.services import meeting_policy as mp
+from agent_friday.services import meeting_workspace as mw
 from agent_friday.routes._errors import api_error, public_result
 
 meetings_bp = Blueprint('meetings', __name__)
@@ -60,17 +100,51 @@ def meetings_suggest():
     return jsonify({"status": "ok", "event": ev or None})
 
 
+_NOT_ON_SCREEN = ({"status": "error", "code": "screen_only",
+                   "error": "Recording starts only from the Start recording card "
+                            "in the Friday window."}, 403)
+
+
+def _session_id() -> str:
+    """The screen session a start card is bound to: a digest of the page's
+    rotating session token, never the token itself."""
+    tok = request.headers.get("X-Friday-Token") or ""
+    return hashlib.sha256(tok.encode("utf-8")).hexdigest()[:32]
+
+
+@meetings_bp.route('/api/meetings/start-card', methods=['POST'])
+def meetings_start_card():
+    """What the start card shows (the consent statement, its version, the
+    jurisdiction note and the editable line) and the single-use token its start
+    button sends, bound to this screen session. Asking for it starts nothing,
+    and only the page in the Friday window may ask (a POST, so the page adds
+    its session token like any other change)."""
+    if not screen_click.screen_session(request):
+        return jsonify(_NOT_ON_SCREEN[0]), _NOT_ON_SCREEN[1]
+    card = mc.get_manager().issue_start_card(_session_id())
+    return jsonify({"status": "ok"} | mp.consent() | card)
+
+
 @meetings_bp.route('/api/meetings/start', methods=['POST'])
 def meetings_start():
+    if not screen_click.screen_session(request):
+        return jsonify(_NOT_ON_SCREEN[0]), _NOT_ON_SCREEN[1]
     d = request.get_json(silent=True) or {}
     try:
+        # `confirm` is never read from the request: the start is confirmed by
+        # the token the start card was handed, which is single use and short
+        # lived. A body that merely says confirm:true starts nothing.
         st = mc.get_manager().start(
             consent_ack=d.get("consent_ack") is True,
             consent_version=d.get("consent_version"),
             title=d.get("title") or "",
             event_id=d.get("event_id") or "",
             keep_audio=bool(d.get("keep_audio")),
-            max_duration_s=d.get("max_duration_s"))
+            max_duration_s=d.get("max_duration_s"),
+            system_audio=d.get("system_audio") is True,
+            speak_consent=d.get("speak_consent") is True,
+            consent_line=d.get("consent_line"),
+            nonce=d.get("nonce"), session=_session_id())
     except mc.MeetingError as e:
         return _fail(e)
     return jsonify({"status": "ok"} | st)
@@ -85,6 +159,62 @@ def meetings_stop():
     return jsonify({"status": "ok", "meeting": row})
 
 
+@meetings_bp.route('/api/meetings/live')
+def meetings_live():
+    return jsonify({"status": "ok"} | mc.get_manager().live())
+
+
+_BAD = ({"status": "error", "code": "bad_request",
+         "error": "That choice was not understood."}, 400)
+
+
+@meetings_bp.route('/api/meetings/consent', methods=['GET', 'POST'])
+def meetings_consent():
+    if request.method == 'GET':
+        return jsonify({"status": "ok"} | mp.consent())
+    d = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"status": "ok"} | mp.set_consent(
+            line=d.get("line"), mode=d.get("mode"), speak=d.get("speak")))
+    except (ValueError, TypeError):
+        return jsonify(_BAD[0]), _BAD[1]
+
+
+@meetings_bp.route('/api/meetings/retention', methods=['GET', 'POST'])
+def meetings_retention():
+    if request.method == 'GET':
+        return jsonify({"status": "ok"} | mp.retention())
+    d = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"status": "ok"} | mp.set_retention(
+            audio=d.get("audio"), text=d.get("text"), days=d.get("days")))
+    except (ValueError, TypeError):
+        return jsonify(_BAD[0]), _BAD[1]
+
+
+@meetings_bp.route('/api/meetings/suggestion', methods=['GET', 'POST'])
+def meetings_suggestion():
+    if request.method == 'POST':
+        d = request.get_json(silent=True) or {}
+        try:
+            return jsonify({"status": "ok"} | mp.answer_suggestion(d.get("action"), d.get("key")))
+        except (ValueError, TypeError):
+            return jsonify(_BAD[0]), _BAD[1]
+    m = mc.get_manager()
+    try:
+        ev = m.event_lookup()
+    except Exception:
+        ev = None
+    # Asking does not use the card up: the page says "shown" once it is on screen.
+    card = mp.suggest(ev, recording=bool(m.status().get("recording")))
+    return jsonify({"status": "ok", "suggestion": card} | {"state": mp.suggestion_state()})
+
+
+@meetings_bp.route('/api/meetings/suggestion/reset', methods=['POST'])
+def meetings_suggestion_reset():
+    return jsonify({"status": "ok"} | mp.reset_suggestions())
+
+
 @meetings_bp.route('/api/meetings')
 def meetings_list():
     return jsonify(public_result({"status": "ok", "meetings": mc.get_manager().list()}, "Couldn't list the meetings"))
@@ -97,6 +227,14 @@ def meetings_one(mid):
         if request.method == 'DELETE':
             return jsonify({"status": "ok"} | m.delete(mid))
         return jsonify({"status": "ok", "meeting": m.get(mid)})
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/audio', methods=['DELETE'])
+def meetings_audio_delete(mid):
+    try:
+        return jsonify({"status": "ok"} | mc.get_manager().delete_audio(mid))
     except mc.MeetingError as e:
         return _fail(e)
 
@@ -158,3 +296,100 @@ def meetings_audio(mid):
                     headers={"Content-Disposition":
                              "attachment; filename=meeting-%s.wav" % mid,
                              "Cache-Control": "no-store"})
+
+
+# -- the Meetings workspace -------------------------------------------------
+
+@meetings_bp.route('/api/meetings/archive', methods=['GET', 'POST'])
+def meetings_archive():
+    if request.method == 'GET':
+        return jsonify({"status": "ok"} | ma.status())
+    d = request.get_json(silent=True) or {}
+    if not screen_click.screen_session(request):
+        # The yes that makes transcripts and notes searchable is the owner's, on screen; so is the no, which
+        # removes the archive and the quotes of it in saved chats.
+        return jsonify({"status": "error", "code": "screen_only",
+                        "error": "Whether meetings are searchable is chosen only from the Meetings view "
+                                 "in the Friday window."}), 403
+    try:
+        out = ma.set_choice(d.get("choice"), background=True)
+    except (ValueError, TypeError):
+        return jsonify(_BAD[0]), _BAD[1]
+    if out.get("refused"):
+        return jsonify({"status": "error", "code": "not_available", "error": out["refused"]}), 409
+    if out["choice"] == "on":
+        # reading each finished meeting into the Library takes a while: off the request's thread
+        manager = mc.get_manager()
+        worker = threading.Thread(target=ma.reindex_all, args=(manager,), name="meeting-archive", daemon=True)
+        worker.start()
+    return jsonify({"status": "ok"} | out)
+
+
+@meetings_bp.route('/api/meetings/<mid>/lines')
+def meetings_lines(mid):
+    try:
+        m = mc.get_manager().get(mid)
+    except mc.MeetingError as e:
+        return _fail(e)
+    return jsonify({"status": "ok", "lines": [dict(ln, clock=mw.clock(ln["t"])) for ln in mw.spoken(m)]})
+
+
+@meetings_bp.route('/api/meetings/<mid>/actions')
+def meetings_actions(mid):
+    try:
+        return jsonify({"status": "ok", "items": mc.get_manager().action_item_check(mid)})
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/pad', methods=['GET', 'POST'])
+def meetings_pad(mid):
+    mgr = mc.get_manager()
+    try:
+        if request.method == 'GET':
+            return jsonify({"status": "ok", "pad": mgr.pad_get(mid)})
+        d = request.get_json(silent=True) or {}
+        return jsonify({"status": "ok", "item": mgr.pad_add(mid, d.get("text"))})
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/pad/<int:pad_id>', methods=['DELETE'])
+def meetings_pad_one(mid, pad_id):
+    try:
+        return jsonify({"status": "ok"} | mc.get_manager().pad_remove(mid, pad_id))
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/polish', methods=['POST'])
+def meetings_polish(mid):
+    try:
+        return jsonify({"status": "ok", "polished": mc.get_manager().expand_notes(mid)})
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/memory', methods=['GET', 'POST'])
+def meetings_memory(mid):
+    try:
+        if request.method == 'GET':
+            mc.get_manager().get(mid)          # a meeting that does not exist has no proposals
+            from agent_friday.services import memory_proposals
+            mine = [r for r in memory_proposals.pending(limit=1000)
+                    if (r.get("provenance") or {}).get("meeting_id") == mid]
+            return jsonify({"status": "ok", "proposals": mine})
+        return jsonify({"status": "ok"} | mc.get_manager().propose_memory(mid))
+    except mc.MeetingError as e:
+        return _fail(e)
+
+
+@meetings_bp.route('/api/meetings/<mid>/calendar', methods=['POST'])
+def meetings_calendar(mid):
+    try:
+        m = mc.get_manager().get(mid)
+    except mc.MeetingError as e:
+        return _fail(e)
+    out = mcal.request(m, requested_by="meetings")
+    code = 200 if out.get("status") in ("pending_approval", "done", "nothing") else 409
+    return jsonify({"ok": code == 200} | out), code

@@ -1,0 +1,61 @@
+{
+ "schema": 1,
+ "id": "health",
+ "label": "Health",
+ "group": "life",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": [], "sections": []},
+ "objects": [
+  {
+   "kind": "health",
+   "stage_workspace": "health",
+   "noun": "records",
+   "ref_template": "health:{med|appt|veh}-{n}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (domList, counts only)",
+    "facets": ["kind"],
+    "filters": {},
+    "fields": [],
+    "selectable": false,
+    "privacy": "counts_only"
+   },
+   "open": {"tool": null, "none_because": "no row-level target yet (WS-2/WS-3)", "gap": true, "wave": "WS-2/WS-3"},
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "health.switch_section",
+   "action": "health.switch_section",
+   "group": "navigate",
+   "ui": {"control": "switch section"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open health"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [],
+ "not_for_laya": [
+  {
+   "action": "health.view",
+   "kind": "gap",
+   "reason": "Counts-only stage by design; a privacy-preserving read verb is planned.",
+   "wave": "WS-4"
+  },
+  {
+   "action": "health.copy_contact",
+   "kind": "by_design",
+   "reason": "Health details stay on the page; Friday does not copy them anywhere."
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

@@ -217,7 +217,7 @@ def test_two_leases_cannot_be_held_at_once(arb):
     """Transitions are serial; a racing residency layer exhausts VRAM."""
     arb.boot(measure_baseline=False)
     arb.grant("heavy_turn")
-    second = arb.grant("image_job")
+    second = arb.grant("image_job", wait_s=0)          # asks once; a waiting request is tested in test_local_scheduler_leases
     assert second["ok"] is False
     assert "already held" in second["error"]
 

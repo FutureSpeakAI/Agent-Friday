@@ -29,7 +29,7 @@ RULES = {"kind": "rules", "model": "", "provider": ""}
 
 #: Routing modes from the consent screen under which a cloud reader may even
 #: be offered. `local_only` never offers one.
-CLOUD_MODES = ("cloud_only", "local_preferred")
+CLOUD_MODES = ("cloud_only", "cloud_preferred", "local_preferred")
 
 
 def local_model() -> str | None:
@@ -72,6 +72,7 @@ def cloud_model() -> dict | None:
 
 def options(routing_mode: str) -> dict:
     """What the chat can offer: {local, cloud} where either may be None."""
+    routing_mode = "local_preferred" if routing_mode == "smart" else routing_mode
     loc = local_model()
     cloud = cloud_model() if (routing_mode in CLOUD_MODES and not loc) else None
     return {"local": loc, "cloud": cloud}

@@ -586,11 +586,38 @@ class TestRouteIntegration:
         assert result["is_local"] is True
         assert result["vault_allowed"] is True
 
-    def test_local_preferred_falls_back_to_cloud_when_unavailable(self, monkeypatch):
+    def test_local_preferred_with_nothing_local_offers_instead_of_going_to_the_cloud(self, monkeypatch):
+        """No local model is serving: the router refuses WITH an offer. It never
+        routes to the cloud on its own (routing-modes addendum 2.1 rule 4); the
+        owner's "send it to Claude" arrives as a recorded intent."""
         self._patch_ollama(monkeypatch, available=False)
+        monkeypatch.setattr(ModelRouter, "_local_candidates", lambda self: [])
         r = _router(mode="local_preferred", fallback_to_cloud=True)
         result = r.route(_msgs("hello"))
+        assert result["provider"] == "local"
+        assert result["refuse"] is True and result["local_unavailable"] is True
+        assert "nothing was sent to a cloud model" in result["warning"].lower()
+        assert result["offer_cloud_switch"] is True
+
+    def test_local_preferred_goes_to_the_cloud_only_with_an_intent(self, monkeypatch):
+        from agent_friday.services import cloud_intent
+        self._patch_ollama(monkeypatch, available=False)
+        monkeypatch.setattr(ModelRouter, "_local_candidates", lambda self: [])
+        r = _router(mode="local_preferred", fallback_to_cloud=True,
+                    task_overrides={TaskType.SIMPLE: {"provider": "cloud",
+                                                      "model": "claude-haiku-4-5-20251001"}})
+        with cloud_intent.intent_scope("user_explicit", source="test"):
+            result = r.route(_msgs("hello"))
         assert result["provider"] == "cloud"
+
+    def test_local_preferred_makes_no_mode_switch_offer_when_fallback_is_off(self, monkeypatch):
+        self._patch_ollama(monkeypatch, available=False)
+        monkeypatch.setattr(ModelRouter, "_local_candidates", lambda self: [])
+        r = _router(mode="local_preferred", fallback_to_cloud=False)
+        result = r.route(_msgs("hello"))
+        assert result["provider"] != "cloud"
+        assert result["refuse"] is True
+        assert not result.get("offer_cloud_switch")
 
     # local_only mode ────────────────────────────────────────────────────────-
 
@@ -642,9 +669,29 @@ class TestRouteIntegration:
                            models=[{"name": "gemma4:latest", "size_gb": 5.0}])
         overrides = {TaskType.SIMPLE: {"provider": "cloud", "model": "claude-haiku-4-5-20251001"}}
         r = _router(mode="local_preferred", task_overrides=overrides)
-        result = r.route(_msgs("hi"))
+        # A cloud override is honoured with a recorded intent (the owner's word).
+        from agent_friday.services import cloud_intent
+        with cloud_intent.intent_scope("user_explicit", source="test"):
+            result = r.route(_msgs("hi"))
         assert result["provider"] == "cloud"
         assert result["model"] == "claude-haiku-4-5-20251001"
+
+    def test_a_cloud_task_override_is_a_remembered_choice_in_local_preferred_only(self, monkeypatch):
+        # RM-1b: a configured per-task cloud override is the owner's standing
+        # choice, so local_preferred carries it as the remembered_choice intent
+        # (the chat route records it before the transport's require). local_only
+        # never takes it without the per-turn confirm.
+        self._patch_ollama(monkeypatch, available=True,
+                           models=[{"name": "gemma4:latest", "size_gb": 5.0}])
+        overrides = {TaskType.SIMPLE: {"provider": "cloud", "model": "claude-haiku-4-5-20251001"}}
+        r = _router(mode="local_preferred", task_overrides=overrides)
+        result = r.route(_msgs("hi"))
+        assert result["provider"] == "cloud"
+        assert result["implied_intent"] == "remembered_choice"
+        r = _router(mode="local_only", task_overrides=overrides)
+        result = r.route(_msgs("hi"))
+        assert result["provider"] == "local"
+        assert not result.get("implied_intent")
 
 
 # ── ModelRouter.get_stats / reload_config ────────────────────────────────────

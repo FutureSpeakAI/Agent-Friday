@@ -112,12 +112,12 @@ def _post_back(conversation_id: str, text: str, approval_id: str = "") -> None:
     if not conversation_id:
         return
     try:
-        from agent_friday.services import conversations as _convs
-        _convs.append(conversation_id, {"role": "friday", "text": text, "ts": time.time(),
-                                        "meta": {"kind": "approval_result", "approval_id": approval_id}})
-        from agent_friday.services import desktop_bus as _bus
-        _bus.broadcast({"type": "approval_result", "conversation_id": conversation_id,
-                        "approval_id": approval_id}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.transcript_add("E75", conversation_id,
+                           {"role": "friday", "text": text, "ts": time.time(),
+                            "meta": {"kind": "approval_result", "approval_id": approval_id}})
+        _nr.bus_broadcast("E74", {"type": "approval_result", "conversation_id": conversation_id,
+                                  "approval_id": approval_id}, kind="chat")
     except Exception as e:
         _log.warning("could not post the task result into %s: %s", conversation_id, e)
 

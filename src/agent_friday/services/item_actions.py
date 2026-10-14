@@ -100,9 +100,9 @@ def words_hash(text: str) -> str:
 def _notify(title: str, body: str, kind: str = "info", priority: str = "") -> None:
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title=title, body=body,
-                priority=priority or ("low" if kind == "info" else "medium"),
-                kind=kind, source="actions")
+        priority = priority or ("low" if kind == "info" else "medium")
+        ne.push(title=title, body=body, priority=priority, kind=kind, source="actions",
+                emitter="E49", dedupe_key="actions:%s:%s" % (kind, priority))
     except Exception as e:
         _log.info("could not notify (%s): %s", title, e)
 
@@ -110,9 +110,9 @@ def _notify(title: str, body: str, kind: str = "info", priority: str = "") -> No
 def _tell_pages(domain: str, receipt_id: str) -> None:
     """News for the desktop: a list it shows may have changed."""
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "items_changed", "domain": domain,
-                               "receipt_id": receipt_id}, kind="desktop")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "items_changed", "domain": domain,
+                                  "receipt_id": receipt_id}, kind="desktop")
     except Exception:
         pass
 
@@ -123,16 +123,16 @@ def _post_back(conversation_id: str | None, text: str, approval_id: str | None) 
     if not cid:
         return
     try:
-        from agent_friday.services import conversations as _convs
-        _convs.append(cid, {"role": "friday", "text": text, "ts": time.time(),
-                            "meta": {"kind": "approval_result", "approval_id": approval_id}})
+        from agent_friday.services import notice_registry as _nr
+        _nr.transcript_add("E75", cid, {"role": "friday", "text": text, "ts": time.time(),
+                                        "meta": {"kind": "approval_result", "approval_id": approval_id}})
     except Exception as e:
         _log.warning("could not post the outcome into %s: %s", cid, e)
         return
     try:
-        from agent_friday.services import desktop_bus as _bus
-        _bus.broadcast({"type": "approval_result", "conversation_id": cid,
-                        "approval_id": approval_id}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "approval_result", "conversation_id": cid,
+                                  "approval_id": approval_id}, kind="chat")
     except Exception:
         pass
 
@@ -307,6 +307,36 @@ def _search_threads(account_id: str, query: str, limit: int) -> tuple[list[str],
             return out, False
 
 
+def _senders_of(msgs: list, cap: int = 3) -> tuple:
+    """(names, lines) for the sender of each listed message: the distinct senders in order, up to ``cap``.
+    ``names`` is what a readback, a spoken line or a chat history may carry; ``lines`` adds each address,
+    for the card the owner reads on screen only (a display name is the sender's to choose)."""
+    from email.utils import parseaddr
+    seen, names, shown = set(), [], []
+    for m in msgs:
+        name, addr = parseaddr(str((m or {}).get("from") or ""))
+        addr = _address(str((m or {}).get("from") or ""))
+        who = _clean_row(name, 40) or _clean_row(addr.split("@")[0], 40) or "someone"
+        if "@" in who:                     # a display name that is itself an address: the local part only
+            who = _clean_row(who.split("@")[0], 40) or "a sender"
+        key = addr or who.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(who)
+        shown.append("%s <%s>" % (who, addr) if addr else "%s <address not shown>" % who)
+        if len(names) >= cap:
+            break
+    return ", ".join(names), ", ".join(shown)
+
+
+def _address(from_header: str) -> str:
+    """The address in a From header, lower-cased, or '' when there is none that looks like one."""
+    from email.utils import parseaddr
+    addr = parseaddr(str(from_header or ""))[1].strip().lower()
+    return addr[:120] if re.fullmatch(r"[^\s<>@,;]{1,64}@[^\s<>@,;]{1,120}", addr) else ""
+
+
 def _thread_heads(account_id: str, tids: list[str]) -> dict:
     """{thread id: {"subject", "sender", "date"}} for a few conversations."""
     from agent_friday.services import gmail_api
@@ -365,6 +395,20 @@ def _split_ids(thread_ids, accounts: list[dict]) -> dict:
     return {a: list(dict.fromkeys(t)) for a, t in out.items()}
 
 
+#: A Laya card is bound to the messages shown; more than this many on one card goes the model's way.
+MAX_LAYA_MESSAGES = 400
+
+
+def _clean_row(value, limit: int) -> str:
+    """A subject or sender as the card shows it: no control, bidi or zero-width characters
+    (they can reorder or hide text so one row reads as another), one line, capped."""
+    import unicodedata
+    s = "".join(" " if unicodedata.category(c) in ("Zl", "Zp") else c
+                for c in str(value or "") if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cn", "Cs")
+                or c in "\t\n")
+    return " ".join(s.split())[:limit]
+
+
 def select_email(query: str = "", thread_ids=None, account: str = "",
                  limit: int = MAX_ITEMS) -> dict:
     """The conversations a request names, per account, with the first few
@@ -413,8 +457,8 @@ def select_email(query: str = "", thread_ids=None, account: str = "",
         for tid in want:
             h = heads.get(tid) or {}
             preview.append({"id": tid, "account_id": acct, "account": names.get(acct, acct),
-                            "subject": h.get("subject") or "(conversation %s)" % tid,
-                            "sender": h.get("sender") or "", "date": h.get("date") or ""})
+                            "subject": _clean_row(h.get("subject"), 200) or "(conversation %s)" % tid,
+                            "sender": _clean_row(h.get("sender"), 80), "date": h.get("date") or ""})
     return {"accounts": per, "count": total, "preview": preview, "blocked": blocked,
             "errors": errors, "truncated": truncated, "query": query}
 
@@ -467,10 +511,11 @@ def _tell_held(detail: dict, state: str, receipt_id: str = "", card_id: str = ""
     if not refs:
         return
     try:
-        from agent_friday.services import desktop_bus, screen_stage
-        desktop_bus.push([{"type": "held", "workspace": detail.get("stage_ws") or "messages", "card_id": card_id,
-                           "refs": refs, "state": state, "action": detail.get("action") or "",
-                           "receipt_id": receipt_id, "selection_id": detail.get("selection_id") or ""}])
+        from agent_friday.services import notice_registry as _nr
+        from agent_friday.services import screen_stage
+        _nr.bus_push("E71", [{"type": "held", "workspace": detail.get("stage_ws") or "messages", "card_id": card_id,
+                              "refs": refs, "state": state, "action": detail.get("action") or "",
+                              "receipt_id": receipt_id, "selection_id": detail.get("selection_id") or ""}])
         screen_stage.log_counts("held_" + state, detail.get("stage_ws") or "messages", len(refs))
     except Exception:
         pass
@@ -480,22 +525,75 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
                   label: str = "", why: str = "", conversation_id: str | None = None,
                   owner_words: str = "", requested_by: str = "friday", room_mode: bool = False,
                   replaces: str = "", refs=None, selection_id: str = "",
-                  stage_rev: int = 0, rule: str = "") -> dict:
+                  stage_rev: int = 0, rule: str = "", laya_card: bool = False,
+                  viewed_at: float | None = None) -> dict:
     """Find the mail a request names and raise ONE card to change all of it.
 
     `refs` (with `selection_id` and `stage_rev`) bind the batch to what the owner saw ticked:
     `thread_ids` are exactly those conversations, nothing is searched, and the card keeps the
     refs so the page can hold those rows until the owner answers. A mark-read, star or label
-    change (EMAIL_NO_CARD) runs at once and returns its receipt."""
+    change (EMAIL_NO_CARD) runs at once and returns its receipt.
+
+    `laya_card` (Laya's safe writes, services/laya_safe_writes) only ever ADDS: the change waits
+    for ONE card even when it is a no-card kind, it must be on Laya's reversible list, and a label
+    must already exist (Laya never makes one). Nothing here can skip a card."""
     action = str(action or "").strip().lower().replace(" ", "_").replace("-", "_")
     if action not in EMAIL_ACTIONS:
         raise Refused("organize_email can: " + ", ".join(EMAIL_ACTIONS))
     label = str(label or "").strip()[:225]
     if action in _LABEL_ACTIONS and not label:
         raise Refused("say which label")
+    if laya_card:
+        from agent_friday.services import laya_safe_writes as _lsw
+        try:
+            _lsw.guard_card(action, laya_card=True)
+        except _lsw.Refusal as e:
+            raise Refused(str(e))
+        query = ""
     sel = select_email(query, thread_ids, account)
+    if laya_card and action in _LABEL_ACTIONS:
+        for acct in sel["accounts"]:
+            if _label_id(acct, label, create=False)[0] is None:
+                raise Refused("there is no label called \u201c%s\u201d in that mailbox; Laya does not make labels"
+                              % label)
+    messages, who_lines, newer_n = {}, {}, 0
+    if laya_card:
+        # The card is bound to the MESSAGES the owner could have seen, not the conversations: a reply
+        # that arrives before the owner approves is not changed, a message that arrived after their
+        # screen last showed the list is left out (and the card says so), and undo has an exact record.
+        from agent_friday.services import gmail_mailbox as _gm
+        since_ms = int(float(viewed_at) * 1000) if viewed_at else None
+        keep = {}
+        try:
+            for acct, tids in sel["accounts"].items():
+                snap = _gm.snapshot_messages(acct, tids)
+                for tid in tids:
+                    msgs = snap.get(tid) or []
+                    old = [m for m in msgs if not (since_ms and m.get("ts") and m["ts"] > since_ms)]
+                    newer_n += len(msgs) - len(old)
+                    if not old:
+                        continue                    # nothing in it was on the owner's screen: left out whole
+                    messages.setdefault(acct, {})[tid] = [m["id"] for m in old]
+                    who_lines[(acct, tid)] = _senders_of(old)
+                    keep.setdefault(acct, []).append(tid)
+        except Exception as e:
+            raise Refused("Laya could not read those conversations message by message, so she did not "
+                          "put a change on a card (%s)" % exception_text(e))
+        if not keep:
+            raise Refused("everything in those conversations arrived after your screen last showed them, "
+                          "so Laya left them out; point at them again")
+        if sum(len(v) for per in messages.values() for v in per.values()) > MAX_LAYA_MESSAGES:
+            raise Refused("those conversations hold too many messages for Laya to put on one card; "
+                          "the model path can take it")
+        sel["accounts"] = keep
+        sel["count"] = sum(len(t) for t in keep.values())
+        sel["preview"] = [dict(p, sender=who_lines[(p["account_id"], p["id"])][0])
+                          for p in sel["preview"] if (p["account_id"], p["id"]) in who_lines]
     n = sel["count"]
     notes = []
+    if newer_n:
+        notes.append("%s not included: %s arrived after your screen last showed the list"
+                     % (_plural(newer_n, "newer message"), "it" if newer_n == 1 else "they"))
     for b in sel["blocked"]:
         notes.append("%s in %s left alone: that account has not allowed Friday to change "
                      "its mailbox (Settings \u2192 Connections: reconnect with sending)"
@@ -510,7 +608,11 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
                 "text": "Nothing to change: no conversation matches%s." % (
                     (" " + sel["query"]) if sel["query"] else "")
                 + ("" if not notes else " " + "; ".join(notes) + ".")}
-    lines = ["%s%s" % (p["subject"], (" \u2014 " + p["sender"]) if p.get("sender") else "")
+    def _who(p):
+        if laya_card:       # the card on screen names each listed message's sender with the address; nothing
+            return who_lines[(p["account_id"], p["id"])][1]     # spoken or stored in a chat does
+        return p.get("sender") or ""
+    lines = ["%s%s" % (p["subject"], (" \u2014 " + _who(p)) if _who(p) else "")
              for p in sel["preview"][:PREVIEW]]
     if n > len(lines):
         lines.append("\u2026and %d more" % (n - len(lines)))
@@ -521,9 +623,15 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
     if refs:
         detail.update(refs=[str(r) for r in refs][:MAX_ITEMS], selection_id=str(selection_id or "")[:40],
                       stage_rev=int(stage_rev or 0))
+    if laya_card:
+        detail["messages"] = messages
+        detail["newer_not_included"] = newer_n
+        detail["origin"] = "laya_safe_write"
+        detail["laya_rule"] = str(rule or "")[:80]
+        requested_by = "laya:safe_write"        # the approval and the signed gate receipt say who asked
     _verb, doing = _email_words(action, label, n)
-    if action in EMAIL_NO_CARD:
-        rec = run_email(detail)
+    if action in EMAIL_NO_CARD and not laya_card:
+        rec = run_email(detail, card_free=True)
         _tell_held(detail, "done", receipt_id=rec.get("receipt_id") or "")
         _tell_pages("email", rec.get("receipt_id") or "")
         return {"status": rec.get("status") or "complete", "count": n, "receipt_id": rec.get("receipt_id"),
@@ -536,10 +644,25 @@ def propose_email(action: str, *, query: str = "", thread_ids=None, account: str
         said.append("The search matched more than %d; only these %d are in this batch." % (MAX_ITEMS, n))
     if rule:
         said.append("Selected on screen: %s." % rule)
+    if laya_card:
+        said.append("This covers the %d messages in these conversations as they are now; a reply that "
+                    "arrives before you approve is not changed." % sum(
+                        len(m) for per in messages.values() for m in per.values()))
+    if laya_card and newer_n:
+        said.append("%s that arrived after your screen last showed this list %s left out."
+                    % (_plural(newer_n, "newer message"), "is" if newer_n == 1 else "are"))
     if detail["why"]:
         said.append("Why (Friday's words): " + detail["why"])
+    if laya_card:
+        from agent_friday.services import laya_safe_writes as _lsw2
+        if _lsw2.mode() != "on":
+            raise Refused("Laya's safe writes were turned off while this card was being made, so there is none")
     card = _raise_card("email", action, detail, title=title, body=" ".join(said),
                        requested_by=requested_by, replaces=replaces)
+    if laya_card:
+        from agent_friday.services import laya_safe_writes as _lsw2
+        if _lsw2.mode() != "on":            # turned off in the instant between the check and the store
+            _lsw2.expire_pending_cards()
     if card.get("status") == "pending_approval":
         _tell_held(detail, "held", card_id=card.get("approval_id") or "")
     out = {**card, "count": n, "readback": email_readback(sel, action, label, room_mode),
@@ -560,28 +683,39 @@ def _label_id(account_id: str, name: str, create: bool) -> tuple[str | None, boo
     return gm.create_label(account_id, name)["id"], True
 
 
-def run_email(detail: dict, approval_id: str | None = None) -> dict:
-    """Carry out an approved mail batch: exactly the conversations it lists."""
+def run_email(detail: dict, approval_id: str | None = None, card_free: bool = False) -> dict:
+    """Carry out an approved mail batch: exactly the conversations it lists. ``card_free`` marks a change the
+    owner's rule lets run with no card (EMAIL_NO_CARD): its receipt says so and carries the turn id, the
+    count and the message ids (never a subject), which the turn receipt then lists."""
     from agent_friday.services import gmail_mailbox as gm
     action = detail["action"]
     gm_action, _ask, past = EMAIL_ACTIONS[action]
     label = detail.get("label") or ""
     preview = {(p.get("account_id"), p.get("id")): p for p in detail.get("preview") or []}
-    items, changed_all, created = [], {}, []
+    items, changed_all, created, created_ids = [], {}, [], {}
     for acct, tids in (detail.get("accounts") or {}).items():
+        laya = detail.get("origin") == "laya_safe_write"
+        # A card Laya raised changes only the messages it listed and only what it can put back exactly. A change
+        # made with no card is held to the same exactness: a conversation that cannot be read message by message
+        # first is refused, never run in a way Undo could not reverse.
+        exact = ({"only": (detail.get("messages") or {}).get(acct) or {}, "exact_only": True} if laya
+                 else ({"exact_only": True} if card_free else {}))
         try:
             if action in _LABEL_ACTIONS:
-                lid, made = _label_id(acct, label, create=(action != "unlabel"))
+                # A card Laya raised never makes a label (a label that vanished while it waited fails).
+                lid, made = _label_id(acct, label, create=(action != "unlabel"
+                                                           and detail.get("origin") != "laya_safe_write"))
                 if made:
                     created.append(label)
+                    created_ids[acct] = lid
                 if lid is None:
                     raise Refused("there is no label called \u201c%s\u201d" % label)
                 if action == "unlabel":
-                    res = gm.modify_threads(acct, tids, (), (lid,))
+                    res = gm.modify_threads(acct, tids, (), (lid,), **exact)
                 else:
-                    res = gm.modify_threads(acct, tids, (lid,), ("INBOX",) if action == "move" else ())
+                    res = gm.modify_threads(acct, tids, (lid,), ("INBOX",) if action == "move" else (), **exact)
             else:
-                res = gm.apply_action(acct, tids, gm_action)
+                res = gm.apply_action(acct, tids, gm_action, **exact)
         except Exception as e:
             why = getattr(e, "user_message", None) or exception_text(e)
             res = {"changed": {}, "failed": {t: why for t in tids}}
@@ -605,10 +739,39 @@ def run_email(detail: dict, approval_id: str | None = None) -> dict:
                          ("; %d could not be changed" % (n - ok)) if ok < n else "")
     if created:
         summary += "; made the label \u201c%s\u201d" % created[0]
+    extra = {"query": detail.get("query") or "", "said": said, **_laya_receipt(detail)}
+    undo_rec = {"email": changed_all} if changed_all else {}
+    if created_ids:
+        undo_rec["created_labels"] = created_ids
+    if card_free:
+        extra["card_free"] = True
+        extra["labels_created"] = list(created)
+        extra["turn_id"] = _current_turn_id()
+        extra["count"] = ok
+        extra["message_ids"] = {acct: {tid: sorted((ch.get("messages") or {}).keys())
+                                       for tid, ch in per.items()} for acct, per in changed_all.items()}
     return journal.record("organize_email", action, "email", items=items, summary=summary + ".",
-                          status=status, undo={"email": changed_all} if changed_all else {},
+                          status=status, undo=undo_rec,
                           approval_id=approval_id, conversation_id=detail.get("conversation_id"),
-                          extra={"query": detail.get("query") or "", "said": said})
+                          extra=extra)
+
+
+def _current_turn_id():
+    try:
+        from agent_friday.services import turn_plan
+        return turn_plan.current_turn_id()
+    except Exception:
+        return None
+
+
+def _laya_receipt(detail: dict) -> dict:
+    """The journal's Laya receipt for a batch Laya proposed: who proposed it, on which rung,
+    and how the rows were chosen. Nothing for a batch she did not."""
+    if detail.get("origin") != "laya_safe_write":
+        return {}
+    return {"origin": "laya_safe_write",
+            "laya": {"by": "laya:safe_write", "rung": "R0 rules", "rows_chosen": detail.get("laya_rule") or "",
+                     "approved_by": "owner"}}
 
 
 def undo_email(receipt: dict, approval_id: str | None = None) -> dict:
@@ -632,6 +795,14 @@ def undo_email(receipt: dict, approval_id: str | None = None) -> dict:
         tail = "; %d could not be" % failed_n
         if inexact_n:
             tail += " (%d can't be undone exactly)" % inexact_n
+    # A label that change created goes with it when nothing is left in it; one that still holds mail stays,
+    # and the owner is told.
+    for acct, lid in ((receipt.get("undo") or {}).get("created_labels") or {}).items():
+        try:
+            gone = bool(gm.delete_label_if_empty(acct, lid))
+        except Exception:
+            gone = False
+        tail += "; removed the label it created" if gone else "; the label it created was left in place"
     journal.update(receipt["receipt_id"], undone=failed_n == 0, undone_at=time.time(),
                    undo_failed=failed_n)
     return journal.record("undo_action", "undo", "email",
@@ -2010,7 +2181,8 @@ def _tell_call(conversation_id: str | None, rec: dict | None, ok: bool) -> None:
                 line += " They can say \u201cundo that\u201d to put it back."
         else:
             line = "The approved change did not happen; the reason is on their screen."
-        vlc.deliver(cid, line, kind="result")
+        from agent_friday.services import notice_registry as _nr
+        _nr.voice_say("E75", cid, line, kind="result")
     except Exception as e:
         _log.info("could not tell the live call: %s", e)
 
@@ -2053,7 +2225,21 @@ def wait_for(approval_id: str, timeout: float) -> dict | None:
 
 # ── Answering a card in words ──────────────────────────────────────────────
 
-def typed_decision(words: str) -> str | None:
+def is_laya_card(card_id: str) -> bool:
+    """True for an organize card Laya raised herself (laya_safe_writes)."""
+    try:
+        from agent_friday.services import approvals as ap
+        rec = ap.get_approval(str(card_id or "").strip())
+        return bool(rec and (rec.get("payload") or {}).get("origin") == "laya_safe_write")
+    except Exception:
+        return False
+
+
+LAYA_CARD_BUTTON = ("NOT RECORDED: a card Laya raised is approved with its Approve button on your screen; "
+                    "a typed reply does not approve it. You can still say no here to decline it.")
+
+
+def typed_decision(words: str, card_id: str | None = None) -> str | None:
     """'approve', 'deny' or None from the owner's typed words, by the chat
     confirmation gate's rule (agent._is_affirmative): the whole reply must
     approve, so "yes, but not those" approves nothing, and a reply that reads
@@ -2064,7 +2250,8 @@ def typed_decision(words: str) -> str | None:
     if _ag._is_negative(w):
         return "deny"
     if _ag._is_affirmative(w):
-        return "approve"
+        # Never an approval of a card Laya raised herself: that card is approved with its own button.
+        return None if (card_id is not None and is_laya_card(card_id)) else "approve"
     return None
 
 
@@ -2075,6 +2262,18 @@ def _not_recorded(want: str, room_mode: bool) -> dict:
 
 
 #: What a spoken approval of a card whose question was not voiced is told.
+UNVOICED_LAYA_CARD = ("I have not read that card out to you in this conversation, so I cannot take a yes for it. "
+                      "Press Approve on it on your screen, or ask me to read it again and answer after I have.")
+LAYA_CARD_NOT_ON_LIVE = ("That card is approved on your screen with its Approve button; it is not read out or "
+                         "approved on this call.")
+
+
+def unvoiced_text(card_id: str) -> str:
+    """What a refused unheard yes says: a Laya card cannot be approved by naming its action, so the owner is
+    told what does work."""
+    return UNVOICED_LAYA_CARD if is_laya_card(card_id) else UNVOICED_CARD
+
+
 UNVOICED_CARD = ("NOT RECORDED: Friday has not been heard asking that card's question in full, "
                  "so a bare yes or no cannot decide it. Ask the user to confirm on screen, or "
                  "to say what the card does (for example, 'yes, archive them').")
@@ -2095,6 +2294,17 @@ def card_action_words(card_id: str) -> set:
     return {w for w in words if w}
 
 
+def card_in_conversation(card_id: str, conversation_id) -> bool:
+    """True when the card was raised in ``conversation_id`` (and it names one)."""
+    try:
+        from agent_friday.services import approvals as ap
+        rec = ap.get_approval(str(card_id or "").strip()) or {}
+        mine = str((rec.get("payload") or {}).get("conversation_id") or "").strip()
+        return bool(mine) and mine == str(conversation_id or "").strip()
+    except Exception:
+        return False
+
+
 def unvoiced_card_approval_blocked(card_id: str, owner_words: str, room_mode: bool = False) -> bool:
     """True when the owner's spoken words would APPROVE ``card_id`` (however
     they are worded: "yes, Friday", "yeah sure", "uh, yes") but the card's
@@ -2108,6 +2318,8 @@ def unvoiced_card_approval_blocked(card_id: str, owner_words: str, room_mode: bo
         return True
     if verdict in (None, "deny"):
         return False
+    if is_laya_card(card_id):
+        return True         # a card Laya raised: only a delivered line counts; naming its action is no substitute
     said = set(re.findall(r"[a-z]+", str(owner_words or "").lower()))
     return not (said & card_action_words(card_id))
 
@@ -2136,6 +2348,8 @@ def answer_card(card_id: str, claimed: str, owner_words: str, *, room_mode: bool
     if want is None:
         return {"ok": False, "text": "NOT RECORDED: the decision is approve or decline."}
     spoken = str(surface or "").startswith("voice")
+    if want == "approve" and not spoken and (rec.get("payload") or {}).get("origin") == "laya_safe_write":
+        return {"ok": False, "text": LAYA_CARD_BUTTON}
     if spoken:
         from agent_friday.services import local_context as _lc
         got = _lc.decide_by_voice(rec["approval_id"], owner_words, room_mode, want)
@@ -2143,7 +2357,7 @@ def answer_card(card_id: str, claimed: str, owner_words: str, *, room_mode: bool
             return _not_recorded(want, room_mode)
         won, status = bool(got.get("won")), got.get("status")
     else:
-        if typed_decision(owner_words) != want:
+        if typed_decision(owner_words, rec["approval_id"]) != want:
             return _not_recorded(want, room_mode)
         out, won = ap.decide_with_outcome(rec["approval_id"], want,
                                           decided_by="owner:%s" % (surface or "chat"))

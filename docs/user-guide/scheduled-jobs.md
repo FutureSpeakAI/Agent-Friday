@@ -63,12 +63,32 @@ rules:
   and editorial. They run one at a time and behind your chats, but they do not
   wait for idle.
 - A second request for work that is already waiting joins it.
+- Every call to a local model waits its turn, in this order: a voice turn, a
+  chat, a Local API request, a job you asked for (a button in a workspace, a
+  tool inside your own chat), then background work. Inside a class it is first
+  come, first served. A job you asked for never waits for the chat it was
+  started from, and never for idle.
+- A background call that nothing claims, such as a summary written after a chat,
+  joins the queue as a job that can wait. It shows in the chip, and in
+  Activity with a card that names the model.
+- Jobs take their model together. A model that is already loaded finishes its
+  waiting jobs before anything asks the machine to load another, and when
+  another one is loaded, all of its waiting jobs go together.
+- A model does not load if it would leave less than 4 GB of memory free
+  (`local_scheduler_ram_floor_gb`). The job waits, and the chip says why.
+- A second GPU job (an image, a heavy model) that finds the card in use waits its
+  turn instead of being refused, for up to two minutes. A voice call waits 20
+  seconds, and it stands the card down for work of a lower class.
 
 While work waits or runs, a **Local AI: N queued** chip appears in the top bar.
-It is hidden when the queue is empty. Choose it to see each job, why it waits,
-and two buttons: **Run now**, which skips only the idle wait, and **Cancel**.
-The tray icon's tooltip shows the same ("Local AI: 3 tasks queued · next: ... ·
-waits for idle"). Only labels appear, never what a job contains.
+It is the one place this shows. It is hidden when the queue is empty. Choose it
+to see each job, why it waits, and two buttons: **Run now**, which skips only
+the idle wait, and **Cancel**. The tray icon's tooltip shows the same ("Local
+AI: 3 tasks queued · next: ... · waits for idle"). Only labels appear, never what
+a job contains. The scheduler also keeps a few numbers on this PC and sends none
+of them anywhere: model swaps and the lowest free memory each hour, how long
+each class waited, and how many background jobs finished
+(`GET /api/work/local/metrics`).
 
 Cloud models are not queued. A local voice call keeps work that can wait
 waiting until the call ends. Cloud voice calls (Gemini Live) do not pause

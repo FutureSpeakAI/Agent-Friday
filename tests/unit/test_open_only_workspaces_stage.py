@@ -32,8 +32,8 @@ def _clean(tmp_path, monkeypatch):
 
 
 def test_the_registrar_covers_every_open_only_workspace():
-    assert set(MAP) == {"calendar", "chat", "workflows", "contacts", "career", "trust", "futurespeak", "system",
-                        "health", "finance", "family"}, MAP
+    assert set(MAP) == {"calendar", "meetings", "chat", "workflows", "contacts", "career", "trust", "futurespeak",
+                        "system", "health", "finance", "family"}, MAP
 
 
 def test_every_registered_workspace_is_allow_listed_by_the_server():
@@ -119,7 +119,10 @@ def test_navigate_to_an_event_carries_its_id_and_is_confirmed_by_the_page():
 def test_the_calendar_page_accepts_and_reports_the_event():
     for page in ("index.html", "ui_parts/app.html"):
         text = (ROOT / page).read_text(encoding="utf-8")
-        assert "'meeting_id','event']" in text.replace(" ", "") or "'meeting_id', 'event']" in text, page
+        # The calendar declares the `event` key it accepts from a link (other keys may follow it).
+        decl = re.search(r"fridayDeclareNav\(\s*'calendar'\s*,\s*\{\s*keys\s*:\s*\[([^\]]*)\]", text)
+        assert decl, page
+        assert "'event'" in re.findall(r"'[^']*'", decl.group(1)), (page, decl.group(1))
         assert "setShownEvent(String(t.event))" in text and "shownEvent" in text, page
     assert "kind === 'chat' ? 'chat'" in (ROOT / "index.html").read_text(encoding="utf-8")
 

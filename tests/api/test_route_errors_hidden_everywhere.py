@@ -195,6 +195,99 @@ def test_a_tool_that_raises_gives_the_model_the_text_and_marks_it(monkeypatch):
     assert INTERNAL in out and isinstance(out, ExceptionText)
 
 
+def test_an_instant_open_whose_tool_raises_hides_the_text_from_the_page(client, monkeypatch):
+    # The "open the X" reflex runs one command with no model; its trace and its refusal line
+    # go straight to the page through routes/chat._instant_response.
+    from agent_friday.governance import action_gate
+    from agent_friday.routes import chat as chat_routes
+    from agent_friday.services import agent, reflex_chat
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "zz_boom_probe", _boom)
+    monkeypatch.setitem(agent.TOOL_RINGS, "zz_boom_probe", 0)
+    monkeypatch.setattr(action_gate, "INTERNAL_TOOLS",
+                        action_gate.INTERNAL_TOOLS | {"zz_boom_probe"})
+    monkeypatch.setattr(chat_routes, "_persist_turn", lambda *a, **k: None)
+    monkeypatch.setattr(chat_routes, "_save_chat_history", lambda *a, **k: None)
+
+    class _Res:
+        command = {"tool": "zz_boom_probe", "input": {}}
+
+        class chosen:
+            title = "Go-live checklist"
+
+    out = reflex_chat._run_command(_Res(), "open the go-live checklist", session_id="s-hidden",
+                                   conversation_id="c-hidden", turn_id=None, authenticated=True)
+    assert out["outcome"] == "refused"
+    with client.application.test_request_context("/api/chat", method="POST"):
+        resp = chat_routes._instant_response("open the go-live checklist", out, "c-hidden")
+    data = _hidden(resp)
+    assert data["instant"] is True
+    assert data["response"].startswith("I did not open Go-live checklist: the action failed (error ")
+    # The reflex result itself carries no tool text: core_routes' open route returns its reply
+    # without public_result, so the boundary is here, not at the route.
+    assert INTERNAL not in out["reply"] and INTERNAL not in repr(out["tool_trace"])
+    assert out["tool_trace"][0]["status"] == "error"
+
+
+@pytest.mark.parametrize("handler,shown", [
+    (_boom, None),                                                     # a raised exception: fixed reason
+    (lambda inp: "NOT DONE: that label is not one of yours.", "NOT DONE: that label is not one of yours."),
+])
+def test_a_safe_write_shows_its_own_refusal_but_never_an_exception(client, monkeypatch, handler, shown):
+    # Laya's safe write: the governed handler's refusal is written for the owner and reaches them as
+    # written; a handler that raises puts nothing of its exception on the page or in the trace.
+    from types import SimpleNamespace
+    from agent_friday.governance import action_gate
+    from agent_friday.routes import chat as chat_routes
+    from agent_friday.services import agent, reflex_chat
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "zz_safe_write_probe", handler)
+    monkeypatch.setitem(agent.TOOL_RINGS, "zz_safe_write_probe", 0)
+    monkeypatch.setattr(action_gate, "INTERNAL_TOOLS",
+                        action_gate.INTERNAL_TOOLS | {"zz_safe_write_probe"})
+    monkeypatch.setattr(chat_routes, "_persist_turn", lambda *a, **k: None)
+    monkeypatch.setattr(chat_routes, "_save_chat_history", lambda *a, **k: None)
+    r = SimpleNamespace(tool="zz_safe_write_probe", args={"action": "archive"})
+    out = reflex_chat._safe_write_turn(r, "archive these", session_id="s-hidden", conversation_id="c-hidden",
+                                       turn_id=None, authenticated=True)
+    assert out["outcome"] == "refused"
+    assert INTERNAL not in out["reply"] and INTERNAL not in repr(out["tool_trace"])
+    assert "result" not in out["tool_trace"][0]
+    if shown is None:
+        assert out["reply"].startswith("I did not do that: the action failed (error ")
+        assert out["tool_trace"][0]["status"] == "error"
+    else:
+        assert out["reply"] == "I did not do that: %s (instant, no model; nothing ran)." % shown
+    with client.application.test_request_context("/api/chat", method="POST"):
+        resp = chat_routes._instant_response("archive these", out, "c-hidden")
+    data = _hidden(resp)
+    if shown is not None:
+        assert shown in data["response"]
+
+
+def test_a_point_and_act_whose_tool_raises_hides_the_text_from_the_page(client, monkeypatch):
+    # "open the second one": the rows named on screen, run with no model; reply and trace go to the page.
+    from agent_friday.governance import action_gate
+    from agent_friday.routes import chat as chat_routes
+    from agent_friday.services import agent, laya, laya_router as lr, point_act, reflex_chat
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "zz_boom_probe", _boom)
+    monkeypatch.setitem(agent.TOOL_RINGS, "zz_boom_probe", 0)
+    monkeypatch.setattr(action_gate, "INTERNAL_TOOLS",
+                        action_gate.INTERNAL_TOOLS | {"zz_boom_probe"})
+    monkeypatch.setattr(chat_routes, "_persist_turn", lambda *a, **k: None)
+    monkeypatch.setattr(chat_routes, "_save_chat_history", lambda *a, **k: None)
+    monkeypatch.setattr(point_act, "looks_like", lambda m: True)
+    monkeypatch.setattr(reflex_chat, "trusted_surface", lambda *a, **k: True)
+    monkeypatch.setattr(laya, "point_act_turn", lambda *a, **k: lr.Route(
+        "tool", tool="zz_boom_probe", args={}, layer="point_act"))
+    out = reflex_chat._point_act_turn("open the second one", {}, session_id="s-hidden", conversation_id="c-hidden",
+                                      turn_id=None, authenticated=True, local=True)
+    assert out["outcome"] == "refused"
+    assert out["reply"].startswith("I did not do that: the action failed (error ")
+    assert INTERNAL not in out["reply"] and INTERNAL not in repr(out["tool_trace"])
+    with client.application.test_request_context("/api/chat", method="POST"):
+        resp = chat_routes._instant_response("open the second one", out, "c-hidden")
+    _hidden(resp)
+
+
 # ── services whose results routes return ─────────────────────────────────────
 
 def test_the_phone_ingress_port_failure_is_marked(monkeypatch):

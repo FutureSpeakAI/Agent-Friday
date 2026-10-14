@@ -510,6 +510,8 @@ def claude_summarizer(client, model, *, session_ctx=None, on_cost=None):
     """
     def _summarize(text, max_tokens=400):
         try:
+            from agent_friday.services import cloud_intent as _cloud_intent
+            _cloud_intent.require("anthropic", "context compaction (Claude)", str(model or ""))
             from agent_friday.services import model_router as _mr
             kwargs = _mr._seal_or_block({
                 "model": model, "max_tokens": max(1024, int(max_tokens) * 4),

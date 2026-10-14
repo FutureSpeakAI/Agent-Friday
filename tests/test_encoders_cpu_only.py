@@ -63,7 +63,7 @@ def test_every_small_encoder_load_in_src_pins_cpu():
                 key = "%s:%d" % (path.relative_to(SRC).as_posix(), node.lineno)
                 if not _pins_cpu(node) and key not in ALLOW:
                     offenders.append(key)
-    assert seen >= 6, "the guard stopped seeing the encoder loads (%d)" % seen
+    assert seen >= 4, "the guard stopped seeing the encoder loads (%d)" % seen
     assert not offenders, 'encoder loaded without device="cpu": %s' % offenders
 
 
@@ -85,7 +85,11 @@ def fake_st(monkeypatch):
     monkeypatch.setitem(sys.modules, "sentence_transformers", mod)
     from agent_friday.services import embedder_cache
     monkeypatch.setattr(embedder_cache, "ensure_available", lambda *a, **k: None)
-    return _FakeST
+    from agent_friday.services import minilm
+    minilm.reset()
+    monkeypatch.setattr(minilm, "onnx_model", lambda: None)      # the torch fallback is what is under test
+    yield _FakeST
+    minilm.reset()
 
 
 def test_sensitivity_classifier_loads_on_cpu(fake_st, monkeypatch):
@@ -105,7 +109,8 @@ def test_tool_selector_loads_on_cpu(fake_st, monkeypatch):
              {"name": "play_music", "description": "Play a song."}]
     assert ts._ensure_index(tools) is True
     assert fake_st.devices == ["cpu"]
-    # the other load site: ranking blocks of prose, with no model held yet
+    # the other load site: ranking blocks of prose, with no model held yet; the shared MiniLM
+    # (services/minilm) is built once, so this takes the same CPU copy and builds no second one
     ts._STATE["model"] = None
     assert ts.rank_texts(["email notes", "song list"], "email") is not None
-    assert fake_st.devices == ["cpu", "cpu"]
+    assert fake_st.devices == ["cpu"]

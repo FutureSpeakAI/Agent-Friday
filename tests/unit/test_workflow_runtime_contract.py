@@ -6,7 +6,7 @@ import copy
 import pytest
 
 from agent_friday.services import agent as ag
-from agent_friday.services import artifacts, conversations, projects
+from agent_friday.services import artifacts, conversations, desktop_bus, projects
 from agent_friday.services import scheduler, task_journal, task_resume
 try:
     from agent_friday.services import workflow_outcomes as outcomes
@@ -23,6 +23,9 @@ def isolated(monkeypatch, tmp_path):
     task_journal.reset_for_tests()
     monkeypatch.setattr(ag, '_log_context', lambda *a, **kw: None)
     monkeypatch.setattr(ag, '_load_settings', lambda: {})
+    # A finished run is delivered where the owner is (services/notice_registry):
+    # these tests are about the chat line, so the chat is open.
+    monkeypatch.setattr(desktop_bus, 'connected', lambda *a, **k: True)
     owners = {cid: {'id': cid, 'project': 'project-research'} for cid in
               ('conv-research', 'conv-a', 'conv-b', 'conv-owned')}
     monkeypatch.setattr(conversations, 'load', lambda cid: owners.get(cid))
@@ -754,3 +757,50 @@ def test_the_newest_run_wins_even_when_the_clock_does_not_tick_between_runs(fake
     assert ag.TASKS[two]['run_created'] > ag.TASKS[one]['run_created']
     assert ag.chain_run_status(saved['slug'])['run_id'] == ag.TASKS[two]['run_id']
     assert ag.chain_run_status(saved['slug'])['state'] == 'completed_unverified'
+
+
+def _delivery_effects(monkeypatch, *, call_live):
+    """Count what one finished run does to the owner: a transcript line, a card, speech."""
+    effects = []
+    messages = []
+    monkeypatch.setattr(conversations, 'messages', lambda cid: messages)
+    monkeypatch.setattr(conversations, 'append',
+                        lambda cid, msg, **kw: messages.append(msg) or effects.append('chat') or msg)
+    import agent_friday.notifications_engine as ne
+    monkeypatch.setattr(ne, 'push', lambda **kw: effects.append('panel') or kw)
+    from agent_friday.services import voice_live_channel
+    monkeypatch.setattr(voice_live_channel, 'is_live', lambda cid: call_live)
+    monkeypatch.setattr(voice_live_channel, 'deliver',
+                        lambda *a, **kw: effects.append('spoken') or True)
+    return effects
+
+
+@pytest.mark.parametrize('call_live, chat_open, expected', [
+    (True, True, ['spoken']), (True, False, ['spoken']),
+    (False, True, ['chat']), (False, False, ['panel'])],
+    ids=['in-a-call', 'in-a-call-chat-open', 'chat-open', 'neither'])
+def test_a_finished_workflow_is_delivered_once_where_the_owner_is(
+        monkeypatch, fake_spawn, call_live, chat_open, expected):
+    monkeypatch.setattr(desktop_bus, 'connected', lambda *a, **k: chat_open)
+    saved = ag.save_workflow_chain(definition(steps=[{'name': 'Write', 'prompt': 'Write report'}],
+                                              notify='on_complete'))
+    task = ag.run_workflow_chain(saved['slug'])
+    ag.TASKS[task].update(status='complete', result='The verified document is available.')
+    effects = _delivery_effects(monkeypatch, call_live=call_live)
+    ag._report_task_completion(task, 'Write', 'complete', ag.TASKS[task]['result'])
+    assert effects == expected
+    assert ag.TASKS[task]['delivery']['status'] == 'delivered'
+
+
+def test_a_call_that_has_gone_falls_to_the_panel_not_to_silence(monkeypatch, fake_spawn):
+    monkeypatch.setattr(desktop_bus, 'connected', lambda *a, **k: False)
+    saved = ag.save_workflow_chain(definition(steps=[{'name': 'Write', 'prompt': 'Write report'}],
+                                              notify='on_complete'))
+    task = ag.run_workflow_chain(saved['slug'])
+    ag.TASKS[task].update(status='complete', result='The verified document is available.')
+    effects = _delivery_effects(monkeypatch, call_live=True)
+    from agent_friday.services import voice_live_channel
+    monkeypatch.setattr(voice_live_channel, 'deliver', lambda *a, **kw: False)
+    ag._report_task_completion(task, 'Write', 'complete', ag.TASKS[task]['result'])
+    assert effects == ['panel']
+    assert ag.TASKS[task]['delivery']['status'] == 'delivered'

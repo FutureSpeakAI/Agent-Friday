@@ -41,3 +41,27 @@ def consume(conversation_id: str | None, within: float = WINDOW_S) -> bool:
 def clear() -> None:
     with _LOCK:
         _MARKS.clear()
+
+
+# A conversation that read a MEETING's words just now (a tool result, or a spoken turn that has no footnote): the
+# saved reply is remembered as a meeting reply (library/cite) so it never rides a later cloud turn, even after a
+# restart. Memory only, like the mark above.
+_MEETING_MARKS: dict[str, float] = {}
+
+
+def mark_meeting(conversation_id: str) -> None:
+    if not conversation_id:
+        return
+    with _LOCK:
+        _MEETING_MARKS[str(conversation_id)] = time.time()
+        if len(_MEETING_MARKS) > 256:
+            for k in sorted(_MEETING_MARKS, key=_MEETING_MARKS.get)[:64]:
+                _MEETING_MARKS.pop(k, None)
+
+
+def consume_meeting(conversation_id: str | None, within: float = WINDOW_S) -> bool:
+    if not conversation_id:
+        return False
+    with _LOCK:
+        at = _MEETING_MARKS.pop(str(conversation_id), None)
+    return at is not None and time.time() - at <= within

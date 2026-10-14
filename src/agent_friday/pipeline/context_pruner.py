@@ -114,7 +114,7 @@ class ContextPruner:
             # Nothing archived to retrieve from — leave the list as-is.
             return list(system_msgs) + list(recent) + [current_msg]
 
-        query_emb = self._embed(current_prompt or "")
+        query_emb = self._embed_query(current_prompt or "")
         scored = []
         for idx, pair in pairs:
             text = self._pair_query_text(pair)
@@ -148,13 +148,32 @@ class ContextPruner:
     def _get_model(self):
         """Load the sentence-transformer model on first use (not at import)."""
         if self._model is None:
-            from agent_friday.services.ml_imports import import_module as _ml_import  # shared ML import lock
-            SentenceTransformer = _ml_import("sentence_transformers").SentenceTransformer
             from agent_friday.services import embedder_cache
             if self.model_name == embedder_cache.MODEL:
-                embedder_cache.ensure_available("context trimming")
-            self._model = SentenceTransformer(self.model_name, device="cpu")
+                # The one shared MiniLM (services/minilm), never a copy of its own.
+                from agent_friday.services import minilm
+                self._model = minilm.model("context trimming")
+            else:
+                from agent_friday.services.ml_imports import import_module as _ml_import  # shared ML import lock
+                SentenceTransformer = _ml_import("sentence_transformers").SentenceTransformer
+                self._model = SentenceTransformer(self.model_name, device="cpu")
         return self._model
+
+    def _embed_query(self, text):
+        """The embedding of the current prompt (the query side only).
+
+        The turn embeds the user's message once (services/turn_vector); when
+        this pruner uses that same model the shared vector is taken as is.
+        Archived turns are always embedded here."""
+        try:
+            from agent_friday.services import embedder_cache, turn_vector
+            if self.model_name == embedder_cache.MODEL:
+                shared = turn_vector.compute(text)
+                if shared is not None:
+                    return np.asarray(shared, dtype="float32")
+        except Exception:
+            pass
+        return self._embed(text)
 
     def _embed(self, text):
         """Embed a single text string, with caching keyed by content hash."""

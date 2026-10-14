@@ -32,11 +32,36 @@ when the microphone fails.
 
 What is captured
 ----------------
-Only the microphone. The other side of a call reaches this machine as
-system audio, which Windows exposes through WASAPI loopback. Nothing
-installed here offers that cleanly, so it is not captured, and the UI says
-so. A source is anything with start(on_pcm) / stop() / error / kind; a
-loopback source plugs in through `source_factory` without touching the rest.
+The microphone always. The other side of a call reaches this machine as
+system audio, which Windows exposes through WASAPI loopback
+(services/meeting_audio); it is recorded only when the owner ticks "record
+the other side too" on the start card, and `status()["system_audio"]` says
+what is true right now, never what was asked for. A source is anything with
+start(on_pcm) / stop() / error / kind; the loopback plugs in through
+`source_factory(max_s, system_audio=True)`. A source that delivers two
+channels calls `on_pcm(pcm, "you")` and `on_pcm(pcm, "them")`: each channel
+is cut, gated and transcribed on its own and its segments carry `speaker`
+("You" for the microphone, "Them" for the loopback). A single microphone in a
+room is not split into speakers, so those segments carry no speaker.
+
+Speech and the scheduler
+------------------------
+A chunk is transcribed only when it holds speech: Silero VAD through the
+voice stack's VADEndpointer where it is installed, the RMS gate otherwise.
+Live partials come from the streaming ear (voice_ear_stream) when its model
+is installed, fed from a thread of its own so capture never waits on it; they
+are shown, never stored. While a meeting records it holds a voice-class place
+in the local scheduler (local_scheduler.MeetingHold): no background job is
+admitted and a running one waits at its next checkpoint. The finishing ear is
+the voice stack's own (voice_workers.build_ear): a leased GPU worker when the
+card is free, the CPU otherwise, and the CPU again if the lease is taken back.
+
+Consent and deletion
+--------------------
+Recording starts only on `start(confirm=True)`, which only the start route
+calls, from the owner's own click. Audio can be deleted without the notes
+(`delete_audio`); deleting a meeting removes everything. Both are real
+deletions and each leaves a count, nothing else, in the activity ledger.
 
 Notes
 -----
@@ -57,6 +82,7 @@ import math
 import os
 import queue
 import re
+import secrets
 import shutil
 import threading
 import time
@@ -65,6 +91,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from agent_friday.paths import contained
+from agent_friday.services import meeting_workspace as mw
 from agent_friday.user_errors import ExceptionText, UserFacingError, log_failure
 from agent_friday.services.visible_jobs import visible_job
 
@@ -87,18 +114,46 @@ TICK_S = 1.0
 #: Characters of transcript per local-model call.
 NOTES_CHARS_PER_CALL = 12000
 
-SYSTEM_AUDIO = {
-    "captured": False,
-    "reason": ("Only your microphone is recorded. Recording the other side "
-               "of a call needs Windows loopback capture, which needs a small "
-               "audio package that is not installed. Put the call on speaker "
-               "if you want both sides, and ask for loopback to be added if "
-               "you want it."),
-}
+#: Speaker labels by channel. A microphone-only recording has no labels.
+SPEAKERS = {"you": "You", "them": "Them"}
+
+
+def system_audio_status(*, requested: bool = False, active: bool = False,
+                        error: str = "") -> dict:
+    """What is true about system audio: `captured` is True only while the
+    loopback is delivering audio. `available` says whether this machine can;
+    `reason` says why not, or what is off."""
+    from agent_friday.services import meeting_audio
+    av = meeting_audio.availability()
+    if active:
+        return {"captured": True, "available": True, "requested": True,
+                "reason": "Recording your microphone (You) and the other "
+                          "side of the call (Them), kept apart."}
+    if requested:
+        return {"captured": False, "available": av["available"], "requested": True,
+                "reason": ("System audio stopped: %s Your microphone is still "
+                           "being recorded." % (error or "it did not start."))}
+    if not av["available"]:
+        return {"captured": False, "available": False, "requested": False,
+                "reason": "Only your microphone is recorded. " + av["reason"]}
+    return {"captured": False, "available": True, "requested": False,
+            "reason": "Only your microphone is recorded unless you choose to "
+                      "record the other side of the call too."}
 
 NO_LOCAL_SEAT = ("No local model is serving right now, so notes were not "
                  "written. The transcript is saved; try again when the local "
                  "model is up. Meeting notes never go to a cloud model.")
+NO_LOCAL_SEAT_CLOUD = ("The model chosen for local work is a cloud model, and "
+                       "meeting notes never go to a cloud model, so notes were "
+                       "not written. The transcript is saved; choose a model "
+                       "that runs on this computer and try again.")
+
+#: How long the start card's single-use token stays valid, and how many are kept.
+START_NONCE_TTL_S = 600.0
+START_NONCE_MAX = 8
+#: How long stop() waits for a start that is still opening its devices before
+#: it hands the closing to start() itself.
+START_STOP_WAIT_S = 15.0
 
 STOP_REASONS = {
     "owner": "You stopped the recording.",
@@ -107,9 +162,14 @@ STOP_REASONS = {
     "screen_locked": "The screen was locked.",
     "device_error": "The microphone stopped working.",
     "shutdown": "Friday was shutting down.",
+    "interrupted": "Friday closed or restarted before this recording was finished.",
 }
 
 _ID_RE = re.compile(r"^[0-9a-f]{12}$")
+
+
+class _StopRequested(Exception):
+    """Raised inside start() when a stop arrived while the sources were opening."""
 
 
 class MeetingError(UserFacingError):
@@ -184,14 +244,142 @@ class MicrophoneSource:
         return self._rec.error if self._rec is not None else ""
 
 
-def _default_source_factory(max_seconds):
-    return MicrophoneSource(max_seconds)
+def _default_source_factory(max_seconds, system_audio: bool = False):
+    """The microphone; with `system_audio`, the microphone ("You") and the
+    WASAPI loopback ("Them") as two channels."""
+    mic = MicrophoneSource(max_seconds)
+    if not system_audio:
+        return mic
+    from agent_friday.services import meeting_audio
+    return meeting_audio.DualSource(mic, meeting_audio.LoopbackSource())
+
+
+class _EarSession:
+    """The ear a meeting transcribes with: the voice stack's own, built the way
+    a voice session builds it (voice_workers.build_ear).
+
+    A GPU worker when the card has room (the lease is evictable and renewed on
+    every chunk by the worker itself), the CPU engine when it does not. If the
+    lease is taken back mid-meeting the next chunk rebuilds the ear, which
+    lands on the CPU if the card is still busy: the transcript never stops
+    for want of the GPU.
+    """
+
+    def __init__(self, build=None):
+        self._build = build
+        self._engine = None
+        self._lock = threading.Lock()
+        self.rebuilds = 0
+
+    def _make(self):
+        build = self._build
+        if build is None:
+            from agent_friday.services import voice_workers
+            build = voice_workers.build_ear
+        return build({"device_policy": "if_free", "model": "auto"})
+
+    # Nested inside the transcriber's own job it is a step of it, not a second card.
+    @visible_job('Meeting transcript', kind='meeting_transcript', workspace='meetings', deferrable=True)
+    def transcribe(self, pcm: bytes) -> str:
+        with self._lock:
+            eng = self._engine
+            if eng is None or not eng.alive():
+                eng = self._engine = self._make()
+                self.rebuilds += 1
+        try:
+            return eng.transcribe(pcm) or ""
+        except Exception:
+            # The worker died or its lease was taken back: ask again, which
+            # may land on the CPU, and give this chunk to the new ear.
+            with self._lock:
+                eng = self._engine = self._make()
+                self.rebuilds += 1
+            return eng.transcribe(pcm) or ""
+
+    @property
+    def device(self) -> str:
+        e = self._engine
+        return getattr(e, "device", "") if e is not None else ""
+
+
+_EAR = _EarSession()
 
 
 @visible_job('Meeting transcript', kind='meeting_transcript', workspace='meetings', deferrable=True)
 def _default_transcriber(pcm: bytes) -> str:
+    try:
+        return _EAR.transcribe(pcm)
+    except Exception as e:
+        log.info("meeting ear fell back to the local voice engine: %s", e)
     from agent_friday.services.local_voice import get_local_voice_engine
     return get_local_voice_engine().transcribe(pcm) or ""
+
+
+def _default_speech_gate():
+    """A callable(pcm) -> bool for "this chunk holds speech", and the name of
+    the detector behind it. Silero through the VADEndpointer where it is
+    installed (never under test); the RMS gate otherwise."""
+    decide = None
+    try:
+        from agent_friday.services.local_voice import VADEndpointer
+        decide = VADEndpointer().silero_decider()
+    except Exception as e:
+        log.info("Silero VAD unavailable for meetings: %s", e)
+    if decide is None:
+        return (lambda pcm: _rms(pcm) >= SILENCE_RMS), "energy"
+
+    def gate(pcm: bytes) -> bool:
+        try:
+            return bool(decide(pcm))
+        except Exception:
+            return _rms(pcm) >= SILENCE_RMS
+    return gate, "silero"
+
+
+def _default_partials():
+    """The streaming ear for live partials, or None when its model is not
+    installed. One recognizer serves both channels from one thread."""
+    try:
+        from agent_friday.services import voice_ear_stream as ves
+        if not ves.installed():
+            return None
+        rec = ves.make_recognizer()
+        return {"you": ves.StreamingEar(rec), "them": ves.StreamingEar(rec)}
+    except Exception as e:
+        log.info("streaming ear unavailable for meetings: %s", e)
+        return None
+
+
+def _default_scheduler(meeting_id: str):
+    """The meeting's place in the local scheduler (voice class, whole length)."""
+    from agent_friday.services import local_scheduler
+    return local_scheduler.hold_for_meeting(meeting_id)
+
+
+def _default_speaker(text: str) -> None:
+    """Say `text` aloud through the local voice and the default output."""
+    from agent_friday.services.local_voice import get_local_voice_engine
+    pcm = get_local_voice_engine().synthesize(text)
+    import io
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(pcm)
+    import winsound
+    winsound.PlaySound(buf.getvalue(), winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+
+
+def _default_ledger(kind, **fields):
+    from agent_friday.services import activity_ledger
+    return activity_ledger.record(kind, **fields)
+
+
+def _default_retention():
+    from agent_friday.services import meeting_policy
+    return meeting_policy.audio_retention()
 
 
 def _default_seat_resolver():
@@ -199,8 +387,13 @@ def _default_seat_resolver():
     return _resolve_local_seat()
 
 
-@visible_job('Meeting notes', kind='meeting_notes', workspace='meetings', deferrable=True)
+# Notes are work the owner asked for (a stop, or "write notes again"), so the
+# job is not deferrable: it neither waits for idle nor for a recording's pause.
+@visible_job('Meeting notes', kind='meeting_notes', workspace='meetings', deferrable=False)
 def _default_notes_call(system: str, user: str, model: str):
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    if is_cloud_model_tag(model):
+        raise MeetingError("cloud_seat", NO_LOCAL_SEAT_CLOUD, 409)
     from agent_friday.services import local_call
     return local_call.call_json(system, user, model, max_tokens=2048)
 
@@ -308,6 +501,39 @@ def _write_enc(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
+def _remove_tree(path: Path) -> bool:
+    """Remove a folder for good, trying again a few times when another program
+    (a scanner, the indexer) briefly holds a file. True when it is gone."""
+    for attempt in range(4):
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            time.sleep(0.05 * (attempt + 1))
+        if not path.exists():
+            return True
+    return not path.exists()
+
+
+def _remove_meeting_folder(d: Path) -> bool:
+    """Remove a meeting folder with the same retries as the audio, record last.
+    Everything but `meeting.json.enc` goes first; if any of it cannot be removed
+    the record stays, so the meeting is still readable and can be deleted again."""
+    try:
+        for child in list(d.iterdir()):
+            if child.name == "meeting.json.enc":
+                continue
+            if child.is_dir():
+                if not _remove_tree(child):
+                    return False
+            else:
+                child.unlink()
+    except OSError:
+        return False
+    return _remove_tree(d)
+
+
 def _load(mid: str) -> dict:
     p = _dir(mid) / "meeting.json.enc"
     if not p.exists():
@@ -320,7 +546,7 @@ def _row(m: dict) -> dict:
     s = m.get("summary") or {}
     return {k: m.get(k) for k in (
         "id", "title", "started_at", "ended_at", "duration_s", "state",
-        "stop_reason", "source", "keep_audio")} | {
+        "stop_reason", "source", "keep_audio", "system_audio")} | {
         "segments": sum(1 for x in m.get("segments") or []
                         if x.get("kind") == "speech"),
         "summary_status": s.get("status") or "pending"}
@@ -397,8 +623,9 @@ def transcript_text(m: dict) -> str:
         if s.get("kind") != "speech":
             continue
         t = int(s.get("t") or 0)
-        lines.append("[%02d:%02d:%02d] %s" % (t // 3600, t // 60 % 60, t % 60,
-                                              s.get("text") or ""))
+        who = (s.get("speaker") + ": ") if s.get("speaker") else ""
+        lines.append("[%02d:%02d:%02d] %s%s" % (t // 3600, t // 60 % 60, t % 60,
+                                                who, s.get("text") or ""))
     return "\n".join(lines)
 
 
@@ -428,16 +655,55 @@ def _default_email_requester(**kw):
     return gmail_send.request_send(**kw)
 
 
+def _default_archive_index(m: dict):
+    from agent_friday.services import meeting_archive
+    return meeting_archive.index_when_free(m)
+
+
+def _default_archive_remove(mid: str):
+    from agent_friday.services import meeting_archive
+    return meeting_archive.remove_meeting(mid)
+
+
+def _default_proposal_purge(meeting_id: str):
+    from agent_friday.services import memory_proposals
+    return memory_proposals.purge_meeting(meeting_id)
+
+
+def _default_proposer(candidates, meeting_id, day, model):
+    from agent_friday.services import memory_proposals
+    return memory_proposals.propose_from_meeting(candidates, meeting_id, day, model)
+
+
+def _notes_work():
+    """The notes run is work the owner asked for: the scheduler admits it as a
+    `user_job`, not as background work that would wait for them to be idle."""
+    import contextlib
+    try:
+        from agent_friday.services import local_scheduler
+        return local_scheduler.work("Meeting notes", cls="user_job", deferrable=False)
+    except Exception:
+        return contextlib.nullcontext()
+
+
 # ── The recorder ────────────────────────────────────────────────────────────
+
+class _Channel:
+    """One audio channel of a recording: its own buffer and clock position."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.buf = bytearray()
+        self.offset = 0              # bytes handed to the worker so far
+
 
 class _Recording:
     def __init__(self, meeting: dict, max_s: float, chunk_s: float):
         self.meeting = meeting
         self.max_s = max_s
         self.chunk_bytes = int(chunk_s * RATE) * 2
-        self.buf = bytearray()
+        self.chans: dict = {}
         self.buf_lock = threading.Lock()
-        self.offset = 0              # bytes handed to the worker so far
         self.first_sample_at = None  # monotonic
         self.t0 = 0.0
         self.q: queue.Queue = queue.Queue()
@@ -447,6 +713,25 @@ class _Recording:
         self.watchdog = None
         self.lock_detection = False
         self.audio_n = 0
+        self.labelled = False        # two channels: segments carry a speaker
+        self.hold = None             # the scheduler hold (voice class)
+        self.partials = None         # {"you": StreamingEar, "them": ...} or None
+        self.partial_q: queue.Queue = queue.Queue(maxsize=200)
+        self.partial_thread = None
+        self.live: dict = {}         # channel -> latest partial text
+        self.system_error = ""
+        self.start_done = threading.Event()   # set once start() has finished, well or badly
+        self.start_failed = False             # start() tore this recording down itself
+        self.stopping = False                 # a stop was asked for; the source may still be open
+        self.stop_reason_req = "owner"
+        self.finished = False                 # the source is stopped and the record closed
+        self.finish_lock = threading.Lock()
+
+    def chan(self, name: str) -> _Channel:
+        c = self.chans.get(name)
+        if c is None:
+            c = self.chans[name] = _Channel(name)
+        return c
 
 
 class MeetingManager:
@@ -454,6 +739,9 @@ class MeetingManager:
                  seat_resolver=None, notes_call=None, asr_check=None,
                  lock_detector=None, event_lookup=None, notifier=None,
                  todo_writer=None, email_requester=None,
+                 speech_gate=None, partials_factory=None, scheduler=None,
+                 speaker=None, ledger=None, retention=None,
+                 archive_index=None, archive_remove=None, proposer=None, proposal_purge=None,
                  clock=time.monotonic, wall=time.time, tick_s=TICK_S,
                  chunk_s=CHUNK_S, auto_notes=True):
         self.source_factory = source_factory or _default_source_factory
@@ -466,6 +754,17 @@ class MeetingManager:
         self.notifier = notifier
         self.todo_writer = todo_writer or _default_todo_writer
         self.email_requester = email_requester or _default_email_requester
+        self._speech_gate = speech_gate          # callable(pcm) -> bool, or None for the default
+        self.partials_factory = partials_factory or _default_partials
+        self.scheduler = scheduler or _default_scheduler
+        self.speaker = speaker or _default_speaker
+        self.ledger = ledger or _default_ledger
+        self.retention = retention or _default_retention
+        self.archive_index = archive_index or _default_archive_index
+        self.archive_remove = archive_remove or _default_archive_remove
+        self.proposer = proposer or _default_proposer
+        self.proposal_purge = proposal_purge or _default_proposal_purge
+        self.vad_backend = ""
         self.clock = clock
         self.wall = wall
         self.tick_s = tick_s
@@ -476,60 +775,174 @@ class MeetingManager:
         self._active: _Recording | None = None
         self._busy: dict = {}          # id -> worker thread still finishing
         self._deleted: set = set()
+        #: id -> when the owner deleted the audio. Checked under `_io` by the
+        #: transcript worker before it writes audio and by every save, so a
+        #: delete that lands while a transcript is finishing cannot be undone
+        #: by the worker's own copy of the record.
+        self._audio_deleted: dict = {}
+        self._nonces: dict = {}        # start-card token -> monotonic expiry
         self._last_stop: dict | None = None
 
     # -- persistence -------------------------------------------------------
+    def _apply_forgotten(self, m: dict) -> None:
+        """A person the owner asked Friday to forget is not written back into a record: a meeting that was
+        recording or being transcribed when forget-person ran is redacted when it first saves in a settled state."""
+        try:
+            # Only the names that were forgotten while THIS meeting was being made, stored against its id: a
+            # name like "Will" or "May" must never rewrite a meeting that was recorded later.
+            names = _pending_forget_peek(m.get("id"))
+            pat = _name_pattern(names)
+            if pat is None:
+                return False
+            new, n = _redact_value(m, pat)
+            if n:
+                m.clear()
+                m.update(new)
+            return True                  # the entry is dropped only after the record is written
+        except Exception as e:  # noqa: BLE001 - never blocks a save
+            log.info("meeting %s: forgotten names not applied (%s)", m.get("id"), type(e).__name__)
+            return False
+
     def _save(self, m: dict) -> None:
         with self._io:
             if m["id"] in self._deleted:
                 return
+            gone = self._audio_deleted.get(m["id"])
+            if gone:
+                m["keep_audio"] = False
+                m["audio_deleted_at"] = gone
+            applied = False
+            if m.get("state") not in ("recording", "transcribing"):
+                applied = self._apply_forgotten(m)
             _write_enc(_dir(m["id"]) / "meeting.json.enc",
                        json.dumps(m, ensure_ascii=False).encode("utf-8"))
+            if applied:
+                try:
+                    _pending_forget_drop(m["id"])
+                except Exception as e:  # noqa: BLE001 - the record is written; the entry is used again harmlessly
+                    log.info("meeting %s: pending names not dropped (%s)", m["id"], type(e).__name__)
 
     # -- status ------------------------------------------------------------
     def status(self) -> dict:
+        """What the indicator, the tray and the meeting view show. It takes no
+        lock: the indicator must answer while a source is still opening, and a
+        recording is published here before its first device is touched."""
+        r = self._active
+        base = {"recording": False, "consent_text": CONSENT_TEXT,
+                "consent_version": CONSENT_VERSION,
+                "system_audio": system_audio_status(),
+                "default_max_s": DEFAULT_MAX_S,
+                "finishing": sorted(k for k, t in list(self._busy.items())
+                                    if t.is_alive()),
+                "last_stop": self._last_stop}
+        if r is None:
+            return base
+        m = r.meeting
+        return base | {
+            "recording": True,
+            "id": m["id"],
+            "title": m["title"],
+            "started_at": m["started_at"],
+            "elapsed_s": round(self.clock() - r.t0, 1),
+            "max_s": r.max_s,
+            # The microphone takes about 600 ms to deliver its first
+            # sample; until then the indicator says "starting".
+            "capturing": r.first_sample_at is not None,
+            "starting": not r.start_done.is_set(),
+            "stopping": r.stopping,
+            "source": m["source"],
+            # What is being recorded, for the indicator, the tray and the
+            # meeting view: the same words everywhere.
+            "system_audio": system_audio_status(
+                requested=bool(m.get("system_audio_requested")),
+                active=bool(m.get("system_audio")),
+                error=r.system_error),
+            "channels": sorted(list(r.chans)) or ["you"],
+            "speakers": r.labelled,
+            "vad": self.vad_backend or None,
+            "live_partials": r.partials is not None,
+            "lock_detection": r.lock_detection,
+            "pending_chunks": r.q.qsize(),
+        }
+
+    # -- the start card's token --------------------------------------------
+    def issue_start_card(self, session: str = "") -> dict:
+        """What the start card shows and the single-use token its button must
+        send. Asking for the card starts nothing; the token only proves that
+        this request came from a card that was handed out a moment ago."""
+        now = time.monotonic()
+        token = secrets.token_urlsafe(18)
         with self._lock:
-            r = self._active
-            base = {"recording": False, "consent_text": CONSENT_TEXT,
-                    "consent_version": CONSENT_VERSION,
-                    "system_audio": SYSTEM_AUDIO,
-                    "default_max_s": DEFAULT_MAX_S,
-                    "finishing": sorted(k for k, t in self._busy.items()
-                                        if t.is_alive()),
-                    "last_stop": self._last_stop}
-            if r is None:
-                return base
-            m = r.meeting
-            return base | {
-                "recording": True,
-                "id": m["id"],
-                "title": m["title"],
-                "started_at": m["started_at"],
-                "elapsed_s": round(self.clock() - r.t0, 1),
-                "max_s": r.max_s,
-                # The microphone takes about 600 ms to deliver its first
-                # sample; until then the indicator says "starting".
-                "capturing": r.first_sample_at is not None,
-                "source": m["source"],
-                "lock_detection": r.lock_detection,
-                "pending_chunks": r.q.qsize(),
-            }
+            for k in [k for k, v in self._nonces.items() if v[0] <= now]:
+                del self._nonces[k]
+            while len(self._nonces) >= START_NONCE_MAX:
+                del self._nonces[min(self._nonces, key=lambda k: self._nonces[k][0])]
+            self._nonces[token] = (now + START_NONCE_TTL_S, str(session or ""))
+        return {"nonce": token, "ttl_s": int(START_NONCE_TTL_S),
+                "consent_text": CONSENT_TEXT, "consent_version": CONSENT_VERSION}
+
+    def _nonce_valid(self, token, session: str = "") -> bool:
+        if not isinstance(token, str) or not token:
+            return False
+        with self._lock:
+            v = self._nonces.get(token)
+        return v is not None and v[0] > time.monotonic() and v[1] == str(session or "")
+
+    def _consume_start_nonce(self, token, session: str = "") -> bool:
+        """Spend a token once. It is bound to the screen session it was issued
+        to: a token fetched by one session is no good to another."""
+        if not isinstance(token, str) or not token:
+            return False
+        with self._lock:
+            v = self._nonces.get(token)
+            if v is None or v[1] != str(session or ""):
+                return False
+            del self._nonces[token]
+        return v[0] > time.monotonic()
 
     # -- start -------------------------------------------------------------
     def start(self, *, consent_ack=False, consent_version=None, title="",
-              event_id="", keep_audio=False, max_duration_s=None) -> dict:
+              event_id="", keep_audio=False, max_duration_s=None,
+              system_audio=False, confirm=False, speak_consent=None,
+              nonce=None, consent_line=None, session="") -> dict:
+        """Start recording. Needs the owner's confirmed consent (`consent_ack`),
+        the version of the consent statement the card showed
+        (`consent_version`, required) and their explicit start: either
+        `confirm` (library callers) or the single-use `nonce` the start card was
+        handed (the route). All of it comes from the start card on screen,
+        through routes/meetings.py, and nothing else calls this.
+
+        Once a source has been asked to start, the recording is published (so
+        status, the indicator and stop all see it) and every failure after
+        that point stops the source and releases the scheduler hold before the
+        error leaves: no path leaves a device capturing with no way to stop it."""
         if consent_ack is not True:
             raise MeetingError("consent_required",
                                "Confirm the consent statement to start "
                                "recording: " + CONSENT_TEXT)
-        if consent_version is not None and int(consent_version) != CONSENT_VERSION:
+        if confirm is not True and not self._nonce_valid(nonce, session):
+            raise MeetingError("confirm_required",
+                               "Recording starts only when you press start on "
+                               "the start card. Nothing was recorded.")
+        try:
+            version_ok = (consent_version is not None
+                          and not isinstance(consent_version, bool)
+                          and int(consent_version) == CONSENT_VERSION)
+        except (TypeError, ValueError):
+            version_ok = False
+        if not version_ok:
             raise MeetingError("consent_changed",
-                               "The consent statement changed; read it again.")
+                               "The consent statement was not shown, or it "
+                               "changed; read it again.")
         max_s = float(max_duration_s or DEFAULT_MAX_S)
         if not (60 <= max_s <= MAX_ALLOWED_S):
             raise MeetingError("bad_duration",
                                "The maximum length must be between one minute "
                                "and eight hours.")
+        if confirm is not True and not self._consume_start_nonce(nonce, session):
+            raise MeetingError("confirm_required",
+                               "Recording starts only when you press start on "
+                               "the start card. Nothing was recorded.")
         with self._lock:
             if self._active is not None:
                 raise MeetingError("already_recording",
@@ -560,13 +973,16 @@ class MeetingManager:
                 title = "Meeting " + datetime.now().strftime("%Y-%m-%d %H:%M")
             now = _now_iso()
             mid = uuid.uuid4().hex[:12]
-            source = self.source_factory(max_s)
+            want_system = system_audio is True
+            source = (self.source_factory(max_s, system_audio=True) if want_system
+                      else self.source_factory(max_s))
             m = {
                 "id": mid, "title": title, "event_id": event_id,
                 "started_at": now, "ended_at": None, "duration_s": 0,
                 "state": "recording", "stop_reason": None,
                 "source": getattr(source, "kind", "microphone"),
                 "system_audio": False,
+                "system_audio_requested": want_system,
                 "keep_audio": bool(keep_audio), "max_s": max_s,
                 "consent": {"text": CONSENT_TEXT, "version": CONSENT_VERSION,
                             "acknowledged_at": now},
@@ -583,99 +999,318 @@ class MeetingManager:
                 r.lock_detection = self.lock_detector() is False
             except Exception:
                 r.lock_detection = False
+            r.labelled = tuple(getattr(source, "channels", ())) == ("you", "them")
             self._save(m)
             r.worker = threading.Thread(target=self._work, args=(r,),
                                         name="meeting-transcribe", daemon=True)
             r.worker.start()
             r.t0 = self.clock()
-            try:
-                source.start(lambda pcm, _r=r: self._on_pcm(_r, pcm))
-            except Exception as e:
-                r.q.put(None)
-                m["state"] = "error"
-                m["stop_reason"] = "device_error"
-                _why = ("The microphone would not start (error %s)."
-                        % log_failure(e, "Meeting microphone failed"))
-                m["error"] = _why
-                self._save(m)
-                raise MeetingError("device_error", _why, 503,
-                                   detail="The microphone would not start: %s" % e)
+            # Published before any device or model is touched, and the lock is
+            # let go: status, the indicator and stop answer while the
+            # microphone, the loopback and the streaming ear are still opening.
             self._active = r
             self._busy[mid] = r.worker
+        try:
+            # The meeting is a person who is busy: voice class for its whole
+            # length, no background job admitted, a running one asked to wait.
+            try:
+                r.hold = self.scheduler(mid)
+            except Exception as e:
+                log.warning("meeting %s: not admitted to the scheduler: %s", mid, e)
+                r.hold = None
+            self._stop_checkpoint(r)
+            r.t0 = self.clock()
+            try:
+                source.start(lambda pcm, channel="you", _r=r: self._on_pcm(_r, pcm, channel))
+            except Exception as e:
+                _why = ("The microphone would not start (error %s)."
+                        % log_failure(e, "Meeting microphone failed"))
+                raise MeetingError("device_error", _why, 503,
+                                   detail="The microphone would not start: %s" % e) from e
+            # A stop that arrived while the device was opening is honoured
+            # here, at once, after every step that can take a while.
+            self._stop_checkpoint(r)
+            m["system_audio"] = bool(getattr(source, "system_audio_active", False))
+            if want_system and not m["system_audio"]:
+                self._system_audio_failed(
+                    r, getattr(source, "system_error", "") or "it did not start.")
+            self._start_partials(r)
+            self._stop_checkpoint(r)
             r.watchdog = threading.Thread(target=self._watch, args=(r,),
                                           name="meeting-watchdog", daemon=True)
             r.watchdog.start()
+            self._stop_checkpoint(r)
             log.info("meeting %s recording (%s, max %ds)", mid, m["source"], max_s)
-            return self.status()
+            if speak_consent:
+                threading.Thread(target=self._speak_consent, args=(consent_line,),
+                                 name="meeting-consent-line", daemon=True).start()
+        except _StopRequested:
+            # The owner (or an auto-stop) asked to stop while the sources were
+            # opening: close it as an ordinary stop, source stopped first.
+            self._finish_stop(r, r.stop_reason_req)
+        except BaseException as e:
+            self._abort_start(r, e)
+            if isinstance(e, MeetingError) or not isinstance(e, Exception):
+                raise
+            raise MeetingError("start_failed",
+                               "Recording could not start (error %s), so it was "
+                               "stopped. Nothing is being recorded."
+                               % log_failure(e, "Meeting start failed"), 503,
+                               detail="Recording could not start: %s" % e) from e
+        finally:
+            r.start_done.set()
+        return self.status()
+
+    @staticmethod
+    def _stop_checkpoint(r: _Recording) -> None:
+        if r.stop_evt.is_set():
+            raise _StopRequested()
+
+    def _abort_start(self, r: _Recording, exc: BaseException) -> None:
+        """Undo a start that failed after the recording was published. Never
+        raises: every step is tried, and the recording is marked as an error so
+        the transcript worker does not finish it as a meeting."""
+        m = r.meeting
+        r.start_failed = True
+        r.stop_evt.set()
+        # Status keeps saying "recording" until the source has really stopped.
+        try:
+            if r.source is not None:
+                r.source.stop()
+        except Exception as e:  # noqa: BLE001
+            log.warning("meeting %s: source did not stop cleanly: %s", m["id"], type(e).__name__)
+        with self._lock:
+            if self._active is r:
+                self._active = None
+            if self._last_stop and self._last_stop.get("id") == m["id"]:
+                self._last_stop = None
+        r.finished = True
+        self._release_hold(r)
+        if r.partial_thread is not None:
+            r.partial_q.put(None)
+        why = (exc.user_message if isinstance(exc, MeetingError)
+               else "Recording could not start.")
+        try:
+            with self._io:
+                m["state"] = "error"
+                m["stop_reason"] = "device_error"
+                m["error"] = str(why)[:300]
+                m["ended_at"] = _now_iso()
+                with r.buf_lock:
+                    for c in r.chans.values():
+                        c.buf = bytearray()
+                try:
+                    self._save(m)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("meeting %s: start failure not saved: %s",
+                                m["id"], type(e).__name__)
+        finally:
+            r.q.put(None)
 
     # -- capture -----------------------------------------------------------
-    def _on_pcm(self, r: _Recording, pcm: bytes) -> None:
+    def _on_pcm(self, r: _Recording, pcm: bytes, channel: str = "you") -> None:
         if not pcm:
             return
+        cut_any = False
         with r.buf_lock:
+            c = r.chan(channel if channel in SPEAKERS else "you")
             if r.first_sample_at is None:
                 r.first_sample_at = self.clock()
-            r.buf += pcm
-            while len(r.buf) >= r.chunk_bytes:
-                cut = cut_point(bytes(r.buf), r.chunk_bytes)
-                chunk = bytes(r.buf[:cut])
-                del r.buf[:cut]
-                r.q.put((r.offset / BYTES_PER_S, chunk))
-                r.offset += cut
+            c.buf += pcm
+            while len(c.buf) >= r.chunk_bytes:
+                cut = cut_point(bytes(c.buf), r.chunk_bytes)
+                chunk = bytes(c.buf[:cut])
+                del c.buf[:cut]
+                r.q.put((c.offset / BYTES_PER_S, chunk, c.name))
+                c.offset += cut
+                cut_any = True
+        if r.partials is not None:
+            try:
+                r.partial_q.put_nowait((c.name, pcm, cut_any))
+            except queue.Full:
+                pass                       # partials are best effort: capture never waits
 
     def _flush(self, r: _Recording) -> None:
         with r.buf_lock:
-            if r.buf:
-                r.q.put((r.offset / BYTES_PER_S, bytes(r.buf)))
-                r.offset += len(r.buf)
-                r.buf = bytearray()
+            for c in r.chans.values():
+                if c.buf:
+                    r.q.put((c.offset / BYTES_PER_S, bytes(c.buf), c.name))
+                    c.offset += len(c.buf)
+                    c.buf = bytearray()
+
+    # -- live partials -----------------------------------------------------
+    def _start_partials(self, r: _Recording) -> None:
+        try:
+            r.partials = self.partials_factory()
+        except Exception as e:
+            log.info("meeting live partials unavailable: %s", e)
+            r.partials = None
+        if r.partials is None:
+            return
+        r.partial_thread = threading.Thread(target=self._partials_loop, args=(r,),
+                                            name="meeting-partials", daemon=True)
+        r.partial_thread.start()
+
+    def _partials_loop(self, r: _Recording) -> None:
+        """Feed the streaming ear from a thread of its own and keep the latest
+        hypothesis per channel. At each chunk boundary the stream restarts, so
+        a partial never grows past one chunk."""
+        while True:
+            try:
+                item = r.partial_q.get(timeout=0.5)
+            except queue.Empty:
+                # `stop_evt` is set by every stop and every aborted start, so a
+                # thread started after the sentinel was sent still ends.
+                if r.stop_evt.is_set():
+                    return
+                continue
+            if item is None:
+                return
+            name, pcm, boundary = item
+            ear = (r.partials or {}).get(name)
+            if ear is None:
+                continue
+            try:
+                got = ear.feed(pcm)
+                if got:
+                    r.live[name] = got[0]
+                if boundary:
+                    ear.reset()
+                    r.live.pop(name, None)
+            except Exception as e:  # noqa: BLE001 - partials never break capture
+                log.info("meeting live partial failed: %s", e)
+                r.partials = None
+                r.live.clear()
+                return
+
+    def live(self) -> dict:
+        """The live partial text per channel, while recording; never stored."""
+        with self._lock:
+            r = self._active
+        if r is None:
+            return {"recording": False, "available": False, "partials": {}}
+        return {"recording": True, "available": r.partials is not None,
+                "partials": {(SPEAKERS.get(k) if r.labelled else "") or "": v
+                             for k, v in dict(r.live).items()}}
+
+    def _speak_consent(self, line=None) -> None:
+        """Say the line the start card shows (`line`), not the saved one: the
+        owner may have edited the wording without saving it."""
+        try:
+            from agent_friday.services import meeting_policy
+            meeting_policy.speak_line_if_asked(self.speaker, want=True, line=line)
+        except Exception as e:  # noqa: BLE001
+            log.info("consent line not spoken: %s", e)
+
+    def _release_hold(self, r: _Recording) -> None:
+        hold, r.hold = r.hold, None
+        if hold is not None:
+            try:
+                hold.release()
+            except Exception as e:  # noqa: BLE001
+                log.warning("meeting scheduler hold not released: %s", e)
+
+    def _gate(self):
+        if self._speech_gate is None:
+            self._speech_gate, self.vad_backend = _default_speech_gate()
+        elif not self.vad_backend:
+            self.vad_backend = "injected"
+        return self._speech_gate
 
     # -- transcription worker ---------------------------------------------
+    def _job(self, name: str, kind: str, default_in_use: bool, queued: bool = False):
+        """One task card for a stretch of model work, with a step for each part
+        inside it, instead of a card for every thirty seconds. A caller-supplied
+        transcriber or notes call is that caller's own business."""
+        import contextlib
+        if not default_in_use:
+            return contextlib.nullcontext()
+        return visible_job(name, kind=kind, workspace="meetings",
+                           deferrable=False, queued=queued)
+
+    def _save_safe(self, m: dict) -> None:
+        """Save from the transcript worker: a save that fails (the file held by
+        another program, a full disk) is logged and the worker carries on."""
+        try:
+            self._save(m)
+        except Exception as e:  # noqa: BLE001
+            log.warning("meeting %s: could not save (%s)", m.get("id"), type(e).__name__)
+
     def _work(self, r: _Recording) -> None:
         m = r.meeting
+        try:
+            with self._job("Meeting transcript", "meeting_transcript",
+                           self.transcriber is _default_transcriber) as job:
+                self._transcribe_chunks(r, job)
+            with self._io:
+                failed = m.get("state") == "error"
+                if not failed:
+                    m["state"] = "transcribed"
+                    self._save_safe(m)
+            if (not failed and self.auto_notes
+                    and m["id"] not in self._deleted):
+                try:
+                    self.write_notes(m["id"], _meeting=m)
+                except Exception as e:
+                    log.warning("meeting %s: notes failed: %s", m["id"], e)
+        finally:
+            with self._lock:
+                self._busy.pop(m["id"], None)
+
+    def _transcribe_chunks(self, r: _Recording, job) -> None:
+        m = r.meeting
+        done = 0
         while True:
             item = r.q.get()
             if item is None:
                 break
-            offset_s, pcm = item
+            offset_s, pcm, channel = item
+            speaker = SPEAKERS.get(channel) if r.labelled else None
             if m["keep_audio"]:
                 with self._io:
-                    if m["id"] not in self._deleted:
+                    # Re-read under the lock: a "delete the audio" that landed
+                    # while this part waited in the queue wins, and nothing is
+                    # written again.
+                    if (m["id"] not in self._deleted
+                            and m["id"] not in self._audio_deleted):
                         r.audio_n += 1
                         try:
                             _write_enc(_dir(m["id"]) / "audio"
-                                       / ("%06d.pcm.enc" % r.audio_n), pcm)
+                                       / ("%06d.%s.pcm.enc" % (r.audio_n, channel)), pcm)
                         except Exception as e:
                             log.warning("meeting %s: could not keep audio: %s",
                                         m["id"], e)
-            if _rms(pcm) < SILENCE_RMS:
+            try:
+                speech = self._gate()(pcm)
+            except Exception:
+                speech = _rms(pcm) >= SILENCE_RMS
+            if not speech:
                 continue
+            done += 1
+            try:
+                if job is not None:
+                    job.step("Transcribing part %d" % done)
+            except Exception:  # noqa: BLE001 - the card never stops the work
+                pass
             try:
                 text = (self.transcriber(pcm) or "").strip()
             except Exception as e:
                 with self._io:
                     m["transcription_errors"] += 1
                     m["segments"].append({"t": round(offset_s, 1), "kind": "gap",
+                                          "speaker": speaker,
                                           "text": "[This part could not be "
                                                   "transcribed: %s]" % str(e)[:200]})
-                    self._save(m)
+                    self._save_safe(m)
                 continue
             if text:
                 with self._io:
                     m["segments"].append({"t": round(offset_s, 1),
-                                          "kind": "speech", "text": text})
-                    self._save(m)
+                                          "kind": "speech", "speaker": speaker,
+                                          "text": text})
+                    m["segments"].sort(key=lambda g: g.get("t") or 0)
+                    self._save_safe(m)
             del pcm
-        with self._io:
-            m["state"] = "transcribed"
-            self._save(m)
-        if self.auto_notes and m["id"] not in self._deleted:
-            try:
-                self.write_notes(m["id"], _meeting=m)
-            except Exception as e:
-                log.warning("meeting %s: notes failed: %s", m["id"], e)
-        with self._lock:
-            self._busy.pop(m["id"], None)
 
     # -- watchdog ----------------------------------------------------------
     def _watch(self, r: _Recording) -> None:
@@ -683,59 +1318,124 @@ class MeetingManager:
         while not r.stop_evt.wait(self.tick_s):
             now = self.wall()
             reason = None
-            if now - last > max(SLEEP_GAP_S, self.tick_s * 5):
-                reason = "sleep"
-            elif self.clock() - r.t0 >= r.max_s:
-                reason = "max_duration"
-            elif r.source is not None and getattr(r.source, "error", ""):
-                reason = "device_error"
-            elif r.lock_detection:
-                try:
-                    if self.lock_detector() is True:
-                        reason = "screen_locked"
-                except Exception:
-                    pass
+            # A tick that raises is logged and the next one runs: the
+            # auto-stops (length, sleep, lock, device) must outlive any one
+            # failure, so the loop itself never ends on an exception.
+            try:
+                if now - last > max(SLEEP_GAP_S, self.tick_s * 5):
+                    reason = "sleep"
+                elif self.clock() - r.t0 >= r.max_s:
+                    reason = "max_duration"
+                elif r.source is not None and getattr(r.source, "error", ""):
+                    reason = "device_error"
+                elif (r.labelled and not r.system_error and r.source is not None
+                        and getattr(r.source, "system_error", "")):
+                    self._system_audio_failed(r, r.source.system_error)
+                elif r.lock_detection:
+                    try:
+                        if self.lock_detector() is True:
+                            reason = "screen_locked"
+                    except Exception:
+                        pass
+            except Exception as e:  # noqa: BLE001
+                log.warning("meeting watchdog tick failed (%s); carrying on",
+                            type(e).__name__)
             last = now
             if reason:
                 try:
                     self.stop(reason=reason, _rec=r)
                 except MeetingError:
-                    pass
+                    return
+                except Exception as e:  # noqa: BLE001
+                    log.warning("meeting auto-stop failed (%s); trying again",
+                                type(e).__name__)
+                    continue
                 return
+
+    def _system_audio_failed(self, r: _Recording, why: str) -> None:
+        """The loopback stopped but the microphone did not: say so in the
+        transcript and in status, and carry on with the microphone."""
+        m = r.meeting
+        r.system_error = str(why)[:200]
+        with self._io:
+            m["system_audio"] = False
+            m["segments"].append({"t": round(self.clock() - r.t0, 1), "kind": "gap",
+                                  "speaker": None,
+                                  "text": "[System audio stopped: %s Your "
+                                          "microphone is still being recorded.]" % r.system_error})
+            self._save_safe(m)
 
     # -- stop --------------------------------------------------------------
     def stop(self, reason: str = "owner", _rec=None) -> dict:
+        """Ask the recording to stop and wait for it to be stopped. The
+        recording stays published (status says "recording", with `stopping`)
+        until its source has actually stopped: nothing reports "not recording"
+        while a device may still be capturing."""
         with self._lock:
             r = self._active
             if r is None or (_rec is not None and r is not _rec):
                 raise MeetingError("not_recording", "Nothing is being recorded.", 409)
-            self._active = None
+            if r.stopping:
+                raise MeetingError("not_recording", "Nothing is being recorded.", 409)
+            r.stopping = True
+            r.stop_reason_req = reason
             self._last_stop = {"id": r.meeting["id"], "reason": reason,
                                "message": STOP_REASONS.get(reason, reason),
                                "at": _now_iso()}
         r.stop_evt.set()
-        err = ""
-        try:
-            r.source.stop()
-            err = getattr(r.source, "error", "") or ""
-        except Exception as e:
-            err = str(e)
-        self._flush(r)
+        # A stop that arrives while the sources are still opening waits for
+        # start() to finish (it holds no lock meanwhile). If start() is still
+        # busy after the wait, it closes the recording itself at its next
+        # checkpoint, so the source is stopped either way.
+        if not r.start_done.wait(START_STOP_WAIT_S):
+            return {"id": r.meeting["id"], "state": "stopping",
+                    "message": "Stopping the recording as soon as the microphone has opened."}
+        if r.start_failed:
+            raise MeetingError("not_recording", "Nothing is being recorded.", 409)
+        self._finish_stop(r, reason)
         m = r.meeting
-        with self._io:
-            m["ended_at"] = _now_iso()
-            m["duration_s"] = round(self.clock() - r.t0, 1)
-            m["stop_reason"] = reason
-            m["state"] = "transcribing"
-            if reason == "device_error" and err:
-                m["error"] = err[:300]
-            self._save(m)
-        r.q.put(None)
+        return _row(m) | {"message": STOP_REASONS.get(reason, reason)}
+
+    def _finish_stop(self, r: _Recording, reason: str) -> None:
+        """Close a recording once: stop the source, release the hold, queue the
+        last audio and tell the transcript worker to finish. `_active` is
+        cleared only after the source has stopped. Safe to call from two
+        threads; the second waits for the first and then returns."""
+        m = r.meeting
+        with r.finish_lock:
+            if r.finished:
+                return
+            err = ""
+            try:
+                r.source.stop()
+                err = getattr(r.source, "error", "") or ""
+            except Exception as e:
+                err = str(e)
+            self._release_hold(r)
+            try:
+                self._flush(r)
+                if r.partial_thread is not None:
+                    r.partial_q.put(None)
+                with self._io:
+                    m["ended_at"] = _now_iso()
+                    m["duration_s"] = round(self.clock() - r.t0, 1)
+                    m["stop_reason"] = reason
+                    m["state"] = "transcribing"
+                    if reason == "device_error" and err:
+                        m["error"] = err[:300]
+                    self._save_safe(m)
+            finally:
+                # The worker is always told to finish, so a failure above cannot
+                # leave a transcript worker waiting on a recording that is over.
+                r.q.put(None)
+                with self._lock:
+                    if self._active is r:
+                        self._active = None
+                r.finished = True
         if reason != "owner":
             self._notify(m, reason)
         log.info("meeting %s stopped (%s) after %.0fs", m["id"], reason,
                  m["duration_s"])
-        return _row(m) | {"message": STOP_REASONS.get(reason, reason)}
 
     def _notify(self, m: dict, reason: str) -> None:
         msg = "Recording stopped. %s The transcript is being finished." % (
@@ -746,9 +1446,8 @@ class MeetingManager:
                 return
             import agent_friday.notifications_engine as ne
             ne.push(title="Meeting recording stopped", body=msg,
-                    priority="high", source="meetings", kind="meeting",
-                    target={"workspace": "calendar", "view": "meetings",
-                            "meeting_id": m["id"]},
+                    priority="high", source="meetings", kind="meeting", emitter="E51",
+                    target={"workspace": "meetings", "meeting_id": m["id"]},
                     dedupe_key="meeting-stop:" + m["id"])
         except Exception as e:
             log.info("meeting stop notification failed: %s", e)
@@ -783,40 +1482,153 @@ class MeetingManager:
     def get(self, mid: str) -> dict:
         with self._io:
             m = _load(mid)
-        m["has_audio"] = (_dir(mid) / "audio").exists()
+        m["has_audio"] = self.has_audio(mid)
         return m
 
+    @staticmethod
+    def _audio_files(d: Path) -> dict:
+        """channel -> chunk files in order. Files kept before channels existed
+        (NNNNNN.pcm.enc) are the microphone."""
+        out: dict = {}
+        for p in sorted(d.glob("*.pcm.enc")):
+            parts = p.name.split(".")
+            ch = parts[1] if len(parts) == 4 and parts[1] in SPEAKERS else "you"
+            out.setdefault(ch, []).append(p)
+        return out
+
+    def has_audio(self, mid: str) -> bool:
+        d = _dir(mid) / "audio"
+        return d.is_dir() and any(d.glob("*.pcm.enc"))
+
     def audio_wav(self, mid: str) -> bytes:
+        """The kept audio as a WAV: mono for one channel, stereo (You on the
+        left, Them on the right) when both sides were kept."""
         import io
         import wave
         d = _dir(mid) / "audio"
-        if not d.exists():
+        files = self._audio_files(d) if d.exists() else {}
+        if not files:
             raise MeetingError("no_audio", "This meeting kept no audio.", 404)
+        pcm = {ch: b"".join(_unprotect(p.read_bytes()) for p in fs)
+               for ch, fs in files.items()}
         out = io.BytesIO()
         with wave.open(out, "wb") as w:
-            w.setnchannels(1)
             w.setsampwidth(2)
             w.setframerate(RATE)
-            for p in sorted(d.glob("*.pcm.enc")):
-                w.writeframes(_unprotect(p.read_bytes()))
+            if len(pcm) == 1:
+                w.setnchannels(1)
+                w.writeframes(next(iter(pcm.values())))
+            else:
+                n = max(len(v) for v in pcm.values())
+                left = pcm.get("you", b"").ljust(n, b"\x00")
+                right = pcm.get("them", b"").ljust(n, b"\x00")
+                inter = bytearray(2 * n)
+                inter[0::4], inter[1::4] = left[0::2], left[1::2]
+                inter[2::4], inter[3::4] = right[0::2], right[1::2]
+                w.setnchannels(2)
+                w.writeframes(bytes(inter))
         return out.getvalue()
 
-    def delete(self, mid: str) -> dict:
-        d = _dir(mid)
+    def _refuse_if_recording(self, mid: str, what: str) -> None:
         with self._lock:
             if self._active is not None and self._active.meeting["id"] == mid:
                 raise MeetingError("recording",
-                                   "Stop the recording before deleting it.", 409)
+                                   "Stop the recording before deleting %s." % what, 409)
+
+    def _count(self, scope: str, reason: str, audio_files: int, meetings: int) -> None:
+        """One ledger line: counts only. No title, id, path or text."""
+        try:
+            self.ledger("meeting_deletion", scope=scope, reason=reason,
+                        audio_files=audio_files, meetings=meetings)
+        except Exception as e:  # noqa: BLE001 - the ledger never blocks a deletion
+            log.info("meeting deletion not counted: %s", e)
+
+    def delete(self, mid: str, reason: str = "owner") -> dict:
+        """Delete the whole meeting: transcript, notes and audio. The folder is
+        removed, not hidden."""
+        d = _dir(mid)
+        self._refuse_if_recording(mid, "it")
+        if d.exists():
+            # Out of search first, before anything else is removed: a meeting being deleted is never
+            # an answer. (The archive also refuses a meeting whose folder is gone, and the clear below
+            # runs again once the folder is.)
+            try:
+                self.archive_remove(mid)
+            except Exception as e:  # noqa: BLE001 - the archive never blocks a deletion
+                log.info("meeting %s: archive not cleared: %s", mid, e)
+            self._purge_proposals(mid)
         with self._io:
             if not d.exists():
                 raise MeetingError("not_found", "No such meeting.", 404)
+            n_audio = sum(len(v) for v in self._audio_files(d / "audio").values()) \
+                if (d / "audio").exists() else 0
+            if not _remove_meeting_folder(d):
+                # Nothing is half-deleted into an unreadable folder: the record
+                # is the last thing to go, so a failure leaves a readable meeting.
+                raise MeetingError("delete_incomplete",
+                                   "Some of this meeting could not be removed "
+                                   "right now. Try deleting it again.", 500)
             self._deleted.add(mid)
-            shutil.rmtree(d)
+        try:
+            _pending_forget_drop(mid)       # nothing is left to redact in a meeting that is gone
+        except Exception as e:  # noqa: BLE001
+            log.info("meeting %s: pending names not dropped (%s)", mid, type(e).__name__)
+        try:
+            self.archive_remove(mid)       # its Library documents go with it
+        except Exception as e:  # noqa: BLE001 - the archive never blocks a deletion
+            log.info("meeting %s: archive not cleared: %s", mid, e)
+        self._purge_proposals(mid)          # and any a suggestion still being made wrote meanwhile
+        self._count("meeting", reason, n_audio, 1)
         return {"deleted": mid, "exists": d.exists()}
+
+    def _gone(self, mid: str) -> bool:
+        with self._io:
+            return mid in self._deleted or not (_dir(mid) / "meeting.json.enc").exists()
+
+    def _purge_proposals(self, mid: str) -> None:
+        """Memory proposals made from a meeting sit outside its encrypted record; they go with it."""
+        try:
+            self.proposal_purge(mid)
+        except Exception as e:  # noqa: BLE001 - never blocks a deletion
+            log.info("meeting %s: proposals not cleared: %s", mid, type(e).__name__)
+
+    def delete_audio(self, mid: str, reason: str = "owner") -> dict:
+        """Delete the kept audio and nothing else: the transcript and notes
+        stay exactly as they are."""
+        d = _dir(mid)
+        self._refuse_if_recording(mid, "its audio")
+        with self._io:
+            if not d.exists():
+                raise MeetingError("not_found", "No such meeting.", 404)
+            adir = d / "audio"
+            n = sum(len(v) for v in self._audio_files(adir).values()) if adir.exists() else 0
+            # Marked first, under the same lock the transcript worker takes
+            # before it writes audio or saves the record: from here on nothing
+            # writes audio for this meeting and no save can say it is kept.
+            when = _now_iso()
+            try:
+                m = _load(mid)
+            except MeetingError:
+                m = None
+            if n or (m is not None and m.get("keep_audio")):
+                self._audio_deleted[mid] = when
+            if not _remove_tree(adir):
+                raise MeetingError("delete_incomplete",
+                                   "Some of the audio could not be removed "
+                                   "right now. Nothing new will be kept; try "
+                                   "deleting it again.", 500)
+            if m is not None and (n or m.get("keep_audio")):
+                m["keep_audio"] = False
+                m["audio_deleted_at"] = when
+                self._save(m)
+        # Counted only now that the removal is complete.
+        if n:
+            self._count("audio", reason, n, 0)
+        return {"audio_deleted": mid, "audio_files": n, "has_audio": adir.exists()}
 
     # -- notes -------------------------------------------------------------
     def write_notes(self, mid: str, _meeting=None) -> dict:
-        from agent_friday.services.local_only_guard import local_only
+        from agent_friday.services.local_only_guard import is_cloud_model_tag, local_only
         if _meeting is None:
             self._refuse_while_busy(mid)
         m = _meeting if _meeting is not None else self.get(mid)
@@ -831,7 +1643,17 @@ class MeetingManager:
                 seat = self.seat_resolver()
             except Exception as e:
                 log.info("local seat resolution failed: %s", e)
-            if not seat:
+            # Meeting-side guard: a cloud-tagged Ollama model (`glm-4.6:cloud`)
+            # is served by the daemon but runs on ollama.com, so it is never a
+            # seat for notes. The seat resolver and local_call refuse these tags
+            # themselves once fix/local-seat-no-cloud-tag lands; this check is
+            # then redundant and is superseded by that fix.
+            if seat and is_cloud_model_tag(seat):
+                log.warning("meeting notes: the local seat is a cloud-tagged model; "
+                            "notes were not written")
+                summary = {"status": "skipped", "at": _now_iso(),
+                           "reason": NO_LOCAL_SEAT_CLOUD}
+            elif not seat:
                 summary = {"status": "skipped", "at": _now_iso(),
                            "reason": NO_LOCAL_SEAT}
             else:
@@ -840,7 +1662,9 @@ class MeetingManager:
                     self._save(m)
                 merged = {"notes": [], "decisions": [], "action_items": []}
                 failed = False
-                with local_only("Meeting notes"):
+                with self._job("Meeting notes", "meeting_notes",
+                               self.notes_call is _default_notes_call, queued=True), \
+                        local_only("Meeting notes"), _notes_work():
                     for part in _split_text(text, NOTES_CHARS_PER_CALL):
                         user = ("Meeting: %s\n\nTranscript:\n%s"
                                 % (m.get("title") or "", part))
@@ -872,7 +1696,26 @@ class MeetingManager:
             if m.get("state") == "transcribed":
                 m["state"] = "done"
             self._save(m)
+        if summary.get("status") == "done":
+            self._apply_audio_retention(m["id"])
+            self._index_archive(m)
         return summary
+
+    def _index_archive(self, m: dict) -> None:
+        """Make the finished meeting searchable from the Library, when the owner said yes."""
+        try:
+            self.archive_index(m)
+        except Exception as e:  # noqa: BLE001 - a search index never spoils the notes
+            log.info("meeting %s: not indexed for search: %s", m.get("id"), e)
+
+    def _apply_audio_retention(self, mid: str) -> None:
+        """The owner's "delete the audio once the notes are made" choice. With
+        no choice made, or any other choice, nothing is deleted here."""
+        try:
+            if self.retention() == "delete_after_notes" and self.has_audio(mid):
+                self.delete_audio(mid, reason="after_notes")
+        except Exception as e:  # noqa: BLE001
+            log.info("meeting %s: audio retention not applied: %s", mid, e)
 
     def _refuse_while_busy(self, mid: str) -> None:
         with self._lock:
@@ -962,6 +1805,244 @@ class MeetingManager:
         return {"queued": True, "sent": False,
                 "approval_id": (result or {}).get("approval_id")}
 
+    def repair_interrupted(self) -> int:
+        """Move meetings left in `recording` or `transcribing` by a closed or
+        crashed Friday to the terminal state `interrupted`, so the retention
+        sweep (which never touches a meeting still being made) applies to them
+        and their kept audio can be deleted like any other. Meetings this
+        process is recording or finishing are left alone. Returns the count."""
+        root = _root()
+        if not root.exists():
+            return 0
+        with self._lock:
+            live = {self._active.meeting["id"]} if self._active is not None else set()
+            live |= {k for k, t in self._busy.items() if t.is_alive()}
+        fixed = 0
+        for d in list(root.iterdir()):
+            if not (d.is_dir() and _ID_RE.match(d.name)) or d.name in live:
+                continue
+            try:
+                with self._io:
+                    m = _load(d.name)
+                    if m.get("state") not in ("recording", "transcribing"):
+                        continue
+                    m["state"] = "interrupted"
+                    m["stop_reason"] = m.get("stop_reason") or "interrupted"
+                    m["ended_at"] = m.get("ended_at") or _now_iso()
+                    if (m.get("summary") or {}).get("status") in (None, "pending", "running"):
+                        m["summary"] = {"status": "skipped", "at": _now_iso(),
+                                        "reason": "Friday closed before this "
+                                                  "recording was finished, so no "
+                                                  "notes were written. You can "
+                                                  "write them from what was "
+                                                  "transcribed."}
+                    self._save(m)
+                    fixed += 1
+            except Exception as e:  # noqa: BLE001 - an unreadable folder is listed as such
+                log.info("meeting %s: not repaired (%s)", d.name, type(e).__name__)
+        if fixed:
+            log.info("%d unfinished meeting(s) marked interrupted", fixed)
+        return fixed
+
+    # -- the Meetings workspace -------------------------------------------
+    def _live(self, mid: str):
+        with self._lock:
+            r = self._active
+            return r if (r is not None and r.meeting["id"] == mid) else None
+
+    def pad_get(self, mid: str) -> list:
+        """The owner's shorthand bullets for this meeting."""
+        r = self._live(mid)
+        if r is not None:
+            with self._io:
+                return [dict(b) for b in r.meeting.get("pad") or []]
+        return [dict(b) for b in self.get(mid).get("pad") or []]
+
+    def pad_add(self, mid: str, text, by: str = "") -> dict:
+        """Add a shorthand bullet. While the meeting records it goes into the live record, stamped
+        with how far into the call it was jotted; afterwards into the stored one."""
+        text = " ".join(str(text or "").split())[:mw.PAD_MAX_CHARS]
+        if not text:
+            raise MeetingError("empty", "Write a few words first.", 400)
+        r = self._live(mid)
+        if r is None:
+            self._refuse_while_busy(mid)
+        with self._io:
+            if r is not None:
+                m, t = r.meeting, round(self.clock() - r.t0, 1)
+            else:
+                m, t = _load(mid), None
+            pad = m.setdefault("pad", [])
+            if len(pad) >= mw.PAD_MAX_BULLETS:
+                raise MeetingError("pad_full", "That is a lot of bullets. Expand these before adding more.", 409)
+            item = {"id": max([b.get("id", 0) for b in pad], default=0) + 1, "t": t, "text": text}
+            if by == "friday":
+                item["by"] = "friday"       # a bullet Friday's tools added, shown as hers, not the owner's
+            pad.append(item)
+            self._save(m)
+        return item
+
+    def pad_remove(self, mid: str, pad_id) -> dict:
+        r = self._live(mid)
+        if r is None:
+            self._refuse_while_busy(mid)
+        try:
+            pad_id = int(pad_id)
+        except (TypeError, ValueError):
+            raise MeetingError("not_found", "No such bullet.", 404)
+        with self._io:
+            m = r.meeting if r is not None else _load(mid)
+            before = len(m.get("pad") or [])
+            m["pad"] = [b for b in m.get("pad") or [] if b.get("id") != pad_id]
+            if len(m["pad"]) == before:
+                raise MeetingError("not_found", "No such bullet.", 404)
+            self._save(m)
+        return {"removed": pad_id}
+
+    def _seat(self):
+        try:
+            return self.seat_resolver()
+        except Exception as e:
+            log.info("local seat resolution failed: %s", e)
+            return None
+
+    def _notes_seat(self):
+        """(seat, why not): the model that may read a transcript. A cloud-tagged Ollama model is served
+        by the daemon but runs on ollama.com, so it is never a seat for what was said in a meeting."""
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        seat = self._seat()
+        if seat and is_cloud_model_tag(seat):
+            log.warning("meeting notes: the local seat is a cloud-tagged model; the transcript was not sent")
+            return None, NO_LOCAL_SEAT_CLOUD
+        return (seat, "") if seat else (None, NO_LOCAL_SEAT)
+
+    def expand_notes(self, mid: str) -> dict:
+        """Turn the owner's shorthand bullets into polished notes, by a local model only.
+
+        Each expanded line cites the transcript lines it rests on (segment index and time). A line
+        that cites nothing real, or names something neither the transcript nor its bullet says, is
+        left out and counted. The run is `user_job` work in the local queue, inside the local-only
+        guard, so no path from here reaches a paid provider."""
+        from agent_friday.services.local_only_guard import local_only
+        self._refuse_while_busy(mid)
+        m = self.get(mid)
+        lines = mw.spoken(m)
+        pad = list(m.get("pad") or [])
+        base = {"at": _now_iso(), "bullets": len(pad)}
+        if not pad:
+            out = base | {"status": "skipped", "reason": "Jot a few bullets during the call, then ask for the notes."}
+        elif not lines:
+            out = base | {"status": "skipped", "reason": "Nothing was transcribed, so there is nothing to expand from."}
+        else:
+            seat, why = self._notes_seat()
+            if not seat:
+                out = base | {"status": "skipped", "reason": why}
+            else:
+                transcript = "\n".join(ln["text"] for ln in lines)
+                kept, left_out, failed, seen = [], 0, False, set()
+                with self._job("Meeting notes", "meeting_notes", self.notes_call is _default_notes_call,
+                               queued=True), local_only("Meeting notes"), _notes_work():
+                    for chunk in mw.numbered_chunks(lines, NOTES_CHARS_PER_CALL):
+                        try:
+                            got = self.notes_call(mw.EXPAND_SYSTEM, mw.expansion_user(m.get("title"), pad, chunk), seat)
+                        except Exception as e:
+                            log.warning("meeting notes expansion failed: %s", e)
+                            got = None
+                        if got is None:
+                            failed = True
+                            break
+                        ok, bad = mw.validate_expansion(mw.parse_expansion(got), lines, pad, transcript)
+                        left_out += len(bad)
+                        for k in ok:
+                            if k["text"].lower() not in seen:
+                                seen.add(k["text"].lower())
+                                kept.append(k)
+                if failed:
+                    out = base | {"status": "failed", "model": seat, "local": True,
+                                  "reason": "The local model did not return usable notes. Try again."}
+                else:
+                    kept.sort(key=lambda k: (k["bullet"] is None, k["bullet"] or 0, k["spans"][0]["i"]))
+                    out = base | {"status": "done", "model": seat, "local": True, "lines": kept,
+                                  "left_out": left_out}
+        with self._io:
+            if mid in self._deleted:
+                return out
+            m = _load(mid)
+            m["polished"] = out
+            self._save(m)
+        if out["status"] == "done":
+            self._index_archive(m)
+        return out
+
+    def action_item_check(self, mid: str) -> list:
+        """Each action item of the notes, with the transcript line it traces to, or none. Read on demand
+        and never stored: an item that traces to nothing is one to check before it becomes a task."""
+        m = self.get(mid)
+        lines = mw.spoken(m)
+        out = []
+        for i, a in enumerate((m.get("summary") or {}).get("action_items") or []):
+            sp = mw.ground(a.get("task") or "", lines)
+            out.append({"index": i, "task": a.get("task"), "owner": a.get("owner"), "due": a.get("due"),
+                        "span": sp, "traced": sp is not None})
+        return out
+
+    def propose_memory(self, mid: str) -> dict:
+        """Offer the people, projects and decisions of a meeting to memory, as proposals to review.
+
+        Nothing is written to the knowledge graph or to what Friday knows about the owner: each
+        proposal waits in memory_proposals with where it came from (the meeting, the transcript line
+        and the model that read it), and only the owner's approval there keeps it. Decisions come
+        from the notes already written; people and projects need the local model."""
+        from agent_friday.services.local_only_guard import local_only
+        self._refuse_while_busy(mid)
+        m = self.get(mid)
+        lines = mw.spoken(m)
+        if not lines:
+            return {"proposed": 0, "considered": 0, "reason": "Nothing was transcribed."}
+        seat, why = self._notes_seat()
+        found, note = {"people": [], "projects": []}, ""
+        if seat:
+            seen = {"people": set(), "projects": set()}
+            with self._job("Meeting notes", "meeting_notes", self.notes_call is _default_notes_call,
+                           queued=True), local_only("Meeting notes"), _notes_work():
+                for chunk in mw.numbered_chunks(lines, NOTES_CHARS_PER_CALL):
+                    try:
+                        got = self.notes_call(mw.ENTITIES_SYSTEM, mw.entities_user(m.get("title"), chunk), seat)
+                    except Exception as e:
+                        log.warning("meeting people and projects failed: %s", e)
+                        got = None
+                    if got is None:
+                        note = "The local model did not answer, so only decisions were considered."
+                        break
+                    for key, rows in mw.parse_entities(got).items():
+                        for r in rows:
+                            if r["name"].lower() not in seen[key]:
+                                seen[key].add(r["name"].lower())
+                                found[key].append(r)
+        else:
+            note = ("The model chosen for local work is a cloud model, so only decisions were considered."
+                    if why == NO_LOCAL_SEAT_CLOUD else
+                    "No local model is running, so only decisions were considered.")
+        cands, left_out = mw.proposal_candidates(m, found, lines)
+        day = (m.get("started_at") or "")[:10] or _now_iso()[:10]
+        decisions_model = (m.get("summary") or {}).get("model") or seat or "unknown"
+        stored = 0
+        for group, model in (([c for c in cands if c["category"] != "decision"], seat or ""),
+                             ([c for c in cands if c["category"] == "decision"], decisions_model)):
+            if group and model:
+                if self._gone(mid):
+                    break                    # deleted while the model ran: nothing is written for it
+                stored += self.proposer(group, mid, day, model)
+        if self._gone(mid):
+            self._purge_proposals(mid)       # a write that raced the deletion
+            stored = 0
+        with self._io:
+            if mid not in self._deleted:
+                m = _load(mid)
+                m["memory_proposals"] = {"at": _now_iso(), "proposed": stored, "considered": len(cands)}
+                self._save(m)
+        return {"proposed": stored, "considered": len(cands), "left_out": len(left_out), "note": note}
+
     def shutdown(self) -> None:
         try:
             self.stop(reason="shutdown")
@@ -978,8 +2059,13 @@ def get_manager() -> MeetingManager:
     if _manager is None:
         with _manager_lock:
             if _manager is None:
-                _manager = MeetingManager()
-                atexit.register(_manager.shutdown)
+                mgr = MeetingManager()
+                try:
+                    mgr.repair_interrupted()
+                except Exception as e:  # noqa: BLE001
+                    log.info("interrupted meetings not repaired: %s", type(e).__name__)
+                atexit.register(mgr.shutdown)
+                _manager = mgr
     return _manager
 
 
@@ -988,5 +2074,137 @@ def tray_tooltip(status: dict) -> str | None:
     if not isinstance(status, dict) or not status.get("recording"):
         return None
     t = int(status.get("elapsed_s") or 0)
-    return "Friday — recording a meeting (%d:%02d:%02d)" % (
+    both = bool((status.get("system_audio") or {}).get("captured"))
+    return "Friday — recording a meeting%s (%d:%02d:%02d)" % (
+        " and the other side of the call" if both else "",
         t // 3600, t // 60 % 60, t % 60)
+
+
+# ── forget-person reaches the meeting itself ─────────────────────────────────
+# The Library copy of a meeting is redacted when it is read in; the encrypted record is the source, and it
+# still names the person in its title, transcript, notes, bullets and polished notes. forget-person
+# (services/forget_registry) finds and redacts them there too. A meeting still being recorded is left until it
+# has ended.
+
+def _name_pattern(names):
+    words = sorted({" ".join(str(n or "").split()) for n in (names or ()) if len(str(n or "").strip()) >= 3},
+                   key=len, reverse=True)
+    if not words:
+        return None
+    alts = [r"\s+".join(re.escape(w) for w in n.split(" ")) for n in words]
+    return re.compile(r"\b(?:" + "|".join(alts) + r")\b", re.IGNORECASE)
+
+
+def _redact_value(v, pat):
+    """(value, how many names were replaced); only strings are touched."""
+    if isinstance(v, str):
+        out, n = pat.subn("[removed]", v)
+        return out, n
+    if isinstance(v, list):
+        total, out = 0, []
+        for x in v:
+            y, n = _redact_value(x, pat)
+            out.append(y)
+            total += n
+        return out, total
+    if isinstance(v, dict):
+        total, out = 0, {}
+        for k, x in v.items():
+            if k in ("id", "state", "started_at", "ended_at", "stop_reason", "source", "kind", "speaker", "event_id"):
+                out[k] = x
+                continue
+            y, n = _redact_value(x, pat)
+            out[k] = y
+            total += n
+        return out, total
+    return v, 0
+
+
+_PENDING_LOCK = threading.Lock()
+
+
+def _pending_path() -> Path:
+    return _root() / "_forget_pending.enc"
+
+
+def _pending_read() -> dict:
+    """The pending names, sealed with the meetings keystore like the records they belong to: the file would
+    otherwise tie a forgotten person's name to the meetings they were in."""
+    try:
+        d = json.loads(_unprotect(_pending_path().read_bytes()).decode("utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (FileNotFoundError, ValueError):
+        return {}                    # no list yet; a locked keystore raises, so a list is never overwritten blind
+
+
+def _pending_write(d: dict) -> None:
+    _write_enc(_pending_path(), json.dumps(d).encode("utf-8"))
+
+
+def _pending_forget_add(mid: str, names) -> None:
+    """Names forgotten while this meeting was being recorded or transcribed, kept against its id."""
+    with _PENDING_LOCK:
+        d = _pending_read()
+        d[mid] = sorted(set(d.get(mid) or []) | {str(n) for n in names or ()})
+        _pending_write(d)
+
+
+def _pending_forget_peek(mid) -> list:
+    """The names waiting for this meeting (they stay until its record is written)."""
+    if not mid:
+        return []
+    with _PENDING_LOCK:
+        return list(_pending_read().get(mid) or [])
+
+
+def _pending_forget_drop(mid) -> None:
+    with _PENDING_LOCK:
+        d = _pending_read()
+        if d.pop(mid, None) is not None:
+            _pending_write(d)
+
+
+def _meetings_naming(names, redact: bool) -> int:
+    pat = _name_pattern(names)
+    if pat is None:
+        return 0
+    mgr = get_manager()
+    hits = 0
+    for row in mgr.list():
+        mid = row.get("id")
+        if mid and row.get("state") in ("recording", "transcribing"):
+            if redact:
+                _pending_forget_add(mid, names)      # redacted when this meeting first saves settled
+                try:
+                    with mgr._io:
+                        again = _load(mid)
+                        if again.get("state") not in ("recording", "transcribing"):
+                            mgr._save(again)         # it settled in between: redacted now, not at some later save
+                except Exception as e:  # noqa: BLE001
+                    log.info("meeting %s: not settled yet (%s)", mid, type(e).__name__)
+            continue
+        if not mid or row.get("state") == "unreadable":
+            continue
+        try:
+            with mgr._io:
+                m = _load(mid)
+                new, n = _redact_value(m, pat)
+                if not n:
+                    continue
+                hits += 1
+                if redact:
+                    mgr._save(new)
+        except Exception as e:  # noqa: BLE001 - one unreadable meeting must not stop the rest
+            log.info("meeting %s: not checked for a forgotten name (%s)", mid, type(e).__name__)
+            continue
+        if redact:
+            mgr._index_archive(new)       # the archive is read in again, redacted
+    return hits
+
+
+def people_find(names, emails) -> int:
+    return _meetings_naming(set(names or ()) | set(emails or ()), redact=False)
+
+
+def people_purge(names, emails) -> int:
+    return _meetings_naming(set(names or ()) | set(emails or ()), redact=True)

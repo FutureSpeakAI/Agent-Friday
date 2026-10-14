@@ -1852,10 +1852,11 @@ def format_snapshot(snap: dict, s: Optional[BrowserSession], *, text_offset: int
 
 # ── Tool-facing functions (return text for the model) ───────────────────────
 
-def _notify(title: str, body: str, kind: str = "info") -> None:
+def _notify(title: str, body: str, kind: str = "info", key: str = "") -> None:
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title=title, body=body, priority="medium", kind=kind, source="browser")
+        ne.push(title=title, body=body, priority="medium", kind=kind, source="browser",
+                emitter="E46", dedupe_key=key or "browser:" + kind)
     except Exception as e:
         _log.debug("could not notify (%s): %s", title, e)
 
@@ -1867,11 +1868,12 @@ def _read_out(s: BrowserSession, snap: dict, text_offset: int = 0) -> str:
             s._signin_noted.add(key)
             if s.owner is not None:
                 _notify(f"{s.display_name} needs you to sign in",
-                        f"{_host(key)} needs a sign-in. " + s._owner_help("sign in yourself"))
+                        f"{_host(key)} needs a sign-in. " + s._owner_help("sign in yourself"),
+                        key="browser-signin:" + _host(key))
             else:
                 _notify("Friday's browser needs you to sign in",
                         f"Sign in yourself in the Friday browser window ({_host(key)}), then "
-                        f"tell Friday you are done.")
+                        f"tell Friday you are done.", key="browser-signin:" + _host(key))
     return format_snapshot(snap, s, text_offset=text_offset)
 
 

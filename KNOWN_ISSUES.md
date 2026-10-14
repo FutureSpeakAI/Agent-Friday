@@ -1,6 +1,6 @@
 # Known Issues
 
-**For Agent Friday™ Beta 1.0.2 (1.0.2b1).**
+**For Agent Friday™ Beta 1.1 (1.1.0b1).**
 
 This file lists what is broken, unverified, or deliberately limited in a way
 you may hit. Each entry was checked against the code on that date. Fixed
@@ -92,16 +92,56 @@ you hit something that is not here, please open an issue.
   so a second GPU seat or local image generation may fail to allocate. "I need
   my machine" in Settings > Models releases the GPU.
 
-## 2a. Open in 1.0.2: local voice calls and the Local AI queue
+## 2a. Open in Beta 1.1: safe writes and Ollama cloud models
 
-- **The first local voice call after a while takes about a minute to start.**
-  The voice models load onto the graphics card first. The first answer in a
-  call is also slower than the ones after it.
+- **Laya's safe writes (`laya_safe_writes`) are off and await review.** The
+  feature lets Laya raise the approval card for a reversible mail change to rows
+  you pointed at, and it has not yet had its separate safety review or its
+  adversarial pass. It can be turned on only by the Settings control, by your
+  own click on this PC's page: a value written to `settings.json` any other way
+  counts as off until you click. Until it is enabled the model's own path is
+  unchanged. Its spoken-card behaviour on a live local voice call and the
+  Settings control on screen have been checked in tests only, not on a call or
+  in a rendered window. The card is bound to the messages it listed, so a
+  reply that arrives before you approve is not changed. A conversation Friday
+  cannot read message by message is refused: no card is raised for the batch and
+  the turn ends "NOT DONE" (the model path does not take it), and one that cannot
+  be read when you approve is left unchanged and reported as not changed.
+  Undo reverses the labels Friday changed, message by message; a label a Gmail
+  filter or you changed in between is not restored. The card names up to three
+  senders per conversation. A spoken "yes" approves a Laya card only if Friday
+  read that card's line aloud in this conversation (naming the action is no
+  substitute). On the page, a Laya card is approved with its Approve button; a typed yes does
+  not approve it.
+- **Local only judges an Ollama model as cloud by its name and by the daemon's
+  inventory, so a cloud model that carries neither mark can pass as local.**
+  A model the Ollama daemon runs on ollama.com is recognised by a tag of
+  `cloud` or one ending in `-cloud` (`glm-4.6:cloud`, `gpt-oss:120b-cloud`),
+  or by the daemon's model list marking it with a remote host or remote model
+  (how `ollama cp x:cloud myname:latest` shows up). Any other naming Ollama
+  might adopt for a hosted model is treated as a model the daemon runs on this
+  PC. The daemon's own address must be on this PC or the local network, so a
+  daemon elsewhere is always treated as cloud whatever the model is called.
+- **An older Ollama daemon that does not report remote hosts in its model
+  list hides a renamed cloud model.** On such a daemon, a cloud model copied
+  under a plain name (`ollama cp glm-4.6:cloud myglm:latest`) looks local, and
+  only the original `cloud` tag is caught. On any daemon, the list is read
+  whenever Friday lists the installed models, and before the first call to the
+  daemon if it has not been read yet; a cloud alias created after the last
+  read is not seen until the next one. Update Ollama, and give cloud
+  models names that keep the `cloud` tag.
+
+## 2b. Open in Beta 1.1: local voice calls and the Local AI queue
+
+- **The first local voice call after a while is slow to start.** The voice
+  models load first. They now load at the same time rather than one after
+  another, and the page shows an estimate from this PC's recent starts. The
+  first answer in a call is also slower than the ones after it.
 - **Cloud voice calls (Gemini Live) do not pause background local-model
   work.** Only local voice turns do. Work that can wait, such as wiki notes,
   still waits while you are active at the keyboard.
 
-## 2b. Open in 1.0.1: voice routing
+## 2c. Open in Beta 1.1: voice routing
 
 - **Stop the music and volume by voice.** "Stop the music" and volume changes
   are not handled yet.
@@ -117,6 +157,16 @@ you hit something that is not here, please open an issue.
   may refer to a story the script check left out.
 
 ## 3. Deliberate behaviour that can surprise
+
+- **Star, unstar, label, mark read and mark unread run with no card when a model
+  asks.** This is your rule (2026-10), not a defect: they are instantly
+  undoable and take nothing out of the inbox. Each one is recorded (tool, action,
+  count and message ids, no subject) in the Undo list and in a turn receipt: the
+  chat turn's, the spoken turn's `voice-…`, a Live call's `live-…` or a task's
+  `task-<id>`. Undo is exact: a conversation Friday cannot read message by
+  message is refused, and a label the change created is removed again when it is
+  empty (otherwise it stays and Undo says so). A test pins the list. Archive,
+  move, Trash, Spam and restore always raise a card.
 
 - **`local_only` refuses rather than falls back.** With no local model
   serving, a chat turn is refused with an offer to answer in the cloud.
@@ -138,7 +188,7 @@ you hit something that is not here, please open an issue.
 
 Listed separately from "broken". These are not claims that things work.
 
-- **Beta 1.0.2 has had little time on real computers.** Please report what you
+- **Beta 1.1 has had little time on real computers.** Please report what you
   find.
 - **The phone has not carried real traffic.** Texts, voicemail and approvals
   by text are unit-tested; live calls have run only against a simulated
@@ -152,6 +202,28 @@ Listed separately from "broken". These are not claims that things work.
   12 GB card.
 - **The KV-cache estimate** the seat planner rests on is inferred from two
   anchors on two backends.
+- **Reading your folders, the document-type notes and the drafts were measured on
+  synthetic files only.** The first answer from a folder, the seven document
+  types (note, contract, invoice, paper, receipt, CV, letter) and the copy
+  finder were run on invented documents, not on a real notes folder, and the type
+  heads are a first reading: a document that fits none of them is marked "other".
+- **Drafts from your documents have no review screen yet.** When a local model
+  is installed, Friday drafts summaries and facts into `.friday\wiki\_staging`
+  with the sentence each came from. You can see how many are waiting by asking
+  "how's the indexing going?". The screen for accepting or rejecting them, and
+  the step that writes an accepted draft into the wiki, are not built. Nothing is
+  published until they are.
+- **A copy's mark can be lost, and a changed encoder does not re-note old
+  documents.** Re-reading the original of a pair clears the copy mark on its
+  copy, which is not noted again and may then be drafted from. A change of
+  reading model or of the type heads does not make Friday note older documents
+  again; only a change of the notes' own version does.
+- **Reading folders waits for the same free memory a model load keeps (4 GB by
+  default).** On a PC with little free memory and a model loaded, indexing can
+  wait a long time. `local_scheduler_ram_floor_gb` sets the floor.
+- **Drafts are kept in one folder for the whole PC, not per account.** Friday has
+  one Library account today, so nothing is mixed; this must change before there
+  is a second.
 
 ## 5. Things that leave your machine
 

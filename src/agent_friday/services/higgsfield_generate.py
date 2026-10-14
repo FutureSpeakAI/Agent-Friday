@@ -70,6 +70,8 @@ def _call(tool: str, arguments: dict, timeout: float = 120.0):
 
     Monkeypatch this in tests; nothing else here touches the connector.
     """
+    from agent_friday.services import cloud_intent as _cloud_intent
+    _cloud_intent.require("higgsfield", "media generation (Higgsfield)", str(tool))
     from agent_friday.services import agent as _agent
     mgr = getattr(_agent, "_MCP_MANAGER", None)
     if mgr is None:

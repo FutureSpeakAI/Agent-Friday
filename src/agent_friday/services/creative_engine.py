@@ -497,6 +497,8 @@ def _client():
         raise RuntimeError(
             "No Gemini API key configured. Creative generation needs GEMINI_API_KEY "
             "(set via Settings → Connections or as an environment variable).")
+    from agent_friday.services import cloud_intent as _cloud_intent
+    _cloud_intent.require("google-gemini", "creative generation (Gemini)", "")
     from google import genai  # lazy — import-safe without the SDK
     return genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
 
@@ -978,6 +980,13 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
             return out
     except Exception as _lv_err:                 # never break the cloud path
         log.warning("local video dispatch skipped: %s", _lv_err)
+
+    # Every branch below sends the prompt to a cloud provider (Higgsfield,
+    # kie.ai, Veo). Local only never reaches one, as for generate_image().
+    from agent_friday.services.cloud_mode_policy import cloud_media_refusal
+    _refused = cloud_media_refusal("video")
+    if _refused:
+        return _refused
 
     # ── Higgsfield-seated video models. ───────────────────────────────────
     # Before the `is_available()` Gemini check, for the same reason as the

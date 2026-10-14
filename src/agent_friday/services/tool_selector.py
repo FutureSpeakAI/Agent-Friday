@@ -96,6 +96,24 @@ _STATE: dict = {"sig": None, "emb": None, "docs": None, "df": None,
 _LOCK = threading.Lock()
 
 
+def _query_vector(query: str):
+    """The turn's shared MiniLM vector for `query`, or None to embed it here.
+
+    Both models here are all-MiniLM-L6-v2, so the vector the turn already
+    computed (services/turn_vector) is the one `encode` would return, to
+    within float noise; when no one has computed it yet it is computed now,
+    once, for everyone. None when there is no pinned encoder to compute it."""
+    try:
+        from agent_friday.services import turn_vector
+        vec = turn_vector.compute(query)
+        if vec is None:
+            return None
+        import numpy as np
+        return np.asarray(vec, dtype="float32")
+    except Exception:
+        return None
+
+
 def _tokens(text: str) -> list:
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
             if len(w) > 2 and w not in _STOP]
@@ -127,17 +145,14 @@ def _ensure_index(tools) -> bool:
             return True
         try:
             import numpy as np
-            from agent_friday.services.ml_imports import import_module as _ml_import  # shared ML import lock
-            SentenceTransformer = _ml_import("sentence_transformers").SentenceTransformer
+            # The one shared MiniLM (services/minilm), never a copy of its own.
+            from agent_friday.services import minilm
+            model = _STATE.get("model") or minilm.model("tool selection")
         except Exception as e:
             _log.info("tool selection unavailable (%s) -- sending all tools", e)
             return False
         try:
             t0 = time.time()
-            if not _STATE.get("model"):
-                from agent_friday.services import embedder_cache
-                embedder_cache.ensure_available("tool selection")
-            model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
             texts = _corpus(tools)
             emb = _infer(model.encode, texts, normalize_embeddings=True,
                          show_progress_bar=False)
@@ -197,8 +212,10 @@ def select(tools, query: str, k: int = _DEFAULT_K):
         import numpy as np
         emb = _STATE["emb"]
         names = _STATE["names"]
-        qe = _infer(_STATE["model"].encode, [query], normalize_embeddings=True,
-                    show_progress_bar=False)[0]
+        qe = _query_vector(query)
+        if qe is None:
+            qe = _infer(_STATE["model"].encode, [query], normalize_embeddings=True,
+                        show_progress_bar=False)[0]
         sem = emb @ qe
         span = (sem.max() - sem.min()) or 1.0
         sem = (sem - sem.min()) / span
@@ -230,16 +247,12 @@ def rank_texts(texts, query: str):
         return None
     try:
         import numpy as np
-        from agent_friday.services.ml_imports import import_module as _ml_import  # shared ML import lock
-        SentenceTransformer = _ml_import("sentence_transformers").SentenceTransformer
+        from agent_friday.services import minilm
     except Exception:
         return None
     try:
         with _LOCK:
-            if not _STATE.get("model"):
-                from agent_friday.services import embedder_cache
-                embedder_cache.ensure_available("context ranking")
-            model = _STATE.get("model") or SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+            model = _STATE.get("model") or minilm.model("context ranking")
             _STATE["model"] = model
         # Only the head of each block is embedded. A 40 KB wiki dump has its
         # subject in the first lines; the tail is detail that dilutes the
@@ -247,8 +260,10 @@ def rank_texts(texts, query: str):
         heads = [(t or "")[:600] for t in texts]
         emb = _infer(model.encode, heads, normalize_embeddings=True,
                      show_progress_bar=False)
-        qe = _infer(model.encode, [query], normalize_embeddings=True,
-                    show_progress_bar=False)[0]
+        qe = _query_vector(query)
+        if qe is None:
+            qe = _infer(model.encode, [query], normalize_embeddings=True,
+                        show_progress_bar=False)[0]
         sem = np.asarray(emb) @ qe
         span = (sem.max() - sem.min()) or 1.0
         sem = (sem - sem.min()) / span

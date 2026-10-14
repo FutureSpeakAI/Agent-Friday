@@ -21,6 +21,7 @@ connection would otherwise pin a worker for nothing.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import queue
@@ -258,8 +259,42 @@ class PooledWSGIServer(BaseWSGIServer):
                 break
 
 
+class _InContext:
+    """A response body whose every step runs in its request's own context."""
+
+    def __init__(self, ctx, body):
+        self._ctx, self._body, self._it = ctx, body, None
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._it is None:
+            self._it = self._ctx.run(iter, self._body)
+        return self._ctx.run(next, self._it)
+
+    def close(self):
+        close = getattr(self._body, "close", None)
+        if close is not None:
+            self._ctx.run(close)
+
+
+def per_request_context(app):
+    """Run each request, and the iteration of its body, in a fresh context.
+
+    The workers are started once and serve every request, so a context
+    variable one request sets (the current turn, the provider a tool call is
+    for) would otherwise still be set when the same worker serves the next
+    request. A fresh contextvars.Context gives every request the defaults a
+    new thread would have had."""
+    def wrapped(environ, start_response):
+        ctx = contextvars.Context()
+        return _InContext(ctx, ctx.run(app, environ, start_response))
+    return wrapped
+
+
 def make_pooled_server(host, port, app, **kw) -> PooledWSGIServer:
-    return PooledWSGIServer(host, port, app, **kw)
+    return PooledWSGIServer(host, port, per_request_context(app), **kw)
 
 
 _current: PooledWSGIServer | None = None

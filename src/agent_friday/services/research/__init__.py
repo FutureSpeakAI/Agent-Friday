@@ -51,7 +51,8 @@ def propose(question: str, *, context: str | None = None,
 
     est_min = round(c.budget["wall_clock_soft_s"] / 60)
     dispositions = ["when_away", "now_local"]
-    if c.protection.cloud_allowed:
+    from agent_friday.services import cloud_mode_policy as _cmp
+    if c.protection.cloud_allowed and _cmp.current_mode() != "local_only":
         dispositions.append("now_cloud")
     return {
         "commission_id": c.id,

@@ -387,6 +387,8 @@ REVIEWED_BUILTINS = {
     "content_insights": "summarises local post metrics",
     "relationship_sync": "reads the owner's mail and calendar headers, writes the "
                          "local timeline, and raises local notifications only",
+    "laya_personal_refit": "refits Laya's personal phrasings and calibration from the owner's "
+                           "own sealed corrections on this PC; only tightens, reaches no one",
     "avatar_growth_check": "asks the owner's chosen model for a look change (numbers "
                            "and enums only, through the spend guard and egress gate) "
                            "and writes a signed step locally; reaches no one",
@@ -512,6 +514,10 @@ REVIEWED_SINKS = {
         "the batch writer behind modify_threads and undo, called only by them",
     ("services/gmail_mailbox.py", "create_label"):
         "the owner's click in Messages",
+    ("services/gmail_mailbox.py", "delete_label_if_empty"):
+        "called only by item_actions.undo_email (the owner's Undo, or an undo card the owner approved), "
+        "only for a label id that the same change created (run_email records undo.created_labels only "
+        "when it made the label), and it deletes only a user label Gmail reports empty: never mail",
     ("services/calendar_write.py", "create_event"):
         "the create_calendar_event tool, which is outward",
     ("services/calendar_write.py", "update_event"):

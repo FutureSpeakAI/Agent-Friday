@@ -120,6 +120,30 @@ you add one: chat, briefings, the front page, scheduled jobs and research.
 The rest of setup still works, using simple rules. The checklist, here and in
 Settings, shows which key Friday is using and that it is enough.
 
+#### Start with your knowledge
+
+After Connect, Friday asks whether you already keep notes or documents she
+could start with. This step is optional and **Not now** skips it. It is also
+in **Settings > Privacy & Data > Your knowledge**, so you can do it later, and
+you can say "add my Obsidian vault" and she opens the same choices.
+
+- **Choose folders...** opens the Windows folder window. You can pick several
+  folders. If it cannot open, type the folder's path instead. Either way,
+  drive roots, network locations and your whole home folder are refused.
+- Friday also looks, read-only and no deeper than three folders down, for
+  places that usually hold notes: your Documents folder, Obsidian and Logseq
+  vaults, a Notion export, Evernote `.enex` files, a Zotero library and
+  project folders. Each shows a size and file count. **Nothing is chosen for
+  you.** Documents is labelled Recommended only when it holds a real amount.
+- Two separate choices for each folder. **Let Friday read and index it on this
+  PC** keeps your files here: she can search them and answer from them with
+  citations. **Also let cloud models read it** is off unless you turn it on, folder by folder, and ends after 30 days.
+  It is never offered for a vault or a private-looking folder.
+- Reading here adds the folder to the Library, exactly as **Add to Library**
+  does, and the Library reads it as one job on the Local AI queue once the PC
+  has been idle for a while (see [Your knowledge](your-knowledge.md)). The cloud
+  choice is a separate file permission (see [File grants](file-grants.md)).
+
 ### Who reads your answers
 
 Before the personal part, Friday tells you which model will read your

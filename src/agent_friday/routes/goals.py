@@ -222,15 +222,34 @@ def decide_approval_route(approval_id):
     decision = (data.get("decision") or "").strip().lower()
     if decision not in ("approve", "deny"):
         return jsonify({"ok": False, "error": "decision must be 'approve' or 'deny'"}), 400
-    rec, won = _approvals.decide_with_outcome(
-        approval_id, decision, decided_by=_screen_click.decided_by(request, data.get("decided_by", "owner")),
-        note=data.get("note", ""))
+    by = _screen_click.decided_by(request, data.get("decided_by", "owner"))
+    why = _approvals.refusal_for(approval_id, decision, by)
+    if why:
+        return jsonify({"ok": False, "error": "needs_approve_button", "message": why}), 403
+    rec, won = _approvals.decide_with_outcome(approval_id, decision, decided_by=by, note=data.get("note", ""))
     if not rec:
         return jsonify({"ok": False, "error": "not found"}), 404
     # `won` is False when the card was already decided (in another tab, by
     # voice, by a text reply) or had expired: this request changed nothing,
     # and the page says so instead of implying its click did.
     return jsonify({"ok": True, "approval": rec, "won": won, "already_decided": not won})
+
+
+def _snapshot_event(pending):
+    """The full pending list, with the ids a page lists without popping open (quiet hours, over the
+    hour's budget, Focus Assist: services/interruption_policy). Every card is in `pending` either way."""
+    # A card the hold marks (held, or released quietly by the cap) is listed, never popped open by a
+    # page that connects or reloads later; the policy's own verdict covers the rest.
+    quiet = [p.get("approval_id") for p in pending
+             if p.get("held_by_policy") or p.get("hold_capped")]
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        quiet += [p.get("approval_id") for p in pending
+                  if p.get("approval_id") not in quiet
+                  and _ip.held("approval:%s" % p.get("approval_id"))]
+    except Exception:
+        pass
+    return {"type": "snapshot", "pending": pending, "quiet": quiet}
 
 
 #: Seconds between heartbeats on a quiet approvals stream.
@@ -261,8 +280,7 @@ def approval_events_route():
         q = approval_feed.subscribe()
         try:
             pending = _approvals.list_approvals(status="pending")
-            yield "data: " + _json.dumps({"type": "snapshot", "pending": pending},
-                                         default=str) + "\n\n"
+            yield "data: " + _json.dumps(_snapshot_event(pending), default=str) + "\n\n"
             while True:
                 try:
                     evt = q.get(timeout=BEAT_S)
@@ -273,8 +291,7 @@ def approval_events_route():
                     yield 'data: {"type": "beat"}\n\n'
                     continue
                 if evt.get("type") == "resync":
-                    evt = {"type": "snapshot",
-                           "pending": _approvals.list_approvals(status="pending")}
+                    evt = _snapshot_event(_approvals.list_approvals(status="pending"))
                 yield "data: " + _json.dumps(evt, default=str) + "\n\n"
         finally:
             approval_feed.unsubscribe(q)

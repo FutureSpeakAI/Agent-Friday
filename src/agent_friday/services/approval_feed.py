@@ -85,8 +85,14 @@ def publish(event: dict, lossy: bool = False) -> None:
         _log.warning("approval feed publish failed: %s", e)
 
 
-def card_pending(record: dict) -> None:
-    publish({"type": "pending", "approval": dict(record)})
+def card_pending(record: dict, interrupt: bool = True) -> None:
+    """Tell every page a card is waiting. ``interrupt`` False (quiet hours, over the hour's budget,
+    Focus Assist: services/interruption_policy) means the page lists it and counts it in the badge
+    but does not pop it open. The card itself is untouched either way."""
+    event = {"type": "pending", "approval": dict(record)}
+    if not interrupt:
+        event["interrupt"] = False
+    publish(event)
 
 
 def card_resolved(record: dict) -> None:

@@ -1,0 +1,253 @@
+{
+ "schema": 1,
+ "id": "system",
+ "label": "System",
+ "group": "system",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": "tab", "keys": ["tab", "task"], "sections": ["self-improvement", "approvals"]},
+ "objects": [
+  {
+   "kind": "card",
+   "stage_workspace": "system",
+   "noun": "items",
+   "ref_template": "card:{approval_id}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (approval cards)",
+    "facets": ["kind", "status"],
+    "filters": {},
+    "fields": ["steer.{task_id}"],
+    "selectable": false,
+    "privacy": "titles"
+   },
+   "open": {"tool": null, "none_because": "An approval card is answered, yes or no, not opened; card: is not a Media card."},
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "system.health",
+   "action": "system.health",
+   "group": "read",
+   "ui": {"control": "health / processes / receipts"},
+   "tool": "check_situation",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["how is everything running"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "system.answer_card",
+   "action": "system.answer_card",
+   "group": "organize",
+   "ui": {"control": "approve / deny card"},
+   "tool": "answer_card",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["yes", "go ahead", "no"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_voice_card_readback.py::test_the_fixed_line_fully_emitted_lets_a_bare_yes_approve_exactly_that_card",
+    "tests/api/test_chat_reflex.py::test_a_whole_yes_runs_the_action_with_zero_model_calls"
+   ]
+  },
+  {
+   "id": "system.stop_task",
+   "action": "system.stop_task",
+   "group": "organize",
+   "ui": {"control": "cancel task / steer"},
+   "tool": "task_control",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["stop the background task"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_task_control_tool.py::test_stop_names_a_task_by_words_and_asks_it_to_stop_after_its_step"]
+  },
+  {
+   "id": "system.undo_receipt",
+   "action": "system.undo_receipt",
+   "group": "organize",
+   "ui": {"control": "undo receipt"},
+   "tool": "undo_action",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "laya_tier": "router_rule",
+   "phrasings": ["undo that"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"]
+  },
+  {
+   "id": "system.activity_running",
+   "action": "system.activity_running",
+   "group": "read",
+   "ui": {"control": "Activity: what is running (every task, with its model and status)"},
+   "tool": "queue_status",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["what's running?", "what is running right now"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_activity_lane.py::test_what_is_running_is_said_for_every_task_not_only_the_local_queue",
+    "tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"
+   ]
+  },
+  {
+   "id": "system.activity_waiting",
+   "action": "system.activity_waiting",
+   "group": "read",
+   "ui": {"control": "Activity: what is waiting, in queue order"},
+   "tool": "queue_status",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["what's queued", "what's in your queue?"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": [
+    "tests/unit/test_activity_lane.py::test_what_is_running_is_said_for_every_task_not_only_the_local_queue",
+    "tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"
+   ]
+  },
+  {
+   "id": "system.quiet",
+   "action": "system.quiet",
+   "group": "settings",
+   "ui": {"control": "Quiet until morning (Needs you panel; by voice or the page; typed chat can route it but only raises a card)"},
+   "tool": "notifications",
+   "also_tools": [],
+   "gate": {"class": "by_argument", "ring": 1, "card": "by_argument"},
+   "laya_tier": "router_rule",
+   "phrasings": ["quiet until morning", "be quiet until morning"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_notifications_gate.py::test_the_router_takes_quiet_until_morning_to_the_notifications_tool"]
+  }
+ ],
+ "jobs": [
+  {
+   "id": "system.self_improvement",
+   "trigger": "schedule",
+   "also": ["idle", "button"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "scheduled",
+   "activity_label": "Weekly self-improvement",
+   "entry": "agent_friday.services.scheduler:_run_task_inner",
+   "schedule_ref": "self_improvement"
+  },
+  {
+   "id": "system.skillopt",
+   "trigger": "schedule",
+   "also": ["idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "skillopt",
+   "activity_label": "Skill optimisation",
+   "entry": "agent_friday.services.notifications:_skillopt_llm_researcher"
+  },
+  {
+   "id": "system.self_reflect",
+   "trigger": "schedule",
+   "also": ["idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "self_reflect",
+   "activity_label": "Self reflection",
+   "entry": "agent_friday.services.notifications:_self_reflect"
+  },
+  {
+   "id": "system.memory_proposals",
+   "trigger": "idle",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "memory_proposals",
+   "activity_label": "Memory proposals",
+   "entry": "agent_friday.services.memory_proposals:propose"
+  },
+  {
+   "id": "system.memory_dreaming",
+   "trigger": "schedule",
+   "also": ["idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "scheduled",
+   "activity_label": "Memory dreaming",
+   "entry": "agent_friday.services.scheduler:_run_task_inner",
+   "schedule_ref": "memory_dreaming"
+  },
+  {
+   "id": "system.avatar_evolution",
+   "trigger": "idle",
+   "model_class": "image",
+   "helper": "visible_job",
+   "task_kind": "avatar_evolution",
+   "activity_label": "Avatar evolution step",
+   "entry": "agent_friday.services.avatar_growth:run_step"
+  },
+  {
+   "id": "system.laya_tool_head",
+   "trigger": "laya",
+   "model_class": "encoder",
+   "helper": "visible_job",
+   "task_kind": "laya_head",
+   "activity_label": "Laya tool head",
+   "entry": "agent_friday.services.laya_router_head:propose"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "system.delete_context",
+   "kind": "gap",
+   "reason": "Deleting records is a write; it waits for the safe-writes review.",
+   "wave": "WS-3"
+  },
+  {"action": "system.self_review", "kind": "gap", "reason": "No tool starts a self-review run.", "wave": "WS-3"},
+  {
+   "action": "system.observer_token",
+   "kind": "by_design",
+   "reason": "The observer token and retention are owner-only security settings."
+  },
+  {
+   "action": "system.open_card",
+   "kind": "by_design",
+   "reason": "An approval card is answered, yes or no, not opened."
+  },
+  {
+   "action": "system.batch_decide",
+   "kind": "by_design",
+   "reason": "A batch of approvals is decided on screen; a spoken yes answers one card at a time, never several at once."
+  },
+  {
+   "action": "system.needs_you",
+   "kind": "gap",
+   "reason": "No chat or voice tool reads Needs you or the Updates digest yet; the panel and activity_lane's spoken lines exist.",
+   "wave": "WS-2"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

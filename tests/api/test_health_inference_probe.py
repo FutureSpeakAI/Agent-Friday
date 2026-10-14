@@ -29,7 +29,7 @@ def _health(client):
 def test_health_reports_down_when_backend_cannot_generate(client, monkeypatch):
     """A downed backend must surface as status != ok — the core D1 property."""
     monkeypatch.setattr(provider_health, "inference_probe",
-                        lambda name, prov=None, use_cache=True: {
+                        lambda name, prov=None, use_cache=True, explicit=False: {
                             "provider": name, "status": "down",
                             "detail": "simulated: revoked key",
                             "config": "ok", "proved_inference": False},
@@ -45,7 +45,7 @@ def test_health_reports_down_when_backend_cannot_generate(client, monkeypatch):
 
 def test_health_is_ok_only_when_a_probe_actually_generated(client, monkeypatch):
     monkeypatch.setattr(provider_health, "inference_probe",
-                        lambda name, prov=None, use_cache=True: {
+                        lambda name, prov=None, use_cache=True, explicit=False: {
                             "provider": name, "status": "ok",
                             "detail": "generated in 5ms",
                             "config": "ok", "proved_inference": True},
@@ -60,7 +60,7 @@ def test_health_is_ok_only_when_a_probe_actually_generated(client, monkeypatch):
 def test_key_presence_is_configuration_not_health(client, monkeypatch):
     """A present key must never on its own make health `ok` (D1)."""
     monkeypatch.setattr(provider_health, "inference_probe",
-                        lambda name, prov=None, use_cache=True: {
+                        lambda name, prov=None, use_cache=True, explicit=False: {
                             "provider": name, "status": "down",
                             "detail": "simulated", "config": "ok",
                             "proved_inference": False},

@@ -2037,7 +2037,11 @@ def _why_no_room(hj: dict) -> str:
             return "the graphics card has no room to spare for the display"
         if rule == "R-DISK-SYSTEM":
             return "the system drive is nearly full"
-        if "already held" in err:
+        # Held now ("lease ... already held"), or still held when the lease
+        # queue's wait ran out ("Waited N s for the podcast_voice lease:
+        # waiting for the voice call to finish" / "waiting behind the ...").
+        if ("already held" in err or "waiting for the " in err
+                or "waiting behind the " in err):
             return "another job is using the local models"
         if err.startswith("arbiter is"):
             return "the local models are changing over"

@@ -79,6 +79,23 @@
         .local-ai-row-label { color: var(--fr-text); font-size: 12px; overflow-wrap: anywhere; }
         .local-ai-row-meta { color: var(--fr-dim); font-size: var(--fr-text-xs); font-family: var(--fr-font-mono); }
         .local-ai-row[data-state="running"] .local-ai-row-meta { color: var(--fr-violet-soft); }
+        .place-badge { display: inline-flex; align-items: center; margin-right: 8px; padding: 0 6px; border-radius: 6px; background: var(--fr-warn); color: var(--fr-surface); font-weight: 600; }
+        .place-dot { display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-radius: 50%; background: var(--fr-neutral); vertical-align: middle; }
+        .place-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .place-tab { min-height: 32px; padding: 6px 8px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--fr-label); font-size: var(--fr-text-md); cursor: pointer; }
+        .place-tab.on { color: var(--fr-text); border-bottom-color: var(--fr-cyan); }
+        .place-tab:focus-visible, .place-card .btn:focus-visible, .place-card .ws-tab-link:focus-visible { outline: 2px solid var(--fr-cyan); outline-offset: 2px; }
+        .place-readonly [data-testid="approval-card"] > div:last-child { display: none; }
+        .place-count { margin-left: 6px; padding: 0 5px; border-radius: 8px; background: rgba(255,255,255,0.12); font-size: var(--fr-text-xs); }
+        .place-tab.needs .place-count { background: var(--fr-warn); color: var(--fr-surface); }
+        .place-card { margin-bottom: 8px; padding: 8px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; }
+        .place-card-title { color: var(--fr-text); font-size: var(--fr-text-md); line-height: 1.4; overflow-wrap: anywhere; }
+        .place-list { margin: 6px 0 0; padding-left: 16px; color: var(--fr-label); font-size: var(--fr-text-sm); line-height: 1.5; }
+        .place-note, .place-empty, .place-why-text, .place-ago { color: var(--fr-dim); font-size: var(--fr-text-sm); line-height: 1.5; }
+        .place-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+        .place-quiet { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--fr-dim); font-size: var(--fr-text-sm); }
+        .place-summary { margin-bottom: 8px; color: var(--fr-text); font-size: var(--fr-text-md); }
+        .place-times { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; color: var(--fr-label); font-size: var(--fr-text-sm); }
         .ws-tab-ask.none { border-color: rgba(255,255,255,0.12); background: transparent; color: #7f93ad; }
         .ws-tab-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column;
             padding: 14px 18px 24px; box-sizing: border-box; }

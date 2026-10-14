@@ -502,6 +502,13 @@ def run_job(job_id: str) -> dict:
                 hook(dict(job))
             except Exception:
                 pass
+        # A new local model changes what this PC can run: refresh the stored
+        # capability snapshot in the next idle window.
+        try:
+            from agent_friday.services import local_voice_readiness as _lvr
+            _lvr.note_event("installed")
+        except Exception:
+            pass
     except Exception as e:
         _set(job, status="failed", error="%s: %s" % (type(e).__name__, e),
              finished_at=time.time())

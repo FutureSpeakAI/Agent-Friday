@@ -113,9 +113,9 @@ def approve_plan(cid, aid):
     except ValueError as e:
         return _fail(e)
     try:
-        from agent_friday.services import conversations as _convs
-        _convs.append(cid, {"role": "system", "text": "\u2705 Plan approved: \"%s\". Friday builds it from the next turn, one milestone at a time." % rec["title"],
-                            "meta": {"kind": "plan_approved", "artifact_id": aid}})
+        from agent_friday.services import notice_registry as _nr
+        _nr.transcript_add("E76", cid, {"role": "system", "text": "\u2705 Plan approved: \"%s\". Friday builds it from the next turn, one milestone at a time." % rec["title"],
+                                        "meta": {"kind": "plan_approved", "artifact_id": aid}})
     except Exception:
         pass
     return jsonify({"status": "ok", "artifact": rec})

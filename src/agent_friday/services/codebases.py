@@ -573,9 +573,9 @@ def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S, _site_snapsho
         tmp.write_text(json.dumps(data, indent=1, default=str), encoding="utf-8")
         tmp.replace(_runs_file(cid))
     try:
-        from agent_friday.services import desktop_bus as _bus
-        _bus.broadcast({"type": "codebase_run", "codebase_id": cid, "conversation_id": rec.get("conversation_id") or "",
-                        "run_id": entry["id"], "exit": code}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E73", {"type": "codebase_run", "codebase_id": cid, "conversation_id": rec.get("conversation_id") or "",
+                                  "run_id": entry["id"], "exit": code}, kind="chat")
     except Exception:
         pass
     return dict(entry, status=status)
@@ -756,12 +756,12 @@ def _announce(cid: str, st: dict) -> None:
     """Tell every open chat page a step landed. No content rides along; the
     panel re-reads the codebase."""
     try:
-        from agent_friday.services import desktop_bus
+        from agent_friday.services import notice_registry as _nr
         rec = load(cid) or {}
-        desktop_bus.broadcast({"type": "codebase_step", "codebase_id": cid,
-                               "conversation_id": rec.get("conversation_id"),
-                               "sha": st["sha"], "kind": st["kind"], "summary": st["summary"],
-                               "author": st.get("author")}, kind="chat")
+        _nr.bus_broadcast("E73", {"type": "codebase_step", "codebase_id": cid,
+                                  "conversation_id": rec.get("conversation_id"),
+                                  "sha": st["sha"], "kind": st["kind"], "summary": st["summary"],
+                                  "author": st.get("author")}, kind="chat")
     except Exception:
         pass
 
@@ -1074,8 +1074,8 @@ def clear_key_rejected(cid: str) -> None:
 
 def _announce_header_only(rec: dict) -> None:
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "codebase_header", "codebase_id": rec["id"], "conversation_id": rec.get("conversation_id")}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E73", {"type": "codebase_header", "codebase_id": rec["id"], "conversation_id": rec.get("conversation_id")}, kind="chat")
     except Exception:
         pass
 
@@ -1089,14 +1089,14 @@ def _system_line(rec: dict, text: str, kind: str = "seat_change") -> None:
     conv_id = rec.get("conversation_id")
     if conv_id:
         try:
-            from agent_friday.services import conversations as _convs
-            _convs.append(conv_id, {"role": "system", "kind": kind, "text": "\u2699 " + text, "ts": time.time()})
+            from agent_friday.services import notice_registry as _nr
+            _nr.transcript_add("E73", conv_id, {"role": "system", "kind": kind, "text": "\u2699 " + text, "ts": time.time()})
         except Exception as e:
             _log.warning("could not write the seat line into %s: %s", conv_id, e)
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "codebase_header", "codebase_id": rec["id"], "conversation_id": conv_id,
-                               "text": text}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E73", {"type": "codebase_header", "codebase_id": rec["id"], "conversation_id": conv_id,
+                                  "text": text}, kind="chat")
     except Exception:
         pass
 
@@ -1313,9 +1313,9 @@ def set_pick(cid: str, pick: dict) -> dict:
     rec["pick"] = stored
     _save(rec)
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "codebase_pick", "codebase_id": cid, "conversation_id": rec.get("conversation_id"),
-                               "selector": sel, "tag": tag}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E73", {"type": "codebase_pick", "codebase_id": cid, "conversation_id": rec.get("conversation_id"),
+                                  "selector": sel, "tag": tag}, kind="chat")
     except Exception:
         pass
     return stored

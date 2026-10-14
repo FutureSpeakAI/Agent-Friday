@@ -262,7 +262,7 @@ def _already_there(current: str, addition: str) -> bool:
 
 def annotate_events(query: str, *, location: str = "", phone: str = "",
                     note: str = "", apply_to_series: bool = True,
-                    dry_run: bool = False, account_id=None) -> dict:
+                    dry_run: bool = False, account_id=None, event_id=None) -> dict:
     """ADD a location / phone / note to every event matching `query`.
 
     Strictly additive. A field that already contains the text is left alone; a
@@ -287,6 +287,12 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
     if svc is None:
         return {"error": err}
 
+    if event_id:
+        # One event by its id (a meeting's own calendar event): never the other events that share its title.
+        found = dict(found, events=[e for e in found["events"] if e["id"] == event_id], series=[])
+        if not found["events"]:
+            return {"error": "that calendar event was not found, so nothing was added"}
+        apply_to_series = False
     if apply_to_series and found["series"]:
         covered = {s["id"] for s in found["series"]}
         targets = [dict(s, kind="series") for s in found["series"]]

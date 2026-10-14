@@ -17,11 +17,16 @@ Unit only (fast): pytest tests/unit -q
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
+import warnings
+import weakref
 from pathlib import Path
 
 # ── Hermetic environment — MUST run before any `import server` ────────────────
@@ -460,6 +465,256 @@ def _no_local_seat_is_serving(monkeypatch):
     yield
 
 
+def _reset_local_queue() -> None:
+    """Forget every seat queue, ticket, scheduler source, lease waiter and
+    interactive registration this process holds. The Local AI queue
+    (turn_queue, local_scheduler, background_gate) is process-wide, and an
+    xdist worker runs many files in one process: a ticket, a podcast row or a
+    voice registration one test left behind is a foreign job in the next
+    test's queue. Only modules already imported are touched."""
+    tq = sys.modules.get("agent_friday.services.turn_queue")
+    if tq is not None:
+        tq.reset_for_tests()
+        tq.HELD.set(())
+        tq.CURRENT.set(None)
+    ls = sys.modules.get("agent_friday.services.local_scheduler")
+    if ls is not None:
+        ls.reset_for_tests()        # also re-installs the scheduler's gate on turn_queue
+    bg = sys.modules.get("agent_friday.services.background_gate")
+    if bg is not None:
+        with bg._INTERACTIVE_LOCK:
+            bg._INTERACTIVE.clear()
+        bg._THRESHOLD_CACHE["at"] = 0.0
+    # The capability check is a scheduler source read from a state file in the
+    # shared test home: a re-assessment one test asked for (a model install
+    # calls note_event) is a waiting "local_capability:reassess" job in every
+    # later test's queue. The file and the in-memory job go together.
+    lvr = sys.modules.get("agent_friday.services.local_voice_readiness")
+    if lvr is not None:
+        lvr.reset_for_tests()
+        try:
+            lvr._state_path().unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+@pytest.fixture(autouse=True)
+def _fresh_local_queue():
+    """Each test starts with an empty Local AI queue and leaves one behind."""
+    _reset_local_queue()
+    yield
+    _reset_local_queue()
+
+
+def _forget_the_current_turn() -> None:
+    """No turn is running. turn_plan names the running turn in a ContextVar,
+    and every test runs on pytest's main thread in one context: a chat turn a
+    test drove in-process (a route through the Flask test client, a reflex
+    turn) stays named in the next test, which then tags its rows with that
+    turn id and shares its call-verifier repeat cache."""
+    tp = sys.modules.get("agent_friday.services.turn_plan")
+    if tp is not None:
+        tp._current.set(None)
+        tp._current_version.set(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_turn_outlives_its_test():
+    """Each test starts outside any turn and leaves none named behind."""
+    _forget_the_current_turn()
+    yield
+    _forget_the_current_turn()
+
+
+def _forget_verified_calls() -> None:
+    """Empty the call verifier's per-turn state. A call with no turn id is kept under
+    one shared key for UNKEYED_TTL, so a test repeating another test's read would get
+    that test's cached result and its own handler would never run."""
+    cv = sys.modules.get("agent_friday.services.call_verifier")
+    if cv is not None:
+        cv.reset()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_call_verifier():
+    """Each test starts with no remembered call and leaves none behind."""
+    _forget_verified_calls()
+    yield
+    _forget_verified_calls()
+
+
+def _forget_live_duplicates() -> None:
+    """Empty the Live surface's duplicate-call window. It is keyed by
+    conversation, tool and arguments for a few seconds, so a test that repeats
+    another test's call (a parametrized pair, the same synthetic conversation)
+    would otherwise get that test's result back without running anything."""
+    ll = sys.modules.get("agent_friday.services.live_laya")
+    if ll is not None:
+        ll.reset_idempotency()
+
+
+@pytest.fixture(autouse=True)
+def _laya_writes_finish_inside_their_test():
+    """Laya's writer thread appends rows after the turn. A row an earlier test
+    queued is written before this test starts, and this test's rows are written
+    before it ends, so none lands in another test's home or fake writer."""
+    laya = sys.modules.get("agent_friday.services.laya")
+    if laya is not None:
+        laya.flush()
+    yield
+    laya = sys.modules.get("agent_friday.services.laya")
+    if laya is not None:
+        laya.flush()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_live_duplicate_window():
+    """Each test starts with no remembered Live call and leaves none behind."""
+    _forget_live_duplicates()
+    yield
+    _forget_live_duplicates()
+
+
+_EPISODE_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}-[0-9a-f]{6}")
+
+
+# A leaked episode is reported as a RuntimeWarning: a builtin category, so an xdist
+# worker can send it to the controller (a class defined in this conftest cannot be
+# rebuilt there and takes the worker down), and not a UserWarning, which pytest.ini
+# ignores. Its text starts with "podcast episode leak" and names who queued it.
+
+
+_SHARED_SHOWS: list = [None, frozenset()]    # [the shared home's podcasts dir, ids there at the first test]
+_EPISODE_ORIGIN: dict = {}                   # episode id -> who queued it in the shared home
+_THREAD_OWNER = weakref.WeakKeyDictionary()  # thread -> the first test it was still alive at the end of
+
+
+def _episode_ids(shows) -> set:
+    try:
+        return {p.name for p in shows.iterdir() if p.is_dir() and _EPISODE_ID_RE.fullmatch(p.name)}
+    except (OSError, AttributeError):
+        return set()
+
+
+def _call_path(limit: int = 8) -> str:
+    """The project frames that led here, outermost first: file:line function."""
+    import traceback
+    frames = [f for f in traceback.extract_stack()[:-2]
+              if ("agent_friday" in f.filename or "tests" in f.filename)
+              and not f.filename.endswith("conftest.py")]
+    return " <- ".join("%s:%d %s" % (Path(f.filename).name, f.lineno, f.name)
+                       for f in reversed(frames[-limit:]))
+
+
+def _trace_episode_saves(shows: Path) -> None:
+    """Note who first writes each episode into the shared test home: the test
+    running, the thread and the test that thread was started in, the call path.
+    A test that replaces podcast_engine.save gets this back at its teardown."""
+    pe = sys.modules.get("agent_friday.services.podcast_engine")
+    if pe is None or getattr(pe.save, "_traces_shared_home", False):
+        return
+    real = pe.save
+
+    def save(ep, *a, **k):
+        try:
+            eid = str((ep or {}).get("id") or "")
+            if eid and eid not in _EPISODE_ORIGIN and Path(pe.root()) == shows:
+                th = threading.current_thread()
+                _EPISODE_ORIGIN[eid] = {
+                    "test": (os.environ.get("PYTEST_CURRENT_TEST") or "").rsplit(" (", 1)[0],
+                    "thread": th.name,
+                    "main": th is threading.main_thread(),
+                    "thread_from": _THREAD_OWNER.get(th, ""),
+                    "path": _call_path()}
+        except Exception:                           # the diagnosis never changes the write
+            pass
+        return real(ep, *a, **k)
+    save._traces_shared_home = True
+    save.__wrapped__ = real
+    pe.save = save
+
+
+def _describe_episode(d: Path) -> str:
+    try:
+        ep = json.loads((d / "episode.json").read_text(encoding="utf-8"))
+    except Exception:
+        ep = {}
+    att = ep.get("attached") or {}
+    made = ep.get("created_at")
+    who = _EPISODE_ORIGIN.get(d.name)
+    return ("episode %s (status %s, origin %s, routine %s, run %s, refs %s, created %s); %s" % (
+        d.name, ep.get("status"), ep.get("origin"), att.get("routine"), att.get("run_id"),
+        [r.get("kind") for r in ep.get("refs") or [] if isinstance(r, dict)],
+        time.strftime("%H:%M:%S", time.localtime(made)) if isinstance(made, (int, float)) else "?",
+        ("queued during %s by thread %s (alive since the end of %s) via %s" % (
+            who["test"], who["thread"], who["thread_from"] or "this test", who["path"])) if who
+        else "written by no podcast_engine.save this process saw"))
+
+
+@pytest.fixture(autouse=True)
+def _no_podcast_episode_outlives_its_test(request):
+    """No podcast episode outlives its test in the shared test home. The
+    scheduler lists every pending episode on disk as a "podcast" job, so one
+    left behind appears in every later queue test in that process. A test that
+    points FRIDAY_DIR at its own tmp_path is untouched.
+
+    An episode a test queues itself, on its own thread, is removed when it
+    ends. Anything else is a leak and is said, with who queued it, as a
+    RuntimeWarning ("podcast episode leak ...") and on request.config.podcast_episode_leaks:
+    one present when a test starts (written after an earlier test ended), and
+    one written during a test by another test's thread or code. Leaks
+    are removed too, so the queue tests stay about the queue."""
+    core = sys.modules.get("agent_friday.core")
+    shows = Path(core.FRIDAY_DIR) / "podcasts" if core is not None else None
+    if _SHARED_SHOWS[0] is None and shows is not None:
+        _SHARED_SHOWS[:] = [shows, frozenset(_episode_ids(shows))]
+    if shows is not None:
+        _trace_episode_saves(shows)
+    leaks = request.config.__dict__.setdefault("podcast_episode_leaks", [])
+    me = request.node.nodeid
+
+    def _leak(name: str, when: str) -> None:
+        said = "podcast episode leak %s %s: %s" % (when, me, _describe_episode(shows / name))
+        leaks.append({"episode": name, "seen": when, "test": me,
+                      "origin": dict(_EPISODE_ORIGIN.get(name) or {}), "said": said})
+        warnings.warn(said, RuntimeWarning, stacklevel=2)
+
+    for name in sorted(_episode_ids(shows) - _SHARED_SHOWS[1]):
+        _leak(name, "at the start of")
+        _remove_episode(shows / name)
+    before = _episode_ids(shows)
+    yield
+    for t in threading.enumerate():
+        _THREAD_OWNER.setdefault(t, me)
+    if shows is not None:
+        _trace_episode_saves(shows)
+    for name in sorted(_episode_ids(shows) - before):
+        who = _EPISODE_ORIGIN.get(name)
+        # Untraced means podcast_engine was first imported by this test, so its
+        # own code wrote the episode; the trace is in place from here on.
+        if who and not (who["test"] == me and (who["main"] or not who["thread_from"])):
+            _leak(name, "during")
+        _remove_episode(shows / name)
+
+
+def _remove_episode(d: Path) -> None:
+    """Remove one episode directory, or raise. On Windows a file written a
+    moment ago can be held open briefly (a virus scanner, the indexer, a reader
+    thread) and rmtree then skips it; an episode left on disk here is in every
+    later test's `before` set, so it would stay a "podcast" job for the rest of
+    the process. Try again for a short while; an episode that cannot be removed
+    fails this test's teardown instead of the next queue test."""
+    for _delay in (0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6):
+        if _delay:
+            time.sleep(_delay)
+        shutil.rmtree(d, ignore_errors=True)
+        if not (d / "episode.json").exists():
+            return
+    raise RuntimeError(
+        "could not remove podcast episode %s after this test; every later test "
+        "in this process would list it as a waiting podcast job" % d.name)
+
+
 def _settings_file() -> Path:
     """The settings.json the app reads: core's own path once core is loaded."""
     core = sys.modules.get("agent_friday.core")
@@ -521,3 +776,27 @@ def _settings_do_not_outlive_their_file():
         core = sys.modules.get("agent_friday.core")
         if core is not None:
             core._invalidate_settings_cache()
+
+
+@pytest.fixture(autouse=True)
+def _interruption_state_per_test(tmp_path):
+    """The hour's interruption count (services/interruption_policy) starts empty in every test, so
+    one test's approvals never use up the budget the next test sees."""
+    from agent_friday.services import interruption_policy as _ip
+    _ip.set_state_path(tmp_path / "interruptions.json")
+    yield
+    _ip.set_state_path(None)
+
+
+@pytest.fixture(autouse=True)
+def _remote_alias_set_per_test():
+    """The daemon's remote-alias set (local_only_guard) is process-wide: an
+    inventory one test feeds in must not make the next test's model cloud.
+
+    By default a test sees an inventory that was read and named no remote alias,
+    so no relay transport in a test reads the developer's own daemon to fill it.
+    A test of the never-read path resets the set itself (it runs after this)."""
+    from agent_friday.services import local_only_guard as _g
+    before = _g._reset_aliases_for_tests((frozenset(), True, 0.0))
+    yield
+    _g._reset_aliases_for_tests(before)

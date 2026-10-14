@@ -59,6 +59,7 @@ import threading
 from typing import Optional
 
 from agent_friday.user_errors import ExceptionText
+from agent_friday.services.local_scheduler import admitted as _admitted
 
 _log = logging.getLogger("friday.privacy.classifier")
 
@@ -752,6 +753,8 @@ def _llm_seat() -> str | None:
     return seat
 
 
+@_admitted("sensitivity_classifier.tier", cls="chat", timeout_s=15,
+           model_fallback=lambda: _llm_seat())
 def _local_llm_tier(text: str) -> int:
     """Layer 4: local Ollama pass for ambiguous spans. Never calls cloud.
 

@@ -99,6 +99,15 @@ def derive_section_name(text: str, index: int) -> str:
 
 
 def new_turn_id() -> str:
+    """The id of the turn this thread is running (services/turn_plan), so the
+    turn receipt can find these rows; a fresh id when no turn is running."""
+    try:
+        from agent_friday.services import turn_plan as _tp
+        current = _tp.current_turn_id()
+        if current:
+            return current
+    except Exception:
+        pass
     return uuid.uuid4().hex[:12]
 
 
@@ -110,11 +119,20 @@ def record_assembly(
     gated: bool,
     policy_source: str,
     log_path: Path | None = None,
+    names: list[str] | None = None,
+    plan_info: dict[int, dict] | None = None,
 ) -> int:
     """Write one row per named section of a prompt assembly.
 
     `sections` is the (tier, text) list `_build_context_prompt` already
-    builds — names are derived per section via `derive_section_name`.
+    builds — names are derived per section via `derive_section_name`, or
+    taken from `names` (same order) for a block with no header.
+
+    `plan_info` maps a section's index to what the slice-need head
+    (services/slice_head) said about it: `planner` (include / withhold /
+    stub), `p`, and `applied` (False in shadow, where the section was sent
+    whatever the head said). A section the head does not slice has no entry
+    and no planner field.
     Never raises: a ledger failure must not break prompt assembly. Returns
     the number of rows written (0 on any failure), which the caller can
     ignore; it exists so tests can assert without inspecting the file.
@@ -128,13 +146,19 @@ def record_assembly(
             "ts": ts,
             "turn_id": turn_id,
             "destination_class": destination_class,
-            "section": derive_section_name(text, i),
+            "section": (names[i] if names and i < len(names)
+                        else derive_section_name(text, i)),
             "tier": tier,
             "chars": len(text),
             "gated": bool(gated),
             "policy_source": policy_source,
             "action_hint": _ACTION_HINT.get(tier, "unknown"),
         }
+        info = (plan_info or {}).get(i)
+        if info:
+            entry["planner"] = info.get("planner")
+            entry["p"] = info.get("p")
+            entry["applied"] = bool(info.get("applied"))
         try:
             rows.append(json.dumps(entry))
         except (TypeError, ValueError):

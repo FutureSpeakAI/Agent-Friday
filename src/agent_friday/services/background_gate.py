@@ -12,7 +12,9 @@ the signals that queue consults:
 * how long the computer has been idle (Windows last-input time, combined with
   Friday's own activity in ``work_queue``);
 * the one rule both admission and the cooperative wait apply,
-  ``block_reason(record)``: why this job may not take the seat now, or "".
+  ``block_reason(record)``: why this job may not take the seat now, or "". A record marked
+  ``memory_floor`` (CPU work such as the Library reading folders) also waits while free RAM is
+  under the scheduler's floor (``local_scheduler_ram_floor_gb``, the one a model load keeps).
 
 and the choke point every local model request passes,
 ``before_local_model_call()``. A request made inside a background job waits
@@ -31,10 +33,13 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import logging
 import sys
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
+
+_log = logging.getLogger(__name__)
 
 #: The Settings default for ``background_idle_minutes``.
 DEFAULT_IDLE_MINUTES = 10
@@ -54,6 +59,7 @@ POLL_S = 0.5
 REASON_INTERACTIVE = "waits for your chat to finish"
 REASON_IDLE = "waits for idle"
 REASON_SEAT = "waits for the local model"
+REASON_PAUSED = "paused by you"
 
 #: An open voice call, as opposed to a voice TURN in progress ("voice"). A
 #: call means the owner is here: deferrable work waits for it to end. Only a
@@ -160,8 +166,66 @@ def idle_state() -> Dict[str, Any]:
 
 
 def idle_seconds() -> float:
-    """The combined idle time (the minimum of the readable signals)."""
-    return float(idle_state()["idle_s"])
+    """The combined idle time (the minimum of the readable signals); 0 when it
+    cannot be read (see ``safe_idle_state``)."""
+    return float(safe_idle_state()["idle_s"])
+
+
+# ── A check that fails holds background work (fail closed) ────────────────────
+#
+# An idle check that raises must never let background work start while the
+# owner may be at the keyboard. Every caller that decides whether background
+# work may run reads the idle state through ``safe_idle_state`` or answers a
+# failed gate with ``failed_check_reason``: the work waits, the failure is
+# logged once per place, and DRAIN_CAP_S still bounds the wait (Friday's own
+# clock, the same cap an unreadable OS clock gets). Interactive turns, voice
+# and work a person is waiting on (``foreground``, ``user_job``) are never
+# held by a failed check: their callers decide them before asking.
+
+_FAILED_CHECKS: set = set()
+_FAILED_CHECKS_LOCK = threading.Lock()
+
+
+def note_failed_check(where: str) -> None:
+    """Log, once per place, that an idle check raised (call from an except block)."""
+    with _FAILED_CHECKS_LOCK:
+        first = where not in _FAILED_CHECKS
+        _FAILED_CHECKS.add(where)
+    if first:
+        _log.warning("background gate: the idle check in %s failed; background work "
+                     "waits until it reads again", where, exc_info=True)
+
+
+def drained_after_failure() -> bool:
+    """The drain cap for a failed check: Friday has seen nobody for DRAIN_CAP_S."""
+    try:
+        return float(friday_idle_seconds()) >= DRAIN_CAP_S
+    except Exception:
+        return False
+
+
+def failed_check_reason(where: str, words: str = REASON_IDLE) -> str:
+    """The reason background work waits after the check at ``where`` raised:
+    ``words`` until the drain cap has passed, then "" (call from an except block)."""
+    note_failed_check(where)
+    return "" if drained_after_failure() else words
+
+
+def safe_idle_state() -> Dict[str, Any]:
+    """``idle_state()``, or a NOT-idle state when it raises (idle once the drain
+    cap has passed). Never raises."""
+    try:
+        return idle_state()
+    except Exception:
+        note_failed_check("idle_state")
+    drained = drained_after_failure()
+    try:
+        fri = float(friday_idle_seconds())
+    except Exception:
+        fri = 0.0
+    return {"idle": drained, "idle_s": fri if drained else 0.0, "os_idle_s": None,
+            "friday_idle_s": fri, "threshold_s": DEFAULT_IDLE_MINUTES * 60.0,
+            "os_readable": False, "drain_cap_s": DRAIN_CAP_S, "failed": True}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -238,6 +302,23 @@ def interactive_kinds() -> List[str]:
     return out
 
 
+def turn_queue_people() -> bool:
+    """A typed chat, a spoken turn or a Local API call is running or waiting in
+    the local scheduler's turn queue (services/turn_queue). The same rule as
+    the registrations above, read from the queue the 1.1 transports admit
+    through, so a turn that never registered here still wins. A job the owner
+    asked for (``user_job``) is not counted: it may be waiting on this one."""
+    try:
+        from agent_friday.services import turn_queue as _tq
+        for q in _tq.queues():
+            for t in list(q.running_tickets()) + list(q.waiting_tickets()):
+                if t.cls in ("voice", "chat", "api"):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  The one rule
 # ─────────────────────────────────────────────────────────────────────────────
@@ -251,6 +332,9 @@ def block_reason(record: Dict[str, Any]) -> str:
     """
     if not record.get("seat_is_local"):
         return ""
+    if record.get("user_paused"):
+        # The owner's Pause on this job (seat_supervisor.pause): it holds even work they asked for.
+        return REASON_PAUSED
     if record.get("foreground"):
         # Work the person (or a turn of theirs) is waiting on, launched from a
         # workspace button or from a tool inside a chat turn
@@ -259,12 +343,20 @@ def block_reason(record: Dict[str, Any]) -> str:
         # itself be waiting on it, and never for idle.
         return ""
     kinds = interactive_kinds()
-    if any(k != KIND_VOICE_CALL for k in kinds):
+    if any(k != KIND_VOICE_CALL for k in kinds) or turn_queue_people():
         return REASON_INTERACTIVE
     if record.get("deferrable") and not record.get("run_now"):
         # An open call is not idle, even when nobody has touched a key.
-        if KIND_VOICE_CALL in kinds or not idle_state()["idle"]:
+        if KIND_VOICE_CALL in kinds or not safe_idle_state()["idle"]:
             return REASON_IDLE
+    if record.get("memory_floor"):
+        # CPU work that holds memory while it runs (the Library reading folders) keeps the same
+        # free-RAM floor a model load keeps, and pauses, not fails, when the PC runs short.
+        try:
+            from agent_friday.services import local_scheduler as _ls
+            return _ls.memory_block(0.0)
+        except Exception:
+            return ""
     return ""
 
 
@@ -312,6 +404,12 @@ def background_job(*, kind: str, key: str, label: str, deferrable: bool):
         yield job
         status = "completed"
     finally:
+        hold = job.pop("hold", None)
+        if hold is not None:
+            try:
+                hold.__exit__(None, None, None)
+            except Exception:
+                pass
         CURRENT_JOB.reset(tok)
         if job.get("id"):
             try:
@@ -345,5 +443,14 @@ def before_local_model_call(model: Optional[str] = None) -> None:
         })
         job["pending"] = False
         job["id"] = job_id
+        # The job's own model calls run on this thread under the slot it was
+        # just admitted to: they must not queue again behind it (turn_queue.HELD).
+        try:
+            from agent_friday.services import turn_queue as _tq
+            hold = _tq.holding(seat, "user_job" if job.get("foreground") else "background")
+            hold.__enter__()
+            job["hold"] = hold
+        except Exception:
+            pass
     if job.get("id"):
         sup.wait_while_blocked(job["id"])

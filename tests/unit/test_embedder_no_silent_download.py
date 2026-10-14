@@ -96,6 +96,11 @@ def test_the_privacy_classifier_asks_before_it_constructs(monkeypatch):
             return [[0.0]] * len(texts)
     monkeypatch.setitem(sys.modules, "sentence_transformers",
                         types.SimpleNamespace(SentenceTransformer=FakeST))
+    # No pinned ONNX encoder on this machine, and no shared torch copy yet: the
+    # classifier goes through services/minilm to the one sentence-transformers model.
+    from agent_friday.services import laya2_encoder, minilm
+    monkeypatch.setattr(laya2_encoder, "load", lambda: False)
+    monkeypatch.setattr(minilm, "_torch_model", None)
     monkeypatch.setattr(sc, "_EMBEDDER", sc._UNTRIED)
     monkeypatch.setattr(sc, "_EXEMPLAR_EMBEDS", None)
     sc._load_embedder()

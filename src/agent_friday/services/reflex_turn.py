@@ -41,7 +41,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeou
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from agent_friday.services import laya2_encoder, laya2_seeds
+from agent_friday.services import laya2_encoder, laya2_seeds, turn_vector
 
 _log = logging.getLogger("friday.reflex_turn")
 
@@ -130,7 +130,11 @@ def _score(vec: List[float], labels: List[str], protos: list) -> Tuple[str, floa
 
 def _classify_now(text: str) -> dict:
     protos = _prototypes()
-    (vec,) = laya2_encoder.embed([text])
+    # The turn's one embedding of the message: computed here, then handed to
+    # the other consumers by services/turn_vector.
+    vec = turn_vector.compute(text)
+    if vec is None:
+        raise RuntimeError("turn vector unavailable")
     labels, p = protos["shape"]
     shape, shape_sim, shape_conf, margin = _score(vec, labels, p)
     labels, p = protos["mutation"]

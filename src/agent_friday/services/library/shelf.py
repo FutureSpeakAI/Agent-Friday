@@ -58,6 +58,12 @@ def tier_of(title: str, sample: str) -> int:
         return sc.Tier.PRIVATE
 
 
+class Shelf(str):
+    """A shelf name that remembers the classifier tier it came from (None for the owner's own choice), so the
+    index records the tier once and Laya's triage does not ask the classifier again."""
+    tier: int | None = None
+
+
 def chooser(principal: str):
     """The `classify` hook for the indexer: the owner's choice first, then the
     classifier."""
@@ -65,5 +71,8 @@ def chooser(principal: str):
         over = grants.shelf_override(principal, path)
         if over:
             return over
-        return "vault" if tier_of(title, sample) >= 2 else "open"
+        tier = tier_of(title, sample)
+        out = Shelf("vault" if tier >= 2 else "open")
+        out.tier = int(tier)
+        return out
     return choose

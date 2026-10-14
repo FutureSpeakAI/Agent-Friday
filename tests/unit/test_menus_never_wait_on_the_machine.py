@@ -180,7 +180,7 @@ def test_a_timed_out_provider_is_unknown_not_down(monkeypatch):
     import agent_friday.services.provider_registry as pr
     monkeypatch.setattr(pr, "get_provider_registry", lambda: _Reg())
     monkeypatch.setattr(ph, "inference_probe",
-                        lambda name, prov=None, use_cache=True: time.sleep(30))
+                        lambda name, prov=None, use_cache=True, explicit=False: time.sleep(30))
     monkeypatch.setattr(mp, "DEFAULT_PROBE_TIMEOUT_S", 0.3)
 
     t0 = time.time()
@@ -204,7 +204,7 @@ def test_one_good_provider_still_reads_degraded_not_down(monkeypatch):
     import agent_friday.services.provider_registry as pr
     monkeypatch.setattr(pr, "get_provider_registry", lambda: _Reg())
 
-    def probe(name, prov=None, use_cache=True):
+    def probe(name, prov=None, use_cache=True, explicit=False):
         if name == "slow":
             time.sleep(30)
         return {"provider": name, "status": "ok", "detail": "fine"}

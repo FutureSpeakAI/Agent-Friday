@@ -392,7 +392,7 @@ def test_manual_text_failure_does_not_expose_browser_argument_diagnostics(monkey
 
 def test_owned_sign_in_notice_names_takeover_controls_and_legacy_keeps_its_window(monkeypatch):
     notices = []
-    monkeypatch.setattr(bs, "_notify", lambda title, body, *args: notices.append((title, body)))
+    monkeypatch.setattr(bs, "_notify", lambda title, body, *args, **kw: notices.append((title, body)))
     snapshot = {"has_password": True, "url": "https://example.test/login",
                 "title": "Synthetic sign-in", "elements": [], "text": "Sign in"}
     s = create()

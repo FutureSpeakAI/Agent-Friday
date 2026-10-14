@@ -101,8 +101,11 @@ class _Job:
     """One running workspace job. Created by ``visible_job.__enter__``."""
 
     def __init__(self, name, *, kind, workspace, description, icon, eager,
-                 deferrable, key, label, queued, model):
+                 deferrable, key, label, queued, model, stoppable=False):
         self.id = str(uuid.uuid4())
+        #: The launching code honours the card's Stop (it calls check_stop at its own checkpoints), so the
+        #: Activity row may offer it (services/activity_lane reads the record's ``stoppable``).
+        self.stoppable = bool(stoppable)
         self.name = str(name)[:120]
         self.kind = kind
         self.workspace = workspace
@@ -186,6 +189,8 @@ class _Job:
             "inline_job": True, "workspace": self.workspace,
             "trace_id": trace, "parent_trace_id": None,
         }
+        if self.stoppable:
+            record["stoppable"] = True
         with agent.TASKS_LOCK:
             agent.TASKS[self.id] = record
         tj = agent._journal()
@@ -388,11 +393,11 @@ class visible_job(contextlib.ContextDecorator):
                  description: str = "", icon: str = "\U0001F6F0", eager: bool = True,
                  deferrable: bool = False, key: Optional[str] = None,
                  label: Optional[str] = None, queued: bool = True,
-                 model: Optional[str] = None):
+                 model: Optional[str] = None, stoppable: bool = False):
         self._kw = dict(name=name, kind=kind, workspace=workspace,
                         description=description, icon=icon, eager=eager,
                         deferrable=deferrable, key=key, label=label,
-                        queued=queued, model=model)
+                        queued=queued, model=model, stoppable=stoppable)
         self._job: Optional[_Job] = None
         self._token = None
         self._bg = None
@@ -426,7 +431,8 @@ class visible_job(contextlib.ContextDecorator):
                    description=self._kw["description"], icon=self._kw["icon"],
                    eager=self._kw["eager"], deferrable=self._kw["deferrable"],
                    key=self._kw["key"], label=self._kw["label"],
-                   queued=self._kw["queued"], model=self._kw["model"])
+                   queued=self._kw["queued"], model=self._kw["model"],
+                   stoppable=self._kw["stoppable"])
         self._job = job
         self._token = CURRENT.set(job)
         if self._kw["eager"]:

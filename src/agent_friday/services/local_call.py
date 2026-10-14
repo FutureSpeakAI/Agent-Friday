@@ -30,6 +30,8 @@ import json as _json
 import logging
 import time as _time
 
+from agent_friday.services.local_scheduler import admitted as _admitted
+
 _log = logging.getLogger("friday.local_call")
 
 # Measured on the reference machine: extraction on a large page runs 121s and
@@ -85,6 +87,12 @@ def _endpoints_file() -> dict:
         return (_json.loads(raw) or {}).get("endpoints") or {}
     except Exception:
         return {}
+
+
+def published_models() -> list:
+    """Model ids the Arbiter's endpoints file lists. A hint: confirm each one
+    with `seat_endpoint`, which asks the server."""
+    return list(_endpoints_file())
 
 
 def seat_endpoint(model: str) -> str | None:
@@ -155,7 +163,13 @@ def _daemon_tags() -> set:
     import urllib.request
     try:
         with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=4) as r:
-            rows = (_json.loads(r.read().decode()) or {}).get("models") or []
+            body = _json.loads(r.read().decode()) or {}
+        rows = body.get("models") or []
+        # A body without a `models` key (an error object) is not an
+        # inventory: it must not replace the known alias set.
+        if isinstance(body, dict) and "models" in body:
+            from agent_friday.services.local_only_guard import note_remote_aliases
+            note_remote_aliases(rows)
         return {m.get("name") for m in rows if m.get("name")}
     except Exception:
         return set()
@@ -172,12 +186,22 @@ def describe_dispatch(model: str, daemon_tags: set | None = None) -> dict:
     tag instead. Nothing in the log says so unless something is asked to.
 
     Returns the same decision `call()` makes, as data:
-      route     — "seat" | "daemon" | "unreachable"
+      route     — "seat" | "daemon" | "cloud_relay" | "unreachable"
+                  ("cloud_relay" is a `:cloud` / `-cloud` Ollama tag: not local)
       endpoint  — the base URL those requests go to
       answering — what that endpoint says it is holding (the seat's own
                   /v1/models id, not the name we asked for)
     """
+    # An Ollama `:cloud` / `-cloud` tag is answered through the daemon but run
+    # on ollama.com. It is its own route, so nothing that means "local"
+    # (route in ("seat", "daemon")) can ever accept it.
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    # Read the inventory FIRST: it is what tells the alias set which names
+    # the daemon relays to a remote host.
     tags = _daemon_tags() if daemon_tags is None else daemon_tags
+    if is_cloud_model_tag(model):
+        return {"model": model, "route": "cloud_relay",
+                "endpoint": ollama_url(), "answering": None}
     base = seat_endpoint(model)
     if base:
         return {"model": model, "route": "seat", "endpoint": base,
@@ -238,6 +262,9 @@ def log_dispatch_table(models, expect_up=None) -> list:
         elif row["route"] == "daemon":
             _log.info("local dispatch: %s -> Ollama daemon %s",
                       model, row["endpoint"])
+        elif row["route"] == "cloud_relay":
+            _log.info("local dispatch: %s is an Ollama cloud-relayed model "
+                      "(ollama.com), not a local seat", model)
         elif model in expect_up:
             # The failure this exists to surface: the plan says this seat is up,
             # and nothing is serving it. Every call 404s and escalates to the
@@ -250,6 +277,30 @@ def log_dispatch_table(models, expect_up=None) -> list:
     return rows
 
 
+def relay_model_status(model: str) -> str:
+    """Whether a model reached through the Ollama daemon stays on this machine.
+
+    ``"cloud"``: a cloud tag, or an alias the daemon's inventory marks remote.
+    ``"local"``: neither, judged on an inventory read at least once in this
+    process, or a model this PC serves from its own seat.
+    ``"unknown"``: the alias set was never filled and reading the inventory
+    now failed, so a plainly named alias of a cloud model cannot be ruled out.
+
+    Every relay transport asks this (local_call directly, the others through
+    cloud_intent.require), so the alias set is filled before the first daemon
+    call whichever transport makes it."""
+    from agent_friday.services.local_only_guard import aliases_filled, is_cloud_model_tag
+    if is_cloud_model_tag(model):
+        return "cloud"
+    if aliases_filled() or seat_endpoint(model):
+        return "local"
+    _daemon_tags()
+    if is_cloud_model_tag(model):
+        return "cloud"
+    return "local" if aliases_filled() else "unknown"
+
+
+@_admitted("local_call.call", on_cancel=lambda: "")
 def call(system: str, user: str, model: str, *, json_mode: bool = False,
          max_tokens: int = 2048, timeout: int = DEFAULT_TIMEOUT_S,
          num_ctx: int | None = None) -> str:
@@ -260,6 +311,30 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     stronger guarantee than asking a small model nicely for JSON.
     """
     import requests
+
+    # A cloud-tagged Ollama model (`glm-4.6:cloud`) is answered through the
+    # daemon but run on ollama.com. Inside a local-only run it is refused
+    # before anything is queued or sent. Outside one it continues to the
+    # daemon path below, where gate_ollama_body seals it like any cloud payload.
+    from agent_friday.services.local_only_guard import (
+        CloudRefused, refuse_if_active, routing_mode)
+    _relay = relay_model_status(model)
+    _cloud_tagged, _unknown = _relay == "cloud", _relay == "unknown"
+    if _cloud_tagged or _unknown:
+        try:
+            if _cloud_tagged:
+                refuse_if_active("ollama", model)
+            # The owner's global Local only mode holds too, not only the
+            # per-thread mark of a local-only job.
+            if routing_mode() == "local_only":
+                raise CloudRefused(
+                    "routing mode is local_only, so it will not call %s "
+                    "(%s)" % (model, "a cloud-relayed model" if _cloud_tagged
+                              else "the daemon inventory could not be read to "
+                                   "rule out a cloud relay"))
+        except CloudRefused as e:
+            _log.warning("local_call refused cloud-relayed model %s: %s", model, e)
+            return ""
 
     # The Local AI queue's choke point (services/background_gate): inside a
     # background job this waits while an interactive turn is active. A job
@@ -275,9 +350,9 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
         pass
     # A workspace job's card names the local model that is about to answer.
     from agent_friday.services import visible_jobs as _vj
-    _vj.note_inference(model, local=True)
+    _vj.note_inference(model, local=not _cloud_tagged)
 
-    base = seat_endpoint(model)
+    base = None if _cloud_tagged else seat_endpoint(model)
     if base:
         return _openai_style(base, system, user, model, json_mode, max_tokens,
                              timeout)
@@ -295,11 +370,17 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
     if json_mode:
         payload["format"] = "json"
     try:
-        # A cloud-tagged Ollama model is relayed to ollama.com: seal it like
-        # any cloud payload. A plain local model is returned untouched.
+        # A cloud-tagged Ollama model is relayed to ollama.com, and a daemon
+        # that is not on this machine or the local network is itself the
+        # cloud: both are sealed like any cloud payload. A plain local model on
+        # a local daemon is returned untouched.
+        daemon = ollama_url()
+        from agent_friday.services import cloud_intent as _cloud_intent
+        _cloud_intent.require("ollama", "local_call (cloud-tagged model)", str(model or ""),
+                              base_url=daemon)
         from agent_friday.services.egress_gate import gate_ollama_body
-        payload = gate_ollama_body(payload, model)
-        r = requests.post(f"{ollama_url()}/api/chat", json=payload, timeout=timeout)
+        payload = gate_ollama_body(payload, model, base_url=daemon)
+        r = requests.post(f"{daemon}/api/chat", json=payload, timeout=timeout)
         if r.status_code >= 400:
             _log.warning("local_call HTTP %s from %s: %s", r.status_code, model,
                          r.text[:200])
@@ -310,6 +391,7 @@ def call(system: str, user: str, model: str, *, json_mode: bool = False,
         return ""
 
 
+@_admitted("local_call.openai_style", on_cancel=lambda: "")
 def _openai_style(base: str, system: str, user: str, model: str,
                   json_mode: bool, max_tokens: int, timeout: int) -> str:
     """An Arbiter-owned seat speaks the OpenAI-compatible dialect.

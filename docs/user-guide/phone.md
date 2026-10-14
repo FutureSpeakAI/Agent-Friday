@@ -24,7 +24,9 @@ nothing listens and nothing is sent.
 - **Approve by text** (off by default). Pending approval cards are texted to
   you with a one-time code; reply `YES <code>` or `NO <code>`. A bare "yes"
   does nothing, and five wrong codes switch it off. This is weaker than the
-  app: anyone holding your phone can answer.
+  app: anyone holding your phone can answer. Cards that Laya raises herself for
+  a mail change (Safe writes) are never texted, and a YES for one is refused: you
+  approve those on screen, where you see which conversations.
 - **Live calls from your cell** (off by default, early). Talk with Friday in
   its local voice. Falls back to voicemail if local voice is not ready. Not yet
   tested on real calls.

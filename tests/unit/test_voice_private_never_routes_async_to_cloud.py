@@ -102,3 +102,22 @@ def test_automatic_hands_a_deep_question_to_the_owners_routing(spy, monkeypatch)
     assert out.startswith("DELEGATED:t-1")
     task, = spy["spawn"]
     assert not task.get("pin_to_seat"), "Automatic follows the owner's routing"
+
+
+def test_the_failure_note_saved_to_the_conversation_carries_no_request_text_row_ids_or_account(spy, monkeypatch):
+    """The queued request may carry the resolved rows (ids hold the mailbox account). If the brain never
+    returns, the conversation is told in generic words: a later cloud turn reads that conversation."""
+    told = []
+    monkeypatch.setattr(ve, "_brain_serving", lambda: None)
+    monkeypatch.setattr(rv, "_persist_voice_turn",
+                        lambda u, a, conversation_id=None, provider=None: told.append(a))
+    request = ("archive these\n\n[Resolved on the owner's screen by rules, not by you: archive 2 row(s) in messages. "
+               "Row ids: mail:owner@example.test:t1, mail:owner@example.test:t2. raise the one card for it.]")
+    rv._run_after_call([{"request": request, "title": "archive these"}], "c1", wait_s=0.05, poll_s=0.01)
+    import time
+    end = time.monotonic() + 3
+    while not told and time.monotonic() < end:
+        time.sleep(0.01)
+    assert told and "couldn't get to" in told[0]
+    assert "owner@example.test" not in told[0] and "mail:" not in told[0] and "Row ids" not in told[0]
+    assert "archive these" not in told[0]

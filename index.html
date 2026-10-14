@@ -546,18 +546,10 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .dock-btn.active .dot { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
 
-        /* Predictive "Suggested" glow — Friday thinks you'll want this workspace
-           right now. A soft amber pulse, distinct from the cyan active state. */
-        @keyframes dockSuggestPulse {
-            0%,100% { box-shadow: 0 0 10px rgba(245,158,11,0.18), inset 0 0 10px rgba(245,158,11,0.05); border-color: rgba(245,158,11,0.28); }
-            50%     { box-shadow: 0 0 18px rgba(245,158,11,0.42), inset 0 0 14px rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.55); }
-        }
-        .dock-btn.suggested {
-            color: rgba(255,225,170,0.92);
-            border-color: rgba(245,158,11,0.3);
-            animation: dockSuggestPulse 2.8s ease-in-out infinite;
-        }
-        .dock-btn.suggested .dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+        /* A card Friday raised inside this workspace is waiting: one quiet
+           dot under the label, no count and no pulse. It clears when the
+           workspace is opened or the card is dismissed. */
+        .dock-btn.has-notice .dot { background: #00d4ff; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
@@ -890,6 +882,23 @@ window.addEventListener('DOMContentLoaded',function(){
         .local-ai-row-label { color: var(--fr-text); font-size: 12px; overflow-wrap: anywhere; }
         .local-ai-row-meta { color: var(--fr-dim); font-size: var(--fr-text-xs); font-family: var(--fr-font-mono); }
         .local-ai-row[data-state="running"] .local-ai-row-meta { color: var(--fr-violet-soft); }
+        .place-badge { display: inline-flex; align-items: center; margin-right: 8px; padding: 0 6px; border-radius: 6px; background: var(--fr-warn); color: var(--fr-surface); font-weight: 600; }
+        .place-dot { display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-radius: 50%; background: var(--fr-neutral); vertical-align: middle; }
+        .place-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .place-tab { min-height: 32px; padding: 6px 8px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--fr-label); font-size: var(--fr-text-md); cursor: pointer; }
+        .place-tab.on { color: var(--fr-text); border-bottom-color: var(--fr-cyan); }
+        .place-tab:focus-visible, .place-card .btn:focus-visible, .place-card .ws-tab-link:focus-visible { outline: 2px solid var(--fr-cyan); outline-offset: 2px; }
+        .place-readonly [data-testid="approval-card"] > div:last-child { display: none; }
+        .place-count { margin-left: 6px; padding: 0 5px; border-radius: 8px; background: rgba(255,255,255,0.12); font-size: var(--fr-text-xs); }
+        .place-tab.needs .place-count { background: var(--fr-warn); color: var(--fr-surface); }
+        .place-card { margin-bottom: 8px; padding: 8px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; }
+        .place-card-title { color: var(--fr-text); font-size: var(--fr-text-md); line-height: 1.4; overflow-wrap: anywhere; }
+        .place-list { margin: 6px 0 0; padding-left: 16px; color: var(--fr-label); font-size: var(--fr-text-sm); line-height: 1.5; }
+        .place-note, .place-empty, .place-why-text, .place-ago { color: var(--fr-dim); font-size: var(--fr-text-sm); line-height: 1.5; }
+        .place-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+        .place-quiet { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--fr-dim); font-size: var(--fr-text-sm); }
+        .place-summary { margin-bottom: 8px; color: var(--fr-text); font-size: var(--fr-text-md); }
+        .place-times { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; color: var(--fr-label); font-size: var(--fr-text-sm); }
         .ws-tab-ask.none { border-color: rgba(255,255,255,0.12); background: transparent; color: #7f93ad; }
         .ws-tab-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column;
             padding: 14px 18px 24px; box-sizing: border-box; }
@@ -1581,11 +1590,6 @@ window.addEventListener('DOMContentLoaded',function(){
             from { opacity: 0; transform: translateY(-8px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes bellBadgePulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.75); }
-            50%      { box-shadow: 0 0 0 5px rgba(245,158,11,0); }
-        }
-        .bell-badge-pulse { animation: bellBadgePulse 1.4s infinite ease-out; }
 
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -3756,6 +3760,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- Library: your documents, read on this PC, answered with footnotes (defines window.LibraryWS). -->
     <script src="/static/library_reader.js"></script>
     <script src="/static/library_ws.js"></script>
+    <!-- Meetings: the notes pad, polished notes with their transcript lines, the meetings archive (defines window.MeetingsExtras). -->
+    <script src="/static/meetings_ws.js"></script>
     <!-- Library shelves: the 3D view of the Library (defines window.LibraryShelves3D). -->
     <script src="/static/library_shelves.js"></script>
     <!-- The one 3D file browser: every workspace's 3D view (defines window.FridayFiles3D). -->
@@ -12036,6 +12042,13 @@ function fridayWorkspaceId(id) {
   return a ? a.workspace : id;
 }
 function fridayResolveTarget(t) {
+  if (t && t.workspace === 'calendar' && t.view === 'meetings') {
+    // Meetings has a workspace of its own; Calendar keeps a link to it.
+    t = Object.assign({}, t, {
+      workspace: 'meetings'
+    });
+    delete t.view;
+  }
   if (!t || !t.workspace || !WS_ALIASES[t.workspace]) return t;
   const a = WS_ALIASES[t.workspace];
   return Object.assign({}, t, {
@@ -13838,6 +13851,7 @@ function ConnectorDot({
 // side by side.
 const FWIN_FIRST_SIZE = {
   library: {w:1040,h:720,v:1,firstOnly:true},
+  meetings: {w:920,h:700,v:1,firstOnly:true},
   settings: {w:980,h:760,v:1,firstOnly:true},
   media: {w:1040,h:720,v:1,firstOnly:true},
   code: {w:1100,h:760,v:1,firstOnly:true},
@@ -15605,6 +15619,18 @@ function ChatSurface(props) {
     voiceStatus
   } = props;
   const trayMenu = useSnapMenuOpener();
+  /* A local failure is an offer, never a cloud call: the three choices re-send
+     the owner's own message. Nothing is sent until one is clicked, nothing is
+     preselected, and the card is single-use. */
+  const chooseLocalFallback = (msg, id) => {
+    const src = msg.source_text || '';
+    if (!src) return;
+    setChatMsgs(p => p.map(x => x === msg ? { ...x, local_fallback: null } : x));
+    if (id === 'send_claude') sendChat(src, { skipForecast: true, alreadyShown: true, routeMode: 'cloud', confirmLocalOnly: true });
+    else if (msg.local_fallback && msg.local_fallback.kind === 'local_only_confirm') return;
+    else if (id === 'shorter') sendChat(src + '\n\n(Keep the answer short.)', { skipForecast: true, alreadyShown: true });
+    else sendChat(src, { skipForecast: true, alreadyShown: true });
+  };
   const newChatRequest = React.useRef(null);
   const newChatOwner = React.useRef({alive:true, id:convId, revision:0});
   const [newChatState, setNewChatState] = React.useState({pending:false, error:'', revision:0});
@@ -15946,7 +15972,11 @@ function ChatSurface(props) {
       dest: 'clipboard',
       ico: '📋'
     }]
-  }), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
+  }), m.role === 'friday' && m.laya && m.laya.laya && /*#__PURE__*/React.createElement("span", {
+    className: "laya-chip",
+    title: 'Laya wrote this line (' + (m.laya.kind || 'fixed') + '). It is a fixed phrase, not a model answer.',
+    style: { marginTop: 6, marginRight: 6, display: 'inline-block', fontSize: 10, padding: '1px 6px', border: '1px solid var(--fr-glass-edge)', borderRadius: 8, color: 'var(--fr-dim)' }
+  }, "Laya"), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       marginTop: 6,
@@ -15981,7 +16011,24 @@ function ChatSurface(props) {
       text: '⚙ Could not switch modes — try Settings → Models directly.',
       time: new Date().toLocaleTimeString()
     }]))
-  }, "Switch to Cloud-Only Mode")), /*#__PURE__*/React.createElement("div", {
+  }, "Switch to Cloud-Only Mode"), m.role === 'friday' && m.local_fallback && m.local_fallback.offer && /*#__PURE__*/React.createElement("div", {
+    role: "group",
+    "aria-label": "What next",
+    style: {
+      marginTop: 6,
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, (m.local_fallback.choices || []).map(c => /*#__PURE__*/React.createElement("button", {
+    key: c.id,
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    title: c.recommended ? 'Recommended' : undefined,
+    onClick: () => chooseLocalFallback(m, c.id)
+  }, c.label, c.recommended ? ' (recommended)' : '')))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#888',
@@ -16929,6 +16976,7 @@ function ConversationWindow({
     const body = {
       message: m,
       voice_mode: false,
+      source: 'app_page',
       cite_sources: !!(SH.agentSettings || {}).cite_sources,
       // conversation_id is the whole feature. Without it every window would
       // write into Main and the threads would be one thread wearing three
@@ -16976,6 +17024,7 @@ function ConversationWindow({
           trace_id: d.trace_id || streamTraceId || null,
           reasoning_sources: d.reasoning_sources || [],
           offer_cloud_switch: !!d.offer_cloud_switch,
+          laya: d.laya || null,
           time: stamp()
         });
         setMsgs(p => [...p, ...add]);
@@ -17175,6 +17224,8 @@ function CommandPalette({
   const [sel, setSel] = useState(0);
   const [contacts, setContacts] = useState([]);
   const [routines, setRoutines] = useState([]);
+  const [reflexOn, setReflexOn] = useState(false);
+  const [reflexMsg, setReflexMsg] = useState('');
   const inputRef = useRef(null);
   useEffect(() => {
     inputRef.current?.focus();
@@ -17182,6 +17233,7 @@ function CommandPalette({
   useEffect(() => {
     fetch('/api/contacts').then(r => r.json()).then(d => setContacts(d.contacts || d.items || [])).catch(() => {});
     fetch('/api/routines').then(r => r.json()).then(d => setRoutines(d.routines || d.items || [])).catch(() => {});
+    fetch('/api/reflex/status').then(r => r.json()).then(d => setReflexOn(d.open_enabled === true)).catch(() => {});
   }, []);
   const query = q.trim().toLowerCase();
   const wsResults = WS.filter(w => !fridayWsHeld(w)).filter(w => !query || w.label.toLowerCase().includes(query) || w.id.includes(query) || (w.aka || []).some(a => a.includes(query))).map(w => ({
@@ -17216,7 +17268,18 @@ function CommandPalette({
     meta: c.meta,
     run: c.run
   }));
+  // "Open the X": one item, opened with no model (Settings > Instant answers).
+  const reflexResults = reflexOn && query.length > 4 && /^(open|show|pull up|bring up|go to|take me to|launch|view|find)\b/.test(query) ? [{
+    kind: 'reflex',
+    id: 'reflex',
+    ico: '⚡',
+    label: 'Open “' + q.trim() + '” now',
+    meta: 'instant, no model'
+  }] : [];
   const sections = [{
+    title: 'Instant',
+    items: reflexResults
+  }, {
     title: 'Workspaces',
     items: wsResults
   }, {
@@ -17232,10 +17295,27 @@ function CommandPalette({
   const flat = sections.flatMap(s => s.items);
   useEffect(() => {
     setSel(0);
+    setReflexMsg('');
   }, [q]);
   const activate = item => {
     if (!item) return;
-    if (item.kind === 'cmd') {
+    if (item.kind === 'reflex') {
+      apiFetch('/api/reflex/open', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text: q.trim(),
+          source: 'app_page'
+        })
+      }).then(r => r.json()).then(d => {
+        if (d.status === 'done' || d.status === 'card') {
+          onClose();
+          fridayToast(d.reply || 'Done.');
+        } else if (d.status === 'ask') setReflexMsg(d.reply || 'Which one did you mean?');else setReflexMsg('That one needs the model. Ask in chat.');
+      }).catch(() => setReflexMsg('Could not reach ' + fridayName() + '. Ask in chat.'));
+    } else if (item.kind === 'cmd') {
       onClose();
       item.run();
     } else if (item.kind === 'ws') onOpenWs(item.id);else if (item.kind === 'routine') {
@@ -17287,7 +17367,10 @@ function CommandPalette({
     className: "cmd-palette-results"
   }, flat.length === 0 && /*#__PURE__*/React.createElement("div", {
     className: "cmd-palette-empty"
-  }, "No matches"), (() => {
+  }, "No matches"), reflexMsg && /*#__PURE__*/React.createElement("div", {
+    className: "cmd-palette-empty",
+    role: "status"
+  }, reflexMsg), (() => {
     let idx = -1;
     return sections.map(s => /*#__PURE__*/React.createElement("div", {
       key: s.title
@@ -32016,6 +32099,34 @@ function WorkflowsWS() {
       if (alive.current) setBusy('');
     }
   };
+  // The owner's per-job choice to hear when a routine finishes; saved on the
+  // schedule (finish_notice), so every later run follows it.
+  const toggleFinish = async r => {
+    if (mutation.current) return;
+    mutation.current = true;
+    ++epoch.current;
+    setBusy(r.schedule_id);
+    setError('');
+    try {
+      await apiFetch('/api/schedules/' + encodeURIComponent(r.schedule_id), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          finish_notice: !r.finish_notice
+        })
+      }).then(res => res.json().then(d => {
+        if (!res.ok || d.status === 'error') throw new Error(d.message || d.error || 'Could not change the routine.');
+      }));
+      await load();
+    } catch (e) {
+      if (alive.current) setError(e.message);
+    } finally {
+      mutation.current = false;
+      if (alive.current) setBusy('');
+    }
+  };
   const remove = async w => {
     if (mutation.current || !confirm('Delete “' + w.name + '” and its schedule?')) return;
     mutation.current = true;
@@ -32206,7 +32317,15 @@ function WorkflowsWS() {
     className: "wfx-grow"
   }, /*#__PURE__*/React.createElement("strong", null, r.name), /*#__PURE__*/React.createElement("div", {
     className: "wfx-quiet"
-  }, r.when_text)), /*#__PURE__*/React.createElement(WfSwitch, {
+  }, r.when_text)), r.announces_finish && /*#__PURE__*/React.createElement("span", {
+    className: "wfx-quiet",
+    "aria-hidden": "true"
+  }, "Tell me when it finishes"), r.announces_finish && /*#__PURE__*/React.createElement(WfSwitch, {
+    disabled: !!busy,
+    on: r.finish_notice,
+    label: 'Tell me when ' + r.name + ' finishes',
+    onChange: () => toggleFinish(r)
+  }), /*#__PURE__*/React.createElement(WfSwitch, {
     disabled: !!busy,
     on: r.enabled,
     label: 'Run ' + r.name,
@@ -34729,7 +34848,6 @@ function LegacyCodeWS({only, navTarget}) {
   const [repos, setRepos] = useState([]);
   const [repoLoading, setRepoLoading] = useState(true);
   const [logs, setLogs] = useState([]);
-  const [unseen, setUnseen] = useState(0);
   const [srcFilter, setSrcFilter] = useState('');
   const logBoxRef = useRef(null);
   useEffect(() => { if (navTarget && navTarget.tab) setTab(navTarget.tab); }, [navTarget]);
@@ -34757,7 +34875,6 @@ function LegacyCodeWS({only, navTarget}) {
             const next = [...p, evt];
             return next.slice(-600);
           });
-          setUnseen(u => u + 1);
         } catch (x) {}
       };
       es.onerror = () => {};
@@ -34770,7 +34887,6 @@ function LegacyCodeWS({only, navTarget}) {
   }, []);
   useEffect(() => {
     if (tab === 'logs') {
-      setUnseen(0);
       if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
     }
   }, [tab, logs.length]);
@@ -34801,26 +34917,7 @@ function LegacyCodeWS({only, navTarget}) {
       position: 'relative'
     },
     onClick: () => setTab(t.id)
-  }, t.ico, " ", t.label, t.id === 'logs' && unseen > 0 && tab !== 'logs' && /*#__PURE__*/React.createElement("span", {
-    style: {
-      position: 'absolute',
-      top: -6,
-      right: -6,
-      minWidth: 16,
-      height: 16,
-      padding: '0 4px',
-      borderRadius: 8,
-      background: '#ff0080',
-      color: '#fff',
-      fontSize: 9,
-      fontFamily: 'Orbitron, sans-serif',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 0 10px rgba(255,0,128,0.8)',
-      animation: 'pulse 1.4s infinite'
-    }
-  }, unseen > 99 ? '99+' : unseen)))), tab === 'repos' && /*#__PURE__*/React.createElement(DevRepos, {
+  }, t.ico, " ", t.label))), tab === 'repos' && /*#__PURE__*/React.createElement(DevRepos, {
     repos: repos,
     loading: repoLoading,
     onScan: scanRepos,
@@ -35514,6 +35611,9 @@ function NewsWS() {
   const stageFS = window.fridayStage;
   const fridayNewsFilters = useRef({});
   const newsStageCfg = useRef(null);
+  // The ticked stories (Friday's "select these", the owner's own): refs "news:<id>" in the shared reducer.
+  const [newsSel, setNewsSel] = useState(() => stageFS ? stageFS.emptySelection() : { refs: [], id: '', label: '', source: '', rev: 0, held: {} });
+  const newsSelRef = useRef(newsSel);
   const newsBy = (key, val) => String(fridayNewsFilters.current[key]) === String(val) ? 'friday' : 'owner';
   const newsFilters = () => {
     const f = [];
@@ -35523,6 +35623,8 @@ function NewsWS() {
   };
   newsStageCfg.current = {
     filters: newsFilters,
+    getSel: () => newsSelRef.current,
+    setSel: next => { newsSelRef.current = next; setNewsSel(next); },
     loaded: () => feed.length,
     total: () => feedTotal,
     items: () => tab !== 'feed' ? [] : feed.slice(0, 120).map((it, i) => ({
@@ -37002,6 +37104,7 @@ function NewsWS() {
   }, streamItems.map((it, i) => /*#__PURE__*/React.createElement("div", {
     key: it.id || i,
     'data-fr-ref': 'news:' + (it.id || i),
+    'data-fr-sel': newsSel.refs.indexOf('news:' + (it.id || i)) >= 0 ? 'on' : undefined,
     className: 'news-card cat-' + (it.color || 'tech') + (i === 0 ? ' feature' : '')
   }, /*#__PURE__*/React.createElement("div", {
     className: "news-cardtop"
@@ -38814,7 +38917,7 @@ function calFmtTime(iso) {
   });
 }
 fridayDeclareNav('calendar', {
-  keys: ['date', 'view', 'meeting_id', 'event'],
+  keys: ['date', 'view', 'meeting_id', 'event', 'start'],
   sections: [{
     id: 'meetings',
     label: 'Meetings',
@@ -38994,7 +39097,7 @@ function CalendarWS() {
     className: "btn active",
     onClick: quickAdd,
     disabled: adding
-  }, adding ? 'Parsing…' : '✨ Add')), /*#__PURE__*/React.createElement(MeetingsPanel, null), /*#__PURE__*/React.createElement("div", {
+  }, adding ? 'Parsing…' : '✨ Add')), /*#__PURE__*/React.createElement(MeetingsLink, null), /*#__PURE__*/React.createElement("div", {
     className: "cal-layers"
   }, /*#__PURE__*/React.createElement("button", {
     className: 'btn' + (showMedia ? ' active' : ''),
@@ -39203,11 +39306,20 @@ function CalendarWS() {
 // Record a meeting from the Calendar, transcribe it on this machine, take notes
 // on a local model. Starting shows the consent statement every time; while a
 // recording runs, MeetingRecIndicator shows a red dot and the elapsed time on
-// every screen, with a one-click stop.
+// every screen, with a one-click stop. The indicator has no dismiss control and
+// a style that no layout can override: while Friday records, it is on screen.
+// Nothing here starts a recording by itself: only the start card's own button
+// does, and it sends the owner's confirmation with it.
 function meetingsChanged() {
   try {
     window.dispatchEvent(new Event('friday-meetings'));
   } catch (_) {}
+}
+// A meeting row is counts-only on the stage: a kind and a position, never a title.
+function meetingFacets(m) {
+  return {
+    kind: 'meeting'
+  };
 }
 function meetingClock(s) {
   s = Math.max(0, Math.floor(s || 0));
@@ -39243,6 +39355,8 @@ function MeetingRecIndicator() {
   const [stopping, setStopping] = useState(false);
   if (!st || !st.recording) return null;
   const live = st.capturing;
+  const sa = st.system_audio || {};
+  const what = sa.captured ? 'microphone and the other side of the call' : 'microphone only';
   const stop = async () => {
     setStopping(true);
     try {
@@ -39255,6 +39369,7 @@ function MeetingRecIndicator() {
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "friday-meeting-indicator",
+    "data-testid": "meeting-rec-indicator",
     role: "status",
     "aria-live": "polite",
     style: {
@@ -39275,7 +39390,7 @@ function MeetingRecIndicator() {
       fontSize: 12,
       color: '#fecaca'
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("style", null, '.friday-meeting-indicator{display:flex !important;visibility:visible !important;opacity:1 !important}'), /*#__PURE__*/React.createElement("span", {
     "aria-hidden": "true",
     style: {
       width: 10,
@@ -39294,8 +39409,8 @@ function MeetingRecIndicator() {
     style: {
       cursor: 'pointer'
     },
-    title: 'Recording “' + (st.title || 'meeting') + '” — microphone only. Open Meetings.'
-  }, live ? 'REC' : 'Starting microphone…', " ", meetingClock(elapsed)), /*#__PURE__*/React.createElement("button", {
+    title: 'Recording “' + (st.title || 'meeting') + '” — ' + what + '. Open Meetings.'
+  }, live ? 'REC' : 'Starting microphone…', " ", meetingClock(elapsed), sa.captured ? ' · both sides' : ''), /*#__PURE__*/React.createElement("button", {
     onClick: stop,
     disabled: stopping,
     "aria-label": "Stop recording",
@@ -39311,15 +39426,19 @@ function MeetingRecIndicator() {
     }
   }, stopping ? 'Stopping…' : '■ Stop'));
 }
-function MeetingsPanel() {
+function MeetingsPanel(props) {
   const [st, elapsed, reloadSt] = useMeetingStatus(3000);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!(props && props.inWorkspace));
   const [list, setList] = useState([]);
   const [asking, setAsking] = useState(false);
   const [title, setTitle] = useState('');
   const [keepAudio, setKeepAudio] = useState(false);
   const [maxH, setMaxH] = useState(2);
   const [sel, setSel] = useState(null);
+  // What its own tab opens on, and how the desktop confirms "open that meeting" landed on that one.
+  useTabState('meetings', () => ({
+    meeting_id: sel ? sel.id : ''
+  }));
   const [picked, setPicked] = useState({});
   const [fu, setFu] = useState(null);
   // See & Touch: the follow-up draft's three fields, while it is open.
@@ -39335,6 +39454,33 @@ function MeetingsPanel() {
   const [showTx, setShowTx] = useState(false);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sysAudio, setSysAudio] = useState(false);
+  const [speak, setSpeak] = useState(false);
+  const [consent, setConsent] = useState(null);
+  const [card, setCard] = useState(null);
+  const [line, setLine] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [ret, setRet] = useState(null);
+  const [sugg, setSugg] = useState(null);
+  const [suggOff, setSuggOff] = useState(false);
+  const [liveTx, setLiveTx] = useState({});
+  const loadConsent = () => fetch('/api/meetings/consent').then(r => r.json()).then(d => {
+    setConsent(d);
+    setLine(d.line || '');
+    setSpeak(!!d.speak);
+  }).catch(() => {});
+  // The start card's own text, version and single-use token come from one request; Start stays off until they have all arrived.
+  const loadCard = () => fetch('/api/meetings/start-card', {
+    method: 'POST'
+  }).then(r => r.json()).then(d => {
+    if (d && d.status === 'ok' && d.nonce && d.consent_text && d.jurisdiction_note) {
+      setCard(d);
+      setConsent(d);
+      setLine(d.line || '');
+      setSpeak(!!d.speak);
+    } else setCard(null);
+  }).catch(() => setCard(null));
+  const loadRet = () => fetch('/api/meetings/retention').then(r => r.json()).then(setRet).catch(() => {});
   const loadList = () => fetch('/api/meetings').then(r => r.json()).then(d => setList(d.meetings || [])).catch(() => {});
   const openMeeting = id => fetch('/api/meetings/' + id).then(r => r.json()).then(d => {
     if (d.meeting) {
@@ -39347,10 +39493,11 @@ function MeetingsPanel() {
   // Reads the deep-link target without consuming it: CalendarWS reads the same one.
   useEffect(() => {
     const apply = t => {
-      if (t && t.workspace === 'calendar' && t.view === 'meetings') {
+      if (t && (t.workspace === 'meetings' || t.workspace === 'calendar' && t.view === 'meetings')) {
         setOpen(true);
         loadList();
         if (t.meeting_id) openMeeting(t.meeting_id);
+        if (t.start === 'confirm') ask();
       }
     };
     apply(window.__fridayNavTarget);
@@ -39360,22 +39507,144 @@ function MeetingsPanel() {
   }, []);
   useEffect(() => {
     loadList();
+    loadConsent();
+    loadRet();
   }, []);
+  // A "take notes?" card for the event that is starting: the server offers it at most once per event and stops after two declines.
+  useEffect(() => {
+    fetch('/api/meetings/suggestion').then(r => r.json()).then(d => {
+      setSugg(d.suggestion || null);
+      setSuggOff(!!(d.state && d.state.off_after_declines));
+    }).catch(() => {});
+  }, []);
+  // Live words while recording (shown, never stored).
+  useEffect(() => {
+    if (!(st && st.recording)) {
+      setLiveTx({});
+      return undefined;
+    }
+    const t = setInterval(() => fetch('/api/meetings/live').then(r => r.json()).then(d => setLiveTx(d.partials || {})).catch(() => {}), 2000);
+    return () => clearInterval(t);
+  }, [st && st.recording]);
+  // The offer is spent when the card is actually on screen, not when it loads.
+  useEffect(() => {
+    if (!sugg || st && st.recording || asking || typeof IntersectionObserver !== 'function') return undefined;
+    const el = document.getElementById('meeting-suggestion-card');
+    if (!el) return undefined;
+    let done = false;
+    const io = new IntersectionObserver(es => {
+      if (!done && !document.hidden && es.some(e => e.isIntersecting && e.intersectionRatio >= 0.5)) {
+        done = true;
+        fetch('/api/meetings/suggestion', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            action: 'shown',
+            key: sugg.key
+          })
+        }).catch(() => {});
+      }
+    }, {
+      threshold: [0.5]
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [sugg && sugg.key, st && st.recording, asking]);
   const finishing = st && st.finishing || [];
   useEffect(() => {
     loadList();
     if (sel && !finishing.includes(sel.id)) openMeeting(sel.id);
   }, [finishing.join(','), st && st.recording]);
-  const ask = async () => {
+  const answerSugg = async a => {
+    const c = sugg;
+    setSugg(null);
+    try {
+      const d = await (await fetch('/api/meetings/suggestion', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action: a,
+          key: c && c.key
+        })
+      })).json();
+      setSuggOff(!!d.off_after_declines);
+    } catch (e) {}
+    if (a === 'accept' && c) {
+      ask(c.event && c.event.title);
+    }
+  };
+  const suggBack = async () => {
+    try {
+      await fetch('/api/meetings/suggestion/reset', {
+        method: 'POST'
+      });
+    } catch (e) {}
+    setSuggOff(false);
+  };
+  const copyLine = async () => {
+    try {
+      await navigator.clipboard.writeText(line);
+      setCopied(true);
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = line;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true);
+      } catch (_) {
+        setMsg('Select the line and copy it yourself.');
+      }
+      document.body.removeChild(ta);
+    }
+  };
+  const saveLine = async () => {
+    const d = await (await fetch('/api/meetings/consent', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        line
+      })
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') {
+      setConsent(d);
+      setLine(d.line);
+      setMsg('Consent line saved.');
+    } else setMsg(d.error || 'Could not save the line.');
+  };
+  const setRetention = async b => {
+    const d = await (await fetch('/api/meetings/retention', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(b)
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') setRet(d);else setMsg(d.error || 'Could not save that choice.');
+  };
+  const ask = async t0 => {
     setMsg('');
     setAsking(true);
-    setTitle('');
+    setCopied(false);
+    setCard(null);
+    loadCard();
+    setTitle(typeof t0 === 'string' ? t0 : '');
+    if (typeof t0 === 'string' && t0) return;
     try {
       const d = await (await fetch('/api/meetings/suggest')).json();
       if (d.event && d.event.title) setTitle(d.event.title);
     } catch (e) {}
   };
+  const startReady = !!(card && card.nonce && card.consent_text && card.jurisdiction_note && card.consent_version);
   const start = async () => {
+    if (!startReady) return;
     setBusy(true);
     setMsg('');
     try {
@@ -39386,18 +39655,29 @@ function MeetingsPanel() {
         },
         body: JSON.stringify({
           consent_ack: true,
-          consent_version: st && st.consent_version,
+          nonce: card.nonce,
+          consent_version: card.consent_version,
+          consent_line: line,
           title,
           keep_audio: keepAudio,
+          system_audio: sysAudio,
+          speak_consent: speak,
           max_duration_s: maxH * 3600
         })
       });
       const d = await r.json();
       if (d.status === 'ok') {
         setAsking(false);
-      } else setMsg(d.error || 'Could not start recording.');
+        setCard(null);
+      } else {
+        setMsg(d.error || 'Could not start recording.');
+        setCard(null);
+        loadCard();
+      }
     } catch (e) {
       setMsg('Could not start recording.');
+      setCard(null);
+      loadCard();
     }
     setBusy(false);
     meetingsChanged();
@@ -39412,6 +39692,16 @@ function MeetingsPanel() {
     setBusy(false);
     meetingsChanged();
     loadList();
+  };
+  const delAudio = async m => {
+    if (!window.confirm('Delete the audio of “' + (m.title || 'this meeting') + '”? The transcript and notes stay. The audio is removed from this computer and cannot be brought back.')) return;
+    const d = await (await fetch('/api/meetings/' + m.id + '/audio', {
+      method: 'DELETE'
+    })).json().catch(() => ({}));
+    if (d.status === 'ok') {
+      setMsg('Audio deleted. The transcript and notes are untouched.');
+      openMeeting(m.id);
+    } else setMsg(d.error || 'Could not delete the audio.');
   };
   const del = async m => {
     if (!window.confirm('Delete “' + (m.title || 'this meeting') + '”? The transcript, notes and any kept audio are removed from this computer.')) return;
@@ -39483,6 +39773,14 @@ function MeetingsPanel() {
     color: '#8a93a6'
   };
   const s = sel && sel.summary || {};
+  // The newest finished meeting, for "Open the latest" (and "open my last meeting" by voice).
+  const latest = list.find(x => x.state !== 'recording' && x.state !== 'unreadable');
+  const openLatest = () => {
+    if (latest) {
+      setOpen(true);
+      openMeeting(latest.id);
+    }
+  };
   return /*#__PURE__*/React.createElement("div", {
     className: "meetings-panel",
     style: box
@@ -39536,12 +39834,76 @@ function MeetingsPanel() {
       setOpen(!open);
       if (!open) loadList();
     }
-  }, open ? 'Hide past meetings' : 'Past meetings (' + list.length + ')')), finishing.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, open ? 'Hide past meetings' : 'Past meetings (' + list.length + ')'), latest && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: openLatest
+  }, "Open the latest")), finishing.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       ...small,
       marginTop: 6
     }
-  }, "Finishing the transcript and notes\u2026"), asking && !rec && /*#__PURE__*/React.createElement("div", {
+  }, "Finishing the transcript and notes\u2026"), rec && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...small,
+      marginTop: 6
+    }
+  }, st.system_audio && st.system_audio.reason || '', st.vad ? ' Speech detection: ' + (st.vad === 'silero' ? 'Silero.' : 'volume gate.') : ''), rec && Object.keys(liveTx).length > 0 && /*#__PURE__*/React.createElement("div", {
+    "aria-live": "off",
+    style: {
+      marginTop: 6,
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, Object.keys(liveTx).map(k => /*#__PURE__*/React.createElement("div", {
+    key: k
+  }, /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, k ? k + ': ' : ''), liveTx[k]))), rec && window.MeetingsExtras && /*#__PURE__*/React.createElement(window.MeetingsExtras.Pad, {
+    meetingId: st.id
+  }), sugg && !rec && !asking && /*#__PURE__*/React.createElement("div", {
+    id: "meeting-suggestion-card",
+    role: "region",
+    "aria-label": "Take notes?",
+    style: {
+      ...box,
+      marginTop: 8,
+      borderColor: 'rgba(0,212,255,0.4)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: '#eef1f6',
+      marginBottom: 6
+    }
+  }, sugg.text), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn active",
+    onClick: () => answerSugg('accept')
+  }, "Open the start card"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => answerSugg('decline')
+  }, "Not now"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      ...small,
+      flex: 1
+    }
+  }, "I'll ask once for this event. Nothing records until you start it."))), suggOff && !rec && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...small,
+      marginTop: 6
+    }
+  }, "Suggestions are off after two \u201Cnot now\u201D answers. ", /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: suggBack,
+    style: {
+      marginLeft: 4
+    }
+  }, "Turn them back on")), asking && !rec && /*#__PURE__*/React.createElement("div", {
     role: "dialog",
     "aria-label": "Start recording",
     style: {
@@ -39556,12 +39918,59 @@ function MeetingsPanel() {
       fontWeight: 600,
       marginBottom: 6
     }
-  }, st ? st.consent_text : ''), /*#__PURE__*/React.createElement("div", {
+  }, card ? card.consent_text : 'Loading the consent statement…'), /*#__PURE__*/React.createElement("div", {
     style: {
       ...small,
       marginBottom: 8
     }
-  }, st && st.system_audio ? st.system_audio.reason : '', " Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks."), /*#__PURE__*/React.createElement("input", {
+  }, card ? card.jurisdiction_note : '', " Transcribed on this computer; audio is dropped after transcription unless you keep it. Stops by itself after the maximum length, on sleep, and when the screen locks."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: small
+  }, "What to tell everyone (edit it, then copy it into the call chat; I don't post into other apps):"), /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    rows: 2,
+    "aria-label": "Consent line",
+    style: {
+      width: '100%',
+      marginTop: 2
+    },
+    value: line,
+    onChange: e => {
+      setLine(e.target.value);
+      setCopied(false);
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      marginTop: 2
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: copyLine
+  }, copied ? 'Copied' : 'Copy the line'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: saveLine,
+    disabled: !consent || line === consent.line
+  }, "Save my wording"), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: speak,
+    onChange: e => setSpeak(e.target.checked)
+  }), " Say it aloud when recording starts"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...small,
+      marginBottom: 6
+    }
+  }, st && st.system_audio ? st.system_audio.reason : ''), /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       width: '100%',
@@ -39583,7 +39992,14 @@ function MeetingsPanel() {
     type: "checkbox",
     checked: keepAudio,
     onChange: e => setKeepAudio(e.target.checked)
-  }), " Keep the audio (encrypted)"), /*#__PURE__*/React.createElement("label", null, "Stop after ", /*#__PURE__*/React.createElement("select", {
+  }), " Keep the audio (encrypted)"), /*#__PURE__*/React.createElement("label", {
+    title: st && st.system_audio && !st.system_audio.available ? st.system_audio.reason : ''
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: sysAudio,
+    disabled: !!(st && st.system_audio && !st.system_audio.available),
+    onChange: e => setSysAudio(e.target.checked)
+  }), " Also record the other side of the call (kept separate: You / Them)"), /*#__PURE__*/React.createElement("label", null, "Stop after ", /*#__PURE__*/React.createElement("select", {
     value: maxH,
     onChange: e => setMaxH(Number(e.target.value))
   }, [1, 2, 3, 4].map(h => /*#__PURE__*/React.createElement("option", {
@@ -39599,14 +40015,91 @@ function MeetingsPanel() {
   }, "Cancel"), /*#__PURE__*/React.createElement("button", {
     className: "btn active",
     onClick: start,
-    disabled: busy
-  }, "I've told everyone \u2014 start recording"))), msg && /*#__PURE__*/React.createElement("div", {
+    disabled: busy || !startReady
+  }, consent && consent.mode === 'owner_decides' ? "I've checked what applies — start recording" : "I've told everyone — start recording"))), msg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#00d4ff',
       marginTop: 6
     }
-  }, msg), open && /*#__PURE__*/React.createElement("div", {
+  }, msg), open && ret && /*#__PURE__*/React.createElement("div", {
+    role: "group",
+    "aria-label": "Keeping and deleting",
+    style: {
+      ...box,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#eef1f6',
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "Keeping and deleting"), /*#__PURE__*/React.createElement("div", {
+    style: small
+  }, "Nothing is chosen for you. Until you choose, nothing is deleted on a timer."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#cfd6e4',
+      marginTop: 6
+    }
+  }, "Audio"), ret.audio.options.map(o => /*#__PURE__*/React.createElement("label", {
+    key: o.value,
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "radio",
+    name: "mtg-audio-ret",
+    checked: ret.audio.selected === o.value,
+    onChange: () => setRetention({
+      audio: o.value
+    })
+  }), " ", o.label, o.recommended ? ' (Recommended)' : '', " ", /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, o.hint))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#cfd6e4',
+      marginTop: 6
+    }
+  }, "Transcripts and notes"), ret.text.options.map(o => /*#__PURE__*/React.createElement("label", {
+    key: o.value,
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "radio",
+    name: "mtg-text-ret",
+    checked: ret.text.selected === o.value,
+    onChange: () => setRetention({
+      text: o.value
+    })
+  }), " ", o.label, " ", /*#__PURE__*/React.createElement("span", {
+    style: small
+  }, o.hint))), ret.text.selected === 'days' && /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: '#cfd6e4'
+    }
+  }, "After ", /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "1",
+    max: "3650",
+    style: {
+      width: 70
+    },
+    defaultValue: ret.text.days,
+    onBlur: e => setRetention({
+      days: Number(e.target.value)
+    })
+  }), " days")), open && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8
     }
@@ -39614,6 +40107,7 @@ function MeetingsPanel() {
     style: small
   }, "No recorded meetings."), list.map(m => /*#__PURE__*/React.createElement("div", {
     key: m.id,
+    ...fridayRow('meeting', m.id, m.title, meetingFacets(m)),
     onClick: () => openMeeting(m.id),
     style: {
       display: 'flex',
@@ -39659,15 +40153,21 @@ function MeetingsPanel() {
   }, sel.title), sel.has_audio && /*#__PURE__*/React.createElement("a", {
     className: "btn",
     href: '/api/meetings/' + sel.id + '/audio'
-  }, "Audio"), /*#__PURE__*/React.createElement("button", {
+  }, "Audio"), sel.has_audio && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => delAudio(sel),
+    style: {
+      color: '#fca5a5'
+    }
+  }, "Delete audio only"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     onClick: () => del(sel),
     style: {
       color: '#fca5a5'
     }
-  }, "Delete")), /*#__PURE__*/React.createElement("div", {
+  }, "Delete meeting")), /*#__PURE__*/React.createElement("div", {
     style: small
-  }, (sel.started_at || '').replace('T', ' ').slice(0, 16), " \xB7 ", meetingClock(sel.duration_s), " \xB7 microphone only", sel.stop_reason && sel.stop_reason !== 'owner' ? ' · stopped: ' + sel.stop_reason.replace('_', ' ') : ''), s.status === 'done' ? /*#__PURE__*/React.createElement("div", {
+  }, (sel.started_at || '').replace('T', ' ').slice(0, 16), " \xB7 ", meetingClock(sel.duration_s), " \xB7 ", sel.system_audio ? 'microphone and system audio' : 'microphone only', sel.stop_reason && sel.stop_reason !== 'owner' ? ' · stopped: ' + sel.stop_reason.replace('_', ' ') : ''), s.status === 'done' ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 8,
       fontSize: 12,
@@ -39741,7 +40241,10 @@ function MeetingsPanel() {
     style: {
       marginLeft: 8
     }
-  }, "Write notes again")), fu && /*#__PURE__*/React.createElement("div", {
+  }, "Write notes again")), window.MeetingsExtras && sel.state !== 'recording' && /*#__PURE__*/React.createElement(window.MeetingsExtras.After, {
+    meeting: sel,
+    reload: () => openMeeting(sel.id)
+  }), fu && /*#__PURE__*/React.createElement("div", {
     style: {
       ...box,
       marginTop: 8
@@ -39826,7 +40329,57 @@ function MeetingsPanel() {
       fontSize: 10,
       color: '#8a93a6'
     }
-  }, meetingClock(g.t), " "), g.text)))));
+  }, meetingClock(g.t), " "), g.speaker ? /*#__PURE__*/React.createElement("b", null, g.speaker, ": ") : null, g.text)))));
+}
+
+fridayDeclareNav('meetings', {
+  keys: ['meeting_id', 'start'],
+  sections: []
+});
+// The Meetings workspace: the recorder and past meetings, then the question box over their archive.
+function MeetingsWS() {
+  const Ex = window.MeetingsExtras;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ws-fill meetings-ws",
+    style: {
+      overflowY: 'auto',
+      padding: 12
+    }
+  }, /*#__PURE__*/React.createElement(MeetingsPanel, {
+    inWorkspace: true
+  }), Ex ? /*#__PURE__*/React.createElement(Ex.Archive, null) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#8a93a6'
+    }
+  }, "The meetings search did not load."));
+}
+// Calendar's link to the workspace that holds the recorder and the notes.
+function MeetingsLink() {
+  const go = () => {
+    const nav = {
+      workspace: 'meetings'
+    };
+    if (window.fridayOpenWorkspace) window.fridayOpenWorkspace(nav);else fridayNavigate(nav);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "meetings-link",
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: '#8a93a6'
+    }
+  }, "Recording, notes and past meetings have a place of their own now."), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: go
+  }, "Open Meetings"));
 }
 
 // ═══ DRAFT PREVIEW HELPERS ═══
@@ -47575,69 +48128,6 @@ function RtTrayCard({
   }, "open full tree ↗")));
 }
 
-/* The tray's REASONING section: every live root trace (running first,
-   then those finished in the last ten minutes). */
-function ReasoningTraySection({
-  onOpenViewer
-}) {
-  const snap = useTraceStore(s => [s.ready(), s.error()].concat(s.roots()), true);
-  const ready = snap[0],
-    err = snap[1],
-    roots = snap.slice(2);
-  const [open, setOpen] = useState({});
-  const runningN = roots.filter(t => t.status === 'running').length;
-  const MAX = 6;
-  return rtEl(React.Fragment, null, rtEl("div", {
-    className: "notif-section-header"
-  }, rtEl("span", null, "REASONING", runningN ? ' · ' + runningN + ' LIVE' : ''), onOpenViewer && rtEl("button", {
-    onClick: onOpenViewer,
-    title: "Browse, search and verify every recorded reasoning trace",
-    style: {
-      background: 'rgba(0,212,255,0.06)',
-      border: '1px solid rgba(0,212,255,0.25)',
-      color: '#00d4ff',
-      cursor: 'pointer',
-      fontSize: 9,
-      fontFamily: 'JetBrains Mono',
-      borderRadius: 4,
-      padding: '1px 6px'
-    }
-  }, "💭 Traces")), rtEl("div", {
-    style: {
-      padding: '6px 10px 2px'
-    }
-  }, !ready ? rtMuted(err ? 'reasoning feed unavailable — ' + err : 'loading reasoning…', err ? {
-    color: '#f87171'
-  } : null) : roots.length === 0 ? rtEl("div", {
-    className: "notif-empty",
-    style: {
-      padding: '8px 4px'
-    }
-  }, "No reasoning in the last 10 minutes") : roots.slice(0, MAX).map(t => rtEl(RtTrayCard, {
-    key: t.trace_id,
-    trace: t,
-    open: !!open[t.trace_id],
-    onToggle: () => setOpen(o => Object.assign({}, o, {
-      [t.trace_id]: !o[t.trace_id]
-    }))
-  })), ready && roots.length > MAX && rtEl("button", {
-    onClick: onOpenViewer,
-    style: {
-      background: 'none',
-      border: 'none',
-      color: 'rgba(0,212,255,0.75)',
-      cursor: 'pointer',
-      fontSize: 9,
-      fontFamily: RT_MONO,
-      padding: '0 0 6px'
-    }
-  }, "+", roots.length - MAX, " more — open Traces"), ready && err && rtMuted('feed interrupted — ' + err + ' (retrying)', {
-    color: '#f59e0b'
-  })), rtEl("div", {
-    className: "notif-section-divider"
-  }));
-}
-
 /* Collapsible "Reasoning" above a Friday reply that carries a trace_id.
    While the reply streams the header says so and shows the latest line;
    expanded, the full tree spools from the live store (or is fetched). */
@@ -50599,6 +51089,22 @@ function SetupChat({
         action: 'skip'
       }, '')
     });
+  } else if (card === 'knowledge') {
+    cardEl = /*#__PURE__*/React.createElement("div", {
+      className: "sc-card"
+    }, /*#__PURE__*/React.createElement("h2", {
+      tabIndex: -1,
+      "data-sc-focus": ""
+    }, "Start with your knowledge"), /*#__PURE__*/React.createElement(KnowledgePanel, {
+      mode: "setup",
+      busy: busy,
+      onSaved: s => answer({
+        action: 'done',
+        local: s.local,
+        cloud: s.cloud
+      }, ''),
+      onSkip: () => answer('skip', '')
+    }));
   } else if (card === 'finish') {
     cardEl = /*#__PURE__*/React.createElement(SetupFinishCard, {
       state: st,
@@ -50723,11 +51229,15 @@ function SetupChat({
 }
 
 // ── Settings: the setup checklist and "Your profile" ────────────────────────
-function SettingsSetupChecklist() {
+function SettingsSetupChecklist({
+  s
+}) {
   return /*#__PURE__*/React.createElement(StSection, {
     title: "Setup checklist",
     desc: ("Everything " + fridayName() + " can connect to, with exactly what each one asks for. Anything you skipped in the setup chat waits here.")
-  }, /*#__PURE__*/React.createElement(SetupConnectionsPanel, null));
+  }, /*#__PURE__*/React.createElement(SetupConnectionsPanel, null), /*#__PURE__*/React.createElement(QuietHoursOffer, {
+    s: s
+  }));
 }
 function SettingsYourProfile() {
   const [p, setP] = React.useState(null);
@@ -52061,7 +52571,7 @@ function PrivacyHoldCard({
         e.preventDefault();
         onCancel && onCancel();
       }
-      if (e.key === 'Enter' && !waiting) {
+      if (e.key === 'Enter' && !waiting && ((hold && hold.options) || []).some(o => o.id === 'wait')) {
         e.preventDefault();
         setWaiting(true);
       }
@@ -52112,13 +52622,13 @@ function PrivacyHoldCard({
       fontSize: 12,
       color: '#f59e0b'
     }
-  }, "Held for privacy"), /*#__PURE__*/React.createElement("span", {
+  }, hold && hold.title || "Held for privacy"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 9,
       color: 'rgba(255,255,255,0.35)',
       fontFamily: 'JetBrains Mono'
     }
-  }, "full check starting")), /*#__PURE__*/React.createElement("div", {
+  }, hold && hold.badge || "full check starting")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'rgba(255,255,255,0.72)',
@@ -52176,7 +52686,7 @@ function PrivacyHoldCard({
       color: '#f59e0b',
       marginTop: 8
     }
-  }, waiting ? '⏳ Waiting for the full privacy check — it sends by itself when ready.' : '⏸ Nothing has been sent yet.'), /*#__PURE__*/React.createElement("button", {
+  }, waiting ? '⏳ Waiting for the full privacy check — it sends by itself when ready.' : '⏸ ' + (hold && hold.status || 'Nothing has been sent yet.')), /*#__PURE__*/React.createElement("button", {
     onClick: onCancel,
     style: {
       marginTop: 7,
@@ -54546,6 +55056,13 @@ function CloudConsentRow({ consent, onChanged, compact }) {
       else setMsg((j && j.message) || 'Not recorded.');
     }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
   };
+  // "Not measured" offers Measure now: an idle background job, never during a call.
+  const measureNow = () => {
+    setBusy(true); setMsg('');
+    apiFetch('/api/voice/local-readiness/measure', { method: 'POST' }).then(r => r.json()).then(j => {
+      setMsg(j && j.status === 'ok' ? 'Queued. It runs when you have been away for a few minutes.' : ((j && j.message) || 'Could not queue the measurement.'));
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
   const when = c.at ? new Date(c.at) : null;
   const whenTxt = when && !isNaN(when) ? when.toLocaleDateString() : (c.source === 'legacy_unrestricted_cloud_flag' ? 'legacy flag' : 'never');
   const choiceTxt = c.answered === false || !c.choice ? 'not answered (gated)'
@@ -54556,8 +55073,15 @@ function CloudConsentRow({ consent, onChanged, compact }) {
     E('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
       E('span', { style: { color: 'rgba(255,255,255,0.9)' } }, 'Cloud consent: ' + choiceTxt),
       E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, 'answered ' + whenTxt),
-      c.snapshot_capable === false && E('span', { style: { color: '#f59e0b' } },
-        'the machine said local was not capable' + (c.snapshot_why ? ': ' + c.snapshot_why : '')),
+      c.snapshot_capable === false && (c.snapshot_state === 'refused'
+        ? E('span', { style: { color: '#f59e0b' } },
+          'the machine said local was not capable' + (c.snapshot_why ? ': ' + c.snapshot_why : ''))
+        : E('span', { style: { color: '#f59e0b' } },
+          'local was not measured when this was answered, so nothing has said it cannot run' + (c.snapshot_why ? ' (' + c.snapshot_why + ')' : ''))),
+      c.snapshot_capable === false && c.snapshot_state !== 'refused' && E('button', {
+        className: 'settings-btn', disabled: busy, onClick: measureNow,
+        style: { fontSize: 10, padding: '3px 9px' },
+      }, 'Measure now'),
       E('button', {
         className: 'settings-btn', disabled: busy, onClick: reask,
         style: { fontSize: 10, padding: '3px 9px' },
@@ -54569,7 +55093,9 @@ function CloudConsentRow({ consent, onChanged, compact }) {
     },
       E('div', { style: { color: cap && cap.capable ? '#00ff80' : '#f59e0b', marginBottom: 6 } },
         cap && cap.capable ? 'This machine can run private-local today.'
-          : 'This machine still cannot run the full private-local set: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'no reason given') + '.'),
+          : cap && cap.state === 'unknown'
+            ? 'This machine has not been measured for the full private-local set yet: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'nothing measured') + '. That is not the same as it not working.'
+            : 'This machine still cannot run the full private-local set: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'no reason given') + '.'),
       E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
         cap && cap.capable && E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('local_private') },
           'Keep it local and private'),
@@ -55669,8 +56195,25 @@ function PushToTranscribeRows({ s, save }) {
         /*#__PURE__*/React.createElement("li", null, "The recording is discarded as soon as it has been transcribed."),
         /*#__PURE__*/React.createElement("li", null, "Turning Push-to-Transcribe off removes the hook entirely.")))));
 }
+const KOKORO_VOICE_LABELS = [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']];
+// The picker lists the voices installed on this computer (the same inventory
+// the podcast renderer speaks from). A voice already chosen but not installed
+// stays visible and is marked, so the select never silently shows another.
+function kokoroVoiceOptions(inv, current) {
+  const installed = inv && Array.isArray(inv.installed) ? inv.installed : null;
+  const rows = KOKORO_VOICE_LABELS.filter(([v]) => !installed || installed.includes(v));
+  (installed || []).forEach(v => { if (!KOKORO_VOICE_LABELS.some(([k]) => k === v)) rows.push([v, v]); });
+  if (current && !rows.some(([v]) => v === current)) rows.push([current, current + ' (not installed)']);
+  return rows.map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l));
+}
 function VoiceStackCard({ s, save, mc }) {
   const [manifest, setManifest] = useState(null);
+  const [kokoroInv, setKokoroInv] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    fetch('/api/podcasts/voices').then(r => r.json()).then(d => { if (!stop && d && Array.isArray(d.installed)) setKokoroInv({ installed: d.installed, error: d.engine_error || '' }); }).catch(() => {});
+    return () => { stop = true; };
+  }, []);
   const [err, setErr] = useState('');
   const [note, setNote] = useState('');
   const pollRef = useRef(null);
@@ -55737,8 +56280,89 @@ function VoiceStackCard({ s, save, mc }) {
         policyRow('voice_mouth_gpu', 'Graphics card'),
         sel === 'kokoro' && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 } },
           /*#__PURE__*/React.createElement("select", { className: "input", style: { width: '100%' }, value: s.local_voice_kokoro_voice || 'af_heart', onChange: e => save({ local_voice_kokoro_voice: e.target.value }) },
-            [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']].map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l))),
+            kokoroVoiceOptions(kokoroInv, s.local_voice_kokoro_voice || 'af_heart')),
+          kokoroInv && kokoroInv.error && /*#__PURE__*/React.createElement("div", { role: "status", style: { fontSize: 11, opacity: 0.8, marginTop: 4, lineHeight: 1.45 } }, kokoroInv.error),
           /*#__PURE__*/React.createElement("button", { className: `settings-btn ${s.local_voice_kokoro_allow_cpu ? 'active' : ''}`, style: { fontSize: 11, padding: '5px 10px', marginTop: 6 }, onClick: () => save({ local_voice_kokoro_allow_cpu: !s.local_voice_kokoro_allow_cpu }) }, s.local_voice_kokoro_allow_cpu ? 'Kokoro on the processor: allowed (default; slower than the card)' : 'Kokoro on the processor: off (Piper speaks when the card is busy)')))));
+}
+// ── Settings → Voice → Local voice readiness (Laya in every mode, LV-7) ──
+// Why the voice is on the cloud (your choice / local not ready / local not
+// measured), "Measure now" for a PC nobody has measured, the idle measuring
+// job's progress, and the one-time switch offer: both choices, nothing
+// preselected. "Not measured" is never worded as "can't". Everything shown
+// comes from /api/voice/local-readiness; this component decides nothing.
+function LocalVoiceReadiness({ s }) {
+  const E = React.createElement;
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const pollRef = useRef(null);
+  const load = useCallback(() => fetch('/api/voice/local-readiness').then(r => r.json()).then(d => { if (d && d.status === 'ok') setSt(d); }).catch(() => {}), []);
+  useEffect(() => { load(); }, [load, s.voice_engine, s.local_voice_switch_offer]);
+  // The Mode row asked "just this call, or always?" (or an answer moved the engine): look again.
+  useEffect(() => {
+    const again = () => load();
+    window.addEventListener('friday:cloud-voice-asked', again);
+    return () => window.removeEventListener('friday:cloud-voice-asked', again);
+  }, [load]);
+  // While a job waits or runs, look again every few seconds so its progress is true.
+  useEffect(() => {
+    clearTimeout(pollRef.current);
+    const j = st && st.job;
+    if (j && (j.state === 'waiting' || j.state === 'running')) pollRef.current = setTimeout(load, 5000);
+    return () => clearTimeout(pollRef.current);
+  }, [st, load]);
+  const post = (url, body) => {
+    setBusy(true); setMsg('');
+    return apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.status === 'ok') { setSt(d); setMsg(d.message || ''); try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {} try { fridayInvalidateModelCatalog(); } catch (_) {} }
+        else setMsg((d && d.message) || 'That did not go through.');
+      })
+      .catch(() => setMsg('Could not reach the server.'))
+      .finally(() => setBusy(false));
+  };
+  if (!st) return null;
+  const job = st.job || {};
+  const queued = job.state === 'waiting' || job.state === 'running';
+  const why = st.why_cloud || {};
+  const offer = st.offer;
+  const word = st.voice_state === 'capable' ? 'Local voice runs well on this PC.'
+    : st.voice_state === 'refused' ? 'Local voice is not ready on this PC' + (st.why ? ': ' + st.why : '') + '.'
+    : 'Local voice is not measured on this PC yet. That is not the same as it not working.';
+  const color = st.voice_state === 'capable' ? '#00ff80' : st.voice_state === 'refused' ? '#ef4444' : 'var(--warn, #e0a030)';
+  const when = st.assessed_at ? new Date(st.assessed_at) : null;
+  return E(StRow, { label: 'Local voice', desc: 'Whether voice can run on this PC, and why ' + fridayName() + ' is on cloud voice when she is. Measuring loads the voice models once, when you are away, and never during a call.', settingKey: 'local_voice_readiness' },
+    E('div', { style: { fontSize: 12, lineHeight: 1.5 } },
+      E('div', null, E('span', { style: { color, marginRight: 6 } }, st.voice_state === 'capable' ? '●' : st.voice_state === 'refused' ? '✕' : '○'), word),
+      why.on_cloud && E('div', { style: { fontSize: 11, opacity: 0.8, marginTop: 4 }, 'data-why-cloud': why.reason }, E('b', null, 'Why cloud voice: '), why.text),
+      st.voice_state === 'unknown' && E('div', { style: { marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+        E('button', { className: 'settings-btn', style: { fontSize: 11, padding: '5px 12px' }, disabled: busy || queued, onClick: () => post('/api/voice/local-readiness/measure') }, queued ? 'Measure queued' : 'Measure now'),
+        queued && E('span', { role: 'status', style: { fontSize: 11, opacity: 0.8 } }, job.phase || 'Waiting for you to be away')),
+      st.voice_state !== 'unknown' && queued && E('div', { role: 'status', style: { fontSize: 11, opacity: 0.8, marginTop: 6 } }, job.phase || 'Checking what this PC can run'),
+      when && !isNaN(when) && E('div', { style: { fontSize: 11, opacity: 0.55, marginTop: 6 } }, 'Last checked ' + when.toLocaleDateString()),
+      offer && E('div', { 'data-local-voice-offer': '1', style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, lineHeight: 1.5 } },
+        E('div', { style: { fontWeight: 600, marginBottom: 6 } }, offer.title),
+        E('div', { style: { marginBottom: 8 } }, offer.body),
+        E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          (offer.choices || []).map(c => E('button', { key: c.id, className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/local-readiness/offer', { choice: c.id }) }, c.label + (c.recommended ? ' (Recommended)' : ''))))),
+      st.cloud_choice && E('div', { 'data-cloud-choice': st.cloud_choice.scope, style: { fontSize: 11, opacity: 0.8, marginTop: 6 } },
+        (st.cloud_choice.scope === 'always' ? 'Cloud voice, always' : 'Cloud voice, just this call')
+          + (st.cloud_choice.reason_text ? ' (' + st.cloud_choice.reason_text + ')' : '')
+          + (st.cloud_choice.at ? ', since ' + new Date(st.cloud_choice.at * 1000).toLocaleString() : '')),
+      st.cloud_question && E('div', { 'data-cloud-voice-question': '1', style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, lineHeight: 1.5 } },
+        E('div', { style: { fontWeight: 600, marginBottom: 6 } }, st.cloud_question.question),
+        st.cloud_question.reason_text && E('div', { style: { fontSize: 11, opacity: 0.8, marginBottom: 6 } }, st.cloud_question.reason_text + '.'),
+        (st.cloud_question.choices || []).map(c => E('div', { key: c.id, style: { marginBottom: 8 } },
+          E('button', { className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/cloud-switch/answer', { choice: c.id, id: st.cloud_question.id }) }, c.label + (c.recommended ? ' (Recommended)' : '')),
+          E('div', { style: { fontSize: 11, opacity: 0.7, marginTop: 2 } }, c.detail))),
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/cloud-switch/answer', { choice: 'cancel', id: st.cloud_question.id }) }, 'Stay on local voice')),
+      st.switch_back && E('div', { 'data-switch-back-offer': '1', style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, lineHeight: 1.5 } },
+        E('div', { style: { fontWeight: 600, marginBottom: 6 } }, st.switch_back.title),
+        E('div', { style: { marginBottom: 8 } }, st.switch_back.body),
+        E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          (st.switch_back.choices || []).map(c => E('button', { key: c.id, className: 'settings-btn', style: { fontSize: 11 }, disabled: busy, onClick: () => post('/api/voice/local-readiness/switch-back', { choice: c.id, id: st.switch_back.id }) }, c.label + (c.recommended ? ' (Recommended)' : ''))))),
+      msg && E('div', { role: 'status', style: { fontSize: 11, opacity: 0.8, marginTop: 6 } }, msg)));
 }
 // ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
 // One row of modes for the `voice_engine` setting. `auto` is gone from the
@@ -55749,6 +56373,7 @@ function VoiceStackCard({ s, save, mc }) {
 function VoiceModePicker({ s, save, mc }) {
   const [providers, setProviders] = useState([]);
   const [pending, setPending] = useState(null);   // {id, label, lines}
+  const [refusal, setRefusal] = useState('');       // why cloud voice was refused (local-only mode)
   useEffect(() => {
     fetch('/api/voice/cloud/providers').then(r => r.json()).then(d => setProviders(d && d.providers || [])).catch(() => {});
   }, []);
@@ -55795,11 +56420,12 @@ function VoiceModePicker({ s, save, mc }) {
       }, o.label))),
       rows.filter(o => o.id === cur).map(o => /*#__PURE__*/React.createElement("div", { key: 'cur', style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, o.desc)),
       rows.filter(o => o.off && o.reason).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.label, " unavailable:"), " ", o.reason)),
+      refusal && /*#__PURE__*/React.createElement("div", { role: "status", 'data-cloud-voice-refused': '1', style: { fontSize: 11, opacity: 0.85, marginTop: 6, lineHeight: 1.45 } }, refusal),
       pending && /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
         /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, marginBottom: 6 } }, "Before switching to ", pending.label),
         pending.lines.map(([k, v]) => /*#__PURE__*/React.createElement("div", { key: k, style: { marginBottom: 4 } }, /*#__PURE__*/React.createElement("b", null, k, ": "), v)),
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
-          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { save({ voice_engine: pending.id }); setPending(null); } }, "Switch to ", pending.label),
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { if (pending.id === 'gemini') { apiFetch('/api/voice/cloud-switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'settings' }) }).then(r => r.json()).then(d => { setRefusal(d && (d.status === 'refused' || d.status === 'error') ? (d.message || 'Cloud voice is not allowed in this mode.') : ''); try { window.dispatchEvent(new CustomEvent('friday:cloud-voice-asked')); } catch (_) {} }).catch(() => {}); } else { save({ voice_engine: pending.id }); } setPending(null); } }, pending.id === 'gemini' ? 'Continue: just this call or always?' : 'Switch to ' + pending.label),
           /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => setPending(null) }, "Keep ", cur)))));
 }
 // ── Settings → Voice → Local voice models ────────────────────────────────
@@ -56019,6 +56645,8 @@ function SettingsTabVoice({
     s: s,
     save: save,
     mc: mc
+  }), /*#__PURE__*/React.createElement(LocalVoiceReadiness, {
+    s: s
   }), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
     label: "Gemini Live model",
     desc: "The speech-to-speech model the cloud engine uses."
@@ -56223,7 +56851,32 @@ function SettingsTabVoice({
       voice_tools: s.voice_tools === false
     }),
     desc: ("Lets " + fridayName() + " call her tools mid-conversation.")
-  }), /*#__PURE__*/React.createElement(StSavedSlider, {
+  }), /*#__PURE__*/React.createElement("div", {
+    role: "group",
+    "aria-label": "Trim what each call carries",
+    style: { padding: '10px 0' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 13, fontWeight: 600 }
+  }, "Trim what each call carries"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 11.5, opacity: 0.8, margin: '4px 0 8px', lineHeight: 1.5 }
+  }, "Each voice call re-sends a briefing and a list of tools every turn. In our offline test that was about 33K tokens before and about 6K trimmed (an estimate; yours depends on what she remembers about you). Her safety rules are always kept. Measure only changes nothing: it logs on this PC, as counts, what trimming would have left out and whether you then needed it."), /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 10, flexWrap: 'wrap' }
+  }, [['off','Off','Send everything, as before.'],['shadow','Measure only (recommended)','Send everything, and log what trimming would have dropped.'],['on','Trim','Send a short voice-only briefing and about 20 tools. Ask for more tools by voice.']].map(([v, l, d]) => {
+    const cur = (s.voice_live_trim || 'shadow') === v;
+    return /*#__PURE__*/React.createElement("div", {
+      key: v,
+      style: { flex: '1 1 150px', minWidth: 150 }
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-pressed": cur,
+      onClick: () => save({
+        voice_live_trim: v
+      }),
+      style: { width: '100%', padding: '6px 10px', cursor: 'pointer', fontSize: 12.5, borderRadius: 6, border: '1px solid ' + (cur ? 'var(--st-accent)' : 'var(--st-border, rgba(255,255,255,0.18))'), background: cur ? 'rgba(0,229,255,0.12)' : 'transparent', color: 'inherit' }
+    }, l, cur ? ' \u00b7 in use' : ''), /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 11, opacity: 0.7, marginTop: 3, lineHeight: 1.4 }
+    }, d));
+  }))), /*#__PURE__*/React.createElement(StSavedSlider, {
     label: /*#__PURE__*/React.createElement("span", null, "Variety", s.voice_temperature != null && /*#__PURE__*/React.createElement("button", {
       type: "button",
       onClick: () => save({
@@ -56355,6 +57008,174 @@ function PrivacyCheckLayers() {
     }, l.status));
   }));
 }
+// Cloud context slicing (spec 9.5a, decision D8): what a cloud model is sent
+// besides the message. The choice is offered once, at the first cloud turn, and
+// lives in Settings > Privacy. Nothing is preselected: a button shows as chosen
+// only after it has been.
+const SLICING_CHOICES = [{
+  id: 'slice',
+  label: 'Send only what each turn needs',
+  tag: ' (Recommended)',
+  note: 'A cloud model gets the personal context a message needs and nothing else. If it needs more, it asks and you decide.'
+}, {
+  id: 'everything',
+  label: 'Send everything as before',
+  tag: '',
+  note: 'A cloud model gets the same context a local one does, after the privacy gate has run.'
+}];
+function useCloudSlicing() {
+  const [st, setSt] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const s = d && d.settings || {};
+      setSt({
+        choice: s.cloud_context_slicing || '',
+        offer: s.cloud_context_slicing_offer || ''
+      });
+    }).catch(() => setSt({
+      choice: '',
+      offer: '',
+      error: true
+    }));
+  }, []);
+  useEffect(() => {
+    load();
+    const on = () => load();
+    window.addEventListener('friday:slicing-offer', on);
+    window.addEventListener('friday:settings-changed', on);
+    return () => {
+      window.removeEventListener('friday:slicing-offer', on);
+      window.removeEventListener('friday:settings-changed', on);
+    };
+  }, [load]);
+  const save = useCallback(patch => apiFetch('/api/settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      settings: patch
+    })
+  }).then(r => r.json()).then(() => {
+    load();
+    try {
+      window.dispatchEvent(new CustomEvent('friday:settings-changed'));
+    } catch (_) {}
+  }).catch(() => {}), [load]);
+  return [st, save];
+}
+function CloudSlicingButtons({
+  st,
+  save
+}) {
+  const E = React.createElement;
+  return E('div', {
+    role: 'radiogroup',
+    'aria-label': 'What a cloud model is sent',
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8
+    }
+  }, SLICING_CHOICES.map(c => {
+    const on = st.choice === c.id;
+    return E('button', {
+      key: c.id,
+      type: 'button',
+      role: 'radio',
+      'aria-checked': on,
+      className: 'btn',
+      'data-testid': 'cloud-slicing-' + c.id,
+      style: {
+        textAlign: 'left',
+        padding: '8px 10px',
+        borderColor: on ? 'var(--fr-cyan)' : undefined,
+        background: on ? 'var(--fr-cyan-soft)' : undefined
+      },
+      onClick: () => save({
+        cloud_context_slicing: c.id,
+        cloud_context_slicing_offer: 'done'
+      })
+    }, E('div', {
+      style: {
+        fontSize: 'var(--fr-text-base)'
+      }
+    }, c.label + c.tag), E('div', {
+      style: {
+        fontSize: 'var(--fr-text-sm)',
+        color: 'var(--fr-dim)',
+        marginTop: 2
+      }
+    }, c.note));
+  }));
+}
+function CloudSlicingSettings() {
+  const E = React.createElement;
+  const [st, save] = useCloudSlicing();
+  if (!st) return null;
+  return E('div', null, E('div', {
+    style: {
+      fontSize: 'var(--fr-text-md)',
+      color: 'var(--fr-dim)',
+      lineHeight: 1.6,
+      marginBottom: 10
+    }
+  }, 'Which of your personal context (notes, people, tasks, calendar, career, memory, your screen) goes to a cloud model with your message. Local models always get all of it. ' + fridayName() + '’s identity and your rules are always sent.'), E(CloudSlicingButtons, {
+    st: st,
+    save: save
+  }), !st.choice && E('div', {
+    style: {
+      fontSize: 'var(--fr-text-sm)',
+      color: 'var(--fr-dim)',
+      marginTop: 8
+    }
+  }, 'You have not chosen yet. Until you do, cloud models get everything, as before.'));
+}
+function CloudSlicingCard() {
+  const E = React.createElement;
+  const [st, save] = useCloudSlicing();
+  if (!st || st.offer !== 'pending' || st.choice) return null;
+  return E('div', {
+    className: 'card',
+    role: 'dialog',
+    'aria-label': 'What a cloud model is sent',
+    'data-testid': 'cloud-slicing-offer',
+    style: {
+      position: 'fixed',
+      bottom: 16,
+      right: 16,
+      zIndex: 9700,
+      width: 'min(420px, calc(100vw - 32px))',
+      padding: 12,
+      border: '1px solid var(--fr-glass-edge)'
+    }
+  }, E('div', {
+    className: 'card-title'
+  }, 'One question about cloud models'), E('div', {
+    style: {
+      fontSize: 'var(--fr-text-md)',
+      color: 'var(--fr-dim)',
+      lineHeight: 1.6,
+      margin: '6px 0 10px'
+    }
+  }, fridayName() + ' can send a cloud model only the personal context each message needs, instead of everything she has ready. Pick how you want it. You can change this later in Settings > Privacy.'), E(CloudSlicingButtons, {
+    st: st,
+    save: save
+  }), E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'cloud-slicing-later',
+    style: {
+      fontSize: 11,
+      padding: '2px 8px',
+      marginTop: 8
+    },
+    onClick: () => save({
+      cloud_context_slicing_offer: 'done'
+    })
+  }, 'Decide later in Settings'));
+}
+
 function PrivacyCloudConsent() {
   const E = React.createElement;
   const [st, setSt] = useState(null);
@@ -56369,6 +57190,7 @@ function PrivacyCloudConsent() {
     consent: {
       answered: st.answered, choice: st.choice, at: st.at, source: st.source,
       snapshot_capable: snap.capable,
+      snapshot_state: st.snapshot_state || snap.state,
       snapshot_why: snap.why || (snap.roles && snap.roles.text && snap.roles.text.why) || snap.chain_why,
     },
     onChanged: load,
@@ -56688,12 +57510,74 @@ function SettingsTabPrivacy({
     s: s,
     save: save
   })), /*#__PURE__*/React.createElement(StSection, {
+    title: "What cloud models are sent"
+  }, /*#__PURE__*/React.createElement(CloudSlicingSettings, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Privacy check",
     desc: ("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")
   }, /*#__PURE__*/React.createElement(PrivacyCheckLayers, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Meeting recordings",
+    desc: ("How long " + fridayName() + " keeps what she records in Meetings. Nothing is chosen for you; until you choose, nothing is deleted on a timer. Deleting audio never touches the transcript or notes.")
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Audio",
+    settingKey: "meeting_audio_retention"
+  }, /*#__PURE__*/React.createElement(StSelect, {
+    ariaLabel: "How long to keep meeting audio",
+    value: s.meeting_audio_retention || '',
+    onChange: e => save({
+      meeting_audio_retention: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "",
+    disabled: true
+  }, "Choose\u2026"), /*#__PURE__*/React.createElement("option", {
+    value: "delete_after_notes"
+  }, "Delete it once the notes are made (Recommended)"), /*#__PURE__*/React.createElement("option", {
+    value: "30_days"
+  }, "Delete it after 30 days"), /*#__PURE__*/React.createElement("option", {
+    value: "keep"
+  }, "Keep it until I delete it"))), /*#__PURE__*/React.createElement(StRow, {
+    label: "Transcripts and notes",
+    settingKey: "meeting_text_retention",
+    desc: "Deleting them removes the whole meeting, audio included."
+  }, /*#__PURE__*/React.createElement(StSelect, {
+    ariaLabel: "How long to keep meeting transcripts and notes",
+    value: s.meeting_text_retention || '',
+    onChange: e => save({
+      meeting_text_retention: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "",
+    disabled: true
+  }, "Choose\u2026"), /*#__PURE__*/React.createElement("option", {
+    value: "keep"
+  }, "Keep them until I delete them"), /*#__PURE__*/React.createElement("option", {
+    value: "days"
+  }, "Delete them after a number of days")), s.meeting_text_retention === 'days' && /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-label)'
+    }
+  }, "After ", /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "1",
+    max: "3650",
+    style: {
+      width: 80
+    },
+    defaultValue: s.meeting_text_retention_days || 90,
+    onBlur: e => save({
+      meeting_text_retention_days: Math.max(1, Math.min(3650, Number(e.target.value) || 90))
+    })
+  }), " days"))), /*#__PURE__*/React.createElement(StSection, {
     title: "File access",
     desc: "Which files and folders cloud models may read when " + fridayName() + " opens them."
   }, /*#__PURE__*/React.createElement(FileAccessPanel, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Your knowledge",
+    desc: "Notes and documents you want " + fridayName() + " to start with. Each folder has two separate choices: read it on this PC, and, only if you turn it on, let cloud models read it."
+  }, /*#__PURE__*/React.createElement(KnowledgePanel, {
+    mode: "settings"
+  })), /*#__PURE__*/React.createElement(StSection, {
     title: "Library",
     desc: "Documents you add to the Library are read and indexed on this PC, and nothing is sent anywhere. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key."
   }, /*#__PURE__*/React.createElement(LibraryTrackedToggle, null), /*#__PURE__*/React.createElement(StToggle, {
@@ -56744,6 +57628,12 @@ function SettingsTabPrivacy({
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "Laya chat pilot"
   }, /*#__PURE__*/React.createElement(LayaPilotPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
+    title: "What Laya learns about you"
+  }, /*#__PURE__*/React.createElement(LayaLearningPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
+    title: "Instant answers (no model)"
+  }, /*#__PURE__*/React.createElement(LayaReflexPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
+    title: "Safe writes (off until you turn them on)"
+  }, /*#__PURE__*/React.createElement(LayaSafeWritesPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Scheduled jobs: what they may do on their own"
   }, /*#__PURE__*/React.createElement(GovernanceGrantsPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: (fridayName() + "’s rules on this PC")
@@ -56912,6 +57802,134 @@ function SettingsTabPrivacy({
 // loading" or "the download is missing". A switch reading ON while the gate is
 // in fact keyword-only would be the same class of lie the approval log exists
 // to stop.
+// Your knowledge (setup chat "knowledge" stage and Settings > Privacy & Data): start Friday on the
+// notes and documents you already have. The same component in both places. Two separate choices
+// per folder, in plain words: read and index it on this PC (a Library scope, via /api/library/add)
+// and, only if you turn it on, let cloud models read it for 30 days (a file grant, via
+// /api/privacy/file-grants). Nothing is preselected: the folders Friday found start unticked, a
+// folder you pick yourself starts ticked for reading here only, and the cloud choice always starts
+// off and is not offered for a vault or a private folder. Every folder was checked by the server
+// (services/knowledge_folders.py) before it is shown. The words come from the server (one source,
+// {agent} filled in here).
+function KnowledgePanel({ mode, busy, onSaved, onSkip }) {
+  const E = React.createElement;
+  const setup = mode === 'setup';
+  const [copy, setCopy] = useState({});
+  const [rows, setRows] = useState(null);
+  const [local, setLocal] = useState({});
+  const [cloud, setCloud] = useState({});
+  const [typed, setTyped] = useState('');
+  const [notes, setNotes] = useState([]);
+  const [picking, setPicking] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [result, setResult] = useState(null);
+  const T = k => String(copy[k] || '').split('{agent}').join(fridayName());
+  const post = (url, body) => apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(r => r.json().then(d => ({ ok: r.ok, d: d || {} })).catch(() => ({ ok: r.ok, d: {} })));
+  const load = useCallback(() => apiFetch('/api/files/knowledge-suggestions').then(r => r.json()).then(d => {
+    if (d && d.status === 'ok') { setCopy(d.copy || {}); setRows(d.suggestions || []); } else setRows([]);
+  }).catch(() => setRows([])), []);
+  useEffect(() => {
+    apiFetch('/api/files/knowledge-suggestions?copy=only').then(r => r.json()).then(d => { if (d && d.copy) setCopy(d.copy); }).catch(() => {});
+    load();
+  }, [load]);
+  const merge = (list, ticked) => {
+    setRows(cur => {
+      const have = new Set((cur || []).map(r => String(r.path).toLowerCase()));
+      return (cur || []).concat(list.filter(r => !have.has(String(r.path).toLowerCase())));
+    });
+    if (ticked) setLocal(cur => Object.assign({}, cur, ...list.filter(r => r.can_add && !r.added).map(r => ({ [r.path]: true }))));
+  };
+  const pick = () => {
+    setPicking(true);
+    setNotes([]);
+    post('/api/files/pick-folders').then(({ d }) => {
+      if (d && d.status === 'ok') {
+        merge(d.folders || [], true);
+        const out = (d.refused || []).map(x => (x.path || 'That folder') + ': ' + x.error);
+        if (!(d.folders || []).length && !out.length) out.push('Nothing was chosen.');
+        setNotes(out);
+      } else setNotes([(d && d.error) || 'The folder window did not open. Type the folder’s path below instead.']);
+    }).catch(() => setNotes(['The folder window did not open. Type the folder’s path below instead.'])).finally(() => setPicking(false));
+  };
+  const check = e => {
+    if (e) e.preventDefault();
+    const p = typed.trim();
+    if (!p) { setNotes(['Type the path of a folder.']); return; }
+    setNotes([]);
+    post('/api/files/describe-folder', { path: p }).then(({ ok, d }) => {
+      if (ok && d.status === 'ok' && d.folder) { merge([d.folder], true); setTyped(''); }
+      else setNotes([d.error || 'That folder can’t be used.']);
+    }).catch(() => setNotes(['Couldn’t check that folder.']));
+  };
+  const save = async () => {
+    const wantL = (rows || []).filter(r => local[r.path] && r.can_add && !r.added);
+    const wantC = (rows || []).filter(r => cloud[r.path] && r.cloud_offer);
+    if (!wantL.length && !wantC.length) { setNotes([T('nothing_picked')]); return; }
+    setWorking(true);
+    setNotes([]);
+    const lines = [];
+    let nl = 0, nc = 0, failed = 0;
+    for (const r of wantL) {
+      const { ok, d } = await post('/api/library/add', { path: r.path, recursive: true }).catch(() => ({ ok: false, d: {} }));
+      if (ok && d.status === 'ok') { nl++; lines.push({ ok: true, text: 'Reading on this PC: ' + r.name }); }
+      else { failed++; lines.push({ ok: false, text: r.name + ': ' + (d.error || 'it was not added') }); }
+    }
+    for (const r of wantC) {
+      const { ok, d } = await post('/api/privacy/file-grants', { path: r.path, scope: 'folder', expiry_days: 30 }).catch(() => ({ ok: false, d: {} }));
+      if (ok && d.status === 'ok') { nc++; lines.push({ ok: true, text: 'Cloud models may read for 30 days: ' + r.name }); }
+      else { failed++; lines.push({ ok: false, text: r.name + ': ' + (d.error || d.message || 'the cloud permission was not created') }); }
+    }
+    setWorking(false);
+    setResult({ lines, nl, nc, failed });
+    setLocal({});
+    setCloud({});
+    if (!setup) load();
+    if (setup && !failed && onSaved) onSaved({ local: nl, cloud: nc });
+  };
+  const muted = { fontSize: 11.5, color: 'var(--st-dim, rgba(255,255,255,0.55))', lineHeight: 1.6 };
+  const q = r => (r.approximate ? 'about ' : '') + r.size_label + ' in ' + (r.approximate ? 'about ' : '') + Number(r.file_count || 0).toLocaleString() + (r.file_count === 1 ? ' file' : ' files');
+  const btn = setup ? 'sc-btn' : 'settings-btn';
+  const off = busy || working || picking;
+  const list = rows || [];
+  return E('div', { 'data-testid': 'knowledge-panel', 'data-mode': mode },
+    E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, T('intro')),
+    E('div', { className: 'card', style: { padding: 10, marginBottom: 10 } },
+      E('div', { style: { fontSize: 12.5 } }, E('b', null, T('local_title'))),
+      E('div', { style: muted }, T('local_body')),
+      E('div', { style: { fontSize: 12.5, marginTop: 8 } }, E('b', null, T('cloud_title'))),
+      E('div', { style: muted }, T('cloud_body'))),
+    E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 } },
+      E('button', { type: 'button', className: btn, disabled: off, onClick: pick, 'data-testid': 'knowledge-pick' }, picking ? T('pick_busy') : T('pick'))),
+    rows === null ? E('div', { style: muted, role: 'status' }, 'Looking around this PC…')
+      : list.length === 0 ? E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, T('none_found'))
+        : E('div', null,
+          E('div', { style: { fontSize: 12, marginBottom: 6 } }, T('detected')),
+          E('ul', { style: { margin: 0, padding: 0 }, 'data-testid': 'knowledge-rows' }, list.map(r => E('li', { key: r.path, className: 'card', 'data-testid': 'knowledge-row', 'data-kind': r.kind, style: { padding: 10, marginBottom: 8, listStyle: 'none' } },
+            E('div', { style: { fontSize: 13, overflowWrap: 'anywhere' } }, E('b', null, r.label), r.kind !== 'documents' && r.name ? ' · ' + r.name : '',
+              r.recommended ? E('span', { style: { marginLeft: 8, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#00d4ff' } }, T('recommended')) : null),
+            E('div', { style: muted }, q(r) + ' · ' + r.why),
+            E('div', { style: Object.assign({}, muted, { fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, overflowWrap: 'anywhere' }) }, r.path),
+            r.added ? E('div', { style: Object.assign({}, muted, { color: '#00ff80' }) }, T('added')) : null,
+            r.note ? E('div', { style: muted }, r.note) : null,
+            r.can_add && !r.added ? E('label', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 8, fontSize: 12.5 } },
+              E('input', { type: 'checkbox', checked: !!local[r.path], disabled: off, onChange: e => setLocal(c => Object.assign({}, c, { [r.path]: e.target.checked })) }),
+              E('span', null, T('local_title'))) : null,
+            r.cloud_offer && r.can_add ? E('label', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 6, fontSize: 12.5 } },
+              E('input', { type: 'checkbox', checked: !!cloud[r.path], disabled: off, onChange: e => setCloud(c => Object.assign({}, c, { [r.path]: e.target.checked })) }),
+              E('span', null, T('cloud_title') + ' (30 days)')) : null,
+            !r.cloud_offer ? E('div', { style: muted }, 'Cloud reading isn’t offered for this one.') : null)))),
+    E('form', { onSubmit: check, style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 } },
+      E('input', { className: 'input', 'aria-label': T('typed'), placeholder: T('typed'), value: typed, disabled: off, onChange: e => setTyped(e.target.value), style: { flex: 1, minWidth: 200 } }),
+      E('button', { type: 'submit', className: btn, disabled: off || !typed.trim() }, T('typed_add'))),
+    notes.length ? E('div', { role: 'status', style: Object.assign({}, muted, { marginTop: 8, color: 'rgba(255,210,140,0.95)' }) }, notes.map((n, i) => E('div', { key: i }, n))) : null,
+    result ? E('div', { role: 'status', 'data-testid': 'knowledge-result', style: { marginTop: 8, fontSize: 12 } }, result.lines.map((l, i) => E('div', { key: i, style: { color: l.ok ? '#00ff80' : '#ff8080', overflowWrap: 'anywhere' } }, l.text))) : null,
+    E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 } },
+      result && setup && result.failed ? E('button', { type: 'button', className: btn, disabled: off, onClick: () => onSaved && onSaved({ local: result.nl, cloud: result.nc }) }, 'Continue') : null,
+      E('button', { type: 'button', className: btn, disabled: off, onClick: save, 'data-testid': 'knowledge-save' }, working ? 'Saving…' : T('save')),
+      setup ? E('button', { type: 'button', className: btn, disabled: off, onClick: () => onSkip && onSkip(), 'data-testid': 'knowledge-skip' }, T('skip')) : null),
+    setup ? E('div', { style: Object.assign({}, muted, { marginTop: 8 }) }, T('later')) : null);
+}
 // Settings › Privacy › File access: which files and folders cloud models may
 // read when Friday opens them. Lists every grant with its status, adds one
 // (the Add click is the owner's approval) and removes one, all through
@@ -57183,7 +58201,7 @@ function LayaPilotPanel({s, save}) {
     return () => { if (pending.current) pending.current.abort(); };
   }, [load, s.laya_pilot_enabled, s.off_record]);
   const groups = (st && st.groups) || [];
-  const modeName = value => ({local_only:'Local only',local_preferred:'Local preferred',cloud_only:'Cloud only',smart:'Smart'})[value] || 'Other';
+  const modeName = value => ({local_only:'Local only',local_preferred:'Local preferred',cloud_only:'Cloud only',smart:'Local preferred'})[value] || 'Other';
   const seconds = value => typeof value === 'number' ? (value / 1000).toFixed(1) + 's' : '—';
   const cell = {padding:'5px 8px',textAlign:'left',borderBottom:'1px solid rgba(255,255,255,0.07)',whiteSpace:'nowrap'};
   const enabled = !!s.laya_pilot_enabled;
@@ -57213,6 +58231,108 @@ function LayaPilotPanel({s, save}) {
   );
 }
 // End Laya chat pilot panel
+
+function LayaReflexPanel({s, save}) {
+  // Turns answered with no model round (services/reflex_chat). The approval-reply
+  // switch is on by default; "open the X" is the owner's choice, unchosen at first.
+  const E = React.createElement;
+  const openChoice = s.reflex_open_enabled;
+  const pick = (value, label, desc) => E('button', {
+    type:'button', className:'settings-btn', 'aria-pressed': openChoice === value,
+    onClick:() => save({reflex_open_enabled:value}),
+    style:{display:'block',textAlign:'left',width:'100%',marginBottom:6,fontSize:12,
+      borderColor: openChoice === value ? 'var(--st-accent, #00d4ff)' : undefined}},
+    E('span', {style:{display:'block',fontWeight:600}}, label),
+    E('span', {style:{display:'block',fontSize:11,color:'var(--st-dim)',marginTop:2}}, desc));
+  const toolChoice = s.chat_tool_routing;
+  const pickTool = (value, label, desc) => E('button', {
+    type:'button', className:'settings-btn', 'aria-pressed': toolChoice === value,
+    onClick:() => save({chat_tool_routing:value}),
+    style:{display:'block',textAlign:'left',width:'100%',marginBottom:6,fontSize:12,
+      borderColor: toolChoice === value ? 'var(--st-accent, #00d4ff)' : undefined}},
+    E('span', {style:{display:'block',fontWeight:600}}, label),
+    E('span', {style:{display:'block',fontSize:11,color:'var(--st-dim)',marginTop:2}}, desc));
+  return E('div', null,
+    E(StToggle, {
+      label:'Run a plain yes right away', value:s.reflex_approval_replies !== false,
+      onChange:() => save({reflex_approval_replies:s.reflex_approval_replies === false}),
+      desc:'When ' + fridayName() + ' is waiting on your OK, a plain \u201cyes\u201d runs it at once, with no model in the way. Same approval, same receipt. \u201cYes, but\u2026\u201d is a change request and still goes to the model. Typed in the app on this PC only.',
+    }),
+    E('div', {style:{fontSize:12,margin:'12px 0 6px'}}, 'When you ask ' + fridayName() + ' to open one thing, like \u201copen the go-live email from Dana\u201d:'),
+    pick(true, 'Open it right away (Recommended)',
+      'Opens the one item you named, instantly, with no model. It goes through the same approvals as any action, and the answer says it was instant.'),
+    pick(false, 'Ask the model every time',
+      'Slower and uses the model, but nothing changes from today.'),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
+      typeof openChoice !== 'boolean'
+        ? 'You have not chosen yet. Until you do, these requests go to the model, as they do today.'
+        : openChoice ? 'On. If Laya is not available on this PC, a request goes to the model as usual.'
+        : 'Off. These requests go to the model.'),
+    E('div', {style:{fontSize:12,margin:'16px 0 6px'}}, 'When you ask ' + fridayName() + ' to look something up in chat, like \u201cwhat\u2019s on my calendar\u201d, who picks the tool?'),
+    pickTool('laya', 'Laya picks it (Recommended)',
+      'A small model on this PC reads your line first. For a plain lookup it runs the tool itself, through the same approvals, and your chat model answers from the result. Anything it is unsure of goes to the chat model, as today.'),
+    pickTool('model', 'The chat model picks it',
+      'Slower for simple lookups, but nothing changes from today.'),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
+      toolChoice === 'laya' ? 'Laya picks. A cloud model still holds its full toolbox and is only spared a round when Laya is very sure.'
+        : toolChoice === 'model' ? 'The chat model picks.'
+        : 'You have not chosen yet. Until you do, the chat model picks, as it does today.')
+  );
+}
+// End instant answers panel
+
+function LayaSafeWritesPanel() {
+  // Laya's safe writes (services/laya_safe_writes): off until the owner chooses here. This control is the
+  // only way to widen it (owner_action); a card is always raised and only the owner approves it.
+  const E = React.createElement;
+  const [mode, setMode] = useState(null);
+  const [note, setNote] = useState('');
+  const [fileMode, setFileMode] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/settings').then(r => r.json())
+      .then(d => {
+        // The value in effect, not the file's word: only the owner's own click counts.
+        setMode((((d || {}).effective || {}).laya_safe_writes) || 'off');
+        setFileMode((((d || {}).settings || {}).laya_safe_writes) || 'off');
+      })
+      .catch(() => setMode('off'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const choose = (value) => {
+    setNote('');
+    apiFetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({owner_action:'laya_safe_writes', settings:{laya_safe_writes:value}})})
+      .then(r => r.json())
+      .then(d => {
+        const got = (((d || {}).effective || {}).laya_safe_writes);
+        setMode(got || 'off');
+        setFileMode((((d || {}).settings || {}).laya_safe_writes) || 'off');
+        if (got !== value) setNote('That did not save. It stays ' + (got || 'off') + '.');
+        try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {}
+      })
+      .catch(() => setNote('That did not save. Nothing changed.'));
+  };
+  const pick = (value, label, desc) => E('button', {
+    type:'button', className:'settings-btn', 'aria-pressed': mode === value, disabled: mode === null,
+    onClick:() => choose(value),
+    style:{display:'block',textAlign:'left',width:'100%',marginBottom:6,fontSize:12,
+      borderColor: mode === value ? 'var(--st-accent, #00d4ff)' : undefined}},
+    E('span', {style:{display:'block',fontWeight:600}}, label),
+    E('span', {style:{display:'block',fontSize:11,color:'var(--st-dim)',marginTop:2}}, desc));
+  return E('div', {'data-st-key':'settings.laya.safe_writes'},
+    E('div', {style:{fontSize:12,margin:'0 0 8px'}}, 'When you point at mail ("archive these", "star the ones from Dana", "mark these as read", "move this to Receipts"), ' + fridayName() + ' can put the approval card up for you, without waking a model. Every change can be undone, and you approve every card.'),
+    pick('shadow', 'Watch only',
+      'Records what she would have proposed, as counts and hashes, and changes nothing.'),
+    pick('on', 'Raise the card',
+      'She puts the card up, even for changes that run with no card when a model asks. Nothing changes until you say yes. She never trashes, reports spam, sends, deletes or touches your calendar, files or money.'),
+    pick('off', 'Off',
+      'A change goes to the model, as it always has.'),
+    E('div', {style:{fontSize:11,lineHeight:1.6,color:'var(--st-dim)',marginTop:4}},
+      mode === null ? 'Checking.' : (fileMode && fileMode !== mode ? ('Your settings file says ' + fileMode + ', but only your own click here counts, so it is ' + mode + '. Choose one to set it.') : mode === 'on' ? 'On. She raises the card; you approve it.' : mode === 'shadow' ? 'Watching only. Nothing is proposed.' : 'Off. This stays off until you choose.')),
+    note ? E('div', {role:'status', style:{fontSize:11,marginTop:4}}, note) : null);
+}
+// End safe writes panel
+
 
 function LayaLabelQueue({st, reload}) {
   // The owner's answer key for the approval scanner: one yes/no question per
@@ -57269,6 +58389,104 @@ function LayaLabelQueue({st, reload}) {
   );
 }
 // End Laya label queue
+
+function LayaLearningPanel({s, save}) {
+  // What Laya learns about you (services/laya_personal; swot spec d.2-d.4). The report
+  // card: what she learned, what she turned down and why, what waits for your OK, the
+  // routes she learns less about because of sensitivity, undo and forget per item, reset,
+  // wipe, roll back to one of the last three versions, and the only place a threshold
+  // can be loosened (a card, approved by a click here).
+  const E = React.createElement;
+  const [rep, setRep] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [wipeAsk, setWipeAsk] = useState(false);
+  const load = useCallback(() => {
+    apiFetch('/api/laya/learning')
+      .then(r => r.json())
+      .then(d => { if (d.status !== 'ok') throw new Error(d.message || 'Could not read what Laya learned.'); setRep(d); })
+      .catch(e => setMsg(e.message || 'Could not read what Laya learned.'));
+  }, []);
+  useEffect(() => { load(); }, [load, s.laya_personal_learning]);
+  const post = (path, body, key) => {
+    setBusy(key || path); setMsg('');
+    apiFetch('/api/laya/learning/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
+      .then(r => r.json())
+      .then(d => { setMsg(d.message || ''); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => { setBusy(''); setWipeAsk(false); });
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const head = {fontSize:11.5, color:'rgba(255,255,255,0.7)', margin:'12px 0 4px'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
+  const when = at => { try { return new Date(at * 1000).toLocaleDateString(); } catch (e) { return ''; } };
+  const btn = (label, onClick, key, extra) => E('button', Object.assign({className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, extra || {}), label);
+  const learning = rep && rep.learning;
+  const item = (it, actions) => E('div', {key: it.id, style: row},
+    E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, '“' + (it.text || '') + '” → ' + it.route),
+    E('div', {style: dim}, when(it.at) + ' · ' + (it.source === 'spoken' ? 'you said it' : it.source === 'brain' ? 'the deeper mind chose it' : 'typed or answered')
+      + (it.weight === 'weak' ? ' · tells me if an action was wanted' : '') + (it.off ? ' · set aside' : '')),
+    it.reason ? E('div', {style: dim}, it.reason) : null,
+    E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}}, actions));
+  const undoBtn = it => it.off ? btn('Put it back', () => post('undo', {id: it.id, off: false}, 'u' + it.id), 'put')
+                               : btn('Undo', () => post('undo', {id: it.id, off: true}, 'u' + it.id), 'undo');
+  const forgetBtn = it => btn('Forget', () => post('forget', {id: it.id}, 'f' + it.id), 'forget');
+  return E('div', null,
+    E('div', {'data-st-key': 'settings.laya.personal_learning'},
+      E(StToggle, {label:'Let Laya learn from my corrections', value: s.laya_personal_learning !== false,
+        onChange: () => save({laya_personal_learning: s.laya_personal_learning === false}),
+        desc:'On. When you correct Laya or answer one of her questions, she keeps those words, sealed in your vault on this PC for 180 days, and checks them against her test questions before she uses them. She does not keep what she can tell is sensitive, and when she cannot tell she keeps nothing. She never learns from silence, and a minor profile learns nothing. Nothing leaves this PC.'})),
+    rep && !rep.notice_ack && rep.learning && rep.learning.on && E('div', {role:'status', style:Object.assign({}, row, {borderColor:'rgba(255,179,71,0.25)'})},
+      E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)'}}, rep.notice),
+      E('div', {style:{marginTop:4}}, btn('Got it', () => post('notice', {}, 'notice'), 'notice'))),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'#f59e0b', marginTop:6}}, msg),
+    rep && E('div', {style: dim},
+      (learning && !learning.on ? learning.why + ' ' : '') +
+      (rep.vault === 'locked' ? 'The vault is locked: new corrections wait in a sealed buffer (' + (rep.staged || 0) + ') and nothing is read until it opens. ' : '') +
+      (rep.vault === 'no_key' ? (rep.vault_note || '') + ' ' : '') +
+      (rep.households ? rep.households.note + ' ' : '') +
+      'Kept for ' + rep.retention_days + ' days.'),
+    rep && (rep.notes || []).map((n, i) => E('div', {key: 'note' + i, style: dim}, n)),
+    rep && rep.vault === 'open' && E('div', null,
+      E('div', {style: head}, 'What she learned'),
+      (rep.learned || []).length === 0 && E('div', {style: dim}, 'Nothing yet. When you correct her, it lands here and she tells you.'),
+      (rep.learned || []).slice(0, 30).map(it => item(it, [undoBtn(it), forgetBtn(it)])),
+      (rep.rejected || []).length > 0 && E('div', {style: head}, 'What she turned down, and why'),
+      (rep.rejected || []).slice(0, 30).map(it => item(it, [forgetBtn(it)])),
+      (rep.waiting || []).length > 0 && E('div', {style: head}, 'Waiting for your OK'),
+      (rep.waiting || []).length > 0 && E('div', {style: dim}, 'The deeper mind made these choices. They teach Laya only after you confirm them.'),
+      (rep.waiting || []).slice(0, 20).map(it => item(it, [
+        btn('Yes, that was right', () => post('confirm', {id: it.id, confirm: true}, 'c' + it.id), 'yes'),
+        btn('No, drop it', () => post('confirm', {id: it.id, confirm: false}, 'd' + it.id), 'no')])),
+      (rep.under_learned || []).length > 0 && E('div', {style: head}, 'She learns less about these'),
+      (rep.under_learned || []).map(u => E('div', {key: u.route_id, style: dim}, u.route + ': ' + u.skipped + ' turn' + (u.skipped === 1 ? '' : 's') + ' not kept. ' + u.why)),
+      E('div', {style: head}, 'Versions'),
+      E('div', {style: dim}, 'She keeps the last three, plus how she shipped. Now in use: ' + (rep.live === 'base' ? 'how she shipped' : 'version ' + rep.live) + '.'),
+      (rep.versions || []).map(v => E('div', {key: v.id, style: Object.assign({}, row, {display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'})},
+        E('span', {style:{fontSize:11.5, color:'rgba(255,255,255,0.7)'}}, when(v.created) + ' · ' + v.phrasings + ' phrasing' + (v.phrasings === 1 ? '' : 's') + (v.live ? ' · in use' : '')),
+        !v.live && btn('Go back to this', () => post('rollback', {target: v.id}, 'r' + v.id), 'rb'))),
+      E('div', {style:{display:'flex', gap:6, flexWrap:'wrap', marginTop:6}},
+        btn('Back to how she shipped', () => post('rollback', {target: 'base'}, 'base'), 'base'),
+        btn('Reset (set everything aside)', () => post('reset', {}, 'reset'), 'reset'),
+        btn('Learn now', () => post('refit', {}, 'refit'), 'refit'),
+        wipeAsk ? [E('span', {key:'q', style: dim}, 'This deletes everything she kept, for good.'),
+                   btn('Yes, wipe it', () => post('wipe', {confirm: true}, 'wipe'), 'wipe'),
+                   btn('Keep it', () => setWipeAsk(false), 'keep')]
+                : btn('Wipe everything…', () => setWipeAsk(true), 'wipeask')),
+      rep.u2 && E('div', null,
+        E('div', {style: head}, 'How sure she is'),
+        E('div', {style: dim}, rep.u2.live
+          ? ('Her confidence is tuned to your corrections: she acts only above ' + (rep.u2.live.act != null ? Number(rep.u2.live.act).toFixed(2) : 'her shipped level') + '. She can only get more careful on her own.')
+          : 'Her confidence is still the shipped one. It tunes itself only after you have given her enough corrections, and only toward asking more.'),
+        rep.u2.pending && E('div', {style: dim}, 'A newer tuning is running unseen for a few days before it takes over.'),
+        rep.u2.last_gate && (rep.u2.last_gate.checks || []).map((c, i) => E('div', {key: i, style: dim}, (c.ok ? '✓ ' : '✗ ') + c.name + ': ' + c.detail))),
+      (rep.loosen || []).map(o => E('div', {key: o.head + o.name, style: row},
+        E('div', {style:{fontSize:11.5, color:'rgba(255,255,255,0.7)'}}, 'Let her act on a lower score?'),
+        E('div', {style: dim}, o.why),
+        o.can_offer && btn('Ask me to approve ' + Number(o.proposed).toFixed(2), () => post('loosen', {head: o.head, name: o.name, value: o.proposed}, 'loosen'), 'loosen'),
+        o.can_offer && E('div', {style: dim}, 'This raises a card in your approvals. Only a click there lets her act on less than the shipped score.')))));
+}
+// End Laya learning panel
 
 function ApprovalScannerPanel({
   s,
@@ -61729,10 +62947,15 @@ function SettingsWS() {
     }
   }, /*#__PURE__*/React.createElement(FileAccessPausedBanner, {
     key: 'fa-' + tab
-  }), tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, null), /*#__PURE__*/React.createElement(SettingsTabGeneral, {
+  }), tab === 'general' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsSetupChecklist, {
+    s: s
+  }), /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), /*#__PURE__*/React.createElement(SettingsYourProfile, null), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+  }), /*#__PURE__*/React.createElement(SettingsYourProfile, null), /*#__PURE__*/React.createElement(SettingsInterruptions, {
+    s: s,
+    save: save
+  }), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
   }), tab === 'connections' && /*#__PURE__*/React.createElement(React.Fragment, null, window.MediaChannelsSettings ? /*#__PURE__*/React.createElement(window.MediaChannelsSettings, null) : null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
@@ -62117,11 +63340,54 @@ const LOCAL_AI_KIND_WORDS = {
   prefix_warm: 'warm-up',
   runner: 'background job',
   task: 'task',
-  podcast: 'podcast'
+  podcast: 'podcast',
+  background_call: 'background AI work',
+  model_call: 'model call',
+  gpu_lease: 'GPU turn',
+  library_index: 'indexing'
 };
+// The Library reading the folders you added is one job per folder on this queue.
+// Its words: "Indexing your Obsidian vault · 1,240 of 3,100 · paused while you're here".
+function localAiWhyWords(j) {
+  const w = String(j && j.why || '');
+  const idle = /^(waits for idle|waits for your chat to finish|waiting for you to be idle|waiting for your chat to finish)$/.test(w);
+  if (idle) return j.state === 'paused' ? "paused while you're here" : "waits until you've stepped away";
+  return w;
+}
+// The Library reading a folder is a task of its own (Activity names the reading model, its status and its
+// trace); its queue row has the same id and carries the counts and why it is held.
+function laneLibraryRow(t, q) {
+  if (!t || t.kind !== 'library_index' && t.kind !== 'library_reindex') return null;
+  return (q && q.jobs || []).find(j => j.id === t.id) || null;
+}
+function laneRowLabel(t, q) {
+  const r = laneLibraryRow(t, q);
+  return r && r.label || t.label;
+}
+function laneWhy(t, q) {
+  const r = laneLibraryRow(t, q);
+  if (r || t.kind === 'library_index') {
+    const w = localAiWhyWords({ why: r && r.why || t.why || '', state: r && r.state || t.status });
+    return w ? [w] : [];
+  }
+  return t.why ? [t.why] : [];
+}
+function laneLibraryRunNow(t, q) {
+  const r = laneLibraryRow(t, q);
+  return !!(r && r.state === 'queued' && r.deferrable && !r.run_now);
+}
+function laneIsLibrary(t) {
+  return !!t && (t.kind === 'library_index' || t.kind === 'library_reindex') && (t.status === 'running' || t.status === 'queued' || t.status === 'paused');
+}
 function localAiChipText(q) {
   const n = q && q.count || 0;
   const run = q && q.running && q.running[0];
+  const lead = run || q && q.queued && q.queued[0];
+  if (lead && lead.kind === 'library_index') {
+    const more = (q.running ? q.running.length : 0) + (q.queued ? q.queued.length : 0) - 1;
+    const why = lead.state === 'running' ? '' : localAiWhyWords(lead);
+    return lead.label + (why ? ' · ' + why : '') + (more > 0 ? ' · +' + more + ' more' : '');
+  }
   const parts = [];
   if (n) parts.push(n + ' queued');
   if (run) parts.push((run.state === 'paused' ? 'paused: ' : 'running: ') + run.label);
@@ -62139,6 +63405,253 @@ function localAiMarkActive() {
     method: 'POST'
   }).catch(() => {});
 }
+// ── The four places behind the chip: Needs you, Activity, Updates, Receipts & traces ──
+// The chip below is the way in; this is what it opens (routes/lanes.py, services/activity_lane.py).
+// Needs you holds only what blocks on your decision, with the badge. Activity lists every task there
+// is, whoever started it, with its model, status, a link to its reasoning trace, its place in the
+// queue and Stop only where the job honours it. Updates is a digest you pull; it never pops up.
+// Receipts & traces are pulled, from an item ("Why?") or from here, never pushed. Amber is for
+// "needs you", violet for working, neutral for waiting; nothing here moves.
+const LANE_TABS = [['needs', 'Needs you'], ['activity', 'Activity'], ['updates', 'Updates'], ['receipts', 'Receipts & traces']];
+function laneChipContent(lane, localText) {
+  const h = React.createElement;
+  const n = lane && lane.needs_you || 0;
+  const out = [];
+  if (n) out.push(h('span', { key: 'b', className: 'place-badge', 'data-testid': 'lane-badge' }, n + (n === 1 ? ' needs you' : ' need you')));
+  if (localText) out.push(localText);
+  else if (lane && lane.activity) out.push('Activity: ' + [lane.running ? lane.running + ' running' : '', lane.queued ? lane.queued + ' queued' : ''].filter(Boolean).join(' · '));
+  else if (!n) out.push('Updates');
+  if (lane && lane.updates) out.push(h('span', { key: 'd', className: 'place-dot', 'data-testid': 'lane-updates-dot', role: 'img', 'aria-label': 'New updates' }));
+  return out;
+}
+function laneStatusWords(t) {
+  if (t.status === 'queued') return t.queue_position ? 'waiting, place ' + t.queue_position : 'waiting';
+  const words = { running: 'running', paused: 'paused', complete: 'done', completed: 'done', failed: 'failed', cancelled: 'stopped', interrupted: 'interrupted' };
+  return words[t.status] || t.status;
+}
+function laneAgo(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - (typeof iso === 'number' ? iso * 1000 : Date.parse(iso));
+  if (!(ms >= 0)) return '';
+  const m = Math.round(ms / 60000);
+  return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago';
+}
+function useLaneData(url, every) {
+  const [d, setD] = useState(null);
+  const load = () => apiFetch(url, { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(x => { if (x) setD(x); }).catch(() => {});
+  useEffect(() => {
+    setD(null);
+    load();
+    const t = setInterval(() => { if (!document.hidden) load(); }, every || 5000);
+    return () => clearInterval(t);
+  }, [url]);
+  return [d, load];
+}
+// "Why?" on an item: how it reached you, in plain words, and its trace if it has one. Pulled.
+function LaneWhy({ id }) {
+  const h = React.createElement;
+  const [w, setW] = useState(null);
+  const [open, setOpen] = useState(false);
+  const toggle = () => {
+    setOpen(v => !v);
+    if (!w) apiFetch('/api/lanes/why/' + encodeURIComponent(id)).then(r => r.json()).then(setW).catch(() => setW({ ok: false }));
+  };
+  return h('span', { className: 'place-why' },
+    h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-why', 'aria-expanded': open ? 'true' : 'false', onClick: toggle }, 'Why?'),
+    open && h('div', { className: 'place-why-text', role: 'note', 'data-testid': 'lane-why-text' },
+      !w ? 'One moment.' : w.ok ? w.sentence : 'There is no record of that item any more.',
+      w && w.trace_id ? h('button', { type: 'button', className: 'ws-tab-link', onClick: () => window.fridayOpenTrace(w.trace_id) }, 'Open its trace') : null));
+}
+// A batch of approvals of one kind and source: one card, each action listed. Approving the batch
+// approves exactly the listed actions, one approval each; "Review each" shows the single cards.
+function fridayDecideBatch(b, decision) {
+  return fetch('/api/approvals/batches/' + encodeURIComponent(b.batch_id) + '/decide', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision, approval_ids: b.approval_ids, decided_by: 'owner:ui' })
+  }).then(r => r.json()).then(d => {
+    if (d && d.ok) (d.results || []).forEach(x => { if (x.won) fridayApprovalFeed.drop(x.approval_id); });
+    else if (d && d.error === 'changed') fridayToast('That batch changed while you looked. Here is the new list.');
+    return d;
+  }).catch(() => { fridayToast('Could not reach ' + fridayName() + ' to record that. The cards are still waiting.'); return null; });
+}
+function LaneBatch({ b, items, busy, onBusy, onDecided }) {
+  const h = React.createElement;
+  const [each, setEach] = useState(false);
+  const run = decision => {
+    if (busy) return;
+    onBusy(b.batch_id);
+    fridayDecideBatch(b, decision).then(() => { onBusy(''); onDecided(); });
+  };
+  const cards = (items || []).filter(a => b.approval_ids.indexOf(a.approval_id) >= 0);
+  return h('div', { className: 'place-card', 'data-testid': 'lane-batch', 'data-batch-id': b.batch_id },
+    h('div', { className: 'place-card-title' }, b.sentence),
+    !each && h('div', { className: 'place-readonly', 'data-testid': 'lane-batch-items' }, b.items.map(it => h(ApprovalCardBody, { key: it.approval_id, a: it, busy: busy, onDecide: () => {} }))),
+    h('div', { className: 'place-note' }, 'Each action stays its own approval. Approving these approves exactly the ' + b.count + ' listed and nothing else.'),
+    h('div', { className: 'place-actions' },
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-ok)' }, disabled: !!busy, 'data-testid': 'lane-batch-approve', onClick: () => run('approve') }, 'Approve these ' + b.count),
+      h('button', { type: 'button', className: 'btn', style: { color: 'var(--fr-deny)' }, disabled: !!busy, 'data-testid': 'lane-batch-deny', onClick: () => run('deny') }, 'Decline these ' + b.count),
+      h('button', { type: 'button', className: 'ws-tab-link', 'aria-expanded': each ? 'true' : 'false', onClick: () => setEach(v => !v) }, each ? 'Hide the cards' : 'Review each')),
+    each && cards.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { onBusy(id); fridayDecideApproval(id, decision).then(() => { onBusy(''); onDecided(); }); } })));
+}
+function LaneNeedsYou({ onChanged }) {
+  const h = React.createElement;
+  const [d, reload] = useLaneData('/api/lanes/needs-you');
+  const feed = useApprovalFeed();
+  const [busy, setBusy] = useState('');
+  useEffect(() => { reload(); }, [feed.length]);
+  if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
+  const inBatch = new Set();
+  d.batches.forEach(b => b.approval_ids.forEach(id => inBatch.add(id)));
+  const singles = feed.filter(a => !inBatch.has(a.approval_id));
+  const q = d.quiet || {};
+  const until = q.until ? new Date(q.until * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+  const setQuiet = on => apiFetch('/api/lanes/quiet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ until_morning: on }) }).then(() => { reload(); onChanged(); }).catch(() => {});
+  const done = () => { reload(); onChanged(); };
+  return h('div', { 'data-testid': 'lane-needs-you' },
+    h('div', { className: 'place-quiet', 'data-testid': 'lane-quiet' },
+      q.active
+        ? [h('span', { key: 't' }, 'Quiet until ' + until + '. Only safety-critical things interrupt.'),
+           q.why === 'until_morning' ? h('button', { key: 'b', type: 'button', className: 'ws-tab-link', onClick: () => setQuiet(false) }, 'End quiet') : null]
+        : h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-quiet-on', onClick: () => setQuiet(true) }, 'Quiet until morning')),
+    d.count === 0 && !singles.length ? h('div', { className: 'place-empty' }, 'Nothing needs you.') : h('div', { className: 'place-summary', role: 'status' }, d.summary ? d.summary.charAt(0).toUpperCase() + d.summary.slice(1) + '.' : ''),
+    d.batches.map(b => h(LaneBatch, { key: b.batch_id, b: b, items: feed, busy: busy, onBusy: setBusy, onDecided: done })),
+    singles.map(a => h(ApprovalCardBody, { key: a.approval_id, a: a, busy: busy, onDecide: (id, decision) => { setBusy(id); fridayDecideApproval(id, decision).then(() => { setBusy(''); done(); }); } })),
+    d.others.map(o => h('div', { key: o.id, className: 'place-card', 'data-testid': 'lane-need', 'data-kind': o.kind },
+      h('div', { className: 'place-card-title' }, o.title + (o.count > 1 ? ' (' + o.count + ' times)' : '')),
+      o.body ? h('div', { className: 'place-note' }, o.body) : null,
+      h('div', { className: 'place-actions' },
+        (o.actions || []).filter(x => x && x.label).map((x, i) => h('button', { key: i, type: 'button', className: 'btn',
+          onClick: () => { if (window.fridayOpenWorkspace && (x.workspace || (o.target && o.target.workspace))) window.fridayOpenWorkspace(Object.assign({}, o.target || {}, x.workspace ? { workspace: x.workspace, tab: x.tab } : {})); } }, x.label)),
+        !(o.actions || []).some(x => x && x.label) ? h('span', { className: 'place-note' }, 'There is nothing to fix from here.') : null,
+        h(LaneWhy, { id: o.id })))));
+}
+function LaneActivity({ q, onLocal, busy, onChanged }) {
+  const h = React.createElement;
+  const [d, reload] = useLaneData('/api/lanes/activity');
+  const [stopping, setStopping] = useState('');
+  if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
+  const stop = t => {
+    setStopping(t.id);
+    apiFetch(t.stop.url, { method: t.stop.method }).catch(() => {}).then(() => { setStopping(''); reload(); onChanged(); });
+  };
+  return h('div', { 'data-testid': 'lane-activity' },
+    (q && q.jobs && q.jobs.length) ? h('div', { className: 'local-ai-list-note' }, 'One job at a time on your local model. Your chats and voice always go first.') : null,
+    !d.tasks.length ? h('div', { className: 'place-empty' }, 'Nothing is running and nothing is waiting.') : d.tasks.map(t => h('div', { key: t.id, className: 'local-ai-row', 'data-state': t.status === 'running' ? 'running' : t.status, 'data-testid': 'lane-task', 'data-task-id': t.id, 'data-kind': t.kind },
+      h('div', { className: 'local-ai-row-text' },
+        h('div', { className: 'local-ai-row-label' }, laneRowLabel(t, q)),
+        h('div', { className: 'local-ai-row-meta', 'data-testid': 'lane-task-meta' },
+          [t.model || (t.status === 'queued' ? 'model chosen when it starts' : 'model not named'), laneStatusWords(t)].concat(laneWhy(t, q)).concat(t.source === 'local_queue' && LOCAL_AI_KIND_WORDS[t.kind] ? [LOCAL_AI_KIND_WORDS[t.kind]] : []).join(' · '))),
+      t.trace_id ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-trace', title: 'How it is thinking, step by step. Pulled, never pushed.', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Trace') : null,
+      t.run_now ? h('button', { type: 'button', className: 'ws-tab-link', disabled: !!busy, onClick: () => onLocal(t.id, 'run-now'), title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.' }, 'Run now') : null,
+      !t.run_now && laneLibraryRunNow(t, q) ? h('button', { type: 'button', className: 'ws-tab-link', disabled: !!busy, onClick: () => onLocal(t.id, 'run-now'), title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.' }, 'Run now') : null,
+      laneIsLibrary(t) ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'local-ai-library-pause', disabled: !!busy, onClick: () => onLocal('library-index', q && q.library && q.library.paused ? 'resume' : 'pause'), title: q && q.library && q.library.paused ? 'Carry on reading your folders where it stopped' : 'Stop reading your folders before the next file. Nothing already read is lost.' }, q && q.library && q.library.paused ? 'Resume' : 'Pause') : null,
+      !laneIsLibrary(t) && t.pausable ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-pause', disabled: !!busy, onClick: () => onLocal(t.id, t.paused_by_you ? 'resume' : 'pause'), title: t.paused_by_you ? 'Let it take its place in line again' : 'Hold it before its next step. Nothing it has done is lost.' }, t.paused_by_you ? 'Resume' : 'Pause') : null,
+      t.stoppable && t.stop ? h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-stop', disabled: !!busy || stopping === t.id, onClick: () => t.source === 'local_queue' ? onLocal(t.id, 'cancel') : stop(t), title: t.status === 'queued' ? 'Remove from the line' : 'Stop it after its current step. The record is kept.' }, t.source === 'local_queue' || t.status === 'queued' ? 'Cancel' : 'Stop') : null)));
+}
+function LaneUpdates() {
+  const h = React.createElement;
+  const [d] = useLaneData('/api/lanes/updates?today=1', 15000);
+  if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
+  if (!d.groups.length) return h('div', { className: 'place-empty', 'data-testid': 'lane-updates' }, 'No new updates today.');
+  return h('div', { 'data-testid': 'lane-updates' },
+    h('div', { className: 'place-note' }, 'Results and FYIs, grouped. They never pop up; you read them here.'),
+    d.groups.map(g => h('div', { key: g.kind, className: 'place-card', 'data-kind': g.kind },
+      h('ul', { className: 'place-list' }, g.items.map(it => h('li', { key: it.id },
+        h('span', null, it.title + (it.count > 1 ? ' (' + it.count + ' times)' : '')),
+        h('span', { className: 'place-ago' }, ' ' + laneAgo(it.created_at)),
+        h(LaneWhy, { id: it.id })))))));
+}
+function LaneReceipts() {
+  const h = React.createElement;
+  const [d] = useLaneData('/api/lanes/receipts?limit=30', 15000);
+  if (!d) return h('div', { className: 'place-empty' }, 'One moment.');
+  if (!d.traces.length) return h('div', { className: 'place-empty', 'data-testid': 'lane-receipts' }, 'No traces yet. They appear as work happens.');
+  return h('div', { 'data-testid': 'lane-receipts' },
+    h('div', { className: 'place-note' }, 'Why ' + fridayName() + ' did what she did, step by step. Pulled from here or from any item; never pushed.'),
+    d.traces.map(t => h('div', { key: t.trace_id, className: 'local-ai-row' },
+      h('div', { className: 'local-ai-row-text' },
+        h('div', { className: 'local-ai-row-label' }, t.label || t.kind || 'A trace'),
+        h('div', { className: 'local-ai-row-meta' }, [t.model, t.status, laneAgo(t.started)].filter(Boolean).join(' · '))),
+      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
+}
+function LaneBody({ tab, onTab, lane, q, onLocal, busy, onChanged }) {
+  const h = React.createElement;
+  const counts = { needs: lane && lane.needs_you || 0, activity: lane && lane.activity || 0, updates: lane && lane.updates || 0, receipts: 0 };
+  const onKey = e => {
+    const i = LANE_TABS.findIndex(x => x[0] === tab);
+    if (e.key === 'ArrowRight') onTab(LANE_TABS[(i + 1) % LANE_TABS.length][0]);
+    else if (e.key === 'ArrowLeft') onTab(LANE_TABS[(i + LANE_TABS.length - 1) % LANE_TABS.length][0]);
+    else return;
+    e.preventDefault();
+  };
+  return h(React.Fragment, null,
+    h('div', { className: 'place-tabs', role: 'tablist', 'aria-label': 'Needs you, Activity, Updates, Receipts and traces', onKeyDown: onKey },
+      LANE_TABS.map(([id, label]) => h('button', { key: id, type: 'button', role: 'tab', id: 'lane-tab-' + id, 'aria-selected': tab === id ? 'true' : 'false', tabIndex: tab === id ? 0 : -1,
+        className: 'place-tab' + (tab === id ? ' on' : '') + (id === 'needs' && counts.needs ? ' needs' : ''), 'data-testid': 'lane-tab-' + id, onClick: () => onTab(id) },
+        label, counts[id] ? h('span', { className: 'place-count' }, counts[id]) : null))),
+    h('div', { role: 'tabpanel', 'aria-labelledby': 'lane-tab-' + tab, 'data-testid': 'lane-panel' },
+      tab === 'needs' ? h(LaneNeedsYou, { onChanged }) : tab === 'activity' ? h(LaneActivity, { q, onLocal, busy, onChanged }) : tab === 'updates' ? h(LaneUpdates, null) : h(LaneReceipts, null)));
+}
+// Settings: how often something that needs you may interrupt, and quiet hours. Nothing is preselected
+// for you beyond the default; the recommended choice carries its label. Safety-critical items
+// (spend halt, credential problem, seat change, a cLaw block) are exempt from all of it.
+const LANE_BUDGETS = [[3, '3 an hour'], [6, '6 an hour (Recommended)'], [12, '12 an hour'], [0, 'No limit']];
+function laneQuietChoice(s) {
+  if (!s || !s.quiet_hours_enabled) return 'off';
+  return (s.quiet_hours_start || '22:00') === '22:00' && (s.quiet_hours_end || '07:00') === '07:00' ? 'recommended' : 'custom';
+}
+function QuietHoursRow({ s, save }) {
+  const h = React.createElement;
+  const choice = laneQuietChoice(s);
+  const [custom, setCustom] = useState(choice === 'custom');
+  const start = s && s.quiet_hours_start || '22:00', end = s && s.quiet_hours_end || '07:00';
+  const pick = v => {
+    setCustom(v === 'custom');
+    if (v === 'off') save({ quiet_hours_enabled: false });
+    else if (v === 'recommended') save({ quiet_hours_enabled: true, quiet_hours_start: '22:00', quiet_hours_end: '07:00' });
+    else save({ quiet_hours_enabled: true });
+  };
+  return h(StRow, { label: 'Quiet hours', settingKey: 'quiet_hours_enabled',
+    desc: 'In quiet hours only safety-critical things interrupt you. Everything else waits in your badge and in Updates, and background work that would ask for approvals runs when they end.' },
+    h('select', { className: 'input', 'aria-label': 'Quiet hours', value: custom ? 'custom' : choice, onChange: e => pick(e.target.value) },
+      h('option', { value: 'off' }, 'Off'), h('option', { value: 'recommended' }, '22:00 to 07:00 (Recommended)'), h('option', { value: 'custom' }, 'Choose the times')),
+    (custom || choice === 'custom') && h('div', { className: 'place-times' },
+      h('label', null, 'From ', h('input', { type: 'time', className: 'input', value: start, onChange: e => e.target.value && save({ quiet_hours_start: e.target.value }) })),
+      h('label', null, ' to ', h('input', { type: 'time', className: 'input', value: end, onChange: e => e.target.value && save({ quiet_hours_end: e.target.value }) }))));
+}
+function SettingsInterruptions({ s, save }) {
+  const h = React.createElement;
+  const v = s && Number.isInteger(s.interruption_budget_per_hour) ? s.interruption_budget_per_hour : 6;
+  return h(StSection, { title: 'Interruptions' },
+    h(StRow, { label: 'How often something may interrupt you', settingKey: 'interruption_budget_per_hour',
+      desc: 'Over the limit, things that need you wait in your badge instead of popping up, and the badge says how many. Safety-critical things always get through.' },
+      h('select', { className: 'input', 'aria-label': 'How often something may interrupt you', value: String(v), onChange: e => save({ interruption_budget_per_hour: Number(e.target.value) }) },
+        LANE_BUDGETS.map(([n, label]) => h('option', { key: n, value: String(n) }, label)))),
+    h(QuietHoursRow, { s: s, save: save }),
+    h(StRow, { label: 'Follow Windows Focus Assist', settingKey: 'honour_focus_assist',
+      desc: 'When Windows Do Not Disturb is on, only safety-critical things interrupt. Off until you choose it.' },
+      h('select', { className: 'input', 'aria-label': 'Follow Windows Focus Assist', value: s && s.honour_focus_assist ? 'on' : 'off', onChange: e => save({ honour_focus_assist: e.target.value === 'on' }) },
+        h('option', { value: 'off' }, 'No, leave Windows alone'), h('option', { value: 'on' }, 'Yes, follow it'))));
+}
+// A card the policy judged "may not interrupt" (quiet hours, over the hour's budget, Focus Assist) is
+// listed and counted but does not pop the approval window open (services/interruption_policy).
+function fridayApprovalQuiet(id) {
+  const q = window.__fridayQuietApprovals;
+  return !!(q && q.has(id));
+}
+// In the Setup checklist: quiet hours are offered, and the Recommended window is named, but nothing is
+// chosen for you. The row itself lives under Interruptions.
+function QuietHoursOffer({ s }) {
+  const h = React.createElement;
+  const on = !!(s && s.quiet_hours_enabled);
+  const go = () => {
+    const el = document.querySelector('[data-st-key="quiet_hours_enabled"] select');
+    if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+  };
+  return h(StRow, { label: 'Quiet hours',
+    desc: on ? 'On. Only safety-critical things interrupt you in your quiet hours.' : 'Off. Something that needs you can interrupt at any hour. 22:00 to 07:00 is the recommended window, and the choice is yours.' },
+    h('button', { type: 'button', className: 'settings-btn', onClick: go }, on ? 'Change' : 'Choose'));
+}
 function LocalAiQueueChip() {
   const [q, setQ] = useState(null);
   const [open, setOpen] = useState(false);
@@ -62146,6 +63659,13 @@ function LocalAiQueueChip() {
   const chipRef = useRef(null);
   const listRef = useRef(null);
   const wasOpen = useRef(false);
+  const [lane, setLane] = useState(null);
+  const [tab, setTab] = useState('');
+  const loadLane = () => apiFetch('/api/lanes/summary', {
+    cache: 'no-store'
+  }).then(r => r.ok ? r.json() : null).then(d => {
+    if (d) setLane(d);
+  }).catch(() => {});
   const load = () => apiFetch('/api/local-queue', {
     cache: 'no-store'
   }).then(r => r.ok ? r.json() : null).then(d => {
@@ -62155,11 +63675,14 @@ function LocalAiQueueChip() {
     // Polls every 5 s while the page is visible; a hidden page asks nothing
     // and catches up the moment it is shown again.
     load();
+    loadLane();
     const t = setInterval(() => {
       if (!document.hidden) load();
+      if (!document.hidden) loadLane();
     }, 5000);
     const onVisible = () => {
       if (!document.hidden) load();
+      if (!document.hidden) loadLane();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -62208,8 +63731,13 @@ function LocalAiQueueChip() {
     }).catch(() => {}).then(() => setBusy(''));
   };
   const jobs = q && q.jobs || [];
-  if (!jobs.length) return null;
-  const working = !!(q.running && q.running.length);
+  const laneAny = !!(lane && (lane.activity || lane.needs_you || lane.updates));
+  if (!jobs.length && !laneAny) return null;
+  const working = !!(q && q.running && q.running.length) || !!(lane && lane.running);
+  const openLane = () => {
+    if (!open) setTab(lane && lane.needs_you ? 'needs' : jobs.length || lane && lane.activity ? 'activity' : 'updates');
+    setOpen(v => !v);
+  };
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
     type: "button",
     ref: chipRef,
@@ -62217,48 +63745,32 @@ function LocalAiQueueChip() {
     "data-testid": "local-ai-queue-chip",
     "aria-haspopup": "dialog",
     "aria-expanded": open ? 'true' : 'false',
-    onClick: () => setOpen(v => !v),
-    title: 'Background work waiting for your local AI model. It runs one job at a time and never during your chats.'
-  }, localAiChipText(q)), open && /*#__PURE__*/React.createElement("div", {
+    onClick: openLane,
+    title: 'What ' + fridayName() + ' is doing, and what is waiting on you. Background AI work runs one job at a time and never during your chats.'
+  }, laneChipContent(lane, jobs.length ? localAiChipText(q) : '')), open && /*#__PURE__*/React.createElement("div", {
     className: "ws-tab-drawer local-ai-list",
     ref: listRef,
     tabIndex: -1,
     role: "dialog",
-    "aria-label": "Local AI queue",
+    "aria-label": "Activity",
     "data-testid": "local-ai-queue-list"
   }, /*#__PURE__*/React.createElement("div", {
     className: "local-ai-list-head"
-  }, /*#__PURE__*/React.createElement("b", null, "Local AI queue"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("b", null, "Activity"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     "aria-label": 'Close',
     title: 'Close',
     className: "ws-tab-link",
     onClick: () => setOpen(false)
-  }, "✕")), /*#__PURE__*/React.createElement("div", {
-    className: "local-ai-list-note"
-  }, "One job at a time on your local model. Your chats and voice always go first."), jobs.map(j => /*#__PURE__*/React.createElement("div", {
-    key: j.id,
-    className: "local-ai-row",
-    "data-state": j.state
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "local-ai-row-text"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "local-ai-row-label"
-  }, j.label), /*#__PURE__*/React.createElement("div", {
-    className: "local-ai-row-meta"
-  }, (LOCAL_AI_KIND_WORDS[j.kind] || j.kind) + ' · ' + (j.state === 'running' ? 'running now' : j.why || 'waiting'))), j.state === 'queued' && j.deferrable && !j.run_now && /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "ws-tab-link",
-    disabled: !!busy,
-    onClick: () => act(j.id, 'run-now'),
-    title: 'Start without waiting for idle. It still waits for your chat and for the job ahead of it.'
-  }, "Run now"), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "ws-tab-link",
-    disabled: !!busy,
-    onClick: () => act(j.id, 'cancel'),
-    title: j.state === 'queued' ? 'Remove from the queue' : 'Stop before its next step'
-  }, "Cancel")))));
+  }, "✕")), /*#__PURE__*/React.createElement(LaneBody, {
+    tab: tab || 'activity',
+    onTab: setTab,
+    lane: lane,
+    q: q,
+    onLocal: act,
+    busy: busy,
+    onChanged: loadLane
+  })));
 }
 // Settings > Advanced: how long the computer must be idle before deferrable
 // background work (wiki notes, daily creation, the session summary) starts.
@@ -62405,6 +63917,8 @@ const fridayApprovalFeed = (() => {
     heard = Date.now(),
     release = null;
   const listeners = new Set();
+  // Cards judged "may not interrupt" (quiet hours, over budget, Focus Assist): listed, not popped open.
+  const quiet = window.__fridayQuietApprovals = new Set();
   // Presence frames (services/presence.py) ride this same stream: the
   // lattice's processing-state gestures listen here, in every tab.
   const presenceListeners = new Set();
@@ -62425,6 +63939,12 @@ const fridayApprovalFeed = (() => {
   const apply = d => {
     if (!d || !d.type) return;
     heard = Date.now();
+    if (d.type === 'snapshot') {
+      quiet.clear();
+      (d.quiet || []).forEach(id => quiet.add(id));
+    } else if (d.type === 'pending' && d.approval) {
+      if (d.interrupt === false) quiet.add(d.approval.approval_id);else quiet.delete(d.approval.approval_id);
+    }
     if (d.type === 'snapshot') {
       cards = new Map((d.pending || []).map(a => [a.approval_id, a]));
       emit();
@@ -63046,11 +64566,12 @@ function ApprovalCardBody({
 function ApprovalPopups() {
   const items = useApprovalFeed();
   const [later, setLater] = useState(false);
+  const [peek, setPeek] = useState(false);
   const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
-    const fresh = items.some(a => !seen.current.has(a.approval_id));
-    seen.current = new Set(items.map(a => a.approval_id));
+    const fresh = items.some(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    seen.current = new Set(items.filter(a => !fridayApprovalQuiet(a.approval_id)).map(a => a.approval_id));
     if (fresh) setLater(false);
   }, [items]);
   // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
@@ -63059,6 +64580,7 @@ function ApprovalPopups() {
     const on = e => {
       const id = e && e.detail && e.detail.approval_id;
       setLater(false);
+      setPeek(true);
       setTimeout(() => {
         let el = null;
         try {
@@ -63091,8 +64613,9 @@ function ApprovalPopups() {
     right: 16,
     zIndex: 9800
   };
-  if (later && window.__FRIDAY_STANDALONE__) return null;
-  if (later) return /*#__PURE__*/React.createElement("button", {
+  const folded = later || !peek && items.every(a => fridayApprovalQuiet(a.approval_id));
+  if (folded && window.__FRIDAY_STANDALONE__) return null;
+  if (folded) return /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn",
     "data-testid": "approval-popup-pill",
@@ -63101,7 +64624,10 @@ function ApprovalPopups() {
       color: '#f59e0b',
       background: 'rgba(10,14,26,0.9)'
     }),
-    onClick: () => setLater(false)
+    onClick: () => {
+    setLater(false);
+    setPeek(true);
+  }
   }, "\u270B ", items.length === 1 ? '1 approval waiting' : items.length + ' approvals waiting');
   return /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -63813,37 +65339,7 @@ function App() {
   const [clock, setClock] = useState(new Date());
   const [structureName, setStructureName] = useState('Genesis Lattice');
   const [notifs, setNotifs] = useState([]);
-  const [wikiPending, setWikiPending] = useState(0);
-  const [msgActionable, setMsgActionable] = useState(0);
-  // Content pipeline dock badge — HELD + FAILED counts (spec §10.3). Gated on
-  // the connector-health bus: only servers that actually expose the content
-  // pipeline connector get polled, so older builds see zero 404 noise.
-  const [contentAlerts, setContentAlerts] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    const pull = () => {
-      if (!(window.__fridayConnByWs && window.__fridayConnByWs.content)) return;
-      fetch('/api/content/queue').then(r => r.ok ? r.json() : null).then(d => {
-        if (!d || cancelled) return;
-        const c = d.counts || {};
-        if (c.held != null || c.failed != null) {
-          setContentAlerts((c.held || 0) + (c.failed || 0));
-          return;
-        }
-        const held = (d.held || []).length;
-        const failed = (d.upcoming || []).concat(d.history || []).filter(x => String(x.status || x.outcome || '').toUpperCase() === 'FAILED').length;
-        setContentAlerts(held + failed);
-      }).catch(() => {});
-    };
-    pull();
-    const iv = setInterval(pull, 60000);
-    return () => {
-      cancelled = true;
-      clearInterval(iv);
-    };
-  }, []);
   // Predictive workspaces — ids Friday predicts you'll want now (dock glow).
-  const [suggestedWs, setSuggestedWs] = useState(new Set());
   const [countdowns, setCountdowns] = useState([]);
   const [promptText, setPromptText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -65385,6 +66881,7 @@ function App() {
           voiceKeepRef.current.fatalTs = Date.now();
           // m.detail carries the actionable text (install command, key fix,
           // model fix) — the bare error code alone left users stranded.
+          if (m.offer && m.offer.kind === 'cloud_switch') { try { apiFetch('/api/voice/cloud-switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: m.offer.source || 'failure' }) }).then(() => { try { window.dispatchEvent(new CustomEvent('friday:cloud-voice-asked')); } catch (_) {} }).catch(() => {}); } catch (_) {} }
           setVoiceStatus('error: ' + (m.detail || m.error || 'unknown'));
         }
       }
@@ -66195,13 +67692,6 @@ function App() {
       }).catch(() => {});
     } catch (_) {}
   };
-  /* In-flight work, shown in the tray ABOVE the finished notifications.
-     Same object at two moments of its life: a process while it runs, a
-     conclusion when it ends. The tray's progress bar belongs here — one
-     place that answers both "what is happening"
-     and "what finished". */
-  const [liveProcs, setLiveProcs] = useState([]);
-  const [failedProcs, setFailedProcs] = useState([]);
   const [orbiting, setOrbiting] = useState([]);
   const [clearingOrbs, setClearingOrbs] = useState(false);
   /* One control that empties the desk.
@@ -66213,7 +67703,6 @@ function App() {
     setClearingOrbs(true);
     const ids = [...new Set([...orbiting, ...(window.fridayGetOrbs?.() || [])].filter(p => window.fridayOrbFinished(p)).map(p => p.id))];
     ids.forEach(id => { try { window.fridayRemoveOrb?.(id); } catch (_) {} });
-    setFailedProcs([]);
     setOrbiting(o => o.filter(p => !window.fridayOrbFinished(p)));
     apiFetch('/api/orbs/clear', {
       method: 'POST',
@@ -66230,8 +67719,6 @@ function App() {
     let on = true;
     const tick = () => apiFetch('/api/processes').then(r => r.json()).then(d => {
       if (!on) return;
-      setLiveProcs((d.processes || []).filter(p => p.status === 'running'));
-      setFailedProcs((d.processes || []).filter(p => p.orb_failed && !p.dismissed));
       // Everything actually in orbit — failures AND finished-but-lingering AND
       // still-working. The old "CLEAR ALL" only knew about failures, so the
       // reasoning and completed orbs on the desktop had no exit at all.
@@ -66246,34 +67733,6 @@ function App() {
       clearInterval(iv);
     };
   }, []);
-  const cancelProc = id => {
-    apiFetch('/api/processes/' + encodeURIComponent(id) + '/cancel', {
-      method: 'POST'
-    }).then(() => setLiveProcs(p => p.filter(x => x.id !== id))).catch(() => {});
-  };
-  // Acknowledging a failure removes it from the ring immediately rather than on
-  // the next 1.5s poll — a dismiss that visibly lags feels like it did nothing.
-  const dismissProc = id => {
-    setFailedProcs(p => p.filter(x => x.id !== id));
-    try {
-      window.fridayRemoveOrb?.(id);
-    } catch (_) {}
-    apiFetch('/api/processes/' + encodeURIComponent(id) + '/dismiss', {
-      method: 'POST'
-    }).catch(() => {});
-  };
-  const dismissAllFailed = () => {
-    const ids = failedProcs.map(p => p.id);
-    setFailedProcs([]);
-    ids.forEach(id => {
-      try {
-        window.fridayRemoveOrb?.(id);
-      } catch (_) {}
-    });
-    apiFetch('/api/processes/dismiss-failed', {
-      method: 'POST'
-    }).catch(() => {});
-  };
   const clearNotif = id => {
     if (id) {
       dismissedNotifIds.current.add(id);
@@ -66363,6 +67822,7 @@ function App() {
     } : n));
     _notifPost('/api/notifications/read', id);
   };
+  const noticeSeenIds = useRef(new Set());
   useEffect(() => {
     const pull = () => fetch('/api/notifications').then(r => r.json()).then(d => {
       const items = (d.items || []).filter(n => !dismissedNotifIds.current.has(n.id));
@@ -66370,7 +67830,8 @@ function App() {
         const readMap = new Map(prev.map(n => [n.id, n.read]));
         return items.map(n => ({
           ...n,
-          read: readMap.has(n.id) ? readMap.get(n.id) : !!n.read
+          read: readMap.has(n.id) ? readMap.get(n.id) : !!n.read,
+          seen: !!n.seen || noticeSeenIds.current.has(n.id)
         }));
       });
     }).catch(() => {});
@@ -66378,28 +67839,32 @@ function App() {
     const iv = setInterval(pull, 30000);
     return () => clearInterval(iv);
   }, []);
+  // A workspace's dock icon is highlighted only while a card Friday raised
+  // inside it is unseen. Opening the workspace, by any route, marks its
+  // cards seen; dismissing a card takes it out of the list.
+  const noticeWorkspaceOf = n => {
+    const t = n && n.target && n.target.workspace || Array.isArray(n && n.actions) && n.actions[0] && n.actions[0].workspace || n && n.workspace;
+    return t ? fridayWorkspaceId(t) : '';
+  };
+  const noticeWs = new Set(notifs.filter(n => !n.seen && !n.dismissed).map(noticeWorkspaceOf).filter(Boolean));
   useEffect(() => {
-    const pull = () => fetch('/api/wiki/pending').then(r => r.json()).then(d => setWikiPending((d.pending || []).length)).catch(() => {});
-    pull();
-    const iv = setInterval(pull, 15000);
-    return () => clearInterval(iv);
-  }, []);
-  useEffect(() => {
-    const pull = () => fetch('/api/messages/stats').then(r => r.json()).then(d => setMsgActionable(d.actionable || 0)).catch(() => {});
-    pull();
-    const iv = setInterval(pull, 30000);
-    return () => clearInterval(iv);
-  }, []);
-  // Predictive workspaces — refresh the "Suggested" set Friday glows on the dock.
-  useEffect(() => {
-    const pull = () => fetch('/api/workspace/predictions?top=4').then(r => r.json()).then(d => {
-      const strong = (d.predictions || []).filter(p => (p.score || 0) >= 0.12).map(p => fridayWorkspaceId(p.workspace));
-      setSuggestedWs(new Set(strong));
+    const ids = notifs.filter(n => n.id && !n.seen && openWins.has(noticeWorkspaceOf(n))).map(n => n.id);
+    if (!ids.length) return;
+    ids.forEach(id => noticeSeenIds.current.add(id));
+    setNotifs(prev => prev.map(n => ids.includes(n.id) ? {
+      ...n,
+      seen: true
+    } : n));
+    apiFetch('/api/notifications/seen', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ids
+      })
     }).catch(() => {});
-    pull();
-    const iv = setInterval(pull, 120000);
-    return () => clearInterval(iv);
-  }, []);
+  }, [openWins, notifs]);
   // Ambient awareness — let the holographic scene breathe with the user's state.
   // Stores an UPPERCASE system mood the 1s scene loop adopts when otherwise idle.
   useEffect(() => {
@@ -67053,6 +68518,9 @@ function App() {
         if (m.type === 'hello') report(true);else if (m.type === 'command') run(m);
         else if (m.type === 'desktop_cards_changed') window.dispatchEvent(new Event('friday:desktop-cards-changed'));
         else if (m.type === 'workspace_customizations_changed') window.dispatchEvent(new Event('friday:ws-custom-changed'));
+        else if (m.type === 'slicing_offer') {
+          try { window.dispatchEvent(new Event('friday:slicing-offer')); } catch (_) {}
+        }
         else if (m.type === 'settings_changed') {
           try { window.dispatchEvent(new CustomEvent('friday:settings-changed', { detail: m })); } catch (_) {}
         }
@@ -67429,12 +68897,14 @@ function App() {
       const body = {
         message: m,
         voice_mode: voiceOn,
+        source: 'app_page',
         cite_sources: !!agentSettings.cite_sources,
         // Without this every turn lands in Main and the transcripts merge again.
         conversation_id: turnConversation || undefined,
         turn_id: inFlightTurn.current
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
+      if (opts.confirmLocalOnly) body.confirm_local_only = true;
       if (opts.privacyOverride) body.privacy_layer3_override = true;
       if (focusWin) body.workspace = focusWin;
       const frame = cameraOn ? cameraFrameRef.current?.primary : null;
@@ -67520,6 +68990,11 @@ function App() {
         // choice to switch instead of a dead-end error: fail, then ask the
         // user whether it may go into cloud-only mode.
         offer_cloud_switch: !!d.offer_cloud_switch,
+        // The local model could not finish: the offer (try again locally / a
+        // shorter version / send to Claude), and the words it re-sends.
+        local_fallback: d.local_fallback || null,
+        laya: d.laya || null,
+        source_text: m,
         time: new Date().toLocaleTimeString()
       }]);
       // Execute any structured actions Friday returned (navigate, open_path…).
@@ -67685,6 +69160,7 @@ function App() {
     // The Gmail-grade inbox (static/friday_mail.js); the older view stays as the fallback.
     messages: with3D('messages', 'messages', window.FridayMailPanel ? /*#__PURE__*/React.createElement(window.FridayMailPanel, null) : /*#__PURE__*/React.createElement(MessagesWS, null)),
     calendar: with3D('calendar', 'calendar', /*#__PURE__*/React.createElement(CalendarWS, null)),
+    meetings: /*#__PURE__*/React.createElement(MeetingsWS, null),
     marketplace: fridayHeldOn('federation') ? /*#__PURE__*/React.createElement(MarketplaceWS, null) : null,
     workflows: /*#__PURE__*/React.createElement(WorkflowsWS, null),
     settings: /*#__PURE__*/React.createElement(SettingsWS, null)
@@ -67698,11 +69174,6 @@ function App() {
     a[w.id] = w;
     return a;
   }, {});
-  // The badge counts what needs the owner; FYI cards roll into the digest.
-  const unread = notifs.filter(n => !n.read && n.tier !== 'fyi').length;
-  const runningTaskCount = bgTasks.filter(t => (t.status || 'running') === 'running').length;
-  const bellBadgeCount = runningTaskCount > 0 ? runningTaskCount : unread;
-  const sortedBgTasks = [...bgTasks].sort((a, b) => (b.created || 0) - (a.created || 0));
   const noWindows = openWins.size === 0;
   const structures = window.fridayVibe?.getStructures?.() ?? [];
   /* What a chat window shares with the docked chat: settings, the list of
@@ -67910,6 +69381,11 @@ function App() {
     showChat,
     setChatSide,
     placeTray,
+    // A width in pixels, with no remembered fraction: the tray as it was before the cards closed.
+    placeWidth: px => {
+      setChatFrac(0);
+      setChatW(clampChatW(Math.round(px)));
+    },
     remember: (side, frac) => snapDo.current.rememberTray && snapDo.current.rememberTray(side, frac)
   };
   useEffect(() => {
@@ -67925,7 +69401,8 @@ function App() {
       const t = trayDo.current;
       if (d.side === 'left' || d.side === 'right') t.setChatSide(d.side);
       let shown = t.open;
-      const frac = FRIDAY_TRAY_SIZES[d.size];
+      // The cards' restore hands back the chat's earlier width as a fraction.
+      const frac = FRIDAY_TRAY_SIZES[d.size] || (typeof d.frac === 'number' && d.frac > 0.1 && d.frac < 0.9 ? d.frac : 0);
       if (frac) {
         t.placeTray(d.side || t.side, frac);
         t.remember(d.side || t.side, frac);
@@ -67934,14 +69411,21 @@ function App() {
           shown = true;
         }
       }
+      if (typeof d.width === 'number' && d.width >= 300 && d.width < 4000) t.placeWidth(d.width);
       if (typeof d.visible === 'boolean') {
         t.showChat(d.visible);
         shown = d.visible;
       }
+      // "Hide the cards" / "show the cards": Simple's Home cards, through the same tool.
+      let cards;
+      if (d.cards === 'hide' || d.cards === 'show') {
+        const holo = window.FridayHolographicWorkspace;
+        cards = holo && holo.setCards ? holo.setCards(d.cards === 'hide' ? 'hidden' : 'shown') : { applied: false, reason: 'loading' };
+      }
       if (d.id) apiFetch('/api/desktop/ack', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: d.id, result: { applied: true, shown, side: d.side || t.side, size: frac ? d.size : undefined } })
+        body: JSON.stringify({ id: d.id, result: { applied: cards ? cards.applied : true, shown, side: d.side || t.side, size: frac ? d.size : undefined, cards: cards && cards.applied ? cards.cards : undefined, cards_reason: cards && !cards.applied ? cards.reason : undefined } })
       }).catch(() => {});
     };
     window.addEventListener('keydown', onKey);
@@ -68635,32 +70119,13 @@ function App() {
       fontSize: 14,
       position: 'relative'
     },
-    title: runningTaskCount > 0 ? `${runningTaskCount} task${runningTaskCount === 1 ? '' : 's'} running` : 'Notifications',
-    "aria-label": runningTaskCount > 0 ? `${runningTaskCount} tasks running, open notifications` : 'Open notifications'
+    title: 'Notifications',
+    "aria-label": 'Open notifications'
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 13
     }
-  }, "\uD83D\uDD14"), bellBadgeCount > 0 && /*#__PURE__*/React.createElement("span", {
-    className: runningTaskCount > 0 ? 'bell-badge-pulse' : '',
-    style: {
-      position: 'absolute',
-      top: -4,
-      right: -4,
-      minWidth: 14,
-      height: 14,
-      padding: '0 3px',
-      borderRadius: 7,
-      background: runningTaskCount > 0 ? '#f59e0b' : '#ff0080',
-      fontSize: 10,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: '#0a0e1a',
-      fontWeight: 700,
-      fontFamily: 'Orbitron, sans-serif'
-    }
-  }, bellBadgeCount)), !shellChat && /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDD14")), !shellChat && /*#__PURE__*/React.createElement("button", {
     onClick: toggleQuickDraft,
     style: {
       background: 'none',
@@ -69061,70 +70526,37 @@ function App() {
       top: notifAnchor.top,
       right: notifAnchor.right
     }
-  }, /*#__PURE__*/React.createElement(ReasoningTraySection, {
-    onOpenViewer: () => {
-      setActivityTab('traces');
-      setActivityOpen(true);
-      setNotifOpen(false);
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "notif-activity-link",
+    "data-testid": "notif-activity-link",
+    title: "Running work, reasoning and finished tasks are in Activity",
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '8px 14px',
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.55)'
     }
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "notif-section-header"
-  }, /*#__PURE__*/React.createElement("span", null, "TASKS", runningTaskCount > 0 ? ` · ${runningTaskCount} LIVE` : ''), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1
+    }
+  }, "Tasks and reasoning are in Activity."), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setActivityTab('activity');
       setActivityOpen(true);
       setNotifOpen(false);
     },
-    title: "Open the global activity ledger \u2014 every model action, subagent spawn, and tool call",
-    style: {
-      background: 'rgba(0,212,255,0.06)',
-      border: '1px solid rgba(0,212,255,0.25)',
-      color: '#00d4ff',
-      cursor: 'pointer',
-      fontSize: 9,
-      fontFamily: 'JetBrains Mono',
-      borderRadius: 4,
-      padding: '1px 6px',
-      marginLeft: 8
-    }
-  }, "\uD83D\uDCD2 Ledger"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.7)',
-      letterSpacing: '0.04em'
-    }
-  }, sortedBgTasks.length || 0), sortedBgTasks.some(t => t.status !== 'running' && t.status !== 'queued') && /*#__PURE__*/React.createElement("button", {
+    className: "ws-tab-link"
+  }, "Activity"), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
-      fetch('/api/tasks/dismiss-all', {
-        method: 'POST'
-      }).catch(() => {}).then(() => setBgTasks(p => p.filter(x => x.status === 'running' || x.status === 'queued' || x.status === 'interrupted' && x.resumable)));
+      setActivityTab('traces');
+      setActivityOpen(true);
+      setNotifOpen(false);
     },
-    title: "Hide finished cards. Records are kept, and anything that can still be resumed stays.",
-    style: {
-      background: 'none',
-      border: 'none',
-      color: 'rgba(255,255,255,0.4)',
-      cursor: 'pointer',
-      fontSize: 9,
-      fontFamily: 'JetBrains Mono',
-      padding: 0,
-      marginLeft: 8
-    }
-  }, "CLEAR FINISHED")), sortedBgTasks.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "notif-empty"
-  }, "No active tasks") : sortedBgTasks.slice(0, 8).map(t => /*#__PURE__*/React.createElement(TaskCard, {
-    key: t.task_id,
-    task: t,
-    expanded: !!notifCardExpanded[t.task_id],
-    onToggle: () => setNotifCardExpanded(e => ({
-      ...e,
-      [t.task_id]: !e[t.task_id]
-    })),
-    onCancel: () => cancelBgTask(t.task_id),
-    onChanged: () => setBgTasks(p => p.filter(x => x.task_id !== t.task_id)),
-    onView: () => viewBgTaskResult(t)
-  })), /*#__PURE__*/React.createElement("div", {
+    className: "ws-tab-link"
+  }, "Reasoning")), /*#__PURE__*/React.createElement("div", {
     className: "notif-section-divider"
   }), /*#__PURE__*/React.createElement("div", {
     className: "notif-section-header"
@@ -69134,14 +70566,7 @@ function App() {
       gap: 8,
       alignItems: 'center'
     }
-  }, unread > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 10,
-      color: '#ff0080',
-      letterSpacing: '0.04em'
-    }
-  }, unread, " NEW"), notifs.length > 0 && /*#__PURE__*/React.createElement("button", {
+  }, notifs.length > 0 && /*#__PURE__*/React.createElement("button", {
     onClick: clearAllNotifs,
     style: {
       background: 'none',
@@ -69152,163 +70577,7 @@ function App() {
       fontFamily: 'JetBrains Mono',
       padding: 0
     }
-  }, "CLEAR ALL"))), failedProcs.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '6px 10px 2px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 9,
-      fontFamily: 'JetBrains Mono',
-      color: 'rgba(255,179,71,0.75)',
-      letterSpacing: '.1em',
-      flex: 1
-    }
-  }, "FAILED \xB7 ", failedProcs.length), /*#__PURE__*/React.createElement("button", {
-    onClick: dismissAllFailed,
-    style: {
-      background: 'none',
-      border: 'none',
-      color: 'rgba(255,255,255,0.4)',
-      cursor: 'pointer',
-      fontSize: 10,
-      fontFamily: 'JetBrains Mono',
-      padding: 0
-    }
-  }, "CLEAR ALL")), failedProcs.slice(0, 8).map(p => /*#__PURE__*/React.createElement("div", {
-    key: p.id,
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 7,
-      padding: '3px 0',
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.7)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true"
-  }, "\u26A0"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      flex: 1,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap'
-    },
-    title: p.label || p.name
-  }, p.label || p.name || 'Task'), /*#__PURE__*/React.createElement("button", { "aria-label": "Dismiss this failure", 
-    onClick: () => dismissProc(p.id),
-    title: "Dismiss this failure",
-    style: {
-      background: 'none',
-      border: 'none',
-      color: 'rgba(255,255,255,0.35)',
-      cursor: 'pointer',
-      fontSize: 11,
-      padding: '0 2px'
-    }
-  }, "\u2715")))), liveProcs.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '6px 10px 2px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 9,
-      fontFamily: 'JetBrains Mono',
-      color: 'rgba(255,255,255,0.35)',
-      letterSpacing: '.1em',
-      marginBottom: 6
-    }
-  }, "RUNNING NOW"), liveProcs.map(p => {
-    const pct = Math.round((p.progress || 0) * 100);
-    const el = p.elapsed || 0;
-    const eta = p.eta_s || 0;
-    /* Overrun is SAID, not hidden. A bar that parks at 99% and waits is
-       worse than one that admits it is taking longer than usual. */
-    const over = eta > 0 && el > eta * 1.25;
-    const bar = over ? '#f59e0b' : '#00d4ff';
-    const when = over ? 'longer than usual — ' + el + 's so far' : eta > 0 ? Math.max(0, eta - el) + 's left of ~' + eta + 's' : el + 's';
-    return /*#__PURE__*/React.createElement("div", {
-      key: p.id,
-      style: {
-        marginBottom: 8,
-        padding: '7px 9px',
-        borderRadius: 7,
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.07)'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12
-      }
-    }, p.icon || '⚡'), /*#__PURE__*/React.createElement("span", {
-      style: {
-        flex: 1,
-        fontSize: 11,
-        color: 'rgba(255,255,255,0.85)',
-        minWidth: 0,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, p.label || p.name), p.model && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 9,
-        fontFamily: 'JetBrains Mono',
-        color: 'rgba(255,255,255,0.4)'
-      }
-    }, p.model), /*#__PURE__*/React.createElement("button", {
-      onClick: () => cancelProc(p.id),
-      title: "Stop this and hand the GPU back",
-      style: {
-        background: 'none',
-        border: '1px solid rgba(255,84,112,0.3)',
-        color: '#ff5470',
-        borderRadius: 4,
-        cursor: 'pointer',
-        fontSize: 9,
-        padding: '1px 6px',
-        fontFamily: 'JetBrains Mono'
-      }
-    }, "stop")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        height: 4,
-        borderRadius: 2,
-        background: 'rgba(255,255,255,0.08)',
-        marginTop: 6,
-        overflow: 'hidden'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        height: '100%',
-        width: Math.max(2, Math.min(100, pct)) + '%',
-        background: bar,
-        transition: 'width .4s ease'
-      }
-    })), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 9,
-        fontFamily: 'JetBrains Mono',
-        color: over ? '#f59e0b' : 'rgba(255,255,255,0.35)',
-        marginTop: 3
-      }
-    }, pct, "% \xB7 ", when), /*#__PURE__*/React.createElement(TraceExpander, {
-      traceId: p.trace_id,
-      taskId: p.task_id
-    }));
-  })), notifs.length > 0 && notifGroupCards(notifs), notifs.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "CLEAR ALL"))), notifs.length > 0 && notifGroupCards(notifs), notifs.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "notif-empty"
   }, "No new notifications") : [...notifs].filter(n => !notifGroupedIds(notifs).has(n.id)).sort((a, b) => (a.tier === 'fyi') - (b.tier === 'fyi')).slice(0, 50).map((n, i, arr) => {
     const key = n.id || `n_${i}`;
@@ -69469,7 +70738,21 @@ function App() {
         color: '#00d4ff',
         marginTop: 1
       }
-    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && n.kind && n.kind !== 'approval_pending' && /*#__PURE__*/React.createElement("button", {
+    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && n.meta && n.meta.schedule_id && (n.kind === 'scheduled_task' || n.kind === 'scheduled_status') && /*#__PURE__*/React.createElement("button", {
+      "aria-label": "Don't tell me when this finishes",
+      className: "notif-finish-optout",
+      onClick: e => {
+        e.stopPropagation();
+        apiFetch('/api/schedules/' + encodeURIComponent(n.meta.schedule_id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ finish_notice: false })
+        }).then(r => { if (r.ok) clearNotif(n.id); }).catch(() => {});
+      },
+      style: { background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)', cursor: 'pointer',
+               fontSize: 10, padding: '0 2px', lineHeight: 1 },
+      title: "Don't tell me when this finishes (turn it back on under Workflows, built-in routines)"
+    }, "Don't tell me"), n.id && n.kind && n.kind !== 'approval_pending' && /*#__PURE__*/React.createElement("button", {
       "aria-label": "Mute this kind",
       className: "notif-mute",
       onClick: e => {
@@ -69946,7 +71229,7 @@ function App() {
       map: wsCustMap,
       setCust
     }
-  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
+  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(CloudSlicingCard, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
     // The server stores the passphrase as the chat begins; this page does
     // not keep it.
     onDone: seed => {
@@ -70279,7 +71562,7 @@ function App() {
     className: "dock-group-btns"
   }, g.items.map(w => /*#__PURE__*/React.createElement("button", {
     key: w.id,
-    className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${suggestedWs.has(w.id) && !openWins.has(w.id) ? 'suggested' : ''}`,
+    className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${noticeWs.has(w.id) && !openWins.has(w.id) ? 'has-notice' : ''}`,
     "data-ws": w.id,
     // Ctrl/Cmd-click or middle-click: the workspace in a new BACKGROUND tab,
     // the way a link would -- the person chose to stay here. A plain click
@@ -70299,7 +71582,7 @@ function App() {
       }
     },
     onMouseDown: e => { if (e.button === 1) e.preventDefault(); },
-    title: suggestedWs.has(w.id) && !openWins.has(w.id) ? ('Suggested — ' + fridayName() + ' predicts you’ll want this') : w.blurb ? w.label + ' — ' + w.blurb : undefined,
+    title: noticeWs.has(w.id) && !openWins.has(w.id) ? (fridayName() + ' left you something here') : w.blurb ? w.label + ' — ' + w.blurb : undefined,
     style: {
       position: 'relative'
     }
@@ -70328,66 +71611,7 @@ function App() {
     }
   }, w.ico)), /*#__PURE__*/React.createElement("span", null, w.label), /*#__PURE__*/React.createElement("span", {
     className: "dot"
-  }), w.id === 'knowledge' && wikiPending > 0 && /*#__PURE__*/React.createElement("span", {
-    title: wikiPending + ' wiki update' + (wikiPending === 1 ? '' : 's') + ' waiting for your approval',
-    style: {
-      position: 'absolute',
-      top: 2,
-      right: 2,
-      minWidth: 14,
-      height: 14,
-      padding: '0 4px',
-      borderRadius: 7,
-      background: '#f59e0b',
-      color: '#0a0e1a',
-      fontSize: 9,
-      fontWeight: 700,
-      fontFamily: 'Orbitron, sans-serif',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 0 8px rgba(245,158,11,0.7)'
-    }
-  }, wikiPending), w.id === 'messages' && msgActionable > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      position: 'absolute',
-      top: 2,
-      right: 2,
-      minWidth: 14,
-      height: 14,
-      padding: '0 4px',
-      borderRadius: 7,
-      background: '#00d4ff',
-      color: '#031018',
-      fontSize: 9,
-      fontWeight: 700,
-      fontFamily: 'Orbitron, sans-serif',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 0 8px rgba(0,212,255,0.7)'
-    }
-  }, msgActionable), w.id === 'content' && contentAlerts > 0 && /*#__PURE__*/React.createElement("span", {
-    title: "Held or failed posts need your attention \u2014 Content \u2192 Queue",
-    style: {
-      position: 'absolute',
-      top: 2,
-      right: 2,
-      minWidth: 14,
-      height: 14,
-      padding: '0 4px',
-      borderRadius: 7,
-      background: '#f59e0b',
-      color: '#0a0e1a',
-      fontSize: 9,
-      fontWeight: 700,
-      fontFamily: 'Orbitron, sans-serif',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 0 8px rgba(245,158,11,0.7)'
-    }
-  }, contentAlerts)))), g.name && /*#__PURE__*/React.createElement("div", {
+  })))), g.name && /*#__PURE__*/React.createElement("div", {
     className: "dock-group-label"
   }, g.name))))), shellPalette, shellShortcuts, shellQuickPost, shellPodcast, shellTaskModal);
 }
@@ -70492,7 +71716,8 @@ function App() {
               // card, where every path it would allow is listed; the caption
               // never offers it.
               var list = ((d && d.approvals) || []).filter(function (x) {
-                return CAPTION_NEVER_DECIDES.indexOf(x && x.kind) < 0;
+                return CAPTION_NEVER_DECIDES.indexOf(x && x.kind) < 0
+                  && !(x && x.payload && x.payload.origin === 'laya_safe_write');
               });
               var a = list[0];
               body.classList.toggle('has-approval', !!a);

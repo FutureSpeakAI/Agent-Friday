@@ -13,6 +13,260 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+---
+
+## [1.1.0-beta.1] - Agent Friday Beta 1.1 (2026-10-14)
+
+Agent Friday™ Beta 1.1 (version `1.1.0b1`, tag `v1.1.0-beta.1`, build
+sequence 101010001) follows Beta 1.0.1; Beta 1.0.2 was prepared but never
+published, and its changes ship here. It installs over Beta 1.0.2, Beta 1.0.1,
+Beta 1.0 and 5.x in place, with the data backed up first.
+
+### Added
+
+- **Laya's safe writes** (off until you turn them on; Settings > Privacy & Data >
+  Safe writes). Laya can put the approval card up for a change you can undo to
+  the mail rows you pointed at: archive, mark read or unread, star, unstar,
+  label, and move to a label that already exists. You approve every card; she
+  never trashes, reports spam, sends or deletes. The card lists the senders of
+  the messages it lists (up to three per conversation, with the address, on
+  screen only), covers only the messages it lists, leaves out a message that arrived after your screen last showed the
+  list and says so, and Undo puts back the labels Friday changed. A conversation
+  Friday cannot read message by message is refused. Only your own click on the
+  Settings page turns it on (a signed record on this PC, anchored in the system
+  keychain); a hand edit, a restored backup, the command line or a file write
+  reads as off. By voice a bare yes counts only after the card's fixed line was
+  played whole; on the page a Laya card is approved with its Approve button, not
+  by typing yes. Turning the setting down expires the cards still waiting. The
+  saved conversation never holds a title or a sender name from a card. Setting:
+  `laya_safe_writes` (`off`, `shadow`, `on`).
+- **Card-free mail changes are recorded and pinned.** Star, unstar, label, take a
+  label off, mark read and mark unread still run with no card when a model asks
+  (your rule). Each now appears in the Undo list and in a turn receipt (chat
+  turn, spoken turn, Live tool call or background task) by tool, action, count
+  and message ids (no subjects). A conversation that cannot be read message by
+  message is refused rather than changed inexactly, a label such a change creates
+  is removed again by Undo when it is empty, and a test pins the list.
+  A spoken "yes" approves a card Laya raised only if Friday read that card's line
+  aloud in this conversation.
+- **Voice history keeps no card details.** When a local voice call reads an
+  approval card aloud (any card, with safe writes on or off), or asks a question
+  built from your screen ("which sender?"), the saved conversation and the
+  end-of-call summary keep a neutral line ("I have a change waiting for your OK;
+  the details are on your screen. Shall I go ahead?") instead of the subjects and
+  sender names. Friday still says the full line aloud; a later typed turn on a
+  cloud model no longer reads it.
+- **A plain "yes" runs the action Friday is waiting on** (`reflex_approval_replies`,
+  on by default). A whole, unconditional yes typed on Friday's own page to a
+  question she is waiting on runs the stored action straight away, with the same
+  approval and receipt as an ordinary turn. "Yes, but ..." goes to the model.
+  Never from a tunnel, a channel, a call or the Local API. Set it to `false` to
+  send every reply through the ordinary turn.
+- **"Open the X" without a model** (`reflex_open_enabled`, off until you choose).
+  "Open the go-live email from Dana" is resolved and opened by rules; the same
+  switch lets you point at rows on your screen ("open the second one", "select
+  these"). Archive, move, label, star and mark are never run this way.
+- **Laya picks the tool for a typed lookup** (`chat_tool_routing`, unchosen by
+  default). With `laya`, a small model on this PC reads your line first; for a
+  lookup it is sure of it runs the tool through the same approvals and receipts,
+  and your chat model answers from the result. Anything it is unsure of, or any
+  change to your data, goes to the chat model, and a cloud model keeps its whole
+  toolbox.
+- **A tool chooser beside Laya's routing** (`laya_tool_head`, `shadow` by
+  default). Once a tested chooser is in your profile it records, as hashes and
+  numbers only, what it would have chosen next to what Laya chose, in one task
+  card per burst of turns; it changes nothing until you set `on`, and then only
+  when it is sure at a level it was tested to.
+- **Voice point-and-act.** In a local voice call, "open the second one", "select
+  these" and "star the ones from Dana" are settled against the rows on your
+  screen by rules. When it cannot tell which rows you mean it asks one short
+  question (you answer it by saying what you want again; a spoken "yes" does not
+  answer it). Changes still go to the model and its approval card.
+
+- **Cloud voice is asked for, and offered back once** (Settings > Voice). Moving
+  voice to the cloud, from Settings, by voice, or after local voice fails to
+  start, asks "just this call, or always?": two choices, "just this call"
+  marked Recommended because it keeps local voice your default, nothing
+  preselected. Just this call returns to local voice when the call ends;
+  always is kept with the time and the reason. After an always, when local
+  voice is measured and ready again, Friday offers once to switch back, in
+  every mode except local-only (cloud-only, the default, included); no answer
+  changes nothing, and nothing switches silently in either direction. If Friday
+  restarts in the middle of a "just this call", voice is back on local. You can
+  answer by voice ("just this call", "always", "switch back", "keep cloud")
+  when the local model is loaded, otherwise on the card; a spoken answer counts
+  only as your own words, said after the question, and "no, not always" is not
+  one. Local-only mode refuses the switch and says why, and a peer device can
+  no longer push cloud voice to this one.
+- **What Laya learns about you** (on by default; Settings > Privacy & Data).
+  When you correct her, or answer a question she asks, in a local voice call on
+  this PC, or typed on Friday's own page while Laya picks the tool for typed chat
+  (`chat_tool_routing`) on a local model, she keeps those words, sealed in your vault
+  on this PC, and learns your phrasing. In a call she goes by the voice connection on
+  this PC, not by speaker (turn on room mode when others or a TV are heard). Nothing
+  said on a paired phone, through a relay, in a cloud voice call or in a delegated
+  task teaches her as a correction, nothing typed teaches her while chat is left to
+  the chat model or runs on a cloud model, and a request she answers from what is on
+  your screen is not kept as a phrasing. When she hands a request you said in a
+  private (local-only) voice call to the deeper mind, the first tool of the
+  background task it starts that she could have chosen herself (a lookup such as
+  calendar, mail search or notes; never a write, never a tool run for another
+  request, nothing from a task that read untrusted content) shows under "Waiting
+  for your OK" on the report card and teaches her only after you click "Yes, that
+  was right". A new phrasing must pass a collision check
+  and a re-score of her shipped test questions and of your own earlier answers
+  before she uses it; if anything she got right would turn wrong, she turns it
+  down and says why. Her confidence is retuned from your labels as a visible
+  Local AI queue job ("Learning from your corrections", on the processor only) that
+  runs only while you are signed in and at the PC, with the vault open and on AC
+  power, and it can only make her more careful on its own. A learned guess acts
+  only for a read-only local route you confirmed three times and a near-exact
+  repeat; everything else still asks. Nothing she can tell is sensitive is kept
+  (and when she cannot tell, nothing is), nothing while you are off the record or
+  in a voice call with several people in the room, and a minor profile learns
+  nothing. A notice, a report card (what she learned, what she turned down and
+  why, undo and forget per item, reset, wipe, and a roll back to one of her last
+  three versions) and spoken controls ("what have you learned?", "forget that",
+  "reset", "go back to how you were last week") come with it. Loosening a
+  threshold is yours alone, per head, by a card you click on screen. Corrections
+  are kept 180 days, at most 4,000 (the oldest go first, as if forgotten), and
+  **Forget** on a person in Contacts deletes every correction that names them and the
+  versions built from them (with the vault without a key, the sealed ones go when it
+  opens). The spoken controls work in a local voice call and in typed chat on this PC,
+  not in a cloud voice call.
+  Settings: `laya_personal_learning`, `laya_personal_retention_days`,
+  `laya_personal_shadow_days`.
+- When Laya asks which of several places you mean, she now always offers
+  "something else".
+
+- **One scheduler decides what the local models do next.** Every call to a
+  local model now waits its turn in the order voice, chat, Local API, jobs you
+  asked for, background. A model that is loaded finishes its waiting jobs before
+  anything asks for another to load, and the jobs for one unloaded model go
+  together. No model loads if it would leave less than 4 GB of memory free; the
+  job waits and the Local AI chip says why. A second GPU job (an image, a heavy
+  model) waits for the card instead of being refused. A background call nothing
+  claims, such as a summary written after a chat, becomes a waiting job in the
+  same Local AI queue, with a card that names the model, and starts only after
+  you have been away for `background_idle_minutes`. A voice turn holds
+  background work; an open call keeps only the work that can wait waiting. Say
+  "cancel the podcast job" to take a waiting job out of the line. The scheduler
+  keeps swaps, free memory, waits and finished jobs in a file on this PC and
+  sends none of it anywhere (`GET /api/work/local/metrics`).
+
+- **Four places, one rule each.** The top-bar chip now opens **Needs you**
+  (only what waits for your decision, with a badge), **Activity** (every task,
+  whoever started it: model, status, a link to its reasoning trace, place in
+  line, and Stop only where the job can be stopped), **Updates** (a digest you
+  pull; a quiet dot, never a popup) and **Receipts & traces** (pulled from an
+  item's **Why?**, never pushed). Page: [Notifications](docs/user-guide/notifications.md).
+- **An interruption limit.** At most 6 things an hour may pop up, speak or text
+  (`interruption_budget_per_hour`; 6 is the recommended choice, 3, 12 and no
+  limit are offered). Over the limit they wait in the badge, which says how
+  many. Spend halts, credential problems, budget alerts, seat changes and cLaw
+  blocks are exempt.
+- **Quiet hours and Focus Assist.** Quiet hours are off until you turn them on
+  (22:00 to 07:00 is offered as the recommended window). In them only
+  safety-critical items interrupt, and background jobs that would raise
+  approvals wait until quiet hours end, then run once, labelled late; a
+  one-time job asks first. Following Windows Focus Assist is off until you
+  choose it. By voice: "quiet until morning".
+- **Batch approval cards.** Approvals of one kind and source show as one card
+  that lists every action in full. Approving the batch approves exactly those
+  actions, one approval each through the same checkpoint; a batch that changed
+  while you looked is refused. Only the media-diet and career-tracker changes
+  batch for now; actions that use outside content, money, connector actions and
+  click-only approvals never do.
+- **A burst becomes one card.** Repeated "ran" and "waiting" lines of a
+  schedule within five minutes are one card with a count; a notice about one task,
+  run or message keeps its own card. Editing a schedule forgets a run that was
+  waiting for quiet hours to end, and says so.
+- A held approval keeps its own expiry and never gains one; after a limit on how
+  long a hold may last it joins **Needs you** quietly. A card that expires
+  without having popped says so in Needs you.
+- **A folder you add is read as one job on the Local AI queue.** Only while the
+  PC is idle, one folder at a time, paused when you come back, in a meeting or
+  when memory is low, and picked up where it stopped after a restart. Every pass
+  is a task in Activity that names the reading model, with its status, log,
+  trace and place in line, and the top-bar chip reads "Indexing your Obsidian
+  vault · 1,240 of 3,100 · paused while you're here" with Run now, Pause, Resume
+  and Cancel. "How's the indexing going?" and "pause the indexing" work by voice.
+  The Library reads text first, so the first cited answer comes as soon as the
+  first files are in. Page: [Your knowledge](docs/user-guide/your-knowledge.md).
+- **Friday notes each document.** On the processor she notes its type, how
+  sensitive it is and whether it is a copy (a near copy needs the words to agree,
+  not just the topic). A local model drafts summaries and facts into a staging
+  folder, each with the sentence it came from, for your review. Nothing is
+  published without you.
+- **New and changed files are found while the PC is idle** and read as one job
+  per folder, never at the moment of a change.
+
+- **A Meetings workspace.** The recorder and past meetings move out of Calendar
+  into Meetings in the dock (Calendar keeps a link). A recording starts only
+  from the start card on screen, after your consent and an explicit confirm;
+  Friday never starts one by herself. It can record both sides of a call: the
+  microphone is "You" and the computer's sound is "Them". A notes pad takes
+  shorthand bullets during the call; afterwards a local model expands them, and
+  every kept line cites a transcript segment and time. People, decisions and
+  projects become memory proposals, never direct writes, and the summary reaches
+  the calendar event only through an approval card. Retention settings have
+  nothing preselected, and the audio can be deleted apart from the notes. The
+  tray icon carries a red dot while a meeting records. Your meetings become
+  searchable in the Library only after you say yes (`meeting_archive`, empty
+  until you choose). Page: [Meetings](docs/user-guide/meetings.md).
+- **Settings > Voice says whether local voice can run here.** A Local voice row
+  shows capable, not measured (with **Measure now**) or not ready with its
+  reason, and why voice is on the cloud when it is. "Not measured" is no longer
+  shown as "can't". The measurement is refreshed as a visible, idle-time job when
+  a local model is installed, when the graphics card, its driver or the memory
+  changes, and weekly. Ask "can you run voice locally now?" by voice or in chat.
+- **The avatar stays centred in what you can see.** In Classic it re-centres in
+  the visible part of the desktop when panels, the chat tray or windows change
+  the space, and eases there. In Simple a **Hide the cards** control gives the
+  avatar one half and the chat the other; say "hide the cards" or "show the
+  cards". Reduced motion moves more gently.
+- **One media player.** Every way into a podcast episode or a recording opens
+  Friday's one player, and the avatar follows the audio that is playing. Until
+  you drag it, the player rests in the work area's bottom corner, above the
+  selection bar, so it does not cover a workspace's header or toolbar.
+- **Podcast lengths are spoken time.** Short is about 2 minutes, Standard about
+  5 (the default for every routine and every new episode) and Long about 10,
+  with fewer stories each told longer. Each story is written from its full
+  article where the page can be read, and the transcript and the player list
+  each segment's sources. Writing an episode is a job in the Local AI queue;
+  cancelling the job cancels the episode.
+- **Cloud work orders (off by default).** With the internal switch
+  `work_orders_enabled` on, a cloud model you are already using can hand this PC
+  a plan that names your material only by random handles; Friday's own models
+  do the work here, and what goes back depends on how private the material is.
+  There is no Settings control for it yet. Page:
+  [Cloud work orders](docs/user-guide/cloud-work-orders.md).
+- A small Laya chip marks the replies Laya wrote herself.
+
+### Changed
+
+- **Local voice starts faster.** The ear, the voice and the fast reply model now
+  load at the same time instead of one after another. The page says "Warming up
+  the voice" with an estimate taken from this PC's recent starts for the stages
+  that will really run, and no number when there is no record.
+- A follow-up that drops its subject, such as "what about tomorrow?" after a
+  calendar question, re-uses the previous look-up with the new day or name; with
+  nothing to carry over it goes to the deeper mind.
+- **Local modes call the cloud only when you asked.** In `local_preferred` and
+  `local_only`, background, health, media, avatar, research and resume calls no
+  longer reach a cloud provider on their own. When a local answer fails, Friday
+  offers to try again locally, give a shorter version or send it to Claude, with
+  nothing preselected, by voice too. The old `smart` mode is read as
+  `local_preferred` (a one-time settings migration).
+- **Mail reads have a time limit.** A list that does not load within 20 seconds
+  shows an error with **Retry** instead of an empty inbox; a list already on
+  screen stays, with a "couldn't refresh" note.
+- Installing local voice also installs spaCy's small English model, which the
+  Kokoro pronouncer needs, as part of the download you agree to, instead of a
+  silent download on first use.
+- The installer's upgrade check now proves upgrades from v5.14.3,
+  v1.0.0-beta.1, v1.0.1-beta.1 and v1.0.2-beta.1.
+
 ### Fixed
 
 - **Undoing a mailbox change is now exact for every message in a conversation.**
@@ -32,6 +286,24 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   privacy gate. The gate now decides from the model as well as the provider
   name, and those models are checked like any other cloud model. The model
   list also hides both forms of cloud tag from the on-device picks.
+- Library search stays fast with thousands of documents. Your consents are
+  still read fresh on every search, so removing a folder takes effect at once.
+- **Settings survive a read that meets a save.** On Windows, reading
+  `settings.json` while it was being saved could fail and fall back to factory
+  defaults, and a later save could then write those defaults over your
+  settings. A read now retries briefly, and a failed read can never become a
+  save.
+- The speech engines a voice call loads in the server are released when the
+  call ends, instead of staying in memory.
+- A mail read that does not answer is shown as an error, never as an empty
+  inbox.
+
+### Security
+
+- Passages of a meeting's transcript or notes reach only a local model
+  answering on this PC (not one answering for a cloud voice call), and a reply that came from a turn that read a meeting is left out of
+  the history sent to a cloud model.
+- A model that Ollama runs in its cloud is sent no images.
 
 ---
 

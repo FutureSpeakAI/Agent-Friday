@@ -18,7 +18,7 @@ from __future__ import annotations
 #
 # `reader` comes after `connect` on purpose: a key connected in the checklist
 # can be the thing that makes a model available to read the answers.
-STAGES = ("welcome", "agent_name", "basics", "connect", "reader",
+STAGES = ("welcome", "agent_name", "basics", "connect", "knowledge", "reader",
           "research_ask", "research_seeds", "questions", "style",
           "research_review", "scheduled_cloud", "room_voice", "brain_warm",
           "finish", "done")
@@ -27,6 +27,7 @@ STAGES = ("welcome", "agent_name", "basics", "connect", "reader",
 STAGE_GROUPS = (
     ("hello", "Hello", ("welcome", "agent_name", "basics")),
     ("connect", "Connect", ("connect",)),
+    ("knowledge", "Your files", ("knowledge",)),
     ("research", "Research", ("reader", "research_ask", "research_seeds")),
     ("about", "About you", ("questions",)),
     ("style", "Your Friday", ("style", "research_review")),
@@ -81,6 +82,36 @@ CONNECT = (
     "in Settings > Connections.")
 
 CONNECT_DONE = "Done for now"
+
+# ── Stage 2b: start with your knowledge ──────────────────────────────────────
+#
+# The panel under this message (services/knowledge_folders.COPY) holds the two
+# kinds of access in plain words: reading and indexing on this PC, and, as a
+# separate choice, letting cloud models read a folder. This message only
+# frames it; the choices are made on the panel and nothing is chosen for you.
+
+KNOWLEDGE = (
+    "Do you already keep notes or documents somewhere? If you point me at "
+    "them, I can find things in them for you. This is optional, and you "
+    "choose every folder yourself; nothing is picked for you.\n\n"
+    "There are two different kinds of yes here. One lets me read and index a "
+    "folder on this PC, and nothing leaves it. The other, separately and "
+    "folder by folder, lets a cloud model read it for 30 days; it is off "
+    "unless you turn it on, and I never suggest it for a vault or a private "
+    "folder.\n\n"
+    "\"Not now\" skips all of this. You can come back to it in Settings > "
+    "Privacy & Data > Your knowledge.")
+
+KNOWLEDGE_SKIP = "Not now"
+KNOWLEDGE_DONE = "Saved my choices"
+KNOWLEDGE_SKIPPED = "No problem. It will be in Settings > Privacy & Data > Your knowledge whenever you want it."
+KNOWLEDGE_SAVED_LOCAL = "I'll read {n} here on this PC; nothing leaves it."
+KNOWLEDGE_SAVED_CLOUD = "Cloud models may read {n} for the next 30 days."
+KNOWLEDGE_SAVED_TAIL = ("Nothing else was touched, and you can change any of "
+                        "it in Settings > Privacy & Data > Your knowledge.")
+KNOWLEDGE_SAVED_NOTHING = ("You didn't choose anything, so nothing changed. "
+                           "It will be in Settings > Privacy & Data > Your "
+                           "knowledge whenever you want it.")
 
 # ── One key is enough (cloud mode) ───────────────────────────────────────────
 #
@@ -241,6 +272,9 @@ MOTHER_LEAD_IN = (
 
 MOTHER_QUESTION = "What was the relationship with your mother like?"
 
+#: The recommended quiet-hours choice. It is offered, never preselected.
+QUIET_RECOMMENDED = "22:00 to 07:00 (Recommended)"
+
 #: The questions, in order. Each: (id, question, chips, placeholder).
 #: Every question also accepts free text and the Skip / Rather not say chips.
 QUESTIONS = (
@@ -270,6 +304,11 @@ QUESTIONS = (
      "interruptions?",
      ("Early mornings", "Normal office hours", "Late nights", "It varies"),
      "e.g. deep work before lunch, meetings after"),
+    ("quiet",
+     "Would you like quiet hours? In them only the urgent things interrupt me, and the rest waits "
+     "for the morning. You can change this any time in Settings.",
+     ("Not now", QUIET_RECOMMENDED),
+     "Or tell me when, and I'll point you to Settings"),
     ("values",
      "What matters most to you in your work?",
      ("Getting it right", "Moving fast", "Craft", "The people"),

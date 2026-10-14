@@ -59,6 +59,16 @@ A model call that does not go through the router (a speech model, a direct
 HTTP call to a seat, a Gemini client) calls `visible_jobs.note_inference(model,
 local=...)` right before it, so the card names that model too.
 
+A local call that no job claims (nothing opened a `visible_job` or a queue job
+around it, and no person's turn made it) is wrapped by the local work scheduler
+(`services/local_scheduler.admit`) as a deferrable `visible_job` of kind
+`background_call`, `eager=False`: it waits in the Local AI queue for idle like
+any deferrable job, shows one row in the chip and, once a model answers, one
+card that names it. Work that is time-bound (a schedule that is due, an episode
+someone asked for) says so with `local_scheduler.work(label, cls="background",
+deferrable=False)` and is not held for idle. The setting
+`local_scheduler_wrap_background` turns the wrapping off.
+
 The task card (`TaskCard` in `index.html` and `ui_parts/app.html`) shows the
 model line (`data-testid="task-model"`), the queue line
 (`data-testid="task-queue"`) and the reasoning button.
@@ -89,3 +99,18 @@ visible surface (the chat turn, the voice surface, a phone call, the setup
 wizard, a workspace chat), the task machinery that is itself the registry, and
 small infrastructure checks with their own result page (a key probe, the privacy
 judge). Each entry says why. A job is wrapped, never allow-listed.
+
+## Declaring a workspace's jobs
+
+Each workspace's Laya manifest (`src/agent_friday/resources/laya_manifests/<id>.json`) lists
+the jobs the workspace can launch in `jobs`. An entry names the job's `id`, what starts it
+(`trigger`: a button, a schedule, an idle sweep, Laya or voice), the kind of model it needs
+(`model_class`), and the `task_kind` and `activity_label` its `visible_job` call gives it,
+with the `entry` function the call decorates. A scheduled job also names its `schedule_ref`
+(the `register_builtin_task` ref). A launcher that is its own TASKS record (a Crew request)
+has `helper: "task"` and is the allow-listed entry in `scripts/check_visible_jobs.py`.
+
+`tests/test_laya_workspace_contracts.py` holds the manifests to the source: every declared job
+is a real `visible_job` call with that kind and label, and every `visible_job` kind in the tree
+belongs to a manifest (or to `UNOWNED_KINDS` there, with the reason). Add the job to the
+manifest in the same change that adds the call.

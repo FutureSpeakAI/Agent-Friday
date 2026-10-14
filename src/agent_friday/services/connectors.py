@@ -954,7 +954,7 @@ def monitor_connector_health() -> dict:
             body=f"{c['name']} was connected and is now {c['status']}: {c['detail']}",
             priority="medium",
             source="connectors",
-            kind="connector_down",
+            kind="connector_down", emitter="E39",
             meta={"connector": c["key"], "status": c["status"]},
             target={"workspace": "system"},
             dedupe_key=f"connector_down:{c['key']}:{c['status']}",

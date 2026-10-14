@@ -1,12 +1,13 @@
-"""The chat route builds a prompt as CLOUD for the model it is preparing it for.
+"""The keyless safety net never takes a cloud-tagged Ollama model.
 
-``routes/chat.py::_prep_for`` classifies a prompt by the model it is built for.
-The keyless safety net picks a local Ollama model and prepares the prompt for it;
-when the only model the daemon lists is a cloud-tagged one (``glm-4.6:cloud``),
-that prompt must be built as cloud (vault tiers withheld, PII scrubbed), by the
-model passed to ``_prep_for`` and not by whatever the route record happens to
-hold. And ``_prep_for``'s docstring must be its docstring: code above it made
-it a dead string.
+``routes/chat.py``'s keyless safety net picks an on-device Ollama model when
+the router chose the cloud and there is no key. A cloud tag (``glm-4.6:cloud``)
+is relayed to ollama.com, so it is never that model, in any routing mode: the
+cloud path is an explicit offer or the normal cloud route. Should a cloud tag
+ever be prepared or answer, its prompt is built AS CLOUD (vault withheld, PII
+scrubbed) by the model passed to ``_prep_for``, and the response never labels
+it local. And ``_prep_for``'s docstring must be its docstring: code above it
+made it a dead string.
 """
 from __future__ import annotations
 
@@ -50,27 +51,60 @@ def test_the_safety_net_prepares_for_the_model_it_picked():
     assert all(any(k.arg == "model" for k in c.keywords) for c in calls)
 
 
-def test_a_cloud_tagged_local_fallback_is_prepared_as_cloud(client, monkeypatch):
+CLOUD_TAG = "glm-4.6:cloud"
+MODES = ["smart", "local_preferred", "local_only", "cloud_preferred", "cloud_only"]
+
+
+def _keyless_turn(client, monkeypatch, mode):
+    """One keyless /api/chat turn in `mode` with only a cloud tag in Ollama.
+
+    Returns (prepared, ollama_models, body): the (provider, model) of every
+    prompt the route prepared, the model of every _call_ollama, and the JSON."""
     s = dict(DEFAULT_SETTINGS)
     s["model_routing"] = dict(s.get("model_routing") or {})
-    s["model_routing"]["mode"] = "smart"
+    s["model_routing"]["mode"] = mode
     monkeypatch.setattr(chat_mod, "_load_settings", lambda: s, raising=False)
     monkeypatch.setattr(chat_mod, "get_anthropic_client", lambda *a, **k: None, raising=False)
     import agent_friday.routing.ollama_manager as ollama_manager
     monkeypatch.setattr(ollama_manager, "get_manager", lambda *a, **k: _FakeOllama(), raising=False)
     import agent_friday.services.demo_mode as _dm
     monkeypatch.setattr(_dm, "is_demo", lambda *a, **k: False, raising=False)
-    monkeypatch.setattr(chat_mod, "_call_ollama", lambda *a, **k: ("reply", []), raising=False)
 
-    seen = []
+    called = []
+
+    def ollama(*a, **k):
+        called.append(k.get("model"))
+        return "reply", []
+    monkeypatch.setattr(chat_mod, "_call_ollama", ollama, raising=False)
+
+    prepared = []
 
     def build(message, workspace, vision, *a, **kw):
-        seen.append((kw.get("provider"), kw.get("model")))
+        prepared.append((kw.get("provider"), kw.get("model")))
         return "SYSTEM", []
     monkeypatch.setattr(chat_mod, "_build_context_prompt", build)
 
-    client.post("/api/chat", json={"message": "hello Friday"})
+    resp = client.post("/api/chat", json={"message": "hello Friday"})
+    return prepared, called, (resp.get_json(silent=True) or {})
 
-    fallback = [c for c in seen if c[1] == "glm-4.6:cloud"]
-    assert fallback, "the fallback never prepared a prompt for the cloud-tagged model: %r" % (seen,)
-    assert all(p == "cloud" for p, _m in fallback), seen
+
+@pytest.mark.parametrize("mode", MODES)
+def test_the_keyless_safety_net_never_picks_a_cloud_tag(client, monkeypatch, mode):
+    prepared, called, body = _keyless_turn(client, monkeypatch, mode)
+    assert CLOUD_TAG not in called, (mode, called)
+    assert not [c for c in prepared if c[1] == CLOUD_TAG], (mode, prepared)
+    # Should a cloud tag ever be prepared or answer, it is cloud, never local.
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    assert all(p == "cloud" for p, m in prepared if is_cloud_model_tag(m)), prepared
+    served = body.get("served_by") or {}
+    if is_cloud_model_tag(served.get("model") or body.get("model") or ""):
+        assert not served.get("local") and body.get("seat") != "local", body
+
+
+@pytest.mark.parametrize("mode", ["smart", "local_preferred", "local_only"])
+def test_a_local_mode_never_falls_back_to_a_cloud_tag(client, monkeypatch, mode):
+    # A local mode with no recorded intent: a cloud tag is relayed off this PC,
+    # so it is never the keyless fallback (cloud_intent), not even prepared.
+    prepared, called, _body = _keyless_turn(client, monkeypatch, mode)
+    assert not [c for c in prepared if c[1] == CLOUD_TAG], prepared
+    assert CLOUD_TAG not in called, called

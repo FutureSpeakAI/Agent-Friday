@@ -1,0 +1,120 @@
+{
+ "schema": 1,
+ "id": "futurespeak",
+ "label": "Sites",
+ "group": "work",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": ["site_id", "account_id", "domain", "preview_build_id"], "sections": []},
+ "objects": [
+  {
+   "kind": "site",
+   "stage_workspace": "futurespeak",
+   "noun": "sites",
+   "ref_template": "site:{name}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (legacy portfolio only)",
+    "facets": ["kind", "status"],
+    "filters": {},
+    "fields": [],
+    "selectable": false,
+    "privacy": "titles"
+   },
+   "open": {"tool": null, "none_because": "no row-level target yet (WS-2/WS-3)", "gap": true, "wave": "WS-2/WS-3"},
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "futurespeak.sites_status",
+   "action": "futurespeak.sites_status",
+   "group": "read",
+   "ui": {"control": "sites / status / deployments"},
+   "tool": "site_action",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["how are my sites doing"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "futurespeak.open_site",
+   "action": "futurespeak.open_site",
+   "group": "navigate",
+   "ui": {"control": "open site / domain"},
+   "tool": "site_action",
+   "also_tools": ["domain_action"],
+   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["open my portfolio site"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "futurespeak.build_publish",
+   "action": "futurespeak.build_publish",
+   "group": "create",
+   "ui": {"control": "save / build / preview / prepare publish"},
+   "tool": "site_action",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["build a preview of my site"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "futurespeak.domain_accounts",
+   "action": "futurespeak.domain_accounts",
+   "group": "settings",
+   "ui": {"control": "domain accounts / DNS / renewal"},
+   "tool": "domain_action",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["when does my domain renew"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "futurespeak.draft_blog",
+   "action": "futurespeak.draft_blog",
+   "group": "create",
+   "ui": {"control": "draft blog / proposal"},
+   "tool": "draft_email",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["draft a proposal for the new client"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [],
+ "not_for_laya": [
+  {
+   "action": "futurespeak.legacy_portfolio",
+   "kind": "gap",
+   "reason": "Only the legacy portfolio view has these rows; Sites has no stage in its default view.",
+   "wave": "WS-3"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": ["on_demand"]}
+}

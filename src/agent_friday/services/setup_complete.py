@@ -24,7 +24,7 @@ import os
 from datetime import datetime
 
 #: The modes the consent screen offers (onboarding_copy.ROUTING_CHOICES).
-ROUTING_MODES = ("cloud_only", "local_only", "local_preferred")
+ROUTING_MODES = ("cloud_only", "local_only", "local_preferred", "cloud_preferred")
 
 _SETTINGS_KEYS = ('agent_name', 'orchestrator_model', 'subagent_model',
                   'creative_model', 'music_model', 'minor_mode',

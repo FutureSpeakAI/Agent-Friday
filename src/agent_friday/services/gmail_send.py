@@ -836,7 +836,8 @@ def _notify(title: str, body: str, *, priority: str = "medium",
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=title, body=body, priority=priority, kind=kind,
-                source="gmail_send")
+                source="gmail_send", emitter="E43",
+                dedupe_key="gmail_send:%s:%s" % (kind, priority))
     except Exception as e:
         _log.warning("could not notify (%s): %s", title, e)
 

@@ -16,8 +16,10 @@ _log = logging.getLogger("friday.routes.federation")
 
 # Settings keys that are safe to sync across devices (no secrets, no PII).
 # API keys, vault content, and personally identifiable data are never synced.
+# `voice_engine` is not synced either: moving voice to the cloud is the owner's answer to
+# "just this call, or always?" on this device (services/local_voice_readiness), never a peer's push.
 _SYNC_SAFE_KEYS = frozenset({
-    "agent_name", "communication_style", "temperature", "voice_engine",
+    "agent_name", "communication_style", "temperature",
     "voice_temperature", "voice_silence_ms", "voice_interruption_mode",
     "voice_affective", "voice_proactive", "voice_style_prompt",
     "voice_tools", "stream_responses", "cite_sources",
@@ -186,7 +188,7 @@ def federation_settings_sync():
 
         {
           "peer_id": "<agent_id>",  # optional; omit to broadcast to all peers
-          "keys": ["voice_engine", ...]  # optional subset; omit to send all safe keys
+          "keys": ["theme", ...]  # optional subset; omit to send all safe keys
         }
 
     Returns per-peer send results — the caller can poll until all peers ACK.

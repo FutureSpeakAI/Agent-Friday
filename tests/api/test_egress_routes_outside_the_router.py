@@ -118,7 +118,20 @@ def _png_b64():
     return base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 64).decode()
 
 
-def test_chat_send_keeps_the_image_on_the_machine_in_local_only(client, monkeypatch, fake_genai, ledger_spy):
+@pytest.fixture
+def local_vision(monkeypatch):
+    """The on-device describer, stubbed: no seat, no network."""
+    from agent_friday.services import local_vision as lv
+    state = {"result": {"ok": False, "text": None, "reason": "no local seat"}, "calls": 0}
+
+    def fake_describe(*a, **kw):
+        state["calls"] += 1
+        return state["result"]
+    monkeypatch.setattr(lv, "describe", fake_describe)
+    return state
+
+
+def test_chat_send_keeps_the_image_on_the_machine_in_local_only(client, monkeypatch, fake_genai, ledger_spy, local_vision):
     import agent_friday.routes.chat as chat
     monkeypatch.setattr(chat, "_load_settings", lambda: {"model_routing": {"mode": "local_only"}})
     monkeypatch.setattr(chat.core, "GEMINI_API_KEY", "k", raising=False)
@@ -127,9 +140,31 @@ def test_chat_send_keeps_the_image_on_the_machine_in_local_only(client, monkeypa
     assert ("gemini", "vision_image", "block") in ledger_spy
 
 
+@pytest.mark.parametrize("mode", ["local_preferred", "local_only"])
+def test_chat_send_tries_the_local_seat_first(client, monkeypatch, fake_genai, ledger_spy, local_vision, mode):
+    import agent_friday.routes.chat as chat
+    monkeypatch.setattr(chat, "_load_settings", lambda: {"model_routing": {"mode": mode}})
+    monkeypatch.setattr(chat.core, "GEMINI_API_KEY", "k", raising=False)
+    local_vision["result"] = {"ok": True, "text": "a desk", "model": "seat-x"}
+    client.post("/api/chat/send", json={"message": "what is on my screen", "includeVision": True, "screenshot": _png_b64()})
+    assert local_vision["calls"] == 1
+    assert fake_genai == [], "the image went to Gemini although the local seat described it"
+    assert ("local:seat-x", "vision_image", "allow") in ledger_spy
+
+
+def test_chat_send_goes_to_the_cloud_only_after_local_fails_under_local_preferred(client, monkeypatch, fake_genai, ledger_spy, local_vision):
+    import agent_friday.routes.chat as chat
+    monkeypatch.setattr(chat, "_load_settings", lambda: {"model_routing": {"mode": "local_preferred"}})
+    monkeypatch.setattr(chat.core, "GEMINI_API_KEY", "k", raising=False)
+    client.post("/api/chat/send", json={"message": "what is on my screen", "includeVision": True, "screenshot": _png_b64()})
+    assert local_vision["calls"] == 1
+    assert len(fake_genai) == 1
+    assert ("gemini", "vision_image", "allow") in ledger_spy
+
+
 def test_chat_send_records_every_image_that_leaves(client, monkeypatch, fake_genai, ledger_spy):
     import agent_friday.routes.chat as chat
-    monkeypatch.setattr(chat, "_load_settings", lambda: {"model_routing": {"mode": "smart"}})
+    monkeypatch.setattr(chat, "_load_settings", lambda: {"model_routing": {"mode": "cloud_only"}})
     monkeypatch.setattr(chat.core, "GEMINI_API_KEY", "k", raising=False)
     client.post("/api/chat/send", json={"message": "what is on my screen", "includeVision": True, "screenshot": _png_b64()})
     assert len(fake_genai) == 1

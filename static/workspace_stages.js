@@ -20,6 +20,7 @@
   // window id -> what its rows are called in a ref, whether Friday may tick them, whether only counts leave
   var WORKSPACES = {
     calendar: { prefix: 'event:', selectable: true },
+    meetings: { prefix: 'meeting:', selectable: true, counts_only: true },
     chat: { prefix: 'convo:', selectable: true },
     workflows: { prefix: 'wf:' },
     contacts: { prefix: 'person:' },

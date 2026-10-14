@@ -70,13 +70,16 @@ def test_chat_routes_append_it_to_the_volatile_tail_and_not_to_history():
     chat = (SRC / "routes" / "chat.py").read_text(encoding="utf-8")
     # /api/chat appends it to its volatile tail directly; /api/chat/send goes through _screen_block_for,
     # which reads chat_tail and scrubs it for a guarded cloud turn. Both reach the prompt's tail, not history.
-    assert chat.count("tail = tail + chat_tail(_conversation_id)") == 1
-    assert chat.count("prompt = prompt + _screen_block_for(provider_name, _conversation_id)") == 1
+    # Each goes through the slice-need head's gate_block (services/slice_head), which
+    # returns the block unchanged unless the owner chose to send a cloud model only
+    # what a turn needs.
+    assert chat.count('"screen", chat_tail(_conversation_id), name="on_screen")') == 1
+    assert chat.count('"screen", _screen_block_for(provider_name, _conversation_id),') == 1
     helper = chat[chat.index("def _screen_block_for("):]
     helper = helper[:helper.index("@chat_bp.route")]
     assert "chat_tail(conversation_id)" in helper and "_scrub_pii" in helper
     assert "history" not in helper and "append" not in helper
-    assert chat.index("tail = tail + chat_tail(_conversation_id)") > chat.index("_VM")
+    assert chat.index('"screen", chat_tail(_conversation_id)') > chat.index("_VM")
     assert "workspaceContext" not in chat and "workspace_context" not in chat, "the dead pipe is gone"
     router = (SRC / "services" / "model_router.py").read_text(encoding="utf-8")
     assert "ACTIVE WORKSPACE" not in router and "workspace_context" not in router

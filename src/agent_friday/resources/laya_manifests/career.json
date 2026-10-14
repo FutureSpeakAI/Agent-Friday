@@ -1,0 +1,146 @@
+{
+ "schema": 1,
+ "id": "career",
+ "label": "Career",
+ "group": "work",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": [], "sections": []},
+ "objects": [
+  {
+   "kind": "job",
+   "stage_workspace": "career",
+   "noun": "entries",
+   "ref_template": "job:{company}|{role}|{n}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (domList over fridayRow)",
+    "facets": ["kind", "stage"],
+    "filters": {},
+    "fields": [],
+    "selectable": false,
+    "privacy": "titles"
+   },
+   "open": {"tool": null, "none_because": "no row-level target yet (WS-2/WS-3)", "gap": true, "wave": "WS-2/WS-3"},
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "career.pipeline",
+   "action": "career.pipeline",
+   "group": "read",
+   "ui": {"control": "pipeline / reports / funnel"},
+   "tool": "get_career_pipeline",
+   "also_tools": ["career_status"],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["how is my job search going"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "career.scan",
+   "action": "career.scan",
+   "group": "create",
+   "ui": {"control": "scan opportunities"},
+   "tool": "career_scan",
+   "also_tools": [],
+   "gate": {"class": "by_argument", "ring": 2, "card": "by_argument"},
+   "laya_tier": "model_only",
+   "phrasings": ["scan for new openings"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "career.evaluate_tailor",
+   "action": "career.evaluate_tailor",
+   "group": "create",
+   "ui": {"control": "evaluate / tailor"},
+   "tool": "career_evaluate",
+   "also_tools": ["career_tailor"],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["evaluate this role", "tailor my resume for it"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "career.outreach",
+   "action": "career.outreach",
+   "group": "create",
+   "ui": {"control": "draft outreach / log sent"},
+   "tool": "draft_email",
+   "also_tools": ["career_update_tracker"],
+   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["draft a note to the recruiter"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "career.workflow_starter",
+   "action": "career.workflow_starter",
+   "group": "create",
+   "ui": {"control": "add workflow starter"},
+   "tool": "workflow_action",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["set up a weekly job scan"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "career.cover_letter",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "cover_letter",
+   "activity_label": "Cover letter draft",
+   "entry": "agent_friday.routes.jobs:_llm_cover_drafter"
+  },
+  {
+   "id": "career.outreach_draft",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "outreach_draft",
+   "activity_label": "Outreach draft",
+   "entry": "agent_friday.routes.workflows:outreach_draft"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "career.open_report",
+   "kind": "gap",
+   "reason": "A job row has no row-level open target yet, only the Career workspace.",
+   "wave": "WS-3"
+  },
+  {"action": "career.select_roles", "kind": "gap", "reason": "Career rows cannot be ticked yet.", "wave": "WS-3"},
+  {
+   "action": "career.folder_setting",
+   "kind": "gap",
+   "reason": "A folder choice is a setting; it will go through setting proposals.",
+   "wave": "WS-4"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

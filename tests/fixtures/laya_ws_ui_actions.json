@@ -1,0 +1,301 @@
+{
+ "_note": "The per-workspace UI action list (the Laya-in-every-workspace audit of 2026-10-10, re-derived against the live tree), a fixed fixture. The guard never scans the UI at test time; a new UI action is added here AND to its manifest. audit_status: L Laya runs it (a router rule or seed), M a model or voice tool only, N no tool, new added since the audit.",
+ "workspaces": {
+  "news": [
+   {"id": "news.read_feed", "group": "read", "label": "read feed / top stories", "audit_status": "L"},
+   {"id": "news.filter_sort", "group": "read", "label": "filter / sort feed", "audit_status": "M"},
+   {"id": "news.listen", "group": "read", "label": "listen / play / stop audio", "audit_status": "L"},
+   {"id": "news.open_article", "group": "navigate", "label": "open article", "audit_status": "M"},
+   {
+    "id": "news.switch_view",
+    "group": "navigate",
+    "label": "switch view (front page/weekly/archive/sources)",
+    "audit_status": "M"
+   },
+   {"id": "news.select_stories", "group": "select", "label": "select stories", "audit_status": "M"},
+   {"id": "news.read_later", "group": "organize", "label": "read-later save/remove", "audit_status": "N"},
+   {"id": "news.annotate_notes", "group": "organize", "label": "annotate / delete notes", "audit_status": "N"},
+   {"id": "news.source_trust", "group": "organize", "label": "ban / boost / unban source", "audit_status": "N"},
+   {"id": "news.media_diet_rule", "group": "organize", "label": "media-diet rule add/remove", "audit_status": "M"},
+   {
+    "id": "news.generate_front_page",
+    "group": "create",
+    "label": "generate front page / weekly / editorial / briefing",
+    "audit_status": "M"
+   },
+   {"id": "news.deep_dive", "group": "create", "label": "deep dive / discuss story", "audit_status": "M"},
+   {"id": "news.make_podcast", "group": "create", "label": "make podcast / share to draft", "audit_status": "M"},
+   {
+    "id": "news.settings",
+    "group": "settings",
+    "label": "briefing prefs / local city / section order",
+    "audit_status": "M"
+   }
+  ],
+  "messages": [
+   {"id": "messages.read_inbox", "group": "read", "label": "read inbox / unread", "audit_status": "L"},
+   {"id": "messages.search_mail", "group": "read", "label": "search mail", "audit_status": "L"},
+   {"id": "messages.refresh", "group": "read", "label": "refresh", "audit_status": "L"},
+   {"id": "messages.open_thread", "group": "navigate", "label": "open thread", "audit_status": "M"},
+   {"id": "messages.filter_lanes", "group": "navigate", "label": "folders / lanes / accounts", "audit_status": "M"},
+   {"id": "messages.select_rows", "group": "select", "label": "tick rows / select all / clear", "audit_status": "M"},
+   {"id": "messages.archive", "group": "organize", "label": "archive / move to inbox", "audit_status": "M"},
+   {"id": "messages.trash_restore", "group": "organize", "label": "trash / restore / spam", "audit_status": "M"},
+   {"id": "messages.mark_read", "group": "organize", "label": "mark read / unread", "audit_status": "M"},
+   {"id": "messages.star", "group": "organize", "label": "star / unstar", "audit_status": "M"},
+   {
+    "id": "messages.label_move",
+    "group": "organize",
+    "label": "label / unlabel / move / new label",
+    "audit_status": "M"
+   },
+   {"id": "messages.snooze", "group": "organize", "label": "snooze", "audit_status": "N"},
+   {"id": "messages.unsubscribe", "group": "organize", "label": "unsubscribe", "audit_status": "N"},
+   {"id": "messages.undo_change", "group": "organize", "label": "undo change / undo send", "audit_status": "L"},
+   {
+    "id": "messages.compose",
+    "group": "create",
+    "label": "compose / reply / reply all / forward",
+    "audit_status": "M"
+   },
+   {"id": "messages.send_later", "group": "create", "label": "send later / attachments", "audit_status": "N"},
+   {
+    "id": "messages.accounts",
+    "group": "settings",
+    "label": "reconnect account / sending accounts",
+    "audit_status": "M"
+   }
+  ],
+  "calendar": [
+   {"id": "calendar.view", "group": "read", "label": "view day / week / agenda", "audit_status": "L"},
+   {"id": "calendar.open_event", "group": "navigate", "label": "open event / pick day", "audit_status": "M"},
+   {"id": "calendar.select_events", "group": "select", "label": "tick events", "audit_status": "M"},
+   {"id": "calendar.quick_add", "group": "create", "label": "quick add event", "audit_status": "M"},
+   {"id": "calendar.meeting_prep", "group": "create", "label": "generate meeting prep", "audit_status": "M"},
+   {"id": "calendar.delete_event", "group": "organize", "label": "delete event / meeting", "audit_status": "N"},
+   {"id": "calendar.move_event", "group": "organize", "label": "move / shift event", "audit_status": "M"}
+  ],
+  "family": [
+   {"id": "family.view", "group": "read", "label": "view members / dates / countdowns", "audit_status": "N"},
+   {"id": "family.add_countdown", "group": "create", "label": "add countdown", "audit_status": "N"},
+   {"id": "family.ask_friday", "group": "create", "label": "ask Friday (quickAsk)", "audit_status": "M"}
+  ],
+  "health": [
+   {"id": "health.view", "group": "read", "label": "view meds / appointments / vehicles", "audit_status": "N"},
+   {"id": "health.switch_section", "group": "navigate", "label": "switch section", "audit_status": "M"},
+   {"id": "health.copy_contact", "group": "read", "label": "copy contact", "audit_status": "N"}
+  ],
+  "finance": [
+   {"id": "finance.view", "group": "read", "label": "view portfolio / perks / wallet", "audit_status": "N"},
+   {"id": "finance.switch_section", "group": "navigate", "label": "switch section", "audit_status": "M"},
+   {"id": "finance.refresh", "group": "read", "label": "refresh data", "audit_status": "N"},
+   {"id": "finance.transfer", "group": "create", "label": "send transfer / claim grant", "audit_status": "N"}
+  ],
+  "career": [
+   {"id": "career.pipeline", "group": "read", "label": "pipeline / reports / funnel", "audit_status": "M"},
+   {"id": "career.open_report", "group": "navigate", "label": "open report / role", "audit_status": "N"},
+   {"id": "career.select_roles", "group": "select", "label": "tick roles", "audit_status": "N"},
+   {"id": "career.scan", "group": "create", "label": "scan opportunities", "audit_status": "M"},
+   {"id": "career.evaluate_tailor", "group": "create", "label": "evaluate / tailor", "audit_status": "M"},
+   {"id": "career.outreach", "group": "create", "label": "draft outreach / log sent", "audit_status": "M"},
+   {"id": "career.workflow_starter", "group": "create", "label": "add workflow starter", "audit_status": "M"},
+   {"id": "career.folder_setting", "group": "settings", "label": "career-ops folder", "audit_status": "N"}
+  ],
+  "contacts": [
+   {"id": "contacts.lookup", "group": "read", "label": "list / detail / timeline", "audit_status": "M"},
+   {"id": "contacts.open_person", "group": "navigate", "label": "open person", "audit_status": "M"},
+   {"id": "contacts.select_people", "group": "select", "label": "tick people", "audit_status": "N"},
+   {"id": "contacts.follow_up", "group": "create", "label": "set follow-up", "audit_status": "M"},
+   {"id": "contacts.save_google", "group": "create", "label": "save to Google", "audit_status": "M"},
+   {"id": "contacts.import_sync", "group": "create", "label": "import LinkedIn / sync", "audit_status": "N"},
+   {"id": "contacts.forget_person", "group": "organize", "label": "forget person", "audit_status": "N"},
+   {
+    "id": "contacts.relationship_config",
+    "group": "settings",
+    "label": "relationship memory config / connect Google",
+    "audit_status": "N"
+   }
+  ],
+  "crew": [
+   {"id": "crew.roster", "group": "read", "label": "roster / status / current work", "audit_status": "M"},
+   {"id": "crew.new_agent", "group": "create", "label": "new agent", "audit_status": "M"},
+   {"id": "crew.hand_off", "group": "create", "label": "hand off / ask / steer", "audit_status": "M"},
+   {"id": "crew.voice_room", "group": "create", "label": "start / stop voice room", "audit_status": "M"},
+   {
+    "id": "crew.retire_edit",
+    "group": "organize",
+    "label": "retire / edit permissions / revisions",
+    "audit_status": "N"
+   },
+   {"id": "crew.open_chat", "group": "navigate", "label": "open chat", "audit_status": "N"}
+  ],
+  "code": [
+   {"id": "code.read_repo", "group": "read", "label": "repos / diff / processes", "audit_status": "M"},
+   {"id": "code.open_repo", "group": "navigate", "label": "open repo / tab / file", "audit_status": "M"},
+   {"id": "code.edit_run", "group": "create", "label": "edit / run / launch agent", "audit_status": "M"},
+   {"id": "code.open_pr", "group": "create", "label": "open pull request", "audit_status": "M"},
+   {"id": "code.kill_process", "group": "organize", "label": "kill process", "audit_status": "N"},
+   {"id": "code.undo_edit", "group": "organize", "label": "undo edit", "audit_status": "M"}
+  ],
+  "futurespeak": [
+   {"id": "futurespeak.sites_status", "group": "read", "label": "sites / status / deployments", "audit_status": "M"},
+   {"id": "futurespeak.open_site", "group": "navigate", "label": "open site / domain", "audit_status": "M"},
+   {
+    "id": "futurespeak.build_publish",
+    "group": "create",
+    "label": "save / build / preview / prepare publish",
+    "audit_status": "M"
+   },
+   {
+    "id": "futurespeak.domain_accounts",
+    "group": "settings",
+    "label": "domain accounts / DNS / renewal",
+    "audit_status": "M"
+   },
+   {
+    "id": "futurespeak.legacy_portfolio",
+    "group": "organize",
+    "label": "legacy portfolio add/remove project",
+    "audit_status": "N"
+   },
+   {"id": "futurespeak.draft_blog", "group": "create", "label": "draft blog / proposal", "audit_status": "M"}
+  ],
+  "media": [
+   {"id": "media.browse", "group": "read", "label": "browse / views / group / sort", "audit_status": "M"},
+   {"id": "media.quick_look", "group": "read", "label": "quick look / play", "audit_status": "L"},
+   {"id": "media.open_card", "group": "navigate", "label": "open card", "audit_status": "M"},
+   {"id": "media.select_cards", "group": "select", "label": "tick cards", "audit_status": "M"},
+   {"id": "media.favourite", "group": "organize", "label": "favourite", "audit_status": "M"},
+   {"id": "media.tag_move", "group": "organize", "label": "tag / move to project", "audit_status": "M"},
+   {"id": "media.change_status", "group": "organize", "label": "change status", "audit_status": "N"},
+   {"id": "media.trash_tidy", "group": "organize", "label": "trash / restore / tidy", "audit_status": "N"},
+   {"id": "media.new_card", "group": "create", "label": "new card / project", "audit_status": "M"},
+   {"id": "media.turn_into", "group": "create", "label": "turn into...", "audit_status": "M"},
+   {"id": "media.schedule_publish", "group": "create", "label": "schedule / publish", "audit_status": "M"},
+   {"id": "media.save_view", "group": "create", "label": "save view / collection", "audit_status": "N"},
+   {"id": "media.export", "group": "create", "label": "export / show in folder", "audit_status": "N"}
+  ],
+  "library": [
+   {"id": "library.search", "group": "read", "label": "search / ask library", "audit_status": "M"},
+   {"id": "library.open_document", "group": "navigate", "label": "open document", "audit_status": "M"},
+   {"id": "library.select_documents", "group": "select", "label": "tick documents", "audit_status": "M"},
+   {"id": "library.add", "group": "create", "label": "add folder / file", "audit_status": "M"},
+   {"id": "library.submit_work_order", "group": "create", "label": "work order: a cloud model hands this PC a plan (cloud-only tool)", "audit_status": "new"},
+   {"id": "library.work_order_status", "group": "read", "label": "work order status (cloud-only tool)", "audit_status": "new"},
+   {"id": "library.add_knowledge","group": "create", "label": "Your knowledge: pick folders, or 'add my Obsidian vault'", "audit_status": "new"},
+   {"id": "library.remove_forget", "group": "organize", "label": "remove / forget", "audit_status": "N"},
+   {"id": "library.shelf", "group": "organize", "label": "shelf", "audit_status": "N"},
+   {"id": "library.show_3d", "group": "read", "label": "show in 3D", "audit_status": "M"},
+   {"id": "library.index_status", "group": "read", "label": "indexing progress", "audit_status": "new"},
+   {"id": "library.index_pause_resume", "group": "settings", "label": "pause / resume reading", "audit_status": "new"},
+   {"id": "library.tracked_reindex", "group": "settings", "label": "tracked / reindex", "audit_status": "N"}
+  ],
+  "meetings": [
+   {"id": "meetings.start_recording", "group": "create", "label": "record start/stop / consent line / start card", "audit_status": "new"},
+   {"id": "meetings.open_meeting", "group": "navigate", "label": "open a past meeting", "audit_status": "new"},
+   {"id": "meetings.open_latest", "group": "navigate", "label": "open the latest meeting", "audit_status": "new"},
+   {"id": "meetings.select_meetings", "group": "select", "label": "tick meetings", "audit_status": "new"},
+   {"id": "meetings.ask_meetings", "group": "read", "label": "ask your meetings (decisions, action items) with citations", "audit_status": "new"},
+   {"id": "meetings.read_notes", "group": "read", "label": "open a meeting by name / read its notes and transcript", "audit_status": "new"},
+   {"id": "meetings.jot_note", "group": "create", "label": "jot a bullet in the notes pad", "audit_status": "new"},
+   {"id": "meetings.expand_notes", "group": "create", "label": "write notes again / expand the bullets into notes", "audit_status": "new"},
+   {"id": "meetings.make_tasks", "group": "create", "label": "add action items to Tasks", "audit_status": "new"},
+   {"id": "meetings.remember", "group": "create", "label": "propose people, decisions and projects to memory", "audit_status": "new"},
+   {"id": "meetings.follow_up_draft", "group": "create", "label": "draft thank-you / follow-up", "audit_status": "new"},
+   {"id": "meetings.attach_to_event", "group": "organize", "label": "add the summary to the calendar event", "audit_status": "new"},
+   {"id": "meetings.copy_notes", "group": "read", "label": "copy the notes", "audit_status": "new"},
+   {"id": "meetings.archive_choice", "group": "settings", "label": "make meetings searchable from the Library, or not", "audit_status": "new"},
+   {"id": "meetings.delete_meeting", "group": "organize", "label": "delete meeting / delete audio only / keeping and deleting", "audit_status": "new"}
+  ],
+  "knowledge": [
+   {"id": "knowledge.search", "group": "read", "label": "search pages / graph", "audit_status": "L"},
+   {"id": "knowledge.open_page", "group": "navigate", "label": "open page / show in graph", "audit_status": "M"},
+   {"id": "knowledge.create_edit", "group": "create", "label": "create page / edit", "audit_status": "M"},
+   {"id": "knowledge.delete_page", "group": "organize", "label": "delete page", "audit_status": "M"},
+   {"id": "knowledge.move_rename_tag", "group": "organize", "label": "move / rename / tag", "audit_status": "M"},
+   {
+    "id": "knowledge.approve_reject",
+    "group": "organize",
+    "label": "approve / reject pending update",
+    "audit_status": "M"
+   },
+   {"id": "knowledge.podcast", "group": "create", "label": "podcast from page", "audit_status": "M"},
+   {"id": "knowledge.select_pages", "group": "select", "label": "select pages", "audit_status": "N"}
+  ],
+  "trust": [
+   {"id": "trust.view", "group": "read", "label": "view trust graph", "audit_status": "M"},
+   {"id": "trust.expand_person", "group": "navigate", "label": "expand person", "audit_status": "N"},
+   {"id": "trust.receipts_traces", "group": "read", "label": "receipts & traces: why it did that, pulled from an item", "audit_status": "new"}
+  ],
+  "marketplace": [
+   {"id": "marketplace.browse", "group": "read", "label": "browse listings", "audit_status": "N"},
+   {"id": "marketplace.publish", "group": "create", "label": "publish listing", "audit_status": "N"},
+   {"id": "marketplace.buy", "group": "create", "label": "buy", "audit_status": "N"},
+   {"id": "marketplace.remove_listing", "group": "organize", "label": "remove listing", "audit_status": "N"}
+  ],
+  "workflows": [
+   {"id": "workflows.list_progress", "group": "read", "label": "list / view progress", "audit_status": "M"},
+   {"id": "workflows.create_edit", "group": "create", "label": "create / draft / edit / save", "audit_status": "M"},
+   {"id": "workflows.run_retry", "group": "create", "label": "run / retry delivery", "audit_status": "M"},
+   {"id": "workflows.stop_run", "group": "organize", "label": "stop run", "audit_status": "L"},
+   {
+    "id": "workflows.delete_pause_resume",
+    "group": "organize",
+    "label": "delete / pause / resume",
+    "audit_status": "M"
+   },
+   {"id": "workflows.schedule", "group": "settings", "label": "schedule / notifications", "audit_status": "M"},
+   {
+    "id": "workflows.open_workflow",
+    "group": "navigate",
+    "label": "open workflow / result conversation",
+    "audit_status": "N"
+   }
+  ],
+  "system": [
+   {"id": "system.health", "group": "read", "label": "health / processes / receipts", "audit_status": "M"},
+   {"id": "system.answer_card", "group": "organize", "label": "approve / deny card", "audit_status": "L"},
+   {"id": "system.stop_task", "group": "organize", "label": "cancel task / steer", "audit_status": "L"},
+   {"id": "system.undo_receipt", "group": "organize", "label": "undo receipt", "audit_status": "L"},
+   {
+    "id": "system.delete_context",
+    "group": "organize",
+    "label": "delete context range / records",
+    "audit_status": "N"
+   },
+   {"id": "system.self_review", "group": "create", "label": "run self-review", "audit_status": "N"},
+   {"id": "system.observer_token", "group": "settings", "label": "observer token / retention", "audit_status": "N"},
+   {"id": "system.open_card", "group": "navigate", "label": "open card", "audit_status": "N"},
+   {"id": "system.activity_running", "group": "read", "label": "Activity: what is running (every task, with its model and status)", "audit_status": "new"},
+   {"id": "system.activity_waiting", "group": "read", "label": "Activity: what is waiting, in queue order", "audit_status": "new"},
+   {"id": "system.needs_you", "group": "read", "label": "Needs you and Updates: what waits for a decision, and today's digest", "audit_status": "new"},
+   {"id": "system.quiet", "group": "settings", "label": "Quiet until morning (Needs you panel)", "audit_status": "new"},
+   {"id": "system.batch_decide", "group": "organize", "label": "approve or decline a batch of approvals", "audit_status": "new"}
+  ],
+  "settings": [
+   {"id": "settings.open_section", "group": "navigate", "label": "open section", "audit_status": "M"},
+   {"id": "settings.toggle_setting", "group": "settings", "label": "toggle / set a setting (meeting retention is owner-only)", "audit_status": "M"},
+   {"id": "settings.model_provider", "group": "settings", "label": "model / provider", "audit_status": "M"},
+   {"id": "settings.voice_pace", "group": "settings", "label": "voice pace / depth", "audit_status": "L"},
+   {
+    "id": "settings.cards_layout",
+    "group": "settings",
+    "label": "hide / show the Home cards (Simple desktop)",
+    "audit_status": "new"
+   },
+   {"id": "settings.connectors", "group": "settings", "label": "connectors / accounts / keys", "audit_status": "N"},
+   {"id": "settings.local_voice_measure", "group": "settings", "label": "local voice: Measure now", "audit_status": "new"},
+   {"id": "settings.local_voice_status", "group": "settings", "label": "local voice: can it run here, and why cloud voice", "audit_status": "new"},
+   {"id": "settings.local_voice_switch_offer", "group": "settings", "label": "local voice: switch-back offer (switch back / keep cloud), once", "audit_status": "new"},
+   {"id": "settings.cloud_voice_scope", "group": "settings", "label": "cloud voice: just this call or always (asked at every switch)", "audit_status": "new"},
+   {"id": "settings.interruptions", "group": "settings", "label": "interruptions: hourly limit, quiet hours, Focus Assist", "audit_status": "new"},
+   {"id": "settings.laya_report", "group": "read", "label": "what Laya learned: the report card (Settings > Laya)", "audit_status": "new"},
+   {"id": "settings.laya_item", "group": "settings", "label": "what Laya learned: undo or forget one item", "audit_status": "new"},
+   {"id": "settings.laya_reset", "group": "settings", "label": "what Laya learned: reset, roll back to a kept version, or wipe", "audit_status": "new"},
+   {"id": "settings.laya_confirm", "group": "settings", "label": "what Laya learned: confirm or drop a choice the deeper mind made", "audit_status": "new"},
+   {"id": "settings.laya_refit", "group": "settings", "label": "what Laya learned: Learn now (a visible Local AI queue job)", "audit_status": "new"},
+   {"id": "settings.laya_loosen", "group": "settings", "label": "what Laya learned: let her act on a lower score (a card; owner only)", "audit_status": "new"},
+   {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"}
+  ]
+ }
+}

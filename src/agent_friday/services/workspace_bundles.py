@@ -402,9 +402,9 @@ def rollback(ws_id: str, sha256: str, *, by: str = "you") -> dict:
 
 def _announce(rec: dict, kind: str) -> None:
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "workspace_bundle_changed", "workspace_id": rec["id"], "kind": kind,
-                               "current": rec["current"], "label": rec.get("label")}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "workspace_bundle_changed", "workspace_id": rec["id"], "kind": kind,
+                                  "current": rec["current"], "label": rec.get("label")}, kind="chat")
     except Exception:
         pass
 
@@ -514,12 +514,11 @@ def _post_back(record: dict, text: str) -> None:
     if not cid:
         return
     try:
-        from agent_friday.services import conversations as _convs
-        _convs.append(cid, {"role": "friday", "text": text, "ts": time.time(),
-                            "meta": {"kind": "approval_result", "approval_id": record.get("approval_id")}})
-        from agent_friday.services import desktop_bus as _bus
-        _bus.broadcast({"type": "approval_result", "conversation_id": cid,
-                        "approval_id": record.get("approval_id")}, kind="chat")
+        from agent_friday.services import notice_registry as _nr
+        _nr.transcript_add("E75", cid, {"role": "friday", "text": text, "ts": time.time(),
+                                        "meta": {"kind": "approval_result", "approval_id": record.get("approval_id")}})
+        _nr.bus_broadcast("E74", {"type": "approval_result", "conversation_id": cid,
+                                  "approval_id": record.get("approval_id")}, kind="chat")
     except Exception as e:
         _log.warning("could not post the swap result into %s: %s", cid, e)
 

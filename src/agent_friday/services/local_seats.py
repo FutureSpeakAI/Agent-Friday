@@ -54,6 +54,10 @@ def _names_a_cloud_model(model) -> bool:
     mid = str(model or "").strip()
     if not mid:
         return False
+    # An Ollama `:cloud` / `-cloud` tag is run on ollama.com, not on a seat.
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    if is_cloud_model_tag(mid):
+        return True
     try:
         from agent_friday.routing.model_router import provider_family
         fam = provider_family(mid)
@@ -253,7 +257,11 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
         if not _daemon_port_open(base):
             raise OSError("no Ollama daemon listening at %s" % base)
         with urllib.request.urlopen(f"{base}/api/tags", timeout=4) as r:
-            raw = json.loads(r.read().decode()).get("models", [])
+            _body = json.loads(r.read().decode()) or {}
+            raw = _body.get("models", [])
+        if "models" in _body:       # an error body is not an inventory
+            from agent_friday.services.local_only_guard import note_remote_aliases
+            note_remote_aliases(raw)
         for m in raw:
             n = m.get("name")
             if not n:
@@ -267,7 +275,9 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     except Exception as e:
         _log.debug("could not read the Ollama inventory: %s", e)
 
-    rows = [t for t in rows if "embed" not in t[0].lower()]
+    from agent_friday.services.local_only_guard import is_cloud_model_tag as _is_cloud_tag
+    rows = [t for t in rows if "embed" not in t[0].lower()
+            and not _is_cloud_tag(t[0])]
 
     # A GGUF ON DISK IS NOT A SEAT A CALLER CAN REACH.
     #
@@ -740,6 +750,10 @@ def _is_local_name(model: str) -> bool:
     Cloud ids must never be touched: they are not in `ollama list` and
     "not installed" says nothing about whether they work.
     """
+    # A cloud-relayed tag is cloud, whatever the ":" in it suggests.
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    if is_cloud_model_tag(model):
+        return False
     try:
         from agent_friday.routing.model_router import provider_family
         return provider_family(model) == "local"

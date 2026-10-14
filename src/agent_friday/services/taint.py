@@ -473,6 +473,8 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "navigate_to": {},
     "check_situation": {},
     "queue_status": {},
+    # Laya's own learning controls: no argument carries a recipient, a link or a body.
+    "laya_learning": {},
     # See & Touch: ticking, pointing and filtering carry no sensitive argument; the text of a fill is a message
     # body, so a link or address in it that Friday read in something outside is flagged.
     "screen_select": {"text": "message_body"},

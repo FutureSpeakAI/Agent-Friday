@@ -29,6 +29,12 @@ import threading
 import time
 from pathlib import Path
 
+from agent_friday.services.local_scheduler import admitted as _admitted
+
+#: The front is its own llama-server process (one slot): its own line, and a
+#: spoken turn always admits at the voice class.
+_ADMIT_FRONT = dict(seat="voice-front", cls="voice")
+
 log = logging.getLogger("friday.voice_front")
 
 #: Clear of the ports the Arbiter assigns by arithmetic. It is inside the
@@ -734,11 +740,13 @@ class FrontSeat:
 
     # ── turns ──────────────────────────────────────────────────────────────
 
+    @_admitted("voice_front.post", **_ADMIT_FRONT)
     def _post(self, body: dict, stream: bool):
         import requests
         return requests.post(self.base + "/v1/chat/completions", json=body,
                              stream=stream, timeout=(5, 120))
 
+    @_admitted("voice_front.prefill", **_ADMIT_FRONT)
     def prefill(self, system: str, contract: dict) -> dict:
         """Put the session prefix (system prompt + tool declarations) in the
         slot's cache with a one-token completion, the way a turn sends it."""
@@ -755,6 +763,7 @@ class FrontSeat:
         self.prefill_ms = int((time.perf_counter() - t0) * 1000)
         return {"ms": self.prefill_ms, "prompt_n": timings.get("prompt_n")}
 
+    @_admitted("voice_front.prefill", **_ADMIT_FRONT)
     def prefill_partial(self, system: str, messages: list, contract: dict) -> dict:
         """Speculative prefill: send the turn as it stands (a stable partial
         transcript) with a one-token answer, so the slot's cache already holds
@@ -772,6 +781,7 @@ class FrontSeat:
         r.raise_for_status()
         return (r.json() or {}).get("timings") or {}
 
+    @_admitted("voice_front.turn", say_wait_arg="on_delta", **_ADMIT_FRONT)
     def run_turn(self, system: str, messages: list, contract: dict, *,
                  on_delta=None, run_tool=None, max_tokens: int = 400,
                  temperature=None, timings=None, allow_continuation=False,

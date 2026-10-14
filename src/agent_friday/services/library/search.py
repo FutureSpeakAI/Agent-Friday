@@ -32,6 +32,11 @@ _STOP = frozenset("""a an and are as at be but by can did do does for from had h
 my of on or our she so than that the their them then there these they this to us was we were what when where which
 who whom why will with would you your about tell say said""".split())
 
+#: The Library scope the Meetings archive lives in (services/meeting_archive.SCOPE), and the words that
+#: ask a search to look only there.
+MEETINGS_SCOPE = "meetings"
+MEETINGS_SCOPE_WORDS = frozenset({"meetings", "meeting", "my meetings", "meeting archive", "the meetings"})
+
 _STATS = re.compile(r"\bhow many\s+(pages?|documents?|files?|words?|sections?|paragraphs?)\b", re.I)
 
 
@@ -101,8 +106,12 @@ class _Ctx:
         if scope:
             s = scope.lower()
             vis = self.tb.visible_docs()
-            self.tb._visible = {i: r for i, r in vis.items()
-                                if s in (r["title"] or "").lower() or s in str(r["path"]).lower()}
+            if s in MEETINGS_SCOPE_WORDS:
+                # "meetings": the archive of the owner's own meetings, a scope of its own
+                self.tb._visible = {i: r for i, r in vis.items() if r["scope"] == MEETINGS_SCOPE}
+            else:
+                self.tb._visible = {i: r for i, r in vis.items()
+                                    if s in (r["title"] or "").lower() or s in str(r["path"]).lower()}
         self.floor_tier = False
         self.keys = keywords(question)
 

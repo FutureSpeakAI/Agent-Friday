@@ -17,7 +17,7 @@ import json
 import math
 import time
 
-from agent_friday.services import laya2_encoder, laya2_seeds, reflex_turn
+from agent_friday.services import laya2_encoder, laya2_seeds, reflex_turn, turn_vector
 
 SHAPES = list(laya2_seeds.SHAPE_SEEDS)
 MUTS = list(laya2_seeds.MUTATION_SEEDS)
@@ -67,6 +67,9 @@ class _FakeEncoder:
 
 def _install(monkeypatch, fake):
     reflex_turn.reset_cache()
+    # The turn's one embedding is cached per message (services/turn_vector): a vector an earlier fake
+    # encoder produced for the same words must not answer for this one.
+    turn_vector.reset()
     monkeypatch.setattr(laya2_encoder, "is_available", lambda: True)
     monkeypatch.setattr(laya2_encoder, "embed", fake.embed)
 

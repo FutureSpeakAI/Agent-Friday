@@ -261,7 +261,7 @@ def _anthropic_probe(monkeypatch, kinds):
     monkeypatch.setattr("agent_friday.core.get_anthropic_client",
                         lambda: _Client())
     ph.reset_probe_cache()
-    return ph.inference_probe("anthropic", use_cache=False)
+    return ph.inference_probe("anthropic", use_cache=False, explicit=True)
 
 
 def test_a_thinking_only_response_still_proves_inference(monkeypatch):

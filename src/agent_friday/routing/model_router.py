@@ -3,7 +3,7 @@ routing/model_router.py — ROUTING LAYER (WHERE to send a request).
 
 This module decides which provider (Anthropic / Ollama / OpenAI-compatible)
 and which model should handle a given request, based on:
-  • The user's model_routing.mode setting (cloud_only / smart / local_preferred / local_only)
+  • The user's model_routing.mode setting (cloud_only / local_preferred / local_only; an old `smart` reads as local_preferred)
   • The request's vault tier (TIER_2/3 → local only)
   • The current network state (offline → local only)
   • Task-type overrides in model_routing.task_overrides
@@ -195,10 +195,18 @@ class ModelRouter:
 
     @property
     def mode(self):
-        return self.config.get("mode", "cloud_only")
+        mode = self.config.get("mode", "cloud_only")
+        # `smart` was a duplicate of local_preferred (RM-D1); an old value
+        # reads as the mode it was always routed as.
+        return "local_preferred" if str(mode or "").lower() == "smart" else mode
 
     @property
     def fallback_to_cloud(self):
+        """Whether a turn no local model can take is OFFERED to the cloud.
+
+        True (the default) means the refusal carries an offer the owner can
+        accept; False means no offer is made. It never sends on its own.
+        """
         return self.config.get("fallback_to_cloud", True)
 
     def classify_task(self, messages, has_tools=False, workspace=None, is_voice=False):
@@ -495,6 +503,18 @@ class ModelRouter:
             return False
         return True
 
+    @staticmethod
+    def _ollama_models(ollama):
+        """The daemon's models that actually run on this machine.
+
+        A tag ending in `-cloud` (or `:cloud`) is listed by the daemon but
+        relayed to ollama.com, so it is a cloud model wearing a local
+        provider's name and never a local candidate.
+        """
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        return [m for m in (ollama.list_models() or [])
+                if not is_cloud_model_tag(m.get("name"))]
+
     def _local_candidates(self):
         """Local generation models Friday can actually serve right now.
 
@@ -512,6 +532,30 @@ class ModelRouter:
                     models.append({"name": mid,
                                    "size_gb": (rec.get("size_bytes") or 0)
                                    / 1024 ** 3})
+        except Exception:
+            pass
+        # Seats the Arbiter published and a live server confirms: a seat can be
+        # up without being in the model store's table or the daemon's list.
+        try:
+            from agent_friday.services import local_call as _lc
+            from agent_friday.services.local_only_guard import is_cloud_model_tag
+            try:
+                from agent_friday.services import residency_catalog as _rc_pub
+                _can_pub = _rc_pub.can_generate
+            except Exception:
+                def _can_pub(_mid):
+                    return True
+            have = {m["name"] for m in models}
+            for mid in sorted(_lc.published_models()):
+                if mid in have or is_cloud_model_tag(mid):
+                    continue
+                try:
+                    if not _can_pub(mid):
+                        continue
+                except Exception:
+                    pass
+                if _lc.seat_endpoint(mid):
+                    models.append({"name": mid, "size_gb": 0})
         except Exception:
             pass
         try:
@@ -536,7 +580,7 @@ class ModelRouter:
                 except Exception:
                     def _can(_mid):
                         return True
-                for m in ollama.list_models():
+                for m in self._ollama_models(ollama):
                     name = m.get("name")
                     if not name or name in have:
                         continue
@@ -656,9 +700,14 @@ class ModelRouter:
             # protection the setting disclaims.
             vault_route = self._route_vault(ctx)
             if vault_route is not None:
-                return vault_route
+                return self._enforce_local_modes(vault_route, ctx)
 
         result = self._apply_cloud_provider(self._route_basic(messages, ctx), ctx)
+        # In a local mode the cloud is reached only with a recorded intent
+        # (services/cloud_intent). A decision that names a cloud model without
+        # one is rewritten here to a local seat, or to a refusal that carries an
+        # offer: the router never hands the ladder a cloud head nobody asked for.
+        result = self._enforce_local_modes(result, ctx)
         # Say which seat won and why. Three sessions have now debugged "the
         # model I picked is not the model that answered" without this line.
         try:
@@ -683,6 +732,81 @@ class ModelRouter:
         return self._finalize(result, vault_access=False,
                               refuse=bool(result.get("refuse")),
                               warning=result.get("warning"))
+
+    def _local_unavailable(self, task_type, why):
+        """A refusal that carries an OFFER, for a local mode with nothing local to run.
+
+        Never a cloud route: the chat pipeline renders `local_unavailable` as the
+        "try again locally / a shorter version / send it to Claude" choice and
+        the voice pipeline speaks it. `offer_cloud_switch` stays the local_only
+        "switch the mode" button the chat already knows.
+        """
+        return {
+            "provider": "local",
+            "model": None,
+            "refuse": True,
+            "local_unavailable": True,
+            # `fallback_to_cloud` means "offer", never "send": off makes no
+            # mode-switch offer (the chat offer card still lists the choices).
+            "offer_cloud_switch": bool(self.fallback_to_cloud),
+            "task_type": task_type,
+            "warning": ("No local model is answering right now (%s), so nothing "
+                        "was sent to a cloud model. You can try again once one is "
+                        "loaded, or send this one turn to Claude." % why),
+            "reason": "%s mode: %s" % (self.mode, why),
+        }
+
+    def _enforce_local_modes(self, result, ctx):
+        """Local modes: a cloud decision with no intent becomes a local one.
+
+        local_preferred, smart and local_only call the cloud only with a recorded
+        intent (services/cloud_intent). The routes that hold the owner's word
+        (a chat bound to a cloud model, "send it to Claude", a pinned job) set it
+        before routing; a configured per-task cloud override carries the implied
+        remembered_choice in local_preferred (never in local_only). Everything
+        else, including a global cloud reasoning seat, a background task carrying
+        `subagent_model` and the vault "redact" fallback, stays on a local seat or
+        is refused with an offer.
+        """
+        from agent_friday.services import cloud_intent as _ci
+        mode = self.mode
+        if not _ci.is_local_mode(mode):
+            return result
+        if result.get("refuse") or result.get("provider") == "local":
+            return result
+        if _ci.opens_cloud(mode):
+            return result
+        if result.get("implied_intent") and str(mode).lower() != "local_only":
+            return result
+        task_type = result.get("task_type")
+        withheld = {"model": result.get("model"), "reason": result.get("reason")}
+        models = self._local_candidates()
+        if models:
+            names = {m["name"] for m in models}
+            pick = None
+            try:
+                from agent_friday.core import _load_settings as _ls
+                want = (((_ls() or {}).get("capability_routing") or {})
+                        .get("reasoning") or {}).get("model")
+                if want in names:
+                    pick = want
+            except Exception:
+                pass
+            pick = pick or self._pick_local_model(models, task_type, mode) \
+                or models[0]["name"]
+            new = {
+                "provider": "local",
+                "model": pick,
+                "task_type": task_type,
+                "cloud_withheld": withheld,
+                "reason": ("%s mode: no cloud intent for this call, so it stays on "
+                           "a local seat" % mode),
+            }
+            return self._finalize(new, vault_access=bool(result.get("vault_access")))
+        new = self._local_unavailable(task_type, "no local model is serving")
+        new["cloud_withheld"] = withheld
+        return self._finalize(new, vault_access=bool(result.get("vault_access")),
+                              warning=new["warning"], refuse=True)
 
     def _is_registry_local(self, model_id: str) -> bool:
         """True if model_id is explicitly listed under a local-type provider
@@ -839,7 +963,7 @@ class ModelRouter:
         task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace,
                                        is_voice=bool(ctx.get("is_voice")))
 
-        if mode == "cloud_only":
+        if mode in ("cloud_only", "cloud_preferred"):
             # cloud_only means NOTHING RUNS ON THIS MACHINE. It never meant
             # "ignore the picker", but that is what it did: this branch used to
             # return the default cloud model here, above both the task_overrides
@@ -915,7 +1039,7 @@ class ModelRouter:
             # an ordinary interactive turn — the single most common case —
             # fell through this whole method with no mode check at all and
             # went straight to cloud, for every one of
-            # local_only/local_preferred/smart. Mirrors
+            # local_only/local_preferred. Mirrors
             # cloud_only's own block above: an explicit choice that conflicts
             # with the mode's absolute guarantee (a cloud task_override, or a
             # capability_routing.reasoning seat naming a cloud model) is
@@ -983,6 +1107,7 @@ class ModelRouter:
                 "model": None,
                 "refuse": True,
                 "offer_cloud_switch": True,
+                "local_unavailable": True,
                 "task_type": task_type,
                 "warning": ("Local-only mode is on, but no local model is "
                            "serving right now. Load one in Settings > "
@@ -1010,6 +1135,10 @@ class ModelRouter:
                 "model": override.get("model", DEFAULT_CLOUD_MODEL),
                 "task_type": task_type,
                 "reason": f"User override for {task_type}",
+                # A configured per-task cloud override is the owner's standing
+                # choice: in local_preferred it counts as a remembered_choice
+                # (never in local_only, which overrides it above).
+                "implied_intent": "remembered_choice",
             }
 
         if task_type == TaskType.VOICE:
@@ -1031,7 +1160,7 @@ class ModelRouter:
             # leaving the machine in the first place.
             #
             # This preference applies to EVERY TOOL_USE turn under
-            # local_preferred/smart, interactive or not; it is not scoped to
+            # local_preferred, interactive or not; it is not scoped to
             # scheduled/background work. Maintainer ruling: "ordinary chat
             # does need to respect local only in addition to Smart routing
             # and cloud mode" -- the modes' own names and UI text promise
@@ -1104,10 +1233,10 @@ class ModelRouter:
                     "provider": "local",
                     "model": chosen,
                     "task_type": task_type,
-                    "reason": "local_preferred/smart — kept on a local seat",
+                    "reason": "local_preferred — kept on a local seat",
                 }
             # No local seat exists at all: this is the genuine "cloud only
-            # as fallback" case local_preferred/smart's own names promise.
+            # as fallback" case local_preferred's own name promise.
             # An explicit seat pick still wins here over the bare default,
             # for the same reason this has its own branch: choosing a
             # model in the picker IS asking for
@@ -1129,36 +1258,39 @@ class ModelRouter:
                 "reason": "Tool use, and no seat was explicitly chosen",
             }
 
+        from agent_friday.services import cloud_intent as _ci
+        if _ci.is_local_mode(mode):
+            # Friday's OWN seats count as local candidates: the Ollama daemon is
+            # one source, not the only one. Asking only the daemon sent every
+            # non-tool call to the cloud on a machine whose llama-server seats
+            # were up and whose daemon was not.
+            models = self._local_candidates()
+            if not models:
+                return self._local_unavailable(task_type, "no local model is serving")
+            local_model = self._pick_local_model(
+                models, task_type, mode, preferred=ctx.get("preferred_model"))
+            out = {
+                "provider": "local",
+                "model": local_model or models[0]["name"],
+                "task_type": task_type,
+                "reason": f"Routing {task_type} to local model",
+            }
+            if getattr(self, "last_local_refusal", None):
+                out["override_refused"] = self.last_local_refusal
+            return out
+
         from agent_friday.routing.ollama_manager import get_manager
         ollama = get_manager(self.config.get("ollama_url", "http://localhost:11434"))
 
         if not ollama.is_available():
-            if self.fallback_to_cloud:
-                return {
-                    "provider": "cloud",
-                    "model": ctx.get("cloud_model") or self.config.get(
-                        "default_cloud_model", DEFAULT_CLOUD_MODEL
-                    ),
-                    "task_type": task_type,
-                    "reason": "Ollama not available, falling back to cloud",
-                }
-            return {
-                "provider": "cloud",
-                "model": ctx.get("cloud_model", DEFAULT_CLOUD_MODEL),
-                "task_type": task_type,
-                "reason": "Ollama not available",
-            }
-
-        models = ollama.list_models()
-        if not models:
-            return {
-                "provider": "cloud",
-                "model": ctx.get("cloud_model") or self.config.get(
-                    "default_cloud_model", DEFAULT_CLOUD_MODEL
-                ),
-                "task_type": task_type,
-                "reason": "No local models installed",
-            }
+            # Friday's own store can still serve with the daemon stopped.
+            models = self._local_candidates()
+            if not models:
+                return self._local_unavailable(task_type, "Ollama not available")
+        else:
+            models = self._ollama_models(ollama)
+            if not models:
+                return self._local_unavailable(task_type, "No local models installed")
 
         # D6: .fridayhints `preferred_model` finally reaches dispatch. It was
         # parsed, merged, and served over HTTP while nothing read it.
@@ -1178,20 +1310,13 @@ class ModelRouter:
             return out
 
         if self.fallback_to_cloud:
-            return {
-                "provider": "cloud",
-                "model": ctx.get("cloud_model") or self.config.get(
-                    "default_cloud_model", DEFAULT_CLOUD_MODEL
-                ),
-                "task_type": task_type,
-                "reason": "No suitable local model, falling back to cloud",
-            }
+            return self._local_unavailable(task_type, "No suitable local model")
 
         return {
             "provider": "local",
             "model": models[0]["name"],
             "task_type": task_type,
-            "reason": "local_only mode, using first available model",
+            "reason": "no cloud offer, using first available local model",
         }
 
     def _vram_fit(self, model_names):
@@ -1295,7 +1420,9 @@ class ModelRouter:
                     return name
         if task_type == TaskType.SIMPLE:
             return sorted(pool, key=lambda n: (sizes.get(n, 0), n))[0]
-        if mode in ("local_only", "local_preferred", "smart"):
+        # An old `smart` reads as local_preferred here too, as it does in `mode`.
+        from agent_friday.services.cloud_intent import normalize_mode
+        if normalize_mode(mode) in ("local_only", "local_preferred"):
             return sorted(pool, key=lambda n: (-sizes.get(n, 0), n))[0]
         return None
 

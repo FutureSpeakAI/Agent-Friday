@@ -21,6 +21,7 @@ import hmac
 import json
 import os
 import threading
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -59,7 +60,7 @@ _OFF_RECORD_ITEMS: Dict[str, Dict[str, Any]] = {}
 _OFF_RECORD_LEDGER: Dict[str, Dict[str, Any]] = {}
 _STUB_KEYS = ("id", "priority", "source", "kind", "read", "dismissed", "created_at",
               "chat_injected", "off_record", "tier", "count", "held", "quiet",
-              "resolved_at")
+              "resolved_at", "place", "emitter", "safety_critical")
 _OPAQUE_KEYS = ("dedupe_key", "collapse_key", "resolve_key", "job")
 _SALT = os.urandom(16)
 
@@ -220,8 +221,21 @@ def push(
     tier: Optional[str] = None,
     resolve_key: Optional[str] = None,
     job: Optional[str] = None,
+    emitter: Optional[str] = None,
+    off_record: bool = False,
 ) -> Dict[str, Any]:
     """Add a notification to the tray (services/notification_policy).
+
+    off_record:  the notice is about something raised off the record. It is treated as off the record
+                 whatever the mode is now (kept in memory, never written to notifications.json), and
+                 the caller keeps the private words out of title, body and key.
+
+    emitter:     the registry id of what is raising this (services/notice_registry).
+                 It names the notice's place (needs_you / activity / updates /
+                 receipts) and whether it is safety-critical (never muted, never
+                 held). Omitted, the registry finds it from kind and source. A
+                 trace or a receipt is never pushed: it is written to the
+                 activity ledger and pulled from the item that made it.
 
     tier:        NEEDS_YOU / FYI / LOG_ONLY; derived from kind, source and
                  priority when omitted. An approval is always NEEDS_YOU.
@@ -250,25 +264,51 @@ def push(
     if priority not in PRIORITY_ORDER:
         priority = "medium"
     from agent_friday.services import notification_policy as _pol
+    from agent_friday.services import notice_registry as _reg
+    private = bool(off_record) or _off_record_now()
     approval = _pol.is_approval(kind)
-    t = _pol.tier_for(kind, source, priority, tier)
-    if not approval and (t == _pol.LOG_ONLY or _pol.is_muted(kind, source)):
-        logged = {"title": "Off the record" if _off_record_now() else title,
+    em = _reg.resolve(kind, source, emitter)
+    safety = _reg.is_safety_critical(kind, emitter, source)
+    if _reg.is_receipt(kind, emitter, source) and not approval:
+        # Traces and receipts are pulled, never pushed.
+        place = _reg.RECEIPTS
+        pulled = {"title": "Off the record" if private else title,
                   "kind": kind, "source": source, "priority": priority,
-                  "tier": _pol.LOG_ONLY, "logged": True,
+                  "tier": _pol.LOG_ONLY, "logged": True, "pull_only": True,
+                  "place": place, "emitter": em.id if em else None,
+                  "created_at": _now_iso()}
+        _log_only(pulled)
+        return pulled
+    t = _pol.tier_for(kind, source, priority, tier)
+    place = _reg.place_of(kind, source, emitter, t)
+    # An Activity-place notice (a routine run, a heartbeat, a background start)
+    # is visible in Activity, not as a tray card.
+    activity = place == _reg.ACTIVITY and not safety
+    if not approval and (t == _pol.LOG_ONLY or activity or _pol.is_muted(kind, source)):
+        logged = {"title": "Off the record" if private else title,
+                  "kind": kind, "source": source, "priority": priority,
+                  "tier": _pol.LOG_ONLY, "logged": True, "place": place,
+                  "emitter": em.id if em else None,
                   "muted": t != _pol.LOG_ONLY, "created_at": _now_iso()}
         _log_only(logged)
         return logged
     quiet = _pol.owner_in_conversation()
     key = dedupe_key if approval else _pol.collapse_key(kind, source, title, dedupe_key)
+    # May this interrupt? (services/interruption_policy: quiet hours, Focus Assist if chosen, the
+    # hourly budget; safety-critical always.) A needs-you item that may not still lands in the badge,
+    # silently. Nothing here removes or hides the item.
+    # An off-the-record notice is counted but not remembered by key: its key can embed its title.
+    interrupt, hold_reason = _interruption(kind, source, emitter, None if private else key,
+                                           approval, t)
     job = _pol.job_for(job=job, meta=meta, dedupe_key=dedupe_key, resolve_key=resolve_key)
-    off = _off_record_now()
+    off = private
     with _LOCK:
         items, ledger = _read_store()
         probe = {"kind": kind, "source": source, "priority": priority, "tier": t,
                  "job": job, "collapse_key": key, "dedupe_key": dedupe_key,
                  "off_record": off}
         if not approval and _hidden(probe, ledger):
+            _notice_line(em, kind, place, False, safety)
             return dict(probe, title=title, body=body, suppressed=True, dismissed=True,
                         read=True, created_at=_now_iso())
         if key:
@@ -279,6 +319,8 @@ def push(
                     continue
                 if approval:
                     return n                     # the same approval, already waiting
+                if safety and n.get("held"):
+                    n["held"] = False            # a safety-critical repeat is never held
                 before = _rank_of(n)
                 n["count"] = int(n.get("count") or 1) + 1
                 n["title"], n["body"] = title, body
@@ -297,6 +339,35 @@ def push(
                     n["tier"] = t                # a failure after progress is louder
                     n["read"] = t == _pol.FYI
                 _save(items, ledger)
+                _notice_line(em, kind, place, not n.get("held"), safety)
+                return n
+        if (not approval and not safety and not off and t != _pol.NEEDS_YOU and em is not None
+                and em.burst and place in (_reg.UPDATES, _reg.ACTIVITY)
+                and not (meta or {}).get("no_coalesce")):
+            # A burst of one kind from one source within five minutes is one card with a count, for the
+            # emitters that declare themselves bursty (the "ran" lines of schedules). A card about one
+            # task, run or message keeps its own key; needs-you items stay one per decision.
+            from agent_friday.services import interruption_policy as _ip
+            for n in reversed(items):
+                if n.get("dismissed") or n.get("tier") == _pol.NEEDS_YOU:
+                    continue
+                if n.get("kind") != kind or n.get("source") != source or n.get("emitter") != em.id:
+                    continue
+                if n.get("off_record") or n.get("meta", {}).get("no_coalesce"):
+                    continue                 # an off-the-record card is never merged into, or out of
+                if not _ip.coalesces(_utc_ts(n.get("created_at") or "")):
+                    break
+                n["count"] = int(n.get("count") or 1) + 1
+                n["title"], n["body"] = title, body
+                n["created_at"] = _now_iso()
+                if target:
+                    n["target"] = target     # the card opens the latest item, not the first
+                if actions:
+                    n["actions"] = actions
+                if meta:
+                    n["meta"] = dict(n.get("meta") or {}, **meta)
+                _save(items, ledger)
+                _notice_line(em, kind, place, not n.get("held"), safety)
                 return n
         entry = {
             "id": str(uuid.uuid4()),
@@ -320,10 +391,15 @@ def push(
             "collapse_key": key,
             # Mid-conversation: a card waits until the owner is done; an
             # approval arrives anyway, marked quiet so nothing interrupts.
-            "held": bool(quiet and not approval),
-            "quiet": bool(quiet and approval),
+            "held": bool(quiet and not approval and not safety),
+            "quiet": bool(quiet and approval) or not interrupt,
+            "interrupt": interrupt,
+            "hold_reason": hold_reason,
             "resolve_key": resolve_key,
             "job": job,
+            "place": place,
+            "emitter": em.id if em else None,
+            "safety_critical": safety,
         }
         if t == _pol.FYI:
             entry["read"] = True              # an FYI never bumps the badge
@@ -331,7 +407,36 @@ def push(
             entry["off_record"] = True
         items.append(entry)
         _save(items, ledger)
+        _notice_line(em, kind, place, not entry["held"] and (interrupt or t != _pol.NEEDS_YOU), safety)
         return entry
+
+
+def _interruption(kind: str, source: str, emitter: Optional[str], key: Optional[str],
+                  approval: bool, tier: str):
+    """(may_interrupt, why_not) for a notice. Only a needs-you item interrupts at all; an FYI never
+    does and is not counted against the hour's budget. Never raises: on a fault it interrupts."""
+    try:
+        from agent_friday.services import notice_registry as _reg
+        if _reg.is_safety_critical(kind, emitter, source):
+            return True, ""                  # whatever tier it was given, it always reaches the owner
+    except Exception:
+        return True, ""
+    if not approval and tier != "needs_you":
+        return False, ""
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        v = _ip.verdict(kind, source=source, emitter=emitter, key=key)
+        return v.interrupt, ("" if v.interrupt else v.reason)
+    except Exception:
+        return True, ""
+
+
+def _notice_line(em: Any, kind: str, place: str, delivered: bool, safety: bool) -> None:
+    """The activity-ledger line for a notice: kind, place, delivered or held.
+    The kind is the registry's, never the caller's words."""
+    from agent_friday.services import notice_registry as _reg
+    _reg.record_line(em.kind if em else "unregistered", place, delivered,
+                     safety=safety, emitter=em.id if em else "")
 
 
 def _off_record_now() -> bool:
@@ -343,19 +448,24 @@ def _off_record_now() -> bool:
 
 
 def _log_only(entry: Dict[str, Any]) -> None:
-    """Housekeeping and muted kinds: the activity log, never the tray."""
+    """Housekeeping, muted kinds and pulled-only receipts: the activity log,
+    never the tray. The line names the kind and source and identifies the title by its length
+    and a digest keyed with this process's random _SALT (as _opaque): a title can quote the
+    owner's mail, events or files, which the log must not hold, and an unkeyed digest of a
+    short title could be reversed by guessing."""
     try:
         import logging
+        title = str(entry.get("title") or "")
         logging.getLogger("friday.notifications").info(
-            "log-only notification [%s/%s]: %s", entry.get("kind"), entry.get("source"),
-            entry.get("title"))
+            "log-only notification [%s/%s]: title of %d characters (key %s)",
+            entry.get("kind"), entry.get("source"), len(title),
+            hmac.new(_SALT, title.encode("utf-8"), hashlib.sha256).hexdigest()[:12])
     except Exception:
         pass
     try:
-        from agent_friday.services import activity_ledger
-        activity_ledger.record("notification", kind=entry.get("kind"),
-                               source=entry.get("source"), tier=entry.get("tier"),
-                               muted=bool(entry.get("muted")))
+        from agent_friday.services import notice_registry as _reg
+        _notice_line(_reg.get(entry.get("emitter")), entry.get("kind"),
+                     entry.get("place") or "updates", False, False)
     except Exception:
         pass
 
@@ -580,6 +690,7 @@ def upsert_status(
     priority: str = "low",
     target: Optional[Dict[str, Any]] = None,
     meta: Optional[Dict[str, Any]] = None,
+    emitter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create or refresh a single, always-read 'status' entry keyed by
     ``dedupe_key``. Unlike push(), a matching existing entry is UPDATED in place
@@ -591,10 +702,22 @@ def upsert_status(
     """
     if priority not in PRIORITY_ORDER:
         priority = "low"
+    from agent_friday.services import notice_registry as _reg
+    em = _reg.resolve(kind, source, emitter)
+    place = _reg.place_of(kind, source, emitter)
+    if place == _reg.ACTIVITY and not _reg.is_safety_critical(kind, emitter, source):
+        # A heartbeat's "last ran" lives in Activity and the schedule's history.
+        entry = {"title": title, "kind": kind, "source": source, "priority": priority,
+                 "tier": "log_only", "logged": True, "place": place,
+                 "emitter": em.id if em else None, "created_at": _now_iso()}
+        _log_only(entry)
+        return entry
+    _notice_line(em, kind, place, True, False)
     with _LOCK:
         items = _load()
         for n in items:
             if n.get("dedupe_key") == key and not n.get("dismissed"):
+                n["place"] = place
                 n["title"] = title
                 n["body"] = body
                 n["priority"] = priority
@@ -625,6 +748,8 @@ def upsert_status(
             "chat_injected": False,
             "dedupe_key": key,
             "meta": meta or {},
+            "place": place,
+            "emitter": em.id if em else None,
         }
         try:
             from agent_friday.services import off_record as _off
@@ -651,7 +776,8 @@ def list_notifications(
             _save(items, ledger)
     items = [n for n in items if not n.get("held")]
     if not include_dismissed:
-        items = [n for n in items if not n.get("dismissed") and not _hidden(n, ledger)]
+        items = [n for n in items if not n.get("dismissed") and not _hidden(n, ledger)
+                 and _in_tray(n)]
     items = [dict(n, group=_pol.group_key(n)) for n in items]
     # Priority, then newest first. created_at has one-second resolution, so
     # two notifications in the same second tie; new entries are appended, so
@@ -674,6 +800,16 @@ def _iso_ts(s: str) -> float:
         return 0.0
 
 
+def _utc_ts(s: str) -> float:
+    """Epoch seconds of a stored ``_now_iso()`` stamp (UTC, trailing Z)."""
+    try:
+        from datetime import timezone
+        return datetime.fromisoformat(str(s).replace("Z", "")).replace(
+            tzinfo=timezone.utc).timestamp()
+    except Exception:
+        return 0.0
+
+
 def mark_read(notif_id: str) -> bool:
     with _LOCK:
         items = _load()
@@ -683,6 +819,26 @@ def mark_read(notif_id: str) -> bool:
                 _save(items)
                 return True
     return False
+
+
+def mark_seen(ids: List[str]) -> int:
+    """The owner has looked at the workspace these cards are about (it was
+    opened). A card's dock highlight shows only while it is unseen; seen is not
+    read and not dismissed, so the card stays in the tray until it expires or
+    is dismissed."""
+    want = {str(i) for i in (ids or []) if i}
+    if not want:
+        return 0
+    with _LOCK:
+        items = _load()
+        n = 0
+        for it in items:
+            if it.get("id") in want and not it.get("seen"):
+                it["seen"] = True
+                n += 1
+        if n:
+            _save(items)
+    return n
 
 
 def mark_all_read() -> int:
@@ -737,7 +893,31 @@ def unread_count() -> int:
             _save(items, ledger)
     return sum(1 for n in items if not n.get("read") and not n.get("dismissed")
                and not n.get("held") and n.get("tier", "needs_you") != "fyi"
-               and not _hidden(n, ledger))
+               and not _hidden(n, ledger) and _in_tray(n))
+
+
+#: An FYI card (a finished briefing, a podcast, a task result) leaves the tray
+#: after this long; it is still in its workspace and in Activity.
+FYI_TTL_S = 24 * 3600
+
+
+def _in_tray(n: Dict[str, Any], now: Optional[float] = None) -> bool:
+    """The tray holds what needs the owner and the results of things the owner
+    started. Activity-place notices (routine runs, heartbeats, background
+    starts) live in Activity, and an FYI card expires after FYI_TTL_S. An
+    approval and a safety-critical notice are always in the tray."""
+    from agent_friday.services import notification_policy as _pol
+    from agent_friday.services import notice_registry as _reg
+    kind, source, emitter = n.get("kind"), n.get("source"), n.get("emitter")
+    if _pol.is_approval(kind) or _reg.is_safety_critical(kind, emitter, source):
+        return True
+    place = n.get("place") or _reg.place_of(kind, source, emitter, n.get("tier"))
+    if place == _reg.ACTIVITY:
+        return False
+    if (n.get("tier") or _pol.NEEDS_YOU) == _pol.FYI:
+        age = (now if now is not None else time.time()) - _utc_ts(n.get("created_at", ""))
+        return age <= FYI_TTL_S
+    return True
 
 
 # ────────────────────────────────────────────────────────────────────────

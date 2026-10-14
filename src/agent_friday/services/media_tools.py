@@ -170,10 +170,15 @@ def _describe_locally(images, prompt: str):
     return "\n".join(outs), None
 
 
+from agent_friday.services.cloud_intent import owner_request as _owner_request
+
+
 def _gemini_client():
     from agent_friday import core
     if not getattr(core, "GEMINI_API_KEY", None):
         return None
+    from agent_friday.services import cloud_intent as _cloud_intent
+    _cloud_intent.require("google-gemini", "media inspection (Gemini)", "gemini-2.5-flash")
     from google import genai
     return genai.Client(api_key=core.GEMINI_API_KEY)
 
@@ -206,6 +211,7 @@ def _volume_stats(path):
 
 # ── inspect_image ───────────────────────────────────────────────────────────
 
+@_owner_request("media_inspect")
 def _tool_inspect_image(inp):
     inp = inp or {}
     path, err = _resolve_media_path(inp.get("path"))
@@ -333,6 +339,7 @@ def _whisper():
     return _WHISPER
 
 
+@_owner_request("media_inspect")
 def _tool_inspect_audio(inp):
     inp = inp or {}
     path, err = _resolve_media_path(inp.get("path"))

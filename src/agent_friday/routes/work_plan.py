@@ -147,6 +147,34 @@ def local_queue_cancel(job_id):
     return jsonify({"ok": ok, "queue": _local_queue_snapshot()}), (200 if ok else 404)
 
 
+@work_plan_bp.route("/api/local-queue/<job_id>/pause", methods=["POST"], defaults={"what": "pause"})
+@work_plan_bp.route("/api/local-queue/<job_id>/resume", methods=["POST"], defaults={"what": "resume"})
+@login_required
+def local_queue_pause(job_id, what):
+    """Pause or resume one job in the Local AI queue. A waiting job is not started until it is resumed; a
+    running one waits at its next model call and lets the next job in line go meanwhile."""
+    if job_id == "library-index":
+        return local_queue_library_index(what)
+    from agent_friday.services.agent import local_queue_pause as _pause
+    ok = bool(_pause(job_id, what == "pause"))
+    return jsonify({"ok": ok, "queue": _local_queue_snapshot()}), (200 if ok else 404)
+
+
+@work_plan_bp.route("/api/local-queue/library-index/<what>", methods=["POST"])
+@login_required
+def local_queue_library_index(what):
+    """Pause or resume the Library reading your folders. Pausing holds it before the next file; resuming
+    takes up where it stopped. Neither touches a document."""
+    from agent_friday.services.library import index_job, principal as _pr
+    if what not in ("pause", "resume"):
+        return jsonify({"ok": False, "error": "pause or resume"}), 404
+    p = _pr.current()
+    if p is None:
+        return jsonify({"ok": False, "error": "the Library is not available to this account"}), 403
+    out = index_job.pause(p) if what == "pause" else index_job.resume(p)
+    return jsonify({"ok": True, "queue": _local_queue_snapshot(), **out})
+
+
 @work_plan_bp.route("/api/work/queue/<item_id>", methods=["DELETE"])
 @login_required
 def cancel_item(item_id):
@@ -260,9 +288,57 @@ def _cloud_available() -> bool:
 @work_plan_bp.route("/api/work/activity", methods=["POST"])
 @login_required
 def touch_activity():
-    """Someone is here. The away-drain waits on this."""
-    wq.mark_active()
+    """Someone is here (a click or key in the page). The away-drain and every
+    background job's idle window wait on this."""
+    from agent_friday.services import local_scheduler as ls
+    ls.mark_activity("ui")
     return jsonify({"ok": True, "idle_s": wq.idle_seconds()})
+
+
+# ── the local work scheduler (services/local_scheduler) ─────────────────────
+# The Local AI chip is the one indicator (GET /api/local-queue); these three
+# routes are the same list in the scheduler's words, a way to take one waiting
+# job out of the line, and the scheduler's own numbers.
+
+@work_plan_bp.route("/api/work/local", methods=["GET"])
+@login_required
+def local_work_status():
+    """What the local models are working on and what waits, with the reason
+    each job is waiting."""
+    from agent_friday.services import local_scheduler as ls
+    try:
+        return jsonify(ls.status())
+    except Exception as e:
+        return api_error(e, "Couldn't read the local work queue", shape="ok")
+
+
+@work_plan_bp.route("/api/work/local/cancel", methods=["POST"])
+@login_required
+def local_work_cancel():
+    """Take one waiting job out of the line (by id, from the status list)."""
+    from agent_friday.services import local_scheduler as ls
+    body = request.get_json(silent=True) or {}
+    job_id = str(body.get("id") or "").strip()
+    if not job_id:
+        return jsonify({"ok": False, "error": "Say which job to cancel."}), 400
+    res = ls.cancel(job_id)
+    return jsonify(res), (200 if res.get("ok") else 404)
+
+
+@work_plan_bp.route("/api/work/local/metrics", methods=["GET"])
+@login_required
+def local_work_metrics():
+    """Swaps per hour, the lowest free RAM per hour, queue wait per class and
+    background throughput. Read from a file on this PC; nothing is sent."""
+    from agent_friday.services import local_scheduler as ls
+    try:
+        hours = max(1.0, min(168.0, float(request.args.get("hours", 24))))
+    except ValueError:
+        hours = 24.0
+    try:
+        return jsonify({"ok": True, **ls.metrics_summary(hours)})
+    except Exception as e:
+        return api_error(e, "Couldn't read the scheduler's numbers", shape="ok")
 
 
 def _runner(item):

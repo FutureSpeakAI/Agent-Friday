@@ -29,11 +29,16 @@ class TreeBuilder:
         if self._visible is None:
             out = {}
             self.locked = 0
+            allow = grants.allower(self.principal)        # one pass: the refusals are kept, the consents read live
+            rows = []
             for r in self.store.q("SELECT * FROM documents WHERE state='indexed'"):
                 if r["shelf"] == "vault" and not self.store.vault_open():
                     self.locked += 1
                     continue
-                if grants.allowed(self.principal, Path(r["path"])):
+                rows.append(r)
+            allow.prime(Path(r["path"]) for r in rows)
+            for r in rows:
+                if allow(Path(r["path"])):
                     out[r["id"]] = r
             self._visible = out
         return self._visible

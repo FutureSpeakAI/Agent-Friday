@@ -40,6 +40,7 @@ permissions are paused, and sends you to **Privacy & Data, File access**.
   [Setup chat](setup-chat.md)). A key pasted here is refused, with a pointer to
   Connections. **Research on you** is optional, runs only on what you type, and
   shows findings for line-by-line review before anything is kept.
+- **Interruptions.** How often something may interrupt you (6 an hour is the recommended choice), quiet hours (off until you turn them on; 22:00 to 07:00 is offered), and whether to follow Windows Focus Assist. See [Notifications](notifications.md).
 - **Muted notifications.** The kinds of notice you have muted.
 
 ## Voice
@@ -104,6 +105,11 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
   which shows which privacy layers are running now.
 - **File access.** Which files and folders cloud models may read. See
   [File grants](file-grants.md).
+- **Your knowledge.** Start Friday on notes and documents you already have: pick
+  folders in the Windows folder window or choose from places she found, with a
+  size and file count for each. Reading a folder on this PC and letting cloud
+  models read it are two separate choices, and the cloud one is off unless you
+  turn it on. See [The setup chat](setup-chat.md) and [Library](library.md).
 - **Library.** Library search, cloud answers (off by default) with a character
   cap, reading on battery, and whether the knowledge graph learns from your
   documents. See [Library](library.md).
@@ -135,6 +141,18 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
 ## Appearance
 
 - **Display style** for your desktop presentation.
+  - **Simple** keeps Home's cards beside Friday. **Hide cards**, on Friday's half
+    of the screen or under **Scene & depth**, closes them: Friday takes one half
+    of the screen and the chat the other. **Show cards** brings them back and puts
+    the chat back as it was. The choice stays in this browser.
+    Say "hide the cards" or "show the cards" to do it by voice or in chat.
+    On a narrow window the cards stay where they are. While a workspace is
+    open the screen is laid out for that workspace, and your choice is
+    waiting when you are back on Home.
+  - **Classic** keeps Friday centred in the part of the desktop nothing covers:
+    what is left beside the chat tray, a task tray, notifications, or a
+    workspace docked to one side. She glides there when that changes, and keeps
+    moving, only more gently, when your system asks for reduced motion.
 - **Dock.** Which workspaces the dock shows, and in what order.
 - **Start screen.** **Show my day**, and when your day shows over the scene.
 - **3D effects.** **3D dazzle** (full, subtle or off) controls glow, particles and

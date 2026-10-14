@@ -14,9 +14,11 @@ and host prompt cache hold the prefix before anyone asks. The volatile tail
 (clock and everything the assembler appends after it) is left out on purpose:
 it differs on every turn and would only be read again.
 
-The warm is best-effort: a failure is logged and nothing else changes. It
-never runs for a seat that is not the brain, and `seat_prefix_warm: false`
-turns it off.
+The warm is best-effort and strictly local: it runs inside a local-only run,
+so the agent's fallback ladder cannot carry the ~19k-token head to a cloud
+provider when the warm fails. A failure is logged and the warm stops. It never
+runs for a seat that is not the brain, and `seat_prefix_warm: false` turns it
+off.
 """
 from __future__ import annotations
 
@@ -102,19 +104,21 @@ def _nullcontext():
 def _warm_admitted(model_id: str, port, settings: dict, t0: float) -> dict:
     try:
         from agent_friday.services.agent import _generate_agent
+        from agent_friday.services.local_only_guard import local_only
         from agent_friday.services.model_router import TIMINGS_SINK
         head = canonical_head(settings.get("active_workspace") or "")
         timings: dict = {}
         tok = TIMINGS_SINK.set(lambda t: timings.update(t or {}))
         try:
-            _generate_agent(
-                [{"role": "user", "content": "OK."}],
-                system=head, model=model_id, max_tokens=1,
-                session_ctx={"authenticated": True, "provider": "local",
-                             "is_background_task": True, "prefix_warm": True},
-                workspace=settings.get("active_workspace") or "",
-                orb_label="Prefix warm",
-            )
+            with local_only("Prefix warm"):
+                _generate_agent(
+                    [{"role": "user", "content": "OK."}],
+                    system=head, model=model_id, max_tokens=1,
+                    session_ctx={"authenticated": True, "provider": "local",
+                                 "is_background_task": True, "prefix_warm": True},
+                    workspace=settings.get("active_workspace") or "",
+                    orb_label="Prefix warm",
+                )
         finally:
             TIMINGS_SINK.reset(tok)
         out = {"warmed": True, "seat": model_id, "port": port,

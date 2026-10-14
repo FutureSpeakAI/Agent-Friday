@@ -107,10 +107,21 @@ def _clear_cache(principal: str, doc_id: int, doc=None) -> None:
         pass
 
 
-def _purge_graph(principal: str, doc_id: int) -> None:
+def _purge_staging(doc_id: int, gone: bool = True) -> None:
+    """Drafts the local model made from this document (wiki/_staging) go with it. A removal or forget also
+    tombstones the id, so a draft still being made is refused when it finishes."""
+    try:
+        from agent_friday.services.library import staging
+        staging.purge_document(doc_id, gone=gone)
+    except Exception:  # noqa: BLE001 - nothing staged is nothing to purge
+        pass
+
+
+def _purge_graph(principal: str, doc_id: int, gone: bool = True) -> None:
     """Facts the knowledge graph learned from this document go with it."""
     if principal != lstore.OWNER:
         return
+    _purge_staging(doc_id, gone)
     try:
         from agent_friday.services.knowledge_graph import indexer as kg
         kg.purge_library_document(doc_id)
@@ -122,7 +133,7 @@ def left_the_open_shelf(principal: str, doc_id: int) -> None:
     """A document moved to the vault: what the graph learned from its open copy, the page
     renders and the remembered last search all go; the index rewrites its own rows."""
     from agent_friday.services.library import search
-    _purge_graph(principal, doc_id)
+    _purge_graph(principal, doc_id, gone=False)      # the document stays, so it is not tombstoned
     search.forget_last(doc_id)
     doc = lstore.store_for(principal).get_document(doc_id)
     if doc:
@@ -231,11 +242,19 @@ def _name_hits(st: Store, names: set[str]) -> list[tuple[int, int, str]]:
     return list(hits.values())
 
 
+def _staged_naming(names, emails) -> list:
+    try:
+        from agent_friday.services.library import staging
+        return staging.naming(set(names) | set(emails))
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def people_find(names, emails) -> int:
     total = 0
     for principal in _principals():
         total += len(_name_hits(lstore.store_for(principal), set(names) | set(emails)))
-    return total
+    return total + len(_staged_naming(names, emails))       # drafts quote the sentences that name a person
 
 
 def people_purge(names, emails) -> int:
@@ -255,6 +274,11 @@ def people_purge(names, emails) -> int:
             st.x("DELETE FROM passages WHERE id=?", (pid,))
             total += 1
         st.compact()
+    try:
+        from agent_friday.services.library import staging
+        total += staging.purge_naming(set(names) | set(emails))
+    except Exception:  # noqa: BLE001
+        pass
     return total
 
 
@@ -268,3 +292,29 @@ def _principals() -> list[str]:
 def register() -> None:
     from agent_friday.services import forget_registry
     forget_registry.register_store("library", people_find, people_purge)
+
+
+def scrub_copies(principal: str, doc_id: int) -> int:
+    """Take this document's words out of the saved chats that CITED it, and only those: the footnote token
+    becomes "[forgotten source]" and the exact lines the reply quoted from it are removed (the cited-chat pass of
+    forget, without the tombstone). Used when a meeting is deleted or the archive turned off. It never runs the
+    eight-word sweep of every store: conversational speech repeats ("let me know if you have any questions"), and
+    that sweep would rewrite the owner's own messages and unrelated chats. Best effort; returns the chats changed."""
+    st = lstore.store_for(principal)
+    doc = st.get_document(doc_id)
+    if not doc or (doc["shelf"] == "vault" and not st.vault_open()):
+        return 0
+    from agent_friday.services import conversations
+    changed = 0
+    try:
+        doc_norm = _doc_text(st, doc_id)
+        for cid in cited_conversations(st, doc_id):
+            try:
+                changed += conversations.rewrite(
+                    cid, lambda m, d=doc_id, n=doc_norm: _scrub_message(m, d, n) if m.get("role") == "assistant" else m)
+            except Exception:  # noqa: BLE001 - the rest still goes
+                continue
+        st.x("DELETE FROM cited_in WHERE doc_id=?", (doc_id,))
+    except Exception:  # noqa: BLE001 - the document itself is removed by the caller either way
+        pass
+    return changed

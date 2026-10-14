@@ -318,6 +318,13 @@ def generate_music(prompt: str, *,
     if not allowed:
         return {"status": "blocked", "reason": reason}
 
+    # Every path below sends the prompt to a cloud provider (Higgsfield,
+    # Lyria). Local only never reaches one: there is no on-device music model.
+    from agent_friday.services.cloud_mode_policy import cloud_media_refusal
+    _refused = cloud_media_refusal("music")
+    if _refused:
+        return _refused
+
     # ── Higgsfield-seated music models. ───────────────────────────────────
     # This branch sits BEFORE resolve_music_model() deliberately, and that
     # function is left untouched.
@@ -384,6 +391,8 @@ def generate_music(prompt: str, *,
     orb = _orb_start(f"Composing music — {(model or DEFAULT_MUSIC_MODEL)}…",
                      icon="🎵", name="Generating music")
     try:
+        from agent_friday.services import cloud_intent as _cloud_intent
+        _cloud_intent.require("google-gemini", "music generation (Lyria)", api_model)
         from google import genai
         from google.genai import types
         client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
@@ -459,6 +468,8 @@ def _generate_music_cloud(client, types, api_model, full_prompt, *, mode, lyrics
             gen_kwargs["image"] = types.Image(image_bytes=seed_bytes,
                                               mime_type="image/png")
 
+    from agent_friday.services import cloud_intent as _cloud_intent
+    _cloud_intent.require("google-gemini", "music generation (Lyria)", str(api_model))
     operation = client.models.generate_music(**gen_kwargs)
 
     waited = 0

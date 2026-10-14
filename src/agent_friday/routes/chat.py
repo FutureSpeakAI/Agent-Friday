@@ -19,6 +19,9 @@ import hmac as _hmac
 import queue as _queue
 import contextvars as _contextvars
 from agent_friday.services.reasoning_trace import current as _rt_current
+from agent_friday.services import cloud_intent as _cloud_intent
+from agent_friday.services import local_offer as _local_offer
+from agent_friday.services import outage_fallback as _outage_fallback
 import difflib as _difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
@@ -397,6 +400,35 @@ def _confirmed_action_response(message, session_ctx):
                                  "Couldn't resume the approved action"))
 
 
+def _instant_response(message, result, conversation_id):
+    """Answer a turn that a rule or the item resolver settled without a model.
+
+    `result` is services/reflex_chat's {"reply", "tool_trace", "actions",
+    "outcome"}. The exchange is written to the conversation like any other.
+    """
+    reply = result.get("reply") or ""
+    # A str reply is kept as it is: one that quotes a tool's exception text is marked, and
+    # public_result below swaps it. str() would drop the mark.
+    reply = reply if isinstance(reply, str) else str(reply)
+    # A reply that names rows from the owner's screen (a title, a sender) is shown to them live, but the
+    # conversation keeps a neutral line: the next turn's model may be a cloud model that reads the history.
+    kept = result.get("history_text") or reply
+    kept = kept if isinstance(kept, str) else str(kept)
+    user_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                'role': 'user', 'text': message, 'pinned': False, 'sources': []}
+    friday_msg = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                  'role': 'friday', 'text': kept, 'pinned': False, 'sources': []}
+    _persist_turn(conversation_id, user_msg, friday_msg)
+    _save_chat_history(CHAT_HISTORY)
+    return jsonify(public_result({"status": "ok", "response": reply,
+                                  "user_msg": user_msg, "friday_msg": friday_msg,
+                                  "sources": [], "tool_trace": result.get("tool_trace") or [],
+                                  "actions": result.get("actions") or [],
+                                  "instant": True,
+                                  "laya": result.get("laya")},
+                                 "Couldn't finish that without a model"))
+
+
 try:
     # The brain's seat warms its prompt head the moment it is ready
     # (services/seat_warm); registered here because the chat routes are
@@ -437,6 +469,38 @@ def _conv_context(cid, limit=None):
                 _library_cite.remember_library_reply(text)
             out.append({"role": role, "content": text})
     return out
+
+
+def _offer_turn_response(message, text, offer, *, conversation_id, workspace='',
+                         model='', seat_events=None, flags=None):
+    """A turn the local model could not finish: the choice, not the cloud.
+
+    Persists the exchange (the owner's words and what Friday said) and returns the
+    chat response with `local_fallback`: the offer the page renders as three
+    buttons, nothing preselected. Nothing here calls a model.
+    """
+    user_msg = {
+        'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+        'role': 'user', 'text': message, 'pinned': False, 'sources': [],
+        'workspace': workspace,
+    }
+    friday_msg = {
+        'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+        'role': 'friday', 'text': text, 'pinned': False, 'sources': [],
+    }
+    _persist_turn(conversation_id, user_msg, friday_msg)
+    _save_chat_history(CHAT_HISTORY)
+    body = {
+        "status": "ok", "response": text, "user_msg": user_msg,
+        "friday_msg": friday_msg, "sources": [], "tool_trace": [],
+        "model": model, "seat": "local", "local_fallback": offer,
+        # Truthful: the local model named here did NOT answer, and nothing else did.
+        "served_by": {"model": model, "provider": "local", "local": True,
+                      "answered": False},
+        "seat_events": seat_events or [],
+    }
+    body.update(flags or {})
+    return jsonify(body)
 
 
 def _persist_turn(cid, user_msg, friday_msg, meta=None):
@@ -505,7 +569,7 @@ _ROUTING_MODE_LABELS = {
     "local_preferred": "Local preferred",
     "local_only": "Local only",
     "cloud_only": "Cloud only",
-    "smart": "Smart",
+    "smart": "Local preferred",
 }
 
 
@@ -647,7 +711,7 @@ def _announce_seat_notice(conversation_id, text):
         push(title="Answered by a different model than you chose", body=text,
              priority="high", source="routing", kind="seat_notice",
              actions=[SEAT_NOTICE_ACTION],
-             dedupe_key="seat_notice:" + text[:80])
+             emitter="E31", dedupe_key="seat_notice:%s" % (conversation_id or "main"))
     except Exception:
         pass
 
@@ -664,6 +728,47 @@ def _announce_seat_notice(conversation_id, text):
 #: Shorter than a typical proxy read timeout (Caddy/nginx default to 60s) with
 #: room to spare.
 _STREAM_KEEPALIVE_S = 10.0
+
+
+def _computer_control_cloud_override(cc_on, routed_local, vault_access):
+    """Whether Computer Control moves a locally routed turn to the cloud.
+
+    "" (no change), "override" (send the turn to the cloud tool-use loop) or
+    "held" (the turn needs the cloud but the routing mode does not allow it,
+    so it stays local and the escalation card can ask).
+    """
+    if not (cc_on and routed_local and not vault_access):
+        return ""
+    from agent_friday.services.cloud_mode_policy import cloud_allowed
+    return "override" if cloud_allowed("computer control", explicit=True) else "held"
+
+
+def _cloud_turn_decision(route_mode, mode, confirmed, vault_access):
+    """What a per-turn `route_mode=cloud` request does, given the routing mode.
+
+    Returns "" (no override asked), "vault" (the turn touches vault-tier
+    material and stays local), "confirm" (Local only: ask first, send nothing)
+    or "allow". Under Local only the override is honoured for one turn, and
+    only when the request carries the owner's confirm.
+    """
+    if str(route_mode or "").strip().lower() != "cloud":
+        return ""
+    if vault_access:
+        return "vault"
+    if str(mode or "").strip().lower() == "local_only" and not confirmed:
+        return "confirm"
+    return "allow"
+
+
+def _vault_redact_needs_confirm(route_info, mode, confirmed):
+    """A vault turn the router would send to the cloud (redacted) because no
+    local model is available, in a local mode, without the owner's say-so."""
+    if confirmed or not (route_info or {}).get('vault_access'):
+        return False
+    if (route_info or {}).get('refuse') or (route_info or {}).get('provider') != 'cloud':
+        return False
+    from agent_friday.services.cloud_mode_policy import is_local_mode
+    return is_local_mode(mode)
 
 
 def _privacy_hold_payload(message, holds):
@@ -962,6 +1067,7 @@ def _ag_tools_for_turn(workspace, conversation_id):
 @chat_bp.route('/api/chat', methods=['POST'])
 @_traced_turn
 @_privacy_hold_turn
+@_cloud_intent.per_turn
 def chat():
     """Text chat — powered by Anthropic Claude.
 
@@ -1026,6 +1132,30 @@ def chat():
         cite_sources = bool(data.get('cite_sources',
                                      settings_early.get('cite_sources', False)))
         session_id = _current_session_id()
+        # Turns answered without a model round (spec 9.5f). A whole "yes" to a
+        # question that is waiting runs the stored action by the same claim path
+        # used further down, before the turn is prepared. With the opt-in on,
+        # "open the X" is resolved and run through the governed tool path. A
+        # conditional "yes, but ..." and everything else is the ordinary turn.
+        _instant_ctx = _opened = None
+        try:
+            from agent_friday.services import reflex_chat as _reflex_chat
+            _reflex_auth = bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD)
+            _instant_ctx = _reflex_chat.approval_turn(
+                message, data, session_id=session_id, conversation_id=_conversation_id,
+                turn_id=_turn_id, settings=settings_early, authenticated=_reflex_auth)
+            if _instant_ctx is None:
+                _opened = _reflex_chat.open_turn(
+                    message, data, session_id=session_id, conversation_id=_conversation_id,
+                    turn_id=_turn_id, settings=settings_early, authenticated=_reflex_auth)
+        except Exception as _reflex_err:
+            _LOG.debug("reflex path skipped: %s", _reflex_err)
+        if _instant_ctx is not None:
+            _instant = _confirmed_action_response(message, _instant_ctx)
+            if _instant is not None:
+                return _instant
+        if _opened is not None:
+            return _instant_response(message, _opened, _conversation_id)
         vision_description = None
 
         # ── B2: seat-change visibility. ANY change to the seat-relevant
@@ -1141,8 +1271,9 @@ def chat():
         screenshot_b64 = data.get('image') or data.get('screenshot') or None
         _vision_events = []
         if screenshot_b64 and (include_vision or data.get('image') is not None):
-            _routing_mode = str(((settings_early.get('model_routing') or {})
-                                 .get('mode') or 'smart')).lower()
+            from agent_friday.services.cloud_mode_policy import normalize_mode as _norm_mode
+            _routing_mode = _norm_mode((settings_early.get('model_routing') or {})
+                                       .get('mode'))
             _mime = 'image/jpeg' if data.get('image') else 'image/png'
             _is_screen = data.get('screenshot') is not None
             _what = 'a screenshot of your desktop' if _is_screen else 'the camera frame'
@@ -1200,6 +1331,7 @@ def chat():
             # 2 ── cloud, only when the mode permits it, and never silently.
             if screenshot_b64 and vision_description is None:
                 try:
+                    _cloud_intent.require("google-gemini", "vision (chat image)", "gemini-2.5-flash")
                     from google import genai
                     from google.genai import types
                     gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
@@ -1342,6 +1474,16 @@ def chat():
             _turn_shape = _reflex.shadow(message, _conversation_id)
         except Exception:
             _turn_shape = None
+        # The same verdict, recorded as this turn's TurnPlan (shadow only:
+        # nothing reads it for the prompt, the tools or the route). Off the
+        # record the turn gets no id and no plan.
+        try:
+            from agent_friday.services import turn_plan as _tplan
+            _tplan.begin_turn(_turn_id)
+            if _turn_shape is not None and _tplan.current_turn_id():
+                _tplan.shadow_plan(_turn_shape, _turn_id)
+        except Exception:
+            pass
 
         # ── Model Routing: decide local vs cloud BEFORE building the prompt. ──
         # The routing decision drives the whole privacy posture downstream:
@@ -1422,7 +1564,13 @@ def chat():
                     # cloud id keeps the catalogue as its authority, because it
                     # is not "installed" anywhere and absence from a local
                     # inventory says nothing about it.
-                    if local_seats._is_local_name(_want):
+                    from agent_friday.services.local_only_guard import (
+                        is_cloud_model_tag as _is_cloud_tag_chat)
+                    if _is_cloud_tag_chat(_want):
+                        # Relayed to ollama.com: not an on-device model, and
+                        # absent from the local inventory by design.
+                        _known = True
+                    elif local_seats._is_local_name(_want):
                         _known = any(n == _want
                                      for n, _ in local_seats.installed())
                         if not _known:
@@ -1460,6 +1608,25 @@ def chat():
                         "seat_events": _seat_events,
                     })
 
+            # The owner bound this conversation to a cloud model: that choice is
+            # the recorded intent for this turn's cloud call. local_only never
+            # reads the binding, and an unconfirmed intent does not open it.
+            try:
+                _cs_model = ((_conv_seat.get('model') or '').strip()
+                             if isinstance(_conv_seat, dict) else '')
+                _cs_prov = ((_conv_seat.get('provider') or '').strip().lower()
+                            if isinstance(_conv_seat, dict) else '')
+                if _cs_model and not _router._is_local_choice(_cs_model, _cs_prov):
+                    _cloud_intent.set_intent('user_explicit', source='chat_seat')
+            except Exception:
+                pass
+            # The owner's confirmed per-turn cloud choice (the offer's button) is
+            # the recorded intent for the router too: a vault turn with no local
+            # model then gets its redacted cloud route instead of the offer.
+            if (str((data or {}).get('route_mode') or '').strip().lower() == 'cloud'
+                    and (data or {}).get('confirm_local_only')):
+                _cloud_intent.set_intent('user_explicit', source='confirmed_offer',
+                                         confirmed=True)
             _route_info = _router.route(messages, task_context={
                 "has_tools": True,
                 "workspace": workspace,
@@ -1467,14 +1634,29 @@ def chat():
                 "conversation_seat": _conv_seat,
                 "cloud_model": settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
             })
+            if _route_info.get('implied_intent') and not _cloud_intent.current():
+                _cloud_intent.set_intent(_route_info['implied_intent'], source='task_override')
         except Exception as _re:
-            print(f"  [ROUTER] routing failed, defaulting to cloud: {_re}")
-            _route_info = {
-                "provider": "cloud",
-                "model": settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
-                "is_local": False, "vault_allowed": False, "scrub_pii": True,
-                "vault_access": False, "refuse": False, "warning": None,
-            }
+            _fmode = str((_routing_cfg or {}).get('mode') or '').lower()
+            if _cloud_intent.is_local_mode(_fmode) and not _cloud_intent.opens_cloud(_fmode):
+                # A router that cannot answer is not an intent to use the cloud.
+                print(f"  [ROUTER] routing failed, staying local: {_re}")
+                _route_info = {
+                    "provider": "local", "model": None, "is_local": True,
+                    "vault_allowed": True, "scrub_pii": False, "vault_access": False,
+                    "refuse": True, "local_unavailable": True,
+                    "warning": ("I couldn't work out which model should answer that, so "
+                                "I didn't send it to a cloud model. You choose what "
+                                "happens next."),
+                }
+            else:
+                print(f"  [ROUTER] routing failed, defaulting to cloud: {_re}")
+                _route_info = {
+                    "provider": "cloud",
+                    "model": settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
+                    "is_local": False, "vault_allowed": False, "scrub_pii": True,
+                    "vault_access": False, "refuse": False, "warning": None,
+                }
 
         # ── Per-turn escape hatch for "Friday is about to go quiet" ──
         #
@@ -1489,13 +1671,32 @@ def chat():
         # the cloud option for vault work; this refuses it again here, because
         # a rule enforced only in the interface is not enforced.
         _route_mode = str((data or {}).get('route_mode') or '').strip().lower()
-        if _route_mode == 'cloud' and not _route_info.get('vault_access'):
+        _rm_mode = str((_routing_cfg or {}).get('mode') or '').lower()
+        _rm_confirmed = bool((data or {}).get('confirm_local_only'))
+        _cloud_turn = _cloud_turn_decision(
+            _route_mode, _rm_mode, _rm_confirmed, _route_info.get('vault_access'))
+        if _cloud_turn == 'confirm':
+            # Local only honours an explicit cloud request for ONE turn, after a
+            # confirm that names the mode. Nothing has been sent. The offer's
+            # button resends with `confirm_local_only`: one mechanism for every
+            # per-turn cloud confirm.
+            _route_info = dict(
+                _route_info, provider='local', is_local=True, refuse=True,
+                local_unavailable=True, offer_confirm_local_only=True,
+                warning=_local_offer.build(mode='local_only',
+                                           kind='local_only_confirm')['text'])
+        elif _cloud_turn == 'allow':
+            if _cloud_intent.is_local_mode(_rm_mode):
+                _cloud_intent.set_intent('user_explicit', source='route_mode',
+                                         confirmed=_rm_confirmed)
             _route_info = dict(
                 _route_info, provider='cloud', is_local=False,
                 vault_allowed=False, vault_access=False, scrub_pii=True,
+                refuse=False, warning=None, local_unavailable=False,
+                offer_cloud_switch=False,
                 model=settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
                 route_override='user chose the cloud to avoid a local pause')
-        elif _route_mode == 'cloud':
+        elif _cloud_turn == 'vault':
             print("  [ROUTER] refusing route_mode=cloud: this turn touches "
                   "vault-tier material and stays local")
 
@@ -1536,6 +1737,13 @@ def chat():
                 "Please install Ollama or switch to local routing mode."
             )
             _offer_cloud_switch = bool(_route_info.get('offer_cloud_switch'))
+            _refuse_offer = None
+            if _route_info.get('local_unavailable'):
+                _refuse_offer = _local_offer.build(
+                    model=str(_route_info.get('model') or ''),
+                    mode=str((_routing_cfg or {}).get('mode') or ''),
+                    kind=('local_only_confirm' if _route_info.get('offer_confirm_local_only')
+                          else 'no_local_model'))
             _vault_orb("Vault Access — Blocked" if _vault_access
                       else "Local-Only Mode — No Local Seat")
             user_msg = {
@@ -1553,10 +1761,28 @@ def chat():
                 "response": _warn, "user_msg": user_msg, "friday_msg": friday_msg,
                 "sources": [], "tool_trace": [], "vault_blocked": _vault_access,
                 "offer_cloud_switch": _offer_cloud_switch,
+                "local_fallback": _refuse_offer,
                 # The seat change that caused this refusal is exactly the one
                 # the user most needs to see; it rides every turn response.
                 "seat_events": _seat_events,
             })
+
+        # A vault turn with no local model would go to the cloud redacted
+        # (`vault_cloud_fallback: redact`). In a local mode that needs the
+        # owner's say-so, and the router's warning is shown rather than lost.
+        if _vault_redact_needs_confirm(
+                _route_info, (settings.get('model_routing') or {}).get('mode'),
+                bool((data or {}).get('confirm_local_only'))):
+            _pilot_outcome = "refused"
+            _vmode = str((settings.get('model_routing') or {}).get('mode') or '')
+            _voffer = _local_offer.build(mode=_vmode, kind='no_local_model')
+            _voffer['vault_redacted'] = True
+            return _offer_turn_response(
+                message,
+                ((_route_info.get('warning') or '').strip() + " Nothing was sent. "
+                 "A redacted version (vault material replaced by a placeholder, "
+                 "personal details scrubbed) can go for this turn only, if you say so.").strip(),
+                _voffer, conversation_id=_conv_id_from(data), seat_events=_seat_events)
 
         if _vault_access and _routed_local:
             _vault_orb("Vault Access — Local Only")
@@ -1567,7 +1793,23 @@ def chat():
         # the mouse. When the user has Computer Control enabled, force this turn to
         # the cloud model (which has the tool loop), UNLESS the turn touches the
         # vault — vault data must never leave the device, so privacy wins there.
-        if _CC_PERMISSION.is_set() and _routed_local and not _vault_access:
+        #
+        # The routing mode has the last word: local_only never overrides (the turn
+        # stays on the local seat and `needs_cloud_escalation` marks it for the
+        # escalation card, RM-2). local_preferred honours the owner's switch as a
+        # recorded `user_explicit` intent.
+        _cc_verdict = _computer_control_cloud_override(
+            _CC_PERMISSION.is_set(), _routed_local, _vault_access)
+        if _cc_verdict == 'held':
+            _route_info['needs_cloud_escalation'] = 'computer_control'
+            _announce_seat_notice(
+                _conversation_id,
+                "Computer Control is on, but your routing mode keeps this turn "
+                "on the local model, which cannot see or drive the screen. "
+                "Nothing was sent to the cloud.")
+        if _cc_verdict == 'override':
+            if _cloud_intent.is_local_mode(str((_routing_cfg or {}).get('mode') or '')):
+                _cloud_intent.set_intent('user_explicit', source='computer_control')
             print("  [ROUTER] Computer Control enabled — routing to cloud for the tool-use loop")
             import logging as _rlog
             _rlog.getLogger("friday.routing").warning(
@@ -1615,13 +1857,14 @@ def chat():
         # gives Friday cross-session continuity (RAG over past conversations);
         # the citation block (only in cite_sources mode) tells Friday to
         # attribute every factual claim. Both are PII-scrubbed for cloud below.
-        _extra_system = _build_memory_context_block(message, session_id)
+        _mem_part = _build_memory_context_block(message, session_id)
         # Continuity from the most recent end-of-day session summary + tone
         # adaptation from the accumulated emotional arc. Both are content-free /
         # already-summarised, provider-independent, and PII-scrubbed for cloud
         # below like the rest of _extra_system.
-        _extra_system += _build_session_continuity_block()
-        _extra_system += _build_emotional_tone_block()
+        _cont_part = _build_session_continuity_block()
+        _tone_part = _build_emotional_tone_block()
+        _extra_system = _mem_part + _cont_part + _tone_part
         # The ask-first action policy is added by `seal_system_prompt` in
         # `_prep_for`, once and last. The gate in _execute_tool still enforces
         # it if the model forgets.
@@ -1633,6 +1876,13 @@ def chat():
         _last_user_msg = (messages[-1] if messages and messages[-1].get('role') == 'user'
                           and isinstance(messages[-1].get('content'), str) else None)
         _last_user_text = _last_user_msg.get('content') if _last_user_msg is not None else None
+
+        def _tplan_turn_id():
+            try:
+                from agent_friday.services import turn_plan as _tp
+                return _tp.current_turn_id()
+            except Exception:
+                return None
 
         def _prep_for(provider, model=None):
             """The system prompt for `provider`, in two parts.
@@ -1668,11 +1918,19 @@ def chat():
             if _last_user_msg is not None:
                 _last_user_msg['content'] = _last_user_text
             vc = _get_vault_control() if _vault_local_only() else None
+            # The slice-need head's reading of this turn (shadow); it trims the
+            # tail only when the owner chose to send cloud models just what a
+            # turn needs, and never on a local leg (services/slice_head).
+            from agent_friday.services import slice_head as _slice_head
+            _slicer = _slice_head.for_turn(
+                message, conversation_id=_conversation_id, provider=provider,
+                turn_id=_tplan_turn_id(), settings=settings)
             sp, src = _build_context_prompt(
                 message, workspace, vision_description,
                 provider=provider, vault_control=vc,
                 vault_fallback=_vault_cloud_fallback(),
                 model=_prep_model,
+                slicer=_slicer,
                 **({"pilot": _pilot} if _pilot is not None else {}),
             )
             from agent_friday.services.prompt_cache import VOLATILE_MARKER as _VM
@@ -1745,17 +2003,29 @@ def chat():
                     "conversation is open-ended.\n"
                     "=========================\n"
                 )
-            if _extra_system:
-                tail = tail + "\n" + _extra_system
+            _extra = (_slicer.gate_block(
+                          "memory", _mem_part, name="relevant_past_conversations",
+                          marker="== RELEVANT PAST CONVERSATIONS")
+                      + _slicer.gate_block("continuity", _cont_part, name="continuity")
+                      + _slicer.gate_block("tone", _tone_part, name="tone")
+                      + (CITATION_INSTRUCTIONS if cite_sources else ""))
+            if _extra:
+                tail = tail + "\n" + _extra
             # A situation the model pinned with check_situation(pin=true):
             # read now, from memory, on every turn of this conversation.
             try:
                 from agent_friday.services.situation import pinned_block
                 tail = tail + pinned_block(_conversation_id)
                 from agent_friday.services.screen_stage import chat_tail
-                tail = tail + chat_tail(_conversation_id)
+                tail = tail + _slicer.gate_block(
+                    "screen", chat_tail(_conversation_id), name="on_screen")
             except Exception:
                 pass
+            # Context the user approved (or declined) since the last turn, for
+            # a slice the model asked for with request_context.
+            if not _slice_head.is_local(provider):
+                tail = tail + _slice_head.render_released(
+                    _conversation_id, _tplan_turn_id())
             lookup = {}
             # Scrub guarded cloud turns. Scrubbing every message
             # (not just the new one) means a cached LOCAL reply retrieved by the
@@ -1804,6 +2074,8 @@ def chat():
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "provider": _provider,
+            # The routed model, read by the governance receipt's `chosen_by`.
+            "model": str(_route_info.get('model') or ''),
             # Laya 2's tier-1 verdict for this turn (or None): read only by
             # the local payload's reasoning-effort choice.
             "turn_shape": _turn_shape,
@@ -1881,8 +2153,9 @@ def chat():
             if _route_info.get('provider') == 'openai':
                 _provider = 'openai'
                 system_prompt, sources, pii_lookup = _prep_for('openai')
+        _outage_local = _outage_receipt = None
         if (not _routed_local) and _provider == 'cloud' and get_anthropic_client() is None:
-            _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
+            _mode = _cloud_intent.normalize_mode((_routing_cfg or {}).get('mode'))
             if _mode == 'cloud_only':
                 print("  [ROUTER] No Anthropic key and mode is cloud_only — "
                       "refusing the local fallback and asking for a key")
@@ -1921,7 +2194,12 @@ def chat():
                 from agent_friday.routing.ollama_manager import get_manager
                 _om = get_manager((settings.get('model_routing') or {}).get(
                     'ollama_url', 'http://localhost:11434'))
-                _om_models = _om.list_models() if _om.is_available() else []
+                # '-cloud' / ':cloud' tags are relayed to ollama.com, so they
+                # are never an on-device candidate, even as a last resort.
+                from agent_friday.services.local_only_guard import is_cloud_model_tag as _is_cloud_tag
+                _om_models = ([m for m in (_om.list_models() or [])
+                               if not _is_cloud_tag(m.get('name'))]
+                              if _om.is_available() else [])
                 if _om_models:
                     # Prefer a real on-device model; skip ':cloud' passthrough stubs.
                     # Pick the SMALLEST by size — it's the fastest to respond, which
@@ -1946,8 +2224,47 @@ def chat():
                     _route_info['is_local'] = True
                     # Rebuild the prompt for local (vault content allowed, no PII scrub).
                     system_prompt, sources, pii_lookup = _prep_for('local', model=_local_pick)
+                    if _outage_fallback.may_fall_back(_mode, no_key=True):
+                        # cloud_preferred: the local answer is said out loud.
+                        _outage_local = {"provider": _outage_fallback.provider_label('cloud')}
             except Exception as _safe_e:
                 print(f"  [ROUTER] local safety-net routing failed: {_safe_e}")
+
+        # ── Laya routes the tool, when the owner chose it (chat_tool_routing). ──
+        # The same services/laya_router.route the local voice front uses, through
+        # laya.route_turn (one deadline, a receipt). On a local model a `tool`
+        # route runs through agent._execute_tool and the model answers from the
+        # fenced result; `ask` is the router's one question; `defer` and
+        # `no_tool` are the model's own turn with native tool calling untouched.
+        # A cloud model gets only a high-confidence `tool` fast path and keeps
+        # its whole catalogue. Unchosen, or a turn that is not the owner's own
+        # short line, never reaches the router. The owner mark of the voice
+        # router is not given here: a typed "quiet until morning" is a card.
+        _laya_tr = _laya_entry = None
+        try:
+            from agent_friday.services import chat_tool_routing as _ctr
+            if _ctr.enabled(settings) and messages and messages[-1].get('role') == 'user':
+                from agent_friday.services import off_record as _off_laya
+                _laya_tr = _ctr.decide(
+                    message, data, settings=settings, local=_routed_local,
+                    held=[str(t.get('name')) for t in _ag_tools_for_turn(workspace, _conversation_id)],
+                    off_record=bool(_off_laya.active()),
+                    conversation_id=_conversation_id)
+            if _laya_tr is not None and _laya_tr.action == 'ask':
+                _ctr.record(_turn_id, _laya_tr, ran=None, outcome='asked')
+                return _instant_response(
+                    message, _ctr.ask_result(_laya_tr), _conversation_id)
+            if _laya_tr is not None and _laya_tr.action == 'run':
+                _laya_entry = _ctr.run(_laya_tr, session_ctx=_sess_ctx, pii_lookup=pii_lookup)
+                if _laya_entry is not None:
+                    _ctr.attach_block(messages, _ctr.result_block(_laya_tr, _laya_entry))
+            if _laya_tr is not None:
+                _ctr.record(_turn_id, _laya_tr,
+                            ran=(_laya_entry or {}).get('name'),
+                            outcome=('ran' if _laya_entry is not None
+                                     else 'model' if _laya_tr.action == 'model' else 'error'))
+        except Exception as _laya_err:
+            _LOG.warning("chat tool routing skipped: %s", _laya_err)
 
         # ── Dispatch. ──
         reply, tool_trace = None, []
@@ -2056,120 +2373,129 @@ def chat():
                 # is the honest outcome: the user asked for on-device work,
                 # and a slow answer from the model they chose beats a fast
                 # one from a model they rejected.
-                _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
-                # An explicit per-chat pick refuses the cloud the same way: the
-                # owner chose this local model for this chat.
+                _mode = _cloud_intent.normalize_mode((_routing_cfg or {}).get('mode'))
+                # An explicit per-chat pick is a local choice the owner made for
+                # this chat; its failure is reported the same way.
                 _explicit = _explicit_local_pick(_conv_seat, _route_info.get('model'))
+                # A LOCAL FAILURE IS AN OFFER, NEVER A CLOUD CALL.
+                #
+                # The owner chose local (the mode, or this chat's model). Answering
+                # from the cloud instead is a decision they did not make, about
+                # data they kept on the machine, and a changed badge is not telling
+                # them. So the turn stops here: it says what failed and offers
+                # three things, nothing preselected: try again locally, a shorter
+                # version, or send this one turn to Claude (the page re-sends it
+                # with route_mode=cloud, which records the intent).
+                _pilot_error = True
+                print(f"  [ROUTER] local inference failed; offering the choice, "
+                      f"not the cloud: {_ole}")
+                import logging as _logging
+                _logging.getLogger("friday.local_fallback").warning(
+                    "local seat %s failed; offered a choice instead of the cloud: %s",
+                    _route_info.get('model'), str(_ole)[:800])
+                _lf_flags = {}
                 if _mode == 'local_only' or _explicit:
-                    _pilot_error = True
-                    print(f"  [ROUTER] local inference failed and "
-                          f"{'mode is local_only' if _mode == 'local_only' else 'this chat is bound to ' + _explicit}"
-                          f" — refusing the cloud: {_ole}")
                     _why_local = (
                         "You are in **local only** mode, so I did not send this "
                         "to a cloud model. Options: wait and try again once the "
-                        "GPU is free, pick a smaller local model, or switch the "
-                        "mode to Local preferred in Settings -> Models if "
-                        "you want me to fall back when local is busy."
+                        "GPU is free, pick a smaller local model, or send this one "
+                        "turn to Claude."
                         if _mode == 'local_only' else
                         "You chose " + _explicit + " for this chat, so I did not "
                         "send this to a cloud model. Options: wait and try again "
-                        "once the local model is free, or pick a different model "
-                        "for this chat in the model picker."
+                        "once the local model is free, pick a different model for "
+                        "this chat in the model picker, or send this one turn to "
+                        "Claude."
                     )
-                    _local_only_msg = (
-                        "I could not get an answer out of "
-                        + str(_route_info.get('model') or 'the local model')
-                        + " just now (error "
-                        + log_failure(_ole, "Local model failed in local-only mode")
-                        + ").\n\n" + _why_local
+                    _lf_flags = {"local_only_refused": True}
+                else:
+                    _why_local = (
+                        "Nothing was sent to a cloud model. Try again locally, try "
+                        "a shorter version, or send this one turn to Claude."
                     )
-                    user_msg = {
-                        'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
-                        'role': 'user', 'text': message, 'pinned': False, 'sources': [],
-                    }
-                    friday_msg = {
-                        'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
-                        'role': 'friday', 'text': _local_only_msg, 'pinned': False,
-                        'sources': [],
-                    }
-                    _persist_turn(_conv_id_from(data), user_msg, friday_msg)
-                    _save_chat_history(CHAT_HISTORY)
-                    return jsonify({
-                        "response": _local_only_msg, "user_msg": user_msg,
-                        "friday_msg": friday_msg, "sources": [], "tool_trace": [],
-                        "model": _route_info.get('model'), "seat": "local",
-                        "local_only_refused": True,
-                        "seat_events": _seat_events,
-                    })
-                print(f"  [ROUTER] local inference failed, falling back to cloud: {_ole}")
-                # The user chose a local seat. Answering from the cloud instead
-                # is a decision they did not make, about data they chose to keep
-                # on the machine, and it must not happen quietly — a silent
-                # fallback is indistinguishable from "changing the model does
-                # nothing".
-                #
-                # friday.log too, with the full error: the tray DEVNULLs
-                # stdout, so the print above vanishes — without this, a 400
-                # body (which names the exact token count) survives in no
-                # log anywhere.
-                import logging as _logging
-                _logging.getLogger("friday.local_fallback").warning(
-                    "local seat %s failed, falling back to cloud: %s",
-                    _route_info.get('model'), str(_ole)[:800])
-                _fell_back_from_local = {
-                    "model": _route_info.get('model'),
-                    "why": exception_text(_ole),
-                }
-                _routed_local = False
-                _provider = 'cloud'
-                # Rebuild the prompt for cloud (gated) and scrub before sending.
-                system_prompt, sources, pii_lookup = _prep_for('cloud')
+                _local_only_msg = (
+                    "I could not get an answer out of "
+                    + str(_route_info.get('model') or 'the local model')
+                    + " just now (error "
+                    + log_failure(_ole, "Local model failed")
+                    + ").\n\n" + _why_local
+                )
+                return _offer_turn_response(
+                    message, _local_only_msg,
+                    _local_offer.build(_ole, model=str(_route_info.get('model') or ''),
+                                       mode=_mode),
+                    conversation_id=_conv_id_from(data),
+                    model=_route_info.get('model'), seat_events=_seat_events,
+                    flags=_lf_flags)
 
-        if not _routed_local:
-            if _provider == 'openai':
-                # OpenAI-compatible cloud path with a full agentic tool loop.
-                # The route decision carries the RESOLVED registry provider
-                # (openrouter / groq / huggingface / a custom endpoint ...), so
-                # each request hits that provider's own base_url + credentials
-                # (multi-provider dispatch, GAP-3 fix). provider_name=None
-                # keeps the legacy single-slot settings behavior.
-                # The cloud gets the same opening set as the local seat and
-                # loads the rest through load_tools (services/tool_catalogue).
-                _cloud_tools, _cloud_catalogue = _cloud_tool_set(
-                    _pilot, _ag_tools_for_turn(workspace, _conversation_id))
-                reply, tool_trace = _call_openai(
-                    messages, system=system_prompt, model=_route_info.get('model'),
-                    temperature=settings.get('temperature'),
-                    orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
-                    tools=_cloud_tools, catalogue_all=_cloud_catalogue,
-                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
-                    provider=_route_info.get('provider_name'),
-                )
-            else:
-                # Honor the user's chosen Claude model (orchestrator selection)
-                # rather than always using the Anthropic default. Only forward a
-                # claude-* id; anything unexpected falls back to the default.
-                _cloud_model = _route_info.get('model')
-                _claude_model = _cloud_model if str(_cloud_model or '').startswith('claude') else None
-                reply, tool_trace = _call_claude_agent(
-                    messages, system=system_prompt, model=_claude_model,
-                    temperature=settings.get('temperature'),
-                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
-                    orb_label=_orb_label, orb_category='default', orb_icon='💬',
-                )
-                if _routing_cfg.get('cost_tracking', True):
-                    try:
-                        from agent_friday.routing.model_router import get_router
-                        _router = get_router()
-                        _est_tokens = len(str(messages)) // 4 + len(reply) // 4
-                        _router.cost_tracker.record(
-                            "cloud",
-                            settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
-                            prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
-                        )
-                    except Exception:
-                        pass
+        try:
+            if not _routed_local:
+                if _provider == 'openai':
+                    # OpenAI-compatible cloud path with a full agentic tool loop.
+                    # The route decision carries the RESOLVED registry provider
+                    # (openrouter / groq / huggingface / a custom endpoint ...), so
+                    # each request hits that provider's own base_url + credentials
+                    # (multi-provider dispatch, GAP-3 fix). provider_name=None
+                    # keeps the legacy single-slot settings behavior.
+                    # The cloud gets the same opening set as the local seat and
+                    # loads the rest through load_tools (services/tool_catalogue).
+                    _cloud_tools, _cloud_catalogue = _cloud_tool_set(
+                        _pilot, _ag_tools_for_turn(workspace, _conversation_id))
+                    reply, tool_trace = _call_openai(
+                        messages, system=system_prompt, model=_route_info.get('model'),
+                        temperature=settings.get('temperature'),
+                        orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
+                        tools=_cloud_tools, catalogue_all=_cloud_catalogue,
+                        pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                        provider=_route_info.get('provider_name'),
+                    )
+                else:
+                    # Honor the user's chosen Claude model (orchestrator selection)
+                    # rather than always using the Anthropic default. Only forward a
+                    # claude-* id; anything unexpected falls back to the default.
+                    _cloud_model = _route_info.get('model')
+                    _claude_model = _cloud_model if str(_cloud_model or '').startswith('claude') else None
+                    reply, tool_trace = _call_claude_agent(
+                        messages, system=system_prompt, model=_claude_model,
+                        temperature=settings.get('temperature'),
+                        pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                        orb_label=_orb_label, orb_category='default', orb_icon='💬',
+                    )
+                    if _routing_cfg.get('cost_tracking', True):
+                        try:
+                            from agent_friday.routing.model_router import get_router
+                            _router = get_router()
+                            _est_tokens = len(str(messages)) // 4 + len(reply) // 4
+                            _router.cost_tracker.record(
+                                "cloud",
+                                settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
+                                prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
+                            )
+                        except Exception:
+                            pass
+        except Exception as _cloud_exc:
+            # cloud_preferred only: a connection/transport failure (never a
+            # refusal, the spend cap or a policy error) lets the local model
+            # answer, and the reply says so. cloud_only re-raises as before.
+            _outage_model = (None if _routed_local else _outage_fallback.local_model_for(
+                _routing_cfg.get('mode'), _cloud_exc, settings))
+            if not _outage_model:
+                raise
+            _outage_local = {"provider": _outage_fallback.provider_label(_provider, _route_info)}
+            _routed_local, _provider = True, 'local'
+            _route_info['model'], _route_info['is_local'] = _outage_model, True
+            system_prompt, sources, pii_lookup = _prep_for('local', model=_outage_model)
+            reply, tool_trace = _call_ollama(
+                messages, system=system_prompt, model=_outage_model,
+                temperature=settings.get('temperature'),
+                orb_label=f"🏠 {_orb_label}", orb_icon='🏠',
+                tools=None, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+            )
+        if _outage_local:
+            reply, _outage_receipt = _outage_fallback.announce(reply, _outage_local["provider"])
+
+        if _laya_entry is not None:
+            tool_trace = [_laya_entry] + list(tool_trace or [])
 
         # ── FR-2: tool-call integrity — scan for fabricated bracket-syntax
         # pseudo-tool-calls (e.g. [query_calendar], [search_email(...)])
@@ -2525,7 +2851,8 @@ def chat():
             # very surprise the confirmation flow exists to prevent.
             _res = str(_entry.get('result') or '')
             if _res.lstrip().startswith(('[CONFIRMATION REQUIRED]', '[GOVERNANCE DENY]',
-                                         '[SANDBOX DENY]', '[VAULT')):
+                                         '[SANDBOX DENY]', '[VAULT',
+                                         '[VERIFIER', 'INVALID ARGUMENTS')):
                 continue
             _ws = _resolve_workspace(str((_entry.get('input') or {}).get('workspace', '')))
             if _ws and _ws not in _seen_nav:
@@ -2589,9 +2916,17 @@ def chat():
             "served_by": {
                 "model": _route_info.get('model'),
                 "provider": _route_info.get('provider'),
-                "local": bool(_route_info.get('is_local')),
+                "local": bool(_route_info.get('is_local')) and (
+                    _attr is None or (_attr.last_generation() or {}).get('seat') != 'cloud'),
                 "override": _route_info.get('override'),
+                # What the dispatch layer recorded as actually generating.
+                "answered_by": (_attr.last_generation() if _attr is not None else None),
             },
+            # Why the cloud was allowed, when it was called: the intent
+            # (user_explicit, laya_escalation, remembered_choice,
+            # scheduled_cloud, cloud_mode) and where it came from.
+            "cloud_intent": ((_attr.cloud_intents() or [None])[-1]
+                             if _attr is not None else None),
             "tools_ran": _receipts.summary(),
             "unbacked_claims": _unbacked,
             "unsupported_actions": _unsupported,
@@ -2619,6 +2954,10 @@ def chat():
             # cloud did instead. The client renders it as a system line so the
             # substitution is visible in the transcript, not just in a log.
             "local_fallback": _fell_back_from_local,
+            # cloud_preferred answered locally because the cloud was out: the
+            # reply already opens with the fixed notice; this is its receipt.
+            "laya": _outage_receipt,
+            "outage_local": bool(_outage_local),
             # A capability loss the user did not ask for and cannot otherwise
             # see. When the seat could not carry the whole toolbox, say so in
             # the turn — same principle as local_fallback above. Absent on
@@ -2677,6 +3016,13 @@ def chat_turn_liveness(turn_id):
     except Exception:
         out["hang"] = {"armed": False, "stalled": False}
     return jsonify(out)
+
+
+@chat_bp.route('/api/turns/<turn_id>/receipt', methods=['GET'])
+def turn_receipt_get(turn_id):
+    """What was sent for one turn: names, sizes, tiers, salted hashes. Read-only."""
+    from agent_friday.services import turn_receipt as _tr
+    return jsonify(_tr.build(turn_id))
 
 
 @chat_bp.route('/api/chat/turn/<turn_id>/stop', methods=['POST'])
@@ -2761,6 +3107,7 @@ def _screen_block_for(provider_name, conversation_id):
 @chat_bp.route('/api/chat/send', methods=['POST'])
 @_traced_turn
 @_privacy_hold_turn
+@_cloud_intent.per_turn
 def chat_send():
     """Send a message, save to persistent history, return Friday's response.
     Accepts context-aware payload: {message, workspace, includeVision, screenshot}.
@@ -2807,22 +3154,43 @@ def chat_send():
             # Same contract as /api/chat (above): Local only means the image
             # does not leave, and every image that does leave is a ledger
             # row.
-            _routing_mode = str(((_load_settings().get('model_routing') or {})
-                                 .get('mode') or 'smart')).lower()
+            from agent_friday.services.cloud_mode_policy import normalize_mode as _norm_mode
+            _routing_mode = _norm_mode((_load_settings().get('model_routing') or {})
+                                       .get('mode'))
             try:
                 _img_len = len(base64.b64decode(screenshot_b64))
             except Exception:
                 _img_len = 0
 
-            def _record_send(action, reason):
+            def _record_send(action, reason, provider='gemini'):
                 try:
                     from agent_friday.services.egress_gate import record_binary_egress
-                    record_binary_egress('gemini', 'vision_image', action=action,
+                    record_binary_egress(provider, 'vision_image', action=action,
                                          reason=reason, byte_len=_img_len)
                 except Exception as _ee:
                     print(f"  [VISION] egress record failed: {_ee}")
 
-            if _routing_mode == 'local_only':
+            # Local first when the mode asks for it, like /api/chat: the image
+            # goes to the cloud only if the local seat could not describe it
+            # and the mode allows the cloud.
+            if _routing_mode in ('local_only', 'local_preferred'):
+                try:
+                    from agent_friday.services import local_vision as _lv
+                    _send_res = _lv.describe(
+                        screenshot_b64,
+                        mime='image/jpeg' if data.get('image') else 'image/png',
+                        settings=_load_settings())
+                except Exception as _lve:
+                    _send_res = {"ok": False, "text": None,
+                                 "reason": exception_text(_lve, "local vision raised %s")}
+                if _send_res.get("ok"):
+                    vision_description = _send_res["text"]
+                    _record_send('allow', 'described on-device; nothing left the machine',
+                                 provider='local:' + str(_send_res.get('model')))
+
+            if vision_description is not None:
+                pass
+            elif _routing_mode == 'local_only':
                 vision_description = (
                     "[I could not look at that image without leaving the "
                     "machine, and you have chosen Local only, so I did not "
@@ -2830,6 +3198,7 @@ def chat_send():
                 _record_send('block', 'local_only: image withheld from the cloud (/api/chat/send)')
             else:
                 try:
+                    _cloud_intent.require("google-gemini", "vision (chat image)", "gemini-2.5-flash")
                     from google import genai
                     from google.genai import types
                     gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
@@ -2868,11 +3237,27 @@ def chat_send():
         _send_sources = []
 
         def _sys_for(provider_name):
+            # This route has no tier-1 verdict, so the turn gets its id here;
+            # the slice-need head then reads it (shadow, and a trim only for
+            # an owner who chose that on a cloud leg; services/slice_head).
+            from agent_friday.services import slice_head as _slice_head
+            from agent_friday.services import turn_plan as _tplan_send
+            if _tplan_send.current_turn_id() != _turn_id:
+                _tplan_send.begin_turn(_turn_id)
+            # The model on a local leg is the conversation's seat or the saved
+            # local model; one that Ollama relays to its cloud is sliced as cloud.
+            _slice_model = (_conv_seat_model
+                            or str((settings.get('model_routing') or {}).get('local_model') or ''))
+            _slicer = _slice_head.for_turn(
+                message, conversation_id=_conversation_id, provider=provider_name,
+                turn_id=_tplan_send.current_turn_id(), settings=settings,
+                model=_slice_model)
             prompt, sources = _build_context_prompt(
                 message, workspace, vision_description,
                 provider=provider_name,
                 vault_control=(_get_vault_control() if _vault_local_only() else None),
                 vault_fallback=_vault_cloud_fallback(),
+                slicer=_slicer,
                 **({"pilot": _pilot} if _pilot is not None else {}),
             )
             _send_sources[:] = sources or []
@@ -2885,9 +3270,15 @@ def chat_send():
             # else above, so a local seat's memory recall isn't scrubbed as
             # if it were headed to the cloud either.
             try:
-                _mem_block = (_build_memory_context_block(message, _session_id)
-                              + _build_session_continuity_block()
-                              + _build_emotional_tone_block())
+                _mem_block = (_slicer.gate_block(
+                                  "memory", _build_memory_context_block(message, _session_id),
+                                  name="relevant_past_conversations",
+                                  marker="== RELEVANT PAST CONVERSATIONS")
+                              + _slicer.gate_block(
+                                  "continuity", _build_session_continuity_block(),
+                                  name="continuity")
+                              + _slicer.gate_block(
+                                  "tone", _build_emotional_tone_block(), name="tone"))
                 if _mem_block:
                     prompt = prompt + "\n" + _mem_block
             except Exception as _mb_err:
@@ -2897,7 +3288,12 @@ def chat_send():
             try:
                 from agent_friday.services.situation import pinned_block
                 prompt = prompt + pinned_block(_conversation_id)
-                prompt = prompt + _screen_block_for(provider_name, _conversation_id)
+                prompt = prompt + _slicer.gate_block(
+                    "screen", _screen_block_for(provider_name, _conversation_id),
+                    name="on_screen")
+                if not _slice_head.is_local(provider_name, _slice_model):
+                    prompt = prompt + _slice_head.render_released(
+                        _conversation_id, _tplan_send.current_turn_id())
             except Exception:
                 pass
             try:
@@ -2961,6 +3357,16 @@ def chat_send():
         except Exception:
             pass
 
+        # A conversation bound to a cloud model is the owner's own word for the
+        # cloud on this turn; the prediction below and the dispatch both see it.
+        try:
+            if _conv_seat_model:
+                from agent_friday.routing.model_router import get_router as _get_router_cs
+                if not _get_router_cs(_load_settings().get('model_routing'))._is_local_choice(
+                        _conv_seat_model, ''):
+                    _cloud_intent.set_intent('user_explicit', source='chat_seat')
+        except Exception:
+            pass
         _send_provider = _predict_route_provider(
             keywords=message, workspace=workspace, has_tools=True)
         system_prompt = _sys_for(_send_provider)
@@ -3018,12 +3424,25 @@ def chat_send():
             _attr2.reset()
         except Exception:
             _attr2 = None
-        reply, tool_trace = _generate_agent(
-            messages, system=system_prompt, temperature=settings.get('temperature'),
-            session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
-            conversation_seat=({"model": _conv_seat_model}
-                               if _conv_seat_model else None),
-        )
+        try:
+            reply, tool_trace = _generate_agent(
+                messages, system=system_prompt, temperature=settings.get('temperature'),
+                session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
+                conversation_seat=({"model": _conv_seat_model}
+                                   if _conv_seat_model else None),
+            )
+        except _cloud_intent.LocalUnavailable as _lu:
+            # A local failure is an offer, never a cloud call (rule 4).
+            _pilot_error = True
+            _lu_mode = str((settings.get('model_routing') or {}).get('mode') or '')
+            _lu_offer = _local_offer.build(_lu, model=_lu.model, mode=_lu_mode)
+            return _offer_turn_response(
+                message,
+                "I could not get an answer out of the local model just now (%s). "
+                "Nothing was sent to a cloud model. Try again locally, try a shorter "
+                "version, or send this one turn to Claude." % _local_offer.short_reason(_lu),
+                _lu_offer, conversation_id=_conversation_id, workspace=workspace,
+                model=_lu.model)
 
         # ── FR-2/A7 on this endpoint too: pseudo-tool-call leaks and
         # unreceipted completion claims are stripped and corrective-retried

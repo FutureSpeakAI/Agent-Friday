@@ -115,7 +115,8 @@ def _notify(title: str, body: str, *, priority: str = "medium", kind: str = "inf
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=title, body=body[:600], priority=priority, kind=kind,
-                source="phone", dedupe_key=dedupe_key,
+                source="phone", emitter="E42",
+                dedupe_key=dedupe_key or "phone:%s:%s" % (kind, priority),
                 target={"workspace": "settings", "tab": "phone"})
     except Exception as e:
         _log.debug("phone notify failed: %s", e)
@@ -559,6 +560,17 @@ def _on_decision(record: dict) -> None:
 _REPLY = re.compile(r"^\s*(yes|y|approve|no|n|deny)\s+(\d{6})\s*[.!]?\s*$", re.I)
 
 
+def _may_text_about(rec: dict) -> bool:
+    """A text is an interruption: the same verdict as the popup for this approval (quiet hours, the
+    hour's budget, Focus Assist when chosen; services/interruption_policy). Fails open."""
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        return _ip.verdict("approval_pending", source="approvals",
+                           key="approval:%s" % rec.get("approval_id")).interrupt
+    except Exception:
+        return True
+
+
 def offer_pending_approvals(now: Optional[float] = None) -> int:
     """Text the owner a code for each new pending card. Returns how many."""
     cfg = config.load()
@@ -573,14 +585,24 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
         for rec in ap.list_approvals(status="pending"):
             aid = rec.get("approval_id")
             live_ids.add(aid)
-            if aid in st["codes"] or (now - (rec.get("created_at") or 0)) > SMS_APPROVAL_MAX_AGE_S:
+            if aid in st["codes"] or rec.get("held_by_policy") or rec.get("hold_capped"):
+                continue                    # held (quiet or over budget): offered when the hold ends;
+                                            # a hold ended by its cap is a quiet release: no text
+            # Age counts from when the hold ended, so a card held all night is still texted in the morning.
+            if (now - float(rec.get("released_at") or rec.get("created_at") or 0)) > SMS_APPROVAL_MAX_AGE_S:
                 continue
+            if not _may_text_about(rec):
+                continue
+            if (rec.get("payload") or {}).get("origin") == "laya_safe_write":
+                continue                    # a card Laya raised is approved on the screen (or by voice): no text offer
             code, salt = _new_code(), secrets.token_hex(8)
             title = _gate_text((rec.get("title") or "an action")[:120])
             body = ("Friday needs your approval: %s\nReply YES %s to approve or NO %s to "
                     "deny. Details are in the app." % (title, code, code))
             try:
                 text_owner(body, reason="approval request")
+                from agent_friday.services import notice_registry as _nr
+                _nr.note("E64", True)
             except PhoneRefused as e:
                 _log.info("approval not offered by text: %s", e)
                 break
@@ -633,6 +655,10 @@ def handle_approval_reply(text: str, now: Optional[float] = None) -> Optional[st
             _save_state("sms_approvals.json", st)
             return "That code does not match a waiting approval. Nothing was changed."
         card = ap.get_approval(match) or {}
+        if decision == "approve" and (card.get("payload") or {}).get("origin") == "laya_safe_write":
+            _save_state("sms_approvals.json", st)
+            return ("A card Laya raised is approved only on screen, in the app, where you see which "
+                    "conversations. Nothing was changed; reply NO %s to decline it." % code)
         if decision == "approve" and card.get("kind") in ap.SCREEN_ONLY_KINDS:
             # Said plainly, and the code is kept so a NO still works: this kind
             # of card is approved only by a click on screen.
@@ -734,6 +760,8 @@ def _handle_sms_in(ev: dict) -> str:
     if reply:
         try:
             text_owner(reply, reason="reply")
+            from agent_friday.services import notice_registry as _nr
+            _nr.note("E65", True)
         except PhoneRefused as e:
             _notify("Friday could not text back", str(e), priority="medium")
     return "answered"

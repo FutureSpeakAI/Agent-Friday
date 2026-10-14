@@ -51,6 +51,9 @@ STAGE_FACETS: dict[str, frozenset[str]] = {
     # P7: the workspaces that were open-only. What a row may say about itself is a kind, a state, a day: never a
     # name, an amount, a diagnosis or a date of birth.
     "calendar": frozenset({"kind", "when", "recurring", "all_day", "has_guests"}),
+    # A meeting row is counts-only (see PRIVATE_WORKSPACES): a title can be sensitive, and the stage cannot tell
+    # a local reader from a cloud one.
+    "meetings": frozenset({"kind"}),
     "workflows": frozenset({"status", "scheduled", "steps"}),
     "contacts": frozenset({"kind", "has_follow_up"}),
     "career": frozenset({"kind", "stage"}),
@@ -65,9 +68,9 @@ STAGE_FACETS: dict[str, frozenset[str]] = {
 
 #: Workspaces whose rows are about the owner's body, money or family. Their rows reach Friday as a kind and a
 #: position only: no title, no name, no figure, whatever the page sends.
-PRIVATE_WORKSPACES = frozenset({"health", "finance", "family"})
+PRIVATE_WORKSPACES = frozenset({"health", "finance", "family", "meetings"})
 #: The kinds a private workspace's row may be; any other word the page sends is dropped.
-PRIVATE_KINDS = frozenset({"medication", "appointment", "vehicle", "position", "perk", "countdown"})
+PRIVATE_KINDS = frozenset({"medication", "appointment", "vehicle", "position", "perk", "countdown", "meeting"})
 
 #: The most rows Friday outlines with a numbered badge at once; the rest are counted ("and N more").
 POINT_CAP = 12
@@ -84,12 +87,12 @@ FILTER_KEYS: dict[str, dict[str, frozenset | None]] = {
 }
 #: What each workspace calls one of its rows, for what a cloud voice may hear.
 NOUNS = {"messages": "conversations", "news": "stories", "media": "cards", "library": "documents", "files": "files",
-         "calendar": "events", "workflows": "workflows", "contacts": "people", "career": "entries", "trust": "entries",
+         "calendar": "events", "meetings": "meetings", "workflows": "workflows", "contacts": "people", "career": "entries", "trust": "entries",
          "futurespeak": "sites", "system": "items", "chat": "chats", "health": "records", "finance": "records", "family": "entries"}
 
 #: The kinds of row a ref may name: a conversation, a story, a Media card, a Library document, a file.
 ROW_KINDS = ("mail", "news", "media", "lib", "file", "event", "wf", "person", "job", "trust", "site", "card", "convo",
-             "health", "fin", "fam")
+             "health", "fin", "fam", "meeting")
 _REF = re.compile(r"^(?:%s):[^\s]{1,160}$" % "|".join(ROW_KINDS))
 
 
@@ -137,6 +140,13 @@ def _ref(v: Any) -> str | None:
     return s if _REF.match(s) else None
 
 
+def _no_meeting_title(text: str) -> str:
+    """A Library row that is a meeting's transcript or notes ("Meeting transcript: <title> (<day>)") reaches a model
+    as a position only: the stage cannot tell a local reader from a cloud one, and a meeting's title can be sensitive."""
+    t = str(text or "")
+    return "" if t.lstrip().lower().startswith(("meeting transcript:", "meeting notes:")) else t
+
+
 def bound_stage(raw: Any, now: float | None = None) -> dict | None:
     """The page's stage, cut to the contract (S1). None when it is not a stage."""
     if not isinstance(raw, dict):
@@ -166,12 +176,12 @@ def bound_stage(raw: Any, now: float | None = None) -> dict | None:
         except (TypeError, ValueError):
             n = len(items) + 1
         items.append({"ref": ref, "n": n, "facets": facets,
-                      "title": "" if private else _clip(it.get("title")), "who": "" if private else _clip(it.get("who"))})
+                      "title": "" if private else _no_meeting_title(_clip(it.get("title"))), "who": "" if private else _clip(it.get("who"))})
     sel = raw.get("selection") if isinstance(raw.get("selection"), dict) else {}
     refs = [r for r in (_ref(x) for x in (sel.get("refs") or [])[:MAX_REFS]) if r]
     source = sel.get("source") if sel.get("source") in ("friday", "owner", "mixed") else ""
     selection = {"id": _clip(sel.get("id"), 40), "refs": refs, "count": len(refs),
-                 "label": "" if private else _clip(sel.get("label"), 40), "source": source,
+                 "label": "" if private else _no_meeting_title(_clip(sel.get("label"), 40)), "source": source,
                  "beyond_loaded": max(0, int(sel.get("beyond_loaded") or 0))
                  if isinstance(sel.get("beyond_loaded"), (int, float)) else 0}
     filters = []

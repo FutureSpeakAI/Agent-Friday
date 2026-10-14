@@ -3,14 +3,16 @@
 The server half is real: News > Briefings > "generate" runs through its route
 with a local model double, and WHILE the model call is in flight the desktop's
 own endpoints are read (``/api/tasks``, ``/api/tasks/<id>``, ``/api/processes``,
-``/api/traces/live``, the task journal). The browser half is real too: the served
+``/api/traces/live``, the task journal, ``/api/lanes/summary``,
+``/api/lanes/activity``, ``/api/local-queue``). The browser half is real too: the served
 ``index.html`` loads on a scratch static server, those recorded responses are
 what its API calls get, and the test looks at what a person would see:
 
-  * the bell counts the running job;
   * the holographic desktop has an orb for it, under the task's own id;
-  * the task card names the model and where it runs;
-  * the reasoning button opens a trace that has content.
+  * the bell carries no count: running work lives in Activity, not the tray;
+  * the Activity chip in the top bar opens a row for it that names the model
+    and its status;
+  * the row's Trace button opens a trace that has content.
 
 The frame is saved for a person to look at (AGENTS.md: a passing DOM assertion
 is not a look): ``FRIDAY_SHOT_DIR`` (default: the repo's ``test-results`` is
@@ -86,6 +88,9 @@ def desk(client, tmp_path, monkeypatch):
         seen["journal"] = client.get("/api/tasks/%s/journal?since=0" % tid).get_json()
         seen["live"] = client.get("/api/traces/live?snapshot=1").get_json()
         seen["tree"] = client.get("/api/traces/" + card["trace_id"]).get_json()
+        seen["lanes_summary"] = client.get("/api/lanes/summary").get_json()
+        seen["lanes_activity"] = client.get("/api/lanes/activity").get_json()
+        seen["local_queue"] = client.get("/api/local-queue").get_json()
         seen["task_id"], seen["trace_id"] = tid, card["trace_id"]
         return "# Briefing\n## Calendar\nNothing today.\n", []
 
@@ -147,6 +152,12 @@ def test_the_briefing_task_is_on_the_desktop_with_its_model_and_an_openable_trac
             return _json(route, desk["live"])
         if p == "/api/traces/" + trace_id:
             return _json(route, desk["tree"])
+        if p == "/api/lanes/summary":
+            return _json(route, desk["lanes_summary"])
+        if p == "/api/lanes/activity":
+            return _json(route, desk["lanes_activity"])
+        if p == "/api/local-queue":
+            return _json(route, desk["local_queue"])
         return route.continue_()
 
     try:
@@ -170,35 +181,29 @@ def test_the_briefing_task_is_on_the_desktop_with_its_model_and_an_openable_trac
                               " return { id: o.id, label: o.label, model: o.model }; }", tid)
             assert orb == {"id": tid, "label": "Daily briefing", "model": LOCAL_MODEL}, orb
 
-            # 2. The bell counts it as running work.
-            bell = pg.locator("button[aria-label*='running, open notifications']")
-            bell.wait_for()
-            assert re.search(r"1 task", bell.get_attribute("aria-label")), bell.get_attribute("aria-label")
+            # 2. The bell carries no count; running work is in Activity.
+            pg.locator("button[aria-label='Open notifications']").wait_for()
+            assert pg.locator("button[aria-label*='running, open notifications']").count() == 0
 
-            # 3. Its card, in the task tray, says who is working.
-            bell.click()
-            card = pg.locator(".task-card", has_text="Daily briefing").first
-            card.wait_for()
-            assert "EXECUTING" in card.inner_text()
-            model_line = card.locator("[data-testid=task-model]")
-            model_line.wait_for()
-            assert model_line.inner_text().strip() == LOCAL_MODEL + " · local seat"
+            # 3. Its row in Activity says who is working and what it is doing.
+            pg.locator("[data-testid=local-ai-queue-chip]").click()
+            # The chip opens on "Needs you" when anything waits on the owner
+            # (approvals other tests left behind count); Activity is one click.
+            pg.locator("[data-testid=lane-tab-activity]").click()
+            row = pg.locator("[data-testid=lane-task][data-task-id='%s']" % tid)
+            row.wait_for()
+            meta = row.locator("[data-testid=lane-task-meta]").inner_text()
+            assert meta.startswith(LOCAL_MODEL + " · running"), meta
 
             # 4. The reasoning behind it opens, and has content.
-            card.get_by_role("button", name=re.compile("reasoning")).click()
+            row.locator("[data-testid=lane-trace]").click()
             pg.wait_for_function(
-                "() => { const c = [...document.querySelectorAll('.task-card')]"
-                ".find(e => e.innerText.includes('Daily briefing')); "
-                "return !!c && /Asking bonsai2:27b/.test(c.innerText); }", timeout=45000)
-            text = card.inner_text()
-            assert "Asking " + LOCAL_MODEL in text, text
+                "() => /Asking bonsai2:27b/.test(document.body.innerText)", timeout=45000)
 
             # 5. A person can look at it.
-            card.get_by_role("button", name=re.compile("Expand")).click()
             pg.wait_for_timeout(600)
             SHOT_DIR.mkdir(parents=True, exist_ok=True)
             pg.screenshot(path=str(SHOT_DIR / "briefing_task.png"))
-            card.screenshot(path=str(SHOT_DIR / "briefing_task_card.png"))
             browser.close()
     finally:
         httpd.shutdown()

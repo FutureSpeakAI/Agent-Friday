@@ -812,7 +812,8 @@ def tick(now: datetime | None = None) -> dict:
                         _push(title="Follow up with %s" % f.get("person"),
                               body=f.get("note") or "You asked to be reminded.",
                               priority="medium", source="relationships",
-                              kind="follow_up", dedupe_key="follow-up:" + f["id"],
+                              kind="follow_up", emitter="E55",
+                              dedupe_key="follow-up:" + f["id"],
                               target={"workspace": "contacts", "name": f.get("person")})
                         f["notified"] = True
                 _save_follow_ups(items)
@@ -835,7 +836,7 @@ def tick(now: datetime | None = None) -> dict:
                     _push(title="No reply from %s in %d days" % (c["name"], c["days"]),
                           body="On “%s”." % (c["subject"] or "(no subject)"),
                           priority="low", source="relationships", kind="cold_thread",
-                          dedupe_key="cold:" + key,
+                          emitter="E55", dedupe_key="cold:" + key,
                           target={"workspace": "contacts", "name": c["name"]})
                     nudged[key] = c["last_id"]
                     sent += 1

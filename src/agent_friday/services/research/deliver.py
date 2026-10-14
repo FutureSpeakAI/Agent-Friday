@@ -269,7 +269,8 @@ def announce(c, verified: dict) -> bool:
         import agent_friday.notifications_engine as ne
         ne.push(title=f"Research finished: {c.question[:60]}",
                 body=f"{conf} confirmed, {struck} struck, {unc} unconfirmed.",
-                proactive_chat=True, chat_message=msg,
+                proactive_chat=True, chat_message=msg, emitter="E58",
+                dedupe_key=f"research-done:{c.id}",
                 target={"kind": "research", "id": c.id,
                         "open": c.styled_path or ""})
         c.log("announced into the conversation")
@@ -286,7 +287,8 @@ def announce_failure(c) -> bool:
         import agent_friday.notifications_engine as ne
         ne.push(title=f"Research failed: {c.question[:60]}",
                 body=c.failure or "No report was produced.",
-                proactive_chat=True,
+                proactive_chat=True, emitter="E59",
+                dedupe_key=f"research-failed:{c.id}",
                 chat_message=(f"Research **failed**: *\"{c.question}\"*\n\n"
                               f"{c.failure or 'No report was produced.'}\n\n"
                               f"I am not giving you a report, because I do not "

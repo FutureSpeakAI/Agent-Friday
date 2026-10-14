@@ -337,9 +337,10 @@ def laya_pilot_status():
 def reflex_resolve():
     """Resolve one request to one item: {text} -> services/laya_resolver.Resolution.
 
-    Decides only. The command it returns (navigate_to {kind, id}, or open_url
-    for a news story) is run by the caller through the ordinary governed tool
-    path, so governance and receipts are exactly those of the tool itself.
+    Decides only. The command it returns (navigate_to {kind, id}, or
+    library_show for a Library document) is run by the caller through the
+    ordinary governed tool path, so governance and receipts are exactly those
+    of the tool itself.
     """
     data = request.get_json(silent=True) or {}
     text = str(data.get("text") or "").strip()[:500]
@@ -350,6 +351,59 @@ def reflex_resolve():
         return jsonify(dict(laya_resolver.resolve(text).to_dict(), ok=True))
     except Exception as e:
         return api_error(e, "Couldn't resolve that request")
+
+
+@core_bp.route('/api/reflex/status')
+def reflex_status():
+    """Which instant (no model) answers are on, and how they have gone."""
+    try:
+        from agent_friday.services import reflex_chat
+        settings = _load_settings()
+        return jsonify({"status": "ok",
+                        "approval_replies": reflex_chat.approval_enabled(settings),
+                        "open_enabled": reflex_chat.open_enabled(settings),
+                        "open_choice": settings.get(reflex_chat.OPEN_SETTING),
+                        "stats": reflex_chat.stats()})
+    except Exception as e:
+        return api_error(e, "Couldn't read the instant-answer status")
+
+
+@core_bp.route('/api/reflex/open', methods=['POST'])
+def reflex_open():
+    """The command palette's "open the X": resolve one item and open it.
+
+    Only with the opt-in on, only from this PC. The resolved command runs
+    through the ordinary governed tool path (agent._execute_tool), so approvals
+    and receipts are exactly those of the tool. {text[, conversation_id]} ->
+    {status: "done"|"card"|"ask"|"model"|"off"|"untrusted", reply}. "model" means the
+    resolver could not settle it and the request belongs in chat.
+    """
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()[:500]
+    if not text:
+        return jsonify({"status": "error", "message": "text is required"}), 400
+    try:
+        from agent_friday.services import reflex_chat
+        from agent_friday.services import conversations as _conv
+        from agent_friday.services.model_router import _current_session_id
+        settings = _load_settings()
+        if not reflex_chat.open_enabled(settings):
+            return jsonify({"status": "off", "reply": ""})
+        if not reflex_chat.trusted_surface(data, text):
+            return jsonify({"status": "untrusted", "reply": ""}), 403
+        cid = _conv.resolve(str(data.get("conversation_id") or "").strip() or None)
+        auth = bool(session.get("authenticated")) or not bool(core.FRIDAY_PASSWORD)
+        out = reflex_chat.open_turn(text, data, session_id=_current_session_id(),
+                                    conversation_id=cid, turn_id=None,
+                                    settings=settings, authenticated=auth,
+                                    # only a conversation the page named is its own to disarm: Main is not
+                                    disarm=bool(str(data.get("conversation_id") or "").strip()))
+        if out is None:
+            return jsonify({"status": "model", "reply": ""})
+        status = "ask" if out["outcome"] == "ask" else ("card" if out["outcome"] == "card" else "done")
+        return jsonify({"status": status, "outcome": out["outcome"], "reply": out["reply"]})
+    except Exception as e:
+        return api_error(e, "Couldn't open that")
 
 
 @core_bp.route('/api/decisions/label_queue')
@@ -812,7 +866,8 @@ def _health_payload():
     # failure: a revoked key, a stopped Ollama daemon or an out-of-credit
     # account all read as healthy. It is now derived from a real one-token
     # generation (cached ~60s inside provider_health, because the tray
-    # watchdog polls this endpoint).
+    # watchdog polls this endpoint). Only a local seat or an owner-requested
+    # probe generates; a paid provider's light shows a key check by default.
     #
     # The HTTP status stays 200 even when status == "down": the tray treats a
     # non-2xx as "server is dead" and would restart a server that is in fact
@@ -821,6 +876,10 @@ def _health_payload():
     _inference = {"status": "unknown", "providers": []}
     try:
         from agent_friday.services.provider_health import inference_health
+        # Computed off the request thread and polled by the tray: paid
+        # providers get a free key check here. The real probe belongs to the
+        # Providers panel (/api/providers/health?deep=1), which is the owner
+        # asking.
         _inference = inference_health()
     except Exception as _e:
         _inference = {"status": "unknown", "providers": [],
@@ -1408,11 +1467,15 @@ _VOICE_ENUMS = {
     # The voice front (local voice spec §6).
     "voice_front_model": ("auto", "ternary-bonsai:1.7b", "qwen3-4b-instruct-2507", "qwen3-1.7b"),
     "voice_tool_routing": ("laya", "model"),
+    "voice_live_reflex": ("off", "shadow", "on"),
+    "voice_live_reduce_local_model": ("off", "seat_if_up"),
     "voice_brain_during_calls": ("auto", "parked", "resident"),
     "voice_async_routing": ("local_only", "follow_model_routing"),
     # Not a voice key, but the same rule: an unknown value would silently
     # resolve to automatic, which is not what was written.
     "call_mode": ("automatic", "ask", "off"),
+    # Typed chat: who picks the tool (services/chat_tool_routing). Same rule.
+    "chat_tool_routing": ("laya", "model"),
 }
 
 
@@ -1453,6 +1516,26 @@ def _check_voice_enums(new_settings):
     return None
 
 
+def _check_cloud_voice_switch(new_settings):
+    """A settings write that would move `voice_engine` from local to cloud voice
+    (Gemini) is not applied: it raises the question "just this call, or always?"
+    (services/local_voice_readiness.ask_cloud_switch) and answers 409
+    `needs_choice`; local-only mode answers 409 `refused` with its reason. None
+    when the write is not that switch. Cloud synthesis providers are a different
+    mode (the reply text only) and keep their own disclosure."""
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr_g
+        return _lvr_g.gate_settings_write(new_settings)
+    except Exception:
+        # Fail CLOSED: a gate that cannot run must not let voice move to the cloud unasked.
+        eng = str((new_settings or {}).get("voice_engine") or "").strip().lower() if isinstance(new_settings, dict) else ""
+        if eng in ("gemini", "gemini-live"):
+            return {"http": 409, "body": {"status": "error",
+                                          "message": "Cloud voice could not be asked about just now, so nothing "
+                                                     "was changed. Try again in Settings, Voice."}}
+        return None
+
+
 def _check_background_idle_minutes(new_settings):
     """`background_idle_minutes` is a whole number of minutes in the range the
     Local AI queue accepts (services/background_gate). An error dict, or None.
@@ -1489,6 +1572,31 @@ def _check_podcast_length(new_settings):
     return {"status": "error",
             "message": ("podcasts.length maps a show (%s) to a length (%s); got %r"
                         % (", ".join(_pe.LENGTH_SHOWS), ", ".join(_pe.LENGTHS), val))}
+
+
+def _check_interruption_settings(new_settings):
+    """The interruption budget is a whole number from 0 (no limit) to 60, and quiet hours are two
+    HH:MM times. A bad value would be read as the default, so the row would say one thing and the
+    policy do another (services/interruption_policy). An error dict, or None."""
+    if "interruption_budget_per_hour" in new_settings:
+        v = new_settings.get("interruption_budget_per_hour")
+        if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 60:
+            return {"status": "error",
+                    "message": ("interruption_budget_per_hour must be a whole number from 0 "
+                                "(no limit) to 60 (got %r)" % (v,))}
+    for key in ("quiet_hours_start", "quiet_hours_end"):
+        if key in new_settings:
+            v = new_settings.get(key)
+            ok = False
+            if isinstance(v, str) and len(v) == 5 and v[2] == ":" and v[:2].isdigit() and v[3:].isdigit():
+                ok = int(v[:2]) <= 23 and int(v[3:]) <= 59
+            if not ok:
+                return {"status": "error",
+                        "message": "%s must be a time like 22:00 (got %r)" % (key, v)}
+    for key in ("quiet_hours_enabled", "honour_focus_assist"):
+        if key in new_settings and not isinstance(new_settings.get(key), bool):
+            return {"status": "error", "message": "%s must be true or false" % key}
+    return None
 
 
 def _check_local_only_seats(new_settings):
@@ -1632,8 +1740,11 @@ def _check_seat_installed(new_settings):
         installed = []
     if not installed:
         return None
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
     for key, model, prov in wanted:
-        if model in installed:
+        # A cloud-relayed tag is not a local model: the installed check does
+        # not apply (seat_policy covers it under local-only).
+        if model in installed or is_cloud_model_tag(model):
             continue
         return {
             "status": "error",
@@ -1670,21 +1781,54 @@ def api_setting_change_undo(change_id):
     return jsonify({"status": "ok" if res["ok"] else "refused", **res}), (200 if res["ok"] else 409)
 
 
+def _effective_guarded(settings):
+    """What each guarded setting is IN EFFECT (the narrower of settings.json and the owner's recorded
+    click), for the Settings page to show instead of the file's bare word. Never raises."""
+    try:
+        from agent_friday.services import guarded_settings as _gs
+        return {k: _gs.effective(k, (settings or {}).get(k), block=True) for k in _gs.GUARDED}
+    except Exception:
+        return {}
+
+
 @core_bp.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     """GET: return current agent settings + personality.
     POST: merge new values into ~/.friday/settings.json and (optionally) save personality.
     """
     if request.method == 'GET':
+        _cur = _load_settings()
         return jsonify({
             "status": "ok",
-            "settings": _load_settings(),
+            "settings": _cur,
+            "effective": _effective_guarded(_cur),
             "personality": _load_agent_personality(),
             "default_personality": DEFAULT_AGENT_PERSONALITY,
         })
     try:
         data = request.get_json(silent=True) or {}
         new_settings = data.get('settings') or {}
+        if isinstance(new_settings, dict) and 'meeting_archive' in new_settings:
+            # Whether meetings are searchable is chosen only at /api/meetings/archive (on, from the
+            # Friday window); the generic settings write is not a way to say yes for the owner.
+            new_settings = {k: v for k, v in new_settings.items() if k != 'meeting_archive'}
+        if isinstance(new_settings, dict) and ('voice_engine_choice' in new_settings
+                                               or 'voice_switch_back' in new_settings):
+            # The record of a cloud voice choice and its switch-back offer are written only by the
+            # question and its answer (services/local_voice_readiness), never by a settings write.
+            new_settings = {k: v for k, v in new_settings.items()
+                            if k not in ('voice_engine_choice', 'voice_switch_back')}
+
+        # Laya's safe writes widen only on the owner's own click on this server's page: a
+        # same-origin browser request that carries the page's rotating token (the check the
+        # Library's pick-folders route uses). A body that merely says owner_action is refused.
+        _sw_owner = False
+        if data.get('owner_action') == 'laya_safe_writes':
+            from agent_friday.services import screen_click as _screen_click
+            if not _screen_click.screen_session(request):
+                return jsonify({"status": "denied",
+                                "error": "this setting changes only from the Settings page"}), 403
+            _sw_owner = True
 
         # FR-1 (toolcall-integrity-v5): a local model may only take Friday's
         # tool-using seat if it passes the structural conformance gate — see
@@ -1709,6 +1853,12 @@ def api_settings():
         if enum_error is not None:
             return jsonify(enum_error), 400
 
+        # Moving voice from local to the cloud is never a silent write: it becomes the question
+        # "just this call, or always?" (and local-only mode refuses it, with its reason).
+        cloud_gate = _check_cloud_voice_switch(new_settings)
+        if cloud_gate is not None:
+            return jsonify(cloud_gate["body"]), cloud_gate["http"]
+
         idle_error = _check_background_idle_minutes(new_settings)
         if idle_error is not None:
             return jsonify(idle_error), 400
@@ -1717,6 +1867,10 @@ def api_settings():
         if podcast_error is not None:
             return jsonify(podcast_error), 400
 
+        interrupt_error = _check_interruption_settings(new_settings)
+        if interrupt_error is not None:
+            return jsonify(interrupt_error), 400
+
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting
         # the non-persistent offline routing overlay (mode=local_only).
@@ -1724,7 +1878,14 @@ def api_settings():
         # carries a mode keeps the current one (core._save_settings).
         merged = _save_settings(
             new_settings,
-            owner_routing_change=(data.get('owner_action') == 'routing_mode'))
+            owner_routing_change=(data.get('owner_action') == 'routing_mode'),
+            owner_safe_writes_change=_sw_owner)
+        if isinstance(new_settings, dict) and 'voice_engine' in new_settings:
+            try:
+                from agent_friday.services import local_voice_readiness as _lvr_w
+                _lvr_w.note_engine_written(new_settings.get('voice_engine'))
+            except Exception:
+                pass
 
         # A seat change must reach the PLAN, not just dispatch.
         #
@@ -1782,6 +1943,7 @@ def api_settings():
         return jsonify({
             "status": "ok",
             "settings": merged,
+            "effective": _effective_guarded(merged),
             "personality": _load_agent_personality(),
         })
     except Exception as e:
@@ -1961,10 +2123,13 @@ ANALYZE_TEXT_EXT = ('txt', 'md', 'py', 'js', 'html', 'css', 'json', 'ts',
 
 def _analyze_mode() -> str:
     try:
-        return str(((_load_settings() or {}).get('model_routing') or {})
-                   .get('mode') or 'smart').lower()
+        from agent_friday.services.cloud_mode_policy import normalize_mode
+        return normalize_mode(((_load_settings() or {}).get('model_routing') or {})
+                              .get('mode'))
     except Exception:
-        return 'smart'
+        # Fails closed, like routing_mode(): the cloud is reached only on an
+        # affirmative read.
+        return 'local_only'
 
 
 def _analyze_record(provider, action, reason, nbytes):
@@ -2051,6 +2216,8 @@ def analyze_file():
             # A workspace job's card names the model about to read the file.
             from agent_friday.services import visible_jobs as _vj
             _vj.note_inference('gemini-2.5-flash', local=False)
+            from agent_friday.services import cloud_intent as _cloud_intent
+            _cloud_intent.require("google-gemini", "analyze_file", "gemini-2.5-flash")
             if not _client_box:
                 _client_box.append(
                     genai.Client(api_key=core.GEMINI_API_KEY))  # pragma: allowlist secret

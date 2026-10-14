@@ -1,0 +1,72 @@
+{
+ "schema": 1,
+ "id": "trust",
+ "label": "Trust",
+ "group": "system",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {"key": null, "keys": [], "sections": []},
+ "objects": [
+  {
+   "kind": "trust",
+   "stage_workspace": "trust",
+   "noun": "entries",
+   "ref_template": "trust:{name}",
+   "see_touch": {
+    "publisher": "static/workspace_stages.js (domList over fridayRow)",
+    "facets": ["kind", "level"],
+    "filters": {},
+    "fields": [],
+    "selectable": false,
+    "privacy": "titles"
+   },
+   "open": {"tool": null, "none_because": "no row-level target yet (WS-2/WS-3)", "gap": true, "wave": "WS-2/WS-3"},
+   "resolver": null
+  }
+ ],
+ "verbs": [
+  {
+   "id": "trust.view",
+   "action": "trust.view",
+   "group": "read",
+   "ui": {"control": "view trust graph"},
+   "tool": "query_trust_graph",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["how much do I trust this source"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "trust.receipts_traces",
+   "action": "trust.receipts_traces",
+   "group": "read",
+   "ui": {"control": "Receipts & traces: why it did that, from any item or the Activity lane"},
+   "tool": "why_that_plan",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["why did you do that"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [],
+ "not_for_laya": [
+  {
+   "action": "trust.expand_person",
+   "kind": "gap",
+   "reason": "Trust rows have no row-level open target yet.",
+   "wave": "WS-3"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": null, "pools": []}
+}

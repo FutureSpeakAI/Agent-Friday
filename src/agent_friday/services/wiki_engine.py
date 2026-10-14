@@ -272,6 +272,18 @@ def _propose_wiki_update(file, section, new_value, reason, old_value=""):
     return item["id"]
 
 
+def _attach_cloud_note(proposal_id, cloud_note):
+    """Internal, for the work-order executor only (not a tool): attach a cloud model's
+    labelled, fenced note to a pending proposal, apart from its reason. False if not found."""
+    items = _load_pending_wiki()
+    for it in items:
+        if it.get("id") == proposal_id and it.get("status") == "pending":
+            it["cloud_note"] = str(cloud_note)[:600]
+            _save_pending_wiki(items)
+            return True
+    return False
+
+
 def _apply_wiki_proposal(item):
     """Apply a pending proposal to the actual file.
 

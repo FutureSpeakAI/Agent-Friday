@@ -152,6 +152,9 @@ def _pilot_outcome(session_ctx, outcome):
 
 
 
+from agent_friday.services import cloud_intent as _cloud_intent
+
+
 def _generate_crew_agent(messages, *, system, max_tokens, temperature,
                          session_ctx, pii_lookup, orb_label, orb_category,
                          orb_icon, tools, on_route):
@@ -189,17 +192,21 @@ def _generate_crew_agent(messages, *, system, max_tokens, temperature,
                   "reason": "Crew agent's explicit binding"})
     if session_ctx.get("crew_chat_only"):
         _crew_model_checkpoint(messages, session_ctx)
-    if adapter == "anthropic":
-        if provider != "anthropic":
-            raise RuntimeError("Crew's native Anthropic adapter requires the Anthropic provider binding.")
-        return _call_claude_agent(messages, system=system, model=model,
-            max_tokens=max_tokens, temperature=temperature, pii_lookup=pii_lookup,
-            session_ctx=session_ctx, orb_label=orb_label, orb_category=orb_category,
-            orb_icon=orb_icon, workspace="crew", tools=schemas)
-    return _call_openai(messages, system=system, model=model, max_tokens=max_tokens,
-        temperature=temperature, pii_lookup=pii_lookup, session_ctx=session_ctx,
-        orb_label=orb_label, orb_icon=orb_icon, tools=schemas, provider=provider,
-        fallback_models=None)
+    # The owner bound this Crew agent to this cloud model (local_only refused
+    # above); that binding is the recorded intent for this one dispatch.
+    with _cloud_intent.intent_scope("user_explicit", source="crew_binding",
+                                    confirmed=True):
+        if adapter == "anthropic":
+            if provider != "anthropic":
+                raise RuntimeError("Crew's native Anthropic adapter requires the Anthropic provider binding.")
+            return _call_claude_agent(messages, system=system, model=model,
+                max_tokens=max_tokens, temperature=temperature, pii_lookup=pii_lookup,
+                session_ctx=session_ctx, orb_label=orb_label, orb_category=orb_category,
+                orb_icon=orb_icon, workspace="crew", tools=schemas)
+        return _call_openai(messages, system=system, model=model, max_tokens=max_tokens,
+            temperature=temperature, pii_lookup=pii_lookup, session_ctx=session_ctx,
+            orb_label=orb_label, orb_icon=orb_icon, tools=schemas, provider=provider,
+            fallback_models=None)
 
 
 def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384,
@@ -338,7 +345,15 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         routed_model = route.get('model') or model
         routed_provider_name = route.get('provider_name')
     except Exception as _re:
-        print(f"  [AGENT] routing failed, defaulting to cloud: {_re}")
+        _rmode = str(routing_cfg.get('mode') or '').lower()
+        if _cloud_intent.is_local_mode(_rmode) and not _cloud_intent.opens_cloud(_rmode):
+            # Fail closed: a router that cannot answer is not an intent to go
+            # to the cloud. The ladder below is local-only and a local failure
+            # becomes a LocalUnavailable the caller offers on.
+            print(f"  [AGENT] routing failed, staying local: {_re}")
+            provider, routed_model = 'local', None
+        else:
+            print(f"  [AGENT] routing failed, defaulting to cloud: {_re}")
     if on_route:
         # Report the ACTUAL decision to whoever wants to narrate it. Never let
         # a logging callback break a turn.
@@ -360,6 +375,13 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     # Honor the router's verdicts BEFORE any provider sees the request.
     # refuse=True means vault access was required and the configured fallback
     # is deny/warn — no model call is permitted at all.
+    if route.get('implied_intent') and not _cloud_intent.current():
+        _cloud_intent.set_intent(route['implied_intent'], source='task_override')
+    if route.get('local_unavailable'):
+        _pilot_outcome(session_ctx, "refused")
+        raise _cloud_intent.LocalUnavailable(
+            "no local model is serving", purpose="agent",
+            mode=str(routing_cfg.get('mode') or ''))
     if route.get('refuse'):
         _pilot_outcome(session_ctx, "refused")
         return (route.get('warning')
@@ -447,6 +469,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         # nothing left for it to drop, which is the point.
         from agent_friday.services import tool_catalogue as _TCat
         _turn_tools = tools if tools is not None else tools_for_workspace(workspace, conversation_id=(session_ctx or {}).get("conversation_id"))
+        _turn_tools = _without_cloud_only(_turn_tools)   # this loop runs on the local seat
         if _TCat.enabled() and _turn_tools:
             _open = _TCat.opening_set(
                 _turn_tools, pilot=(session_ctx or {}).get("_laya_pilot"))
@@ -519,6 +542,8 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         from agent_friday.services.model_router import _mode_filtered_attempts
         attempts = _mode_filtered_attempts(attempts, routing_cfg,
                                            vault_access=vault_access)
+    except _cloud_intent.LocalUnavailable:
+        raise
     except Exception:
         pass
     try:
@@ -576,8 +601,11 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             pass
     if _pinned:
         _pilot_outcome(session_ctx, "error")
-        raise RuntimeError("the local seat %s could not answer (%s); nothing else was "
-                           "tried" % (model, "; ".join(errors[-1:]) or "no reply"))
+        raise _cloud_intent.LocalUnavailable(
+            "the local seat %s could not answer (%s); nothing else was tried"
+            % (model, "; ".join(str(e) for e in errors[-1:]) or "no reply"),
+            purpose="agent", model=str(model or ""),
+            mode=str(routing_cfg.get('mode') or ''))
     if vault_access:
         _pilot_outcome(session_ctx, "error")
         # Refuse rather than raise: the caller surfaces this as the reply, and
@@ -602,6 +630,12 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
                 "was NOT sent to any cloud provider. This is a local-model "
                 "problem, not a permissions one: check that the local seat is "
                 "up, then retry."), []
+    _mode_now = str(routing_cfg.get('mode') or '').lower()
+    if _cloud_intent.is_local_mode(_mode_now) and not _cloud_intent.opens_cloud(_mode_now):
+        _pilot_outcome(session_ctx, "error")
+        raise _cloud_intent.LocalUnavailable(
+            "; ".join(str(e) for e in errors[-2:]) or "no reply",
+            purpose="agent", model=str(routed_model or ''), mode=_mode_now)
     raise RuntimeError(
         "No model provider could run the agent (tried "
         + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "
@@ -636,7 +670,7 @@ def _generate_agent(*args, **kwargs):
     """
     from agent_friday.services import reasoning_trace as _rt_scope
     _label = kwargs.get("orb_label") or kwargs.get("workspace") or "Background model call"
-    with _rt_scope.scope("background", str(_label)):
+    with _cloud_intent.preserve_scope(), _rt_scope.scope("background", str(_label)):
         return _generate_agent_untraced(*args, **kwargs)
 
 
@@ -701,8 +735,8 @@ CLAUDE_TOOLS = [
       "required": ["query"]}},
     {"name": "create_calendar_event", "description": "Create a new event on the user's Google Calendar. Times are ISO 8601. If the token is read-only, say so plainly and offer to reconnect Google.",
      "input_schema": {"type": "object", "properties": {
-         "title": {"type": "string"}, "start": {"type": "string", "description": "ISO 8601 start, e.g. 2026-08-18T11:30:00-05:00"},
-         "end": {"type": "string", "description": "ISO 8601 end. Defaults to one hour after start."},
+         "title": {"type": "string"}, "start": {"type": "string", "format": "date-time", "description": "ISO 8601 start, e.g. 2026-08-18T11:30:00-05:00"},
+         "end": {"type": "string", "format": "date-time", "description": "ISO 8601 end. Defaults to one hour after start."},
          "location": {"type": "string"}, "description": {"type": "string"},
          "attendees": {"type": "array", "items": {"type": "string"}},
          "account_id": {"type": "string"}},
@@ -710,7 +744,8 @@ CLAUDE_TOOLS = [
     {"name": "update_calendar_event", "description": "Change one event by id: title, time, location or description. Use annotate_calendar_events for additions across events. Clearing requires specific user confirmation and allow_clearing=true; otherwise refused.",
      "input_schema": {"type": "object", "properties": {
          "event_id": {"type": "string"}, "title": {"type": "string"},
-         "start": {"type": "string"}, "end": {"type": "string"},
+         "start": {"type": "string", "format": "date-time"},
+         "end": {"type": "string", "format": "date-time"},
          "location": {"type": "string"}, "description": {"type": "string"},
          "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."},
          "account_id": {"type": "string"}},
@@ -721,8 +756,8 @@ CLAUDE_TOOLS = [
     {"name": "find_free_slots", "description": "Read-only: find slots free on EVERY connected calendar/account within working hours, time zone, notice and buffers. Offer returned slots; for email put their labels in draft_email (card approval before sending). Disclose unreadable calendars as unchecked.",
      "input_schema": {"type": "object", "properties": {
          "duration_minutes": {"type": "integer"},
-         "window_start": {"type": "string"},
-         "window_end": {"type": "string"},
+         "window_start": {"type": "string", "format": "date-time"},
+         "window_end": {"type": "string", "format": "date-time"},
          "count": {"type": "integer"},
          "min_notice_hours": {"type": "number"},
          "buffer_minutes": {"type": "integer"}}}},
@@ -738,7 +773,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "series_id": {"type": "string", "description": "The series_id hold_slots returned."},
          "hold_event_id": {"type": "string", "description": "The id of the hold to book. Or give start instead."},
-         "start": {"type": "string", "description": "Start time of the hold to book, ISO 8601, when hold_event_id is not known."},
+         "start": {"type": "string", "format": "date-time", "description": "Start time of the hold to book, ISO 8601, when hold_event_id is not known."},
          "title": {"type": "string"},
          "attendees": {"type": "array", "items": {"type": "string"}, "description": "Email addresses to invite."},
          "description": {"type": "string"}, "location": {"type": "string"},
@@ -750,7 +785,8 @@ CLAUDE_TOOLS = [
          "account_id": {"type": "string"}},
       "required": ["series_id"]}},
     {"name": "query_calendar", "description": "Read today's and tomorrow's Google Calendar events. Built-in integration: 'not connected' needs one-time OAuth; offer setup, never claim calendar access is unavailable.",
-     "input_schema": {"type": "object", "properties": {}}},
+     "input_schema": {"type": "object", "properties": {
+         "day": {"type": "string", "format": "date", "description": "Only this day (YYYY-MM-DD); omit for both."}}}},
     {"name": "search_email", "description": "Search/read recent Gmail across connected accounts (read-only). Gmail operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes, OR. Empty query returns recent unread. Not connected means OAuth setup is needed: offer it, without claiming Gmail is unavailable. search_failed/error means the search failed, never zero results.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:alex after:2026-09-01'. Empty means recent unread."}}, "required": ["query"]}},
     {"name": "search_drive", "description": "Read-only: search file/folder names across all connected Google accounts. Returns id, name, mime_type and account; pass id + mime_type to read_doc for Docs/Sheets. Report missing Drive permission per account, not as 'not connected'.",
@@ -775,7 +811,7 @@ CLAUDE_TOOLS = [
          "account_id": {"type": "string"},
          "tasklist_id": {"type": "string"},
          "notes": {"type": "string"},
-         "due": {"type": "string", "description": "RFC3339 timestamp, e.g. 2026-09-01T00:00:00Z"}},
+         "due": {"type": "string", "format": "date-time", "description": "RFC3339 timestamp, e.g. 2026-09-01T00:00:00Z"}},
       "required": ["title", "account_id"]}},
     {"name": "update_task", "description": "Update a Google Task's title/notes/due/status. Required account_id and tasklist_id must come from list_tasks, never guesses. Use complete_task just to mark done.",
      "input_schema": {"type": "object", "properties": {
@@ -784,7 +820,7 @@ CLAUDE_TOOLS = [
          "account_id": {"type": "string"},
          "title": {"type": "string"},
          "notes": {"type": "string"},
-         "due": {"type": "string"},
+         "due": {"type": "string", "format": "date-time"},
          "status": {"type": "string", "description": "'needsAction' or 'completed'."}},
       "required": ["task_id", "tasklist_id", "account_id"]}},
     {"name": "delete_task", "description": "Permanently delete a Google Task; cannot undo. Required account_id and tasklist_id must come from list_tasks, never guesses.",
@@ -833,7 +869,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "navigate_to", "description": "Open a workspace tab, mail thread/search, Studio file, creation, news story, Knowledge page/node, Settings section, calendar day/meeting, contact, post or Media card (kind=card). Pass the user's words as query or a known exact id. new_tab opens a maximized Chrome tab; max fills the desktop. No approval. NAV_OK confirms display; NAV_PARTIAL opened something else; NAV_FAIL gives the reason and closest matches.",
      "input_schema": {"type": "object", "properties": {
-         "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post", "card"]},
+         "kind": {"type": "string", "enum": ["workspace", "email", "mail_search", "file", "creation", "news_article", "wiki_page", "graph_node", "settings", "calendar", "contact", "content_post", "card", "meeting"]},
          "new_tab": {"type": "boolean", "description": "Open it in its own Chrome tab, maximized."},
          "max": {"type": "boolean", "description": "Fill the whole window or tab with it."},
          "query": {"type": "string", "description": "The user's words for the thing."},
@@ -843,6 +879,14 @@ CLAUDE_TOOLS = [
          "required": ["kind"]}},
     {"name": "queue_status", "description": "Read the Local AI queue: background work on the local model, what waits and why. Read-only.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "request_context", "description": "Ask for personal context that was held back from this conversation (the prompt says so when something was). Name the category; the user's own computer answers, scrubs it, and the user decides what is sent: an approval card, or a share they already allowed. Ask only when you need it to answer. Never ask again after they decline.",
+     "input_schema": {"type": "object", "properties": {
+         "category": {"type": "string", "enum": ["memory", "notes", "people", "career", "tasks", "calendar", "screen", "last session", "tone"], "description": "Which kind of context you need."},
+         "why": {"type": "string", "description": "What you need it for, in a sentence."}},
+         "required": ["category"]}},
+    {"name": "why_that_plan", "description": "Say what was sent for a turn and what the planner held back or would have: sections, sizes, tiers and where each went. Reads the turn receipt; defaults to the latest turn in this conversation.",
+     "input_schema": {"type": "object", "properties": {
+         "turn_id": {"type": "string", "description": "A specific turn; leave out for the latest."}}}},
     {"name": "check_situation", "description": "Read live activity/load: focused/open workspaces, CPU/RAM/GPU/disk, serving or loaded models, chat turns, tasks, scheduled/background jobs, queue, stand-down and today's spend. pin=true adds a live summary to later turns in this conversation; pin=false stops it.",
      "input_schema": {"type": "object", "properties": {
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
@@ -952,7 +996,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string", "description": "Workspace id, e.g. 'studio', 'news', 'calendar'."},
          "mode": {"type": "string", "enum": ["undo", "as_of", "version", "reset"], "description": "Default 'undo'."},
-         "when": {"type": "string", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
+         "when": {"type": "string", "format": "date-time", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
          "version_id": {"type": "string", "description": "For mode 'version'."}},
       "required": ["workspace"]}},
     {"name": "list_workspace_history", "description": "Inspect workspace changes before an ambiguous revert. Entries give time, changed_label (keys changed) and keys (what restoring brings back). The customization content is omitted; use the entry to revert, without asking for it.",
@@ -1038,11 +1082,14 @@ def _tool_search_web(inp):
     try:
         from agent_friday.services import web_search as _ws
     except Exception as e:
-        return f"Web search unavailable (module import failed: {e}). Query: {q!r}"
+        _log.warning("web search module import failed", exc_info=True)
+        return f"Web search unavailable (module import failed: {type(e).__name__}). Query: {q!r}"
     try:
         out = _ws.search(q, count=int((inp or {}).get('count') or 10))
     except Exception as e:
-        return (f"Web search error: {type(e).__name__}: {e}. This is a TOOL "
+        # The exception's own text can carry a provider URL or key fragment: it goes to the log.
+        _log.warning("web search failed", exc_info=True)
+        return (f"Web search error: {type(e).__name__}. This is a TOOL "
                 f"FAILURE, not evidence that nothing is published. Query: {q!r}")
 
     results = out.get('results') or []
@@ -1823,6 +1870,18 @@ def _tool_query_calendar(_inp):
         return json.dumps({**state, "events": [], "count": 0,
                            "note": summary["note"] or _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Calendar", reads="your calendar")})
+    # `day` (the schema's ISO date, which the verifier checks) narrows the read to
+    # that day, as the voice tool does. The fetch is today and tomorrow; a day
+    # outside it is not read, and the result says so rather than reading as free.
+    day = None
+    if isinstance(_inp, dict) and _inp.get("day"):
+        from agent_friday.services.voice_engine import _calendar_day, _event_on
+        day = _calendar_day(_inp.get("day"))
+    if day is not None and not (date.today() <= day <= date.today() + timedelta(days=1)):
+        return json.dumps({**state, "day": day.isoformat(), "count": 0, "events": [],
+                           "outside_window": True,
+                           "note": "Only today's and tomorrow's calendar is read here, "
+                                   "so this cannot say what is on %s." % day.isoformat()})
     try:
         result = ga.merged_calendar(days=2)
     except Exception as e:
@@ -1833,6 +1892,8 @@ def _tool_query_calendar(_inp):
                                     + f" Calendar fetch error: {e}").strip()})
     accounts_status = _summarize_multi_account_errors(result)
     events = result.get("events") or []
+    if day is not None:
+        events = [ev for ev in events if _event_on(ev, day)]
     out = []
     for ev in events[:20]:
         out.append({
@@ -3257,11 +3318,20 @@ def _tool_navigate_to(inp):
     inp = inp or {}
     from agent_friday.services.desktop_targets import open_on_desktop
     new_tab = bool(inp.get('new_tab'))
+    name_items = not _cloud_voice()
+    from agent_friday.services.desktop_targets import _norm_kind
+    if name_items and _norm_kind(inp.get('kind') or '') == 'meeting':      # "call" and "meetings" are the same kind
+        # a meeting's title is named only to a reader that may hear the meetings (a local loop speaking here)
+        try:
+            from agent_friday.services.library import tools as _lt
+            name_items = bool(_lt._meetings_reader_ok())
+        except Exception:
+            name_items = False
     r = open_on_desktop(inp.get('kind') or '', query=inp.get('query') or '',
                         id=inp.get('id') or '', workspace=inp.get('workspace') or '',
                         section=inp.get('section') or '', new_tab=new_tab,
                         maximize=bool(inp.get('max', new_tab)),
-                        name_items=not _cloud_voice())
+                        name_items=name_items)
     return r['text']
 
 
@@ -3274,12 +3344,143 @@ def _current_conversation_id():
         return (core._TURNS.get(tid) or {}).get('conversation_id')
 
 
+def _library_status_line() -> str:
+    """The Library's folder reading and the drafts waiting for review, in counts and reasons only
+    (library/index_job.status_line): "how's the indexing going?"."""
+    try:
+        from agent_friday.services.library import index_job as _ij
+        return _ij.status_line()
+    except Exception:
+        return ""
+
+
+def _queue_counts_only() -> str:
+    """The Local AI queue as counts, for a model that is not on this computer: no label, so no folder name."""
+    try:
+        snap = local_queue_snapshot() or {}
+        r, q = len(snap.get("running") or []), len(snap.get("queued") or [])
+    except Exception:
+        return ""
+    if not r and not q:
+        return "Nothing is waiting for the local models."
+    return "The local models have %d running and %d waiting." % (r, q)
+
+
 def _tool_queue_status(inp):
     """Tool handler: the Local AI queue in a sentence or two (services/
-    seat_supervisor.spoken_summary). Labels and reasons only, never a job's
-    content."""
+    seat_supervisor.spoken_summary), with the Library's folder reading. Labels,
+    counts and reasons only, never a job's content."""
     from agent_friday.services import seat_supervisor as _ss
-    return _ss.spoken_summary(local_queue_snapshot())
+    from agent_friday.services import slice_head as _sh
+    names = _sh.is_local(_CURRENT_PROVIDER.get())
+    try:
+        # Activity is the one list of every task (services/activity_lane): say what runs and what
+        # waits across all of them. Task names go only to a model on this computer; a cloud model
+        # hears counts, and a private task is never named.
+        from agent_friday.services import activity_lane as _al
+        lane = _al.spoken_running(names=names)
+        local = _ss.spoken_summary(local_queue_snapshot())
+        if lane.startswith("Nothing is running"):
+            text = local if names else _queue_counts_only()
+        else:
+            text = lane + " " + local if names else lane
+    except Exception:
+        text = _ss.spoken_summary(local_queue_snapshot()) if names else _queue_counts_only()
+    extra = _library_status_line()
+    return (text + " " + extra) if extra else text
+
+
+def _tool_request_context(inp):
+    """Tool handler: ask the user's own computer for a slice of context the
+    prompt held back, through local_context (scrub, floor, card or grant).
+
+    A turn that has read untrusted content always raises a card, whatever
+    grant exists, and never becomes a training label (services/slice_head).
+    """
+    inp = inp or {}
+    from agent_friday.services import slice_head
+    from agent_friday.services import turn_plan as _tp
+    conv = _CURRENT_CONVERSATION.get()
+    if slice_head.is_local(_CURRENT_PROVIDER.get()):
+        return "Nothing is held back here: this conversation runs on the user's own computer."
+    if not conv:
+        return "This is not part of a chat conversation, so there is nothing held back to ask for."
+    out = slice_head.request_context(
+        inp.get("category") or "", inp.get("why") or "",
+        conversation_id=conv,
+        cloud_model=_CURRENT_MODEL.get() or "the cloud model",
+        tainted=slice_head.is_tainted(_taint_mod.CURRENT_KEY.get()),
+        turn_id=_tp.current_turn_id())
+    status = (out or {}).get("status")
+    if status == "sent":
+        text = slice_head.take_released_text(conv) or str(out.get("text") or "")
+        return ("The user's own computer answered, scrubbed, under a share they already "
+                "allowed: " + text)
+    if status == "pending":
+        return ("The user has been asked on screen. Carry on without it for now; if they "
+                "approve, it arrives with their next message. Do not ask again.")
+    return str((out or {}).get("reason") or "That context could not be shared.")
+
+
+_WORK_ORDERS_OFF = "Work orders are switched off on this computer, so nothing was queued."
+
+
+def _tool_submit_work_order(inp):
+    """Tool handler: queue a cloud model's work order for local execution
+    (services/work_orders). Refused for a local model, and for a cloud model in
+    a turn where cloud_intent has not opened the cloud."""
+    from agent_friday.services import work_orders
+    if not _work_orders_enabled():
+        work_orders.enforce_switch()
+        return _WORK_ORDERS_OFF
+    conv = _CURRENT_CONVERSATION.get()
+    if not conv:
+        return "This is not part of a chat conversation, so there is nothing to attach a work order to."
+    order = {k: v for k, v in (inp or {}).items() if not str(k).startswith("_")}
+    try:
+        out = work_orders.submit(order, conv, provider=_CURRENT_PROVIDER.get(),
+                                 model=_CURRENT_MODEL.get() or "")
+    except work_orders.OrderRefused as e:
+        return str(e)
+    if out.get("status") == "rejected":
+        return "The work order was not accepted: " + " ".join(out.get("errors") or [])
+    return json.dumps(out)
+
+
+def _tool_work_order_status(inp):
+    """Tool handler: the status of a submitted order, and nothing but status."""
+    from agent_friday.services import work_orders
+    if not _work_orders_enabled():
+        work_orders.enforce_switch()
+        return _WORK_ORDERS_OFF
+    conv = _CURRENT_CONVERSATION.get()
+    ok, why = work_orders.cloud_turn_allowed(_CURRENT_PROVIDER.get(), _CURRENT_MODEL.get() or "")
+    if not ok:
+        return why
+    try:
+        from agent_friday.services.local_only_guard import provider_name_of
+        pname = provider_name_of(_CURRENT_PROVIDER.get()) or "cloud"
+    except Exception:
+        pname = "cloud"
+    from agent_friday.services import turn_plan as _tp
+    return json.dumps(work_orders.status((inp or {}).get("order_id") or "", conv or "",
+                                         provider=pname, turn_id=_tp.current_turn_id() or "",
+                                         model=_CURRENT_MODEL.get() or ""))
+
+
+def _tool_why_that_plan(inp):
+    """Tool handler: read a turn's receipt back in plain words. Slice names go
+    only to a local model; a cloud model hears counts."""
+    inp = inp or {}
+    from agent_friday.services import slice_head, turn_receipt
+    turn_id = str(inp.get("turn_id") or "").strip()
+    if not turn_id:
+        turn_id = slice_head.last_turn_for(_CURRENT_CONVERSATION.get()) or ""
+    if not turn_id:
+        return "I do not have a turn to read back yet."
+    receipt = turn_receipt.build(turn_id)
+    return slice_head.describe_receipt(
+        receipt, names=slice_head.is_local(_CURRENT_PROVIDER.get()))
 
 
 def _tool_check_situation(inp):
@@ -3404,7 +3605,12 @@ def _tool_set_chat_tray(inp):
         visible = {"true": True, "false": False}.get(visible.strip().lower())
     side = str(inp.get("side") or "").strip().lower()
     size = str(inp.get("size") or "").strip().lower().replace(" ", "_").replace("-", "_")
-    if visible is None and not side and not size:
+    # Simple's Home cards ("hide the cards"): the Laya router passes this; the
+    # tool's declared schema is unchanged, so the voice contract does not grow.
+    cards = str(inp.get("cards") or "").strip().lower()
+    if cards and cards not in ("hide", "show"):
+        return "CHAT_FAIL: the cards can be hidden or shown."
+    if visible is None and not side and not size and not cards:
         return "CHAT_FAIL: say whether to show or hide the chat, or where to put it."
     if side and side not in CHAT_TRAY_SIDES:
         return "CHAT_FAIL: the chat docks on the left or the right."
@@ -3418,10 +3624,20 @@ def _tool_set_chat_tray(inp):
         event["side"] = side
     if size:
         event["size"] = size
+    if cards:
+        event["cards"] = cards
     waiter = desktop_bus.expect(cid)
     sent = desktop_bus.broadcast(event, kind="chat")
     got = desktop_bus.wait(cid, waiter, CHAT_TRAY_ACK_S if sent else 0)
     ack = got.get("ack") or {}
+    if cards and got.get("acked") and not ack.get("applied"):
+        if ack.get("cards_reason") == "classic":
+            return "CHAT_FAIL: the cards belong to the Simple desktop; Classic has none to hide."
+        return "CHAT_FAIL: the cards could not be changed just now."
+    if cards and got.get("acked") and ack.get("applied"):
+        if ack.get("cards") == "hidden":
+            return "CHAT_OK — the cards are hidden; Friday and the chat share the screen."
+        return "CHAT_OK — the cards are back beside Friday."
     if got.get("acked") and ack.get("applied"):
         where = ack.get("side") or side or "right"
         if ack.get("shown"):
@@ -3550,6 +3766,22 @@ def _tool_organize_email(inp):
     inp = inp or {}
     extra = {}
     thread_ids, query = inp.get("thread_ids") or None, inp.get("query") or ""
+    if inp.get("laya_write"):
+        # Laya's safe writes (services/laya_safe_writes): a ticket the router minted for rows the
+        # owner pointed at. The rows, the verb and the label come from the ticket alone; whatever
+        # else the call carries is ignored, and the change waits for ONE card, always.
+        from agent_friday.services import laya_safe_writes as _lsw
+        _stage = _fresh_screen_stage(_lsw.WORKSPACE)
+        try:
+            call = _lsw.redeem(inp.get("laya_write"), action=inp.get("action"), stage=_stage,
+                               conversation_id=_CURRENT_CONVERSATION.get())
+        except _lsw.Refusal as e:
+            return "NOT DONE: " + str(e)
+        return _organize_call(_ia.propose_email, call.action, query="", thread_ids=call.thread_ids,
+                              account="", label=call.label, why=call.why, replaces="",
+                              room_mode=_voice_room(), laya_card=True, refs=call.refs,
+                              selection_id="", stage_rev=call.stage_rev, rule=call.rule,
+                              viewed_at=float((_stage or {}).get("at") or 0) or None)
     if str(inp.get("selection") or "").strip().lower() == "screen":
         refs, st, rule, err = _screen_target("messages")
         if err:
@@ -3659,7 +3891,7 @@ def _mail_select_all(match: dict):
 
 
 #: The lists that can show Friday's ticks.
-_TICKABLE = ("messages", "media", "library", "files", "calendar", "chat")
+_TICKABLE = ("messages", "media", "library", "files", "calendar", "meetings", "chat", "news")
 
 #: The keys of a request that name what to match, flat (voice) or nested in `match` (chat).
 _MATCH_KEYS = ("when", "stage", "level", "scheduled", "pinned", "archived", "category", "lane", "unread", "from", "older_than", "ordinals", "query", "deictic",
@@ -3832,7 +4064,7 @@ def _tool_screen_select(inp):
     if op == "fill":
         return _screen_fill(ws, inp)
     if ws not in _TICKABLE:
-        return "SELECT_FAIL: I can show ticks in the Message Center, Media, the Library, Files, the Calendar and the chat list so far."
+        return "SELECT_FAIL: I can show ticks in the Message Center, News, Media, the Library, Files, the Calendar and the chat list so far."
     if ws != "messages" and scope == "all":
         return "SELECT_FAIL: only the Message Center can search the whole list; use scope screen here."
     if op not in ("select", "add", "remove", "clear") or scope not in ("screen", "all"):
@@ -4008,12 +4240,25 @@ def _tool_answer_card(inp):
         voiced = {str(i) for i in ((_CURRENT_TOOL_CONTEXT.get() or {}).get("voiced_cards") or [])}
         if cid not in voiced and _ia.unvoiced_card_approval_blocked(
                 cid, _CURRENT_OWNER_TEXT.get(), _voice_room()):
-            return _ia.UNVOICED_CARD
+            return _ia.unvoiced_text(cid)
+        if cid in voiced and _ia.is_laya_card(cid) and not _ia.card_in_conversation(
+                cid, _CURRENT_CONVERSATION.get()):
+            return _ia.unvoiced_text(cid)   # a line read in another conversation does not count here
     tok = _ia.QUIET.set(_cloud_voice())
     try:
-        return _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
-                               _CURRENT_OWNER_TEXT.get(), room_mode=_voice_room(),
-                               surface=surface)["text"]
+        res = _ia.answer_card(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
+                              _CURRENT_OWNER_TEXT.get(), room_mode=_voice_room(),
+                              surface=surface)
+        if res.get("ok") and surface in ("voice", "chat"):
+            try:  # an approved or declined card is a weak label for Laya's personal layer (off unless learning is on;
+                  # a label needs a turn the owner's own local voice routed in this conversation, so a cloud call,
+                  # a phone or a delegated task never makes one)
+                from agent_friday.services import laya_personal as _lpers
+                _lpers.on_card_decision(str(inp.get("decision") or "").lower().startswith("approv"),
+                                        conversation_id=_CURRENT_CONVERSATION.get())
+            except Exception:
+                pass
+        return res["text"]
     finally:
         _ia.QUIET.reset(tok)
 
@@ -4173,6 +4418,8 @@ def _tool_text_by_phone(inp):
     try:
         if not to or (owner and _pc.normalize_number(to) == owner):
             res = _ps.text_owner(body, reason="asked in chat")
+            from agent_friday.services import notice_registry as _nreg
+            _nreg.note("E65", True)
             return json.dumps({"sent": True, "to": "your cell", "sid": res.get("sid")})
         res = _ps.request_sms(to=to, body=body,
                               owner_instruction=_CURRENT_OWNER_TEXT.get(),
@@ -4551,6 +4798,75 @@ def _restore_tasks_from_journal(announce=True, limit=200):
         TASKS_RESTORED.set()
 
 
+#: A task younger than this is never judged orphaned: its worker may still be
+#: on its way to starting.
+ORPHAN_GRACE_S = 120
+#: A task with no worker thread of its own (an inline workspace job, a quick
+#: draft) is orphaned once nothing has touched it for this long.
+OWNERLESS_STALE_S = 3600
+ORPHAN_REASON = "Its worker stopped without recording an end; the task reconciler closed it."
+
+
+def reconcile_orphan_tasks(now=None):
+    """Close every task that says it is still going but whose work has ended.
+
+    A finished task always leaves "running": the worker's own exit writes the
+    end, and this pass catches the exits that did not (an exception that
+    escaped, a worker that returned before its finally, a cancel that changed
+    only the cache). Orphaned means: its worker thread started and is gone, or
+    it has no thread of its own and nothing has touched it in
+    OWNERLESS_STALE_S. A task whose record on disk already ended takes that
+    status; anything else ends as interrupted with ORPHAN_REASON. The end is
+    journaled through _task_set and the seat it held is freed. Returns the ids
+    closed. Never raises."""
+    now = _time.time() if now is None else now
+    closed = []
+    try:
+        with TASKS_LOCK:
+            items = [(tid, dict(t)) for tid, t in TASKS.items()]
+            threads = dict(TASK_THREADS)
+        with _PENDING_TASK_THREADS_LOCK:
+            pending = set(_PENDING_TASK_THREADS)
+        sup = _SEAT_SUPERVISOR
+        waiting_inline = set(getattr(sup, "_inline_events", {}) or {}) if sup else set()
+        tj = _journal()
+        for tid, t in items:
+            status = t.get('status')
+            if _is_terminal_status(status) or status == 'deleted':
+                continue
+            if now - float(t.get('created') or now) < ORPHAN_GRACE_S:
+                continue
+            if tid in pending or tid in waiting_inline:
+                continue
+            th = threads.get(tid)
+            if th is not None:
+                if th.ident is None or th.is_alive():
+                    continue                    # not started yet, or still working
+            else:
+                seen = max(float(t.get(k) or 0) for k in ('last_seen', 'started', 'created'))
+                if now - seen < OWNERLESS_STALE_S:
+                    continue
+            disk = tj.read_state(tid) or {}
+            if _is_terminal_status(disk.get('status')):
+                fields = {k: disk[k] for k in ('status', 'result', 'ended') if disk.get(k)}
+            else:
+                fields = {'status': 'interrupted', 'ended': t.get('ended') or now,
+                          'status_reason': ORPHAN_REASON,
+                          'result': t.get('result') or '[Interrupted] ' + ORPHAN_REASON}
+            _task_set(tid, **fields)
+            if sup is not None:
+                try:
+                    sup.on_task_end(tid, status=fields['status'])
+                except Exception:
+                    pass
+            closed.append(tid)
+    except Exception as e:
+        _log.warning("task reconciler pass failed: %s", e)
+    if closed:
+        _log.info("task reconciler closed %d orphaned task(s): %s", len(closed), closed[:10])
+    return closed
+
+
 #: How long the worker waits for a local grade. The task's own status is already
 #: set when the evaluator starts, but its completion notice waits for the grade,
 #: so a cold or busy seat must not hold that notice for the local-call default.
@@ -4838,6 +5154,31 @@ def _evidence_verdict(tool_trace):
     return verified, summary, ('complete' if verified else 'completed_unverified')
 
 
+def _background_model_binding(explicit_model, default_model):
+    """The model a background task hands the router as its binding.
+
+    Cloud modes keep today's behaviour: the per-task pick, else the subagent
+    seat. In the local modes the subagent seat is not a binding: an unpinned
+    task returns None so the router picks the local seat, and a cloud model
+    is bound only by a recorded intent (a scheduled_cloud pin, or a per-task
+    model under local_preferred). A local model id is always safe to bind.
+    """
+    from agent_friday.services import cloud_mode_policy as _cmp
+    if not _cmp.is_local_mode():
+        return default_model
+    if _cmp.cloud_allowed("background task", explicit=bool(explicit_model)):
+        return default_model
+    try:
+        from agent_friday.routing.model_router import provider_family
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        if (provider_family(default_model) == "local"
+                and not is_cloud_model_tag(default_model)):
+            return default_model
+    except Exception:
+        pass
+    return None
+
+
 def _ledger_view_chars_for(model):
     """The pinned-ledger size for whichever seat a task's next leg will land
     on: the local seat when routing prefers local, else the task's model."""
@@ -4976,6 +5317,11 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         subagent_model = (model
                           or _load_settings().get("subagent_model")
                           or ANTHROPIC_MODEL_DEFAULT)
+        # In the local modes the global subagent seat is a default, not a
+        # choice: handed on as the model it becomes a cloud binding that
+        # outranks the local preference. Only a per-task pick (`model`) or a
+        # scheduled_cloud pin reaches the cloud.
+        _bind_model = _background_model_binding(model, subagent_model)
         _bg_label = (name or prompt or 'Task')[:24]
         # Route through the provider-agnostic agent dispatcher so a background
         # task (distill-to-wiki, deep research) never hard-fails with
@@ -5003,10 +5349,18 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         _task_ledger.save(task_id, _ledger)
 
         def _leg(leg_messages):
-            with _tbud.unattended():
+            import contextlib as _ctxl
+            # A per-task model the owner picked is a recorded user_explicit intent
+            # (local_preferred only: local_only never honours it unconfirmed, and
+            # an unpinned task is bound to nothing and stays local).
+            _task_scope = (
+                _cloud_intent.intent_scope("user_explicit", source="task_model")
+                if (model and _bind_model == model and _cloud_intent.current() is None)
+                else _ctxl.nullcontext())
+            with _task_scope, _tbud.unattended():
                 return _generate_agent(
                     leg_messages, system=system, system_builder=_sys_for,
-                    max_tokens=16384, model=subagent_model,
+                    max_tokens=16384, model=_bind_model,
                     session_ctx={"authenticated": True, "is_background_task": True,
                                  "task_id": task_id,
                                  **_task_run_context(task_id),
@@ -5111,7 +5465,7 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                 steer_reply, steer_trace = _generate_agent(
                     [{"role": "user", "content": steer_msg}],
                     system=system, system_builder=_sys_for,
-                    max_tokens=16384, model=subagent_model,
+                    max_tokens=16384, model=_bind_model,
                     session_ctx={"authenticated": True, "is_background_task": True,
                          "task_id": task_id,
                          **_task_run_context(task_id),
@@ -5401,6 +5755,7 @@ def _seat_supervisor():
                 thread_factory=_start_pending_task_thread,
                 reclaim_seat=None,
                 on_queued_wait=_offer_cloud_while_waiting,
+                on_assess=reconcile_orphan_tasks,
                 # The background work queue's one rule: no start (and no next
                 # model call) during an interactive turn; deferrable work
                 # waits for idle (services/background_gate).
@@ -5411,6 +5766,15 @@ def _seat_supervisor():
             try:
                 from agent_friday.services import cloud_spill as _cs
                 _cs.register()
+            except Exception:
+                pass
+            # Background jobs are the `background` class of the local seat's
+            # admission queue: people go first (services/turn_queue), and the
+            # work a person is waiting on holds its seat as a `user_job`.
+            try:
+                from agent_friday.services import local_scheduler as _ls  # installs the gate
+                from agent_friday.services import turn_queue as _tq
+                _tq.attach_seat_queue(sup.queue, on_idle=lambda _seat: sup.poke())
             except Exception:
                 pass
             sup.start()
@@ -5531,25 +5895,29 @@ def _make_task_thread(task_id, name, prompt, description, *, orb_icon='🛰',
 
 
 def local_queue_snapshot():
-    """The Local AI queue for the chip, the tray, the API and queue_status."""
-    from agent_friday.services import background_gate as _bg
+    """The Local AI queue for the chip, the tray, the API and queue_status.
+    One source: the local work scheduler reads the queue's own rows
+    (services/seat_supervisor) with the podcast waiting for its turn, the
+    leases and the calls it holds, and the idle state (services/background_gate)."""
+    from agent_friday.services import local_scheduler as _ls
     try:
-        snap = _seat_supervisor().snapshot()
+        return _ls.queue_snapshot()
     except Exception:
-        snap = {"running": [], "queued": [], "count": 0, "jobs": []}
-    try:
-        st = _bg.idle_state()
-        snap["idle"] = {"idle": bool(st["idle"]), "idle_s": int(st["idle_s"]),
-                        "threshold_s": int(st["threshold_s"]),
-                        "os_readable": bool(st["os_readable"])}
-    except Exception:
-        snap["idle"] = None
-    return snap
+        return {"running": [], "queued": [], "count": 0, "jobs": [], "idle": None}
 
 
 def local_queue_run_now(job_id):
     try:
         return _seat_supervisor().run_now(job_id)
+    except Exception:
+        return False
+
+
+def local_queue_pause(job_id, paused=True):
+    """The owner's Pause (or Resume) for one Local AI queue job."""
+    try:
+        sup = _seat_supervisor()
+        return sup.pause(job_id) if paused else sup.resume(job_id)
     except Exception:
         return False
 
@@ -5576,7 +5944,15 @@ def local_queue_cancel(job_id):
         else:
             _task_log(tid, 'Cancel requested from the Local AI queue: it stops before its next model call.')
     try:
-        return _seat_supervisor().cancel(job_id, on_cancel=_teardown)
+        if _seat_supervisor().cancel(job_id, on_cancel=_teardown):
+            return True
+    except Exception:
+        pass
+    # Not one of the queue's own jobs: a podcast, a lease or a call the
+    # local work scheduler holds (it is the same list on screen).
+    try:
+        from agent_friday.services import local_scheduler as _ls
+        return bool(_ls.cancel(job_id, _skip_queue=True).get("ok"))
     except Exception:
         return False
 
@@ -5660,6 +6036,9 @@ def _report_workflow_completion(task_id, name, status, result_text):
                       'changed': not unchanged})
             return
         cid = rec.get('conversation_id')
+        from agent_friday.services import notice_registry as _nreg
+        # One delivery per completion, chosen by where the owner is.
+        target = _nreg.completion_target(cid)
         label = {'completed_unverified': 'finished; output checks are incomplete',
                  'cancelled': 'stopped', 'failed': 'failed', 'timeout': 'timed out'}.get(aggregate, 'finished')
         body = str(result_text or '').strip() or '(no output)'
@@ -5688,12 +6067,12 @@ def _report_workflow_completion(task_id, name, status, result_text):
                     # but precedes the task snapshot, so retries cannot repeat it.
                     existing = any((m.get('meta') or {}).get('workflow_run_id') == rid
                                    for m in conversations.messages(cid))
-                    if not existing:
-                        conversations.append(cid, {'role': 'friday', 'text': text, 'pinned': False,
-                                                   'meta': message_meta}, settings=delivery_settings)
+                    if target == _nreg.CHAT and not existing:
+                        _nreg.transcript_add('E77', cid, {'role': 'friday', 'text': text, 'pinned': False,
+                                                          'meta': message_meta}, settings=delivery_settings)
                     delivered = any((m.get('meta') or {}).get('workflow_run_id') == rid
                                     for m in conversations.messages(cid))
-                    if not delivered:
+                    if target == _nreg.CHAT and not delivered:
                         reason = 'The result was not confirmed in its conversation.'
         except Exception as exc:
             reason = ('The saved destination chat or project is no longer available for this run.'
@@ -5703,26 +6082,26 @@ def _report_workflow_completion(task_id, name, status, result_text):
             _task_set(task_id, delivery={'status': 'failed', 'notification': 'not_sent',
                 'conversation_id': cid, 'reason': reason, 'at': _time.time()})
             return
-        if delivered and not existing:
-            try:
-                from agent_friday.services import voice_live_channel
-                voice_live_channel.deliver(cid, text, kind='task_result')
-            except Exception:
-                pass
+        if target == _nreg.SPOKEN and not existing:
+            # In a live call: said once. A call that has gone falls to the card.
+            if _nreg.voice_say('E77', cid, text, kind='task_result'):
+                delivered = True
+            else:
+                target = _nreg.PANEL
         notification = 'not_sent'
-        try:
-            import agent_friday.notifications_engine as ne
-            notice = ne.push(title=f'Workflow {label}: {title}', body=body[:400],
-                            proactive_chat=False, dedupe_key=f'workflow-run:{rid}',
-                            target={'kind': 'task', 'id': task_id})
-            notification = 'delivered' if notice else 'unconfirmed'
-            if not cid:
-                delivered = bool(notice)
+        if target == _nreg.PANEL and not existing:
+            try:
+                import agent_friday.notifications_engine as ne
+                notice = ne.push(title=f'Workflow {label}: {title}', body=body[:400],
+                                proactive_chat=False, emitter='E03', dedupe_key=f'workflow-run:{rid}',
+                                target={'kind': 'task', 'id': task_id})
+                notification = 'delivered' if notice else 'unconfirmed'
+                delivered = bool(notice) or delivered
                 reason = '' if delivered else 'The completion notice was not confirmed.'
-        except Exception as exc:
-            notification = 'failed'
-            if not delivered:
-                reason = f'Completion notice failed: {type(exc).__name__}.'
+            except Exception as exc:
+                notification = 'failed'
+                if not delivered:
+                    reason = f'Completion notice failed: {type(exc).__name__}.'
         _task_set(task_id, delivery={'status': 'delivered' if delivered else 'failed',
                   'conversation_id': cid, 'notification': notification,
                   'reason': reason, 'changed': not unchanged, 'at': _time.time()})
@@ -5761,75 +6140,53 @@ def _report_task_completion(task_id, name, status, result_text):
         rec = dict(TASKS.get(task_id) or {})
     if rec.get('run_id'):
         return _report_workflow_completion(task_id, name, status, result_text)
+    body = (result_text or '').strip()
+    ok = status not in ('failed', 'error')
+    cid = None
     try:
+        cid = _task_conversation_id(task_id)
+    except Exception:
+        cid = None
+    text = (f"Background task \"{name}\" {'finished' if ok else 'FAILED'}.\n\n"
+            f"{body or '(no output)'}")
+
+    def card():
         # notifications_engine lives at the PACKAGE ROOT, not under services/.
         # Getting this wrong is invisible: the ImportError lands in the except
         # below and the task completes looking green with nobody told — which
         # is the exact defect this function exists to fix.
         import agent_friday.notifications_engine as notifications_engine
-        body = (result_text or '').strip()
         lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
-        ok = status not in ('failed', 'error')
         notifications_engine.push(
             title=f"Task {'finished' if ok else 'failed'}: {name}",
             body=lede or ('Finished with no output.' if ok else 'Failed.'),
-            proactive_chat=True,
-            chat_message=(
-                f"Background task **{name}** {'finished' if ok else 'FAILED'}.\n\n"
-                f"{lede or '(no output)'}"
-            ),
+            emitter='E02', dedupe_key=f'task-done:{task_id}',
             target={"kind": "task", "id": task_id},
         )
+
+    def chat_line():
+        from agent_friday.services import conversations as _cv
+        from agent_friday.services import notice_registry as _nreg
+        _nreg.transcript_add('E77', _cv.resolve(cid), {"role": "friday", "text": text, "pinned": False,
+                                                       "meta": {"kind": "task_result", "task_id": task_id,
+                                                                "status": status}})
+
+    try:
+        # One delivery, chosen by where the owner is: in a call it is spoken, in an
+        # open chat it is one line, otherwise it waits in the panel's Updates.
+        from agent_friday.services import notice_registry as _nreg
+        _nreg.deliver_completion(cid, text=text, panel=card, chat=chat_line)
     except Exception as ne:
         try:
             _task_log(task_id, f'Completion notice could not be sent: {ne}')
         except Exception:
             pass
-    _post_task_result_to_conversation(task_id, name, status, result_text)
 
 
 def _task_pinned(task_id) -> bool:
     """Was this task spawned pinned to its local seat?"""
     with TASKS_LOCK:
         return bool((TASKS.get(task_id) or {}).get('pin_to_seat'))
-
-
-def _post_task_result_to_conversation(task_id, name, status, result_text):
-    """Land a finished task's outcome in the conversation that asked for it.
-
-    The notification above reaches whichever chat is open; the result also
-    belongs in the transcript of the conversation the task was spawned from
-    (a voice call's, via delegate_to_friday, included), and a voice call that
-    is still up on that conversation is handed it to say aloud
-    (services/voice_live_channel). Best-effort, never silent: a failure is
-    written to the task's own log.
-    """
-    cid = None
-    try:
-        cid = _task_conversation_id(task_id)
-    except Exception:
-        cid = None
-    if not cid:
-        return
-    body = (result_text or '').strip()
-    ok = status not in ('failed', 'error')
-    text = (f"Background task \"{name}\" {'finished' if ok else 'FAILED'}.\n\n"
-            f"{body or '(no output)'}")
-    try:
-        from agent_friday.services import conversations as _cv
-        _cv.append(_cv.resolve(cid), {"role": "friday", "text": text, "pinned": False,
-                                      "meta": {"kind": "task_result", "task_id": task_id,
-                                               "status": status}})
-    except Exception as ce:
-        try:
-            _task_log(task_id, f'Result could not be posted to its conversation: {ce}')
-        except Exception:
-            pass
-    try:
-        from agent_friday.services import voice_live_channel as _vlc
-        _vlc.deliver(cid, text, kind="task_result")
-    except Exception:
-        pass
 
 
 def _spawn_task(name, prompt, description='', on_complete=None,
@@ -7517,6 +7874,7 @@ CLAUDE_TOOLS.append({
 })
 
 
+@_cloud_intent.owner_request("creative_image")
 def _tool_generate_image(inp):
     """Generate an image via Gemini (Nano Banana) and save it to creations."""
     from agent_friday.services.creative_engine import generate_image
@@ -7539,6 +7897,7 @@ def _tool_generate_image(inp):
     return _creative_result_summary(res, "image")
 
 
+@_cloud_intent.owner_request("creative_video")
 def _tool_generate_video(inp):
     """Generate a video via Google Veo and save it to creations."""
     from agent_friday.services.creative_engine import generate_video
@@ -7556,6 +7915,7 @@ def _tool_generate_video(inp):
     return _creative_result_summary(res, "video")
 
 
+@_cloud_intent.owner_request("creative_music")
 def _tool_generate_music(inp):
     """Generate music via Lyria 3 and save it to creations."""
     from agent_friday.services import music_engine
@@ -7827,6 +8187,58 @@ def _hub_chat(conversation_id=None) -> bool:
         return False
 
 
+#: Tools that exist only for a cloud model handing work to this PC (CS-1).
+_CLOUD_ONLY_TOOLS = frozenset({"submit_work_order", "work_order_status"})
+
+
+#: Cloud work orders. Declared to a model only while `work_orders_enabled` is on (default off),
+#: only to a cloud model, and only when a turn names its provider. The handlers and the gate
+#: entries stay registered (and refuse while off).
+WORK_ORDER_TOOLS = [
+    {"name": "submit_work_order", "description": "Hand this PC a plan to carry out locally. You refer to private material only by the opaque handles you were given, never by content. Friday validates it, sets the privacy class herself and queues it for her local models; you hear a status, and anything private stays on the PC. Writes are only ever proposals the owner reviews.",
+     "input_schema": {"type": "object", "properties": {
+         "goal": {"type": "string", "description": "What the work is, plainly, under 500 characters. It is read as a request description, not as instructions."},
+         "inputs": {"type": "array", "items": {"type": "string"}, "description": "Handles (h_...) issued in this conversation."},
+         "constraints": {"type": "object", "description": "max_steps and tools_allowed (verbs from the allowed list). deadline_s is honoured only for public material."},
+         "acceptance": {"type": "array", "items": {"type": "object"}, "description": "Checks the local side runs, e.g. {check: count_at_least, value: 1}."},
+         "output_schema": {"type": "object", "description": "Field name to type: string, number, integer, boolean, list, object."},
+         "priority": {"type": "string", "enum": ["now", "when_idle"], "description": "now, or when_idle for background."},
+         "writes": {"type": "array", "items": {"type": "object"}, "description": "Write intents {target: wiki, op, handle, summary}. Each becomes a wiki proposal the owner reviews, written from the local reading, never a direct write."}},
+         "required": ["goal"]}},
+    {"name": "work_order_status", "description": "Check a work order you submitted: queued, working or finished (reported on a fixed schedule, not when the work ends; finished says nothing about whether it succeeded), with only the return the owner's privacy class allows (counts, a PII-free summary the owner approved, or just a handle to a result that stays on the PC).",
+     "input_schema": {"type": "object", "properties": {
+         "order_id": {"type": "string", "description": "The order_id submit_work_order returned."}},
+         "required": ["order_id"]}}
+]
+
+
+def _work_orders_enabled():
+    try:
+        return bool((_load_settings() or {}).get("work_orders_enabled"))
+    except Exception:
+        return False
+
+
+def _work_orders_switched_off():
+    """The switch is off. If work orders were ever used in this process, cancel what is still
+    open (with a notice). Costs nothing otherwise: it does not import the module or read a store."""
+    import sys as _sys
+    wo = _sys.modules.get("agent_friday.services.work_orders")
+    if wo is not None:
+        try:
+            wo.enforce_switch()
+        except Exception:
+            pass
+
+
+def _without_cloud_only(tools, local=True):
+    """The catalogue a local model is shown: no cloud-only tools. The handlers
+    still refuse a local caller; this keeps them out of its tool list too."""
+    if not local:
+        return tools
+    return [t for t in tools if t.get("name") not in _CLOUD_ONLY_TOOLS]
+
+
 def tools_for_workspace(workspace=None, base=None, conversation_id=None):
     """The catalogue for one turn: the always-on tools, the front workspace's
     own, and the hub's when the chat is in the hub. A tool outside the turn's
@@ -7834,7 +8246,20 @@ def tools_for_workspace(workspace=None, base=None, conversation_id=None):
     extra = list(WORKSPACE_TOOLS.get(str(workspace or ""), []))
     if str(workspace or "") != "hub" and _hub_chat(conversation_id):
         extra += [t for t in WORKSPACE_TOOLS.get("hub", []) if t not in extra]
-    return list(CLAUDE_TOOLS if base is None else base) + extra
+    if _work_orders_enabled():
+        extra += [t for t in WORK_ORDER_TOOLS if t not in extra]
+    else:
+        _work_orders_switched_off()
+    out = list(CLAUDE_TOOLS if base is None else base) + extra
+    prov = _CURRENT_PROVIDER.get()
+    if prov is not None:
+        from agent_friday.services import slice_head
+        out = _without_cloud_only(out, local=slice_head.is_local(prov))
+    else:
+        # No provider known (a path that never set one): the cloud-only tools stay
+        # hidden. A turn that names a cloud provider is the only one offered them.
+        out = _without_cloud_only(out, local=True)
+    return out
 
 
 CLAUDE_TOOL_HANDLERS = {
@@ -7880,6 +8305,10 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate_to": _tool_navigate_to,
     "check_situation": _tool_check_situation,
     "queue_status": _tool_queue_status,
+    "request_context": _tool_request_context,
+    "why_that_plan": _tool_why_that_plan,
+    "submit_work_order": _tool_submit_work_order,
+    "work_order_status": _tool_work_order_status,
     "set_workspace_layout": _tool_set_workspace_layout,
     "show_my_day": _tool_show_my_day,
     "set_chat_tray": _tool_set_chat_tray,
@@ -8299,6 +8728,9 @@ TOOL_RINGS: dict[str, int] = {
     "navigate_to":          1,
     "check_situation":      0,   # reads state the server already holds
     "queue_status":         0,   # reads the Local AI queue, labels only
+    "why_that_plan":        0,   # reads the turn receipt (names, sizes, tiers)
+    "submit_work_order":    2,   # queues local work; checks, fences and fixes the privacy class itself
+    "work_order_status":    0,   # reads the order's status
     # Lays out the owner's own screen and remembers it; ring 1 like navigate_to.
     "set_workspace_layout": 1,
     # Shows the start screen's cluster, or sets when it shows; the owner's own screen.
@@ -8352,6 +8784,10 @@ TOOL_RINGS: dict[str, int] = {
     "get_article_deep_dive": 2,
     "get_source_trust":     2,
     "ask_friday":           2,
+    # Cloud-voice session helpers (services/live_session_plan): widen this
+    # call's own tool list at its next reconnect; say what the call has cost.
+    "more_tools":           1,
+    "call_cost":            0,
     "search_web":           2,
     "search_news":          2,   # fetches the live RSS/Brave feed (network)
     "browse_web":           2,
@@ -8373,6 +8809,7 @@ TOOL_RINGS: dict[str, int] = {
     "spawn_task":           2,
     "delegate_to_friday":   2,   # voice hand-over; spawns a task like spawn_task
     "ask_local_for_context": 2,  # its payload goes out only on the owner's card
+    "request_context":      2,   # the same flow for a text chat: card or existing grant
     "answer_share_request": 2,
     "revise_share_request": 2,
     "search_past_conversations": 2,
@@ -9758,7 +10195,7 @@ CLAUDE_TOOLS.extend([
         "input_schema": {"type": "object", "properties": {
             "person": {"type": "string", "description": "Name or email address."},
             "note": {"type": "string", "description": "What to follow up about."},
-            "due": {"type": "string", "description": "YYYY-MM-DD or an ISO datetime."},
+            "due": {"type": "string", "format": "date-time", "description": "YYYY-MM-DD or an ISO datetime."},
             "in_days": {"type": "integer", "description": "Alternative to due; default 3."},
         }, "required": ["person"]},
     },
@@ -10715,6 +11152,12 @@ TOOL_RINGS.update({"plan_first": 1, "plan_approve": 1, "plan_milestone": 1})
 # services/capability_preflight.py owns the declared inventory and the reason
 # each entry exists. Optional-by-design capabilities (Presidio, torch) never
 # reach missing_tools() — they withhold nothing.
+#
+# _WITHHELD_RINGS keeps the ring each withheld tool was declared with. It
+# grants nothing (the tool has no handler and no TOOL_RINGS entry); it lets
+# tool_catalogue describe the tool the same way on every machine, so a ring-3
+# tool is never described as a harmless ring-2 one where it is withheld.
+_WITHHELD_RINGS: dict[str, int] = {}
 try:
     from agent_friday.services import capability_preflight as _cap_preflight
     _WITHHELD_TOOLS = _cap_preflight.missing_tools()
@@ -10723,7 +11166,9 @@ try:
                            if t.get("name") not in _WITHHELD_TOOLS]
         for _wt in _WITHHELD_TOOLS:
             CLAUDE_TOOL_HANDLERS.pop(_wt, None)
-            TOOL_RINGS.pop(_wt, None)
+            _wr = TOOL_RINGS.pop(_wt, None)
+            if _wr is not None:
+                _WITHHELD_RINGS[_wt] = _wr
         print("  [CAPABILITY] withheld %d tool(s) with missing dependencies: %s"
               % (len(_WITHHELD_TOOLS), ", ".join(sorted(_WITHHELD_TOOLS))))
     for _line in _cap_preflight.report():
@@ -10812,6 +11257,16 @@ try:
 except Exception as _cte:  # never let optional deps break the agent import
     print(f"  [CALL] registration skipped: {_cte}")
 
+# Laya beside a cloud voice call (live_laya): what the call sent Google, and
+# whether she acts on her own during calls. Typed chat calls the tool; on a
+# call Laya's own reflex layer hears both questions (the Live declarations have
+# no token budget left for another tool). See services/live_laya.py.
+try:
+    from agent_friday.services import live_laya as _live_laya
+    _live_laya.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _llte:  # never let optional deps break the agent import
+    print(f"  [LIVE LAYA] registration skipped: {_llte}")
+
 # File access (file_access): list, ask for, remove and re-grant file
 # permissions. Asking raises one approval card; the grant itself is created only
 # when the owner approves that card on screen. Shared into voice. See
@@ -10830,6 +11285,13 @@ try:
     _library_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
 except Exception as _lbe:  # never let optional deps break the agent import
     print(f"  [LIBRARY] registration skipped: {_lbe}")
+
+# The meeting tool (find, expand_notes, remember, jot): on demand, local, reviewable. See services/meeting_tool.py.
+try:
+    from agent_friday.services import meeting_tool as _meeting_tool
+    _meeting_tool.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _mte:  # never let optional deps break the agent import
+    print(f"  [MEETINGS] registration skipped: {_mte}")
 
 # ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
 # and save a provider's output but could not produce speech — narration was a
@@ -10859,6 +11321,37 @@ try:
                                 workspace_tools=WORKSPACE_TOOLS)
 except Exception as _lme:  # never let optional deps break the agent import
     print(f"  [LOCAL-MODEL] registration skipped: {_lme}")
+
+# local_work: what the local models are working on and what waits, and cancel a
+# waiting job. A text tool outside the always-on catalogue (the voice front does
+# not declare it; voice reaches it through the router and ask_friday).
+# See services/queue_tools.py and services/local_scheduler.py.
+try:
+    from agent_friday.services import queue_tools as _queue_tools
+    _queue_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS,
+                          workspace_tools=WORKSPACE_TOOLS)
+except Exception as _qte:  # never let optional deps break the agent import
+    print(f"  [QUEUE] registration skipped: {_qte}")
+
+# What Laya has learned about the owner, and forgetting it (laya_learning): the
+# spoken side of Settings > Laya > What Laya learned. A shared text tool; voice
+# reaches it through the router's hand-off. See services/laya_learning_tools.py.
+try:
+    from agent_friday.services import laya_learning_tools as _laya_learning_tools
+    _laya_learning_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _llte:  # never let optional deps break the agent import
+    print(f"  [LAYA-LEARNING] registration skipped: {_llte}")
+
+# Can voice run locally, measure it, and the cloud voice choice (local_voice_readiness):
+# status, measure, ask "just this call, or always?" and take the answers (just this call,
+# always, switch back, keep cloud) on the owner's own words; the spoken side of
+# Settings > Voice > Local voice. Loaded on demand. See
+# services/local_voice_tools.py and services/local_voice_readiness.py.
+try:
+    from agent_friday.services import local_voice_tools as _local_voice_tools
+    _local_voice_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _lvte:  # never let optional deps break the agent import
+    print(f"  [LOCAL-VOICE] registration skipped: {_lvte}")
 
 
 _GOVERNANCE_KEY: bytes | None = None
@@ -11459,6 +11952,18 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     # other than the owner (services: phone) acts only on a number that
     # appears here, never on one the model found in something it read.
     ctx["owner_text"] = str(message or "")[:4000]
+    try:                         # the typed learning controls work with the chat router off, too: but only for a
+        from agent_friday.core import _is_local_request   # page on this PC (a relay, a phone, a channel or a task is not)
+        from flask import request as _flask_request
+        from agent_friday.services import screen_click as _sc_ctl
+        # armed only by a click on Friday's own page carrying the page's session token: a local script or an
+        # injected command holding the token is not the owner's page
+        if (_is_local_request() and _sc_ctl.screen_session(_flask_request) and not ctx.get("is_background_task")
+                and not ctx.get("origin") and not ctx.get("task_id")):
+            from agent_friday.services import laya_personal as _lp_ctl
+            _lp_ctl.note_control_utterance(message, conversation_id)
+    except Exception:
+        pass
     if not session_id:
         return ctx
     session_id = ctx["confirmation_key"]
@@ -11510,6 +12015,25 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
                 entry["awaiting_reply"] = False
                 entry["granted"] = False
     return ctx
+
+
+def disarm_pending(session_id, conversation_id=None):
+    """The conversation moved on: no pending question stays armed for a later yes.
+
+    The effect of ``prepare_confirmation_ctx`` on a message that is not a yes, for a turn answered
+    without it (a Laya instant reply, whose own question a yes would otherwise be taken to answer
+    through an older card). Entries stay stored; none is awaiting a reply or granted."""
+    key = f"conversation:{conversation_id}" if conversation_id else session_id
+    if not key:
+        return 0
+    n = 0
+    with _PENDING_LOCK:
+        for entry in (_PENDING_CONFIRMATIONS.get(key) or {}).values():
+            if entry.get("awaiting_reply") or entry.get("granted"):
+                n += 1
+            entry["awaiting_reply"] = False
+            entry["granted"] = False
+    return n
 
 
 def resume_confirmed_action(session_ctx):
@@ -11636,6 +12160,7 @@ def _task_log_tool(session_ctx, name, args):
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import tool_args as _tool_args
+from agent_friday.services import call_verifier as _call_verifier
 from agent_friday.services import tool_output as _tool_output
 from agent_friday.services import setting_proposals as _setting_proposals  # registers the card hook  # noqa: F401
 
@@ -11810,7 +12335,25 @@ def _bind_browser_dispatch(fn):
     return dispatch
 
 
+def _learn_facts(session_ctx) -> dict:
+    """What the router's learning hooks need to know about one tool call, from the call's own session
+    context: its conversation, its taint ledger key, the background task that made it, whether Laya's own
+    router chose it (``routed``) and whether it comes from a context that is never the owner's (a crew
+    agent, a paired phone: ``unsafe``)."""
+    sc = session_ctx or {}
+    tid = sc.get("task_id")
+    return {"cid": (sc.get("conversation_id") or sc.get("conversation")) or None,
+            "key": _taint_mod.ledger_key(session_ctx),
+            "task_id": str(tid) if tid else None,
+            "routed": str(sc.get("chosen_by") or "").startswith("laya_router:"),
+            "unsafe": bool(sc.get("crew_agent_id") or sc.get("origin") == "phone")}
+
+
+from agent_friday.services import live_laya as _live_laya
+
+
 @_bind_browser_dispatch
+@_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -11868,8 +12411,22 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         name, tool_input if tool_input is not None else {}, _schema_for_tool(name))
     if _arg_error:
         _receipts.record(name, ok=False, denied=True, detail="invalid arguments")
+        _call_verifier.receipt(name, _checked, "verifier_fixit", "invalid arguments", session_ctx)
         return _arg_error
     tool_input = _restore_placeholders(_checked or {}, pii_lookup)
+    # The pre-execution verifier (services/call_verifier): a call that cannot
+    # work comes back as a fix-it message, a repeat of a read this turn comes
+    # back as the earlier result, and anything that should make the owner
+    # think twice rides on ctx.meta to _hook_call_verifier. It never approves.
+    _vout = _call_verifier.preflight(name, tool_input, schema=_schema_for_tool(name),
+                                     session_ctx=session_ctx)
+    if _vout.stops:
+        _call_verifier.receipt(name, tool_input, "verifier_" + _vout.kind,
+                               _vout.message.splitlines()[0] if _vout.message else _vout.kind,
+                               session_ctx)
+        if _vout.kind != "cached":
+            _receipts.record(name, ok=False, denied=True, detail=_vout.message)
+        return _vout.message
     # The gate and handler must act on the same codebase even if the chat is
     # rebound while its turn runs. Pin implicit scope before every pre-hook.
     if name in ("codebase_edit", "codebase_undo", "codebase_read", "codebase_understand") and not str(tool_input.get("codebase_id") or "").strip():
@@ -11903,6 +12460,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         ctx.admission = lambda: _host_action_denial(name,
             dict(ctx.session_ctx or {}, _crew_host_origin=_host_origin))
     ctx.meta["t_start"] = _time.time()
+    ctx.meta["verifier"] = _vout
 
     # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
     # A DENY short-circuits; the deny message is what the model sees as the result.
@@ -11929,6 +12487,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     except Exception:
         pass
 
+    _learn = None
+    _turn_tok = None
     try:
         # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
         # tool that spawns background work had no way to say where that work
@@ -11943,6 +12503,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # handler raises (the email card is created inside draft_email).
         _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
         _ktok = _taint_mod.CURRENT_KEY.set(_taint_mod.ledger_key(session_ctx))
+        # What the router's learning hook needs to know about THIS call, read here because the context
+        # variables are reset when the handler returns (the caller's values would be read after that).
+        _learn = _learn_facts(session_ctx)
         # The owner's decision behind this call, as the hooks established it
         # (approved card, grant, or a chat yes to exactly this call). A handler
         # whose action needs one checks it again before acting.
@@ -11958,6 +12521,19 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # (salon spec §4.7).
         _kp_tok = _CURRENT_KEY_PROFILE.set(str(_sc.get("key_profile") or ""))
         _origin_tok = _CURRENT_ORIGIN.set(str(_sc.get("origin") or ""))
+        # The turn this call belongs to, for the turn receipt. A typed turn already named itself
+        # (turn_plan.begin_turn). A spoken turn carries its id in the call's context, a Live tool call gets
+        # one of its own, and a background task is "task-<id>": none of them is left without a receipt id.
+        try:
+            from agent_friday.services import off_record as _off_rec
+            from agent_friday.services import turn_plan as _tp_mod
+            if not _tp_mod.current_turn_id() and not _off_rec.active():
+                _tid = (_sc.get("turn_id") or (("task-%s" % _sc["task_id"]) if _sc.get("task_id") else None)
+                        or (("live-" + uuid.uuid4().hex[:12]) if _sc.get("surface") == "voice-live" else None))
+                if _tid:
+                    _turn_tok = _tp_mod._current.set(str(_tid))
+        except Exception:
+            _turn_tok = None
         # The loop that is running knows what it talks to; the session's
         # provider is the ROUTED intent, built once and stale after a
         # local-to-cloud fallback. The loop wins; the session only fills in
@@ -11982,6 +12558,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _CURRENT_SURFACE.reset(_surface_tok)
             _CURRENT_KEY_PROFILE.reset(_kp_tok)
             _CURRENT_OWNER_TEXT.reset(_owner_tok)
+            if _turn_tok is not None:
+                try:
+                    _tp_mod._current.reset(_turn_tok)
+                except ValueError:
+                    pass
             _gate_mod.DECIDED.reset(_dtok)
             _taint_mod.CURRENT_KEY.reset(_ktok)
             _taint_mod.CURRENT.reset(_ttok)
@@ -12008,6 +12589,17 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=False, denied=True, detail=result)
     else:
         _receipts.record(name, ok=True)
+        try:  # a tool that resolved a routed ask or defer is a router correction
+            from agent_friday.services import laya_router_learn as _llearn
+            from agent_friday.services import slice_head as _sh
+            if _learn is not None:
+                _lk = _learn["key"]
+                _llearn.note_executed(
+                    name, ctx.input, ok=True, actor="brain",
+                    tainted=True if _learn["unsafe"] else (lambda: _sh.is_tainted(_lk)),
+                    conversation_id=_learn["cid"], task_id=_learn["task_id"], routed=_learn["routed"])
+        except Exception:
+            pass
 
     # Cap result size to prevent token explosion in the model context window.
     # The cut keeps the part that matters for the kind of tool (start of a
@@ -12121,6 +12713,8 @@ def _hook_confirmation_gate(ctx):
         _state = _record_pending_confirmation(_sid, name, ctx.input, turn=_turn)
         _asks = int((_state or {}).get("asks") or 1)
         _q = _confirmation_question(name, ctx.input)
+        if _meta.get("verifier_note"):
+            _q = f"{_q} ({_meta['verifier_note']})"
 
         if _asks == 1:
             return _hooks.DENY(
@@ -12142,6 +12736,99 @@ def _hook_confirmation_gate(ctx):
         return _hooks.DENY(_escalate_confirmation(
             _sid, name, ctx.input, _fp, _q, session_ctx=session_ctx))
     return _hooks.ALLOW
+
+
+def _hook_call_verifier(ctx):
+    """The verifier's reasons to ask, turned into a question or a card. Pre,
+    priority 5: after the governance checkpoint (1), before the confirmation
+    gate (10).
+
+    ESCALATE-ONLY. It runs only on a call governance let through, and it can do
+    exactly two things: mark the call for the confirmation gate (the ask-first
+    chat flow, which raises its own card on a second ask) or, when nobody is in
+    the chat, raise an approval card and hold. It never sets `owner_decided`,
+    never clears a flag another gate set, and steps aside for a call the owner
+    already decided on a card. A grant the owner made covers the action, not an
+    instruction a page slipped in, so only the injection reason survives one.
+    """
+    vout = (ctx.meta or {}).get("verifier")
+    reasons = list(getattr(vout, "escalate", None) or [])
+    if not reasons:
+        return _hooks.ALLOW
+    meta = ctx.meta
+    if meta.get("approved_card") or meta.get("taint_card_approved"):
+        return _hooks.ALLOW
+    if meta.get("owner_decided"):
+        reasons = [r for r in reasons if r[0] == "injection"]
+        if not reasons:
+            return _hooks.ALLOW
+    text = "; ".join(why for _code, why in reasons)
+    sc = ctx.session_ctx
+    if meta.get("gov_confirm"):
+        # The owner is being asked anyway; the reasons ride along in the question.
+        meta["verifier_note"] = text
+        _call_verifier.receipt(ctx.tool_name, ctx.input, "verifier_note", text, sc)
+        return _hooks.ALLOW
+    _sid = (sc or {}).get("confirmation_key") or (sc or {}).get("session_id")
+    if _sid and not _confirmation_bypassed(sc):
+        meta["gov_confirm"] = True
+        meta["verifier_note"] = text
+        _call_verifier.receipt(ctx.tool_name, ctx.input, "verifier_ask", text, sc)
+        return _hooks.ALLOW
+    return _verifier_card(ctx, text)
+
+
+def _verifier_card(ctx, why_text):
+    """Hold a call the verifier wants the owner to see, on an approval card.
+    One card per exact call; an approved card carries the call out through the
+    card executor, so a retry by the model is told so rather than run twice."""
+    name, inp = ctx.tool_name, ctx.input or {}
+    fp = _taint_mod.fingerprint(name, inp)
+    subject = f"verifier:{_taint_mod.ledger_key(ctx.session_ctx)}:{fp}"
+    try:
+        from agent_friday.services import approvals as _appr
+        rec = _appr.find_for_subject("tool_action", subject, "tool_confirm")
+        if (rec is None or rec.get("status") == "expired"
+                or (rec.get("consumed") and rec.get("status") != "approved")):
+            if rec is not None:
+                subject = f"{subject}:{uuid.uuid4().hex[:6]}"
+            rec = _appr.create_approval(
+                kind="tool_confirm", subject_type="tool_action", subject_id=subject,
+                title=_taint_title(name, inp),
+                action_description=f"{name} {json.dumps(inp, default=str)[:600]}",
+                description=f"Held for your yes: {why_text}.",
+                force_gate=True,
+                payload=_approval_tool_payload(name, inp, ctx.session_ctx),
+                action_class=_gate_policy_class(name, inp),
+                requested_by="call_verifier")
+        status = rec.get("status")
+    except Exception as e:
+        _log.warning("verifier card unavailable: %s", e)
+        _call_verifier.receipt(name, inp, "verifier_hold", f"card unavailable: {why_text}", ctx.session_ctx)
+        return _hooks.DENY(
+            f"[VERIFIER HOLD] '{name}' was NOT executed: {why_text}. The approval card "
+            f"could not be created ({e}). Tell the user what you were about to do.")
+    _call_verifier.receipt(name, inp, "verifier_hold", why_text, ctx.session_ctx)
+    if status in ("denied", "blocked"):
+        return _hooks.DENY(
+            f"[DECLINED] The user declined '{name}' with these details on an approval "
+            f"card. It was NOT executed. Do not retry it.")
+    if status == "approved":
+        return _hooks.DENY(
+            f"[VERIFIER HOLD] '{name}' was approved on its card and is handled by the "
+            f"card executor. Do not retry it or claim an outcome without its result.")
+    return _hooks.DENY(
+        f"[VERIFIER HOLD] '{name}' was NOT executed: {why_text}. An approval card is "
+        f"waiting for the owner (Approvals card, System workspace). Do not retry it; "
+        f"tell the user what you were about to do and why it needs their yes.")
+
+
+def _hook_verifier_record(ctx, result):
+    """Tell the verifier what a tool returned (cache, failure streak, ids seen,
+    instructions in the text). Post, priority 99: after the PII scrub, so the
+    cache holds exactly what the model was shown. Never changes the result."""
+    _call_verifier.record_result(ctx.tool_name, ctx.input, result, ctx.session_ctx)
+    return result
 
 
 def _resolve_escalated_card(approval_id, name, tool_input):
@@ -12237,7 +12924,8 @@ def _approval_tool_payload(name, tool_input, session_ctx):
     """Keep a deferred action bound to the Crew authority that requested it."""
     sc = session_ctx or {}
     payload = {"tool": name, "input": tool_input,
-                "conversation_id": sc.get("conversation_id") or ""}
+                "conversation_id": sc.get("conversation_id") or "",
+                "task_id": sc.get("task_id") or ""}
     from agent_friday.services.crew_profiles import BROWSER_TOOLS
     if name in BROWSER_TOOLS:
         from agent_friday.services.browser_authority import approval_owner
@@ -12840,6 +13528,10 @@ def _register_builtin_tool_hooks():
     # governance check, so it can be neither switched off nor fail open.
     _hooks.register_pre_hook(_hook_confirmation_gate, name="confirmation_gate",
                              priority=10, critical=True)
+    # Not critical: it can only add a question, so a failure here is the
+    # behaviour before it existed, never a lockout. Switchable under tool_hooks.
+    _hooks.register_pre_hook(_hook_call_verifier, name="call_verifier",
+                             priority=5)
     _hooks.register_pre_hook(_hook_vault_zt, name="vault_zt",
                              priority=25, critical=True)
     _hooks.register_pre_hook(_hook_sandbox_policy, name="sandbox_policy",
@@ -12849,6 +13541,8 @@ def _register_builtin_tool_hooks():
     _hooks.register_post_hook(_hook_cost_attribution, name="cost_attribution",
                               priority=80)
     _hooks.register_post_hook(_hook_audit_log, name="audit_log", priority=90)
+    _hooks.register_post_hook(_hook_verifier_record, name="call_verifier_record",
+                              priority=99)
     _hooks.register_post_hook(_hook_pii_scrub, name="pii_scrub", priority=95)
     _hooks.register_post_hook(_hook_file_grant_registration,
                               name="file_grant_registration", priority=96,
@@ -13448,6 +14142,8 @@ _TOOL_DENY_SENTINELS = (
     # decided, which is how an itinerary that never existed looked like one that
     # did. Adding a refusal message means adding it here in the same edit.
     "[BLOCKED", "[GOVERNANCE HOLD]", "[DECLINED]", "[NOT RUN]",
+    # The verifier's own refusals (services/call_verifier.SENTINELS).
+    "[VERIFIER FIX]", "[VERIFIER LOOP]", "[VERIFIER HOLD]",
 )
 
 #: Raised a card and stopped. NOT a denial -- nobody refused it, and it may yet
@@ -13459,7 +14155,8 @@ _TOOL_PENDING_SENTINELS = ("[APPROVAL CARD RAISED]",)
 # 'ok', so a failure prefix missing from this tuple is a failed call reporting
 # itself as a success — which is the exact defect the receipts work exists to
 # remove. Changing a failure message means updating this tuple in the same edit.
-_TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED")
+_TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED",
+                          "INVALID ARGUMENTS")
 
 
 def _tool_call_status(result):
@@ -13634,9 +14331,18 @@ def _ledger_model_invocation(model, provider, seat, duration_ms, tokens_in,
             orb_id=orb_id,
             task_id=(session_ctx or {}).get("task_id"),
             workspace=(session_ctx or {}).get("workspace"),
+            turn_id=_current_turn_id(),
         )
     except Exception:
         pass
+
+
+def _current_turn_id():
+    try:
+        from agent_friday.services import turn_plan as _tp
+        return _tp.current_turn_id()
+    except Exception:
+        return None
 
 
 def _no_empty_text(messages):
@@ -13832,6 +14538,8 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     # for it (services/local_only_guard.cloud_pinned).
     from agent_friday.services.local_only_guard import apply_pin, refuse_if_active
     refuse_if_active("anthropic", str(model or ""))
+    # The choke point: a local mode reaches Claude only with a recorded intent.
+    _cloud_intent.require("anthropic", "agent loop (Claude)", str(model or ""))
     model = apply_pin("anthropic", model)
     _crew = (session_ctx or {}).get("crew_binding")
     if _crew and (_crew.get("provider") != "anthropic" or _crew.get("model") != model):
@@ -15428,12 +16136,16 @@ ON_DEMAND_TOOLS = (
     "search_library",        # the Library: labelled passages from the owner's documents
     "library_status",
     "library_show",
+    "meeting",               # recorded meetings: find, expand the notes pad, offer what to remember, jot a bullet
     "show_files_3d",         # the one 3D file browser: a lens and a lit search, on screen
+    "add_knowledge",         # "add my Obsidian vault": the folder window and what to offer; a card adds
     "notifications",         # the tray: read, clear, mute
     "local_models_advise",   # Settings > Models: what this PC can run
     "hand_cursor",           # the hand cursor and big mode, by voice
     "big_mode",
     "hologram_window",       # the hologram window's depth, by voice
+    "local_voice_readiness",  # can voice run locally; measure it when idle; ask and take the cloud voice answers (only on the owner's own words)
+    "laya_learning",         # what Laya learned from the owner's corrections; forget, reset, roll back
 )
 WORKSPACE_TOOLS.setdefault("on_demand", []).extend(
     t for t in CLAUDE_TOOLS if isinstance(t, dict) and t.get("name") in ON_DEMAND_TOOLS)

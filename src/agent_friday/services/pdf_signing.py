@@ -372,7 +372,8 @@ def sign_approved(approval_id: str, actor: str = "owner") -> dict:
 def _notify(title: str, body: str, kind: str = "info") -> None:
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title=title, body=body, priority="medium", kind=kind, source="pdf_signing")
+        ne.push(title=title, body=body, priority="medium", kind=kind, source="pdf_signing",
+                emitter="E47", dedupe_key="pdf_signing:" + kind)
     except Exception as e:
         _log.warning("could not notify (%s): %s", title, e)
 

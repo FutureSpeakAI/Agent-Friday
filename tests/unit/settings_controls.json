@@ -541,7 +541,7 @@
   ],
   "route": "POST /api/settings",
   "reader_file": "src/agent_friday/routing/model_router.py",
-  "reader_needle": "return self.config.get(\"mode\", \"cloud_only\")",
+  "reader_needle": "mode = self.config.get(\"mode\", \"cloud_only\")",
   "status": "ok",
   "note": "core._save_settings drops any mode change that does not carry owner_routing_change, and this is the only caller that sets it. Also written by setup chat/wizard (not Settings). Read on every turn by routing/model_router.ModelRouter.mode."
  },
@@ -2113,6 +2113,20 @@
  {
   "section": "Voice",
   "panel": "Voice & Tracking",
+  "label": "Trim what each call carries",
+  "kind": "three buttons (off, measure only, trim)",
+  "keys": [
+   "voice_live_trim"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/live_session_plan.py",
+  "reader_needle": "(settings or {}).get(\"voice_live_trim\")",
+  "status": "ok",
+  "note": "Gemini mode only. Measure only (the default) sends today's session and logs counts on this PC."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
   "label": "Use tools while talking",
   "kind": "toggle",
   "keys": [
@@ -3346,6 +3360,34 @@
   "reader_needle": "laya_pilot.snapshot()",
   "status": "ok",
   "note": "Read-only refresh."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Instant answers (no model)",
+  "label": "Run a plain yes to a waiting question right away",
+  "kind": "toggle",
+  "keys": [
+   "reflex_approval_replies"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/reflex_chat.py",
+  "reader_needle": "reflex_approval_replies",
+  "status": "ok",
+  "note": "Default on: the outcome is the one the ordinary turn gives, without a model round."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Instant answers (no model)",
+  "label": "Open it right away / Ask the model every time",
+  "kind": "choice",
+  "keys": [
+   "reflex_open_enabled"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/reflex_chat.py",
+  "reader_needle": "reflex_open_enabled",
+  "status": "ok",
+  "note": "Opt-in, unchosen until picked; the recommended choice is labelled, never preselected."
  },
  {
   "section": "Privacy & Data",

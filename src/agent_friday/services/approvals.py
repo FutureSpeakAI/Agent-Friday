@@ -101,6 +101,11 @@ DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 #: "yes" must never be what lets a file's contents reach a cloud model. The
 #: bare "owner" label is NOT a click: it is the default of every in-process
 #: caller, so only the explicit "owner:ui" the page sends counts.
+#: Who may APPROVE a card Laya raised herself (payload.origin == "laya_safe_write"): the Approve button on the
+#: screen, or the owner's voice through the sealed-line and naming rules (local_context.decide_by_voice). Not a text
+#: message, not a typed reply, not any other channel; declining is open to every channel.
+LAYA_CARD_APPROVERS = frozenset({"owner:ui", "owner:/voice/"})
+
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
@@ -109,6 +114,13 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "library_add_request": frozenset({"owner:ui"}),
     "library_remove_request": frozenset({"owner:ui"}),
     "library_forget_request": frozenset({"owner:ui"}),
+    # Loosening one of Laya's learned thresholds (services/laya_personal_fit, swot spec
+    # decision 15): only the owner, per head, by a click on the report card. A spoken "yes"
+    # can never be the owner token that lets learning act on less than the shipped value.
+    "laya_threshold": frozenset({"owner:ui"}),
+    # Wiping everything Laya learned (services/laya_personal_fit): irreversible, so a click on the
+    # screen only; the spoken phrase opens the report card, never the deletion.
+    "laya_wipe_request": frozenset({"owner:ui"}),
 }
 
 
@@ -643,6 +655,9 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
         if decision == "approve" and screen_only is not None and decided_by not in screen_only:
             return dict(rec), False
+        if (decision == "approve" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
+                and decided_by not in LAYA_CARD_APPROVERS):
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
@@ -654,13 +669,63 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     return out, True
 
 
-def expire_stale() -> int:
-    """Sweep pending approvals past their expiry into 'expired'. Blocked
-    steps STAY BLOCKED — expiry NEVER auto-approves. A card with
-    expiry_paused (A4: owner channel unreachable) is skipped this sweep.
-    Registered as the scheduler builtin 'approvals_expiry_sweep'. Returns
-    the count expired."""
-    now = time.time()
+def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
+    """Why this decision cannot be taken, in words for the page, or '' when nothing stops it. Today: a card Laya
+    raised is approved only from its own Approve button or by the owner's voice."""
+    if decision != "approve":
+        return ""
+    rec = get_approval(approval_id) or {}
+    if (rec.get("status") == "pending" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
+            and decided_by not in LAYA_CARD_APPROVERS):
+        return ("A card Laya raised is approved with its own Approve button in the app, where you see which "
+                "conversations. It cannot be approved from here.")
+    return ""
+
+
+def expire_matching(match, by: str, note: str = "") -> int:
+    """Move every PENDING card for which ``match(record)`` is true to 'expired' (never approves anything) and
+    fire the card hooks. Used when what raised the cards is switched off. Returns how many."""
+    expired: List[Dict[str, Any]] = []
+    with _LOCK:
+        recs = _read_store()
+        for r in recs:
+            if r.get("status") == "pending":
+                try:
+                    hit = bool(match(r))
+                except Exception:
+                    hit = False
+                if hit:
+                    r["status"] = "expired"
+                    r["decided_at"] = time.time()
+                    r["decided_by"] = by
+                    r["decision_note"] = note
+                    expired.append(dict(r))
+        if expired:
+            _write_store(recs)
+    for rec in expired:
+        _feed("card_resolved", rec)
+        _fire_hook(rec)
+    return len(expired)
+
+
+def expire_laya_cards() -> int:
+    """Expire every PENDING card Laya's safe writes raised (payload origin ``laya_safe_write``) and nothing else.
+    The one door services/laya_safe_writes has into this module: it takes no card id, no match and no
+    decision, so it can never approve, run or touch any other card. Returns how many expired."""
+    return expire_matching(lambda r: (r.get("payload") or {}).get("origin") == "laya_safe_write",
+                           "system:safe_writes_off", "Laya's safe writes were turned off")
+
+
+def _expire_due(now: float, notify: bool = True) -> List[Dict[str, Any]]:
+    """Move pending cards past their expiry to 'expired' (never approves anything). A card the
+    interruption policy was holding expires on its own clock like any other: holding stops a popup, not
+    time, so the owner's per-class expiry (``approvals_policy``) is never stretched, and a hold never
+    gives a card an expiry it did not have. A card that expires while it was still held back (it never
+    popped open) leaves a notice in Needs you. ``notify=False`` leaves the notices to the caller, which
+    sends them with ``_announce_expired`` once live cards have been judged, so notices about dead cards
+    never use up the hour's budget ahead of a live approval.
+
+    Follow-up (not done): an Updates line for every expired gated card, held or not."""
     expired: List[Dict[str, Any]] = []
     with _LOCK:
         recs = _read_store()
@@ -678,7 +743,146 @@ def expire_stale() -> int:
     for rec in expired:
         _feed("card_resolved", rec)
         _fire_hook(rec)
+    if notify:
+        _announce_expired(expired)
+    return expired
+
+
+def _announce_expired(expired: List[Dict[str, Any]]) -> None:
+    for rec in expired:
+        if rec.get("held_by_policy") or rec.get("hold_capped"):
+            _notify_expired_while_held(rec)
+
+
+def _notify_expired_while_held(rec: Dict[str, Any]) -> None:
+    """Say that an approval's time ran out after it had waited in the badge. A card raised off the record
+    keeps its words out of the notice (and out of notifications.json) whatever the mode is now."""
+    private = bool(rec.get("off_record"))
+    try:
+        import agent_friday.notifications_engine as _ne
+        if private:
+            title = "An off-the-record approval expired before you saw it"
+            body = "It was waiting in your badge and its time ran out. Nothing was done."
+        else:
+            title = "An approval expired before you saw it: %s" % (rec.get("title") or "an action")
+            body = ("It was waiting in your badge while quiet hours, the hourly limit or Focus Assist "
+                    "held it back, and its time ran out. Nothing was done. Ask again if you still want it.")
+        _ne.push(title=title, body=body, priority="medium", source="approvals",
+                 kind="approval_expired_held", tier="needs_you", emitter="NQ3",
+                 dedupe_key="approval-expired:%s" % rec.get("approval_id"), off_record=private)
+    except Exception as e:
+        _log.debug("expiry notice failed: %s", e)
+
+
+def expire_stale() -> int:
+    """Sweep pending approvals past their expiry into 'expired'. Blocked
+    steps STAY BLOCKED — expiry NEVER auto-approves. A card with
+    expiry_paused (A4: owner channel unreachable) is skipped this sweep.
+    Registered as the scheduler builtin 'approvals_expiry_sweep'. Returns
+    the count expired."""
+    now = time.time()
+    expired = _expire_due(now, notify=False)
+    release_held(now)                 # then give the cards whose hold has ended their popup and text
+    _announce_expired(expired)        # and only then the notices about the cards that ran out
     return len(expired)
+
+
+#: How long a card may be held back from popping open. The cap is on the HOLD, never on the card: when
+#: it is reached the card is released into Needs you (quietly) and keeps whatever expiry it had, or none.
+HOLD_CAP_SECONDS = DEFAULT_EXPIRES_SECONDS
+
+
+def _hold(record: Dict[str, Any]) -> None:
+    """A card the interruption policy would not pop open waits in the badge. Its own clock keeps running
+    and is never touched: a hold does not give a card an expiry, move one, or end one."""
+    _patch(record["approval_id"], held_by_policy=True, held_at=time.time())
+
+
+def _release_one(approval_id: str, now: float, capped: bool = False) -> Optional[Dict[str, Any]]:
+    """Clear one hold, only if the card is still pending and still held (checked under the lock, so a
+    card decided a moment ago is never re-announced)."""
+    with _LOCK:
+        recs = _read_store()
+        for r in recs:
+            if r.get("approval_id") != approval_id:
+                continue
+            if r.get("status") != "pending" or not r.get("held_by_policy"):
+                return None
+            r["held_by_policy"] = False
+            r["released_at"] = now
+            if capped:
+                r["hold_capped"] = True
+            _write_store(recs)
+            return dict(r)
+    return None
+
+
+_RELEASE_LOCK = threading.Lock()
+
+
+def release_held(now: Optional[float] = None) -> int:
+    """Tell every page about held cards whose hold has ended (quiet hours over, the hour's budget whole
+    again), so they pop open, and let the text-message offer go out with its age counted from this moment.
+    A card whose time ran out while held expires first and is never released. A hold that has lasted the
+    cap is ended whatever the clock says: the card goes into Needs you without a popup, with its own
+    expiry untouched. One pass at a time: a tick and a page poll that meet do not both judge a card.
+    Returns how many."""
+    now = time.time() if now is None else now
+    if not _RELEASE_LOCK.acquire(blocking=False):
+        return 0
+    released: List[Dict[str, Any]] = []
+    capped: List[Dict[str, Any]] = []
+    expired: List[Dict[str, Any]] = []
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        expired = _expire_due(now, notify=False)
+        with _LOCK:
+            held = [r for r in _read_store() if r.get("status") == "pending" and r.get("held_by_policy")]
+        for r in held:
+            if now - float(r.get("held_at") or now) >= HOLD_CAP_SECONDS:
+                rec = _release_one(r["approval_id"], now, capped=True)
+                if rec:
+                    _ip.forget("approval:%s" % r["approval_id"])
+                    capped.append(rec)
+        if not _ip.hold_reason_now(now) and not _ip.budget_full(now):
+            for r in held:
+                if r.get("hold_capped") or any(c["approval_id"] == r["approval_id"] for c in capped):
+                    continue
+                key = "approval:%s" % r.get("approval_id")
+                _ip.forget(key)
+                if not _ip.verdict("approval_pending", source="approvals", key=key, now=now).interrupt:
+                    continue
+                rec = _release_one(r["approval_id"], now)
+                if rec:
+                    released.append(rec)
+                else:
+                    _ip.forget(key)          # decided a moment ago: its verdict is cleared (a slot it used
+                                             # stays used until the hour rolls over)
+    except Exception as e:
+        _log.debug("release of held approvals failed: %s", e)
+    finally:
+        _RELEASE_LOCK.release()
+    for rec in released:
+        _feed("card_pending", rec)
+    for rec in capped:
+        try:
+            from agent_friday.services import approval_feed
+            approval_feed.card_pending(rec, interrupt=False)      # listed and counted; no popup
+        except Exception as e:
+            _log.debug("capped release feed failed: %s", e)
+    _announce_expired(expired)
+    return len(released) + len(capped)
+
+
+def _may_interrupt(record: Dict[str, Any]) -> bool:
+    """May this card pop open now? Quiet hours, the hour's budget and Focus Assist (when chosen) say
+    no; the card still waits, listed and counted, and is decided exactly as before. Fails open."""
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        return _ip.verdict("approval_pending", source="approvals",
+                           key="approval:%s" % record.get("approval_id")).interrupt
+    except Exception:
+        return True
 
 
 def _feed(name: str, record: Dict[str, Any]) -> None:
@@ -687,10 +891,23 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
     reconnects, and nothing here can fail an approval."""
     try:
         from agent_friday.services import approval_feed
-        getattr(approval_feed, name)(record)
+        if name == "card_pending":
+            interrupt = _may_interrupt(record)
+            if not interrupt:
+                _hold(record)
+            approval_feed.card_pending(record, interrupt=interrupt)
+            from agent_friday.services import notice_registry as _nr
+            _nr.note("E61", interrupt)          # the record of the popup, not a gate on it
+        else:
+            getattr(approval_feed, name)(record)
     except Exception as e:
         _log.warning("approval feed unavailable: %s", e)
     if name == "card_resolved":
+        try:
+            from agent_friday.services import interruption_policy as _ip
+            _ip.forget("approval:%s" % record.get("approval_id"))
+        except Exception:
+            pass
         # A decided or expired card is no longer waiting in the tray. Only
         # its own outcome closes it; nothing else dismisses an approval.
         try:
@@ -742,11 +959,16 @@ def _notify_pending(record: Dict[str, Any]) -> None:
             meta["detail"] = (record.get("action_description") or "")[:300]
     except Exception:
         pass
+    body = (record.get("description") or record.get("action_description") or "")
+    if (record.get("payload") or {}).get("origin") == "laya_safe_write":
+        # A card Laya raised lists subjects, sender names and addresses on its on-screen lines. The notice
+        # (and anything that forwards it) says only what was asked and where to look.
+        body = "Open Friday to see which conversations, and to approve or decline it."
     try:
         _ne.push(
             meta=meta,
             title=f"Approval needed: {record.get('title')}",
-            body=(record.get("description") or record.get("action_description") or "")[:300],
+            body=body[:300],
             priority="medium", source="approvals", kind="approval_pending",
             # `target` is the shape the notification tray's click handler
             # actually navigates on (index.html: `n.target.workspace`); the

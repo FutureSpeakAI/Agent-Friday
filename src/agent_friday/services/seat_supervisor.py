@@ -139,6 +139,7 @@ KIND_LABELS = {
     "runner": "a background job",
     "task": "a background task",
     "podcast": "a podcast episode",
+    "library_index": "reading your folders into the Library",
 }
 
 
@@ -181,6 +182,7 @@ class SeatSupervisor:
         sleep: Callable[[float], None] = time.sleep,
         poll_seconds: float = 0.5,
         brain_resolver: Optional[Callable[[], Optional[str]]] = None,
+        on_assess: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.queue = (queue if queue is not None
                       else _seat_queue_mod.SeatQueue(gate=gate))
@@ -206,6 +208,10 @@ class SeatSupervisor:
         # before paying a cloud provider) lives at the wiring site, and this
         # file keeps its one job, which is who runs next.
         self.on_queued_wait = on_queued_wait
+        # Called once per assess pass, outside the lock: the task registry's
+        # orphan reconciler (agent.reconcile_orphan_tasks), injected for the
+        # same reason as on_queued_wait.
+        self.on_assess = on_assess
         self._records: Dict[str, Dict[str, Any]] = {}
         self._started: set = set()
         self._lock = threading.RLock()
@@ -388,7 +394,7 @@ class SeatSupervisor:
         try:
             return str(self.gate(record) or "")
         except Exception:
-            return ""
+            return _seat_queue_mod.failed_gate_reason(record, "seat_supervisor.running_block_reason")
 
     def wait_while_blocked(self, task_id: str) -> None:
         """The cooperative yield, called before each of a running job's local
@@ -402,7 +408,7 @@ class SeatSupervisor:
         gives the seat to that job and waits at the head of the line, resuming
         when the queue promotes it again. If nothing behind it could run, it
         keeps the seat, so its prompt prefix stays the seat's cache."""
-        from agent_friday.services.background_gate import JobCancelled
+        from agent_friday.services.background_gate import JobCancelled, REASON_INTERACTIVE, REASON_PAUSED
         while True:
             yielded_now = False
             with self._lock:
@@ -426,9 +432,23 @@ class SeatSupervisor:
                     if not reason:
                         if record.pop("paused_reason", None) is not None:
                             record.pop("paused_at", None)
+                        # A slot lent below for a person's turn comes back
+                        # with the job.
+                        reclaim = getattr(self.queue, "reclaim_slot", None)
+                        if reclaim is not None:
+                            reclaim(task_id)
                         return
                     record["paused_reason"] = reason
                     record.setdefault("paused_at", time.time())
+                    # A paused job must not stand in front of the person it is
+                    # waiting for: it lends its slot in the turn queue (the 1.1
+                    # admission queue) and keeps its seat here, and its prompt
+                    # cache with it. A job the owner paused holds nobody back
+                    # either: its slot goes back until they resume it.
+                    if reason in (REASON_INTERACTIVE, REASON_PAUSED):
+                        lend = getattr(self.queue, "lend_slot", None)
+                        if lend is not None:
+                            lend(task_id)
                     yb = getattr(self.queue, "startable_behind", None)
                     if yb is not None and yb(task_id) is not None:
                         self.queue.yield_seat(task_id, reason)
@@ -444,6 +464,24 @@ class SeatSupervisor:
                 self.pump()
             self._sleep(self.poll_seconds)
 
+    def annotate(self, task_id: str, **fields: Any) -> bool:
+        """Set display fields on a live job (its label with progress, a reason it is paused). A ``None``
+        value removes a field. Returns False when the job is gone or was cancelled, so the caller stops."""
+        with self._lock:
+            record = self._records.get(task_id)
+            if record is None or record.get("cancel_requested") or _is_terminal(record.get("status")):
+                return False
+            for k, v in fields.items():
+                if v is None:
+                    record.pop(k, None)
+                else:
+                    record[k] = v
+            if "paused_reason" in fields and fields["paused_reason"] is not None:
+                record.setdefault("paused_at", time.time())
+            elif "paused_reason" in fields:
+                record.pop("paused_at", None)
+        return True
+
     def run_now(self, task_id: str) -> bool:
         """Skip the idle wait for this job. It still runs one at a time and
         still yields to interactive turns."""
@@ -455,6 +493,31 @@ class SeatSupervisor:
                 if rec is not None:
                     rec["run_now"] = True
                     rec["head"] = True
+        self.pump()
+        return True
+
+    def pause(self, task_id: str) -> bool:
+        """The owner's Pause for one job. A queued job is not started until
+        Resume; a running one waits at its next model call (it lets the next
+        job in line have the seat while it waits). Nothing mid-call is cut."""
+        return self._set_paused(task_id, True)
+
+    def resume(self, task_id: str) -> bool:
+        """Undo Pause: the job takes its place in line again."""
+        return self._set_paused(task_id, False)
+
+    def _set_paused(self, task_id: str, paused: bool) -> bool:
+        with self._lock:
+            record = self._records.get(task_id)
+            if record is None or _is_terminal(record.get("status")):
+                return False
+            for rec in (record, self.queue.get(task_id)):
+                if rec is None:
+                    continue
+                if paused:
+                    rec["user_paused"] = True
+                else:
+                    rec.pop("user_paused", None)
         self.pump()
         return True
 
@@ -496,12 +559,19 @@ class SeatSupervisor:
             elif rec.get("paused_reason"):
                 why = rec["paused_reason"]
                 state = "paused"
-            return {"id": tid, "label": str(label)[:80], "kind": kind,
-                    "state": state, "why": why, "seat": rec.get("seat"),
-                    "deferrable": bool(rec.get("deferrable")),
-                    "run_now": bool(rec.get("run_now")),
-                    "queued_at": rec.get("queued_at"),
-                    "merged": int(rec.get("merged") or 0)}
+            row = {"id": tid, "label": str(label)[:80], "kind": kind,
+                   "state": state, "why": why, "seat": rec.get("seat"),
+                   "deferrable": bool(rec.get("deferrable")),
+                   "run_now": bool(rec.get("run_now")),
+                   "paused_by_you": bool(rec.get("user_paused")),
+                   "queued_at": rec.get("queued_at"),
+                   "merged": int(rec.get("merged") or 0),
+                   # Work a person is waiting on (services/visible_jobs): the
+                   # local work scheduler lists it as a job you asked for.
+                   "foreground": bool(rec.get("foreground"))}
+            if isinstance(rec.get("progress"), dict):
+                row["progress"] = dict(rec["progress"])      # counts only: "1,240 of 3,100"
+            return row
         with self._lock:
             running = []
             for tid, rec in self._records.items():
@@ -573,6 +643,23 @@ class SeatSupervisor:
         self.pump()
         return promoted
 
+    def poke(self) -> Optional[str]:
+        """A seat may have become free for background work (no person is
+        running or waiting on it any more): promote what the gate now lets
+        through and start those workers. Called by the turn queue's idle hook
+        and at the top of every supervisor pass."""
+        first = None
+        with self._lock:
+            ready = getattr(self.queue, "promote_ready", None)
+            if ready is not None:
+                ready()
+            while True:
+                promoted = self._sync_promotions()
+                if promoted is None:
+                    break
+                first = first or promoted
+        return first
+
     def _sync_promotions(self) -> Optional[str]:
         """seat_queue promotes on its own copies; sync any newly-running
         queued task back onto the live record and start its thread."""
@@ -597,6 +684,7 @@ class SeatSupervisor:
         if now is None:
             now = time.time()
         events: List[Dict[str, Any]] = []
+        self.poke()
         self._notify_waiting(now)
         with self._lock:
             for task_id, record in list(self._records.items()):
@@ -662,6 +750,11 @@ class SeatSupervisor:
                     self.assess_pass()
                 except Exception:  # pragma: no cover — the loop must never die
                     pass
+                if self.on_assess is not None:
+                    try:
+                        self.on_assess()
+                    except Exception:  # pragma: no cover
+                        pass
                 next_assess = now + self.cadence_seconds
             try:
                 self.pump()
@@ -685,15 +778,33 @@ def spoken_summary(snap: Dict[str, Any]) -> str:
     parts = []
     if running:
         r = running[0]
-        if r.get("state") == "paused":
+        if _is_library_row(r):
+            parts.append(_library_say(r) + ".")
+        elif r.get("state") == "paused":
             parts.append("Running %s, paused: it %s." % (r["label"], r.get("why") or "waits"))
         else:
             parts.append("Running %s." % r["label"])
     if queued:
         q = queued[0]
-        parts.append("%s. Next: %s, which %s." % (_count_words(len(queued)).capitalize(),
-                                                  q["label"], q.get("why") or "waits"))
+        if _is_library_row(q):
+            parts.append("%s. Next: %s." % (_count_words(len(queued)).capitalize(), _library_say(q)))
+        else:
+            parts.append("%s. Next: %s, which %s." % (_count_words(len(queued)).capitalize(),
+                                                      q["label"], q.get("why") or "waits"))
     return " ".join(parts)
+
+
+def _is_library_row(row: Dict[str, Any]) -> bool:
+    return row.get("kind") == "library_index"
+
+
+def _library_say(row: Dict[str, Any]) -> str:
+    """The Library reading a folder, in the words the chip uses (counts and a reason, never a document)."""
+    try:
+        from agent_friday.services.library import index_job
+        return index_job.say_row(row)
+    except Exception:
+        return str(row.get("label") or "Indexing a folder")
 
 
 def tray_tooltip(snap: Optional[Dict[str, Any]], limit: int = 127) -> Optional[str]:

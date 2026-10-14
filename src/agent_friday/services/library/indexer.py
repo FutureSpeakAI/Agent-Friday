@@ -13,12 +13,13 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterable, Iterator
 
 from agent_friday.services.library import extract as _ext
 from agent_friday.services.library import procrun, structure, vectors, withhold
 from agent_friday.services.library.store import INDEX_VERSION, Store, store_for, OWNER
 from agent_friday.services.library.textclean import safe_title
+from agent_friday.services.visible_jobs import visible_job
 
 # Never indexed whatever the scope says: dependency trees, VCS, caches.
 SKIP_DIRS = {"node_modules", ".git", ".hg", ".svn", "__pycache__", ".venv", "venv", ".cache", "$RECYCLE.BIN",
@@ -112,6 +113,16 @@ def scan_scope(root: str | Path, *, recursive: bool = True, glob: str | None = N
             break
 
 
+def _drop_stale_drafts(doc_id: int) -> None:
+    """Drafts a local model made from this document's earlier text or shelf (wiki/_staging) go; the document
+    itself stays and may be drafted from again."""
+    try:
+        from agent_friday.services.library import staging
+        staging.purge_drafts(doc_id)
+    except Exception:  # noqa: BLE001 - nothing staged is nothing to drop
+        pass
+
+
 def _failure_text(e: procrun.TaskFailed) -> str:
     return {"timeout": "took too long to read", "memory": "needs more memory than is allowed"}.get(e.kind, e.reason)
 
@@ -157,6 +168,8 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
     doc_id = store.upsert_document(str(p), sha256=sha, size=st.st_size, mtime=st.st_mtime, kind=kind,
                                    ext=p.suffix.lower().lstrip("."), scope=scope_root, folder_id=fid,
                                    title=withhold.title(safe_title(p.stem)), shelf=shelf or "open")
+    if prior and prior["state"] == "indexed" and (prior["sha256"] != sha or str(prior["shelf"] or "open") != str(shelf or "open")):
+        _drop_stale_drafts(doc_id)                    # however this re-read ends, drafts of the old text go
     if kind is None:
         store.set_state(doc_id, "skipped:unsupported", "this kind of file isn't read yet")
         return {"state": "skipped", "doc_id": doc_id, "detail": "unsupported"}
@@ -180,6 +193,7 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
     sample = "\n".join(b["text"] for b in blocks[:40])[:4000]
     chosen = shelf or (classify(p, title, sample) if classify else "open")
     if chosen == "vault" and not store.vault_open():
+        _drop_stale_drafts(doc_id)
         store.set_state(doc_id, "skipped:sensitive", "looks sensitive, and the vault isn't set up")
         return {"state": "skipped", "doc_id": doc_id, "detail": "sensitive"}
     # Everything stored, embedded or quoted from here on is made from text with every key and token
@@ -188,6 +202,7 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
         blocks = withhold.blocks(blocks)
         title = withhold.title(title)
     except withhold.Withheld as e:
+        _drop_stale_drafts(doc_id)
         store.set_state(doc_id, "skipped:credential", str(e))
         return {"state": "skipped", "doc_id": doc_id, "detail": "credential"}
     except Exception:  # noqa: BLE001 - a check that cannot run is not a pass
@@ -206,9 +221,13 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
                 passages.append(pa)
             profiles[s["id"]] = structure.section_profile(s, kids.get(s["id"], []))
         doc_profile = structure.document_profile(title, sections)
-        stored = store.replace_content(doc_id, title=title, pages=res.get("pages"), shelf=chosen, blocks=blocks,
+        stored = store.replace_content(doc_id, title=title, pages=res.get("pages"), shelf=str(chosen), blocks=blocks,
                                        sections=sections, passages=passages, doc_profile=doc_profile,
                                        section_profiles=profiles, ocr_pages=res.get("ocr_pages") or 0, sha256=sha)
+        if getattr(chosen, "tier", None) is not None:
+            store.note_tier(doc_id, chosen.tier)      # the classifier already ran: Laya's triage reuses it
+        if prior and (prior["sha256"] != sha or str(prior["shelf"] or "open") != str(chosen)):
+            _drop_stale_drafts(doc_id)                # edited text, or moved between shelves: old drafts quote old text
         try:
             vectors.index_document_vectors(store, doc_id, sections=sections, passages=passages,
                                            doc_profile=doc_profile, section_profiles=profiles,
@@ -224,32 +243,70 @@ def index_file(store: Store, path: str | Path, scope: str | Path, *, classify: C
 def sweep_scope(store: Store, scope: str | Path, *, recursive: bool = True, glob: str | None = None,
                 kinds: set[str] | None = None, classify: Classify | None = None,
                 allowed: Callable[[Path], bool] | None = None, gate=None, force: bool = False,
-                on_gone: Callable[[int], None] | None = None) -> dict:
+                on_gone: Callable[[int], None] | None = None, hooks=None,
+                only: Iterable[str | Path] | None = None, covered: Callable[[Path], bool] | None = None) -> dict:
     """Index new and changed files under `scope`; purge rows of files that are
     gone. `allowed` is the consent check: a path it refuses is not read.
     `on_gone(doc_id)` removes a document whose file is gone the way a removal does (graph,
-    caches, remembered searches); without it only the index rows go."""
+    caches, remembered searches); without it only the index rows go.
+
+    `only` limits the pass to those files (the idle change sweep's list); a file of it that is gone
+    is purged, and nothing else under the scope is touched. `hooks` is the queue job reading this
+    pass: `total(n)` once the files are counted, `before(path)` ahead of each file (its pause and
+    cancel point) and `done(path, result)` after each (its checkpoint)."""
     out = {"indexed": 0, "unchanged": 0, "failed": 0, "skipped": 0, "purged": 0}
     seen: set[str] = set()
-    for p in scan_scope(scope, recursive=recursive, glob=glob, kinds=kinds):
-        if allowed and not allowed(p):
-            continue
+    if only is not None:
+        files = []
+        for x in only:
+            p = Path(x)
+            if p.exists():
+                files.append(p)
+    else:
+        files = list(scan_scope(scope, recursive=recursive, glob=glob, kinds=kinds))
+    files = [p for p in files if not allowed or allowed(p)]
+    if hooks is not None:
+        hooks.total(len(files))
+    for p in files:
         try:
             seen.add(str(p.resolve()))
         except OSError:
             continue
+        # Consent is read live before every file, and again once the pause point has let it through (that
+        # wait can last hours): a removal, a never-send mark or an unverifiable ledger stops the pass here.
+        if allowed and not allowed(p):
+            if covered is not None and not covered(Path(scope)):
+                break                                   # the folder itself is no longer covered: read nothing more
+            out["skipped"] += 1
+            continue
+        if hooks is not None:
+            hooks.before(p)
+            if allowed and not allowed(p):
+                if covered is not None and not covered(Path(scope)):
+                    break
+                out["skipped"] += 1
+                hooks.done(p, {"state": "skipped"})
+                continue
         if gate is not None:
             with gate():
                 r = index_file(store, p, scope, classify=classify, force=force)
         else:
             r = index_file(store, p, scope, classify=classify, force=force)
         out[r["state"] if r["state"] in out else "failed"] += 1
+        if hooks is not None:
+            hooks.done(p, r)
     root = Path(scope)
     try:
         base = str(root.resolve() if root.is_dir() else root.resolve().parent)
     except OSError:
         base = str(root)
-    for row in store.q("SELECT id, path FROM documents WHERE scope=?", (base,)):
+    if only is not None:
+        wanted = {os.path.normcase(str(Path(x))) for x in only}
+        rows = [r for r in store.q("SELECT id, path FROM documents WHERE scope=?", (base,))
+                if os.path.normcase(r["path"]) in wanted]
+    else:
+        rows = store.q("SELECT id, path FROM documents WHERE scope=?", (base,))
+    for row in rows:
         if row["path"] not in seen and not Path(row["path"]).exists():
             (on_gone or store.purge_document)(row["id"])
             out["purged"] += 1
@@ -266,8 +323,12 @@ class Indexer:
 
     def __init__(self, principal: str = OWNER, *, can_run: Callable[[], bool] | None = None,
                  classify: Classify | None = None, allowed: Callable[[Path], bool] | None = None,
-                 gate=None):
+                 gate=None, job_factory=None, covered: Callable[[Path], bool] | None = None):
         self.principal = principal
+        #: scope -> does the owner's consent still cover the folder itself (grants.scope_covered).
+        self.covered = covered
+        #: (scope, kw) -> the Local AI queue job that reads that folder (library/index_job), or None.
+        self.job_factory = job_factory
         self.can_run = can_run or (lambda: True)
         self.classify = classify
         self.allowed = allowed
@@ -279,9 +340,21 @@ class Indexer:
         self.current: str | None = None
 
     def enqueue(self, scope: str | Path, **kw) -> None:
+        """Queue a folder. A folder already waiting is not queued twice: a burst of changes becomes
+        one job (the union of the changed files, or the whole folder when either asks for it)."""
         with self._cv:
-            self._q.append((str(scope), kw))
-            self._cv.notify()
+            for i, (s0, kw0) in enumerate(self._q):
+                same = {k: v for k, v in kw0.items() if k != "paths"} == {k: v for k, v in kw.items() if k != "paths"}
+                if s0 == str(scope) and same:
+                    p0, p1 = kw0.get("paths"), kw.get("paths")
+                    merged = None if (p0 is None or p1 is None) else sorted({str(x) for x in p0} | {str(x) for x in p1})
+                    self._q[i] = (s0, dict(kw0, paths=merged) if merged is not None else
+                                  {k: v for k, v in kw0.items() if k != "paths"})
+                    self._cv.notify()
+                    break
+            else:
+                self._q.append((str(scope), kw))
+                self._cv.notify()
         self.start()
 
     def start(self) -> None:
@@ -296,6 +369,11 @@ class Indexer:
         with self._cv:
             self._stop = True
             self._cv.notify_all()
+
+    def has(self, scope: str | Path) -> bool:
+        """Is this folder being read, or waiting its turn, in this indexer?"""
+        with self._cv:
+            return self.current == str(scope) or any(s == str(scope) for s, _kw in self._q)
 
     def pending(self) -> int:
         with self._cv:
@@ -323,9 +401,46 @@ class Indexer:
                     return
             self.current = scope
             try:
-                sweep_scope(store_for(self.principal), scope, classify=self.classify, allowed=self.allowed,
-                            gate=self.gate, on_gone=self._remove_gone, **kw)
+                self._run(scope, kw)
             except Exception:  # noqa: BLE001 - one scope's failure must not stop the queue
                 pass
             finally:
                 self.current = None
+
+    def _run(self, scope: str, kw: dict) -> None:
+        """One pass over one folder: ONE visible job in Activity, whatever reads it. The name carries no
+        path. A folder added to the Library is also a job of the Local AI queue (`job_factory`, see
+        library/index_job), which takes its place in line inside this visible job and shares its card."""
+        from agent_friday.services.background_gate import JobCancelled
+        kw = dict(kw)
+        only = kw.pop("paths", None)                 # the change sweep's list; None reads the whole folder
+        store = store_for(self.principal)
+        job = self.job_factory(scope, dict(kw, paths=only)) if self.job_factory else None
+        title = job.title if job is not None else (
+            "Reading a folder into your Library" if Path(scope).is_dir() else "Reading a file into your Library")
+        # The card's Stop works in every state: `before()` checks it ahead of each file, the held wait every
+        # second, and a Stop while the folder waits in the queue also cancels it there (routes/tasks).
+        try:
+            if only is None:
+                with visible_job(title, kind="library_index", workspace="library", queued=False, deferrable=True,
+                                 stoppable=True,
+                                 description="The Library reads a folder on this PC into its index.") as vj:
+                    self._pass(store, scope, kw, only, job, vj)
+            else:
+                with visible_job(title, kind="library_reindex", workspace="library", queued=False,
+                                 deferrable=True, stoppable=True,
+                                 description="The Library reads the files that changed.") as vj:
+                    self._pass(store, scope, kw, only, job, vj)
+        except JobCancelled:
+            pass                                      # stopped from the queue or the card: this folder ends quietly
+
+    def _pass(self, store, scope: str, kw: dict, only, job, vj) -> None:
+        if job is None:
+            sweep_scope(store, scope, classify=self.classify, allowed=self.allowed, gate=self.gate,
+                        on_gone=self._remove_gone, only=only, covered=self.covered, **kw)
+            return
+        job.attach(vj)
+        with job as j:                               # admitted through the Local AI queue; may be cancelled
+            out = sweep_scope(store, scope, classify=self.classify, allowed=self.allowed, gate=self.gate,
+                              on_gone=self._remove_gone, hooks=j, only=only, covered=self.covered, **kw)
+            j.finish(store, out)

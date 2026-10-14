@@ -4,7 +4,11 @@ A case is correct only when the decision, the tool AND every argument check
 hold. Prints n/N per category, every miss, and routing latency (p50/p95,
 warm). CPU only; loads the Laya 2 encoder that the turn-shape shadow uses.
 
-    python tools/laya_router_eval.py [--json out.json]
+    python tools/laya_router_eval.py [--via-ask] [--json out.json]
+
+``--via-ask`` routes every case through services/laya.route_turn (the router as a
+preset of laya.ask) instead of calling ``route`` directly. The two must give the
+same decision, tool and arguments for every case; compare the --json files.
 """
 from __future__ import annotations
 
@@ -42,19 +46,30 @@ def pct(xs, p):
     return round(xs[max(0, min(len(xs) - 1, int(round(p / 100 * (len(xs) - 1)))))], 2)
 
 
+def _router(a, lr):
+    """The function that routes a case: the router itself, or the router as a
+    preset of laya.ask (--via-ask)."""
+    if getattr(a, "via_ask", False):
+        from agent_friday.services import laya
+        return lambda text, **kw: laya.route_turn(text, caller="eval.router", **kw)
+    return lr.route
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--json")
+    ap.add_argument("--via-ask", action="store_true", help="route through laya.ask (the router as one preset)")
     ap.add_argument("--set", default="laya_router_eval.json")
     a = ap.parse_args(argv)
     from agent_friday.services import laya_router as lr
     cases = json.loads((ROOT / "tests/fixtures" / a.set).read_text(encoding="utf-8"))["cases"]
+    route = _router(a, lr)
     t = time.perf_counter()
     lr._prototypes()
     warm_ms = (time.perf_counter() - t) * 1000
     rows, times = [], []
     for c in cases:
-        r = lr.route(c["text"], budget_ms=1000, log=False)
+        r = route(c["text"], budget_ms=1000, log=False)
         times.append(r.elapsed_ms)
         rows.append({"case": c, "route": r.as_dict(), "why": check(c, r)})
     by = {}

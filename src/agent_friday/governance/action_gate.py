@@ -124,7 +124,7 @@ OUTWARD_TOOLS = frozenset({
     # owner's cards, so a turn steered by something it read could silence an
     # alarm; local_model_status only reads, and its case for internal is its
     # author's to make with a review.
-    "notifications", "local_model_status",
+    "local_model_status",
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
     # Scheduling (services/scheduling.py). book_slot sends invitations to
     # other people. hold_slots writes only to the owner's own calendar and
@@ -197,7 +197,7 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
 #: gate already judges, and delegation (a spawned task's own actions come
 #: back through this checkpoint one by one).
 LIBRARY_SCREEN_ACTIONS = frozenset({"library_add", "library_remove", "library_forget", "library_shelf",
-                                    "library_reindex", "library_tracked"})
+                                    "library_reindex", "library_tracked", "library_draft_review"})
 
 INTERNAL_TOOLS = frozenset({
     # Reads the machine and the model catalogue; downloads nothing and
@@ -208,8 +208,15 @@ INTERNAL_TOOLS = frozenset({
     # or moves the owner's own screen (library_show). Adding, removing and
     # forgetting are file_access cards, decided on screen.
     "search_library", "library_status", "library_show",
+    # Recorded meetings (services/meeting_tool): finds a meeting, runs the local notes model, raises memory
+    # proposals that wait for the owner's yes, adds a bullet to the owner's own pad. Nothing leaves this PC,
+    # and it never starts a recording.
+    "meeting",
     # The one 3D file browser by voice: moves the owner's own screen only.
     "show_files_3d",
+    # "Add my Obsidian vault": opens the owner's own folder window and speaks what
+    # was found. It adds nothing; the picks return as a Library card decided on screen.
+    "add_knowledge",
     "write_clipboard", "query_trust_graph", "query_calendar", "revert_workspace",
     "list_workspace_history", "find_calendar_events", "search_email",
     "search_drive", "read_doc", "list_tasks", "complete_task", "create_task",
@@ -221,8 +228,15 @@ INTERNAL_TOOLS = frozenset({
     # set_chat_tray shows, hides or docks the chat tray, and check_situation
     # reads state the server already holds. None reaches anyone else.
     "navigate_to", "check_situation", "set_workspace_layout", "show_my_day",
-    # Reads the Local AI queue (labels and reasons only).
-    "queue_status",
+    # Reads the Local AI queue (labels and reasons only). local_work says what
+    # the local models are working on and takes a waiting job out of the line:
+    # Friday's own queue, nothing reaches anyone else.
+    "queue_status", "local_work",
+    # What Laya learned from the owner's own corrections (services/laya_learning_tools):
+    # a summary, and forget / reset / roll back / wipe of her own personal layer. It runs
+    # only on the owner's own words in the turn, changes nothing outside Friday's learning
+    # state, and reaches no one else. It can only make her shipped self the one in force.
+    "laya_learning",
     "set_chat_tray",
     # See & Touch (services/screen_stage): ticks rows on the owner's own screen. It shows
     # and changes nothing; every change to the mail still goes through organize_email.
@@ -230,6 +244,10 @@ INTERNAL_TOOLS = frozenset({
     # Stopping a workflow or task after its step, or steering one (the steer's words are checked for where they
     # came from, like any instruction): it only ends or redirects Friday's own background work.
     "task_control",
+    # Can voice run locally, and queue the measurement for an idle moment
+    # (services/local_voice_tools). It moves the voice engine only to carry out the owner's own
+    # answer to "just this call, or always?" / the switch-back offer (their words, after the question).
+    "local_voice_readiness",
     # a setting change holds itself for the owner's Yes on its own card (services/setting_proposals)
     "set_setting",
     # The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show the
@@ -249,6 +267,16 @@ INTERNAL_TOOLS = frozenset({
     # Sharing local context with the cloud voice model has its own gate: the
     # payload card (services/local_context), decided once, by the owner.
     "ask_local_for_context", "answer_share_request", "revise_share_request",
+    # The text chat's counterpart of ask_local_for_context: the same local
+    # answer, scrub, floor and card (services/slice_head -> local_context). A
+    # turn that has read untrusted content cannot use a standing grant.
+    "request_context",
+    # Reads the turn receipt back; names, sizes and tiers, never content.
+    "why_that_plan",
+    # A cloud model's plan, queued for local models. It validates and fences the
+    # order, fixes the privacy class itself and writes nothing: write intents
+    # become proposals later, each behind its own gate.
+    "submit_work_order", "work_order_status",
     # Reads the local conversation store; what a cloud call may hear of it is
     # decided by provenance (services/conversation_recall).
     "search_past_conversations",
@@ -318,6 +346,9 @@ INTERNAL_TOOLS = frozenset({
     "hologram_window",
     # Standing back for a call: the owner's own machine and own setting.
     "call_mode",
+    # Laya beside a cloud call: reads the call's own receipt; the reflex setting
+    # only narrows without a card, widening goes through setting_proposals.
+    "live_laya",
     # File permissions: lists them, removes one (only ever narrowing what
     # leaves), or raises an approval card. It creates no grant: that happens
     # only when the owner approves the card on screen.
@@ -330,6 +361,10 @@ INTERNAL_TOOLS = frozenset({
     "home_cards", "customize_workspace",
     # Voice-only helpers routed through the checkpoint.
     "check_email", "get_source_trust", "get_article_deep_dive", "ask_friday",
+    # Cloud-voice session helpers: more_tools only changes which of Friday's own
+    # tools the NEXT leg declares (each still passes its own gate when called);
+    # call_cost reads this call's metered total.
+    "more_tools", "call_cost",
     # find_free_slots reads free/busy only. release_holds deletes nothing but
     # Friday's own holds: each event is re-read and must carry Friday's active
     # hold marker for that series and no attendees, and nobody is notified,
@@ -359,6 +394,9 @@ INTERNAL_TOOLS = frozenset({
 #: career_run_script by whether the script rewrites the tracker, career_scan
 #: by whether it adds to the pipeline file.
 BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
+                         # By action: only turning quiet ON is internal (it can only hold back
+                         # interruptions); every other action keeps the outward class it had.
+                         "notifications",
                          "write_file", "fill_pdf_form", "run_sandboxed",
                          "career_run_script", "career_scan",
                          # Desktop control (ring 3), by the app it lands on:
@@ -671,6 +709,17 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
         # Before the generic connector rule below: a desktop connector tool
         # is judged by the app it lands on, like Friday's own `click`.
         return _dg.classify(tool_name, a)
+    if tool_name == "notifications":
+        # Narrowing only. "Quiet until morning" holds back interruptions and never hides, approves or
+        # drops anything (services/interruption_policy). Ending quiet, muting, clearing and every
+        # other action, and a call that names no action, are judged outward exactly as before.
+        # Only when the owner's own words did it: the router rule on their typed or spoken line sets
+        # ctx["owner_utterance"]; a model's tool call never carries it, so that call is a card.
+        if (str(a.get("action") or "").strip().lower() == "quiet"
+                and str(a.get("group") or a.get("kind") or "").strip().lower() not in ("off", "end", "stop")
+                and (ctx or {}).get("owner_utterance") is True):
+            return INTERNAL, "the owner asked for quiet until morning, which only holds back interruptions"
+        return OUTWARD, "it can clear, mute or change what reaches the owner"
     if tool_name == "office":
         # By argument, like run_command: the verb and the target decide.
         # Reading a document and building a new one inside Friday's own
@@ -987,7 +1036,8 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
 #: the time and the ids that link it to a card, grant or task. No reason text,
 #: target, or hash of the arguments (a hash of a short message can be guessed).
 _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
-                            "grant", "task_id", "tainted")
+                            "grant", "task_id", "tainted", "chosen_by",
+                            "plan_version")
 
 
 def _receipt(entry: dict) -> None:
@@ -1097,13 +1147,53 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "grant": (v.grant or {}).get("grant_id"),
                   # Which background task took the action, so the morning
                   # receipt can link a decision to the work it belonged to.
-                  "task_id": ctx.get("task_id")})
+                  "task_id": ctx.get("task_id"),
+                  # Which layer chose the action, and under which plan.
+                  "chosen_by": _chosen_by(ctx),
+                  "plan_version": _plan_version(),
+                  "turn_id": _turn_id()})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":
             return Verdict("deny", v.klass, f"the signed receipt could not be written ({e}); "
                                             f"outward actions are held")
     return v
+
+
+def _chosen_by(ctx: dict) -> str:
+    """Which layer proposed the action: an explicit `chosen_by` in the session
+    context, else the model that is running (`brain:` local, `cloud:` remote),
+    else "unknown". Informational; no verdict reads it."""
+    try:
+        named = str(ctx.get("chosen_by") or "").strip()
+        if named:
+            return named[:80]
+        model = str(ctx.get("model") or "").strip()
+        if model:
+            provider = str(ctx.get("provider") or "").strip()
+            if provider:
+                from agent_friday.services.egress_gate import is_local_provider
+                return ("brain:" if is_local_provider(provider) else "cloud:") + model[:60]
+            return "brain:" + model[:60]
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _plan_version():
+    try:
+        from agent_friday.services import turn_plan
+        return turn_plan.current_plan_version()
+    except Exception:
+        return None
+
+
+def _turn_id():
+    try:
+        from agent_friday.services import turn_plan
+        return turn_plan.current_turn_id()
+    except Exception:
+        return None
 
 
 def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:

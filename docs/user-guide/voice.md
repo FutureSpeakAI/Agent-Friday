@@ -109,6 +109,10 @@ idle", "it waits for your chat to finish"). It is read-only and says only job
 labels, never what a job contains. See
 [Scheduled jobs](scheduled-jobs.md#background-ai-work-waits-its-turn).
 
+To take a job out of the line, say "cancel the podcast job". Friday uses the
+`local_work` tool, which takes a job that has not started out of the queue so it
+never reaches a model. A job that is already running is not stopped this way.
+
 ## Talking to Friday
 
 Press the microphone button in the chat. The browser asks for microphone access

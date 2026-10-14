@@ -51,9 +51,13 @@ def _route(r, seat=None):
 
 
 def test_a_conversation_bound_to_a_cloud_model_goes_to_the_cloud(monkeypatch):
-    """THE CRUX, and the direction that was broken."""
+    """THE CRUX, and the direction that was broken. The chat route records the
+    owner's binding as the `user_explicit` intent (services/cloud_intent), which
+    is what lets a local mode reach the cloud for this one conversation."""
+    from agent_friday.services import cloud_intent
     r = _router(monkeypatch)
-    out = _route(r, {"model": "claude-sonnet-5"})
+    with cloud_intent.intent_scope("user_explicit", source="chat_seat"):
+        out = _route(r, {"model": "claude-sonnet-5"})
     assert out.get("provider") == "cloud", out
     assert out.get("model") == "claude-sonnet-5", out
     assert "bound" in (out.get("reason") or "").lower(), \
@@ -83,11 +87,26 @@ def test_an_empty_binding_is_not_a_binding(monkeypatch):
 
 
 def test_with_no_local_seat_the_binding_is_moot_but_harmless(monkeypatch):
-    """Nothing local to keep it on. The turn goes to the cloud either way;
-    this asserts the new branch does not break that path."""
+    """Nothing local to keep it on. The turn goes to the cloud when the owner
+    bound the chat to it (the recorded intent); this asserts the new branch does
+    not break that path."""
+    from agent_friday.services import cloud_intent
+    r = _router(monkeypatch, local=())
+    with cloud_intent.intent_scope("user_explicit", source="chat_seat"):
+        out = _route(r, {"model": "claude-sonnet-5"})
+    assert out.get("provider") == "cloud", out
+
+
+def test_a_cloud_binding_with_no_recorded_intent_is_not_followed_in_a_local_mode(monkeypatch):
+    """A background task carries `model=` as a conversation binding too. Only the
+    chat route records the owner's word; without it a local mode stays local, or
+    refuses with an offer when there is no local seat."""
+    r = _router(monkeypatch)
+    out = _route(r, {"model": "claude-sonnet-5"})
+    assert out.get("provider") == "local" and out.get("model") == "bonsai2:27b", out
     r = _router(monkeypatch, local=())
     out = _route(r, {"model": "claude-sonnet-5"})
-    assert out.get("provider") == "cloud", out
+    assert out.get("refuse") is True and out.get("local_unavailable") is True, out
 
 
 # ── Cloud only: the explicit per-chat pick still wins ─────────────────────────

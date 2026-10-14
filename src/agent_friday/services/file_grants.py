@@ -65,6 +65,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import hmac
+import itertools
 import json
 import threading
 import time
@@ -77,6 +78,7 @@ _MAX_EXPIRY_DAYS = 30
 _APPEND_LOCK = threading.Lock()
 _STATE_LOCK = threading.Lock()
 _STATE_CACHE: dict = {"mtime": -2.0, "state": None}
+_LEDGER_REV = itertools.count(1)
 
 
 def _ledger_path() -> Path:
@@ -176,6 +178,10 @@ class LedgerState:
     paused_library: dict = field(default_factory=dict)
     #: (principal, normcased path) -> "open" | "vault", from library_shelf events.
     library_shelves: dict = field(default_factory=dict)
+    #: Which fold this is. Every re-read of the ledger (an append, a changed file,
+    #: a forced load) makes a new state with a higher number, so a verdict kept
+    #: against one revision is never read against another.
+    rev: int = 0
 
 
 #: Ledger events that can only ever ADD access. Removing one of these from the
@@ -430,7 +436,7 @@ def _alarm_new_failures(dropped_shas: list[str]) -> None:
                   f"until this is resolved; your never-send deny marks still "
                   f"apply. Nothing was silently un-denied. Settings › Privacy › "
                   f"File access shows each line and what you can do about it."),
-            priority="high", source="file_grants", kind="warning",
+            priority="high", source="file_grants", kind="warning", emitter="E41",
             dedupe_key="file_grants_ledger_failure:%s" % ident,
         )
         if not sent:
@@ -474,7 +480,7 @@ def _open_retired_notice(sha: str, ev: dict) -> None:
         _write_notices(d)
     _push(title="An old file permission needs you",
           body=_retired_message(ev) + " It grants nothing until you do.",
-          priority="medium", source="file_grants", kind="info",
+          priority="medium", source="file_grants", kind="info", emitter="E41",
           target={"workspace": "settings", "tab": "privacy"},
           dedupe_key="file_grants_retired:%s" % sha)
 
@@ -531,7 +537,7 @@ def _load_state(force: bool = False) -> LedgerState:
         state = LedgerState(grants=grants, denies=denies, suspended=suspended,
                             dropped=dropped, paused_grants=paused, held=held,
                             library=library, paused_library=paused_library,
-                            library_shelves=shelves)
+                            library_shelves=shelves, rev=next(_LEDGER_REV))
         _STATE_CACHE["mtime"] = mtime
         _STATE_CACHE["state"] = state
     if suspended:

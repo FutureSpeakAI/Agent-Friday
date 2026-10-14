@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 from collections import OrderedDict
@@ -94,6 +95,9 @@ def _still_valid(principal: str, doc_id: int, block_id: int) -> bool:
         return False
     if doc["shelf"] == "vault" and not st.vault_open():
         return False
+    from agent_friday.services import meeting_archive
+    if meeting_archive.is_archive_path(p):
+        return True              # made from the meeting's record, not a file: the index row is the source
     try:
         s = p.stat()
     except OSError:
@@ -155,6 +159,56 @@ def _digest(text: str) -> str:
     return hashlib.sha1(" ".join(text.split()).encode("utf-8")).hexdigest()
 
 
+_MEETING_FILE_LOCK = threading.Lock()
+_MEETING_REPLIES: "dict[str, None] | None" = None      # insertion-ordered: the oldest go first
+_THREAD = threading.local()
+
+
+def _meeting_file() -> Path:
+    from agent_friday import paths
+    return paths.friday_home() / "library" / "meeting_replies.enc"
+
+
+def _load_meeting_replies() -> dict:
+    global _MEETING_REPLIES
+    if _MEETING_REPLIES is None:
+        out: dict = {}
+        try:
+            from agent_friday.services import credential_store as cs
+            out = dict.fromkeys(json.loads(cs.unprotect(_meeting_file().read_bytes()).decode("utf-8")))
+        except Exception:
+            out = {}
+        _MEETING_REPLIES = out
+    return _MEETING_REPLIES
+
+
+def _remember_meeting_digest(d: str) -> None:
+    reps = _load_meeting_replies()
+    reps.pop(d, None)
+    reps[d] = None                          # newest last
+    while len(reps) > 4000:
+        reps.pop(next(iter(reps)))          # evict the oldest, never an arbitrary one
+
+
+def _save_meeting_replies() -> None:
+    try:
+        from agent_friday.services import credential_store as cs
+        keep = list(_MEETING_REPLIES or ())[-4000:]
+        blob, _m = cs.protect(json.dumps(keep).encode("utf-8"))
+        p = _meeting_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_bytes(blob)
+        os.replace(tmp, p)                  # atomic: a crash leaves the old file, never half of one
+    except Exception:
+        pass                               # memory still holds it for this run
+
+
+def note_meeting_turn(on: bool = True) -> None:
+    """The reply this thread saves next read a meeting (see usage.mark_meeting)."""
+    _THREAD.meeting = bool(on)
+
+
 def remember_library_reply(text) -> None:
     """A saved assistant reply that used the Library (see is_library_reply)."""
     if not isinstance(text, str) or not text.strip():
@@ -164,6 +218,11 @@ def remember_library_reply(text) -> None:
         _REPLIES.move_to_end(_digest(text))
         while len(_REPLIES) > _REPLIES_MAX:
             _REPLIES.popitem(last=False)
+    if getattr(_THREAD, "meeting", False):
+        _THREAD.meeting = False
+        with _MEETING_FILE_LOCK:
+            _remember_meeting_digest(_digest(text))
+            _save_meeting_replies()
 
 
 def is_library_reply(text) -> bool:
@@ -172,6 +231,8 @@ def is_library_reply(text) -> bool:
     if not isinstance(text, str) or not text:
         return False
     if "[lib:" in text or "[unverified-lib:" in text or "<evidence-" in text:
+        return True
+    if quotes_a_meeting(text):
         return True
     with _REPLIES_LOCK:
         return _digest(text) in _REPLIES
@@ -186,7 +247,27 @@ def turn_used_library(tool_trace, conversation_id: str | None = None) -> bool:
     """Did this turn read Library text? Its tool trace says for a chat turn; a spoken turn and a read_file
     of a Library document left a mark on the conversation instead. The mark is always taken."""
     read = usage.consume(conversation_id)
+    if usage.consume_meeting(conversation_id):
+        note_meeting_turn(True)
     return bool(used_library(tool_trace) or read)
+
+
+def quotes_a_meeting(text) -> bool:
+    """Does this saved reply cite a passage of a meeting's transcript or notes (a footnote [lib:<doc>#<block>] of an
+    archive document)? Such a reply never rides a later cloud turn, whatever the Library cloud setting says."""
+    try:
+        with _MEETING_FILE_LOCK:
+            if _digest(str(text or "")) in _load_meeting_replies():
+                return True
+        ids = {int(i) for i in re.findall(r"lib:(\d+)#\d+", str(text or ""))}
+        if not ids:
+            return False
+        from agent_friday.services import meeting_archive
+        from agent_friday.services.library.store import store_for
+        st = store_for("owner")
+        return any(meeting_archive.is_archive_doc(st.get_document(i)) for i in ids)
+    except Exception:
+        return False
 
 
 def elide_for_cloud(messages: list, settings: dict | None) -> int:
@@ -195,21 +276,21 @@ def elide_for_cloud(messages: list, settings: dict | None) -> int:
     from the Library. Returns how many turns were replaced. In place, like the PII
     scrub that follows it (a message with block content gets a new list, so shared
     blocks are not touched)."""
-    if (settings or {}).get("library_cloud_answers"):
-        return 0
+    allowed = bool((settings or {}).get("library_cloud_answers"))      # a setting for the owner's files, never for a meeting
     n = 0
     for m in messages:
         if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
         c = m.get("content")
         if isinstance(c, str):
-            if is_library_reply(c):
+            if is_library_reply(c) and (not allowed or quotes_a_meeting(c)):
                 m["content"] = ELIDED
                 n += 1
         elif isinstance(c, list):
             blocks, changed = [], False
             for blk in c:
-                if isinstance(blk, dict) and blk.get("type") == "text" and is_library_reply(blk.get("text")):
+                if (isinstance(blk, dict) and blk.get("type") == "text" and is_library_reply(blk.get("text"))
+                        and (not allowed or quotes_a_meeting(blk.get("text")))):
                     blocks.append(dict(blk, text=ELIDED))
                     changed = True
                     n += 1

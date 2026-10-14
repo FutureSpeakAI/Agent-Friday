@@ -1,0 +1,160 @@
+{
+ "schema": 1,
+ "id": "knowledge",
+ "label": "Knowledge",
+ "group": "system",
+ "held": null,
+ "spoken_words": {"router_extra": ["wiki", "notes"]},
+ "nav": {
+  "key": "view",
+  "keys": ["view", "path", "page", "query", "section", "node"],
+  "sections": ["graph", "split", "pages"]
+ },
+ "objects": [],
+ "verbs": [
+  {
+   "id": "knowledge.search",
+   "action": "knowledge.search",
+   "group": "read",
+   "ui": {"control": "search pages / graph"},
+   "tool": "search_wiki",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["search my wiki for the garden project"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["laya_router_eval.json#Search my wiki for the page about the garden project."]
+  },
+  {
+   "id": "knowledge.open_page",
+   "action": "knowledge.open_page",
+   "group": "navigate",
+   "ui": {"control": "open page / show in graph"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "resolver",
+   "phrasings": ["open my page on the pitch", "show the garden page"],
+   "deictic": ["description"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_laya_resolver.py::test_a_wiki_page_request_is_not_mistaken_for_the_workspace"]
+  },
+  {
+   "id": "knowledge.create_edit",
+   "action": "knowledge.create_edit",
+   "group": "create",
+   "ui": {"control": "create page / edit"},
+   "tool": "propose_wiki_update",
+   "also_tools": ["correct_wiki"],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["add this to my notes on the garden"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "knowledge.delete_page",
+   "action": "knowledge.delete_page",
+   "group": "organize",
+   "ui": {"control": "delete page"},
+   "tool": "organize_wiki",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 1, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["delete the old draft page"],
+   "deictic": [],
+   "undo": {"fn": "item_actions.undo_wiki", "via": "undo_action"},
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "knowledge.move_rename_tag",
+   "action": "knowledge.move_rename_tag",
+   "group": "organize",
+   "ui": {"control": "move / rename / tag"},
+   "tool": "organize_wiki",
+   "also_tools": [],
+   "gate": {"class": "self_gated", "ring": 1, "card": "own_card"},
+   "laya_tier": "model_only",
+   "phrasings": ["rename that page", "tag it as recipes"],
+   "deictic": [],
+   "undo": {"fn": "item_actions.undo_wiki", "via": "undo_action"},
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "knowledge.approve_reject",
+   "action": "knowledge.approve_reject",
+   "group": "organize",
+   "ui": {"control": "approve / reject pending update"},
+   "tool": "answer_card",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["approve that update"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "knowledge.podcast",
+   "action": "knowledge.podcast",
+   "group": "create",
+   "ui": {"control": "podcast from page"},
+   "tool": "make_podcast",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["make a podcast from that page"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "knowledge.question",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "kg_question",
+   "activity_label": "Knowledge graph question",
+   "entry": "agent_friday.services.knowledge_graph.retrieval:local_search"
+  },
+  {
+   "id": "knowledge.learn",
+   "trigger": "idle",
+   "also": ["button", "schedule"],
+   "model_class": "fast",
+   "helper": "visible_job",
+   "task_kind": "kg_learn",
+   "activity_label": "Knowledge graph learning",
+   "entry": "agent_friday.services.knowledge_graph.indexer:reindex_tier_b",
+   "schedule_ref": "knowledge_graph_reindex"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "knowledge.select_pages",
+   "kind": "gap",
+   "reason": "Knowledge has no stage, so pages cannot be ticked.",
+   "wave": "WS-2"
+  }
+ ],
+ "resolver_sources": ["wiki_page"],
+ "workspace_tools": {"key": null, "pools": []}
+}

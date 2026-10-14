@@ -58,14 +58,15 @@ _OFF_RECORD: set = set()
 BASE_DIR_OVERRIDE: Optional[Path] = None
 
 TERMINAL = ("complete", "completed", "completed_unverified", "done", "failed",
-            "error", "timeout", "cancelled", "interrupted")
+            "error", "timeout", "cancelled", "interrupted", "superseded", "killed")
 
 
 def is_terminal(status) -> bool:
     """The registry uses a few spellings of 'finished' (complete,
-    completed_unverified, done). Anything starting with 'complete' counts."""
+    completed_unverified, done). Anything starting with 'complete' counts, and
+    so does a failure with a cause ("failed:watchdog-kill")."""
     s = str(status or "")
-    return s in TERMINAL or s.startswith("complete")
+    return s in TERMINAL or s.startswith("complete") or s.startswith("failed:")
 _LINE_PREFIX = "enc:"   # a protected (base64) line; anything else is plain JSON
 
 
@@ -530,9 +531,10 @@ def apply_retention(now: Optional[float] = None) -> List[str]:
 # ── boot reconciliation (TV8) ────────────────────────────────────────────────
 
 def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
-    """Mark every task the previous process left running/queued as
-    interrupted, journal the halt, and return what was found so the caller
-    can rebuild its cache and announce it. Never raises."""
+    """Mark every task the previous process left unfinished (running, queued,
+    waiting for a seat, paused: no worker survives a restart) as interrupted,
+    journal the halt, and return what was found so the caller can rebuild its
+    cache and announce it. Never raises."""
     now = now or time.time()
     interrupted: List[dict] = []
     restored: List[dict] = []
@@ -543,7 +545,7 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
             st = read_state(tid)
             if not st:
                 continue
-            if st.get("status") in ("running", "queued"):
+            if not is_terminal(st.get("status")) and st.get("status") != "deleted":
                 events = read(tid)
                 last_cp = next((e for e in reversed(events)
                                 if e.get("kind") in ("checkpoint", "started", "created")), None)
@@ -562,10 +564,20 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
                 index_put(tid, st.get("name", ""), "interrupted", st.get("created"), st["ended"])
                 interrupted.append(st)
             else:
+                if not is_terminal(row.get("status")) and is_terminal(st.get("status")):
+                    # The record ended but its index row was never told.
+                    index_put(tid, st.get("name", ""), st["status"], st.get("created"),
+                              st.get("ended") or st.get("state_written") or now)
                 restored.append(st)
     except Exception as e:
         _log.error("task journal reconciliation failed: %s", e)
     return {"interrupted": interrupted, "restored": restored}
+
+
+def _incident(task_ids) -> str:
+    """The same set of interrupted tasks is one incident; a new set is a new one."""
+    import hashlib
+    return hashlib.sha1(",".join(sorted(str(i) for i in task_ids)).encode("utf-8")).hexdigest()[:12]
 
 
 def announce_interrupted(interrupted: Iterable[dict]) -> None:
@@ -581,7 +593,7 @@ def announce_interrupted(interrupted: Iterable[dict]) -> None:
             body=(f"{names}{more}. Each record is complete up to its last checkpoint. "
                   "Nothing was resumed: re-run any of them from the Task Tray."),
             priority="high", source="task-journal", kind="tasks_interrupted",
-            dedupe_key=f"tasks_interrupted:{int(time.time())}",
+            emitter="E28", dedupe_key="tasks_interrupted:" + _incident([t.get("task_id") for t in items]),
             target={"workspace": "system", "tab": "tasks"},
         )
     except Exception:

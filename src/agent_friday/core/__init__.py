@@ -2361,7 +2361,6 @@ DEFAULT_SETTINGS = {
     # feeds and trusted like the built-in high-trust outlets
     # (source_trust_graph.local_beat_sources). Both empty means no Local beat.
     # The four News routines write on the local model (news_engine.local_news_run).
-    "news_local_only": True,
     # Notification kinds the owner muted ("kind|source"); muted kinds go to the
     # activity log. Approvals can never be muted (notification_policy).
     "notification_mutes": [],
@@ -2381,6 +2380,13 @@ DEFAULT_SETTINGS = {
     "voice_affective": True,               # Live API enable_affective_dialog
     "voice_proactive": True,               # Live API proactivity.proactive_audio
     "voice_context_compression": True,     # Live API sliding-window compression; ON by default so the context-window cap never silently terminates a long voice session (pairs with session_resumption renewal)
+    # Cloud voice session plan (services/live_session_plan, Beta 1.1 CV-A).
+    "voice_live_trim": "shadow",           # off | shadow (send today's session; log what trimming would have dropped) | on (the capped voice-only instruction and a Laya-chosen tool kit)
+    "voice_live_instruction_max_tokens": 9000,   # the cap "on" applies; safety text is never cut to meet it; 0 = no cap even when on
+    "voice_live_tool_kit_size": 20,        # about how many tools the kit declares (8-40)
+    "voice_live_compression_trigger_tokens": 24000,  # prompt size that starts folding away the oldest turns; 0 = Google's default window
+    "voice_live_compression_target_tokens": 12000,   # what is kept after a fold
+    "voice_live_soft_budget_usd": 0.0,     # one spoken heads-up per call at this cost; 0 = off. Never cuts a call
     "voice_barge_grace_ms": 800,           # ignore mic this long after Friday starts speaking (echo-canceller warmup)
     "voice_barge_sustain_ms": 200,         # Gemini Live speaker-safe mode: deliberate speech must persist this long (two of its ~171 ms mic frames) to interrupt playback
     "voice_local_barge_sustain_ms": 170,   # local voice: the same, over its ~85 ms mic frames (two frames), so she stops within ~300 ms of the first word
@@ -2487,6 +2493,15 @@ DEFAULT_SETTINGS = {
     # brain takes deep work asynchronously. Read by services/voice_front.
     "voice_front_model": "auto",   # auto (first that runs here: Bonsai 1.7B, then Qwen3 4B, 1.7B) | ternary-bonsai:1.7b | qwen3-4b-instruct-2507 | qwen3-1.7b
     "voice_tool_routing": "laya",   # laya (system one routes tools; the front speaks) | model (the front calls tools)
+    # Laya beside a cloud (Gemini Live) call, services/live_laya. The reflex
+    # reads the call's own transcript: off | shadow (default: writes what she
+    # would do next to what Gemini did, runs nothing) | on (runs the classes
+    # below, and only those past the agreement gate in tools/live_reflex_agreement).
+    "voice_live_reflex": "shadow",
+    "voice_live_reflex_classes": [],       # open | select | play | timer | read; empty until the owner clears one
+    "voice_live_idempotency_s": 8,         # the same Live tool call with equal arguments inside this window runs once (0 = off)
+    "voice_live_reduce_over_chars": 3000,  # a tool result larger than this is cut to what the question needs before it goes to Google
+    "voice_live_reduce_local_model": "off",  # off | seat_if_up: let an already-running local model help cut a result (never loads one)
     # The brain during a call: "auto" = beside the front when the card holds
     # both, else parked for the call; "parked"; "resident".
     "voice_brain_during_calls": "auto",
@@ -2494,6 +2509,42 @@ DEFAULT_SETTINGS = {
     # or after the call) | "follow_model_routing" (the owner's routing,
     # cloud included, behind the same gates).
     "voice_async_routing": "local_only",
+    # Cloud context slicing (services/slice_head; decision D8). "" = not chosen:
+    # cloud models get everything, as before. "slice" sends them only the
+    # context each turn needs; "everything" records that the owner chose the
+    # old behaviour. Nothing is preselected. The offer key tracks the one-time
+    # choice shown at the first cloud turn: "" | "pending" | "done".
+    "cloud_context_slicing": "",
+    "cloud_context_slicing_offer": "",
+    # The one-time offer to move cloud voice to local voice once this PC is
+    # measured capable (services/local_voice_readiness): "" (never offered),
+    # "pending" (shown, not answered), "accepted" or "declined". Declined and
+    # accepted are final; nothing ever switches the engine without the owner.
+    "local_voice_switch_offer": "",
+    # The owner's recorded switch to cloud voice (services/local_voice_readiness):
+    # {} when there is none, else {scope: "call" | "always", engine, previous, at,
+    # reason, source}. "call" puts `voice_engine` back to `previous` when that cloud
+    # call ends; "always" stays until the owner changes it. Written only by the
+    # question "just this call, or always?" and its answer, never by a settings write.
+    "voice_engine_choice": {},
+    # Where the one offer to switch back to local voice stands after an "always":
+    # {} (not offered), else {state: "pending" | "switched" | "kept", made_at,
+    # choice_at}. Forgotten when readiness changes, so it is offered once per spell
+    # of local voice being capable.
+    "voice_switch_back": {},
+    # Cloud work orders (services/work_orders): a cloud model hands this PC a plan,
+    # and this PC carries it out locally (services/work_order_executor), returning
+    # only what the privacy class below allows. The two tools that take an order
+    # stay out of every model's tool list while this is off. Default off; there is
+    # no Settings control for it in 1.1.
+    "work_orders_enabled": False,
+    # How much of a finished work order may go back to the cloud model. "" means you
+    # have not chosen: counts and statuses only (P1). "P1_aggregate" is the same,
+    # chosen; "P2_summary" lets a PII-free summary go back, on a card or a grant you
+    # decide, in Local-preferred and Cloud-only; "P3_local_only" sends back nothing
+    # but a handle. Material in the vault or marked private is always P3. Nothing is
+    # preselected.
+    "work_order_privacy_class": "",
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".
@@ -2609,6 +2660,31 @@ DEFAULT_SETTINGS = {
     # work on a local model (wiki distillation, daily creation, the session
     # summary) waits until the computer has been idle this many minutes.
     "background_idle_minutes": 10,
+    # The local work scheduler (services/local_scheduler, services/turn_queue): every
+    # local model call waits its turn, at the class voice > chat > api > user_job >
+    # background. The one idle window for background work is background_idle_minutes
+    # above (the 1.0.2 rule).
+    "turn_queue_enabled": True,          # False: local calls skip the scheduler, as before 1.1
+    "turn_queue_tool_release_s": 60,     # a turn in one tool this long lets a waiting person go first
+    "turn_queue_seat_slots": {},         # {seat: slots} overrides the seat's real -np; empty reads -np from the seat
+    "local_scheduler_ram_floor_gb": 4,   # no model load starts if it would leave less free RAM than this
+    "local_scheduler_lease_wait_s": 120, # how long a second GPU lease waits behind the first (a voice call: 20 s)
+    "local_scheduler_admit_timeout_s": 900,  # a call stuck behind other work this long goes ahead unqueued, and says so
+    "local_scheduler_resident_s": 300,   # a model it ran this recently counts as still loaded (the daemon keeps it 5 minutes)
+    "local_scheduler_wrap_background": True,  # an unlabelled background call becomes a deferrable visible job in the queue
+    # Interruptions (services/interruption_policy): how often something that needs you may pop up,
+    # speak or text. Over the hour's budget, items wait silently in the Needs-you badge. 0 = no limit.
+    # Safety-critical items (spend halt, credential problem, seat change, a cLaw block) are exempt.
+    "interruption_budget_per_hour": 6,
+    # Quiet hours: off until you turn them on (22:00 to 07:00 is the offered window). In them only
+    # safety-critical items interrupt, and background jobs that would raise approvals wait.
+    "quiet_hours_enabled": False,
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "07:00",
+    # "Quiet until morning": an epoch time; 0 = not set. Set by voice or the Needs-you panel.
+    "quiet_until_ts": 0,
+    # Follow Windows Focus Assist / Do Not Disturb. Off until you choose it.
+    "honour_focus_assist": False,
     # ── Tool lifecycle hooks (Part B) ──
     # Each built-in PreToolUse/PostToolUse hook can be toggled here. Critical
     # hooks (governance_rings, vault_zt) ignore the toggle — they can't be
@@ -2623,6 +2699,21 @@ DEFAULT_SETTINGS = {
         "cost_attribution": {"enabled": True},
         "audit_log": {"enabled": True},
         "pii_scrub": {"enabled": True},
+        "call_verifier": {"enabled": True},
+    },
+    # The pre-execution verifier (services/call_verifier). It checks every tool
+    # call a model proposes before the governance checkpoint and can only add
+    # friction: a fix-it message, the earlier result of a repeated read, or a
+    # reason to ask you. Each part can be switched off; "loop_limit" is how many
+    # identical failures in a row stop a call.
+    "call_verifier": {
+        "enabled": True,
+        "argument_sanity": True,
+        "repeat_cache": True,
+        "loop_breaker": True,
+        "loop_limit": 3,
+        "injection_flag": True,
+        "privacy_vote": True,
     },
     # Token-bucket caps for the rate_limiter hook (per ring, per minute). 0
     # disables limiting for that ring. Ring 0/1 (local reads/writes) are never
@@ -2867,6 +2958,27 @@ DEFAULT_SETTINGS = {
     # holds the scene, parks the brain seat - and comes back when the call
     # ends. "automatic" (recommended), "ask" (a chip, once per call), "off".
     "call_mode": "automatic",
+    # Meeting recording (services/meeting_policy). Recording other people is
+    # the owner's decision every time; these are the choices around it.
+    # meeting_consent_line: "" means the default sentence; an edited line is the
+    # one the start card offers to copy for the call chat. meeting_consent_mode:
+    # "ask_everyone" (default) or "owner_decides". meeting_speak_consent: say the
+    # line aloud when recording starts (off). meeting_suggestions: the "take
+    # notes?" card, at most once per event, off by itself after two declines.
+    # Retention is offered with nothing preselected: "" means nothing is
+    # deleted on a timer. Audio: delete_after_notes (the Recommended label),
+    # 30_days or keep. Transcripts and notes: keep, or days (+ _days).
+    # meeting_archive (the Meetings workspace): "" until the owner chooses, then
+    # "on" (transcripts and notes are searchable from the Library, in a scope of
+    # their own, on this PC) or "off" (nothing is indexed; what was is removed).
+    "meeting_consent_line": "",
+    "meeting_consent_mode": "ask_everyone",
+    "meeting_speak_consent": False,
+    "meeting_suggestions": True,
+    "meeting_audio_retention": "",
+    "meeting_text_retention": "",
+    "meeting_text_retention_days": 90,
+    "meeting_archive": "",
     "tracking": {
         "parallax_strength": 1.0,
         "depth_strength": 1.0,
@@ -2953,10 +3065,53 @@ DEFAULT_SETTINGS = {
     # Optional chat preparation experiment. Alternate ordinary and assisted
     # turns; Laya only prepares read schemas/context and never grants actions.
     "laya_pilot_enabled": False,
+    # Chat turns answered with no model round (services/reflex_chat). A whole
+    # "yes" to a waiting approval question runs the stored action first thing:
+    # same outcome, no model. Default on; false sends every reply through the
+    # ordinary turn.
+    "reflex_approval_replies": True,
+    # "Open the X" resolved and opened with no model. Opt-in and unchosen
+    # (None) until the owner picks; only true turns it on. It runs through the
+    # same approvals and receipts as a model's tool call.
+    "reflex_open_enabled": None,
+    # Who picks the tool for a typed chat turn (services/chat_tool_routing).
+    # "" = not chosen: the chat model picks its own tools, as always. "laya"
+    # lets the Laya router run a plain lookup through the governed runner and
+    # hands the model the result; "model" records that the owner chose the
+    # old behaviour. Offered in Settings; nothing is preselected.
+    "chat_tool_routing": "",
+    # The trained tool chooser as a tier of the Laya router
+    # (services/laya_router_head): "off" | "shadow" | "on". Ships in shadow and
+    # inert until a certified checkpoint exists in this profile's folder.
+    # "shadow" logs its choice beside the router's (hashes only) and changes
+    # nothing; "on" lets it replace the router's guess for a turn only when it
+    # is sure above its certified threshold. Fixed rules, the change guard
+    # and the approval gates are not touched by it.
+    "laya_tool_head": "shadow",
+    # Laya's safe writes (services/laya_safe_writes): "off" | "shadow" | "on".
+    # OFF by default. It is widened only by the owner's own Settings click
+    # (owner_action=laya_safe_writes, which records an owner-enable record in
+    # services/guarded_settings); any other write that would widen it is dropped in
+    # _save_settings_locked, and a value in settings.json with no matching record
+    # reads as off. "shadow" logs the card she WOULD raise (counts and hashes) and
+    # changes nothing. "on" lets her raise the existing batch card for a reversible
+    # mail change she resolved from your words; the card is always raised and only
+    # you approve it.
+    "laya_safe_writes": "off",
     # How Laya runs on the CPU (services/laya_runtime): "auto" takes the
     # fastest engine measured and checked on this PC, else laya's own fp32.
     # "torch-fp32" | "torch-int8" | "onnx-int8" pin one.
     "laya_runtime": "auto",
+    # Laya's personal learning (services/laya_personal). ON by default (owner decision,
+    # 2026-10-10), with a notice and a report card in Settings > Laya: when you correct
+    # her or answer a question she asks, she keeps those words sealed in your vault on this
+    # PC, checks them against her shipped test questions, and only then uses them as extra
+    # examples. Top-sensitivity turns are never kept; a minor profile learns nothing.
+    # Off keeps and reads nothing. Retention is in days; the shadow days are how long a
+    # refit of her confidence runs unseen before it takes over.
+    "laya_personal_learning": True,
+    "laya_personal_retention_days": 180,
+    "laya_personal_shadow_days": 3,
     # How hard a local reasoning seat thinks (services/reasoning_policy, read
     # by the model router's local payload). "auto" lets the turn's shape
     # decide; "medium" | "xhigh" | "none" pin one effort on every turn;
@@ -3391,6 +3546,41 @@ def _sync_capability_routing(settings, changed=None):
             pass
 
 
+_SMART_MIGRATION_TRIED = [False]
+
+
+def _migrate_smart_routing_mode(settings: dict) -> bool:
+    """`smart` was local_preferred under another name; read it as such.
+
+    Changes `settings` in place and returns True when it found the old value.
+    The router, the media tools, chat vision and the setup reader all treat
+    `smart` as `local_preferred` now, so the stored value is renamed once and
+    every later read sees the current mode.
+    """
+    mr = settings.get("model_routing")
+    if isinstance(mr, dict) and str(mr.get("mode") or "").lower() == "smart":
+        settings["model_routing"] = dict(mr, mode="local_preferred")
+        return True
+    return False
+
+
+def _persist_smart_routing_migration():
+    """Write the one-time `smart` -> `local_preferred` rename to settings.json.
+
+    Tried once per process. The rename keeps the behaviour the owner already
+    had, so it passes as the owner's own routing change; a failed write is
+    harmless because every read normalises the old value anyway.
+    """
+    if _SMART_MIGRATION_TRIED[0]:
+        return
+    _SMART_MIGRATION_TRIED[0] = True
+    try:
+        _save_settings({"model_routing": {"mode": "local_preferred"}},
+                       owner_routing_change=True)
+    except Exception:
+        pass
+
+
 def _load_settings_raw():
     """Load agent settings exactly as persisted (no offline overlay).
 
@@ -3474,12 +3664,15 @@ def _load_settings_raw():
         # Fill in any missing keys with defaults
         merged = dict(DEFAULT_SETTINGS)
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+        _smart_found = _migrate_smart_routing_mode(merged)
         _sync_capability_routing(merged)
         _remember_good_settings(merged)
         with _SETTINGS_CACHE_LOCK:
             if _SETTINGS_CACHE_GEN[0] == _gen:
                 _SETTINGS_CACHE["value"] = merged
                 _SETTINGS_CACHE["ts"] = _time.time()
+        if _smart_found:
+            _persist_smart_routing_migration()
         return merged
     except Exception as e:
         # NEVER SILENT, AND NEVER FACTORY DEFAULTS WHEN BETTER IS KNOWN.
@@ -3542,16 +3735,19 @@ def _routing_mode_caller() -> str:
 
 
 def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
-                   owner_routing_change: bool = False):
+                   owner_routing_change: bool = False,
+                   owner_safe_writes_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
         return _save_settings_locked(data,
             _internal_cloud_consent_write=_internal_cloud_consent_write,
-            owner_routing_change=owner_routing_change)
+            owner_routing_change=owner_routing_change,
+            owner_safe_writes_change=owner_safe_writes_change)
 
 
 def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
-                   owner_routing_change: bool = False):
+                   owner_routing_change: bool = False,
+                   owner_safe_writes_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -3677,6 +3873,28 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                 _mr_in = dict(_mr_in)
                 _mr_in.pop("mode", None)
                 data["model_routing"] = _mr_in
+    # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
+    #
+    # `laya_safe_writes` lets Laya raise approval cards for changes to the
+    # owner's mail. Moving it from off toward on (off -> shadow -> on) takes the
+    # Settings control's own `owner_action`; any other write that carries a
+    # wider value (a whole settings dict read earlier, a script, a model's
+    # tool) has the key dropped and logged. Narrowing, and any value that is
+    # not one of the three words, is always safe: a bad value is dropped.
+    if data and "laya_safe_writes" in data:
+        _rank = {"off": 0, "shadow": 1, "on": 2}
+        _new_sw = data.get("laya_safe_writes")
+        _old_sw = existing.get("laya_safe_writes", "off")
+        _old_r = _rank.get(_old_sw, 0)
+        if _new_sw not in _rank or (_rank[_new_sw] > _old_r and not owner_safe_writes_change):
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "REFUSED a change of laya_safe_writes %r -> %r: %s (caller %s); the rest of the write is kept",
+                _old_sw, _new_sw,
+                "not one of off, shadow or on" if _new_sw not in _rank else "not an explicit owner action",
+                _routing_mode_caller())
+            data = dict(data)
+            data.pop("laya_safe_writes", None)
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():
@@ -3727,6 +3945,22 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     _invalidate_settings_cache()
     _remember_good_settings(
         {k: v for k, v in merged.items() if k in DEFAULT_SETTINGS})
+    # The owner's own click on a guarded setting leaves a signed record; a value in settings.json
+    # with no matching record is only a claim (services/guarded_settings.effective).
+    if data and "laya_safe_writes" in data:
+        try:
+            from agent_friday.services import guarded_settings as _gs
+            if owner_safe_writes_change:
+                _gs.record_owner_choice("laya_safe_writes", merged.get("laya_safe_writes"))
+            else:
+                # Any other write that carries the key can only have narrowed it (core dropped a widening):
+                # the record follows, so a stale "on" can never be re-armed by a later file edit.
+                _gs.narrow_record("laya_safe_writes", merged.get("laya_safe_writes"))
+            if merged.get("laya_safe_writes") != "on":
+                from agent_friday.services import laya_safe_writes as _lsw
+                _lsw.expire_pending_cards()         # nothing she proposed under the old setting stays approvable
+        except Exception:
+            pass
     # Switching off the record off drops what the session kept in memory.
     try:
         from agent_friday.services import off_record as _off

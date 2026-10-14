@@ -1,0 +1,331 @@
+{
+ "schema": 1,
+ "id": "news",
+ "label": "News",
+ "group": "life",
+ "held": null,
+ "spoken_words": {"router_extra": []},
+ "nav": {
+  "key": "tab",
+  "keys": ["tab", "article", "url", "title", "source", "episode"],
+  "sections": ["frontpage", "feed", "readlater", "notes", "briefings", "weekly", "editorial", "trust"]
+ },
+ "objects": [
+  {
+   "kind": "news",
+   "stage_workspace": "news",
+   "noun": "stories",
+   "ref_template": "news:{id}",
+   "see_touch": {
+    "publisher": "index.html NewsWS via fridayStage.makeAdapter",
+    "facets": ["age_h", "category", "saved", "source"],
+    "filters": {"category": null, "sort": ["relevance", "source", "time"]},
+    "fields": [],
+    "selectable": true,
+    "privacy": "titles"
+   },
+   "open": {"tool": "navigate_to", "kind": "news_article", "args": {"id": "{id}"}, "row_level": true},
+   "resolver": {"source": "news"}
+  }
+ ],
+ "verbs": [
+  {
+   "id": "news.read_feed",
+   "action": "news.read_feed",
+   "group": "read",
+   "ui": {"control": "read feed / top stories"},
+   "tool": "search_news",
+   "also_tools": ["get_briefing"],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["what's in the news", "give me the top stories"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": [
+    "laya_router_eval.json#What's the latest news about the Artemis moon mission?",
+    "laya_router_eval.json#Give me my morning briefing."
+   ]
+  },
+  {
+   "id": "news.filter_sort",
+   "action": "news.filter_sort",
+   "group": "read",
+   "ui": {"control": "filter / sort feed"},
+   "tool": "screen_select",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["show me only the sports stories", "sort the news by time"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "news.listen",
+   "action": "news.listen",
+   "group": "read",
+   "ui": {"control": "listen / play / stop audio"},
+   "tool": "podcast_play",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["pause the podcast", "skip the chapter"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"]
+  },
+  {
+   "id": "news.open_article",
+   "action": "news.open_article",
+   "group": "navigate",
+   "ui": {"control": "open article"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "point_act_tool",
+   "phrasings": ["open the second story", "open that one"],
+   "deictic": ["ordinal", "these", "description"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["point_act_eval.json#s35-01"],
+   "point_verb": "open"
+  },
+  {
+   "id": "news.switch_view",
+   "action": "news.switch_view",
+   "group": "navigate",
+   "ui": {"control": "switch view (front page/weekly/archive/sources)"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["open the weekly", "show my read later list"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "news.select_stories",
+   "action": "news.select_stories",
+   "group": "select",
+   "ui": {"control": "select stories"},
+   "tool": "screen_select",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "point_act_tool",
+   "phrasings": ["select these stories", "tick the first three"],
+   "deictic": ["these", "ordinal", "facet"],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["point_act_eval.json#s35-02"],
+   "point_verb": "select"
+  },
+  {
+   "id": "news.media_diet_rule",
+   "action": "news.media_diet_rule",
+   "group": "organize",
+   "ui": {"control": "media-diet rule add/remove"},
+   "tool": "media_diet_note",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["remember I want fewer celebrity stories"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "news.generate_front_page",
+   "action": "news.generate_front_page",
+   "group": "create",
+   "ui": {"control": "generate front page / weekly / editorial / briefing"},
+   "tool": "get_briefing",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 0, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["give me my morning briefing"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "news.deep_dive",
+   "action": "news.deep_dive",
+   "group": "create",
+   "ui": {"control": "deep dive / discuss story"},
+   "tool": "discuss_story",
+   "also_tools": ["get_article_deep_dive"],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["let's talk about that story"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "news.make_podcast",
+   "action": "news.make_podcast",
+   "group": "create",
+   "ui": {"control": "make podcast / share to draft"},
+   "tool": "make_podcast",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["make a podcast of today's news"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
+   "id": "news.settings",
+   "action": "news.settings",
+   "group": "settings",
+   "ui": {"control": "briefing prefs / local city / section order"},
+   "tool": "set_setting",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["change my briefing time"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  }
+ ],
+ "jobs": [
+  {
+   "id": "news.briefing",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "briefing",
+   "activity_label": "Daily briefing",
+   "entry": "agent_friday.routes.news:generate_briefing"
+  },
+  {
+   "id": "news.front_page",
+   "trigger": "button",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "front_page",
+   "activity_label": "Front Page",
+   "entry": "agent_friday.services.news_engine:_generate_front_page"
+  },
+  {
+   "id": "news.front_page_morning",
+   "trigger": "schedule",
+   "also": ["idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "scheduled",
+   "activity_label": "Morning news briefing",
+   "entry": "agent_friday.services.scheduler:_run_task_inner",
+   "schedule_ref": "news_morning"
+  },
+  {
+   "id": "news.front_page_evening",
+   "trigger": "schedule",
+   "also": ["idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "scheduled",
+   "activity_label": "Evening front page",
+   "entry": "agent_friday.services.scheduler:_run_task_inner",
+   "schedule_ref": "front_page_evening"
+  },
+  {
+   "id": "news.afternoon_briefing",
+   "trigger": "schedule",
+   "also": ["idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "briefing",
+   "activity_label": "Afternoon briefing",
+   "entry": "agent_friday.services.scheduler:_afternoon_briefing_job",
+   "schedule_ref": "afternoon_briefing"
+  },
+  {
+   "id": "news.weekly_digest",
+   "trigger": "button",
+   "also": ["schedule", "idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "weekly_digest",
+   "activity_label": "Weekly digest",
+   "entry": "agent_friday.services.news_engine:_generate_weekly_digest",
+   "schedule_ref": "weekly_digest"
+  },
+  {
+   "id": "news.weekly_editorial",
+   "trigger": "button",
+   "also": ["schedule", "idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "weekly_editorial",
+   "activity_label": "Weekly editorial",
+   "entry": "agent_friday.services.news_engine:_generate_weekly_editorial",
+   "schedule_ref": "weekly_editorial"
+  },
+  {
+   "id": "news.deep_dive",
+   "trigger": "button",
+   "also": ["voice"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "news_dive",
+   "activity_label": "News deep dive",
+   "entry": "agent_friday.services.news_engine:_deep_dive_article"
+  },
+  {
+   "id": "news.podcast",
+   "trigger": "button",
+   "also": ["voice"],
+   "model_class": "speech",
+   "helper": "visible_job",
+   "task_kind": "podcast",
+   "activity_label": "Podcast episode",
+   "entry": "agent_friday.services.podcast_engine:produce"
+  }
+ ],
+ "not_for_laya": [
+  {
+   "action": "news.read_later",
+   "kind": "gap",
+   "reason": "No tool saves or removes read-later items yet.",
+   "wave": "WS-2"
+  },
+  {
+   "action": "news.annotate_notes",
+   "kind": "gap",
+   "reason": "No tool writes or deletes the owner's story notes yet.",
+   "wave": "WS-2"
+  },
+  {
+   "action": "news.source_trust",
+   "kind": "gap",
+   "reason": "get_source_trust only reads; banning or boosting a source waits for the safe-writes review.",
+   "wave": "WS-2"
+  }
+ ],
+ "resolver_sources": [],
+ "workspace_tools": {"key": "news", "pools": []}
+}

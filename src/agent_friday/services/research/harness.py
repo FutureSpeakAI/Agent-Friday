@@ -184,6 +184,20 @@ JSON shape:
  "working_title":"...","internal_first":["..."]}"""
 
 
+def _scoping_in_cloud(c) -> bool:
+    """Scope on the cloud model only when the protection plan and the mode agree.
+
+    The routing mode has the last word. Under a local mode a commission is
+    scoped on the brain unless the owner chose the cloud for it ("now_cloud";
+    Local only never takes even that).
+    """
+    if not (c.protection.cloud_allowed and c.disposition != "now_local"):
+        return False
+    from agent_friday.services import cloud_mode_policy as _cmp
+    return _cmp.cloud_allowed(
+        "research scoping", explicit=(c.disposition == "now_cloud"))
+
+
 def scope(c: Commission) -> ResearchPlan | None:
     """Turn the question into a plan. Who scopes is the gate's decision."""
     c.set_stage(SCOPING)
@@ -199,7 +213,7 @@ def scope(c: Commission) -> ResearchPlan | None:
     c.log("protection plan computed", cloud_allowed=c.protection.cloud_allowed,
           sentence=c.protection.sentence())
 
-    want_cloud = c.protection.cloud_allowed and c.disposition != "now_local"
+    want_cloud = _scoping_in_cloud(c)
     used, data = "", None
     if want_cloud:
         try:

@@ -19,8 +19,8 @@ import agent_friday.core as core
 from agent_friday.core import login_required
 from agent_friday.routes._errors import api_error
 from agent_friday.services import screen_click, studio_files as sf
-from agent_friday.services.library import (answer, api, forget, grants, pages, principal as pr, procrun,
-                                           runtime, search)
+from agent_friday.services.library import (answer, api, forget, grants, index_job, pages, principal as pr, procrun,
+                                           runtime, search, staging)
 from agent_friday.services.library.store import store_for
 from agent_friday.user_errors import UserFacingValueError
 from agent_friday.services.visible_jobs import visible_job
@@ -267,6 +267,62 @@ def lib_add():
     return jsonify({"status": "ok", "scope": api._scope_row(store_for(p), ev)})
 
 
+@library_bp.route("/api/files/pick-folders", methods=["POST"])
+@login_required
+def files_pick_folders():
+    """Open the Windows folder window on the owner's screen and return the folders chosen.
+    The owner's own click on the page only (the page's session token on a same-origin
+    request): no bare call, key or other site opens a dialog. Every path has passed
+    unsafe_path_reason and too_broad_folder_reason before it is returned. It adds nothing:
+    recording a folder is /api/library/add, and a cloud model reading it is a separate
+    file grant, both pressed in the panel."""
+    bad = _same_origin_json()
+    if bad:
+        return bad
+    p, bad = _principal()
+    if bad:
+        return bad
+    from agent_friday.services import knowledge_folders as kf
+    res = kf.pick_folders(principal=p)
+    if not res.get("ok"):
+        return jsonify({"status": "unavailable", "error": res.get("error"), "fallback": res.get("fallback")}), 200
+    return jsonify({"status": "ok", "cancelled": res["cancelled"], "folders": res["folders"],
+                    "refused": res["refused"]})
+
+
+@library_bp.route("/api/files/knowledge-suggestions")
+@login_required
+def files_knowledge_suggestions():
+    """Places that usually hold someone's notes, found by a bounded read-only look (depth 3,
+    two seconds each), with a size and file-count estimate. Nothing is preselected."""
+    p, bad = _principal()
+    if bad:
+        return bad
+    from agent_friday.services import knowledge_folders as kf
+    if request.args.get("copy") == "only":                 # the words first, before the look around
+        return jsonify({"status": "ok", "copy": kf.COPY})
+    return jsonify({"status": "ok", "suggestions": kf.suggestions(p), "copy": kf.COPY})
+
+
+@library_bp.route("/api/files/describe-folder", methods=["POST"])
+@login_required
+def files_describe_folder():
+    """The typed-path fallback: the same checks the picker's folders pass, for one path."""
+    bad = _same_origin_json()
+    if bad:
+        return bad
+    p, bad = _principal()
+    if bad:
+        return bad
+    from agent_friday.services import knowledge_folders as kf
+    b = request.get_json(silent=True) or {}
+    d = kf.describe_folder(str(b.get("path") or ""), scopes=grants.active_scopes(p))
+    if not d.get("ok"):
+        return jsonify({"status": "denied", "error": d.get("error")}), 400
+    d.pop("ok", None)
+    return jsonify({"status": "ok", "folder": d})
+
+
 @library_bp.route("/api/library/tracked", methods=["GET", "POST"])
 @login_required
 def lib_tracked():
@@ -362,3 +418,48 @@ def lib_reindex():
     if bad:
         return bad
     return jsonify({"status": "ok", "scopes": runtime.resweep(p)})
+
+
+# ── reading the owner's folders: progress, and the drafts waiting for review ──
+
+@library_bp.route("/api/library/index")
+@login_required
+def lib_index_state():
+    """Where the folders stand: each folder's state and counts, whether reading is paused, how long the
+    first file took, and the drafts waiting in staging. Counts and labels only."""
+    p, bad = _principal()
+    if bad:
+        return bad
+    folders = index_job.folders(p)
+    return jsonify({"status": "ok", "paused": index_job.progress_for(p).paused,
+                    "folders": [dict(v, path_id=i) for i, v in enumerate(folders.values())],
+                    "report": index_job.first_answer_report(p), "drafts": staging.counts()})
+
+
+@library_bp.route("/api/library/staging")
+@login_required
+def lib_staging_list():
+    p, bad = _principal()
+    if bad:
+        return bad
+    status = request.args.get("status") or "proposed"
+    return jsonify({"status": "ok", "counts": staging.counts(), "items": staging.list_items(status)[:200]})
+
+
+@library_bp.route("/api/library/staging/review", methods=["POST"])
+@login_required
+def lib_staging_review():
+    """Accept, reject or defer one draft. Publishing a draft into the wiki is not done here."""
+    bad = _same_origin_json()
+    if bad:
+        return bad
+    p, bad = _principal()
+    if bad:
+        return bad
+    b = request.get_json(silent=True) or {}
+    bad = _gated("library_draft_review", {"decision": str(b.get("decision") or "")[:12],
+                                          "draft_id": str(b.get("id") or "")[:80]})
+    if bad:
+        return bad
+    out = staging.review(str(b.get("id") or ""), str(b.get("decision") or ""))
+    return jsonify({"status": "ok" if out.get("ok") else "error", **out}), (200 if out.get("ok") else 400)

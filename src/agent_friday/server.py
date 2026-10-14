@@ -131,7 +131,7 @@ ROUTE_MODULES = [
     'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'insights',
-    'intelligence', 'jobs', 'knowledge_graph', 'learning', 'library', 'liveness', 'local_address', 'media', 'meetings', 'memory_proposals',
+    'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'learning', 'library', 'liveness', 'local_address', 'media', 'meetings', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
     'platform', 'podcasts', 'privacy_consent', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
     'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',
@@ -618,6 +618,16 @@ if not _TESTING:
     except Exception as _pw_e:
         print(f"  Podcasts: render worker not started ({_pw_e})")
 
+    # Local voice readiness: keeps the stored capability snapshot fresh (a GPU or
+    # driver change, a week gone by) and runs wanted measurements as an idle
+    # background job through the local scheduler, never during a call
+    # (services/local_voice_readiness.py).
+    try:
+        from agent_friday.services import local_voice_readiness as _lvr
+        threading.Thread(target=_lvr.loop, daemon=True, name="local-voice-readiness").start()
+    except Exception as _lvr_e:
+        print(f"  Local voice readiness: not started ({_lvr_e})")
+
     # Media library index: built in the background at boot and kept fresh with a
     # cheap periodic change check, so the Library is never an empty grid over a
     # full creations folder (services/media_index.py).
@@ -626,6 +636,14 @@ if not _TESTING:
         _media_index.start_background()
     except Exception as _mi_e:
         print(f"  Media: library indexer not started ({_mi_e})")
+
+    # The Library: purge what was deleted, find changes while idle and take up the folders that were being
+    # read when Friday last stopped (services/library/runtime.py).
+    try:
+        from agent_friday.services.library import runtime as _library_runtime
+        _library_runtime.start_background()
+    except Exception as _lib_e:
+        print(f"  Library: background reading not started ({_lib_e})")
 
     # Offline-first resilience: probe connectivity every 30s, auto-switch to
     # local inference when offline, flush the queue + refresh feeds when back.
@@ -1205,6 +1223,15 @@ if __name__ == '__main__':
                   f"{_hw_cfg.get('stall_threshold_s', 90)}s)")
     except Exception as _hw_err:
         print(f"  Hang watchdog: skipped ({_hw_err})")
+
+    # Laya's safe writes: a settings file edited down while Friday was stopped turns the owner's record down
+    # now, before any turn reads the setting (services/guarded_settings.boot_narrow).
+    try:
+        from agent_friday.core import _load_settings as _ls_boot
+        from agent_friday.services import guarded_settings as _gs_boot
+        _gs_boot.boot_narrow(_ls_boot() or {})
+    except Exception as _gs_err:
+        print(f"  Safe writes record: boot check skipped ({_gs_err})")
 
     # BOOT INVARIANT (services/boot_guard.py).
     #

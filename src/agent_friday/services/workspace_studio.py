@@ -189,8 +189,8 @@ def _save_current_doc(ws_id, doc):
     if isinstance(doc, _WorkspaceDoc):
         doc._revision = hashlib.sha256(data).digest()
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "workspace_customizations_changed", "workspace": ws_id}, kind="desktop")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "workspace_customizations_changed", "workspace": ws_id}, kind="desktop")
     except Exception:
         _log.exception("Could not notify the desktop about saved workspace changes")
     return doc

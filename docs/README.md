@@ -25,11 +25,13 @@ document it is.
 | [Media](user-guide/media.md) | The media workspace: search, previews, transcripts, tidy-up. |
 | [Podcasts](user-guide/podcasts.md) | Episodes written by your local model and spoken on your PC. |
 | [Workflows](user-guide/workflows.md) | Project context, checked results, reusable procedures, and shared desktop, chat and voice controls. |
+| [Notifications, activity and updates](user-guide/notifications.md) | The four places (Needs you, Activity, Updates, Receipts and traces), batch approvals, the hourly limit, quiet hours and Focus Assist. |
 | [Approvals and receipts](user-guide/approvals-and-receipts.md) | What Friday asks before it acts, cards, grants for scheduled jobs, and the signed receipts. |
 | [Privacy: local and cloud](user-guide/privacy.md) | What stays on your PC, what can leave, and the egress gate's limits. |
 | [Mail](user-guide/mail.md) | Messages and Gmail: connecting, what Friday can do, how sending is approved. |
 | [Career](user-guide/career.md) | The walkthrough, setup files, job actions, reports, approval cards, and the manual Career search workflow. |
 | [Calendar](user-guide/calendar.md) | Google Calendar and Tasks, and which changes ask first. |
+| [Meetings](user-guide/meetings.md) | Record a meeting or a call on this PC, both sides, with consent. A notes pad, notes with the transcript lines they came from, a searchable archive, and retention you choose. |
 | [Voice](user-guide/voice.md) | Voice engines, local voice models, and push-to-transcribe (Alt+T). |
 | [Documents](user-guide/documents.md) | Word, Excel and PowerPoint files through OfficeCLI. |
 | [Scheduled jobs](user-guide/scheduled-jobs.md) | Where jobs run, local-only defaults, and grants. |
@@ -85,7 +87,7 @@ decision requests, dated.
 
 ## Release information
 
-- [CHANGELOG](../CHANGELOG.md) The Beta 1.0.2, Beta 1.0.1 and Beta 1.0 entries, then the 5.x record.
+- [CHANGELOG](../CHANGELOG.md) The Beta 1.1, Beta 1.0.2, Beta 1.0.1 and Beta 1.0 entries, then the 5.x record.
 - [RELEASE_NOTES](../RELEASE_NOTES.md), the human-facing notes for the current release.
 - [KNOWN_ISSUES](../KNOWN_ISSUES.md), current, unresolved, user-impacting limitations.
 

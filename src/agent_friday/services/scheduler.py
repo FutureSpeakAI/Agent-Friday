@@ -155,6 +155,9 @@ def _editorial_degraded(result):
     return None
 
 
+_CLOUD_SKIP_LOGGED: set = set()
+
+
 def _resolve_local_seat():
     """The local model actually serving right now, or None.
 
@@ -197,8 +200,25 @@ def _resolve_local_seat():
             if name and name not in candidates:
                 candidates.append(name)
         candidates += [n for n, _ in (local_seats.installed() or [])]
+        from agent_friday.services.local_only_guard import is_cloud_model_tag
+        # One inventory read refreshes the remote-alias set for the whole loop.
+        try:
+            from agent_friday.services.local_call import _daemon_tags
+            _daemon_tags()
+        except Exception:
+            pass
         for name in candidates:
             if not name:
+                continue
+            # An Ollama `:cloud` / `-cloud` tag is answered by the local
+            # daemon but run on ollama.com: never a local seat, whatever
+            # route the dispatch table reports for it.
+            if is_cloud_model_tag(name):
+                if name not in _CLOUD_SKIP_LOGGED:
+                    _CLOUD_SKIP_LOGGED.add(name)
+                    _log.info("local seat: %s is a cloud-relayed model "
+                              "(ollama.com), so it is not used as a local seat",
+                              name)
                 continue
             try:
                 d = describe_dispatch(name) or {}
@@ -331,7 +351,8 @@ def _normalize_record(rec, *, source="user"):
     }
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
-              "not_before", "retry_count", "retry_pending", "catch_up"):
+              "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
+              "finish_notice"):
         if k in rec:
             out[k] = rec[k]
     return out
@@ -343,23 +364,87 @@ def register_schedule(record) -> dict:
     return _upsert(rec)
 
 
+#: The fields that decide WHAT a schedule runs and WHEN. A card raised for one of its runs is bound to
+#: them: a card about the job as it was is not an answer about the job as it is.
+_RUN_FIELDS = ("enabled", "trigger", "spec", "task")
+
+
+def _run_basis(rec) -> dict:
+    basis = {k: (rec or {}).get(k) for k in _RUN_FIELDS}
+    basis["enabled"] = bool((rec or {}).get("enabled", True))
+    return basis
+
+
+def _schedule_fingerprint(rec) -> str:
+    import hashlib
+    import json as _json
+    return hashlib.sha256(_json.dumps(_run_basis(rec), sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+
 def update_schedule(sid, patch) -> dict | None:
     """Patch an existing schedule (name/trigger/spec/task/enabled/notify/...)."""
+    dropped = None
     with _STORE_LOCK:
         cur = get_schedule(sid)
         if not cur:
             return None
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
-                   "retry", "timeout_seconds"}
+                   "retry", "timeout_seconds", "finish_notice"}
+        before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
                 cur[k] = v
+        changed_run_fields = before != _run_basis(cur)
         cur["updated"] = _time.time()
         # Re-enabling or rescheduling clears any pending retry backoff.
         if patch and ("enabled" in patch or "trigger" in patch or "spec" in patch):
             cur["retry_pending"] = False
             cur["not_before"] = 0
-        return _upsert(cur)
+        # An edit that changes what the job is or when it runs is a new decision by the owner: a run that
+        # was waiting for quiet hours to end is forgotten, never carried out under the old terms, and the
+        # owner is told. Saving the same values again (a description edit, a "resume" of a job already
+        # on) changes nothing and leaves the waiting run alone.
+        if changed_run_fields and cur.get("quiet_deferred"):
+            dropped = cur.get("quiet_deferred")
+            cur["quiet_deferred"] = None
+        out = _upsert(cur)
+    if dropped is not None:
+        _notify_deferral_dropped(cur, dropped, bool(cur.get("enabled", True)))
+    if changed_run_fields:
+        _supersede_late_cards(sid)
+    return out
+
+
+def _notify_deferral_dropped(rec, qd, still_on) -> None:
+    """Say that a run waiting for quiet hours to end was dropped because the job changed. The words do
+    not say who changed it (the owner, or a workflow action) and do not promise a run for a job that is
+    now switched off."""
+    try:
+        from agent_friday import notifications_engine as _ne
+        key = (qd or {}).get("at") or (qd or {}).get("day") or ""
+        if still_on:
+            body = "It was dropped because the job was changed. It will run on its new schedule."
+        else:
+            body = "It was dropped because the job was switched off. It will not run until it is switched on."
+        _ne.push(title="%s: the run that was waiting for quiet hours to end was dropped" % (
+                     rec.get("name") or "A scheduled job"),
+                 body=body, priority="low", source="scheduler", kind="scheduled_deferred", tier="fyi",
+                 emitter="NQ2", dedupe_key="sched-dropped:%s:%s" % (rec.get("id"), key))
+    except Exception:
+        _log.debug("deferral-dropped notice failed", exc_info=True)
+
+
+def _supersede_late_cards(sid) -> None:
+    """The schedule changed: any late-run card still waiting for it is about a job that no longer exists
+    as asked. Resolve it (a no, never a yes); its decision hook says "schedule changed since"."""
+    try:
+        from agent_friday.services import approvals as _ap
+        for card in _ap.list_approvals(status="pending", kind=LATE_RUN_KIND):
+            if (card.get("payload") or {}).get("schedule_id") == sid:
+                _ap.decide(card["approval_id"], "deny", decided_by="system:schedule_changed",
+                           note="schedule changed since")
+    except Exception:
+        _log.debug("late-run card supersede failed", exc_info=True)
 
 
 def delete_schedule(sid) -> bool:
@@ -372,6 +457,7 @@ def delete_schedule(sid) -> bool:
         if target.get("source") == "builtin":
             return False
         _write_store([r for r in recs if r.get("id") != sid])
+    _supersede_late_cards(sid)
     return True
 
 
@@ -546,6 +632,18 @@ def idle_work_blocked_reason(rec=None, spec=None, now=None):
     except Exception:
         pass
 
+    # The owner's turns are the clock. A chat or voice turn running or waiting
+    # in the local queue is activity whatever the last mark says, and the
+    # marks themselves (a chat send, a voice turn, a click in the page) come
+    # from services/local_scheduler, so "idle" is time since you were here.
+    try:
+        from agent_friday.services import local_scheduler as _ls
+        busy = _ls.interactive_busy_reason()
+        if busy:
+            return busy + ", so idle work waits"
+    except Exception:
+        pass
+
     after = float(spec.get("idle_after_s", cfg["after_s"]))
     # One idle signal for all background work: the minimum of Windows'
     # last-input time and Friday's own activity (services/background_gate).
@@ -628,7 +726,179 @@ def _cloud_cadence_holds(rec, now) -> bool:
         return False
 
 
+def _deferred_for_quiet(rec, now=None) -> bool:
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        return bool(_ip.schedule_creates_approvals(rec)
+                    and _ip.defer_job("schedule.agent", creates=True,
+                                      now=now.timestamp() if now is not None else None)["defer"])
+    except Exception:
+        return False
+
+
+def _defer_cause(now=None) -> str:
+    """What is holding background work back: 'quiet_hours' or 'focus' (Windows Focus Assist)."""
+    try:
+        from agent_friday.services import interruption_policy as _ip
+        return _ip.defer_job("schedule.agent", creates=True,
+                             now=now.timestamp() if now is not None else None).get("reason") or "quiet_hours"
+    except Exception:
+        return "quiet_hours"
+
+
+def _cause_words(cause) -> str:
+    return "Focus Assist" if cause == "focus" else "quiet hours"
+
+
+def _note_quiet_deferral(rec, now) -> None:
+    """A run came due in quiet hours: remember it so it runs once when they end, and say so in Updates."""
+    sid = rec.get("id")
+    if rec.get("quiet_deferred") or not sid:
+        return
+    day = now.strftime("%Y-%m-%d")
+    cause = _defer_cause(now)
+    _patch_record(sid, quiet_deferred={"day": day, "at": now.timestamp(), "reason": cause})
+    try:
+        from agent_friday import notifications_engine as _ne
+        words = _cause_words(cause)
+        _ne.push(title="%s is due in %s" % (rec.get("name") or "A scheduled job", words),
+                 body="It would ask for approvals, so it runs once when %s end, and says it ran late." % (
+                     "Focus Assist" if cause == "focus" else "quiet hours"),
+                 priority="low", source="scheduler", kind="scheduled_deferred", tier="fyi", emitter="NQ2",
+                 dedupe_key="sched-deferred:%s:%s" % (sid, day))
+    except Exception:
+        _log.debug("deferral notice failed", exc_info=True)
+
+
+def _late_run_due(rec, now) -> bool:
+    """May the run that waited out quiet hours go now? It passes the schedule's other gates (switched
+    on, not already running, retry backoff, `not_before`, the same-day catch-up and its local seat, the
+    cloud cadence); only the time-of-day check is relaxed, for the one missed occurrence. A one-time job
+    is not run under its old terms: the owner is asked again (a card)."""
+    if not rec.get("enabled", True):
+        return False
+    with _RUNNING_LOCK:
+        if rec.get("id") in _RUNNING:
+            return False
+    ts = now.timestamp()
+    if rec.get("trigger") == "once":
+        _ask_late_once(rec)
+        return False
+    if rec.get("retry_pending"):
+        return ts >= (rec.get("not_before") or 0)
+    if (rec.get("not_before") or 0) > ts:
+        return False
+    cu = rec.get("catch_up")
+    if cu:
+        if cu.get("date") != now.strftime("%Y-%m-%d"):
+            return False
+        return _parked_reason() is None and bool(_resolve_local_seat())
+    if rec.get("trigger") == "interval" and _cloud_cadence_holds(rec, now):
+        return False
+    return True
+
+
+LATE_RUN_KIND = "scheduled_late_run"
+
+
+def _ask_late_once(rec) -> None:
+    """A one-time job came due in quiet hours: ask whether to run it now. The card belongs to ONE
+    deferral (its timestamp), so a tick that asks again finds the same card, and a new deferral (the job
+    was rescheduled and came due again, even on the same day) always gets a fresh one. A card an edit
+    superseded does not count: if the job is back in the state it was asked about (a failed save rolled
+    back), the owner is asked again."""
+    qd = rec.get("quiet_deferred") or {}
+    try:
+        from agent_friday.services import approvals as _ap
+        at = qd.get("at")
+        sid = rec.get("id")
+        cards = [c for c in _ap.list_approvals(kind=LATE_RUN_KIND)
+                 if (c.get("payload") or {}).get("schedule_id") == sid and (c.get("payload") or {}).get("at") == at]
+        if cards:
+            latest = max(cards, key=lambda c: c.get("created_at") or 0)
+            if not (latest.get("status") == "denied" and latest.get("decided_by") == "system:schedule_changed"):
+                return                      # waiting, or answered: the hook already dealt with the answer
+        name = rec.get("name") or "A one-time job"
+        words = _cause_words(qd.get("reason"))
+        _ap.create_approval(
+            kind=LATE_RUN_KIND, subject_type="schedule", subject_id="%s:%s:%d" % (sid, at, len(cards)),
+            title="%s was due in %s: run it now?" % (name, words),
+            description="It was due while you had %s on, so it did not run. Nothing runs unless you say yes." % words,
+            action_description="Run the one-time job '%s' now, after its time" % name,
+            force_gate=True,
+            payload={"schedule_id": sid, "day": qd.get("day"), "at": at, "fingerprint": _schedule_fingerprint(rec)},
+            requested_by="scheduler")
+    except Exception:
+        _log.debug("late-run card failed", exc_info=True)
+
+
+def _late_run_decided(card) -> None:
+    """The owner's answer to the late-run card, applied to the job only if it is still the job the card
+    was raised for. Yes runs it now; a no or an expiry drops that one run (a one-time job is switched
+    off). If the job was edited, switched off or deleted since, NOTHING is run and nothing is changed:
+    the card resolves as 'schedule changed since', with a notice."""
+    payload = card.get("payload") or {}
+    sid = payload.get("schedule_id")
+    if not sid:
+        return
+    rec = next((r for r in _read_store() if r.get("id") == sid), None)
+    qd = (rec or {}).get("quiet_deferred") or {}
+    same = bool(rec and rec.get("enabled", True)
+                and payload.get("fingerprint") == _schedule_fingerprint(rec)
+                and qd.get("day") is not None and qd.get("day") == payload.get("day")
+                and qd.get("at") == payload.get("at"))
+    if not same:
+        _notify_late_card_stale(card, rec)
+        return
+    if card.get("status") == "approved":
+        dispatch(rec, manual=True, require_enabled=True)
+    else:
+        _patch_record(sid, quiet_deferred=None, enabled=False)
+        if card.get("status") == "expired":
+            _notify_late_card_expired(rec)
+
+
+def _notify_late_card_stale(card, rec) -> None:
+    name = (rec or {}).get("name") or "A scheduled job"
+    try:
+        from agent_friday import notifications_engine as _ne
+        _ne.push(title="%s changed since it was asked about: nothing was run" % name,
+                 body="The question about running it late was for an earlier version of the job. "
+                      "It was not run and your edit was left as you made it.",
+                 priority="low", source="scheduler", kind="scheduled_deferred", tier="fyi", emitter="NQ2",
+                 dedupe_key="sched-late-stale:%s" % card.get("approval_id"))
+    except Exception:
+        _log.debug("stale late-run notice failed", exc_info=True)
+
+
+def _notify_late_card_expired(rec) -> None:
+    try:
+        from agent_friday import notifications_engine as _ne
+        _ne.push(title="%s was not run: you did not answer in time" % (rec.get("name") or "A one-time job"),
+                 body="It came due while it was held back and its question expired, so the one-time job "
+                      "was switched off. Nothing ran. Turn it on again in Schedules if you still want it.",
+                 priority="low", source="scheduler", kind="scheduled_deferred", tier="fyi", emitter="NQ2",
+                 dedupe_key="sched-late-expired:%s:%s" % (rec.get("id"), (rec.get("quiet_deferred") or {}).get("day")))
+    except Exception:
+        _log.debug("late-run expiry notice failed", exc_info=True)
+
+
 def _is_due(rec, now) -> bool:
+    """Due on its schedule, except that a run that would raise approvals and comes due in quiet hours
+    (services/interruption_policy) waits and runs ONCE when they end, however its trigger reads then
+    (a nightly job would otherwise never be due again at the hour it was missed). A one-time job runs
+    then too, labelled late. Built-in routines and "run now" are never held."""
+    quiet = _deferred_for_quiet(rec, now)
+    if rec.get("quiet_deferred") and not quiet:
+        return _late_run_due(rec, now)
+    due = _is_due_on_schedule(rec, now)
+    if due and quiet:
+        _note_quiet_deferral(rec, now)
+        return False
+    return due
+
+
+def _is_due_on_schedule(rec, now) -> bool:
     if not rec.get("enabled", True):
         return False
     with _RUNNING_LOCK:
@@ -914,27 +1184,40 @@ def _notify_run(rec, status, summary):
             _ne.push(title=(f"\u26a0\ufe0f {name} failed" if status == "failed"
                             else f"\u26a0\ufe0f {name} did not run"),
                      body=(summary or "")[:900], priority="high", source="scheduler",
-                     kind="scheduled_failure", actions=look,
+                     kind="scheduled_failure", actions=look, emitter="E04",
                      dedupe_key=f"sched-fail:{sid}", resolve_key=f"sched-fail:{sid}")
             return
         if status == "waiting":
             _ne.push(title=f"\u23f3 {name} is waiting for the local seat",
                      body=(summary or "")[:900], priority="low", source="scheduler",
-                     kind="scheduled_task", actions=look,
+                     kind="scheduled_task", actions=look, emitter="E05",
                      dedupe_key=f"sched-wait:{sid}", resolve_key=f"sched-wait:{sid}")
             return
         if status == "retired":
             _ne.push(title=f"{name} was switched off", body=(summary or "")[:900],
-                     source="scheduler", kind="schedule_retired")
+                     source="scheduler", kind="schedule_retired", emitter="E06",
+                     dedupe_key=f"sched-retired:{sid}")
             return
         _ne.resolve(f"sched-fail:{sid}")
         _ne.resolve(f"sched-wait:{sid}")
+        if not finish_notice_on(rec):
+            return
         _ne.push(title=f"\u2713 {name} ran",
                  body=(summary or "")[:300] or "Completed.", priority="low",
-                 source="scheduler", kind="scheduled_task",
-                 dedupe_key=f"sched-ok:{sid}")
+                 source="scheduler", kind="scheduled_task", emitter="E07",
+                 dedupe_key=f"sched-ok:{sid}", meta={"schedule_id": sid})
     except Exception as e:
         print(f"  [scheduler] notify failed: {e}")
+
+
+def finish_notice_on(rec) -> bool:
+    """Whether the owner hears when this job finishes. On by default; the
+    owner's per-job "Don't tell me when this finishes" saves
+    ``finish_notice: false`` on the schedule, and every later run reads it from
+    the store. Failures always notify, whatever this says."""
+    sid = (rec or {}).get("id")
+    live = get_schedule(sid) if sid else None
+    return (live or rec or {}).get("finish_notice", True) is not False
 
 
 def _notify_status(rec, summary):
@@ -948,6 +1231,8 @@ def _notify_status(rec, summary):
         _ne = None
     if not _ne or not hasattr(_ne, "upsert_status"):
         return
+    if not finish_notice_on(rec):
+        return
     try:
         when = _now_central().strftime("%b %d at %H:%M")
         body = (summary or "").strip()
@@ -957,8 +1242,9 @@ def _notify_status(rec, summary):
             key=f"sched-status:{rec.get('id')}",
             title=f"💓 {rec.get('name')} — last ran {when}",
             body=body[:300], source="scheduler", kind="scheduled_status",
-            priority="low",
-            target={"workspace": "system", "tab": "schedules"})
+            priority="low", emitter="E08",
+            target={"workspace": "system", "tab": "schedules"},
+            meta={"schedule_id": rec.get("id")})
     except Exception as e:
         print(f"  [scheduler] status update failed: {e}")
 
@@ -1311,9 +1597,46 @@ def _run_workflow(rec, task):
     raise TimeoutError("the workflow did not finish in time")
 
 
-def dispatch(rec, *, manual=False):
-    """Run a due (or manually-triggered) schedule on its own daemon thread."""
+def _late_slot_day(rec):
+    """The slot day a late run is for: the day it was deferred from, kept through a retry or a wait for
+    the seat so the follow-up run is still that slot's, not today's."""
+    qd = rec.get("quiet_deferred")
+    if isinstance(qd, dict) and qd.get("day"):
+        return qd["day"]
+    if (rec.get("retry_pending") or rec.get("catch_up")) and rec.get("slot_day"):
+        return rec["slot_day"]
+    return None
+
+
+def _late_cause(rec):
+    qd = rec.get("quiet_deferred")
+    if isinstance(qd, dict) and qd.get("day"):
+        return qd.get("reason")
+    return rec.get("slot_cause")
+
+
+def _run_mark(rec, now, started) -> dict:
+    """What the store records as a run starts. A run that waited out quiet hours is the late run of the
+    slot it missed, so it is recorded under THAT day: the same day's evening slot still comes due and the
+    job keeps its cadence, also when that late run is retried or waits for the seat. A one-time job
+    switches itself off as it fires."""
+    late_day = _late_slot_day(rec)
+    slot_day = late_day or now.strftime("%Y-%m-%d")
+    mark = dict(last_run_ts=started, last_run_date=slot_day, started_at=started, quiet_deferred=None,
+                slot_day=late_day, slot_cause=_late_cause(rec) if late_day else None)
+    if rec.get("trigger") == "once":
+        mark["enabled"] = False
+    return mark
+
+
+def dispatch(rec, *, manual=False, require_enabled=False):
+    """Run a due (or manually-triggered) schedule on its own daemon thread. ``require_enabled`` (a late
+    run the owner approved) refuses a job that is switched off or gone in the live store."""
     sid = rec.get("id")
+    if require_enabled:
+        live = next((r for r in _read_store() if r.get("id") == sid), None)
+        if not live or not live.get("enabled", True):
+            return None
     with _RUNNING_LOCK:
         # `manual` must NOT exempt "Run Now" from this guard: a user
         # re-clicking Run Now (or clicking it while a normal tick has already
@@ -1341,10 +1664,7 @@ def dispatch(rec, *, manual=False):
     # progress without knowing that overload — visibility for "this has been
     # running unusually long", otherwise a blind spot that lets a stuck job
     # run undetected for hours.
-    _mark = dict(last_run_ts=started, last_run_date=now.strftime("%Y-%m-%d"),
-                started_at=started)
-    if rec.get("trigger") == "once":
-        _mark["enabled"] = False
+    _mark = _run_mark(rec, now, started)
     if (rec.get("task") or {}).get("kind") == "workflow":
         _mark["last_workflow_run_id"] = run_id
     try:
@@ -1389,6 +1709,8 @@ def dispatch(rec, *, manual=False):
             result = _run_task(rec_live)
             status = result.status if isinstance(result, WorkflowRunResult) else "complete"
             summary = _summarize(result)
+            if _late_slot_day(rec):
+                summary = "Ran late: it came due in %s. " % _cause_words(_late_cause(rec)) + summary
             if catch_up:
                 summary = _late_note(catch_up, started) + (
                     " " + summary if summary else "")
@@ -1463,6 +1785,13 @@ def dispatch(rec, *, manual=False):
             # Recorded as a skip with its reason. No retry (the condition does
             # not clear in minutes) and no failure notice: the one status
             # entry scheduled_cloud.notify_paused keeps covers every run.
+            status, summary = "skipped", str(e)
+            _patch_record(sid, last_status="skipped", last_summary=summary,
+                          retry_pending=False, retry_count=0, not_before=0)
+        except StoodDown as e:
+            # The owner took the machine back (or is on a call): a skip with
+            # its reason, not a failure. No retry and no failure card; the job
+            # runs at its next slot after Friday resumes.
             status, summary = "skipped", str(e)
             _patch_record(sid, last_status="skipped", last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0)
@@ -1840,6 +2169,20 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] relationship_sync unavailable: {e}")
 
+    # laya-personal refit (swot spec d.2/d.4): rebuilds Laya's personal phrasings
+    # and calibration from the owner's own corrections. An idle-daily job in the
+    # Local AI queue (a visible job, kind laya_personal_refit); it runs only with
+    # the vault open, the owner present and the PC on AC power, and waits (never
+    # fails) otherwise. CPU only: no GPU, no model seat.
+    try:
+        from agent_friday.services.laya_personal_fit import run_scheduled as _laya_refit
+        register_builtin_task("laya_personal_refit", _laya_refit,
+                              label="Learning from your corrections",
+                              default_trigger="idle_daily",
+                              default_spec={"idle_after_s": 600}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] laya_personal_refit unavailable: {e}")
+
 
 @visible_job('Afternoon briefing', kind='briefing', workspace='news')
 def _afternoon_briefing_job():
@@ -2001,6 +2344,11 @@ def _uses_gpu(rec) -> bool:
 
 def _tick():
     now = _now_central()
+    try:                       # quiet hours or Focus Assist just ended: held approvals pop open and get texted
+        from agent_friday.services import approvals as _ap
+        _ap.release_held()
+    except Exception:
+        pass
     with _STORE_LOCK:
         recs = [dict(r) for r in _read_store()]
     # Anything that wakes on a timer defers while the card is leased.
@@ -2038,6 +2386,17 @@ def _tick():
             _log.warning("tick error [%s]: %s", rec.get('id'), e)
     _reclaim_expired_lease()
     _away_drain_tick()
+    _meeting_retention_tick()
+
+
+def _meeting_retention_tick() -> None:
+    """The owner's meeting retention choices, applied through the work queue
+    (services/meeting_policy). Does nothing until a choice has been made."""
+    try:
+        from agent_friday.services import meeting_policy
+        meeting_policy.retention_tick()
+    except Exception as e:
+        _log.debug("meeting retention tick skipped: %s", e)
 
 
 # ── P5: the away-drain, OFF by default ────────────────────────────────────────
@@ -2129,7 +2488,7 @@ def _announce_drain(res) -> None:
     """A drain that runs and tells nobody is the same defect as P4."""
     try:
         import agent_friday.notifications_engine as ne
-        ne.push(title="Queued work finished",
+        ne.push(title="Queued work finished", emitter="E09", dedupe_key="queue-drained",
                 body=str(res)[:300], proactive_chat=True,
                 chat_message=f"I drained the queued heavy work while you were "
                              f"away. {str(res)[:300]}")
@@ -2197,3 +2556,10 @@ def start_scheduler():
     if core._TESTING:
         return
     threading.Thread(target=_loop, daemon=True).start()
+
+
+try:                                  # the answer to a late one-time run's card (A4)
+    from agent_friday.services import approvals as _approvals_for_late_run
+    _approvals_for_late_run.register_decision_hook(LATE_RUN_KIND, _late_run_decided)
+except Exception:                     # pragma: no cover - the scheduler still works without it
+    pass

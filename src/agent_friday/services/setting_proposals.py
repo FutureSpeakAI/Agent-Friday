@@ -57,6 +57,7 @@ TOOL_OF = {
     "settings.calls.stand_back": "call_mode",
     "settings.podcasts.format": "podcast_format",
     "settings.podcasts.length": "podcast_length",
+    "settings.laya.live_reflex": "live_laya",
 }
 KEYS_OF = {
     "switch_model": ("capability_routing", "orchestrator_model"),
@@ -67,6 +68,7 @@ KEYS_OF = {
     "call_mode": ("call_mode",),
     "podcast_format": ("podcasts",),
     "podcast_length": ("podcasts",),
+    "live_laya": ("voice_live_reflex",),
 }
 LABELS = {
     "switch_model": "the chat model",
@@ -77,6 +79,7 @@ LABELS = {
     "call_mode": "standing back for calls",
     "podcast_format": "who hosts a show",
     "podcast_length": "how long a show runs",
+    "live_laya": "Laya acting on her own during cloud calls",
 }
 
 
@@ -90,8 +93,8 @@ def _path_of(tool: str) -> str:
 def _tell_pages(path: str) -> None:
     """An open Settings page re-reads its rows and its provenance lines."""
     try:
-        from agent_friday.services import desktop_bus
-        desktop_bus.broadcast({"type": "settings_changed", "path": path}, kind="desktop")
+        from agent_friday.services import notice_registry as _nr
+        _nr.bus_broadcast("E74", {"type": "settings_changed", "path": path}, kind="desktop")
     except Exception:
         pass
 
@@ -287,7 +290,8 @@ register_hooks()
 #: path prefix -> how to say it to the tool that owns the row. The path is the Settings row's key.
 PATHS = ("settings.models.chat_model", "settings.display.workspace_layout.<workspace>", "settings.display.start_screen",
          "settings.accessibility.big_mode", "settings.hologram.window.<dial>", "settings.calls.stand_back",
-         "settings.podcasts.format.<show>", "settings.podcasts.length.<show>")
+         "settings.podcasts.format.<show>", "settings.podcasts.length.<show>",
+         "settings.laya.live_reflex")
 _LAYOUT_VALUES = ("normal", "fullscreen_chat")
 
 
@@ -322,6 +326,8 @@ def _route(path: str, value: str):
             return "SETTING_FAIL: %s is a number." % p.rsplit(".", 1)[1]
     if p == "settings.calls.stand_back":
         return "call_mode", {"action": "set_mode", "mode": v}
+    if p == "settings.laya.live_reflex":
+        return "live_laya", {"action": "reflex", "mode": v.lower()}
     if p.startswith("settings.podcasts.format"):
         show = p.split(".", 3)[3] if p.count(".") >= 3 else "any"
         return "podcast_format", {"routine": show, "format": v}
@@ -366,6 +372,7 @@ def tool(inp) -> str:
 ROW_HOMES = {
     "settings.display.start_screen": ("appearance", "Show my day", ("show my day", "start screen", "landing screen", "my day on the start screen")),
     "settings.calls.stand_back": ("voice", "Calls", ("calls", "call mode", "stand back for calls", "standing back for calls")),
+    "settings.laya.personal_learning": ("privacy", "Laya learns from my corrections", ("laya learning", "personal learning", "learn from my corrections", "what laya learned")),
     "settings.accessibility.big_mode": ("voice", "Big mode", ("big mode", "large targets", "big buttons")),
     "settings.hologram.window.depth_strength": ("voice", "Depth effect", ("depth effect", "depth strength", "hologram depth")),
     "settings.hologram.window.parallax_strength": ("voice", "Parallax strength", ("parallax", "parallax strength")),
