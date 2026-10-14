@@ -250,9 +250,10 @@ def test_the_old_zip_path_is_gone():
 
 def test_the_tag_check_accepts_the_beta_tag_against_the_pep440_version():
     assert "(a|b|rc)" in WORKFLOW and "-$word.$($m.Groups[3].Value)" in WORKFLOW
-    # the same normalisation, run on pyproject's version: 1.1.0b1 -> v1.1.0-beta.1
-    import tomllib
-    version = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    # the same normalisation, run on the tree's version (app_version is the one reader of
+    # pyproject.toml): 1.1.0b1 -> v1.1.0-beta.1
+    from agent_friday.services import app_version
+    version = app_version.running_version(REPO)
     m = re.match(r"^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$", version)
     word = {"a": "alpha", "b": "beta", "rc": "rc"}[m.group(2)]
     assert "v%s-%s.%s" % (m.group(1), word, m.group(3)) == release.RELEASE_TAG

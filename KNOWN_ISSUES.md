@@ -92,7 +92,7 @@ you hit something that is not here, please open an issue.
   so a second GPU seat or local image generation may fail to allocate. "I need
   my machine" in Settings > Models releases the GPU.
 
-## 2a. Open in 1.1: safe writes and Ollama cloud models
+## 2a. Open in Beta 1.1: safe writes and Ollama cloud models
 
 - **Laya's safe writes (`laya_safe_writes`) are off and await review.** The
   feature lets Laya raise the approval card for a reversible mail change to rows
@@ -131,7 +131,7 @@ you hit something that is not here, please open an issue.
   read is not seen until the next one. Update Ollama, and give cloud
   models names that keep the `cloud` tag.
 
-## 2b. Open in 1.1: local voice calls and the Local AI queue
+## 2b. Open in Beta 1.1: local voice calls and the Local AI queue
 
 - **The first local voice call after a while is slow to start.** The voice
   models load first. They now load at the same time rather than one after
@@ -141,7 +141,7 @@ you hit something that is not here, please open an issue.
   work.** Only local voice turns do. Work that can wait, such as wiki notes,
   still waits while you are active at the keyboard.
 
-## 2c. Open in 1.1: voice routing
+## 2c. Open in Beta 1.1: voice routing
 
 - **Stop the music and volume by voice.** "Stop the music" and volume changes
   are not handled yet.

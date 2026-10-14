@@ -1706,9 +1706,19 @@ def test_the_settings_are_documented():
 
 
 def test_the_changelog_names_it_under_the_unreleased_block():
+    """The entry is in the next release: [Unreleased], or the block of the release this
+    tree is being prepared as (release.RELEASE_TAG), never only under an older one."""
+    from agent_friday import release
     log = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    top = log[log.index("## [Unreleased]"):]
-    assert "What Laya learns about you" in top[:top.index("\n## [", 10)]
+
+    def block(heading):
+        if heading not in log:
+            return ""
+        top = log[log.index(heading):]
+        return top[:top.index("\n## [", 10)]
+
+    upcoming = block("## [Unreleased]") + block("## [%s]" % release.RELEASE_TAG.lstrip("v"))
+    assert "What Laya learns about you" in upcoming
 
 
 def test_the_manifest_covers_every_report_card_action():
