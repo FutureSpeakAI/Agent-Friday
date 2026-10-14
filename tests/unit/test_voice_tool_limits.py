@@ -8,6 +8,7 @@ every voice tool has a hard limit, and a late result is labelled as late.
 import asyncio
 import inspect
 import json
+import threading
 import time
 
 import pytest
@@ -54,8 +55,11 @@ def test_a_slow_deep_dive_answers_with_the_articles_opening(article, monkeypatch
     assert time.time() - t0 < 1.2
     assert out["partial"] is True
     assert out["summary"].startswith("The city council approved the new transit plan")
-    # The full answer still lands, for the next ask.
-    time.sleep(1.6)
+    # The full answer still lands, for the next ask: once the read that outlived the
+    # budget has finished (joined, not slept past, so a slow machine waits for it).
+    for t in [t for t in threading.enumerate() if t.name == "news-quick-dive"]:
+        t.join(30)
+        assert not t.is_alive(), "the full read never finished"
     again = json.loads(ve._tool_get_article_deep_dive({"url": "https://example.test/b"}))
     assert again["summary"] == "Council approved a transit plan."
 
