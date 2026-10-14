@@ -220,10 +220,12 @@ def test_an_instant_open_whose_tool_raises_hides_the_text_from_the_page(client, 
     with client.application.test_request_context("/api/chat", method="POST"):
         resp = chat_routes._instant_response("open the go-live checklist", out, "c-hidden")
     data = _hidden(resp)
-    assert data["error_id"] and data["instant"] is True
-    # The text is still there for the service's own reader; only the page's copy is swapped.
-    assert isinstance(out["tool_trace"][0]["result"], ExceptionText)
-    assert isinstance(out["reply"], ExceptionText) and INTERNAL in out["reply"]
+    assert data["instant"] is True
+    assert data["response"].startswith("I did not open Go-live checklist: the action failed (error ")
+    # The reflex result itself carries no tool text: core_routes' open route returns its reply
+    # without public_result, so the boundary is here, not at the route.
+    assert INTERNAL not in out["reply"] and INTERNAL not in repr(out["tool_trace"])
+    assert out["tool_trace"][0]["status"] == "error"
 
 
 # ── services whose results routes return ─────────────────────────────────────

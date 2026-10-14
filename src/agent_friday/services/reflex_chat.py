@@ -414,11 +414,12 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
     # The same call a model's tool use makes: confirmation, governance, vault,
     # sandbox, receipts. This module has no other way to run a command.
     result = agent._execute_tool(tool, tool_input, session_ctx=ctx)
-    # A str result is kept as it is, so exception text a handler marked (user_errors.exception_text)
-    # stays marked in the trace and in a reply quoting it, and routes._errors.public_result hides it.
     result = result if isinstance(result, str) else str(result if result is not None else "")
     status = agent._tool_call_status(result)
-    entry = {"name": tool, "input": tool_input, "result": result}
+    # This reply and trace go straight to the page (routes/chat._instant_response and
+    # core_routes' open route). The tool's own text is written for a model and can quote an
+    # exception, so the page gets the status and a fixed phrase; a failure's text goes to the log.
+    entry = {"name": tool, "input": tool_input, "status": status}
     title = ""
     try:
         title = str(res.chosen.title)
@@ -443,20 +444,29 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
         hist = _lt.line("open_card", shown="that").text
     elif status in ("deny", "error"):
         outcome = "refused"
-        reply = _lt.line("open_refused", shown=shown, detail=_first_line(result))
+        reply = _lt.line("open_refused", shown=shown, detail=_page_detail(status, result))
         hist = _lt.line("open_refused", shown="that", detail=hist_detail).text
     else:
         outcome = "not_confirmed"
-        reply = _lt.line("open_unconfirmed", shown=shown, detail=_first_line(result))
+        reply = _lt.line("open_unconfirmed", shown=shown, detail=_page_detail(status, result))
         hist = _lt.line("open_unconfirmed", shown="that", detail=hist_detail).text
     count("open_" + outcome)
     _record_plan(turn_id, shape="reflex_open", reason="resolver: one sealed command",
                  reflex={"by": "resolver", "kind": "open", "tool": tool, "outcome": outcome})
-    from agent_friday.user_errors import keep_mark
-    # The refused and unconfirmed replies quote the result's first line: they carry its mark.
-    shown_text = keep_mark((result,), reply.text) if outcome in ("refused", "not_confirmed") else reply.text
-    return {"reply": shown_text, "tool_trace": [entry], "actions": [], "outcome": outcome,
+    return {"reply": reply.text, "tool_trace": [entry], "actions": [], "outcome": outcome,
             "laya": reply.receipt(), "history_text": hist}
+
+
+def _page_detail(status: str, result: str) -> str:
+    """Why an instant open did not land, in words fixed here. A tool error's own text is logged
+    under an error id, which the phrase names; it never reaches the page."""
+    if status == "deny":
+        return "a rule on this PC held it"
+    if status == "error":
+        from agent_friday.user_errors import log_text
+        return "the action failed (error %s)" % log_text("Instant open failed", result)
+    _log.info("instant open not confirmed: %s", _first_line(result, 120))
+    return "the desktop did not confirm it"
 
 
 # ---------------------------------------------------------------------------
