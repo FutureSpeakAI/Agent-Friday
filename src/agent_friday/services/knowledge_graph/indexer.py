@@ -1082,6 +1082,28 @@ def _link_to_pages(entities: dict[str, dict],
     return out
 
 
+def kg_vectors(texts: list[str]) -> list[list[float]]:
+    """Unit-length all-MiniLM-L6-v2 vectors for the knowledge-graph collection.
+
+    The collection is always handed its vectors; Chroma is never asked to
+    embed. A collection opened without an embedding function gets Chroma's
+    default one, which on first use downloads an ONNX model from Chroma's
+    S3 bucket with no notice to the user. These come from Friday's own shared
+    MiniLM (services/minilm: the pinned on-disk encoder, or the torch model
+    fetched through services/embedder_cache with its visible notice), on the
+    inference thread like every other embedder. Raises when neither is here;
+    the callers then index no vectors and search by keyword.
+
+    The default embedder was the same model with unit-length output, so the
+    vectors already in a collection stay comparable with these.
+    """
+    from agent_friday.services import minilm
+    from agent_friday.services.inference_executor import run
+    m = minilm.model("knowledge graph")
+    rows = run(m.encode, list(texts), normalize_embeddings=True)
+    return [[float(x) for x in r] for r in rows]
+
+
 def _embed_entities(entities: list[dict], say) -> int:
     """Embed entity title+description into a dedicated local ChromaDB
     collection (all-MiniLM-L6-v2 — on-device, never leaves the machine)."""
@@ -1102,7 +1124,8 @@ def _embed_entities(entities: list[dict], say) -> int:
             metas.append({"type": e.get("type", ""),
                           "community": str(e.get("community", ""))})
         if ids:
-            coll.upsert(ids=ids, documents=docs, metadatas=metas)
+            coll.upsert(ids=ids, documents=docs, metadatas=metas,
+                        embeddings=kg_vectors(docs))
         return len(ids)
     except Exception as e:
         say(f"embeddings unavailable: {e}")
