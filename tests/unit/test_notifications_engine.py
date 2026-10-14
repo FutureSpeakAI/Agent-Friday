@@ -233,7 +233,8 @@ class TestListNotifications:
     def test_same_priority_newer_first(self, monkeypatch):
         """created_at has one-second resolution; two notifications in the same
         second still list newest first."""
-        monkeypatch.setattr(ne, "_now_iso", lambda: "2026-01-01T00:00:00Z")
+        stamp = ne._now_iso()                  # one second, and recent: an FYI card expires
+        monkeypatch.setattr(ne, "_now_iso", lambda: stamp)
         e1 = _push(title="Older", priority="medium")
         e2 = _push(title="Newer", priority="medium")
         ids = [n["id"] for n in list_notifications()]
