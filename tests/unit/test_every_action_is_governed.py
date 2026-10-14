@@ -301,6 +301,10 @@ def test_it_fails_closed(monkeypatch):
 
 
 def test_reads_keep_working_when_the_cLaws_check_fails(monkeypatch):
+    # An identical background read elsewhere in this worker within two minutes
+    # would answer from the repeat-call cache without running the handler.
+    from agent_friday.services import call_verifier
+    call_verifier.reset()
     got = []
     monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "search_wiki", lambda inp: got.append(1) or "ok")
     monkeypatch.setattr(action_gate, "verify_claws", lambda: (False, "tampered"))
