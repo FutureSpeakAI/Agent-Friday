@@ -908,19 +908,34 @@ class TestRoutines:
         resp = client.post("/api/routines/no-such-routine/run")
         assert resp.status_code == 404
 
-    def test_routine_run_known_returns_ok_or_an_honest_refusal(self, client):
+    def test_routine_run_known_returns_ok_or_an_honest_refusal(self, client, monkeypatch):
         """Every registry routine answers honestly: 200 when it started,
         501 when this build has no handler for it, 409 while Friday is stood
         down. What it may never do is claim it launched when it did not.
+
+        The start is recorded, not run: once any earlier test has registered
+        the scheduler's built-ins, a real start would put the Front Page,
+        the briefing, the daily creation and a repo sync on daemon threads
+        that outlive this test (the Front Page queues its podcast episode in
+        the shared test home minutes later, a waiting job in some later test).
         """
+        from agent_friday.routes import workflows
         from agent_friday.services.misc_engine import ROUTINE_REGISTRY
+        started = []
+        monkeypatch.setattr(workflows, "_start_routine_thread",
+                            lambda ref, fn: started.append(ref))
         for reg in ROUTINE_REGISTRY:
+            before = len(started)
             r = client.post("/api/routines/%s/run" % reg["id"])
             assert r.status_code in (200, 409, 501), (
                 "%s -> HTTP %s" % (reg["id"], r.status_code))
             body = r.get_json() or {}
-            if r.status_code != 200:
+            if r.status_code == 200:
+                assert started[before:] == [body.get("task_ref")], (
+                    "%s answered 200 without starting its job" % reg["id"])
+            else:
                 assert body.get("status") != "ok"
+                assert len(started) == before, "%s refused and still started a job" % reg["id"]
 
     def test_routine_run_starts_the_real_job(self, client, monkeypatch):
         """A 200 must mean work started.
