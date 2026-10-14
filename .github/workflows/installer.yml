@@ -55,7 +55,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          # pyproject spells a beta 1.0.2b1 (PEP 440); the tag spells it 1.0.2-beta.1.
+          # pyproject spells a beta 1.1.0b1 (PEP 440); the tag spells it 1.1.0-beta.1.
           $v = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           $m = [regex]::Match($v, '^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$')
           if (-not $m.Success) { throw "pyproject version $v is not a version this workflow understands" }
@@ -219,4 +219,4 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
             --repo "${{ github.repository }}" --verify-tag --latest \
-            --title "Agent Friday Beta 1.0.2" --notes-file "$RUNNER_TEMP/notes.md"
+            --title "Agent Friday Beta 1.1" --notes-file "$RUNNER_TEMP/notes.md"
