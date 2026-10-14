@@ -19215,6 +19215,9 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Your knowledge" desc={"Notes and documents you want " + fridayName() + " to start with. Each folder has two separate choices: read it on this PC, and, only if you turn it on, let cloud models read it."}>
       <KnowledgePanel mode="settings"/>
     </StSection>
+    <StSection title="Memory card">
+      <MemoryCardPanel/>
+    </StSection>
     <StSection title="What needs your sign-off">
       <ApprovalScannerPanel s={s} save={save}/>
     </StSection>
@@ -19951,6 +19954,93 @@ function LayaLearningPanel({s, save}) {
         o.can_offer && E('div', {style: dim}, 'This raises a card in your approvals. Only a click there lets her act on less than the shipped score.')))));
 }
 // End Laya learning panel
+
+function MemoryCardPanel() {
+  // The core memory card (services/core_memory): the two short notes Friday reads at
+  // the top of every conversation. Every line is shown and can be edited or deleted
+  // here; suggestions from nightly dreaming and the background review wait for a Keep;
+  // each change Friday made can be undone. The owner's edits apply at once.
+  const E = React.createElement;
+  const [rep, setRep] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [edit, setEdit] = useState(null);
+  const [draft, setDraft] = useState({user: '', friday: ''});
+  const load = useCallback(() => {
+    apiFetch('/api/core-memory')
+      .then(r => r.json())
+      .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory card.'); setRep(d); })
+      .catch(e => setMsg(e.message || 'Could not read the memory card.'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const post = (path, body, key, after) => {
+    setBusy(key || path); setMsg('');
+    apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
+      .then(r => r.json())
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const head = {fontSize:11.5, color:'rgba(255,255,255,0.7)', margin:'12px 0 4px'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
+  const when = at => { try { return new Date(at * 1000).toLocaleDateString(); } catch (e) { return ''; } };
+  const btn = (label, onClick, key, extra) => E('button', Object.assign({className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, extra || {}), label);
+  const from = src => (String(src || '').indexOf('dream') === 0 ? 'nightly dreaming'
+    : src === 'review' ? 'the background review' : src === 'friday' ? fridayName() : 'an older note');
+  const file = t => {
+    const f = rep.card[t];
+    const pct = f.cap ? Math.min(100, Math.round(100 * f.used / f.cap)) : 0;
+    return E('div', {key: t, 'data-core-memory': t},
+      E('div', {style: head}, f.title),
+      E('div', {style: dim}, f.used.toLocaleString() + ' of ' + f.cap.toLocaleString() + ' characters'),
+      E('div', {style:{height:4, borderRadius:2, background:'rgba(255,255,255,0.08)', margin:'4px 0 8px'}},
+        E('div', {style:{height:4, borderRadius:2, width: pct + '%', background: pct >= 90 ? 'var(--st-warn)' : 'var(--st-accent)'}})),
+      f.entries.length === 0 && E('div', {style: dim}, 'Nothing yet.'),
+      f.entries.map((line, i) => (edit && edit.t === t && edit.i === i)
+        ? E('div', {key: t + i, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'})},
+            E('input', {className:'input', 'aria-label':'Edit this line', style:{flex:'1 1 240px', fontSize:12}, value: edit.text,
+              onChange: e => setEdit({t: t, i: i, text: e.target.value})}),
+            btn('Save', () => post('edit', {target: t, index: i, text: edit.text}, 'e' + t + i, () => setEdit(null)), 'save'),
+            btn('Cancel', () => setEdit(null), 'cancel'))
+        : E('div', {key: t + i, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+            E('div', {style:{flex:1, fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, line),
+            btn('Edit', () => setEdit({t: t, i: i, text: line}), 'edit'),
+            btn('Delete', () => post('delete', {target: t, index: i}, 'd' + t + i), 'delete'))),
+      E('div', {style:{display:'flex', gap:6, marginTop:4}},
+        E('input', {className:'input', 'aria-label':'Add a line to ' + f.title, placeholder:'Add a line', style:{flex:1, fontSize:12}, value: draft[t],
+          onChange: e => setDraft(Object.assign({}, draft, {[t]: e.target.value}))}),
+        btn('Add', () => post('add', {target: t, text: draft[t]}, 'a' + t, () => setDraft(Object.assign({}, draft, {[t]: ''}))), 'add',
+          {disabled: !!busy || !String(draft[t] || '').trim()})));
+  };
+  const what = p => p.op === 'add' ? 'Add: “' + p.text + '”'
+    : p.op === 'remove' ? 'Remove: “' + p.old + '”' : 'Change “' + p.old + '” to “' + p.text + '”';
+  const chg = c => c.op === 'add' ? 'Added “' + (c.after || '') + '”'
+    : c.op === 'remove' ? 'Removed “' + (c.before || '') + '”' : 'Changed “' + (c.before || '') + '” to “' + (c.after || '') + '”';
+  return E('div', null,
+    E('div', {style: dim}, 'Two short notes ' + fridayName() + ' reads at the start of every conversation: what she knows about you, and what she has learned about working with you. Each has a size limit, so she merges or drops lines to make room. She saves on her own when you tell her something; anything she picked up from a page, a mail or a file waits for your OK first. Your changes here apply straight away; hers from the next conversation. The files are on this PC only.'),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'#f59e0b', marginTop:6}}, msg),
+    !rep && !msg && E('div', {style: dim}, 'Loading…'),
+    rep && E('div', null,
+      file('user'), file('friday'),
+      (rep.pending || []).length > 0 && E('div', {style: head}, 'Waiting for your review'),
+      (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card; Discard drops them.'),
+      (rep.pending || []).slice(0, 30).map(p => E('div', {key: p.id, style: row},
+        E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, what(p)),
+        E('div', {style: dim}, (p.target === 'friday' ? 'Working with you' : 'About you') + ' · from ' + from(p.source) + ' · ' + when(p.ts)),
+        p.reason ? E('div', {style: dim}, p.reason) : null,
+        E('div', {style:{display:'flex', gap:6, marginTop:4}},
+          btn('Keep', () => post('review', {id: p.id, keep: true}, 'k' + p.id), 'keep'),
+          btn('Discard', () => post('review', {id: p.id, keep: false}, 'x' + p.id), 'discard')))),
+      (rep.changes || []).length > 0 && E('div', {style: head}, 'What ' + fridayName() + ' changed'),
+      (rep.changes || []).slice(0, 20).map(c => E('div', {key: c.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+        E('div', {style:{flex:1}},
+          E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, chg(c)),
+          E('div', {style: dim}, (c.target === 'friday' ? 'Working with you' : 'About you') + ' · ' + when(c.ts) + (c.undone ? ' · undone' : ''))),
+        !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo')))));
+}
+// End memory card panel
+
 
 function ApprovalScannerPanel({s,save}){
   const [st,setSt]=useState(null);

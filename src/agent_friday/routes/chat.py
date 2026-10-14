@@ -1996,7 +1996,9 @@ def chat():
             # prompt next conversation, so the head stays the same bytes.
             try:
                 from agent_friday.services.model_router import memory_head_blocks
-                head = head + memory_head_blocks(workspace, _conversation_id)
+                head = head + memory_head_blocks(
+                    workspace, _conversation_id, provider=provider, vault_control=vc,
+                    vault_fallback=_vault_cloud_fallback(), model=_prep_model)
             except Exception:
                 pass
             # What this chat's panel holds rides in the tail, with what this

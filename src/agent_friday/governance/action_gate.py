@@ -308,6 +308,9 @@ INTERNAL_TOOLS = frozenset({
     # and self-gated: one card per task, services/codebase_tasks.)
     "codebase_engine",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
+    # The core memory card (services/core_memory): local, undoable, shown to
+    # the owner line by line. A tainted call is a card (taint memory_write).
+    "update_core_memory",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
     "create_workflow", "run_workflow", "workflow_status", "creative_project",
