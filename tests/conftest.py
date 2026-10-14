@@ -17,12 +17,16 @@ Unit only (fast): pytest tests/unit -q
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
+import warnings
+import weakref
 from pathlib import Path
 
 # ── Hermetic environment — MUST run before any `import server` ────────────────
@@ -574,24 +578,123 @@ def _fresh_live_duplicate_window():
 _EPISODE_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}-[0-9a-f]{6}")
 
 
+class PodcastEpisodeLeak(Warning):
+    """A podcast episode in the shared test home outlived the test that queued it.
+
+    Not a UserWarning, which pytest.ini ignores: it reaches the warnings summary
+    (xdist workers included) with who queued the episode."""
+
+
+_SHARED_SHOWS: list = [None, frozenset()]    # [the shared home's podcasts dir, ids there at the first test]
+_EPISODE_ORIGIN: dict = {}                   # episode id -> who queued it in the shared home
+_THREAD_OWNER = weakref.WeakKeyDictionary()  # thread -> the first test it was still alive at the end of
+
+
+def _episode_ids(shows) -> set:
+    try:
+        return {p.name for p in shows.iterdir() if p.is_dir() and _EPISODE_ID_RE.fullmatch(p.name)}
+    except (OSError, AttributeError):
+        return set()
+
+
+def _call_path(limit: int = 8) -> str:
+    """The project frames that led here, outermost first: file:line function."""
+    import traceback
+    frames = [f for f in traceback.extract_stack()[:-2]
+              if ("agent_friday" in f.filename or "tests" in f.filename)
+              and not f.filename.endswith("conftest.py")]
+    return " <- ".join("%s:%d %s" % (Path(f.filename).name, f.lineno, f.name)
+                       for f in reversed(frames[-limit:]))
+
+
+def _trace_episode_saves(shows: Path) -> None:
+    """Note who first writes each episode into the shared test home: the test
+    running, the thread and the test that thread was started in, the call path.
+    A test that replaces podcast_engine.save gets this back at its teardown."""
+    pe = sys.modules.get("agent_friday.services.podcast_engine")
+    if pe is None or getattr(pe.save, "_traces_shared_home", False):
+        return
+    real = pe.save
+
+    def save(ep, *a, **k):
+        try:
+            eid = str((ep or {}).get("id") or "")
+            if eid and eid not in _EPISODE_ORIGIN and Path(pe.root()) == shows:
+                th = threading.current_thread()
+                _EPISODE_ORIGIN[eid] = {
+                    "test": (os.environ.get("PYTEST_CURRENT_TEST") or "").rsplit(" (", 1)[0],
+                    "thread": th.name,
+                    "main": th is threading.main_thread(),
+                    "thread_from": _THREAD_OWNER.get(th, ""),
+                    "path": _call_path()}
+        except Exception:                           # the diagnosis never changes the write
+            pass
+        return real(ep, *a, **k)
+    save._traces_shared_home = True
+    save.__wrapped__ = real
+    pe.save = save
+
+
+def _describe_episode(d: Path) -> str:
+    try:
+        ep = json.loads((d / "episode.json").read_text(encoding="utf-8"))
+    except Exception:
+        ep = {}
+    att = ep.get("attached") or {}
+    made = ep.get("created_at")
+    who = _EPISODE_ORIGIN.get(d.name)
+    return ("episode %s (status %s, origin %s, routine %s, run %s, refs %s, created %s); %s" % (
+        d.name, ep.get("status"), ep.get("origin"), att.get("routine"), att.get("run_id"),
+        [r.get("kind") for r in ep.get("refs") or [] if isinstance(r, dict)],
+        time.strftime("%H:%M:%S", time.localtime(made)) if isinstance(made, (int, float)) else "?",
+        ("queued during %s by thread %s (alive since the end of %s) via %s" % (
+            who["test"], who["thread"], who["thread_from"] or "this test", who["path"])) if who
+        else "written by no podcast_engine.save this process saw"))
+
+
 @pytest.fixture(autouse=True)
-def _no_podcast_episode_outlives_its_test():
-    """An episode a test queued in the shared test home is removed when the
-    test ends. The scheduler lists every pending episode on disk as a
-    "podcast" job, so one left behind by a route test (a Front Page generate
-    queues its episode) appears in every later test's queue in that process.
-    A test that points FRIDAY_DIR at its own tmp_path is untouched."""
+def _no_podcast_episode_outlives_its_test(request):
+    """No podcast episode outlives its test in the shared test home. The
+    scheduler lists every pending episode on disk as a "podcast" job, so one
+    left behind appears in every later queue test in that process. A test that
+    points FRIDAY_DIR at its own tmp_path is untouched.
+
+    An episode a test queues itself, on its own thread, is removed when it
+    ends. Anything else is a leak and is said, with who queued it, as a
+    PodcastEpisodeLeak warning and on request.config.podcast_episode_leaks:
+    one present when a test starts (written after an earlier test ended), and
+    one written during a test by another test's thread or code. Leaks
+    are removed too, so the queue tests stay about the queue."""
     core = sys.modules.get("agent_friday.core")
     shows = Path(core.FRIDAY_DIR) / "podcasts" if core is not None else None
+    if _SHARED_SHOWS[0] is None and shows is not None:
+        _SHARED_SHOWS[:] = [shows, frozenset(_episode_ids(shows))]
+    if shows is not None:
+        _trace_episode_saves(shows)
+    leaks = request.config.__dict__.setdefault("podcast_episode_leaks", [])
+    me = request.node.nodeid
 
-    def _episodes():
-        try:
-            return {p.name for p in shows.iterdir() if p.is_dir() and _EPISODE_ID_RE.fullmatch(p.name)}
-        except (OSError, AttributeError):
-            return set()
-    before = _episodes()
+    def _leak(name: str, when: str) -> None:
+        said = "podcast episode leak %s %s: %s" % (when, me, _describe_episode(shows / name))
+        leaks.append({"episode": name, "seen": when, "test": me,
+                      "origin": dict(_EPISODE_ORIGIN.get(name) or {}), "said": said})
+        warnings.warn(PodcastEpisodeLeak(said), stacklevel=2)
+
+    for name in sorted(_episode_ids(shows) - _SHARED_SHOWS[1]):
+        _leak(name, "at the start of")
+        _remove_episode(shows / name)
+    before = _episode_ids(shows)
     yield
-    for name in _episodes() - before:
+    for t in threading.enumerate():
+        _THREAD_OWNER.setdefault(t, me)
+    if shows is not None:
+        _trace_episode_saves(shows)
+    for name in sorted(_episode_ids(shows) - before):
+        who = _EPISODE_ORIGIN.get(name)
+        # Untraced means podcast_engine was first imported by this test, so its
+        # own code wrote the episode; the trace is in place from here on.
+        if who and not (who["test"] == me and (who["main"] or not who["thread_from"])):
+            _leak(name, "during")
         _remove_episode(shows / name)
 
 
