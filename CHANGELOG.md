@@ -27,6 +27,12 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   (`.friday/core_memory`). The older list of facts Friday kept about you moves
   over once: the ones you entered or approved go onto the card, and the ones
   she noted without asking wait for your review.
+- **A quiet review for the memory card.** Every ten turns, after Friday has
+  answered, a model on this PC reads the latest exchanges and may add a line
+  that rests on your own words. Anything it would change or remove, and
+  anything it picked up from what Friday read, waits on the card for your
+  Keep. It never uses a cloud model, shows in the Local AI queue like any
+  other job, and can be turned off on the Memory card panel.
 
 ### Changed
 

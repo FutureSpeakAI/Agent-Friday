@@ -299,7 +299,8 @@
    {"id": "settings.core_memory_card", "group": "read", "label": "memory card: the lines Friday keeps about you and about working with you", "audit_status": "new"},
    {"id": "settings.core_memory_line", "group": "settings", "label": "memory card: add, edit or delete one line", "audit_status": "new"},
    {"id": "settings.core_memory_review", "group": "settings", "label": "memory card: keep or discard a suggestion waiting for review", "audit_status": "new"},
-   {"id": "settings.core_memory_undo", "group": "settings", "label": "memory card: undo a change Friday made", "audit_status": "new"}
+   {"id": "settings.core_memory_undo", "group": "settings", "label": "memory card: undo a change Friday made", "audit_status": "new"},
+   {"id": "settings.memory_review", "group": "settings", "label": "memory card: review our conversations every few turns (local model only)", "audit_status": "new"}
   ]
  }
 }
