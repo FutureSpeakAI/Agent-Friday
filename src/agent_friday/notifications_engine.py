@@ -446,15 +446,16 @@ def _off_record_now() -> bool:
 def _log_only(entry: Dict[str, Any]) -> None:
     """Housekeeping, muted kinds and pulled-only receipts: the activity log,
     never the tray. The line names the kind and source and identifies the title by its length
-    and a short digest: a title can quote the owner's mail, events or files, which the log
-    must not hold."""
+    and a digest keyed with this process's random _SALT (as _opaque): a title can quote the
+    owner's mail, events or files, which the log must not hold, and an unkeyed digest of a
+    short title could be reversed by guessing."""
     try:
         import logging
         title = str(entry.get("title") or "")
         logging.getLogger("friday.notifications").info(
-            "log-only notification [%s/%s]: title of %d characters (sha256 %s)",
+            "log-only notification [%s/%s]: title of %d characters (key %s)",
             entry.get("kind"), entry.get("source"), len(title),
-            hashlib.sha256(title.encode("utf-8")).hexdigest()[:12])
+            hmac.new(_SALT, title.encode("utf-8"), hashlib.sha256).hexdigest()[:12])
     except Exception:
         pass
     try:

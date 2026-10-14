@@ -409,6 +409,8 @@ def test_a_log_only_notification_keeps_its_title_out_of_the_log(caplog):
         ne._log_only({"kind": "mail_digest", "source": "mail", "title": title})
     assert "mail_digest/mail" in caplog.text and "title of %d characters" % len(title) in caplog.text
     assert "Sam Rivera" not in caplog.text and "lab results" not in caplog.text
+    import hashlib
+    assert hashlib.sha256(title.encode("utf-8")).hexdigest()[:12] not in caplog.text   # keyed, not a bare hash
 
 
 if __name__ == "__main__":
