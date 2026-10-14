@@ -533,6 +533,10 @@ def overview() -> dict:
                 "when_text": describe_when(when), "enabled": bool(r.get("enabled", True)),
                 "running": bool(r.get("running")), "next_run": r.get("next_run"),
                 "last_run": _sched_last(r),
+                # Whether a finish is announced at all (a silent job never is),
+                # and the owner's per-job choice (services/scheduler.finish_notice_on).
+                "announces_finish": r.get("notify", "on_complete") not in ("silent", "never"),
+                "finish_notice": r.get("finish_notice", True) is not False,
             })
             continue
         prompt = task.get("prompt") or ""

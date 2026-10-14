@@ -821,6 +821,26 @@ def mark_read(notif_id: str) -> bool:
     return False
 
 
+def mark_seen(ids: List[str]) -> int:
+    """The owner has looked at the workspace these cards are about (it was
+    opened). A card's dock highlight shows only while it is unseen; seen is not
+    read and not dismissed, so the card stays in the tray until it expires or
+    is dismissed."""
+    want = {str(i) for i in (ids or []) if i}
+    if not want:
+        return 0
+    with _LOCK:
+        items = _load()
+        n = 0
+        for it in items:
+            if it.get("id") in want and not it.get("seen"):
+                it["seen"] = True
+                n += 1
+        if n:
+            _save(items)
+    return n
+
+
 def mark_all_read() -> int:
     with _LOCK:
         items = _load()

@@ -6,6 +6,11 @@ The notifications tray holds notifications only. Running tasks, reasoning
 traces and background processes are in Activity (the lane panel and the
 Activity overlay), where every model task shows its model, status, trace and
 queue position.
+
+A dock icon is highlighted only while a card Friday raised inside that
+workspace is unseen; opening the workspace marks it seen. A scheduled job's
+finish card offers "Don't tell me", which saves the opt-out on that schedule,
+and the built-in routines list turns it back on.
 """
 from __future__ import annotations
 
@@ -23,7 +28,9 @@ STYLE = ["index.html", "ui_parts/head.html", "ui_parts/app.html",
 # The removed counters, by name. A new badge would bring one of these back.
 GONE = ["bellBadgeCount", "bell-badge-pulse", "bellBadgePulse", "wikiPending",
         "msgActionable", "contentAlerts", "setUnseen", "fx-nav-badge",
-        "setAppBadge", "ReasoningTraySection"]
+        "setAppBadge", "ReasoningTraySection",
+        # The predictive "suggested workspace" glow on the dock.
+        "suggestedWs", "dockSuggestPulse", ".dock-btn.suggested"]
 
 # The shape every count badge here had: a small absolutely-placed pill.
 PILL = re.compile(r"position:'absolute',top:-?\d+,right:-?\d+,minWidth:1\d,height:1\d,"
@@ -70,3 +77,27 @@ def test_the_bell_has_no_count(rel):
     flat = _flat(rel)
     assert "aria-label\":'Opennotifications'" in flat or 'aria-label="Opennotifications"' in flat
     assert "tasksrunning,opennotifications" not in flat
+
+
+@pytest.mark.parametrize("rel", UI)
+def test_the_dock_highlights_only_a_workspace_with_an_unseen_notice(rel):
+    flat = _flat(rel)
+    assert "noticeWs.has(w.id)&&!openWins.has(w.id)" in flat and "'has-notice'" in flat
+    assert "notifs.filter(n=>!n.seen&&!n.dismissed)" in flat, f"{rel}: the highlight is not tied to unseen cards"
+    assert "'/api/notifications/seen'" in flat and "openWins.has(noticeWorkspaceOf(n))" in flat, (
+        f"{rel}: opening a workspace does not mark its cards seen")
+    assert "seen:!!n.seen||noticeSeenIds.current.has(n.id)" in flat, f"{rel}: a poll would bring the highlight back"
+
+
+@pytest.mark.parametrize("rel", UI)
+def test_a_finish_card_can_turn_off_that_job_and_the_routines_list_turns_it_back_on(rel):
+    flat = _flat(rel)
+    assert "notif-finish-optout" in flat and "JSON.stringify({finish_notice:false})" in flat
+    assert "finish_notice:!r.finish_notice" in flat and "'Tellmewhen'+r.name+'finishes'" in flat
+
+
+@pytest.mark.parametrize("rel", ["index.html", "ui_parts/head.html"])
+def test_the_highlight_is_a_quiet_dot_not_a_pulse(rel):
+    flat = _flat(rel)
+    assert ".dock-btn.has-notice.dot{background:#00d4ff;}" in flat
+    assert ".dock-btn.has-notice{" not in flat, f"{rel}: the highlight grew a glow or an animation"

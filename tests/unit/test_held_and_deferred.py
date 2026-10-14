@@ -28,8 +28,8 @@ def _clean(friday_dir, monkeypatch):
 
 @pytest.fixture
 def burst_emitter(monkeypatch):
-    """A tray emitter that declares itself bursty. The scheduler's "ran" and
-    "waiting" lines, the registry's bursty emitters, live in Activity."""
+    """A tray emitter that declares itself bursty, independent of the
+    scheduler's own lines (its "waiting" line lives in Activity)."""
     from agent_friday.services import notice_registry as reg
     monkeypatch.setitem(reg.REGISTRY, "TB1", reg._e(
         "TB1", "tests", "scheduled_ran", reg.UPDATES, "sched-ok:{schedule_id}",
