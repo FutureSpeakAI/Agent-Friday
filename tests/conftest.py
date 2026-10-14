@@ -592,7 +592,25 @@ def _no_podcast_episode_outlives_its_test():
     before = _episodes()
     yield
     for name in _episodes() - before:
-        shutil.rmtree(shows / name, ignore_errors=True)
+        _remove_episode(shows / name)
+
+
+def _remove_episode(d: Path) -> None:
+    """Remove one episode directory, or raise. On Windows a file written a
+    moment ago can be held open briefly (a virus scanner, the indexer, a reader
+    thread) and rmtree then skips it; an episode left on disk here is in every
+    later test's `before` set, so it would stay a "podcast" job for the rest of
+    the process. Try again for a short while; an episode that cannot be removed
+    fails this test's teardown instead of the next queue test."""
+    for _delay in (0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6):
+        if _delay:
+            time.sleep(_delay)
+        shutil.rmtree(d, ignore_errors=True)
+        if not (d / "episode.json").exists():
+            return
+    raise RuntimeError(
+        "could not remove podcast episode %s after this test; every later test "
+        "in this process would list it as a waiting podcast job" % d.name)
 
 
 def _settings_file() -> Path:

@@ -38,6 +38,14 @@ _POOL = [
 _THE_REPLY = "[Agent hit max tool iterations without completing.]"
 
 
+@pytest.fixture(autouse=True)
+def _no_episode_queued(monkeypatch):
+    """A notified edition queues its podcast episode; these tests are about the
+    notice, so no episode is written into the shared test home (where the
+    scheduler would list it as a waiting job), like the other news tests."""
+    monkeypatch.setattr(ne, "_queue_podcast", lambda *a, **k: None)
+
+
 @pytest.fixture
 def quiet_prompt(monkeypatch):
     """Keep the vault/persona prompt out of these tests."""
