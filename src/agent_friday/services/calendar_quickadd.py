@@ -17,9 +17,32 @@ _MONTHS = ("january|february|march|april|may|june|july|august|september|october|
 _DAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
 _AMPM = r"(?:am|pm|a\.m\.|p\.m\.)"
 
-# An address starts where a run of address characters starts: a scan never retries
-# the same run from each of its characters, so a long run without an "@" costs one pass.
-_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# Attendee addresses are read in two linear steps: find each run of address characters
+# (one character class, so each run is read once), then split the run at "@". A local part
+# is a whole piece between the run's start or an "@" and the next "@"; the domain is the
+# labels (letters, digits, "_", "-") joined by dots at the start of the next piece.
+_ADDR_RUN = re.compile(r"[\w.+@-]+")
+_DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)+")
+
+
+def _address_spans(text: str) -> list:
+    """(start, end) of every attendee address in ``text``, in order."""
+    spans = []
+    for run in _ADDR_RUN.finditer(text):
+        parts = run.group(0).split("@")
+        offsets, at = [], run.start()
+        for p in parts:
+            offsets.append(at)
+            at += len(p) + 1
+        i = 0
+        while i < len(parts) - 1:
+            m = _DOMAIN.match(parts[i + 1]) if parts[i] else None
+            if m:
+                spans.append((offsets[i], offsets[i + 1] + m.end()))
+                i += 2          # the next address can only start after the next "@"
+            else:
+                i += 1
+    return spans
 _RANGE_RE = re.compile(
     r"(?:\b(?:at|from)\s+|@\s*)?\b(\d{1,2})(?::(\d{2}))?\s*(" + _AMPM + r")?\s*"
     r"(?:-|–|to|until)\s*(\d{1,2})(?::(\d{2}))?\s*(" + _AMPM + r")(?![\w])", re.I)
@@ -81,10 +104,17 @@ def parse(text, now=None):
     raw = " ".join(str(text or "").split())
     rest = raw
     attendees = []
-    for m in _EMAIL_RE.finditer(rest):
-        if m.group(0) not in attendees:
-            attendees.append(m.group(0))
-    rest = _EMAIL_RE.sub(" ", rest)
+    spans = _address_spans(rest)
+    for a, b in spans:
+        if rest[a:b] not in attendees:
+            attendees.append(rest[a:b])
+    if spans:
+        pieces, last = [], 0
+        for a, b in spans:
+            pieces.append(rest[last:a])
+            last = b
+        pieces.append(rest[last:])
+        rest = " ".join(pieces)
 
     start_hm = end_hm = None
     m = _RANGE_RE.search(rest)
