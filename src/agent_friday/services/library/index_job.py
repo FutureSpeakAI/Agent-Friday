@@ -176,11 +176,29 @@ def folders(principal: str = lstore.OWNER) -> dict:
 
 # ── the owner's controls ─────────────────────────────────────────────────────
 
+def _queue_pause(principal: str, paused: bool) -> None:
+    """Pause (or resume) the folders already in the Local AI queue, waiting for their turn, for idle or for
+    memory: those waits are the queue's, and the queue holds them on its own Pause. A folder between files
+    reads the Library's flag in `before()`."""
+    sup = _supervisor()
+    if sup is None:
+        return
+    with _lock:
+        ids = [r.get("card_id") for r in progress_for(principal).data["folders"].values()
+               if r.get("card_id") and r.get("state") in (ADMITTING, RUNNING)]
+    for job_id in ids:
+        try:
+            sup.pause(job_id) if paused else sup.resume(job_id)
+        except Exception:  # noqa: BLE001 - a job that ended meanwhile has nothing to pause
+            pass
+
+
 def pause(principal: str = lstore.OWNER) -> dict:
     pr = progress_for(principal)
     with _lock:
         pr.data["paused"] = True
     pr.save()
+    _queue_pause(principal, True)
     return {"ok": True, "paused": True}
 
 
@@ -189,6 +207,7 @@ def resume(principal: str = lstore.OWNER) -> dict:
     with _lock:
         pr.data["paused"] = False          # exactly the inverse of Pause: a folder you cancelled stays cancelled
     pr.save()
+    _queue_pause(principal, False)
     try:
         from agent_friday.services.library import runtime
         runtime.resume_unfinished(principal)
@@ -335,6 +354,8 @@ class FolderJob:
         spec = {"kind": KIND, "job_key": "library_index:" + self.scope, "label": label(rec),
                 "job_label": label(rec), "deferrable": True, "seat": JOB_SEAT, "seat_is_local": True,
                 "memory_floor": True, "progress": {"done": rec.get("done", 0), "total": rec.get("total", 0)}}
+        if self.progress.paused:
+            spec["user_paused"] = True             # your Pause holds it in line, not only between files
         if self.vj is not None:
             spec["id"] = spec["task_id"] = self.vj.id          # one job: the card and the queue row share an id
         self.job_id = self.sup.admit_inline(spec)

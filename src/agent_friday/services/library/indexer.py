@@ -418,14 +418,18 @@ class Indexer:
         job = self.job_factory(scope, dict(kw, paths=only)) if self.job_factory else None
         title = job.title if job is not None else (
             "Reading a folder into your Library" if Path(scope).is_dir() else "Reading a file into your Library")
+        # The card's Stop works in every state: `before()` checks it ahead of each file, the held wait every
+        # second, and a Stop while the folder waits in the queue also cancels it there (routes/tasks).
         try:
             if only is None:
                 with visible_job(title, kind="library_index", workspace="library", queued=False, deferrable=True,
+                                 stoppable=True,
                                  description="The Library reads a folder on this PC into its index.") as vj:
                     self._pass(store, scope, kw, only, job, vj)
             else:
                 with visible_job(title, kind="library_reindex", workspace="library", queued=False,
-                                 deferrable=True, description="The Library reads the files that changed.") as vj:
+                                 deferrable=True, stoppable=True,
+                                 description="The Library reads the files that changed.") as vj:
                     self._pass(store, scope, kw, only, job, vj)
         except JobCancelled:
             pass                                      # stopped from the queue or the card: this folder ends quietly

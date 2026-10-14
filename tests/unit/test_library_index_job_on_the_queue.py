@@ -157,7 +157,7 @@ def test_the_row_carries_counts_and_a_label_the_chip_and_the_voice_both_read(wor
     assert _wait(_done(root))
 
 
-def test_one_background_job_runs_at_a_time_so_a_model_job_and_a_folder_take_turns(world, tmp_path):
+def test_a_folder_and_a_model_job_are_separate_lanes_so_neither_waits_for_the_other(world, tmp_path):
     from agent_friday.services import local_scheduler as ls
     from agent_friday.services.library.store import store_for
     sup, away = world
@@ -166,12 +166,82 @@ def test_one_background_job_runs_at_a_time_so_a_model_job_and_a_folder_take_turn
                     "deferrable": True})
     assert any(r["id"] == "wiki" for r in ls.queue_snapshot()["running"])
     root = _add(tmp_path)
-    assert _wait(lambda: any(r["state"] == "queued" for r in _rows()))
-    time.sleep(0.3)
-    assert store_for("owner").counts()["indexed"] == 0, "the folder waits for the job that is already running"
-    sup.on_task_end("wiki")
-    assert _wait(_done(root))
+    assert _wait(_done(root)), "reading a folder does not wait for the model job that is running"
     assert store_for("owner").counts()["indexed"] == 3
+    sup.on_task_end("wiki")
+
+
+def test_a_model_job_starts_while_a_folder_is_being_read(world, tmp_path, monkeypatch):
+    """The owner's report: the reading model held the line while the GPU models' jobs waited behind it."""
+    import threading
+    from agent_friday.services.library import index_job
+    sup, away = world
+    away[0] = 1e9
+    gate = threading.Event()
+    real_done = index_job.FolderJob.done
+
+    def slow_done(self, path, result):               # hold the folder mid-read until the test has looked
+        real_done(self, path, result)
+        gate.wait(10)
+    monkeypatch.setattr(index_job.FolderJob, "done", slow_done)
+    root = _add(tmp_path, 2)
+    assert _wait(lambda: any(r["state"] == "running" for r in _rows()))
+    assert sup.wire_spawn({"id": "wiki", "seat": "local/brain", "kind": "wiki_distill", "label": "wiki notes",
+                           "deferrable": True}) == "running", "the model job is not held behind the folder"
+    gate.set()
+    assert _wait(_done(root))
+    sup.on_task_end("wiki")
+
+
+def test_two_model_jobs_still_take_turns(world):
+    """The 1.0.2 cap stays for model work: one background model job at a time."""
+    from agent_friday.services import local_scheduler as ls
+    from agent_friday.services import turn_queue as tq
+    sup, away = world
+    away[0] = 1e9
+    tq.queue_for("other-model").background_started("running-model-job", label="first")
+    t = tq.Ticket("next-model-job", "background", "brain", model="", kind="task")
+    assert ls.gate(t) == "waiting for the background job that is already running"
+    tq.queue_for("other-model").background_finished("running-model-job")
+
+
+def test_pause_holds_a_folder_that_is_still_waiting_in_the_queue(world, tmp_path):
+    """Pause pressed while the folder waits for idle or memory: it must not start when the wait ends."""
+    from agent_friday.services.library import index_job
+    from agent_friday.services.library.store import store_for
+    sup, away = world
+    away[0] = 0.0                                    # the owner is here: the folder waits for idle
+    root = _add(tmp_path)
+    assert _wait(lambda: any(r["state"] == "queued" for r in _rows()))
+    index_job.pause("owner")
+    away[0] = 1e9                                    # the owner steps away
+    time.sleep(0.4)
+    assert store_for("owner").counts()["indexed"] == 0, "paused by you, even though the PC is now idle"
+    row = next(r for r in _rows())
+    assert row["why"] == "paused by you" and row["paused_by_you"] is True
+    index_job.resume("owner")
+    assert _wait(_done(root))
+
+
+def test_the_cards_stop_ends_a_folder_that_is_waiting_in_the_queue(world, tmp_path, monkeypatch):
+    """Stop from the Activity card while the folder waits for idle: the queue's wait ends it."""
+    from agent_friday.routes import tasks as task_routes
+    from agent_friday.services import agent as ag
+    from agent_friday.services.library import index_job
+    from agent_friday.services.library.store import store_for
+    sup, away = world
+    monkeypatch.setattr(ag, "_seat_supervisor", lambda: sup)
+    away[0] = 0.0
+    root = _add(tmp_path)
+    assert _wait(lambda: any(r["state"] == "queued" for r in _rows()))
+    job_id = _rows()[0]["id"]
+    with ag.TASKS_LOCK:
+        card = dict(ag.TASKS[job_id])
+    assert card.get("stoppable") is True, "the Activity row offers Stop for this job"
+    # What POST /api/tasks/<id>/stop-after-step does besides setting the card's stop flag.
+    assert task_routes._stop_waiting_queue_job(job_id, card) is True
+    assert _wait(lambda: index_job.folders("owner").get(str(root), {}).get("state") == "stopped")
+    assert store_for("owner").counts()["indexed"] == 0
 
 
 def test_cancelling_the_row_from_the_queue_stops_the_folder(world, tmp_path):

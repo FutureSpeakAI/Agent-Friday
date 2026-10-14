@@ -14,6 +14,7 @@ waiting for its turn or being read is not walked again.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from agent_friday.services.library import index_job, indexer
@@ -24,9 +25,17 @@ def _key(path) -> str:
     return os.path.normcase(str(path))
 
 
+#: How long a file must have stayed untouched before the idle sweep reads it. Friday writes her own folders
+#: in bursts (an episode's audio, captions and notes; a timeline saved as it is edited): a file still being
+#: written is left for the next sweep, so it is read once, settled, instead of once per save.
+SETTLE_S = 600
+
+
 def detect(store: Store, scope: str | Path, *, recursive: bool = True, glob: str | None = None,
-           kinds: set[str] | None = None, allowed=None) -> dict:
-    """{"changed": [paths], "new": [paths], "gone": [paths]} for one folder. Stat only."""
+           kinds: set[str] | None = None, allowed=None, settle_s: float = 0, now: float | None = None) -> dict:
+    """{"changed": [paths], "new": [paths], "gone": [paths]} for one folder. Stat only. A new or changed file
+    modified less than `settle_s` ago is not listed yet (the idle sweep's debounce)."""
+    fresh_after = ((time.time() if now is None else now) - settle_s) if settle_s else None
     root = Path(scope)
     try:
         base = str(root.resolve() if root.is_dir() else root.resolve().parent)
@@ -46,6 +55,8 @@ def detect(store: Store, scope: str | Path, *, recursive: bool = True, glob: str
             continue
         k = _key(real)
         seen.add(k)
+        if fresh_after is not None and st.st_mtime > fresh_after:
+            continue                                        # still being written: the next sweep reads it
         row = rows.get(k)
         if row is None:
             out["new"].append(str(real))
@@ -81,8 +92,9 @@ def purge_gone(principal: str, store: Store, scope_event: dict, *, allowed=None)
     return n
 
 
-def queue(principal: str, ix, scope_event: dict, store: Store, *, allowed=None) -> int:
-    """Hand one folder's changes to its indexer as a single job. Returns 1 when a job was queued, else 0."""
+def queue(principal: str, ix, scope_event: dict, store: Store, *, allowed=None, settle_s: float = 0) -> int:
+    """Hand one folder's changes to its indexer as a single job. Returns 1 when a job was queued, else 0.
+    `settle_s` leaves files written in the last that-many seconds for a later sweep."""
     scope = scope_event["path"]
     pr = index_job.progress_for(principal)
     rec = pr.data["folders"].get(str(scope)) or {}
@@ -92,7 +104,7 @@ def queue(principal: str, ix, scope_event: dict, store: Store, *, allowed=None) 
         return 0
     kw = {"recursive": bool(scope_event.get("recursive", True)), "glob": scope_event.get("glob"),
           "kinds": set(scope_event["kinds"]) if scope_event.get("kinds") else None}
-    d = detect(store, scope, allowed=allowed, **kw)
+    d = detect(store, scope, allowed=allowed, settle_s=settle_s, **kw)
     paths = d["changed"] + d["new"] + d["gone"]
     try:
         # Laya's notes are made by a folder's job; a single file has none, so it is never "waiting" for them.
