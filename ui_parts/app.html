@@ -830,6 +830,11 @@ function fridayRunActions(actions){
             a.result={tracking:TK.get()};
           }
         }
+      }else if(a.type==='key_form'){
+        // The secure key form (KeyFormHost): a key withheld from a message, one
+        // stopped before it was sent, or one Friday needs. Never carries a value.
+        try{window.dispatchEvent(new CustomEvent('friday:key-form',{detail:a}));}catch(_){}
+        a.result={ok:true};
       }else if(a.type==='open_last_source'){
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
@@ -16745,6 +16750,58 @@ function SetupConnectionsPanel({ highlight }) {
   );
 }
 
+// The secure key form, opened by a `key_form` action (services/pasted_secrets):
+// a key withheld from a chat message, one the chat box stopped before sending,
+// or a key Friday needs. It shows the checklist card for that service, whose
+// secure field posts straight to the credential endpoint; the value never
+// enters a conversation, a log or a model.
+function KeyFormHost() {
+  const [req, setReq] = React.useState(null);
+  const [data, setData] = React.useState(null);
+  const [pick, setPick] = React.useState('');
+  const ref = React.useRef(null);
+  const load = React.useCallback(() => {
+    scJSON('/api/setup/connections').then(r => { if (r.ok) setData(r.data); });
+  }, []);
+  React.useEffect(() => {
+    const on = e => { const a = e.detail || {}; setReq(a); setPick(a.target || ''); load(); };
+    window.addEventListener('friday:key-form', on);
+    return () => window.removeEventListener('friday:key-form', on);
+  }, [load]);
+  React.useEffect(() => { if (req && ref.current) ref.current.focus(); }, [req]);
+  if (!req) return null;
+  const close = () => { setReq(null); setData(null); };
+  const all = (data && data.items) || [];
+  const it = all.find(x => x.id === pick);
+  const keyed = all.filter(x => x.connect && (x.connect.kind === 'secret' || x.connect.kind === 'fields'));
+  const what = req.label ? (/^[aeiou]/i.test(req.label) ? 'an ' : 'a ') + req.label : 'a key';
+  const title = req.reason === 'needed' ? (fridayName() + ' needs a key') : 'Store that key securely';
+  const lead = req.reason === 'needed' ? (req.why || ('Paste your ' + (req.label || 'key') + ' below.'))
+    : req.reason === 'blocked' ? ('That looked like ' + what + '. It was not sent anywhere.')
+    : ('That looked like ' + what + '. ' + fridayName() + ' withheld it: it is not in the conversation, her memory or any log.');
+  return (
+    <div className="keys-sheet-overlay key-form-overlay" onClick={close}>
+      <div ref={ref} className="keys-sheet key-form-sheet" role="dialog" aria-modal="true" aria-labelledby="key-form-title"
+        tabIndex={-1} data-testid="key-form" onClick={e => e.stopPropagation()}
+        onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}>
+        <div className="keys-sheet-head"><h2 id="key-form-title">{title}</h2>
+          <button type="button" className="keys-sheet-close" aria-label="Close" onClick={close}>×</button></div>
+        <div className="sc-connections key-form-body">
+          <p className="sc-sub">{lead} Paste it in the secure field: it is stored encrypted on this computer and never shown again.</p>
+          {!data ? <div className="sc-sub">Checking what's connected…</div> : <>
+            {!it && <label className="sc-field"><span>Which service is this key for?</span>
+              <select className="sc-input" value={pick} onChange={e => setPick(e.target.value)}>
+                <option value="">Choose…</option>
+                {keyed.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+              </select></label>}
+            {it && <SetupConnectionItem it={it} open={true} onToggle={() => {}} onChanged={load} onSkip={close} />}
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SetupResearchSeeds({ onSubmit, onSkip, busy, error, intro }) {
   const [v, setV] = React.useState({ name: '', handles: '', sites: '', employer: '' });
   const set = k => e => { const x = e.target.value; setV(o => ({ ...o, [k]: x })); };
@@ -26823,6 +26880,23 @@ function App(){
     const setTurnBusy = value => { if (ownsTurn()) setChatLoad(value); };
     const setTurnPause = value => { if (ownsTurn()) setPausePending(value); };
 
+    /* A key never leaves the chat box. The same shapes the setup chat checks
+       (/api/setup-chat/secret-shapes); a match is not sent anywhere, not even
+       to the pause forecast, and the secure key form opens instead. A bare hex
+       run is a hash or a commit id, not a key. The server withholds keys too
+       (routes/chat._withhold_pasted_keys) for any caller that skips this. */
+    if(!opts.alreadyShown){
+      const shapes=await scLoadShapes();
+      let hit=scDetectSecret(m,shapes);
+      if(hit&&hit.id==='generic'&&/^[0-9a-fA-F]+$/.test(m))hit=null;
+      if(hit){
+        if(!opts.preserveDraft)setChatIn('');
+        setTurnMsgs(p=>[...p,{role:'system',kind:'key_withheld',text:'\u{1F511} '+scKeyNote(hit,shapes),time:new Date().toLocaleTimeString()}]);
+        fridayRunActions([{type:'key_form',reason:'blocked',target:hit.target||'',label:hit.label,kinds:[hit.label]}]);
+        return;
+      }
+    }
+
     /* The user's own message renders IMMEDIATELY and synchronously. Nothing
        about echoing what they just typed needs the server's permission.
 
@@ -26872,6 +26946,15 @@ function App(){
       // Held for privacy: never silent. A system line and the card; no empty reply.
       if(d.privacy_hold){setTurnMsgs(p=>[...p,{role:'system',kind:'privacy_hold',text:'\u{1F6E1} '+d.privacy_hold.text,time:new Date().toLocaleTimeString()}]);
         setTurnPause({kind:'privacy_hold',message:m,hold:d.privacy_hold});if(!d.response)return;}
+      // A key the server withheld (routes/chat._withhold_pasted_keys): the
+      // bubble shows what was kept, and a system line says why. The key_form
+      // action in d.actions opens the secure form.
+      if(d.key_withheld){
+        const kept=d.user_msg&&typeof d.user_msg.text==='string'?d.user_msg.text:null;
+        setTurnMsgs(p=>{const i=p.map(x=>x.role==='user'&&x.text===m).lastIndexOf(true);
+          const q=i<0||kept==null?p:p.map((x,j)=>j===i?{...x,text:kept}:x);
+          return [...q,{role:'system',kind:'key_withheld',text:'\u{1F511} '+d.key_withheld.note,time:new Date().toLocaleTimeString()}];});
+      }
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
       setTurnMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,local_fallback:d.local_fallback||null,laya:d.laya||null,source_text:m,time:new Date().toLocaleTimeString()}]);
@@ -27944,6 +28027,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     const sw=wsInfo[STANDALONE_WS];
     return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
       <ApprovalPopups/>
+      <KeyFormHost/>
       {shellMeeting}{shellTopBar}{shellKillSwitch}
       {sw?<StandaloneShell ws={sw} histOpen={tabHistOpen} onCloseHistory={()=>setTabHistOpen(false)}><Safe name={sw.label}>{wsMap[sw.id]||fridayBundleBody(sw.id)}</Safe></StandaloneShell>
         :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the {fridayName()} desktop</a></div>}
@@ -27953,6 +28037,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
 
   return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
     <ApprovalPopups/>
+    <KeyFormHost/>
     <CloudSlicingCard/>
     {/* ── First-run setup chat. index.html puts the consent screens
          (ConsentFlow, not mirrored here) in front of it. ── */}

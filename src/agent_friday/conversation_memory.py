@@ -306,6 +306,11 @@ class ConversationMemory:
         msg_id         stable id for idempotent upserts; uuid when omitted
         """
         text = (text or "").strip()
+        # A key is withheld before it is embedded, stored as a document,
+        # added to the full-text index or turned into topic keywords; the
+        # knowledge graph reads its conversation source from here too.
+        from agent_friday.services.pasted_secrets import withhold
+        text = withhold(text)[0]
         if not text:
             return None
         if not self._ensure():

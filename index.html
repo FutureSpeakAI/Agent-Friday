@@ -1776,6 +1776,12 @@ window.addEventListener('DOMContentLoaded',function(){
         .keys-sheet-close:hover, .keys-sheet-close:focus-visible {
             color: #fff; background: var(--fr-cyan-soft); outline: none;
         }
+        /* The secure key form (KeyFormHost) uses the same sheet, narrower and
+           solid, above every desktop layer: it is asking for a secret. */
+        .key-form-overlay { z-index: 10000; }
+        .key-form-sheet { width: min(560px, calc(100vw - 32px)); background: var(--fr-surface); }
+        .key-form-body { overflow-y: auto; padding: 14px 20px 18px; }
+        .key-form-body > .sc-sub { margin: 0 0 12px; }
         .keys-sheet-body {
             overflow-y: auto; padding: 4px 20px 14px;
             columns: 2 360px; column-gap: 32px;
@@ -12367,6 +12373,13 @@ function fridayRunActions(actions) {
         else if (a.op === 'back') a.result = HC.back();
         else if (a.op === 'big_mode') a.result = { ok: true, code: HC.setBigMode(a.mode) ? 'BIG_MODE_ON' : 'BIG_MODE_OFF', mode: a.mode };
         else a.result = { ok: false, code: 'CURSOR_BAD_OP' };
+      } else if (a.type === 'key_form') {
+        // The secure key form (KeyFormHost): a key withheld from a message, one
+        // stopped before it was sent, or one Friday needs. Never carries a value.
+        try {
+          window.dispatchEvent(new CustomEvent('friday:key-form', { detail: a }));
+        } catch (_) {}
+        a.result = { ok: true };
       } else if (a.type === 'open_last_source') {
         // News Anchor fallback: "open that story" → open the most recent source
         // chip the voice session surfaced (text-fragment URL highlights the passage).
@@ -50465,6 +50478,97 @@ function SetupConnectionsPanel({
     onSkip: () => skip(it)
   })))));
 }
+// The secure key form, opened by a `key_form` action (services/pasted_secrets):
+// a key withheld from a chat message, one the chat box stopped before sending,
+// or a key Friday needs. It shows the checklist card for that service, whose
+// secure field posts straight to the credential endpoint; the value never
+// enters a conversation, a log or a model.
+function KeyFormHost() {
+  const [req, setReq] = React.useState(null);
+  const [data, setData] = React.useState(null);
+  const [pick, setPick] = React.useState('');
+  const ref = React.useRef(null);
+  const load = React.useCallback(() => {
+    scJSON('/api/setup/connections').then(r => {
+      if (r.ok) setData(r.data);
+    });
+  }, []);
+  React.useEffect(() => {
+    const on = e => {
+      const a = e.detail || {};
+      setReq(a);
+      setPick(a.target || '');
+      load();
+    };
+    window.addEventListener('friday:key-form', on);
+    return () => window.removeEventListener('friday:key-form', on);
+  }, [load]);
+  React.useEffect(() => {
+    if (req && ref.current) ref.current.focus();
+  }, [req]);
+  if (!req) return null;
+  const close = () => {
+    setReq(null);
+    setData(null);
+  };
+  const all = data && data.items || [];
+  const it = all.find(x => x.id === pick);
+  const keyed = all.filter(x => x.connect && (x.connect.kind === 'secret' || x.connect.kind === 'fields'));
+  const what = req.label ? (/^[aeiou]/i.test(req.label) ? 'an ' : 'a ') + req.label : 'a key';
+  const title = req.reason === 'needed' ? fridayName() + ' needs a key' : 'Store that key securely';
+  const lead = req.reason === 'needed' ? req.why || 'Paste your ' + (req.label || 'key') + ' below.' : req.reason === 'blocked' ? 'That looked like ' + what + '. It was not sent anywhere.' : 'That looked like ' + what + '. ' + fridayName() + ' withheld it: it is not in the conversation, her memory or any log.';
+  return /*#__PURE__*/React.createElement("div", {
+    className: "keys-sheet-overlay key-form-overlay",
+    onClick: close
+  }, /*#__PURE__*/React.createElement("div", {
+    ref: ref,
+    className: "keys-sheet key-form-sheet",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "key-form-title",
+    tabIndex: -1,
+    "data-testid": "key-form",
+    onClick: e => e.stopPropagation(),
+    onKeyDown: e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "keys-sheet-head"
+  }, /*#__PURE__*/React.createElement("h2", {
+    id: "key-form-title"
+  }, title), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "keys-sheet-close",
+    "aria-label": "Close",
+    onClick: close
+  }, "\xD7")), /*#__PURE__*/React.createElement("div", {
+    className: "sc-connections key-form-body"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, lead, " Paste it in the secure field: it is stored encrypted on this computer and never shown again."), !data ? /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, "Checking what's connected\u2026") : /*#__PURE__*/React.createElement(React.Fragment, null, !it && /*#__PURE__*/React.createElement("label", {
+    className: "sc-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Which service is this key for?"), /*#__PURE__*/React.createElement("select", {
+    className: "sc-input",
+    value: pick,
+    onChange: e => setPick(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Choose\u2026"), keyed.map(x => /*#__PURE__*/React.createElement("option", {
+    key: x.id,
+    value: x.id
+  }, x.label)))), it && /*#__PURE__*/React.createElement(SetupConnectionItem, {
+    it: it,
+    open: true,
+    onToggle: () => {},
+    onChanged: load,
+    onSkip: close
+  })))));
+}
 function SetupResearchSeeds({
   onSubmit,
   onSkip,
@@ -68814,6 +68918,28 @@ function App() {
     const setTurnBusy = value => { if (ownsTurn()) setChatLoad(value); };
     const setTurnPause = value => { if (ownsTurn()) setPausePending(value); };
 
+    /* A key never leaves the chat box. The same shapes the setup chat checks
+       (/api/setup-chat/secret-shapes); a match is not sent anywhere, not even
+       to the pause forecast, and the secure key form opens instead. A bare hex
+       run is a hash or a commit id, not a key. The server withholds keys too
+       (routes/chat._withhold_pasted_keys) for any caller that skips this. */
+    if (!opts.alreadyShown) {
+      const shapes = await scLoadShapes();
+      let hit = scDetectSecret(m, shapes);
+      if (hit && hit.id === 'generic' && /^[0-9a-fA-F]+$/.test(m)) hit = null;
+      if (hit) {
+        if (!opts.preserveDraft) setChatIn('');
+        setTurnMsgs(p => [...p, {
+          role: 'system',
+          kind: 'key_withheld',
+          text: '\u{1F511} ' + scKeyNote(hit, shapes),
+          time: new Date().toLocaleTimeString()
+        }]);
+        fridayRunActions([{ type: 'key_form', reason: 'blocked', target: hit.target || '', label: hit.label, kinds: [hit.label] }]);
+        return;
+      }
+    }
+
     /* The user's own message renders IMMEDIATELY and synchronously. Nothing
        about echoing what they just typed needs the server's permission.
          An awaited /api/work/forecast call ahead of the optimistic render
@@ -68974,6 +69100,22 @@ function App() {
         }]);
         setTurnPause({ kind: 'privacy_hold', message: m, hold: d.privacy_hold });
         if (!d.response) return;
+      }
+      // A key the server withheld (routes/chat._withhold_pasted_keys): the
+      // bubble shows what was kept, and a system line says why. The key_form
+      // action in d.actions opens the secure form.
+      if (d.key_withheld) {
+        const kept = d.user_msg && typeof d.user_msg.text === 'string' ? d.user_msg.text : null;
+        setTurnMsgs(p => {
+          const i = p.map(x => x.role === 'user' && x.text === m).lastIndexOf(true);
+          const q = i < 0 || kept == null ? p : p.map((x, j) => j === i ? { ...x, text: kept } : x);
+          return [...q, {
+            role: 'system',
+            kind: 'key_withheld',
+            text: '\u{1F511} ' + d.key_withheld.note,
+            time: new Date().toLocaleTimeString()
+          }];
+        });
       }
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
@@ -71218,7 +71360,7 @@ function App() {
     const sw = wsInfo[STANDALONE_WS];
     return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
       value: { map: wsCustMap, setCust }
-    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
+    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
       /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || fridayBundleBody(sw.id)))
       : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
         'There is no workspace called “' + STANDALONE_WS + '”. ',
@@ -71229,7 +71371,7 @@ function App() {
       map: wsCustMap,
       setCust
     }
-  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(CloudSlicingCard, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
+  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), /*#__PURE__*/React.createElement(CloudSlicingCard, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
     // The server stores the passphrase as the chat begins; this page does
     // not keep it.
     onDone: seed => {

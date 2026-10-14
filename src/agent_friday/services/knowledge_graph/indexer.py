@@ -1090,12 +1090,15 @@ def _embed_entities(entities: list[dict], say) -> int:
         cm = ConversationMemory()
         if not cm._ensure():
             return 0
+        from agent_friday.services.pasted_secrets import withhold
         client = cm._client
         coll = client.get_or_create_collection("knowledge-graph")
         ids, docs, metas = [], [], []
         for e in entities:
             ids.append(e["id"])
-            docs.append(f"{e['title']}: {e.get('description', '')[:500]}")
+            # A key an extraction model copied into a description is withheld
+            # before it reaches the searchable index (services/pasted_secrets).
+            docs.append(withhold(f"{e['title']}: {e.get('description', '')[:500]}")[0])
             metas.append({"type": e.get("type", ""),
                           "community": str(e.get("community", ""))})
         if ids:

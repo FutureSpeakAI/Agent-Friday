@@ -826,6 +826,51 @@ def _privacy_hold_turn(fn):
     return _inner
 
 
+#: Where a request's withheld key kinds are kept for the rest of the turn. On
+#: the WSGI environ, not flask.g: /api/chat/stream runs chat() on another
+#: thread under a copied request context, which shares the request (and its
+#: environ) but not the app context that holds g.
+_PASTED_KEYS_ENV = "friday.pasted_key_kinds"
+
+
+def _withhold_pasted_keys(fn):
+    """A key pasted into a chat message never enters the turn.
+
+    Before anything reads the request, the message is cleaned in place
+    (services/pasted_secrets.withhold) in the parsed JSON that every later
+    `request.get_json` returns, so the model, the prompt, the trace and every
+    store see the withheld marker. The reply then carries `key_withheld` (the
+    kinds of key, never a value) and a `key_form` action that opens the secure
+    field for the service the key belongs to.
+    """
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import pasted_secrets as _ps
+        data = request.get_json(silent=True)
+        if isinstance(data, dict) and isinstance(data.get("message"), str):
+            clean, kinds = _ps.withhold(data["message"])
+            if kinds:
+                data["message"] = clean
+                request.environ.setdefault(_PASTED_KEYS_ENV, []).extend(kinds)
+                _LOG.warning("chat: withheld %d pasted key(s) (%s) before the turn",
+                             len(kinds), ", ".join(k["id"] for k in kinds))
+        rv = fn(*args, **kwargs)
+        kinds = request.environ.get(_PASTED_KEYS_ENV)
+        if not kinds:
+            return rv
+        resp, extra = (rv[0], rv[1:]) if isinstance(rv, tuple) else (rv, ())
+        if getattr(resp, "mimetype", "") != "application/json":
+            return rv          # the stream: its chat() call adds these itself
+        d = resp.get_json(silent=True)
+        if not isinstance(d, dict) or "key_withheld" in d:
+            return rv
+        d["key_withheld"] = {"kinds": [dict(k) for k in kinds], "note": _ps.note(kinds)}
+        d["actions"] = list(d.get("actions") or []) + [_ps.key_form_action(kinds)]
+        out = jsonify(d)
+        return (out, *extra) if extra else out
+    return _inner
+
+
 def _note_owner_turn():
     try:
         from agent_friday.services import notification_policy as _pol
@@ -922,6 +967,7 @@ def _start_pilot(message, settings):
 
 
 @chat_bp.route('/api/chat/stream', methods=['POST'])
+@_withhold_pasted_keys
 def chat_stream():
     """The same turn as /api/chat, delivered as it is written.
 
@@ -1065,6 +1111,7 @@ def _ag_tools_for_turn(workspace, conversation_id):
 
 
 @chat_bp.route('/api/chat', methods=['POST'])
+@_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
 @_cloud_intent.per_turn
@@ -3105,6 +3152,7 @@ def _screen_block_for(provider_name, conversation_id):
 
 
 @chat_bp.route('/api/chat/send', methods=['POST'])
+@_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
 @_cloud_intent.per_turn

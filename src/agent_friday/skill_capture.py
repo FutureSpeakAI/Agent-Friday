@@ -21,6 +21,11 @@ import time
 import threading
 from agent_friday.paths import friday_home
 
+
+def _withhold(text: str) -> str:
+    from agent_friday.services.pasted_secrets import withhold
+    return withhold(text)[0]
+
 FRIDAY_DIR = friday_home()
 TRAJ_FILE = FRIDAY_DIR / "trajectories.jsonl"
 
@@ -131,7 +136,9 @@ def capture(message, reply, tool_trace=None, duration_ms=None, error=None, works
                     tools.append(nm)
         rec = {
             "ts": time.time(),
-            "message": (message or "")[:2000],
+            # A pasted key is withheld before the cut, so no fragment of one
+            # survives at the 2,000-character edge.
+            "message": _withhold(message or "")[:2000],
             "reply_len": len(reply or ""),
             "tools": tools,
             "duration_ms": duration_ms,
