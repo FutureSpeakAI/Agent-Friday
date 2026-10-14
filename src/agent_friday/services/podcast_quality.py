@@ -507,7 +507,14 @@ def home_problems(lines: list[dict], home: str) -> list[dict]:
             if _DESTINATION_RE.search(ln["text"]) and city in ln["text"].lower()]
 
 
-_SENT_RE = re.compile(r"(?<=[.!?])\s+")
+# A sentence ends at . ! or ? and a space, but not after an initial or an
+# abbreviation: "U.S. authorities" and "Dr. Lee" are one sentence. Splitting
+# there cut "TechCrunch reports that U.S." loose from its story, and the
+# attribution check then dropped the whole story.
+_SENT_RE = re.compile(
+    r"(?<!\b[A-Za-z]\.)(?<!\bMr\.)(?<!\bMs\.)(?<!\bDr\.)(?<!\bSt\.)(?<!\bJr\.)"
+    r"(?<!\bSr\.)(?<!\bvs\.)(?<!\bNo\.)(?<!\bMrs\.)(?<!\bGov\.)(?<!\bSen\.)(?<!\bRep\.)"
+    r"(?<=[.!?])\s+")
 
 
 def _hard_facts(text: str) -> set:
@@ -955,7 +962,7 @@ def address_problems(lines: list[dict]) -> list[dict]:
 def fragment_problems(lines: list[dict]) -> list[dict]:
     frags = []
     for i, ln in _spoken(lines):
-        for sent in re.split(r"(?<=[.!?])\s+", ln["text"]):
+        for sent in _SENT_RE.split(ln["text"]):
             if _FRAGMENT_RE.match(sent.strip()):
                 frags.append((i, sent.strip()))
     if len(frags) > 1:

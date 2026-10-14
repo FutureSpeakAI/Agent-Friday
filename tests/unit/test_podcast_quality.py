@@ -286,3 +286,27 @@ def test_her_own_analysis_put_in_a_publisher_s_mouth_is_still_caught():
     lines = [{"speaker": "a", "cites": ["S2"], "text": "AP reports that the open model is a watershed for "
               "sovereign assistants."}]
     assert [p for p in q.misattribution_problems(lines, sl, docs) if p["code"] == "misattributed"]
+
+
+# ── a sentence does not end at an initial or an abbreviation ─────────────────
+
+def test_an_abbreviation_does_not_end_a_sentence():
+    text = ("TechCrunch reports that U.S. authorities warn hackers target Americans. "
+            "Dr. Lee said the U.K. agrees. Mr. Ortiz left at 9 p.m. on Tuesday. It rained.")
+    assert q.sentences(text) == [
+        "TechCrunch reports that U.S. authorities warn hackers target Americans.",
+        "Dr. Lee said the U.K. agrees.",
+        "Mr. Ortiz left at 9 p.m. on Tuesday.",
+        "It rained.",
+    ]
+
+
+def test_a_long_line_is_never_split_inside_an_abbreviation():
+    from agent_friday.services import podcast_engine as pe
+    text = ("TechCrunch reported on Tuesday that U.S. authorities warn that sanctioned hackers are "
+            "increasingly targeting Americans to act as facilitators between breached U.S. companies "
+            "and Pyongyang. ") * 3
+    parts = pe._split_long(text.strip())
+    assert len(parts) > 1
+    assert not any(p.rstrip().endswith("U.S.") for p in parts), parts
+    assert all(p.startswith("TechCrunch reported") for p in parts), parts

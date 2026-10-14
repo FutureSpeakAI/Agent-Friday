@@ -1604,7 +1604,7 @@ def _split_long(text: str) -> list[str]:
     if len(text) <= MAX_LINE_CHARS:
         return [text]
     out, cur = [], ""
-    for s in re.split(r"(?<=[.!?])\s+", text):
+    for s in quality.sentences(text):
         if cur and len(cur) + len(s) + 1 > MAX_LINE_CHARS:
             out.append(cur)
             cur = s
