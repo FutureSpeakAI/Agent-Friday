@@ -149,12 +149,13 @@ def _on_decision(record: dict) -> None:
 
     aid = record.get("approval_id")
     try:
-        # A memory write approved once covers the same kind of write for the
-        # rest of the conversation (services/agent.mint_memory_write_batch).
-        from agent_friday.services.agent import mint_memory_write_batch
-        mint_memory_write_batch(record)
+        # The owner's own approval of a memory write opens a window for the
+        # same kind of write in the same conversation or task, receipted
+        # (governance/memory_window). Anything else opens nothing.
+        from agent_friday.governance import memory_window as _mw
+        _mw.open_window(record)
     except Exception as e:
-        _log.warning("no batch grant for approval %s: %s", aid, e)
+        _log.warning("no memory-write window for approval %s: %s", aid, e)
     from agent_friday.services import approvals as _ap
     if not _ap.claim_for_execution(aid):
         return                                  # someone else already has it

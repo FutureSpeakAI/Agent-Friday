@@ -12661,6 +12661,11 @@ def _hook_confirmation_gate(ctx):
         # The user already decided this exact call on a card that showed
         # where its details came from. Asking again in chat adds nothing.
         return _hooks.ALLOW
+    if (getattr(ctx, "meta", None) or {}).get("memory_window"):
+        # The owner opened a memory-write window for this kind of save in this
+        # conversation, on a card that said so (governance/memory_window); the
+        # gate checked it and receipted this use.
+        return _hooks.ALLOW
     if _creations_write_preapproved(name, ctx.input):
         return _hooks.ALLOW
     _meta = getattr(ctx, "meta", None) or {}
@@ -13065,12 +13070,16 @@ def _hook_governance(ctx):
             f"executed: {why}. Do not retry it. Tell the user what you were "
             f"about to do and where that detail came from.")
     v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
-                        tainted=(d.action == "ask"))
+                        tainted=(d.action == "ask"),
+                        taint_roles=frozenset(f.role for f in d.flags))
     ctx.meta["governance"] = v
     if v.action == "allow":
         if v.grant:
             # A scoped, expiring grant the owner created is their decision.
             ctx.meta["owner_decided"] = v.grant.get("grant_id")
+            from agent_friday.governance import memory_window as _mw
+            if _mw.is_window(v.grant):
+                ctx.meta["memory_window"] = v.grant.get("grant_id")
         return _hooks.ALLOW
     if v.action == "deny":
         return _hooks.DENY(
@@ -13163,81 +13172,14 @@ def _approved_card_allows(approval_id, tool_name, args):
     return True, ""
 
 
-#: Memory writes the owner approves once per conversation, not once per write
-#: ("No Pestering"). The owner's approval of one card mints a grant for the same
-#: tool in the same conversation (MEMORY_WRITE_BATCH_S, MEMORY_WRITE_BATCH_USES),
-#: listed and revocable in the governance grants. It covers a call only when
-#: every flag on it is a memory-write flag. Never a delete, never a rule file,
-#: never a path outside Friday's home, never the shared fallback ledger; sends,
-#: spends, commands and deletes keep a card every time.
-MEMORY_WRITE_BATCH_S = 2 * 3600
-MEMORY_WRITE_BATCH_USES = 25
-_BATCH_ROLES = frozenset({"memory_write", "write_path"})
-
-
-def _memory_write_batchable(name, inp):
-    inp = inp or {}
-    if name == "learn_skill":
-        return str(inp.get("action") or "").lower() in ("create", "modify")
-    if name == "correct_wiki":
-        return bool(str(inp.get("new_text") or "").strip())
-    if name == "propose_wiki_update":
-        return bool(str(inp.get("new_value") or "").strip())
-    if name == "write_file":
-        try:
-            from agent_friday.paths import friday_home
-            home = Path(friday_home()).resolve()
-            p = Path(os.path.expanduser(str(inp.get("path") or ""))).resolve()
-        except Exception:
-            return False
-        if not str(inp.get("path") or "").strip() or p.name.lower() in _taint_mod._RULE_FILES:
-            return False
-        return home in p.parents
-    return False
-
-
-def _memory_write_batch_scope(key):
-    return "taintbatch:%s" % key
-
-
-def mint_memory_write_batch(record):
-    """The owner approved a memory-write card: later writes of the same kind in
-    the same conversation need no card of their own. Returns the grant or None."""
-    if not isinstance(record, dict) or record.get("kind") != "tainted_action":
-        return None
-    if record.get("status") != "approved" or not str(record.get("decided_by") or "").startswith("owner"):
-        return None
-    payload = record.get("payload") or {}
-    tool, key = payload.get("tool"), str(payload.get("taint_key") or "")
-    if not key or key == "default" or not _memory_write_batchable(tool, payload.get("input")):
-        return None
-    from agent_friday.governance import action_gate as _gate
-    scope = _memory_write_batch_scope(key)
-    if any(g.get("scope") == scope and tool in (g.get("tools") or [])
-           for g in _gate.list_grants()):
-        return None
-    return _gate.create_grant(
-        tools=[tool], scope=scope, expires_in_seconds=MEMORY_WRITE_BATCH_S,
-        max_uses=MEMORY_WRITE_BATCH_USES, created_by=str(record.get("decided_by")),
-        note="Memory writes in one conversation, approved on card %s" % record.get("approval_id"))
-
-
 def _taint_card(ctx, decision, key):
     """Raise (or read back) the approval card for a flagged call.
 
     One decision, one action: an approved card lets exactly this call through
-    once, and is then marked used. A memory write the owner already approved
-    in this conversation spends one use of its batch grant instead.
+    once, and is then marked used. (A memory write inside an open memory-write
+    window never reaches here: the gate allows it, governance/memory_window.)
     """
     name, inp = ctx.tool_name, ctx.input or {}
-    if (key != "default" and _memory_write_batchable(name, inp)
-            and all(f.role in _BATCH_ROLES for f in decision.flags)):
-        from agent_friday.governance import action_gate as _gate
-        g = _gate.consume_grant(name, _memory_write_batch_scope(key))
-        if g is not None:
-            ctx.meta["owner_decided"] = g.get("grant_id")
-            ctx.meta["taint_batch"] = g.get("grant_id")
-            return _hooks.ALLOW
     fp = _taint_mod.fingerprint(name, inp)
     subject = f"taint:{key}:{fp}"
     try:
@@ -13259,6 +13201,11 @@ def _taint_card(ctx, decision, key):
             why_text = (flags[0].text if flags else
                         "This acts outside the conversation, and nobody could be "
                         "asked about it in chat.")
+            # When approving opens a memory-write window, the card says so.
+            from agent_friday.governance import memory_window as _mw
+            _covers = _mw.card_note(name, inp, ctx.session_ctx)
+            if _covers:
+                why_text = why_text + " " + _covers
             _ptok = _taint_mod.CURRENT.set(decision)
             try:
                 rec = _appr.create_approval(
@@ -13273,10 +13220,7 @@ def _taint_card(ctx, decision, key):
                     # it an approval decided in the System workspace completes
                     # in silence, which is how five events that never existed
                     # went unnoticed for four turns.
-                    # A memory write also names its ledger, so approving it can
-                    # cover the conversation's next writes (mint_memory_write_batch).
-                    payload=dict(_approval_tool_payload(name, inp, ctx.session_ctx),
-                                 **({"taint_key": key} if _memory_write_batchable(name, inp) else {})),
+                    payload=_approval_tool_payload(name, inp, ctx.session_ctx),
                     # WHAT THIS ACTION IS, from the gate that just classified
                     # it, instead of a substring scan over the card's text.
                     # Five identical create_calendar_event cards came out

@@ -962,7 +962,8 @@ def _read_grants() -> list:
 
 
 def create_grant(*, tools, scope: str, expires_in_seconds: float,
-                 max_uses: int = 1, created_by: str = "owner", note: str = "") -> dict:
+                 max_uses: int = 1, created_by: str = "owner", note: str = "",
+                 source: str = "") -> dict:
     """Pre-approve named outward tools for one scheduled job or task.
 
     `scope` is the schedule id or task id the grant belongs to. Nothing else
@@ -976,6 +977,8 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
          "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
          "uses_left": int(max_uses), "created_by": created_by, "note": note[:200],
          "created_at": time.time()}
+    if source:
+        g["source_card"] = str(source)[:80]   # the approval card that opened it
     with _LOCK:
         gs = [x for x in _read_grants() if x.get("expires_at", 0) > time.time()]
         gs.append(g)
@@ -1061,6 +1064,18 @@ def _receipt(entry: dict) -> None:
         f.write(json.dumps(entry, default=str) + "\n")
 
 
+def receipt_window(event: str, grant: dict) -> None:
+    """The signed receipt for a memory-write window (governance/memory_window)
+    opening. Every use of a window is receipted by `authorize`, naming the same
+    grant and card. Raises when the receipt cannot be written."""
+    g = grant or {}
+    _receipt({"tool": ",".join(g.get("tools") or []), "class": "memory_window",
+              "decision": "window_" + str(event), "reason": g.get("note") or "",
+              "grant": g.get("grant_id"), "approval": g.get("source_card"),
+              "scope": g.get("scope"), "expires_at": g.get("expires_at"),
+              "uses_left": g.get("uses_left"), "surface": "approval_card"})
+
+
 def receipts_path() -> Path:
     return Path(friday_home()) / "decision-bom.jsonl"
 
@@ -1116,7 +1131,7 @@ def _interactive(ctx: dict) -> bool:
 
 
 def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] = None,
-              *, tainted: bool = False) -> Verdict:
+              *, tainted: bool = False, taint_roles=()) -> Verdict:
     """Decide whether this action may run now. Never raises.
 
     allow    run it
@@ -1136,7 +1151,7 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         # A check that could not run holds the action; not even a grant
         # overrides that, because nobody knows what the action is.
         v = (Verdict("deny", klass, f"held: {failed}") if failed
-             else _decide(tool_name, klass, why, ctx, tainted))
+             else _decide(tool_name, klass, why, ctx, tainted, args, taint_roles))
     except Exception as e:
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
@@ -1148,6 +1163,8 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
                                                      "background" if ctx.get("is_background_task") else "other"),
                   "grant": (v.grant or {}).get("grant_id"),
+                  # The card that opened the memory-write window this call ran on.
+                  "approval": (v.grant or {}).get("source_card"),
                   # Which background task took the action, so the morning
                   # receipt can link a decision to the work it belonged to.
                   "task_id": ctx.get("task_id"),
@@ -1199,11 +1216,27 @@ def _turn_id():
         return None
 
 
-def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
+def _window(tool_name, klass, why, ctx, args, roles) -> Verdict:
+    """A card, unless an open memory-write window covers this call
+    (governance/memory_window). Reached only where the answer is a card, after
+    the cLaws check for an outward action."""
+    try:
+        from agent_friday.governance import memory_window as _mw
+        g = _mw.spend(tool_name, args, ctx, roles)
+    except Exception as e:
+        _log.warning("memory-write window check failed: %s", e)
+        g = None
+    if g is not None:
+        return Verdict("allow", klass, "memory-write window %s, opened by card %s"
+                       % (g.get("grant_id"), g.get("source_card")), grant=g)
+    return Verdict("card", klass, why)
+
+
+def _decide(tool_name, klass, why, ctx, tainted, args=None, roles=()) -> Verdict:
     if klass == "forbidden":
         return Verdict("deny", klass, f"not allowed: {why}")
     if klass == INTERNAL:
-        return Verdict("card" if tainted else "allow", klass, why)
+        return _window(tool_name, klass, why, ctx, args, roles) if tainted else Verdict("allow", klass, why)
     if klass == OBSERVE:
         # A read at a connected service: runs unasked, receipted as observe.
         # A detail from outside content could be data being smuggled out
@@ -1222,7 +1255,7 @@ def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
             return Verdict("allow", klass, f"pre-approved grant {g['grant_id']}", grant=g)
     if _interactive(ctx) and not tainted and tool_name not in CARD_ONLY_WHEN_OUTWARD:
         return Verdict("confirm", klass, why)
-    return Verdict("card", klass, why)
+    return _window(tool_name, klass, why, ctx, args, roles)
 
 
 class Held(RuntimeError):
