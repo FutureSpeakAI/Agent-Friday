@@ -228,6 +228,41 @@ def test_an_instant_open_whose_tool_raises_hides_the_text_from_the_page(client, 
     assert out["tool_trace"][0]["status"] == "error"
 
 
+@pytest.mark.parametrize("handler,shown", [
+    (_boom, None),                                                     # a raised exception: fixed reason
+    (lambda inp: "NOT DONE: that label is not one of yours.", "NOT DONE: that label is not one of yours."),
+])
+def test_a_safe_write_shows_its_own_refusal_but_never_an_exception(client, monkeypatch, handler, shown):
+    # Laya's safe write: the governed handler's refusal is written for the owner and reaches them as
+    # written; a handler that raises puts nothing of its exception on the page or in the trace.
+    from types import SimpleNamespace
+    from agent_friday.governance import action_gate
+    from agent_friday.routes import chat as chat_routes
+    from agent_friday.services import agent, reflex_chat
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "zz_safe_write_probe", handler)
+    monkeypatch.setitem(agent.TOOL_RINGS, "zz_safe_write_probe", 0)
+    monkeypatch.setattr(action_gate, "INTERNAL_TOOLS",
+                        action_gate.INTERNAL_TOOLS | {"zz_safe_write_probe"})
+    monkeypatch.setattr(chat_routes, "_persist_turn", lambda *a, **k: None)
+    monkeypatch.setattr(chat_routes, "_save_chat_history", lambda *a, **k: None)
+    r = SimpleNamespace(tool="zz_safe_write_probe", args={"action": "archive"})
+    out = reflex_chat._safe_write_turn(r, "archive these", session_id="s-hidden", conversation_id="c-hidden",
+                                       turn_id=None, authenticated=True)
+    assert out["outcome"] == "refused"
+    assert INTERNAL not in out["reply"] and INTERNAL not in repr(out["tool_trace"])
+    assert "result" not in out["tool_trace"][0]
+    if shown is None:
+        assert out["reply"].startswith("I did not do that: the action failed (error ")
+        assert out["tool_trace"][0]["status"] == "error"
+    else:
+        assert out["reply"] == "I did not do that: %s (instant, no model; nothing ran)." % shown
+    with client.application.test_request_context("/api/chat", method="POST"):
+        resp = chat_routes._instant_response("archive these", out, "c-hidden")
+    data = _hidden(resp)
+    if shown is not None:
+        assert shown in data["response"]
+
+
 def test_a_point_and_act_whose_tool_raises_hides_the_text_from_the_page(client, monkeypatch):
     # "open the second one": the rows named on screen, run with no model; reply and trace go to the page.
     from agent_friday.governance import action_gate
