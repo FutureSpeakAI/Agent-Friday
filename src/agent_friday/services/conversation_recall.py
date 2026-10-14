@@ -118,10 +118,14 @@ def recent_voice_pin(max_sessions: int = 3, max_chars: int = 900, windows=None) 
     if not sessions:
         return ""
     recent = sorted(sessions.values(), key=lambda s: -s["ts"])[:max_sessions]
-    out = ["=== RECENT VOICE CONVERSATIONS (from earlier calls with you; search_past_conversations for more) ==="]
+    out = []
     for s in recent:
         when = datetime.fromtimestamp(s["ts"]).strftime("%a %b %d, %I:%M %p")
         said = " / ".join(x for x in s["lines"] if x)
         out.append(f"- {when}: the user said: {said}" if said else f"- {when}")
-    text = "\n".join(out)
-    return text[:max_chars] + "\n"
+    # Labelled as recalled, not new input (services/memory_fence); cut before
+    # fencing so the closing tag is never lost to the length cap.
+    from agent_friday.services import memory_fence as _mf
+    return ("=== RECENT VOICE CONVERSATIONS (from earlier calls with you; "
+            "search_past_conversations for more) ===\n"
+            + _mf.fence("recent_voice_calls", "\n".join(out)[:max_chars]) + "\n")

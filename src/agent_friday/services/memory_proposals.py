@@ -543,7 +543,7 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
             # full card leaves it in the review queue rather than dropping it.
             try:
                 from agent_friday.services import core_memory
-                _cm = core_memory.add("user", text, actor="owner")
+                _cm = core_memory.add("user", text, actor="owner", dedupe=True)
                 if not _cm.get("ok") and _cm.get("full"):
                     core_memory.queue("user", "add", text=text, source=origin,
                                       reason="You kept this, but the memory card was full.")

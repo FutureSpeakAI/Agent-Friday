@@ -36,6 +36,13 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ### Changed
 
+- **Friday does not save the same thing twice, or re-learn what she just
+  remembered.** Before a line goes on the memory card or into its review
+  queue, it is compared with what is already there, and the same fact in other
+  words is skipped (your own additions are always kept). What she recalls from
+  earlier conversations, the last session's summary and the card itself is
+  marked in her instructions as recalled, not new; and a reply that only
+  repeats something she recalled is not stored again as a new exchange.
 - **Nightly dreaming no longer writes into what Friday knows.** What it finds
   in the day's conversations waits on the memory card for your Keep.
 

@@ -2607,6 +2607,15 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
             # Never index (or review) a Library answer's words un-elided.
             print(f"  [MEMORY] turn indexing skipped: {_le}")
             return
+    # What Friday recalled this turn is not new: fenced spans go, and so do the
+    # reply's sentences that only repeat a recalled excerpt (services/
+    # memory_fence), before the index or the review sees the exchange.
+    try:
+        from agent_friday.services import memory_fence as _mf
+        message = _mf.strip(message)
+        reply = _mf.drop_recalled(reply, session_id)
+    except Exception:
+        pass
     # Every few turns a local model reviews the conversation for the memory
     # card, after the reply (services/memory_review). Same end-of-turn door
     # for chat and voice; off the record never reaches here.
@@ -2752,11 +2761,13 @@ def _build_session_continuity_block():
         snippet = text.strip()
         if len(snippet) > 1400:
             snippet = snippet[:1400].rsplit("\n", 1)[0] + "\n…"
+        from agent_friday.services import memory_fence as _mf
         return (
             "\n== CONTINUITY FROM YOUR LAST SESSION (" + date_str + ") ==\n"
-            "This is your own summary of the most recent day you spoke with the "
-            "user. Use it for continuity — pick up open threads naturally — but "
-            "don't recite it back at them.\n" + snippet + "\n")
+            + _mf.fence("last_session_summary",
+                        "This is your own summary of the most recent day you spoke with the "
+                        "user. Use it for continuity — pick up open threads naturally — but "
+                        "don't recite it back at them.\n" + snippet) + "\n")
     except Exception:
         return ""
 
@@ -2949,12 +2960,12 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         if not kept:
             return live_block
         lines = [
-            "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==",
             "These are real excerpts from earlier conversations with this user. "
             "Use them for continuity. When you rely on one to make a factual "
             "claim, you may cite it as [conversation:DATE/\"short quote\"].",
         ]
         used = 0
+        recalled = []
         for h in kept:
             date = h.get("date") or (h.get("timestamp") or "")[:10]
             role = "You" if h.get("role") == "friday" else "User"
@@ -2965,8 +2976,15 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             if used + len(entry) > max_chars:
                 break
             lines.append(entry)
+            recalled.append(" ".join((h.get("text") or "").split()))
             used += len(entry)
-        return live_block + "\n".join(lines) + "\n"
+        # Labelled as recalled (services/memory_fence), and remembered for this
+        # session so the end-of-turn index does not store a reply's repeat of it
+        # as a new exchange.
+        from agent_friday.services import memory_fence as _mf
+        _mf.remember(session_id, recalled)
+        return (live_block + "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==\n"
+                + _mf.fence("past_conversations", "\n".join(lines)) + "\n")
     except Exception as _e:
         return ""
 
@@ -3352,7 +3370,9 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
     # the USER MODEL's old auto-ranked fact list, which is no longer rendered.
     core = _pf.frozen(freeze_key, "core_memory:" + gate_key, _core)
     if core:
-        out += "\n\n== CORE MEMORY ==\n" + _strip_overrides(core, "core-memory") + "\n"
+        from agent_friday.services import memory_fence as _mf
+        out += ("\n\n== CORE MEMORY ==\n"
+                + _mf.fence("memory_card", _strip_overrides(core, "core-memory")) + "\n")
 
     def _um():
         from agent_friday.services.user_model import render_user_model_prompt

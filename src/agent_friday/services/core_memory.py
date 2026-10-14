@@ -214,6 +214,15 @@ def refusal(text: str) -> Optional[str]:
     return None
 
 
+def _near_duplicate(text: str, candidates: List[str]) -> Optional[str]:
+    try:
+        from agent_friday.services.memory_dedupe import near_duplicate
+        return near_duplicate(text, candidates)
+    except Exception:
+        low = (text or "").lower()
+        return next((c for c in candidates if c.lower() == low), None)
+
+
 def _full_message(target: str, items: List[str], need: int) -> str:
     cap = CAPS[target]
     if target == "user" and not REVEAL_USER.get():
@@ -341,7 +350,10 @@ def _err(msg: str) -> Dict[str, Any]:
     return {"ok": False, "error": msg}
 
 
-def add(target: str, text: str, *, actor: str = "friday") -> Dict[str, Any]:
+def add(target: str, text: str, *, actor: str = "friday",
+        dedupe: Optional[bool] = None) -> Dict[str, Any]:
+    """Add one line. Near duplicates are skipped for every writer but the owner
+    typing it themselves (`dedupe` overrides, e.g. an approved suggestion)."""
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
@@ -352,6 +364,13 @@ def add(target: str, text: str, *, actor: str = "friday") -> Dict[str, Any]:
         items = entries(target)
         if any(e.lower() == text.lower() for e in items):
             return {"ok": True, "unchanged": True, "note": "already there"}
+        if (actor != "owner") if dedupe is None else dedupe:
+            # The same fact in other words is not stored twice
+            # (services/memory_dedupe). The owner's own add is theirs to make.
+            dup = _near_duplicate(text, items)
+            if dup:
+                return {"ok": True, "unchanged": True, "duplicate_of": dup,
+                        "note": f"already on the card as: {dup!r}; use replace to reword it"}
         new = items + [text]
         if used(new) > CAPS[target]:
             return {**_err(_full_message(target, items, used(new) - CAPS[target])), "full": True}
@@ -483,13 +502,20 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
         why = refusal(text)
         if why:
             return _err("NOT QUEUED: " + why)
-        if op == "add" and any(e.lower() == text.lower() for e in entries(target)):
+        if op == "add" and _near_duplicate(text, entries(target)):
             return {"ok": True, "unchanged": True}
     with _LOCK:
         rows = _read_jsonl(_pending_path())
         for r in rows:
             if (r.get("target"), r.get("op"), r.get("text"), r.get("old")) == (target, op, text, old):
                 return {"ok": True, "unchanged": True, "id": r.get("id")}
+        if op == "add":
+            waiting = [r.get("text") or "" for r in rows
+                       if r.get("target") == target and r.get("op") == "add"]
+            dup = _near_duplicate(text, waiting)
+            if dup:
+                hit = next(r for r in rows if r.get("op") == "add" and r.get("text") == dup)
+                return {"ok": True, "unchanged": True, "id": hit.get("id")}
         row = {"id": "pend-" + uuid.uuid4().hex[:10], "ts": time.time(), "target": target,
                "op": op, "text": text, "old": old, "source": str(source)[:80],
                "reason": str(reason or "")[:300]}
@@ -516,7 +542,7 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
         if approve:
             t, op = row["target"], row["op"]
             if op == "add":
-                res = add(t, row.get("text") or "", actor="owner")
+                res = add(t, row.get("text") or "", actor="owner", dedupe=True)
             elif op == "replace":
                 res = replace(t, row.get("old") or "", row.get("text") or "", actor="owner")
             else:
@@ -563,7 +589,7 @@ def migrate_user_model_facts() -> Dict[str, Any]:
         if not text:
             continue
         if src.startswith(("manual", "proposed:", "meeting:")):
-            r = add("user", text, actor="owner")
+            r = add("user", text, actor="owner", dedupe=True)
             if r.get("ok") and not r.get("unchanged"):
                 moved += 1
                 continue

@@ -214,6 +214,9 @@ def _tool_update_core_memory(inp=None) -> str:
     if not r.get("ok"):
         return str(r.get("error") or "NOT DONE.")
     if r.get("unchanged"):
+        if r.get("duplicate_of"):
+            return ("Not saved: your core memory already says this as "
+                    f"{r['duplicate_of']!r}. Use action=replace if the wording should change.")
         return "Already in your core memory; nothing changed."
     u = r.get("usage") or {}
     verb = {"add": "Saved", "replace": "Updated", "remove": "Removed"}[action]
