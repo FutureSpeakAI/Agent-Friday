@@ -341,7 +341,8 @@ def test_a_state_file_with_the_earlier_short_keys_still_loads_and_still_counts()
         assert ip.used_this_hour(NOON + 1) == 1           # the earlier event still counts this hour
         v = ip.verdict("approval_pending", source="approvals", key="approval:x", now=NOON + 2, settings={})
         assert v.counted and ip.used_this_hour(NOON + 3) == 2   # judged afresh under the new key
-        assert ip.used_this_hour(NOON + 3601) == 0         # and the earlier entry leaves with the hour
+        assert ip.used_this_hour(NOON + 3601) == 1         # the earlier entry leaves with its hour...
+        assert ip.used_this_hour(NOON + 3603) == 0         # ...and the fresh one with its own
     finally:
         ip.set_state_path(None)
 

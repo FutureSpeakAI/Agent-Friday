@@ -17,6 +17,7 @@ import ast
 import http.client
 import math
 import socket
+import threading
 import types
 import urllib.request
 from pathlib import Path
@@ -74,7 +75,9 @@ def watched(monkeypatch):
     attempts = []
 
     def trip(*a, **k):
-        attempts.append(("network", a[:2]))
+        # Name the destination and the thread, so a failure says who reached out and where to.
+        target = [getattr(x, "full_url", x) for x in a[:2]]
+        attempts.append(("network", target, threading.current_thread().name))
         raise AssertionError("a meeting tried to reach the network")
     monkeypatch.setattr(socket.socket, "connect", trip)
     monkeypatch.setattr(socket.socket, "connect_ex", trip)
