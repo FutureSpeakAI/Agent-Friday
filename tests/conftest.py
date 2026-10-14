@@ -522,6 +522,23 @@ def _no_turn_outlives_its_test():
     _forget_the_current_turn()
 
 
+def _forget_verified_calls() -> None:
+    """Empty the call verifier's per-turn state. A call with no turn id is kept under
+    one shared key for UNKEYED_TTL, so a test repeating another test's read would get
+    that test's cached result and its own handler would never run."""
+    cv = sys.modules.get("agent_friday.services.call_verifier")
+    if cv is not None:
+        cv.reset()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_call_verifier():
+    """Each test starts with no remembered call and leaves none behind."""
+    _forget_verified_calls()
+    yield
+    _forget_verified_calls()
+
+
 def _forget_live_duplicates() -> None:
     """Empty the Live surface's duplicate-call window. It is keyed by
     conversation, tool and arguments for a few seconds, so a test that repeats
