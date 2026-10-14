@@ -758,8 +758,10 @@ def test_the_shadow_log_holds_names_and_counts_never_text(tmp_path):
 
 def test_a_tool_miss_and_a_context_miss_are_logged_apart(tmp_path):
     _out, plan, sp = _plan_for("shadow", tmp_path, settings={"voice_live_instruction_max_tokens": 3000})
-    dropped_tool = plan.would_drop()[0]
-    assert dropped_tool not in lsp.CONTEXT_TOOLS
+    # Which tools the kit keeps depends on the router's choice, so take a dropped tool that is
+    # not a context tool rather than the first dropped one.
+    dropped_tool = next((n for n in plan.would_drop() if n not in lsp.CONTEXT_TOOLS), None)
+    assert dropped_tool, "the capped kit drops at least one non-context tool"
     plan.note_call(dropped_tool)         # tool miss only
     plan.note_call("ask_friday")         # context miss (ask_friday is always in the kit: not a tool miss)
     recs = [json.loads(x) for x in sp.read_text(encoding="utf-8").splitlines() if '"call"' in x]
