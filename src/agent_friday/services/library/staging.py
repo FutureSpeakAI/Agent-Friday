@@ -278,7 +278,13 @@ def review(item_id: str, decision: str) -> dict:
     status = {"accept": "accepted", "reject": "rejected", "defer": "deferred"}.get(decision)
     if status is None or not re.fullmatch(r"lib-[0-9]+-[0-9a-z]+-(summary|fact)(-[0-9]+)?", str(item_id or "")):
         return {"ok": False, "error": "say accept, reject or defer, for one of the drafts"}
-    p = staging_dir() / (item_id + ".json")
+    # The id's shape already keeps it a plain file name; the resolved path is checked against the
+    # resolved staging folder as well, before anything is read or written.
+    root = os.path.realpath(staging_dir())
+    full = os.path.realpath(os.path.join(root, item_id + ".json"))
+    if not full.startswith(root + os.sep):
+        return {"ok": False, "error": "say accept, reject or defer, for one of the drafts"}
+    p = Path(full)
     with _lock:
         try:
             it = json.loads(p.read_text(encoding="utf-8"))

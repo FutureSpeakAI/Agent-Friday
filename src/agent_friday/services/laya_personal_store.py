@@ -583,8 +583,12 @@ def write_blob(profile: str, name: str, obj, *, sub: str = "") -> bool:
         key = vault_key()
         if key is None:
             return False
-        path = profile_dir(profile) / sub / name if sub else profile_dir(profile) / name
-        _atomic_write(path, seal(obj, key).encode("ascii"))
+        # A blob lives inside its profile folder: the resolved path is checked before the write.
+        base = os.path.realpath(profile_dir(profile))
+        full = os.path.realpath(os.path.join(base, sub, name) if sub else os.path.join(base, name))
+        if not full.startswith(base + os.sep):
+            return False
+        _atomic_write(Path(full), seal(obj, key).encode("ascii"))
         return True
 
 
@@ -593,9 +597,13 @@ def read_blob(profile: str, name: str, *, sub: str = ""):
         key = vault_key()
         if key is None:
             return None
-        path = profile_dir(profile) / sub / name if sub else profile_dir(profile) / name
+        # A blob is read only from inside its profile folder (the resolved path is checked).
+        base = os.path.realpath(profile_dir(profile))
+        full = os.path.realpath(os.path.join(base, sub, name) if sub else os.path.join(base, name))
+        if not full.startswith(base + os.sep):
+            return None
         try:
-            return unseal(path.read_text(encoding="ascii").strip(), key)
+            return unseal(Path(full).read_text(encoding="ascii").strip(), key)
         except Exception:
             return None
 

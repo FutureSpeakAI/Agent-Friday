@@ -414,11 +414,12 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
     # The same call a model's tool use makes: confirmation, governance, vault,
     # sandbox, receipts. This module has no other way to run a command.
     result = agent._execute_tool(tool, tool_input, session_ctx=ctx)
-    # A str result is kept as it is, so exception text a handler marked (user_errors.exception_text)
-    # stays marked in the trace and in a reply quoting it, and routes._errors.public_result hides it.
     result = result if isinstance(result, str) else str(result if result is not None else "")
     status = agent._tool_call_status(result)
-    entry = {"name": tool, "input": tool_input, "result": result}
+    # This reply and trace go straight to the page (routes/chat._instant_response and
+    # core_routes' open route). The tool's own text is written for a model and can quote an
+    # exception, so the page gets the status and a fixed phrase; a failure's text goes to the log.
+    entry = {"name": tool, "input": tool_input, "status": status}
     title = ""
     try:
         title = str(res.chosen.title)
@@ -443,20 +444,30 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
         hist = _lt.line("open_card", shown="that").text
     elif status in ("deny", "error"):
         outcome = "refused"
-        reply = _lt.line("open_refused", shown=shown, detail=_first_line(result))
+        reply = _lt.line("open_refused", shown=shown, detail=_page_detail(status, result, tool))
         hist = _lt.line("open_refused", shown="that", detail=hist_detail).text
     else:
         outcome = "not_confirmed"
-        reply = _lt.line("open_unconfirmed", shown=shown, detail=_first_line(result))
+        reply = _lt.line("open_unconfirmed", shown=shown, detail=_page_detail(status, result, tool))
         hist = _lt.line("open_unconfirmed", shown="that", detail=hist_detail).text
     count("open_" + outcome)
     _record_plan(turn_id, shape="reflex_open", reason="resolver: one sealed command",
                  reflex={"by": "resolver", "kind": "open", "tool": tool, "outcome": outcome})
-    from agent_friday.user_errors import keep_mark
-    # The refused and unconfirmed replies quote the result's first line: they carry its mark.
-    shown_text = keep_mark((result,), reply.text) if outcome in ("refused", "not_confirmed") else reply.text
-    return {"reply": shown_text, "tool_trace": [entry], "actions": [], "outcome": outcome,
+    return {"reply": reply.text, "tool_trace": [entry], "actions": [], "outcome": outcome,
             "laya": reply.receipt(), "history_text": hist}
+
+
+def _page_detail(status: str, result: str, tool: str) -> str:
+    """Why an instant open or point-and-act did not land, in words fixed here. A tool error's own text is logged
+    under an error id, which the phrase names; it never reaches the page."""
+    if status == "deny":
+        return "a rule on this PC held it"
+    if status == "error":
+        from agent_friday.user_errors import log_text
+        return "the action failed (error %s)" % log_text("Instant %s failed" % tool, result)
+    # The unconfirmed text can name what was on screen (a title, a sender): only its size is logged.
+    _log.info("instant %s not confirmed: status %s, %d characters", tool, status, len(result or ""))
+    return "the desktop did not confirm it"
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +482,16 @@ _POINT_OK = ("NAV_OK", "SELECT_OK", "SELECT_PARTIAL")
 NEUTRAL_ASK = "I need to know which one you mean. The choices are on your screen."
 
 
+def _safe_write_detail(status: str, result: str, tool: str) -> str:
+    """The reason a safe write's refusal shows the owner. A refusal the handler wrote for them
+    ("NOT DONE: ...", "[GOVERNANCE HOLD] ...") is shown as written; text from a raised exception
+    (a tool error, or anything marked as exception text) is logged and named by an error id."""
+    from agent_friday.user_errors import ExceptionText
+    if status == "error" or isinstance(result, ExceptionText):
+        return _page_detail("error", result, tool)
+    return _first_line(result)
+
+
 def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authenticated):
     """Run Laya's safe-write call (the governed organize_email handler), which can only raise
     ONE card. The line the owner reads is sealed: the verb, a count and their own label."""
@@ -480,10 +501,12 @@ def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authen
     what = prop.what if prop else "that change"
     ctx = _base_ctx(conversation_id, "laya:safe_write", authenticated)
     ctx = agent.prepare_confirmation_ctx(session_id, message, ctx)
-    result = str(agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx) or "")
+    result = agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx)
+    result = result if isinstance(result, str) else str(result or "")    # str() would drop an ExceptionText mark
     status = agent._tool_call_status(result)
-    # The single-use ticket is spent by now; it is not kept in the trace either.
-    entry = {"name": r.tool, "input": {"action": r.args.get("action")}, "result": ""}
+    # The single-use ticket is spent by now; it is not kept in the trace either. The trace carries the status;
+    # its only text is the fixed card notice.
+    entry = {"name": r.tool, "input": {"action": r.args.get("action")}, "status": status}
     history = None
     if result.startswith("CARD_RAISED"):
         # The notice names the count and the owner's own label, never a title or a sender: the card on their
@@ -492,16 +515,15 @@ def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authen
         history = reply.text
         entry["result"] = history
     elif result.startswith("NOT DONE") or status in ("deny", "error"):
-        outcome, reply = "refused", _lt.line("point_refused", detail=_first_line(result))
+        outcome, reply = "refused", _lt.line("point_refused", detail=_safe_write_detail(status, result, r.tool))
     else:
         # A safe write that did not end in a card is a bug, never a success: say so, change nothing more.
-        _log.error("a Laya safe write ended without a card: %s", _first_line(result, 80))
-        outcome, reply = "not_confirmed", _lt.line("point_unconfirmed", detail=_first_line(result))
+        _log.error("a Laya safe write ended without a card: status %s, %d characters", status, len(result))
+        outcome, reply = "not_confirmed", _lt.line("point_unconfirmed",
+                                                   detail=_safe_write_detail(status, result, r.tool))
     count("point_" + outcome)
     _record_plan(turn_id, shape="reflex_point", reason="safe write: one card for the rows named",
                  reflex={"by": "rule", "kind": "safe_write", "tool": r.tool, "outcome": outcome})
-    if not entry["result"]:
-        entry["result"] = _first_line(result)
     out = {"reply": reply.text, "tool_trace": [entry], "actions": [], "outcome": outcome, "laya": reply.receipt()}
     if history:
         out["history_text"] = history
@@ -570,7 +592,8 @@ def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, auth
     ctx = agent.prepare_confirmation_ctx(session_id, message, ctx)
     result = str(agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx) or "")
     status = agent._tool_call_status(result)
-    entry = {"name": r.tool, "input": dict(r.args), "result": result}
+    # The page gets the status, never the tool's own text (it can quote an exception): as _run_command.
+    entry = {"name": r.tool, "input": dict(r.args), "status": status}
     if result.startswith(_POINT_OK):
         outcome = "done"
         # What the page confirmed, in the tool's own words.
@@ -585,10 +608,10 @@ def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, auth
         reply = _lt.line("point_card")
     elif status in ("deny", "error"):
         outcome = "refused"
-        reply = _lt.line("point_refused", detail=_first_line(result))
+        reply = _lt.line("point_refused", detail=_page_detail(status, result, r.tool))
     else:
         outcome = "not_confirmed"
-        reply = _lt.line("point_unconfirmed", detail=_first_line(result))
+        reply = _lt.line("point_unconfirmed", detail=_page_detail(status, result, r.tool))
     count("point_" + outcome)
     _record_plan(turn_id, shape="reflex_point", reason="point-and-act: rows named on screen",
                  reflex={"by": "rule", "kind": "point", "tool": r.tool, "outcome": outcome})

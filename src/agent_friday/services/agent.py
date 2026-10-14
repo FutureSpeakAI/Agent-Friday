@@ -1082,11 +1082,14 @@ def _tool_search_web(inp):
     try:
         from agent_friday.services import web_search as _ws
     except Exception as e:
-        return f"Web search unavailable (module import failed: {e}). Query: {q!r}"
+        _log.warning("web search module import failed", exc_info=True)
+        return f"Web search unavailable (module import failed: {type(e).__name__}). Query: {q!r}"
     try:
         out = _ws.search(q, count=int((inp or {}).get('count') or 10))
     except Exception as e:
-        return (f"Web search error: {type(e).__name__}: {e}. This is a TOOL "
+        # The exception's own text can carry a provider URL or key fragment: it goes to the log.
+        _log.warning("web search failed", exc_info=True)
+        return (f"Web search error: {type(e).__name__}. This is a TOOL "
                 f"FAILURE, not evidence that nothing is published. Query: {q!r}")
 
     results = out.get('results') or []

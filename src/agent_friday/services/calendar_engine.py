@@ -1,6 +1,7 @@
 ﻿import os
 import io
 import json
+import logging
 import glob
 import subprocess
 import base64
@@ -32,6 +33,8 @@ from agent_friday.core import (
     _load_settings,
 )  # noqa: E501
 from agent_friday.services.visible_jobs import visible_job
+
+_log = logging.getLogger(__name__)
 
 
 def _recent_unread_emails(limit=12):
@@ -282,8 +285,9 @@ def _fetch_gmail_recent(limit=15):
         return [{"error": "Google not connected. Visit /api/google/auth to link Gmail (read-only)."}]
     try:
         from googleapiclient.discovery import build
-    except Exception as e:
-        return [{"error": f"google-api-python-client not installed: {e}"}]
+    except Exception:
+        _log.warning("google-api-python-client import failed", exc_info=True)
+        return [{"error": "google-api-python-client not installed."}]
     try:
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
         # Unread-in-last-day first, then anything from the last day, deduped.
@@ -337,8 +341,9 @@ def _fetch_calendar_today():
         return [{"error": "Google not connected. Visit /api/google/auth to link Calendar (read-only)."}]
     try:
         from googleapiclient.discovery import build
-    except Exception as e:
-        return [{"error": f"google-api-python-client not installed: {e}"}]
+    except Exception:
+        _log.warning("google-api-python-client import failed", exc_info=True)
+        return [{"error": "google-api-python-client not installed."}]
     try:
         svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
         now = datetime.now().astimezone()
@@ -366,7 +371,10 @@ def _fetch_calendar_today():
             })
         return out
     except Exception as e:
-        return [{"error": f"Calendar fetch failed: {e}"}]
+        # The exception's own text can carry request URLs and local paths: it goes to the log,
+        # and the caller (a model, then the page) hears only what kind of failure it was.
+        _log.warning("calendar fetch failed", exc_info=True)
+        return [{"error": "Calendar fetch failed (%s)." % type(e).__name__}]
 
 
 def _google_section_error(items):

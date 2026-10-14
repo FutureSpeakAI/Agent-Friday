@@ -1220,6 +1220,12 @@ def test_m4_a_page_that_never_answers_costs_the_turn_one_bounded_rung_and_mints_
         calls.append(1)
         release.wait(3.0)
         return None
+    # The same turn with a page that answers at once, first: route()'s own first-call work (imports,
+    # a cold encoder on a slow runner) is paid here, so the timed turn below measures the page's cost.
+    monkeypatch.setattr(pa, "_default_stage", lambda: None)
+    t0 = time.perf_counter()
+    lr.route("archive these", trusted=True, pointed=None, log=False, conversation_id=CONV)
+    baseline = time.perf_counter() - t0
     monkeypatch.setattr(pa, "_default_stage", silent_page)
     t0 = time.perf_counter()
     try:
@@ -1227,7 +1233,11 @@ def test_m4_a_page_that_never_answers_costs_the_turn_one_bounded_rung_and_mints_
         spent = time.perf_counter() - t0
     finally:
         release.set()
+    assert calls, "the screen read was asked for"
     assert spent < 1.5, "route() returned %.2fs with a page that never answers" % spent
+    assert spent - baseline < lr.POINT_BUDGET_MS / 1000 + 0.5, (
+        "the silent page cost %.2fs over the same turn with an answering page (one rung is %dms)"
+        % (spent - baseline, lr.POINT_BUDGET_MS))
     assert r.layer != "safe_write" and r.decision != "tool" and not r.args.get("refs")
     assert not sw._TICKETS and not _cards()
 
