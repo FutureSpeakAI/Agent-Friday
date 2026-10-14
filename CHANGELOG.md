@@ -15,7 +15,7 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ---
 
-## [1.1.0-beta.1] - Agent Friday Beta 1.1 (⟨DATE⟩)
+## [1.1.0-beta.1] - Agent Friday Beta 1.1 (2026-10-14)
 
 Agent Friday™ Beta 1.1 (version `1.1.0b1`, tag `v1.1.0-beta.1`, build
 sequence 101010001) follows Beta 1.0.1; Beta 1.0.2 was prepared but never
