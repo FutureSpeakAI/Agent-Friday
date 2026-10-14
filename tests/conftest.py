@@ -578,11 +578,10 @@ def _fresh_live_duplicate_window():
 _EPISODE_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}-[0-9a-f]{6}")
 
 
-class PodcastEpisodeLeak(Warning):
-    """A podcast episode in the shared test home outlived the test that queued it.
-
-    Not a UserWarning, which pytest.ini ignores: it reaches the warnings summary
-    (xdist workers included) with who queued the episode."""
+# A leaked episode is reported as a RuntimeWarning: a builtin category, so an xdist
+# worker can send it to the controller (a class defined in this conftest cannot be
+# rebuilt there and takes the worker down), and not a UserWarning, which pytest.ini
+# ignores. Its text starts with "podcast episode leak" and names who queued it.
 
 
 _SHARED_SHOWS: list = [None, frozenset()]    # [the shared home's podcasts dir, ids there at the first test]
@@ -661,7 +660,7 @@ def _no_podcast_episode_outlives_its_test(request):
 
     An episode a test queues itself, on its own thread, is removed when it
     ends. Anything else is a leak and is said, with who queued it, as a
-    PodcastEpisodeLeak warning and on request.config.podcast_episode_leaks:
+    RuntimeWarning ("podcast episode leak ...") and on request.config.podcast_episode_leaks:
     one present when a test starts (written after an earlier test ended), and
     one written during a test by another test's thread or code. Leaks
     are removed too, so the queue tests stay about the queue."""
@@ -678,7 +677,7 @@ def _no_podcast_episode_outlives_its_test(request):
         said = "podcast episode leak %s %s: %s" % (when, me, _describe_episode(shows / name))
         leaks.append({"episode": name, "seen": when, "test": me,
                       "origin": dict(_EPISODE_ORIGIN.get(name) or {}), "said": said})
-        warnings.warn(PodcastEpisodeLeak(said), stacklevel=2)
+        warnings.warn(said, RuntimeWarning, stacklevel=2)
 
     for name in sorted(_episode_ids(shows) - _SHARED_SHOWS[1]):
         _leak(name, "at the start of")
