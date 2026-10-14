@@ -1258,8 +1258,7 @@ def _task_jobs() -> List[dict]:
 def _cancel_task(job_id: str) -> bool:
     """Cancel a job on the Local AI queue: a queued one never starts, a running
     one stops before its next model call."""
-    import sys
-    agent = sys.modules.get("agent_friday.services.agent")
+    agent = _loaded("agent_friday.services.agent")
     if agent is None:
         return False
     try:
@@ -1278,14 +1277,28 @@ def run_now(job_id: str) -> bool:
         return False
 
 
+def _loaded(name: str) -> Any:
+    """The module ``name`` once it is fully imported, else None; never starts
+    an import. A module is in sys.modules from the moment its import begins:
+    one another thread is still importing is waited for (the import system's
+    module lock), never read half made."""
+    import sys
+    if name not in sys.modules:
+        return None
+    import importlib
+    try:
+        return importlib.import_module(name)
+    except Exception:
+        return None
+
+
 _PODCAST_MEMO: List[Any] = [0.0, []]
 
 
 def _podcast_jobs() -> List[dict]:
     """Episodes waiting for their turn or being spoken. Read from disk, so kept
     for five seconds: the chip and Settings both poll."""
-    import sys
-    pe = sys.modules.get("agent_friday.services.podcast_engine")
+    pe = _loaded("agent_friday.services.podcast_engine")
     if pe is None:
         return []
     if time.monotonic() - _PODCAST_MEMO[0] < 5.0:
@@ -1334,8 +1347,7 @@ def _podcast_jobs_now(pe) -> List[dict]:
 
 
 def _cancel_podcast(job_id: str) -> bool:
-    import sys
-    pe = sys.modules.get("agent_friday.services.podcast_engine")
+    pe = _loaded("agent_friday.services.podcast_engine")
     if pe is None or not job_id.startswith("podcast:"):
         return False
     return pe.cancel(job_id.split(":", 1)[1]) is not None
@@ -1360,28 +1372,24 @@ def _cancel_lease(job_id: str) -> bool:
 
 def _capability_jobs() -> List[dict]:
     """The idle capability re-assessment / voice measurement, when one is wanted."""
-    import sys
-    m = sys.modules.get("agent_friday.services.local_voice_readiness")
+    m = _loaded("agent_friday.services.local_voice_readiness")
     return m._jobs_listing() if m is not None else []
 
 
 def _cancel_capability(job_id: str) -> bool:
-    import sys
-    m = sys.modules.get("agent_friday.services.local_voice_readiness")
+    m = _loaded("agent_friday.services.local_voice_readiness")
     return bool(m is not None and m._cancel_listed(job_id))
 
 
 def _library_index_jobs() -> List[dict]:
     """Folders the Library will read but has not started, or has paused (yours, battery, off the record).
     A folder being read is the queue's own row."""
-    import sys
-    m = sys.modules.get("agent_friday.services.library.index_job")
+    m = _loaded("agent_friday.services.library.index_job")
     return m.listed_jobs() if m is not None else []
 
 
 def _cancel_library_index(job_id: str) -> bool:
-    import sys
-    m = sys.modules.get("agent_friday.services.library.index_job")
+    m = _loaded("agent_friday.services.library.index_job")
     return bool(m is not None and m.cancel_listed(job_id))
 
 
@@ -1531,8 +1539,7 @@ def queue_snapshot() -> dict:
         (queued if row["state"] == "queued" else running).append(row)
     snap = {"running": running, "queued": queued, "count": len(queued),
             "jobs": running + queued}
-    import sys
-    ij = sys.modules.get("agent_friday.services.library.index_job")
+    ij = _loaded("agent_friday.services.library.index_job")
     if ij is not None:
         snap["library"] = {"paused": bool(ij.any_paused())}      # the chip's Pause / Resume
     try:
