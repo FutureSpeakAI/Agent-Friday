@@ -482,6 +482,16 @@ _POINT_OK = ("NAV_OK", "SELECT_OK", "SELECT_PARTIAL")
 NEUTRAL_ASK = "I need to know which one you mean. The choices are on your screen."
 
 
+def _safe_write_detail(status: str, result: str, tool: str) -> str:
+    """The reason a safe write's refusal shows the owner. A refusal the handler wrote for them
+    ("NOT DONE: ...", "[GOVERNANCE HOLD] ...") is shown as written; text from a raised exception
+    (a tool error, or anything marked as exception text) is logged and named by an error id."""
+    from agent_friday.user_errors import ExceptionText
+    if status == "error" or isinstance(result, ExceptionText):
+        return _page_detail("error", result, tool)
+    return _first_line(result)
+
+
 def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authenticated):
     """Run Laya's safe-write call (the governed organize_email handler), which can only raise
     ONE card. The line the owner reads is sealed: the verb, a count and their own label."""
@@ -491,10 +501,12 @@ def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authen
     what = prop.what if prop else "that change"
     ctx = _base_ctx(conversation_id, "laya:safe_write", authenticated)
     ctx = agent.prepare_confirmation_ctx(session_id, message, ctx)
-    result = str(agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx) or "")
+    result = agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx)
+    result = result if isinstance(result, str) else str(result or "")    # str() would drop an ExceptionText mark
     status = agent._tool_call_status(result)
-    # The single-use ticket is spent by now; it is not kept in the trace either.
-    entry = {"name": r.tool, "input": {"action": r.args.get("action")}, "result": ""}
+    # The single-use ticket is spent by now; it is not kept in the trace either. The trace carries the status;
+    # its only text is the fixed card notice.
+    entry = {"name": r.tool, "input": {"action": r.args.get("action")}, "status": status}
     history = None
     if result.startswith("CARD_RAISED"):
         # The notice names the count and the owner's own label, never a title or a sender: the card on their
@@ -503,16 +515,15 @@ def _safe_write_turn(r, message, *, session_id, conversation_id, turn_id, authen
         history = reply.text
         entry["result"] = history
     elif result.startswith("NOT DONE") or status in ("deny", "error"):
-        outcome, reply = "refused", _lt.line("point_refused", detail=_first_line(result))
+        outcome, reply = "refused", _lt.line("point_refused", detail=_safe_write_detail(status, result, r.tool))
     else:
         # A safe write that did not end in a card is a bug, never a success: say so, change nothing more.
-        _log.error("a Laya safe write ended without a card: %s", _first_line(result, 80))
-        outcome, reply = "not_confirmed", _lt.line("point_unconfirmed", detail=_first_line(result))
+        _log.error("a Laya safe write ended without a card: status %s, %d characters", status, len(result))
+        outcome, reply = "not_confirmed", _lt.line("point_unconfirmed",
+                                                   detail=_safe_write_detail(status, result, r.tool))
     count("point_" + outcome)
     _record_plan(turn_id, shape="reflex_point", reason="safe write: one card for the rows named",
                  reflex={"by": "rule", "kind": "safe_write", "tool": r.tool, "outcome": outcome})
-    if not entry["result"]:
-        entry["result"] = _first_line(result)
     out = {"reply": reply.text, "tool_trace": [entry], "actions": [], "outcome": outcome, "laya": reply.receipt()}
     if history:
         out["history_text"] = history
