@@ -3208,7 +3208,10 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
         try:
             threading.Thread(
                 target=_index_chat_turn,
-                args=(user_text, agent_text, _current_session_id(), None, None, _library_turn),
+                # The stored message ids, so deleting a message removes its
+                # vector-memory rows too (services/conversation_fts.delete_message).
+                args=(user_text, agent_text, _current_session_id(),
+                      (user_msg or {}).get('id'), (friday_msg or {}).get('id'), _library_turn),
                 # A spoken turn may be someone other than the owner (a paired
                 # phone, a room): the memory review never saves from it silently.
                 kwargs={"owner": False},

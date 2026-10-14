@@ -57727,6 +57727,8 @@ function SettingsTabPrivacy({
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "Memory card"
   }, /*#__PURE__*/React.createElement(MemoryCardPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
+    title: "Search your conversations"
+  }, /*#__PURE__*/React.createElement(ConversationSearchPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "What needs your sign-off"
   }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {
     s: s,
@@ -58684,6 +58686,56 @@ function MemoryCardPanel({s, save}) {
         !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo')))));
 }
 // End memory card panel
+
+function ConversationSearchPanel() {
+  // Full-text search over every conversation (services/conversation_fts), with a Delete
+  // per message that removes it from the transcript and from every index at once.
+  const E = React.createElement;
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [ask, setAsk] = useState('');
+  const run = (query) => {
+    const text = String(query == null ? q : query).trim();
+    if (!text) { setHits(null); return; }
+    setBusy('search'); setMsg('');
+    apiFetch('/api/conversations/search?q=' + encodeURIComponent(text))
+      .then(r => r.json())
+      .then(d => { if (d.status !== 'ok') throw new Error(d.error || 'Search is not available right now.'); setHits(d.results || []); })
+      .catch(e => setMsg(e.message || 'Search is not available right now.'))
+      .finally(() => setBusy(''));
+  };
+  const del = h => {
+    setBusy('d' + h.message_id); setMsg('');
+    apiFetch('/api/conversations/' + encodeURIComponent(h.conversation_id) + '/messages/' + encodeURIComponent(h.message_id), {method:'DELETE'})
+      .then(r => r.json())
+      .then(d => { if (d.status !== 'ok') throw new Error(d.error || 'That did not work.'); setMsg('Deleted from the conversation and from every index.'); setAsk(''); run(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
+  const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, label);
+  return E('div', null,
+    E('div', {style: dim}, 'Everything you and ' + fridayName() + ' have said, typed or spoken, searchable on this PC. Keys and passwords you pasted are withheld before anything is indexed, and nothing said off the record is here. Delete removes a message from its conversation and from every index ' + fridayName() + ' searches, at once.'),
+    E('div', {style:{display:'flex', gap:6, marginTop:6}},
+      E('input', {className:'input', 'aria-label':'Search your conversations', placeholder:'Search your conversations', style:{flex:1, fontSize:12}, value: q,
+        onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === 'Enter') run(); }}),
+      btn('Search', () => run(), 'go')),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'var(--st-warn)', marginTop:6}}, msg),
+    hits && hits.length === 0 && E('div', {style: Object.assign({}, dim, {marginTop:6})}, 'Nothing matches.'),
+    hits && hits.map(h => E('div', {key: h.message_id, style: Object.assign({}, row, {marginTop:6})},
+      E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, h.text),
+      E('div', {style: dim}, h.date + ' · ' + (h.role === 'user' ? 'you' : fridayName()) + ' · ' + (h.via === 'voice' ? 'spoken' : 'typed') + (h.title ? ' · ' + h.title : '')),
+      E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}},
+        ask === h.message_id
+          ? [E('span', {key:'q', style: dim}, 'Delete this message everywhere? It cannot be undone.'),
+             btn('Yes, delete it', () => del(h), 'yes'), btn('Keep it', () => setAsk(''), 'no')]
+          : btn('Delete…', () => setAsk(h.message_id), 'del')))));
+}
+// End conversation search panel
+
 
 
 function ApprovalScannerPanel({

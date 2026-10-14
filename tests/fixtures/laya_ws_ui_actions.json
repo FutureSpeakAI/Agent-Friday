@@ -300,7 +300,9 @@
    {"id": "settings.core_memory_line", "group": "settings", "label": "memory card: add, edit or delete one line", "audit_status": "new"},
    {"id": "settings.core_memory_review", "group": "settings", "label": "memory card: keep or discard a suggestion waiting for review", "audit_status": "new"},
    {"id": "settings.core_memory_undo", "group": "settings", "label": "memory card: undo a change Friday made", "audit_status": "new"},
-   {"id": "settings.memory_review", "group": "settings", "label": "memory card: review our conversations every few turns (local model only)", "audit_status": "new"}
+   {"id": "settings.memory_review", "group": "settings", "label": "memory card: review our conversations every few turns (local model only)", "audit_status": "new"},
+   {"id": "settings.conversation_search", "group": "read", "label": "search your conversations (full text, every conversation)", "audit_status": "new"},
+   {"id": "settings.conversation_delete_message", "group": "settings", "label": "search your conversations: delete one message everywhere", "audit_status": "new"}
   ]
  }
 }
