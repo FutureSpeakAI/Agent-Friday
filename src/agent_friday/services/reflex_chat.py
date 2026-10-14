@@ -458,7 +458,7 @@ def _run_command(res, message, *, session_id, conversation_id, turn_id, authenti
 
 
 def _page_detail(status: str, result: str, tool: str) -> str:
-    """Why an instant open did not land, in words fixed here. A tool error's own text is logged
+    """Why an instant open or point-and-act did not land, in words fixed here. A tool error's own text is logged
     under an error id, which the phrase names; it never reaches the page."""
     if status == "deny":
         return "a rule on this PC held it"
@@ -581,7 +581,8 @@ def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, auth
     ctx = agent.prepare_confirmation_ctx(session_id, message, ctx)
     result = str(agent._execute_tool(r.tool, dict(r.args), session_ctx=ctx) or "")
     status = agent._tool_call_status(result)
-    entry = {"name": r.tool, "input": dict(r.args), "result": result}
+    # The page gets the status, never the tool's own text (it can quote an exception): as _run_command.
+    entry = {"name": r.tool, "input": dict(r.args), "status": status}
     if result.startswith(_POINT_OK):
         outcome = "done"
         # What the page confirmed, in the tool's own words.
@@ -596,10 +597,10 @@ def _point_act_turn(message, data, *, session_id, conversation_id, turn_id, auth
         reply = _lt.line("point_card")
     elif status in ("deny", "error"):
         outcome = "refused"
-        reply = _lt.line("point_refused", detail=_first_line(result))
+        reply = _lt.line("point_refused", detail=_page_detail(status, result, r.tool))
     else:
         outcome = "not_confirmed"
-        reply = _lt.line("point_unconfirmed", detail=_first_line(result))
+        reply = _lt.line("point_unconfirmed", detail=_page_detail(status, result, r.tool))
     count("point_" + outcome)
     _record_plan(turn_id, shape="reflex_point", reason="point-and-act: rows named on screen",
                  reflex={"by": "rule", "kind": "point", "tool": r.tool, "outcome": outcome})
