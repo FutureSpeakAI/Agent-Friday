@@ -2672,3 +2672,16 @@ def test_forgetting_a_person_clears_only_what_names_them_from_memory(w):
     assert [(e["conversation_id"], e["text"]) for e in lp._held] == [("p1", "show my agenda"), ("c9", "show my agenda")]
     assert "show my agenda" in lp._private_vecs and "ask dana about my agenda" not in lp._private_vecs
     assert lp._control_turn
+
+
+def test_a_blob_name_that_leaves_the_profile_folder_is_neither_read_nor_written(w):
+    p = lp.OWNER_PROFILE
+    assert store.write_blob(p, "inside.enc", {"v": 1}, sub=store.ARTIFACT_DIR)
+    assert store.read_blob(p, "inside.enc", sub=store.ARTIFACT_DIR) == {"v": 1}
+    # A sealed blob one folder above the profile: a name with ".." must not reach it.
+    outside = store.profile_dir(p).parent / "outside.enc"
+    outside.write_bytes((store.profile_dir(p) / store.ARTIFACT_DIR / "inside.enc").read_bytes())
+    assert store.read_blob(p, "../../outside.enc", sub=store.ARTIFACT_DIR) is None
+    assert store.read_blob(p, "../outside.enc") is None
+    assert store.write_blob(p, "../escaped.enc", {"v": 2}) is False
+    assert not (store.profile_dir(p).parent / "escaped.enc").exists()
