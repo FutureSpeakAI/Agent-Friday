@@ -936,7 +936,8 @@ _MORE_ACT = re.compile(
     r"(?:e-?mail(?!\s+(?:from|about|is|was|are|were)\b)|tell(?!\s+(?:me|us)\b)|"
     r"let\s+\w+(?:\s+\w+)?\s+know|notify|ping|dm|label|snooze|flag|tag|pin|unpin|"
     r"mute|unmute|block|dismiss|reserve|rsvp|sign up)\b", re.I)
-_CLAUSES = re.compile(r"\s*(?:[,;]|\b(?:and then|and|then|also|after that|afterwards)\b)\s*", re.I)
+# No blanks around the separator: every clause is stripped after the split (as laya_router._clauses).
+_CLAUSES = re.compile(r"[,;]|\b(?:and then|and|then|also|after that|afterwards)\b", re.I)
 
 
 def _ROUTE_PARAMS(lr) -> frozenset:

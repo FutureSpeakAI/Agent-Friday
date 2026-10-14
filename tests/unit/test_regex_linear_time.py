@@ -277,15 +277,24 @@ def test_card_answers_and_small_talk():
         assert not lr._SMALL_TALK.match(other), other
 
 
-def test_clause_split_and_query_fillers_read_collapsed_whitespace():
-    # _CLAUSE_SPLIT, _FILLER_TAIL and live_laya._CLAUSES start with \s*, which retries a run of
-    # spaces from each of its characters; every caller reaches them through route, rules_route,
-    # rule_route or live_laya.write_intent, which collapse whitespace to single spaces first.
+def test_clause_split_and_query_fillers():
+    # Linear on any text, not only on the whitespace-collapsed text the callers pass.
     from agent_friday.services import laya_router as lr, live_laya as ll
+    _fast(lr._clauses, "a" + " " * N + "x")
+    _fast(lr._clauses, "a" + " \t" * (N // 2) + ", x")
+    _fast(ll._CLAUSES.split, "a" + " " * N + "x")
+    _fast(lr._clean_query, "a" + " " * N + "x")
+    _fast(lr._clean_query, "news" + " " * N + "x" + " " * N + "online")
     _fast(lr.rule_route, "archive it" + " " * N + "and" + "\t" * N + "x")
-    _fast(lr.rules_route, "find news about" + " " * N + "x" + " " * N + "online")
     _fast(ll.write_intent, "a" + " " * N + "and" + " " * N + "x")
     assert lr._clauses("archive it, then star the rest") == ["archive it", "star the rest"]
+    assert lr._clauses(" a ;b and then  c,, afterwards d also e ") == ["a", "b", "c", "d", "e"]
+    assert lr._clauses("android and brandy") == ["android", "brandy"]
+    assert [c.strip() for c in ll._CLAUSES.split("x , then y") if c.strip()] == ["x", "y"]
+    assert lr._clean_query("the budget memo on my laptop") == "budget memo"
+    assert lr._clean_query("headlines about mars TODAY") == "mars"
+    assert lr._clean_query("my invoices in my Email please") == "invoices"
+    assert lr._clean_query("notoday") == "no"
 
 
 # ── services/point_act.py: courtesy words at the end of a request ──────────
@@ -309,6 +318,9 @@ def test_calendar_quickadd_addresses():
     out = cq.parse("lunch with sam@example.com and lee.k+cal@mail.example.org tomorrow at 1pm")
     assert out["fields"]["attendees"] == ["sam@example.com", "lee.k+cal@mail.example.org"]
     assert cq.parse("call (ana-b@x.co) at 3pm")["fields"]["attendees"] == ["ana-b@x.co"]
+    assert cq._address_spans("x@y.z+x@y.z.x@y.z") == [(0, 5), (8, 17)]
+    assert cq._address_spans("a@@b.c @x.y a@b") == []
+    assert cq.parse("sync with a@b.co, a@b.co")["fields"]["attendees"] == ["a@b.co"]
 
 
 # ── services/live_session_plan.py: the voice instruction's headers ─────────
@@ -323,7 +335,10 @@ def test_live_instruction_headers():
         ("preamble", "intro\n"), ("memory", "=== Memory ===\nm\n"),
         ("tools", "==  Tools \t==  \nt\n== not = closed\n====x====\n")]
     assert lsp._header_marks("== a == b ==") == [(0, "a == b")]
-    assert lsp._header_marks("== " + "a" * 300 + " ==") == []        # a long line is body text
+    assert lsp._header_marks("== " + "a" * N + " ==") == [(0, "a" * N)]   # any length
+    assert [lsp._header_name(s) for s in ("==  ==", "== ====", "=== x ==", "====x====", "==x==\r",
+                                          "===  =x ===", "== a\t==\t ")] == \
+        [" ", " ==", None, None, None, " =x", "a"]
     before = "x\n== ASIMOV Laws \t==\n=== asimov two ===\n==ASIMOV open\n"
     assert lsp._asimov_headers(before) == ["ASIMOV Laws", "asimov two"]
     assert lsp.safety_ok(before, "ASIMOV Laws and asimov two")

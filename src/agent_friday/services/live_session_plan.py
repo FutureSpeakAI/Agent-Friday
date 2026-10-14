@@ -123,12 +123,34 @@ def estimate_tokens(text: str) -> int:
 
 # ── LV-1: the capped, voice-only instruction ────────────────────────────────
 
-_HEADER = re.compile(r"(={2,3})[ \t]*([^=\n][^\n]*?)[ \t]*\1[ \t]*\Z")
+_BLANKS = " \t"
 
-#: A header is one short line. _HEADER's lazy middle costs the square of the line it
-#: reads, so it only ever reads lines this short that start with "=="; a longer line is
-#: body text, never a header.
-_HEADER_MAX = 200
+
+def _header_name(line: str) -> Optional[str]:
+    """The name of a header line, or None. A header line is "==" or "===", blanks, a name that
+    does not start with "=", blanks, the same "==" or "===" again, and blanks to the end:
+    "=== MEMORY ===", "==  Tools \t==  ". The name keeps everything between the blanks, so
+    "== a == b ==" is "a == b". Read with string operations in one pass over the line."""
+    if line.startswith("==="):
+        mark = "==="
+    elif line.startswith("=="):
+        mark = "=="
+    else:
+        return None
+    rest = line[len(mark):]
+    body = rest.rstrip(_BLANKS)
+    if not body.endswith(mark):
+        return None
+    end = len(body) - len(mark)                      # where the closing mark starts
+    lead = len(rest) - len(rest.lstrip(_BLANKS))     # blanks after the opening mark
+    name = rest[lead:end].rstrip(_BLANKS)
+    if name and not name.startswith("="):
+        return name
+    if lead == 0:
+        return None
+    # The name may not start with "=" and may not be empty, but it may start with a blank:
+    # it then takes the last blank after the opening mark ("== ====" is " ==", "==  ==" is " ").
+    return rest[lead - 1:end].rstrip(_BLANKS) or rest[lead - 1]
 
 
 def _header_marks(text: str) -> List[Tuple[int, str]]:
@@ -136,10 +158,9 @@ def _header_marks(text: str) -> List[Tuple[int, str]]:
     marks: List[Tuple[int, str]] = []
     pos = 0
     for line in text.split("\n"):
-        if line.startswith("==") and len(line) <= _HEADER_MAX:
-            m = _HEADER.match(line)
-            if m:
-                marks.append((pos, m.group(2)))
+        name = _header_name(line)
+        if name is not None:
+            marks.append((pos, name))
         pos += len(line) + 1
     return marks
 

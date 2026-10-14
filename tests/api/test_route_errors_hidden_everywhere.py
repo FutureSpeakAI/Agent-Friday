@@ -220,10 +220,37 @@ def test_an_instant_open_whose_tool_raises_hides_the_text_from_the_page(client, 
     with client.application.test_request_context("/api/chat", method="POST"):
         resp = chat_routes._instant_response("open the go-live checklist", out, "c-hidden")
     data = _hidden(resp)
-    assert data["error_id"] and data["instant"] is True
-    # The text is still there for the service's own reader; only the page's copy is swapped.
-    assert isinstance(out["tool_trace"][0]["result"], ExceptionText)
-    assert isinstance(out["reply"], ExceptionText) and INTERNAL in out["reply"]
+    assert data["instant"] is True
+    assert data["response"].startswith("I did not open Go-live checklist: the action failed (error ")
+    # The reflex result itself carries no tool text: core_routes' open route returns its reply
+    # without public_result, so the boundary is here, not at the route.
+    assert INTERNAL not in out["reply"] and INTERNAL not in repr(out["tool_trace"])
+    assert out["tool_trace"][0]["status"] == "error"
+
+
+def test_a_point_and_act_whose_tool_raises_hides_the_text_from_the_page(client, monkeypatch):
+    # "open the second one": the rows named on screen, run with no model; reply and trace go to the page.
+    from agent_friday.governance import action_gate
+    from agent_friday.routes import chat as chat_routes
+    from agent_friday.services import agent, laya, laya_router as lr, point_act, reflex_chat
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "zz_boom_probe", _boom)
+    monkeypatch.setitem(agent.TOOL_RINGS, "zz_boom_probe", 0)
+    monkeypatch.setattr(action_gate, "INTERNAL_TOOLS",
+                        action_gate.INTERNAL_TOOLS | {"zz_boom_probe"})
+    monkeypatch.setattr(chat_routes, "_persist_turn", lambda *a, **k: None)
+    monkeypatch.setattr(chat_routes, "_save_chat_history", lambda *a, **k: None)
+    monkeypatch.setattr(point_act, "looks_like", lambda m: True)
+    monkeypatch.setattr(reflex_chat, "trusted_surface", lambda *a, **k: True)
+    monkeypatch.setattr(laya, "point_act_turn", lambda *a, **k: lr.Route(
+        "tool", tool="zz_boom_probe", args={}, layer="point_act"))
+    out = reflex_chat._point_act_turn("open the second one", {}, session_id="s-hidden", conversation_id="c-hidden",
+                                      turn_id=None, authenticated=True, local=True)
+    assert out["outcome"] == "refused"
+    assert out["reply"].startswith("I did not do that: the action failed (error ")
+    assert INTERNAL not in out["reply"] and INTERNAL not in repr(out["tool_trace"])
+    with client.application.test_request_context("/api/chat", method="POST"):
+        resp = chat_routes._instant_response("open the second one", out, "c-hidden")
+    _hidden(resp)
 
 
 # ── services whose results routes return ─────────────────────────────────────

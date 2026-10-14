@@ -334,8 +334,9 @@ _ACT_LIVE = _act_pattern(_POINT_OBJECTS)
 #: Where one request holds several: "look up the meeting time and put it on my
 #: calendar". Any clause after the first that is an imperative which changes
 #: something makes the whole turn a write: the read half is never run alone.
-_CLAUSE_SPLIT = re.compile(
-    r"\s*(?:[,;]|\b(?:and then|and|then|also|after that|afterwards)\b)\s*", re.I)
+#: The separators carry no blanks: each clause is stripped after the split, so the result is
+#: the same as splitting on blanks-separator-blanks, and no run of blanks is retried.
+_CLAUSE_SPLIT = re.compile(r"[,;]|\b(?:and then|and|then|also|after that|afterwards)\b", re.I)
 
 
 def _clauses(text: str):
@@ -522,16 +523,30 @@ _FILLER_LEAD = re.compile(
     r"^(?:the web|online|the internet|my (?:email|inbox|mail|notes|wiki|files|computer)|"
     r"the (?:page|file|document|email|news|headlines)|for|about|on|regarding|named|called|"
     r"anything (?:about|on)|a file|any news|news|headlines)\b\s*", re.I)
-_FILLER_TAIL = re.compile(
-    r"\s*(?:on my (?:computer|laptop|pc|desktop)|in (?:the )?news|in my (?:inbox|email|notes|wiki)|"
-    r"online|please|for me|today|right now)\s*$", re.I)
+#: Words a query may end with that are not what is searched for. Longest first: at the end
+#: of a query the longest one that fits is the one dropped.
+_FILLER_TAIL = tuple(sorted((
+    "on my computer", "on my laptop", "on my pc", "on my desktop", "in the news", "in news",
+    "in my inbox", "in my email", "in my notes", "in my wiki", "online", "please", "for me",
+    "today", "right now"), key=len, reverse=True))
+
+
+def _drop_tail_filler(q: str) -> str:
+    """``q`` without one trailing filler from _FILLER_TAIL (any case) and the blanks around it.
+    String comparison at the end of the text, so the cost is the length of the fillers."""
+    t = q.rstrip()
+    low = t[-16:].casefold()
+    for w in _FILLER_TAIL:
+        if low.endswith(w):
+            return t[:-len(w)].rstrip()
+    return q
 
 
 def _clean_query(q: str) -> str:
     q = (q or "").strip().strip("?.!,\"' ")
     for _ in range(3):
         q2 = _FILLER_LEAD.sub("", q).strip()
-        q2 = _FILLER_TAIL.sub("", q2).strip()
+        q2 = _drop_tail_filler(q2).strip()
         q2 = re.sub(r"^(?:the|a|an|my|any)\s+", "", q2, flags=re.I).strip()
         if q2 == q:
             break
