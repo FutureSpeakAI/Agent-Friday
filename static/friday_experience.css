@@ -104,7 +104,6 @@ body.friday-experience-enabled .fx-nav-button[aria-current="page"] {
   border-color: color-mix(in srgb, var(--fr-cyan) 24%, transparent);
   color: var(--fr-cyan);
 }
-body.friday-experience-enabled .fx-nav-badge { position: absolute; top: 3px; right: 2px; display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--fr-warn) 45%, transparent); border-radius: 9px; color: var(--fr-warn); background: var(--fr-surface); font: 600 10px/1 var(--fr-font-body); }
 
 body.friday-experience-enabled .fx-main {
   position: relative;
@@ -495,8 +494,7 @@ body.friday-experience-enabled .fr-lockup-name { text-shadow: 0 0 12px color-mix
 body.friday-experience-enabled .dock { background: var(--fx-chrome); border-top-color: var(--fx-line); gap: 5px; }
 body.friday-experience-enabled .dock-btn { border-radius: 10px; padding: 8px 12px 5px; min-height: 52px; font-size: 12px; transition: background 140ms ease, border-color 140ms ease, color 140ms ease; text-shadow: none; }
 body.friday-experience-enabled .dock-btn.active { background: var(--fr-cyan-soft); box-shadow: none; border-color: color-mix(in srgb, var(--fr-cyan) 25%, transparent); }
-body.friday-experience-enabled .dock-btn.suggested { animation: none; color: var(--fr-cyan); border-color: color-mix(in srgb, var(--fr-cyan) 28%, transparent); }
-body.friday-experience-enabled .dock-btn.suggested .dot { background: var(--fr-cyan); box-shadow: none; }
+body.friday-experience-enabled .dock-btn.has-notice .dot { background: var(--fr-cyan); box-shadow: none; }
 body.friday-experience-enabled :is(.fwin, .chat-win) { background: var(--fx-panel); border: 1px solid var(--fx-line-strong); border-radius: var(--fx-radius); box-shadow: var(--fx-shadow); }
 body.friday-experience-enabled .fwin:hover { box-shadow: var(--fx-shadow); }
 body.friday-experience-enabled .fwin:focus-within { border-color: color-mix(in srgb, var(--fr-cyan) 42%, transparent); }

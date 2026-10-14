@@ -27,7 +27,10 @@ _log = logging.getLogger("friday.activity_lane")
 
 #: A finished task stays in Activity this long, then it is a receipt only.
 FINISHED_VISIBLE_S = 30 * 60
-LIVE = ("queued", "running", "paused", "interrupted")
+#: Still under way. An interrupted task is over (nothing is working on it); it
+#: shows for FINISHED_VISIBLE_S like any finished task, and its resume offer is
+#: a needs-you notice of its own.
+LIVE = ("queued", "running", "paused")
 
 _WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
 
@@ -99,7 +102,7 @@ def _task_rows(now: float) -> List[dict]:
     for r in recs:
         tid = r.get("task_id") or r.get("id")
         status = r.get("status") or ""
-        if not tid or r.get("dismissed"):
+        if not tid or r.get("dismissed") or r.get("tray_dismissed"):
             continue
         ended = r.get("ended")
         if status not in LIVE and not (ended and now - float(ended) <= FINISHED_VISIBLE_S):

@@ -182,6 +182,7 @@ class SeatSupervisor:
         sleep: Callable[[float], None] = time.sleep,
         poll_seconds: float = 0.5,
         brain_resolver: Optional[Callable[[], Optional[str]]] = None,
+        on_assess: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.queue = (queue if queue is not None
                       else _seat_queue_mod.SeatQueue(gate=gate))
@@ -207,6 +208,10 @@ class SeatSupervisor:
         # before paying a cloud provider) lives at the wiring site, and this
         # file keeps its one job, which is who runs next.
         self.on_queued_wait = on_queued_wait
+        # Called once per assess pass, outside the lock: the task registry's
+        # orphan reconciler (agent.reconcile_orphan_tasks), injected for the
+        # same reason as on_queued_wait.
+        self.on_assess = on_assess
         self._records: Dict[str, Dict[str, Any]] = {}
         self._started: set = set()
         self._lock = threading.RLock()
@@ -745,6 +750,11 @@ class SeatSupervisor:
                     self.assess_pass()
                 except Exception:  # pragma: no cover — the loop must never die
                     pass
+                if self.on_assess is not None:
+                    try:
+                        self.on_assess()
+                    except Exception:  # pragma: no cover
+                        pass
                 next_assess = now + self.cadence_seconds
             try:
                 self.pump()

@@ -95,7 +95,8 @@ def test_a_dismissed_failure_is_news_again_once_the_job_has_recovered():
     ne.resolve("sched-fail:sch_afternoon_briefing")       # the next run succeeded
     ok = ne.push(title="Afternoon Briefing ran", source="scheduler", kind="scheduled_task",
                  priority="low", dedupe_key="sched-ok:sch_afternoon_briefing")
-    assert ok.get("suppressed") is True, "a routine success of a dismissed job came back"
+    assert ok.get("suppressed") is True or ok.get("place") == "activity", (
+        "a routine success of a dismissed job came back")
     assert len(_cards()) == 0
     _fail(body="failed again tomorrow")
     assert [c["kind"] for c in _cards()] == ["scheduled_failure"]
@@ -189,8 +190,9 @@ def test_clear_group_never_clears_a_pending_approval():
 
 def test_cards_group_by_job_then_kind_and_source():
     _fail()
-    ne.push(title="Afternoon Briefing is waiting for the local seat", source="scheduler",
-            kind="scheduled_task", priority="low", dedupe_key="sched-wait:sch_afternoon_briefing")
+    ne.push(title="Approval needed: retry the briefing on a cloud model", source="approvals",
+            kind="approval_pending", dedupe_key="appr:group",
+            meta={"group": "job:sched:sch_afternoon_briefing"})
     ne.push(title="Back online soon", source="mail", kind="info", priority="low")
     ne.push(title="Mail synced 3 threads", source="mail", kind="info", priority="low")
     keys = {g["key"]: len(g["items"]) for g in ne.groups()}

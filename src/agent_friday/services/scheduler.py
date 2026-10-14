@@ -351,7 +351,8 @@ def _normalize_record(rec, *, source="user"):
     }
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
-              "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause"):
+              "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
+              "finish_notice"):
         if k in rec:
             out[k] = rec[k]
     return out
@@ -388,7 +389,7 @@ def update_schedule(sid, patch) -> dict | None:
         if not cur:
             return None
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
-                   "retry", "timeout_seconds"}
+                   "retry", "timeout_seconds", "finish_notice"}
         before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
@@ -1199,12 +1200,24 @@ def _notify_run(rec, status, summary):
             return
         _ne.resolve(f"sched-fail:{sid}")
         _ne.resolve(f"sched-wait:{sid}")
+        if not finish_notice_on(rec):
+            return
         _ne.push(title=f"\u2713 {name} ran",
                  body=(summary or "")[:300] or "Completed.", priority="low",
                  source="scheduler", kind="scheduled_task", emitter="E07",
-                 dedupe_key=f"sched-ok:{sid}")
+                 dedupe_key=f"sched-ok:{sid}", meta={"schedule_id": sid})
     except Exception as e:
         print(f"  [scheduler] notify failed: {e}")
+
+
+def finish_notice_on(rec) -> bool:
+    """Whether the owner hears when this job finishes. On by default; the
+    owner's per-job "Don't tell me when this finishes" saves
+    ``finish_notice: false`` on the schedule, and every later run reads it from
+    the store. Failures always notify, whatever this says."""
+    sid = (rec or {}).get("id")
+    live = get_schedule(sid) if sid else None
+    return (live or rec or {}).get("finish_notice", True) is not False
 
 
 def _notify_status(rec, summary):
@@ -1218,6 +1231,8 @@ def _notify_status(rec, summary):
         _ne = None
     if not _ne or not hasattr(_ne, "upsert_status"):
         return
+    if not finish_notice_on(rec):
+        return
     try:
         when = _now_central().strftime("%b %d at %H:%M")
         body = (summary or "").strip()
@@ -1227,8 +1242,9 @@ def _notify_status(rec, summary):
             key=f"sched-status:{rec.get('id')}",
             title=f"💓 {rec.get('name')} — last ran {when}",
             body=body[:300], source="scheduler", kind="scheduled_status",
-            priority="low",
-            target={"workspace": "system", "tab": "schedules"})
+            priority="low", emitter="E08",
+            target={"workspace": "system", "tab": "schedules"},
+            meta={"schedule_id": rec.get("id")})
     except Exception as e:
         print(f"  [scheduler] status update failed: {e}")
 
@@ -1769,6 +1785,13 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             # Recorded as a skip with its reason. No retry (the condition does
             # not clear in minutes) and no failure notice: the one status
             # entry scheduled_cloud.notify_paused keeps covers every run.
+            status, summary = "skipped", str(e)
+            _patch_record(sid, last_status="skipped", last_summary=summary,
+                          retry_pending=False, retry_count=0, not_before=0)
+        except StoodDown as e:
+            # The owner took the machine back (or is on a call): a skip with
+            # its reason, not a failure. No retry and no failure card; the job
+            # runs at its next slot after Friday resumes.
             status, summary = "skipped", str(e)
             _patch_record(sid, last_status="skipped", last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0)

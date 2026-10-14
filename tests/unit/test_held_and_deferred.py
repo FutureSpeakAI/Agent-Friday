@@ -26,6 +26,16 @@ def _clean(friday_dir, monkeypatch):
     yield
 
 
+@pytest.fixture
+def burst_emitter(monkeypatch):
+    """A tray emitter that declares itself bursty, independent of the
+    scheduler's own lines (its "waiting" line lives in Activity)."""
+    from agent_friday.services import notice_registry as reg
+    monkeypatch.setitem(reg.REGISTRY, "TB1", reg._e(
+        "TB1", "tests", "scheduled_ran", reg.UPDATES, "sched-ok:{schedule_id}",
+        source="scheduler", pk="scheduled_task", burst=True))
+
+
 def _settings(monkeypatch, **s):
     monkeypatch.setattr(ip, "_settings", lambda: dict(s))
 
@@ -56,10 +66,10 @@ def _raise(i):
 
 # ── B3: coalescing and the off-the-record guarantee ─────────────────────────
 
-def test_an_off_the_record_notice_is_never_merged_into_an_on_record_card(monkeypatch):
-    ne.push(title="Front Page ready", source="scheduler", kind="scheduled_task", emitter="E07", dedupe_key="sched-ok:a")
+def test_an_off_the_record_notice_is_never_merged_into_an_on_record_card(monkeypatch, burst_emitter):
+    ne.push(title="Front Page ready", source="scheduler", kind="scheduled_task", emitter="TB1", dedupe_key="sched-ok:a")
     monkeypatch.setattr(ne, "_off_record_now", lambda: True)
-    ne.push(title="Secret plan ready", body="private words", source="scheduler", kind="scheduled_task", emitter="E07",
+    ne.push(title="Secret plan ready", body="private words", source="scheduler", kind="scheduled_task", emitter="TB1",
             dedupe_key="sched-ok:b")
     monkeypatch.setattr(ne, "_off_record_now", lambda: False)
     stored = ne.NOTIF_FILE.read_text(encoding="utf-8")
@@ -70,19 +80,19 @@ def test_an_off_the_record_notice_is_never_merged_into_an_on_record_card(monkeyp
     assert on["title"] == "Front Page ready" and on["count"] == 1
 
 
-def test_an_on_record_notice_is_never_merged_into_an_off_record_card(monkeypatch):
+def test_an_on_record_notice_is_never_merged_into_an_off_record_card(monkeypatch, burst_emitter):
     monkeypatch.setattr(ne, "_off_record_now", lambda: True)
-    ne.push(title="Secret plan ready", source="scheduler", kind="scheduled_task", emitter="E07", dedupe_key="sched-ok:a")
+    ne.push(title="Secret plan ready", source="scheduler", kind="scheduled_task", emitter="TB1", dedupe_key="sched-ok:a")
     monkeypatch.setattr(ne, "_off_record_now", lambda: False)
-    ne.push(title="Front Page ready", source="scheduler", kind="scheduled_task", emitter="E07", dedupe_key="sched-ok:b")
+    ne.push(title="Front Page ready", source="scheduler", kind="scheduled_task", emitter="TB1", dedupe_key="sched-ok:b")
     on = [c for c in ne._load() if c["title"] == "Front Page ready"]
     assert len(on) == 1 and not on[0].get("off_record") and on[0]["count"] == 1
 
 
-def test_a_burst_card_follows_the_latest_item_not_the_first():
-    ne.push(title="One", source="scheduler", kind="scheduled_task", emitter="E07", dedupe_key="sched-ok:a",
+def test_a_burst_card_follows_the_latest_item_not_the_first(burst_emitter):
+    ne.push(title="One", source="scheduler", kind="scheduled_task", emitter="TB1", dedupe_key="sched-ok:a",
             target={"workspace": "news", "tab": "a"})
-    ne.push(title="Two", source="scheduler", kind="scheduled_task", emitter="E07", dedupe_key="sched-ok:b",
+    ne.push(title="Two", source="scheduler", kind="scheduled_task", emitter="TB1", dedupe_key="sched-ok:b",
             target={"workspace": "news", "tab": "b"})
     card = ne.list_notifications(limit=5)[0]
     assert card["count"] == 2 and card["target"] == {"workspace": "news", "tab": "b"}

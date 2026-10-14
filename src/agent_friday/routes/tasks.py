@@ -79,7 +79,10 @@ def list_tasks():
     except Exception:
         pass
     seen = {t.get('task_id') for t in tasks if t.get('task_id')}
-    _status_map = {'completed': 'complete', 'error': 'failed', 'running': 'running'}
+    # A process says how it ended (failed, cancelled, timeout ...); only the
+    # two spellings the task list words differently are renamed. An unknown
+    # status is shown as it is, never as 'running'.
+    _status_map = {'completed': 'complete', 'error': 'failed'}
     now = _time.time()
     with PROCESSES_LOCK:
         for pid, p in list(PROCESSES.items()):
@@ -88,14 +91,14 @@ def list_tasks():
             # Skip ephemeral inline chat/voice orbs (category 'default') — those
             # turns are already reflected by the chat "thinking" state, and
             # surfacing every one would clutter the tray.
-            if (p.get('category') or 'default') == 'default':
+            if (p.get('category') or 'default') == 'default' or p.get('dismissed'):
                 continue
             started = p.get('started', now)
             ended = p.get('ended')
             tasks.append({
                 'task_id': pid,
                 'name': p.get('label') or p.get('name') or 'Process',
-                'status': _status_map.get(p.get('status', 'running'), 'running'),
+                'status': _status_map.get(p.get('status') or 'running', p.get('status') or 'running'),
                 # `progress` is passed through as-is, INCLUDING None. It
                 # used to default to 0, which turned "nobody can compute a
                 # fraction for this" into "0% done" — a claim made on behalf

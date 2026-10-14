@@ -34,6 +34,16 @@ def _clean(friday_dir, monkeypatch):
     ip.set_focus_probe(None)
 
 
+@pytest.fixture
+def burst_emitter(monkeypatch):
+    """A tray emitter that declares itself bursty, independent of the
+    scheduler's own lines (its "waiting" line lives in Activity)."""
+    from agent_friday.services import notice_registry as reg
+    monkeypatch.setitem(reg.REGISTRY, "TB1", reg._e(
+        "TB1", "tests", "scheduled_ran", reg.UPDATES, "sched-ok:{schedule_id}",
+        source="scheduler", pk="scheduled_task", burst=True))
+
+
 def _settings(monkeypatch, **s):
     monkeypatch.setattr(ip, "_settings", lambda: dict(s))
 
@@ -186,20 +196,20 @@ def test_a_burst_inside_five_minutes_coalesces_and_a_later_one_does_not():
     assert not ip.coalesces(0, NOON)
 
 
-def test_a_burst_of_one_kind_from_one_source_is_one_card_with_a_count():
+def test_a_burst_of_one_kind_from_one_source_is_one_card_with_a_count(burst_emitter):
     for i in range(4):
-        ne.push(title="Front Page %d ready" % i, source="scheduler", kind="scheduled_task", emitter="E07",
+        ne.push(title="Front Page %d ready" % i, source="scheduler", kind="scheduled_task", emitter="TB1",
                 dedupe_key="sched-ok:ed%d" % i)
     cards = ne.list_notifications(limit=50)
     assert len(cards) == 1 and cards[0]["count"] == 4, cards
 
 
-def test_a_burst_outside_five_minutes_is_a_new_card():
-    ne.push(title="Front Page ready", source="scheduler", kind="scheduled_task", emitter="E07", dedupe_key="sched-ok:a")
+def test_a_burst_outside_five_minutes_is_a_new_card(burst_emitter):
+    ne.push(title="Front Page ready", source="scheduler", kind="scheduled_task", emitter="TB1", dedupe_key="sched-ok:a")
     items = ne._load()
-    items[0]["created_at"] = "2020-01-01T00:00:00Z"
+    items[0]["created_at"] = datetime.utcfromtimestamp(time.time() - 600).strftime("%Y-%m-%dT%H:%M:%SZ")
     ne._save(items)
-    ne.push(title="Front Page ready", source="scheduler", kind="scheduled_task", emitter="E07", dedupe_key="sched-ok:b")
+    ne.push(title="Front Page ready", source="scheduler", kind="scheduled_task", emitter="TB1", dedupe_key="sched-ok:b")
     assert len(ne.list_notifications(limit=50)) == 2
 
 

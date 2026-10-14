@@ -222,3 +222,103 @@ def test_on_change_no_delta_is_silent(monkeypatch):
         "task": {"kind": "builtin", "ref": "t_nochange"}})
     _run_and_wait(rec, "sch_t_nochange")
     assert seen["run"] == 0
+
+
+def test_a_stood_down_run_is_a_skip_with_its_reason_and_no_failure_card(monkeypatch):
+    """Taking the machine back (or a call) pauses background jobs. That pause
+    is not a failure: no retry, no "failed" card, the reason in the history."""
+    from agent_friday.services import stand_down
+    notified = []
+    monkeypatch.setattr(s, "_notify_run", lambda *a, **k: notified.append(a))
+    monkeypatch.setattr(stand_down, "is_stood_down", lambda *a, **k: True)
+    monkeypatch.setattr(stand_down, "reason", lambda *a, **k: "you asked for the machine")
+    ran = []
+    s.register_builtin_task("t_stood_down", lambda: ran.append(1), label="Sync",
+                            default_trigger="interval", default_spec={"every_minutes": 60},
+                            notify="silent")
+    rec = s.register_schedule({
+        "id": "sch_t_stood_down", "name": "Sync", "trigger": "interval",
+        "spec": {"every_minutes": 60}, "notify": "silent",
+        "retry": {"max": 2, "backoff_seconds": 300},
+        "task": {"kind": "builtin", "ref": "t_stood_down"}})
+    _run_and_wait(rec, "sch_t_stood_down")
+    live = next(r for r in s._read_store() if r["id"] == "sch_t_stood_down")
+    assert not ran
+    assert live["last_status"] == "skipped" and "machine" in live["last_summary"]
+    assert not live.get("retry_pending") and notified == []
+
+
+class _FakeNotices:
+    """Records what the scheduler raises, in place of the tray."""
+
+    def __init__(self):
+        self.pushed, self.status = [], []
+
+    def push(self, **kw):
+        self.pushed.append(kw)
+        return kw
+
+    def upsert_status(self, **kw):
+        self.status.append(kw)
+        return kw
+
+    def resolve(self, *a, **k):
+        return 0
+
+
+def _notices(monkeypatch):
+    from agent_friday.services import voice_engine as ve
+    fake = _FakeNotices()
+    monkeypatch.setattr(ve, "_notif_engine", fake, raising=False)
+    return fake
+
+
+def _routine(sid="sch_t_finish", notify="on_complete"):
+    return s.register_schedule({
+        "id": sid, "name": "Front page", "trigger": "daily", "spec": {"hour": 6},
+        "notify": notify, "task": {"kind": "builtin", "ref": "t_finish"}})
+
+
+def test_a_finished_job_is_announced_by_default_with_its_schedule(monkeypatch):
+    fake = _notices(monkeypatch)
+    rec = _routine()
+    s._notify_run(rec, "complete", "done")
+    (card,) = fake.pushed
+    assert card["emitter"] == "E07" and card["meta"] == {"schedule_id": "sch_t_finish"}
+
+
+def test_opting_out_of_one_job_silences_its_finish_and_nothing_else(monkeypatch):
+    fake = _notices(monkeypatch)
+    rec = _routine()
+    other = _routine("sch_t_other")
+    s.update_schedule("sch_t_finish", {"finish_notice": False})
+    s._notify_run(rec, "complete", "done")           # the record the run started with
+    s._notify_status(rec, "beat")
+    assert fake.pushed == [] and fake.status == []
+    s._notify_run(other, "complete", "done")
+    assert [c["meta"]["schedule_id"] for c in fake.pushed] == ["sch_t_other"]
+    s._notify_run(rec, "failed", "it broke")         # a failure always reaches the owner
+    assert fake.pushed[-1]["kind"] == "scheduled_failure"
+
+
+def test_the_opt_out_is_saved_and_survives_a_restart_and_a_re_save(monkeypatch):
+    _routine()
+    s.update_schedule("sch_t_finish", {"finish_notice": False})
+    s._seed_and_reconcile()                           # what a restart does
+    assert s.get_schedule("sch_t_finish")["finish_notice"] is False
+    s.register_schedule(dict(s.get_schedule("sch_t_finish"), name="Front page, renamed"))
+    assert s.finish_notice_on(s.get_schedule("sch_t_finish")) is False
+    s.update_schedule("sch_t_finish", {"finish_notice": True})
+    assert s.finish_notice_on(s.get_schedule("sch_t_finish")) is True
+
+
+def test_the_routines_list_offers_the_switch_only_where_a_finish_is_announced():
+    from agent_friday.services import workflow_overview as wo
+    for sid, notify in (("sch_t_loud", "on_complete"), ("sch_t_quiet", "silent")):
+        s._upsert(s._normalize_record({
+            "id": sid, "name": sid, "trigger": "daily", "spec": {"hour": 6}, "notify": notify,
+            "task": {"kind": "builtin", "ref": "t_finish"}}, source="builtin"))
+    s.update_schedule("sch_t_loud", {"finish_notice": False})
+    rows = {r["schedule_id"]: r for r in wo.overview()["routines"]}
+    assert rows["sch_t_loud"]["announces_finish"] and rows["sch_t_loud"]["finish_notice"] is False
+    assert not rows["sch_t_quiet"]["announces_finish"]
