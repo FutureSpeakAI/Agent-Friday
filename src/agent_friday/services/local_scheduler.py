@@ -1546,8 +1546,10 @@ def queue_snapshot() -> dict:
             "jobs": running + queued}
     import sys
     ij = sys.modules.get("agent_friday.services.library.index_job")
-    if ij is not None:
-        snap["library"] = {"paused": bool(ij.any_paused())}      # the chip's Pause / Resume
+    # A module another thread is still importing is in sys.modules before its functions are defined.
+    any_paused = getattr(ij, "any_paused", None)
+    if any_paused is not None:
+        snap["library"] = {"paused": bool(any_paused())}         # the chip's Pause / Resume
     try:
         from agent_friday.services import background_gate as _bg
         st = _bg.idle_state()
