@@ -1105,7 +1105,12 @@ _CONTENT_READERS = re.compile(
     r"\b(?:grep|egrep|fgrep|rg|ag|ack|findstr|select-string|sls|get-content|gc|cat|type|git\s+grep)\b", re.I)
 _ALWAYS_RECURSIVE = re.compile(r"\b(?:rg|ag|ack|git\s+grep)\b", re.I)
 # Code that walks a folder itself (run_sandboxed): Path.rglob, os.walk, a mailbox reader.
-_WALKERS = re.compile(r"\b(?:rglob|glob|walk|listdir|iterdir|scandir|mailbox)\b")
+# Code that walks a folder itself (run_sandboxed). Deep: every folder under
+# it; shallow: the folder's own files only.
+_DEEP_WALKERS = re.compile(r"\b(?:rglob|os\.walk|walk|mailbox)\b|\*\*")
+_SHALLOW_WALKERS = re.compile(r"\b(?:glob|listdir|iterdir|scandir)\b")
+# A folder named from the home folder or the environment, not spelled out.
+_HOMEISH = re.compile(r"Path\.home\(|expanduser\(|environ|getenv\(|USERPROFILE|APPDATA|HOMEPATH")
 
 
 def _recursive_flag(text: str) -> bool:
@@ -1116,10 +1121,10 @@ def _recursive_flag(text: str) -> bool:
         low = tok.lower()
         if low in ("--recursive", "-recurse", "-recursive"):
             return True
-        if 2 <= len(tok) <= 8 and tok[0] == "-" and tok[1:].isalpha() and "r" in low[1:]:
-            if low not in ("-raw", "-force", "-werror", "-erroraction"):
+        if 2 <= len(tok) <= 5 and tok[0] == "-" and tok[1:].isalpha() and "r" in low[1:]:
+            if low not in ("-raw",):
                 return True
-        if findstr and 2 <= len(tok) <= 8 and tok[0] == "/" and tok[1:].isalpha() and "s" in low[1:]:
+        if findstr and 2 <= len(tok) <= 6 and tok[0] == "/" and tok[1:].isalpha() and "s" in low[1:]:
             return True
     return False
 
@@ -1133,18 +1138,24 @@ def _too_broad(p: Path) -> bool:
         return True
 
 
-def _recursive_dirs(text: str, cwd=None) -> list:
-    """Folders a command reads the contents of recursively (grep -r, rg,
-    findstr /s, Select-String -Recurse, a program that walks a folder).
-    Without `cwd` (run_command and run_sandboxed run in an empty scratch
-    folder) a relative name names nothing and is not judged."""
+_TRAILING_PATTERN = re.compile(r"[\\/]\*(?:\.\*|\.[\w]{1,8})?$")
+
+
+def _recursive_dirs(text: str, cwd=None) -> tuple:
+    """([(folder, deep)], unnamed): the folders a command reads the contents
+    of (grep -r, rg, findstr /s over "dir\\*", Select-String -Recurse, a
+    program that walks or lists a folder), deep when every folder under it
+    is read; `unnamed` when a program walks a folder it names only from the
+    home folder or the environment, which cannot be checked first. Without
+    `cwd` (run_command and run_sandboxed run in an empty scratch folder) a
+    relative name names nothing and is not judged."""
     t = str(text or "")
-    walks = bool(_WALKERS.search(t))
-    if not walks:
-        if not _CONTENT_READERS.search(t):
-            return []
-        if not (_ALWAYS_RECURSIVE.search(t) or _recursive_flag(t)):
-            return []
+    deep_walk = bool(_DEEP_WALKERS.search(t))
+    shallow_walk = bool(_SHALLOW_WALKERS.search(t))
+    reader_deep = bool(_CONTENT_READERS.search(t) and (_ALWAYS_RECURSIVE.search(t) or _recursive_flag(t)))
+    if not (deep_walk or shallow_walk or reader_deep):
+        return [], False
+    deep = deep_walk or reader_deep
     from agent_friday.services import raw_records
     out = []
     quoted = [a or b for a, b in raw_records._QUOTED.findall(t)]
@@ -1152,6 +1163,8 @@ def _recursive_dirs(text: str, cwd=None) -> list:
         tok = tok.strip(raw_records._TOKEN_EDGES).strip()
         if not tok or "://" in tok or tok.replace("/", "\\").startswith("\\\\") or len(tok) > 400:
             continue
+        if reader_deep:
+            tok = _TRAILING_PATTERN.sub("", tok) or tok      # findstr /s x "dir\\*" searches dir
         try:
             p = Path(raw_records.expand(tok))
             if not p.is_absolute():
@@ -1159,12 +1172,13 @@ def _recursive_dirs(text: str, cwd=None) -> list:
                     continue
                 p = Path(cwd) / p
             if p.is_dir():
-                out.append(p)
+                out.append((p, deep))
         except (OSError, ValueError):
             continue
     if cwd and not out and _ALWAYS_RECURSIVE.search(t):
-        out.append(Path(cwd))            # rg / git grep with no folder search where they run
-    return out
+        out.append((Path(cwd), True))    # rg / git grep with no folder search where they run
+    unnamed = bool((deep_walk or shallow_walk) and not out and _HOMEISH.search(t))
+    return out, unnamed
 
 
 def raw_refusal_for_command(text: str, cwd=None) -> str | None:
@@ -1179,9 +1193,13 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
     try:
         from agent_friday.services import raw_records
         named = raw_records.named_in(str(text or ""), cwd=cwd)
-        folders = _recursive_dirs(text, cwd)
+        folders, unnamed = _recursive_dirs(text, cwd)
     except Exception:
         return None
+    if unnamed:
+        return ("Not run: it looks through a folder it names only from the home folder or the "
+                "environment, so I can't check it for mail archives and statements first. Name the "
+                "folder as a full path and run it again.")
     held, asked, too_many = [], 0, []
     for label, kind, p in named:
         if kind == "too_many":
@@ -1200,11 +1218,11 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
         except Exception:
             pass
         held.append(Path(str(label)).name if p is not None else str(label))
-    for folder in folders:
-        if _too_broad(folder):
+    for folder, deep in folders:
+        if deep and _too_broad(folder):
             too_many.append(str(folder))
             continue
-        found, complete = raw_records_in(folder)
+        found, complete = raw_records_in(folder, recursive=deep)
         if not complete:
             too_many.append(str(folder))
         for f in found:
@@ -1230,7 +1248,7 @@ _WALK_SKIP = frozenset({".git", "node_modules", ".venv", "venv", "__pycache__", 
 WALK_BUDGET_S = 3.0
 
 
-def raw_records_in(folder, limit: int = 20000) -> tuple:
+def raw_records_in(folder, limit: int = 20000, recursive: bool = True) -> tuple:
     """(raw records under `folder` the owner has not allowed, whether the
     whole folder was looked at). For a tool that hands a folder to another
     program or searches it. Skips .git, node_modules and virtual
@@ -1242,7 +1260,7 @@ def raw_records_in(folder, limit: int = 20000) -> tuple:
     deadline = time.monotonic() + WALK_BUDGET_S
     try:
         for root, dirs, files in os.walk(str(folder)):
-            dirs[:] = [d for d in dirs if d not in _WALK_SKIP]
+            dirs[:] = [d for d in dirs if d not in _WALK_SKIP] if recursive else []
             for f in files:
                 seen += 1
                 if seen > limit or time.monotonic() > deadline:

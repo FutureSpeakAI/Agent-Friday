@@ -705,3 +705,39 @@ def test_an_address_line_goes_but_a_finding_next_to_an_address_stays(cards, tmp_
     fg.on_file_read(p, body)
     assert not jg.never_send_hits("Christopher Montgomery <chris@other.example>")
     assert jg.never_send_hits("chris@example.test diagnosed: melanoma, stage two")
+
+
+# ── round 8 of the review (v9) ───────────────────────────────────────────────
+
+def test_findstr_over_a_folder_pattern_checks_the_folder(cards, tmp_path):
+    lf = tmp_path / "Local Folders"
+    lf.mkdir()
+    (lf / "Medical").write_bytes(b"From someone@example.test Mon Oct 12 10:00:00 2026\nSubject: x\n\nbody\n")
+    assert fg.raw_refusal_for_command('findstr /si melanoma "%s\\*"' % lf)
+    assert fg.raw_refusal_for_command('findstr /s /i melanoma "%s/*.*"' % lf)
+
+
+def test_mailbox_names_need_a_folder_to_count(cards):
+    for out in ("Archive:  foo.zip\n  inflating: a.txt", "Inbox: 3 unread", "Sent: 12 messages", "Trash: emptied"):
+        assert fg.raw_output_notice(out) is None, out
+    assert fg.raw_output_notice("Mail/Inbox:12:From: bank@example.test")
+
+
+def test_a_walk_from_the_home_folder_is_not_run_until_the_folder_is_named(cards, tmp_path):
+    for code in ("for p in (Path.home()/'AppData').rglob('*'): print(p.read_text())",
+                 "import os\nfor r, d, f in os.walk(os.environ['HOME'] + '/AppData'): print(f)",
+                 'python -c "import os; print(list(os.walk(os.path.expanduser(\'~/AppData\'))))"'):
+        assert fg.raw_refusal_for_command(code), code
+    docs = tmp_path / "Docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("x", encoding="utf-8")
+    assert fg.raw_refusal_for_command("for p in Path(r'%s').rglob('*'): print(p)" % docs) is None
+
+
+def test_listing_a_folder_checks_only_its_own_files(cards, tmp_path):
+    dl = tmp_path / "Downloads"
+    (dl / "old" / "deep").mkdir(parents=True)
+    (dl / "old" / "deep" / "Chase_Activity.csv").write_text("x", encoding="utf-8")
+    (dl / "notes.md").write_text("x", encoding="utf-8")
+    assert fg.raw_refusal_for_command("import os; print(os.listdir(r'%s'))" % dl) is None
+    assert fg.raw_refusal_for_command("grep -Pattern x %s" % dl) is None, "-Pattern is not -r"

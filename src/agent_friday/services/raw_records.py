@@ -217,7 +217,9 @@ def _prefixed_by_record(line: str) -> str | None:
         return None
     name, rest = sp
     base = re.split(r"[\\/]", name)[-1]          # either separator, on any system
-    if base.casefold() in MAILBOX_NAMES:
+    if base.casefold() in MAILBOX_NAMES and ("/" in name or "\\" in name):
+        # "Mail/Inbox:12:..." is a mailbox; "Archive:  foo.zip" (unzip) and
+        # "Inbox: 3 unread" are not.
         return "mail"
     suffix = Path(name).suffix.lower()
     if suffix in ("", ".txt"):
