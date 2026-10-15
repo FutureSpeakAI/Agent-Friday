@@ -510,11 +510,13 @@ def lift_declared_ctx(model_id: str, declared: int, *, prompt: Optional[int] = N
         return int(declared) if overridden else int(floor["num_ctx"])
     _SAID.add(key)
     if overridden:
-        _log.warning("local sizing: %s is overridden to %d tokens, below Friday's prompt "
-                     "floor of %d (prompt ~%d tokens); keeping the override",
-                     model_id, declared, floor["num_ctx"], floor["prompt_len"])
+        # The floor's numbers come from the size of the assembled prompt, so
+        # they stay out of the log line (CodeQL py/clear-text-logging); the
+        # residency status (/api/residency, the seat's "sizing" block) shows them.
+        _log.warning("local sizing: %s is overridden below Friday's prompt floor; "
+                     "keeping the override (numbers: /api/residency)", model_id)
         return int(declared)
-    _log.info("local sizing: %s declares %d tokens of context but Friday's prompt is ~%d "
-              "tokens; serving at %d instead (component=arbiter)",
-              model_id, declared, floor["prompt_len"], floor["num_ctx"])
+    _log.info("local sizing: %s declares less context than Friday's prompt needs; "
+              "serving at the prompt floor instead (component=arbiter; numbers: "
+              "/api/residency)", model_id)
     return int(floor["num_ctx"])

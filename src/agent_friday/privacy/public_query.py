@@ -524,22 +524,25 @@ def log_refusal(refusal: Refusal, *, action: str = "", provider: str = "",
     logged as "other"), so no text derived from the inspected value can reach
     the log line.
     """
-    reason_code = _LOG_REASON_CODES.get(str(refusal.reason), "other")
-    kind_codes = sorted({_LOG_KIND_CODES.get(str(k), "other")
-                         for k in refusal.kinds})
-    try:
-        count = int(refusal.count)
-    except (TypeError, ValueError):
-        count = 0
-    _log.warning("REFUSED component=%s reason=%s kinds=%s count=%d tool=%s "
+    # Each logged word is SELECTED from a constant table by comparison, never
+    # copied from the refusal (CodeQL py/clear-text-logging): the refusal was
+    # built while inspecting text that may hold a secret. No count either.
+    reason_code = "other"
+    for code in _LOG_REASON_CODES:
+        if refusal.reason == code:
+            reason_code = code
+    kind_codes = [code for code in _LOG_KIND_CODES if code in refusal.kinds]
+    if any(k not in _LOG_KIND_CODES for k in refusal.kinds):
+        kind_codes.append("other")
+    _log.warning("REFUSED component=%s reason=%s kinds=%s tool=%s "
                  "provider=%s surface=%s",
                  COMPONENT, reason_code, ",".join(kind_codes),
-                 count, action or "-", provider or "-", surface or "-")
+                 action or "-", provider or "-", surface or "-")
 
 
 #: Fixed log vocabulary for log_refusal: the logged reason/kind is always one
 #: of these constant strings, never text taken from the refusal itself.
-_LOG_REASON_CODES = {r: r for r in REASONS}
+_LOG_REASON_CODES = tuple(REASONS)
 _LOG_KIND_CODES = {
     # what _hits() reports
     "never_send": "never_send",

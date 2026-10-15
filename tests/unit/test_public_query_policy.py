@@ -689,7 +689,7 @@ def test_log_refusal_writes_only_fixed_vocabulary(caplog):
     text = " ".join(r.getMessage() for r in caplog.records
                     if r.name.startswith("friday.privacy"))
     assert "reason=other" in text and "kinds=card,other" in text
-    assert "count=2" in text
+    assert "count=" not in text
     assert "xyz" not in text
 
 

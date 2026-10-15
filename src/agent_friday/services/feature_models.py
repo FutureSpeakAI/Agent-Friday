@@ -81,7 +81,13 @@ MISSING_MODEL_MESSAGE = ("A model this feature needs is not installed - %s, "
 def public_missing_message(feature) -> str:
     """The constant client-facing sentence for a missing model of ``feature``
     (the id is only used as a lookup key)."""
-    return FEATURE_MESSAGES.get(str(feature or ""), MISSING_MODEL_MESSAGE)
+    # Selected by comparison from the constant table, so nothing from the
+    # exception that carried `feature` reaches the client (CodeQL
+    # py/stack-trace-exposure).
+    for known, message in FEATURE_MESSAGES.items():
+        if known == feature:
+            return message
+    return MISSING_MODEL_MESSAGE
 
 
 #: The short name a message uses for each artifact.
