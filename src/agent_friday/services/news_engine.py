@@ -1302,6 +1302,13 @@ EDITORIAL_SYSTEM_PROMPT = (
     "it's real. Write in first person. Have real opinions. Be the editor, not "
     "the mirror. ~800-1200 words.")
 
+
+def editorial_directive() -> str:
+    """The editorial directive as she reads it: in her own name when the owner
+    gave her one (services/agent_identity.named)."""
+    from agent_friday.services import agent_identity
+    return agent_identity.named(EDITORIAL_SYSTEM_PROMPT)
+
 # Per-edition tone framing. Prefixed onto the editorial prompt so the morning
 # edition leads with action and the evening edition reflects on the day.
 FRONT_PAGE_TONE = {
@@ -2099,6 +2106,8 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             "Reply with a JSON object in this shape:\n" + shape +
             "\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
         )
+        from agent_friday.services.agent_identity import named as _named
+        prompt = _named(prompt)
         # A routine job: the slim job prompt, not the ~16.7k-token chat prompt
         # that pushed this request to 25,410 tokens and past an 8k local window.
         system = job_prompt.build(
@@ -2599,7 +2608,8 @@ def _notify_front_page(edition, slot, manual=False):
             actions = [{"label": "View Front Page", "workspace": "news",
                         "tab": "frontpage"}]
         else:
-            title = f"📰 Friday's Front Page — {label} edition"
+            from agent_friday.services.agent_identity import assistant_name
+            title = f"📰 {assistant_name()}'s Front Page — {label} edition"
             body = (f"{edition.get('headline','Your Front Page')} · Lead: "
                     f"{lead.get('title','(no stories)')}")
             actions = [{"label": "View Front Page", "workspace": "news",
@@ -2631,8 +2641,9 @@ def _notify_weekly_digest(digest, manual=False):
         dk = f"weekly-digest:{digest.get('id')}"
         if manual:
             dk += f":manual:{datetime.now().strftime('%H%M%S')}"
+        from agent_friday.services.agent_identity import assistant_name
         _notif_engine.push(
-            title="📅 Friday's Weekly Digest is ready",
+            title=f"📅 {assistant_name()}'s Weekly Digest is ready",
             body=(f"{digest.get('edition_count', 0)} editions synthesized · "
                   + (digest.get("trends") or ["Your week in review"])[0]),
             priority="medium",
@@ -2656,8 +2667,9 @@ def _notify_weekly_editorial(ed, manual=False):
         dk = f"weekly-editorial:{ed.get('id')}"
         if manual:
             dk += f":manual:{datetime.now().strftime('%H%M%S')}"
+        from agent_friday.services.agent_identity import assistant_name
         _notif_engine.push(
-            title="🗞 Friday's editorial is in",
+            title=f"🗞 {assistant_name()}'s editorial is in",
             body="I have opinions this week.",
             priority="medium",
             source="front-page",
@@ -2799,6 +2811,8 @@ def _generate_weekly_digest():
             + (interests + "\n\n" if interests else "") +
             "THIS WEEK'S STORIES:\n" + story_block
         )
+        from agent_friday.services.agent_identity import named as _named
+        prompt = _named(prompt)
         system = job_prompt.build(
             _WEEKLY_DIGEST_JOB, prompt,
             full_system=lambda: _get_friday_system_prompt(
@@ -2890,13 +2904,17 @@ def _editorial_independence_score(text):
 def _editorial_markdown(week_id, when, body, banned, score, regenerated):
     """Assemble the stored/served markdown: disclaimer header, body, byline, and
     the full-source / independence disclosures."""
-    parts = [f"# Friday's Weekly Editorial — {week_id}", ""]
+    from agent_friday.services.agent_identity import assistant_name
+    who = assistant_name()
+    parts = [f"# {who}'s Weekly Editorial — {week_id}", ""]
     parts.append("> " + EDITORIAL_DISCLAIMER)
     parts.append("")
     parts.append((body or "_(No editorial was generated this week.)_").strip())
     parts.append("")
     parts.append("---")
-    parts.append(f"*— Agent Friday, {when}*")
+    # Signed in her own name; the default name signs as the product always has.
+    from agent_friday.services.agent_identity import is_custom_name
+    parts.append(f"*— {who if is_custom_name() else 'Agent Friday'}, {when}*")
     if banned:
         parts.append("")
         parts.append("*Sources I drew from this week despite their place on your "
@@ -2946,7 +2964,7 @@ def _generate_weekly_editorial():
     article_block = "\n".join(lines) or "(the archive is thin this week)"
 
     def _compose(retry):
-        directive = EDITORIAL_SYSTEM_PROMPT
+        directive = editorial_directive()
         if retry:
             # The retry runs only when the first attempt came back empty, so
             # it says exactly that and never critiques a draft that does not
@@ -3024,9 +3042,11 @@ def _editorial_summary(path, include_md=True):
     md = path.read_text(encoding="utf-8")
     week = path.stem
     when = ""
-    m = re.search(r"— Agent Friday, (.+?)\*", md)
-    if m:
-        when = m.group(1).strip()
+    # The byline: "— Agent Friday, <when>" or "— <her name>, <when>", the last
+    # such line (the body above it may quote someone the same way).
+    bylines = re.findall(r"^\*— [^,*\n]+, (.+?)\*\s*$", md, re.M)
+    if bylines:
+        when = bylines[-1].strip()
     preview = ""
     for line in md.splitlines():
         s = line.strip()
@@ -3101,11 +3121,13 @@ def _front_page_narration_script(edition, max_words=780):
     """
     if not edition:
         return ""
+    from agent_friday.services.agent_identity import assistant_name
+    who = assistant_name()
     parts = []
-    headline = (edition.get("headline") or "Friday's Front Page").strip()
+    headline = (edition.get("headline") or f"{who}'s Front Page").strip()
     slot = edition.get("slot")
     label = "evening edition" if slot == "evening" else "morning edition"
-    parts.append(f"Here's your Friday Front Page, the {label}")
+    parts.append(f"Here's your {who} Front Page, the {label}")
     parts.append(headline)
 
     lead = edition.get("lead") or {}
@@ -3115,7 +3137,7 @@ def _front_page_narration_script(edition, max_words=780):
         if lead.get("snippet"):
             parts.append(lead["snippet"].strip())
         if lead.get("editorial_note"):
-            parts.append(f"Friday's take: {lead['editorial_note'].strip()}")
+            parts.append(f"{who}'s take: {lead['editorial_note'].strip()}")
 
     for sec in (edition.get("sections") or []):
         title = (sec.get("title") or "").strip()
@@ -3201,8 +3223,10 @@ def _build_anchor_briefing(edition):
         })
         return frag
 
+    from agent_friday.services.agent_identity import assistant_name
+    who = assistant_name()
     lines = []
-    headline = (edition.get("headline") or "Friday's Front Page").strip()
+    headline = (edition.get("headline") or f"{who}'s Front Page").strip()
     slot = edition.get("slot")
     label = "evening edition" if slot == "evening" else "morning edition"
     when = (edition.get("generated_central") or edition.get("date") or "").strip()
@@ -3255,7 +3279,7 @@ def _build_anchor_briefing(edition):
         if lead.get("snippet"):
             lines.append(f"  Summary: {lead['snippet'].strip()}")
         if lead.get("editorial_note"):
-            lines.append(f"  Friday's take: {lead['editorial_note'].strip()}")
+            lines.append(f"  {who}'s take: {lead['editorial_note'].strip()}")
         if _frag:
             lines.append(f"  Link (pass to open_url): {_frag}")
 

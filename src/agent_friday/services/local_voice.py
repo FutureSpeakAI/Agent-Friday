@@ -1087,6 +1087,12 @@ class LocalVoiceEngine:
             from agent_friday.services.kokoro_voice import (
                 DEFAULT_KOKORO_VOICE, KokoroTTS)
             voice = settings.get("local_voice_kokoro_voice") or DEFAULT_KOKORO_VOICE
+            try:
+                # Her voice: the owner's, or the cloud voice's installed twin.
+                from agent_friday.services.agent_identity import local_kokoro_voice
+                voice = local_kokoro_voice(settings) or voice
+            except Exception:
+                log.debug("identity voice match unavailable", exc_info=True)
             log.info("tier1 tts engine=kokoro voice=%s", voice)
             return KokoroTTS(voice, allow_cpu=bool(
                 settings.get("local_voice_kokoro_allow_cpu")))

@@ -2657,6 +2657,9 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None,
            if _is_local_brain else "\n")
         + VOICE_TOOL_CHOREOGRAPHY
     )
+    # Her own name, as the chat says it (services/agent_identity.named).
+    from agent_friday.services.agent_identity import named as _named
+    voice_prefix = _named(voice_prefix, settings)
     try:
         full_ctx = _get_friday_system_prompt(
             provider=_prov, vault_control=_vault_control,
@@ -2817,10 +2820,12 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
     except Exception:
         style = ""
 
+    from agent_friday.services.agent_identity import named as _named
+
     def compose(digest_text):
         body = (
-            "You are Agent Friday, a sovereign personal AI assistant, in a LIVE "
-            "VOICE conversation. You are her fast voice, running on this computer "
+            _named("You are Agent Friday, a sovereign personal AI assistant, in a LIVE ", settings)
+            + "VOICE conversation. You are her fast voice, running on this computer "
             f"({label}): what they say and what you think stays here; tools that "
             "search the web or the news reach out only for what they look up.\n"
             "Speak like a person: natural, warm, contractions.\n"
@@ -2831,7 +2836,7 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
             "Never state that an action succeeded unless the tool result in this "
             "turn says so. A withheld, failed, or missing result is reported as "
             "exactly that.\n"
-            + VOICE_FRONT_HANDOFF_RULE
+            + _named(VOICE_FRONT_HANDOFF_RULE, settings)
             + VOICE_FRONT_NEWS_RULE + "\n"
             + VOICE_FRONT_TOOL_RULE
             + ("\nTHE TOOLS YOU HOLD IN THIS CONVERSATION: " + ", ".join(names) + ".\n"
@@ -2926,9 +2931,10 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
         style = _front_persona_style(_get_voice_style_prompt() or "")
     except Exception:
         style = ""
+    from agent_friday.services.agent_identity import named as _named
     body = (
-        "You are Agent Friday, a sovereign personal AI assistant, in a LIVE "
-        "VOICE conversation. You are her fast voice, running on this computer "
+        _named("You are Agent Friday, a sovereign personal AI assistant, in a LIVE ", settings)
+        + "VOICE conversation. You are her fast voice, running on this computer "
         f"({label}).\n"
         "Speak like a person: natural, warm, contractions.\n"
         + VOICE_LENGTH_RULE +
@@ -3925,7 +3931,8 @@ def voice_setup_test():
     The wizard plays this back to confirm the TTS pipeline is working end-to-end.
     """
     data = request.get_json(silent=True) or {}
-    text = data.get("text", "Hello, I'm Friday. Voice setup is complete.").strip()
+    from agent_friday.services.agent_identity import assistant_name
+    text = data.get("text", "Hello, I'm %s. Voice setup is complete." % assistant_name()).strip()
     try:
         from agent_friday.services.voice_engine import _synthesize_tts_wav
         wav_buf = _synthesize_tts_wav(text, allow_local=True)  # io.BytesIO, pos 0
@@ -4980,6 +4987,9 @@ if sock is not None:
             + VOICE_ANCHOR_RULES + "\n"
             + VOICE_TOOL_CHOREOGRAPHY
         )
+        # Her own name, as the chat says it (services/agent_identity.named).
+        from agent_friday.services.agent_identity import named as _named
+        voice_prefix = _named(voice_prefix)
         # security-boundary.md §19 row 1: this whole literal is Friday-authored
         # boilerplate with no user data, and it says the words "financial",
         # "health", "legal" — exactly the keywords the TIER-2/3 classifier

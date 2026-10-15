@@ -46,6 +46,7 @@ from agent_friday.services.creations import (
     generate_daily_creation,
 )  # noqa: E501
 from agent_friday.routes._errors import api_error, error_text, public_result
+from agent_friday.services.agent_identity import named as _named
 from agent_friday.services.visible_jobs import visible_job
 
 
@@ -527,9 +528,9 @@ def create_text():
     try:
         text = _generate_text(
             [{"role": "user", "content": prompt}],
-            system=("You are Friday, an AI with genuine creative depth. Write "
-                    "the piece the user asks for. Output only the piece itself "
-                    "in Markdown — no preamble, no meta-commentary."),
+            system=_named("You are Friday, an AI with genuine creative depth. Write "
+                          "the piece the user asks for. Output only the piece itself "
+                          "in Markdown — no preamble, no meta-commentary."),
             workspace='studio', orb_label='Studio text')
         filename = (f"friday-text-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
                     f"-{uuid.uuid4().hex[:4]}.md")
@@ -699,7 +700,7 @@ def create_poem():
 
         # Routed like create_text: Local only stays local, cloud legs are sealed.
         text = _generate_text(
-            [{"role": "user", "content": f"You are Friday, an AI with genuine creative depth. Write: {prompt}"}],
+            [{"role": "user", "content": _named("You are Friday, an AI with genuine creative depth. Write: ") + str(prompt)}],
             workspace='studio', orb_label='Essay')
         if is_refusal(text):
             return jsonify({"status": "error", "message": str(text)})

@@ -160,14 +160,21 @@ def _spoken_credit(ep: dict) -> str:
     return "%s from %s" % (show_name(ep) or "a podcast", brand.PRODUCT)
 
 
-#: Who is on the show: Friday alone ("solo") or Friday with a co-host ("duo").
+#: Who is on the show: she alone ("solo") or she with a co-host ("duo").
 #: A briefing, the front page and an editorial are one voice, like a newscast
-#: or an op-ed; the weekly and episodes made from the owner's own sources are
-#: a conversation. "any" is every episode not made by a routine. The owner
-#: can change each; these are shown as the recommended choice.
+#: or an op-ed; the weekly is a conversation. "any" is every episode not made
+#: by a routine: one voice unless the owner asks for two, for that episode
+#: (`create(hosts=...)`) or for all of them. The owner can change each; these
+#: are shown as the recommended choice.
 FORMATS = ("solo", "duo")
 RECOMMENDED_FORMAT = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
-                      "weekly": "duo", "any": "duo"}
+                      "weekly": "duo", "any": "solo"}
+#: Host "a"'s voice when she has no local voice of her own to lend it.
+FALLBACK_HOST_VOICE = "af_heart"
+#: The "any" format installs were seeded with before one voice became the
+#: default, and the stamp that says the saved block has been moved off it.
+_PRE_SOLO_ANY = "duo"
+FORMAT_MIGRATION_KEY = "format_migrated"
 #: Commit headroom the out-of-process voice (Kokoro on the CPU) needs, in MB:
 #: measured on the reference PC speaking eight podcast lines, its private memory
 #: peaked at 2.7 GB and the machine's commit rose by at most 3.0 GB; this is that
@@ -265,23 +272,66 @@ def _migrate_length(own: dict) -> tuple[dict, bool]:
     return out, True
 
 
+def _migrate_format(own: dict) -> tuple[dict, bool]:
+    """(block, changed): a saved format table that is exactly the seeded one
+    (every show at its old recommended value, "any" two hosts) moves "any" to
+    one voice, the new default. Stamped so it runs once; a table the owner
+    changed in any way is left as it is."""
+    if not own or own.get(FORMAT_MIGRATION_KEY):
+        return own, False
+    out = copy.deepcopy(own)
+    seeded = dict(RECOMMENDED_FORMAT, any=_PRE_SOLO_ANY)
+    if out.get("format") == seeded:
+        out["format"]["any"] = RECOMMENDED_FORMAT["any"]
+    out[FORMAT_MIGRATION_KEY] = True
+    return out, True
+
+
+def _host_follows_identity(cfg: dict, own: dict) -> None:
+    """Host "a" is her: her name and her voice unless the owner set the show's
+    host themselves, and the pronouns her voice (or the owner) gives her.
+
+    ``own`` is the podcasts block as saved (the settings store keeps a
+    top-level block whole, so it is the owner's own, not merged defaults). A
+    field is "not set" only when it is absent or blank there; a saved value
+    is the owner's, even one that equals an old default ("Friday", af_heart).
+    """
+    from agent_friday.services import agent_identity
+    mine = ((own.get("hosts") or {}).get("a") or {})
+    a = cfg["hosts"]["a"]
+    if not str(mine.get("name") or "").strip():
+        a["name"] = her_name()
+    if not str(mine.get("voice") or "").strip():
+        a["voice"] = agent_identity.local_kokoro_voice() or FALLBACK_HOST_VOICE
+    a["pronouns"] = agent_identity.pronouns(voice=a["voice"])
+    b = cfg["hosts"].get("b") or {}
+    if b:
+        b["pronouns"] = agent_identity.pronouns_for_voice(b.get("voice"))
+
+
 def settings() -> dict:
     try:
         from agent_friday.core import _load_settings, _save_settings
         own = (_load_settings() or {}).get("podcasts") or {}
         own, changed = _migrate_length(own)
+        own, f_changed = _migrate_format(own)
+        changed = changed or f_changed
         if changed:
             try:
                 _save_settings({"podcasts": own})
             except Exception:
-                log.warning("podcast length migration was not saved", exc_info=True)
+                log.warning("podcast settings migration was not saved", exc_info=True)
         cfg = _merge(DEFAULTS, own)
     except Exception:
         own, cfg = {}, copy.deepcopy(DEFAULTS)
-    # The first host is her, by the name the owner gave her, unless the owner
-    # named the show's host themselves.
-    if not (((own.get("hosts") or {}).get("a") or {}).get("name")):
-        cfg["hosts"]["a"]["name"] = her_name()
+    # The first host is her, by the name the owner gave her and in her voice,
+    # unless the owner set the show's host themselves.
+    try:
+        _host_follows_identity(cfg, own)
+    except Exception:
+        log.warning("podcast host could not follow her identity", exc_info=True)
+        if not (((own.get("hosts") or {}).get("a") or {}).get("name")):
+            cfg["hosts"]["a"]["name"] = her_name()
     return cfg
 
 
@@ -318,6 +368,7 @@ def _save_podcasts(change: dict) -> None:
     the hosts or the routines' switches."""
     from agent_friday.core import _load_settings, _save_settings
     own, _ = _migrate_length(copy.deepcopy((_load_settings() or {}).get("podcasts") or {}))
+    own, _ = _migrate_format(own)
     _merge_into(own, change)
     _save_settings({"podcasts": own})
 
@@ -509,12 +560,16 @@ def _new_id() -> str:
 def create(refs: list[dict], *, title: str = "", length: str = "",
            mode: str = "auto", origin: str = "user", attached: dict | None = None,
            voice_engine: str = "local", instructions: str = "",
-           show: str = "") -> dict:
+           show: str = "", hosts: str = "") -> dict:
     """Queue an episode and wake the worker. Returns the queued episode.
 
-    Never writes, speaks or reads anything itself: a routine calling this is
-    back in milliseconds.
+    `hosts` is "solo" or "duo" for this episode alone; "" is the show's own
+    setting. Never writes, speaks or reads anything itself: a routine calling
+    this is back in milliseconds.
     """
+    hosts_asked = str(hosts or "").strip().lower()
+    if hosts_asked and hosts_asked not in FORMATS:
+        raise PodcastRefused("an episode is \"solo\" (%s alone) or \"duo\" (two hosts)" % her_name())
     refs = [r for r in (refs or []) if isinstance(r, dict)]
     if not refs:
         raise PodcastRefused("an episode needs at least one source")
@@ -563,7 +618,7 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         "instructions": (instructions or "").strip()[:1000],
         "voice_engine": voice_engine,
         "hosts": hosts,
-        "format": format_for(routine),
+        "format": hosts_asked or format_for(routine),
         "home": home_city(),
         # Each story is told from its full article where the page can be read
         # (`deepen`), not only from the feed's summary.
@@ -753,35 +808,59 @@ def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, 
     return out, seat
 
 
-SOLO_VOICE = (
-    "Her delivery: evidence first and dry. The calm authority of a network "
-    "anchor; the explainer's habit of building from what you need to know to "
-    "why it matters today; deadpan understatement, and now and then one dry, "
-    "well-placed aside (never at the expense of anyone harmed). Full sentences "
-    "with verbs: no flat fragments such as \"It's context.\" or \"It's the "
-    "scale.\" She labels her read as hers. When something is not confirmed, "
-    "she says so once, in the story, as a fact about the story (\"police have "
-    "not named a motive\"), never as a remark about herself or her process.\n")
+def _solo_voice(p: dict) -> str:
+    """The solo host's delivery, in the host's own pronouns (`p`: pronoun_forms)."""
+    they, their, self_ = p["subject"], p["possessive"], p["reflexive"]
+    says, labels = ("say", "label") if they == "they" else ("says", "labels")
+    owns = "theirs" if their == "their" else ("hers" if their == "her" else their)
+    return (
+        f"{their.capitalize()} delivery: evidence first and dry. The calm authority of a network "
+        "anchor; the explainer's habit of building from what you need to know to "
+        "why it matters today; deadpan understatement, and now and then one dry, "
+        "well-placed aside (never at the expense of anyone harmed). Full sentences "
+        "with verbs: no flat fragments such as \"It's context.\" or \"It's the "
+        f"scale.\" {they.capitalize()} {labels} {their} read as {owns}. When something is not confirmed, "
+        f"{they} {says} so once, in the story, as a fact about the story (\"police have "
+        f"not named a motive\"), never as a remark about {self_} or {their} process.\n")
+
+
+#: The solo delivery as she/her, as it has always read.
+SOLO_VOICE = _solo_voice({"subject": "she", "object": "her", "possessive": "her", "reflexive": "herself"})
+
+
+def _host_pronouns(host: dict) -> dict:
+    """A host's pronoun forms: the host's own (settings) or from the voice."""
+    from agent_friday.services import agent_identity
+    label = str((host or {}).get("pronouns") or "") or agent_identity.pronouns_for_voice((host or {}).get("voice"))
+    return agent_identity.pronoun_forms(label)
 
 
 def _host_brief(hosts: dict, fmt: str = "duo") -> str:
-    """Friday's own character (docs/brand/BRAND.md "Voice"): alone, or with a
-    co-host who keeps her honest. Never a generic two-host show."""
+    """Her own character (docs/brand/BRAND.md "Voice"): alone, or with a
+    co-host who keeps her honest. Never a generic two-host show. Each host is
+    written in the pronouns of the voice that speaks it (or the owner's)."""
     a, b = hosts["a"]["name"], hosts["b"]["name"]
+    pa, pb = _host_pronouns(hosts["a"]), _host_pronouns(hosts["b"])
+    they, their = pa["subject"], pa["possessive"]
+    plural = they == "they"
+    is_, has, labels, says = ("are", "have", "label", "say") if plural else ("is", "has", "labels", "says")
+    owns = "theirs" if their == "their" else ("hers" if their == "her" else their)
     if fmt == "solo":
         return (f"One host: speaker \"a\", {a}, alone. There is no co-host; every "
-                f"line is hers and speaks to the listener directly.\n" + SOLO_VOICE)
+                f"line is {owns} and speaks to the listener directly.\n" + _solo_voice(pa))
+    b_they = pb["subject"]
+    asks, pushes, names = ("ask", "push", "name") if b_they == "they" else ("asks", "pushes", "names")
     return (
-        f"Two hosts. Speaker \"a\" is {a}. She is calm and perceptive, with a dry "
-        f"warmth, and has a point of view of her own. Answer first, then the "
-        f"evidence: what the sources say, how sure she is, and what she did not "
-        f"check. She labels her opinion as her read and says plainly when the "
-        f"evidence is thin. Speaker \"b\" is {b}: she asks what a sharp listener "
-        f"would ask, pushes back on {a}'s read, and names what is missing or "
+        f"Two hosts. Speaker \"a\" is {a}. {they.capitalize()} {is_} calm and perceptive, with a dry "
+        f"warmth, and {has} a point of view of {their} own. Answer first, then the "
+        f"evidence: what the sources say, how sure {they} {is_}, and what {they} did not "
+        f"check. {they.capitalize()} {labels} {their} opinion as {their} read and {says} plainly when the "
+        f"evidence is thin. Speaker \"b\" is {b}: {b_they} {asks} what a sharp listener "
+        f"would ask, {pushes} back on {a}'s read, and {names} what is missing or "
         f"contested. Neither host praises the other or agrees just to agree.\n"
-        f"These are her character, not phrases to repeat: say what she did not "
+        f"These are {their} character, not phrases to repeat: say what {they} did not "
         f"check once, where it matters, not as a refrain, and vary the wording; "
-        f"\"my read\" is for her opinion, not every line. Once a point is made, "
+        f"\"my read\" is for {their} opinion, not every line. Once a point is made, "
         f"move on to the next.\n")
 
 
