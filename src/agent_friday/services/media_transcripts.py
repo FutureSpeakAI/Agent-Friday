@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
@@ -23,7 +24,12 @@ from typing import Any, Callable, Deque, Dict, List, Optional
 import agent_friday.core as core
 from agent_friday.services.visible_jobs import visible_job
 
+log = logging.getLogger("friday.media_transcripts")
+
 VERSION = "v1"
+#: The recogniser, and the feature it is in services/feature_models.
+WHISPER_SIZE = "base.en"
+FEATURE = "transcription"
 RAM_FLOOR_MIB = 3072            #: the recogniser and its working set want room
 PAUSE_S = 0.5
 RAM_WAIT_S = 15.0
@@ -35,7 +41,8 @@ _QUEUE: Deque[Dict[str, Any]] = deque()
 _QUEUED: set = set()
 _WORKER: Optional[threading.Thread] = None
 _MODEL = None
-_STATE: Dict[str, Any] = {"done": 0, "failed": 0, "skipped": 0, "building": None, "last": None}
+_STATE: Dict[str, Any] = {"done": 0, "failed": 0, "skipped": 0, "building": None, "last": None,
+                          "unavailable": ""}
 #: Tests hand in a transcriber: ``f(path) -> {"text": str, "segments": [{"start", "end", "text"}]}``.
 transcriber: Optional[Callable[[Path], Dict[str, Any]]] = None
 
@@ -86,18 +93,44 @@ def get(card: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def status() -> Dict[str, Any]:
+    """The queue, and ``unavailable``: why nothing can be transcribed (the
+    missing model, named), or "" when it can."""
     with _LOCK:
-        return {"pending": len(_QUEUE), "done": _STATE["done"], "failed": _STATE["failed"], "skipped": _STATE["skipped"], "building": _STATE["building"]}
+        return {"pending": len(_QUEUE), "done": _STATE["done"], "failed": _STATE["failed"], "skipped": _STATE["skipped"], "building": _STATE["building"],
+                "last": _STATE["last"], "unavailable": _STATE["unavailable"]}
+
+
+def unavailable_reason() -> str:
+    """"" when transcripts can be made here, else why not, in words: the
+    recogniser package, or its model (feature_models names it and where to
+    install it)."""
+    if transcriber is not None:
+        return ""
+    try:
+        import importlib.util
+        if importlib.util.find_spec("faster_whisper") is None:
+            return "The local speech recogniser (faster-whisper) is not installed on this computer."
+    except Exception:
+        return "The local speech recogniser (faster-whisper) is not installed on this computer."
+    from agent_friday.services import feature_models as fm
+    return fm.unavailable_reason(FEATURE)
 
 
 def available() -> bool:
-    if transcriber is not None:
-        return True
-    try:
-        import faster_whisper  # noqa: F401
-        return True
-    except Exception:
+    """Can a transcript be made now? The package AND its model: a recogniser
+    whose model is missing is not available, and saying so once in friday.log
+    beats failing every file in the queue."""
+    why = unavailable_reason()
+    if why:
+        with _LOCK:
+            first = _STATE["unavailable"] != why
+            _STATE["unavailable"] = why
+        if first:
+            log.warning("media transcripts paused: %s", why)
         return False
+    with _LOCK:
+        _STATE["unavailable"] = ""
+    return True
 
 
 # ── the queue ────────────────────────────────────────────────────────────────
@@ -159,9 +192,20 @@ def _run_one(c: Dict[str, Any]) -> None:
         with _LOCK:
             _STATE["done" if r.get("text") else "skipped"] += 1
     except Exception as e:
+        from agent_friday.services.feature_models import FeatureModelMissing
         with _LOCK:
             _STATE["failed"] += 1
-            _STATE["last"] = f"{c.get('id')}: {str(e)[:160]}"
+            _STATE["last"] = f"{c.get('id')}: {str(e)[:300]}"
+            if isinstance(e, FeatureModelMissing):
+                # Every other file would fail the same way: say it once (the
+                # refusal is already in friday.log) and stop the queue.
+                _STATE["unavailable"] = str(e)
+                for q in _QUEUE:
+                    _QUEUED.discard(q.get("id"))
+                _QUEUE.clear()
+        if not isinstance(e, FeatureModelMissing):
+            log.warning("media transcript failed for %s: %s: %s",
+                        c.get("id"), type(e).__name__, str(e)[:300])
     finally:
         with _LOCK:
             _QUEUED.discard(c.get("id"))
@@ -192,11 +236,15 @@ def ensure_all(cards: Optional[List[Dict[str, Any]]] = None, *, sync: Optional[b
 # ── one transcript ───────────────────────────────────────────────────────────
 
 def _model():
+    """base.en on the CPU, loaded by path from the folder feature_models
+    found (no hub lookup); a missing model is a named, logged refusal."""
     global _MODEL
     with _LOCK:
         if _MODEL is None:
+            from agent_friday.services import feature_models as fm
+            path = fm.require_whisper(WHISPER_SIZE, FEATURE, who="media transcripts")
             from faster_whisper import WhisperModel
-            _MODEL = WhisperModel("base.en", device="cpu", compute_type="int8", local_files_only=True)
+            _MODEL = WhisperModel(str(path), device="cpu", compute_type="int8", local_files_only=True)
         return _MODEL
 
 
@@ -228,6 +276,11 @@ def transcribe(card: Dict[str, Any]) -> Dict[str, Any]:
     if dur and dur > MAX_SECONDS:
         rec = {"text": "", "segments": [], "engine": "skipped", "note": "longer than the local recogniser is asked to do"}
     else:
+        if transcriber is None:
+            # Before the job card and before the model: a missing recogniser
+            # is refused by name (and logged), not discovered per file.
+            from agent_friday.services import feature_models as fm
+            fm.require(FEATURE, who="media transcripts")
         fn = transcriber or _run_whisper
         rec = fn(p) or {"text": "", "segments": []}
         rec.setdefault("engine", "local")

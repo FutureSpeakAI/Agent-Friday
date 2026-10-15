@@ -708,16 +708,27 @@ def _whisper():
     global _WHISPER
     with _WHISPER_LOCK:
         if _WHISPER is None:
+            # By path from the folder feature_models finds (the pinned install
+            # or an earlier cache); a missing model is named and logged there
+            # and becomes this render's check_model_missing below.
+            from agent_friday.services import feature_models as fm
+            try:
+                path = fm.require_whisper("base.en", "transcription",
+                                          who="podcast listening check")
+            except fm.FeatureModelMissing as e:
+                raise RenderError("check_model_missing", str(e)) from e
             from faster_whisper import WhisperModel
             try:
-                _WHISPER = WhisperModel("base.en", device="cpu", compute_type="int8",
+                _WHISPER = WhisperModel(str(path), device="cpu", compute_type="int8",
                                         local_files_only=True)
             except Exception as e:
+                log.warning("podcast listening check: whisper base.en at %s did "
+                            "not load: %s: %s", path, type(e).__name__, str(e)[:200])
                 raise RenderError(
                     "check_model_missing",
-                    "The local speech recogniser (faster-whisper base.en) is not "
-                    "installed, so the audio could not be checked against the script. (%s)"
-                    % str(e)[:120]) from e
+                    "The local speech recogniser (faster-whisper base.en) is on this "
+                    "computer but did not load, so the audio could not be checked "
+                    "against the script. (%s)" % str(e)[:120]) from e
         return _WHISPER
 
 

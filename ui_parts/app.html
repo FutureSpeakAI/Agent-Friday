@@ -18044,6 +18044,8 @@ function SettingsTabModels({s,save}){
 function VoiceSetupWizard({onClose}){
   const[status,setStatus]=useState(null);const[testing,setTesting]=useState(false);const[testResult,setTestResult]=useState(null);
   const[job,setJob]=useState(null);const jobPollRef=useRef(null);
+  // The models step's confirm box (feature_models.first_run_offer).
+  const[askStep,setAskStep]=useState(null);
   const refresh=()=>apiFetch('/api/voice/setup/status').then(r=>r.json()).then(setStatus).catch(e=>setStatus({error:String(e)}));
   useEffect(()=>{refresh();
     // Resume the status poll if an install is already running (e.g. the user
@@ -18059,8 +18061,9 @@ function VoiceSetupWizard({onClose}){
       }catch(e){}
     },2000);
   };
-  const startInstall=async(target)=>{
-    try{const r=await apiFetch('/api/voice/setup/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target})});
+  const startInstall=async(target,consent)=>{
+    setAskStep(null);
+    try{const r=await apiFetch('/api/voice/setup/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(consent?{target,consent:true}:{target})});
       const j=await r.json();setJob(j);if(j.state==='running')startPoll();
     }catch(e){setJob({state:'error',error:String(e)});}
   };
@@ -18084,7 +18087,7 @@ function VoiceSetupWizard({onClose}){
   const stepAction=step=>{
     if(job&&job.state==='running')return null;
     if(step.id==='deps'&&step.status!=='ok')return{target:'voice-local-lite',label:'Install'};
-    if(step.id==='models'&&step.status==='needs_download')return{target:'tier1-models',label:'Download'};
+    if(step.id==='models'&&step.download)return{target:step.download.target,label:step.download.size_mb?'Download '+step.download.size_mb+' MB':'Download',offer:step.download};
     if(step.id==='gpu'&&step.status!=='ok')return{target:'voice-local-gpu',label:'Install GPU tier (~6 GB)'};
     return null;
   };
@@ -18099,8 +18102,15 @@ function VoiceSetupWizard({onClose}){
       <div style={{marginBottom:14}}>
         {(status.steps||[]).map(step=>{const act=stepAction(step);return(<div key={step.id} style={{display:'flex',alignItems:'flex-start',gap:10,padding:'7px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
           <span style={{fontFamily:'JetBrains Mono',fontSize:14,color:statusColor(step.status),minWidth:18,textAlign:'center'}}>{statusIcon(step.status)}</span>
-          <div style={{flex:1}}><div style={{fontSize:12,color:'#ddd'}}>{step.label}</div>{step.detail&&<div style={{fontSize:11,color:'#888',marginTop:2}}>{step.detail}</div>}</div>
-          {act&&<button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} onClick={()=>startInstall(act.target)}>⬇ {act.label}</button>}
+          <div style={{flex:1}}><div style={{fontSize:12,color:'#ddd'}}>{step.label}</div>{step.detail&&<div style={{fontSize:11,color:'#888',marginTop:2}}>{step.detail}</div>}
+            {act&&act.offer&&askStep===step.id&&<div style={{marginTop:8,padding:10,border:'1px solid rgba(255,179,71,0.5)',borderRadius:6,fontSize:12,lineHeight:1.5,color:'#ddd'}}>
+              <div>{act.offer.consent_text}</div>
+              <div style={{display:'flex',gap:8,marginTop:8}}>
+                <button className="btn" style={{fontSize:11}} onClick={()=>startInstall(act.target,true)}>{act.label}</button>
+                <button className="btn" style={{fontSize:11}} onClick={()=>setAskStep(null)}>Not now</button>
+              </div>
+            </div>}</div>
+          {act&&<button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} onClick={()=>act.offer?setAskStep(step.id):startInstall(act.target)}>⬇ {act.label}</button>}
         </div>);})}
       </div>
       {job&&job.state!=='idle'&&<div style={{marginBottom:12,padding:'8px 12px',background:'rgba(0,0,0,0.35)',borderRadius:6}}>
@@ -18597,6 +18607,68 @@ function VoiceFrontPicker({ s, save }) {
     !!why(VOICE_FRONT_CHOICES.find(o => o.id === sel) || {}) && React.createElement('div', { role: 'status', style: { fontSize: 11.5, color: '#f59e0b', marginTop: 6 } },
       (VOICE_FRONT_CHOICES.find(o => o.id === sel) || {}).label + why(VOICE_FRONT_CHOICES.find(o => o.id === sel) || {}) + ' Another local voice model that can run answers until then, and says so.'));
 }
+// ── Settings → Voice → Features that need a download ─────────────────────
+// Mirror of index.html's FeatureModelsNeeded (services/feature_models): a
+// feature whose model is missing says so by name and size before anything is
+// fetched; one confirmed click installs that feature's missing pinned models.
+function FeatureModelsNeeded() {
+  const [d, setD] = useState(null);
+  const [ask, setAsk] = useState(null);
+  const [err, setErr] = useState('');
+  const load = useCallback(() => apiFetch('/api/voice/feature-models').then(r => r.json()).then(x => {
+    setD(x || {});
+    setErr('');
+  }).catch(() => setErr('Could not read which features need a download.')), []);
+  useEffect(() => { load(); }, [load]);
+  const job = (d && d.job) || {};
+  const running = job.state === 'running';
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(load, 1500);
+    return () => clearInterval(t);
+  }, [running, load]);
+  const start = f => {
+    setAsk(null);
+    setErr('');
+    apiFetch('/api/voice/setup/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: f.install_target, consent: true })
+    }).then(r => r.json()).then(j => {
+      if (j && j.state === 'error') setErr(j.error || 'The download did not start.');
+      load();
+    }).catch(() => setErr('Could not reach the server to start the download.'));
+  };
+  if (d === null) return err ? React.createElement('div', { role: 'alert', style: { fontSize: 11.5, color: '#ef4444', marginBottom: 8 } }, err) : null;
+  // A feature that cannot run, or one that runs on an older package than the
+  // tested pin ("upgrade available": it keeps working until then).
+  const need = (d.features || []).filter(f => !f.ready || (f.upgrades || []).length);
+  if (!need.length) return null;
+  return React.createElement('div', { 'data-feature-models': '1', style: { marginBottom: 10 } },
+    err && React.createElement('div', { role: 'alert', style: { fontSize: 11.5, color: '#ef4444', marginBottom: 8 } }, err),
+    need.map(f => {
+      const mine = job.target === f.install_target;
+      const p = mine && running ? job.progress : null;
+      const items = f.missing.concat(f.upgrades || []);
+      const mb = f.size_mb + (f.upgrade_mb || 0);
+      const what = f.ready ? f.name + ': upgrade available, ' + (f.upgrades || []).map(m => m.short).join(', ')
+        : f.name + ' needs ' + f.missing.map(m => m.short).join(', ') + ' (' + voiceArtifactSize(f.size_mb) + ')';
+      const desc = f.ready ? f.label + '. It works now with the installed version; the upgrade installs the tested one.'
+        : f.label + '. Until then it says so when used, and nothing downloads by itself.';
+      return React.createElement(StRow, { key: f.id, label: what, desc },
+        React.createElement('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 } },
+          mine && running && React.createElement('span', { role: 'status', style: { color: '#38bdf8' } }, 'downloading' + (p && p.total ? ' ' + Math.floor(100 * p.done / p.total) + '%' : '…')),
+          mine && job.state === 'error' && React.createElement('span', { role: 'status', style: { color: '#ef4444' } }, 'failed: ' + (job.error || 'no reason given')),
+          !running && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: () => setAsk(f.id) }, (f.ready ? 'Upgrade ' : 'Download ') + voiceArtifactSize(mb))),
+        ask === f.id && React.createElement('div', { style: { marginTop: 8, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
+          React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Download ' + (items.some(m => m.deps_mb) ? 'about ' : '') + voiceArtifactSize(mb) + '?'),
+          // Each package with what pip adds for it (spaCy and its helpers for
+          // misaki[en]): the size confirmed is the size downloaded.
+          React.createElement('div', null, items.map(m => m.label + ' (' + voiceArtifactSize(m.size_mb) + ', ' + m.licence + ')' + (m.deps_note ? ', ' + m.deps_note : '')).join(' and ') + ' will be saved on this computer' + voiceArtifactPinCopy(items) + ' If the download stops, Download again picks up where it left off.'),
+          React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
+            React.createElement('button', { className: 'settings-btn active', style: { fontSize: 11 }, onClick: () => start(f) }, 'Download ' + voiceArtifactSize(mb)),
+            React.createElement('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => setAsk(null) }, 'Not now'))));
+    }));
+}
 function LocalVoiceModels() {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
@@ -18626,14 +18698,22 @@ function LocalVoiceModels() {
   const stop = () => apiFetch('/api/voice/setup/install/cancel', { method: 'POST' }).then(() => load()).catch(() => {});
   const byId = {};
   (rows || []).forEach(r => { byId[r.id] = r; });
-  // What a click downloads: the row plus any not-yet-installed piece it needs.
-  const needs = r => [r].concat((r.requires || []).map(i => byId[i]).filter(x => x && !x.installed));
+  // What a click downloads: the row plus any not-yet-installed piece it needs,
+  // and what those need in turn (Kokoro's voices -> kokoro -> misaki -> ...).
+  const needs = r => {
+    const out = [r], seen = { [r.id]: true };
+    for (let i = 0; i < out.length; i++) {
+      (out[i].requires || []).forEach(id => { const x = byId[id]; if (x && !x.installed && !seen[id]) { seen[id] = true; out.push(x); } });
+    }
+    return out;
+  };
   const stateOf = r => {
     const j = r.job;
     if (j && j.state === 'running') {
       const p = j.progress;
       return ['downloading' + (p && p.total ? ' ' + Math.floor(100 * p.done / p.total) + '%' : '…'), '#38bdf8'];
     }
+    if (r.installed && r.upgrade) return ['installed (' + r.upgrade.have + '); ' + r.upgrade.pin + ' available, see the upgrade above', '#00ff80'];
     if (r.installed) return ['installed', '#00ff80'];
     if (j && j.state === 'error') return ['failed: ' + (j.error || 'no reason given'), '#ef4444'];
     if (j && j.state === 'cancelled') return ['stopped; Download continues where it stopped', 'var(--st-dim)'];
@@ -18648,7 +18728,8 @@ function LocalVoiceModels() {
       const isRunning = !!(r.job && r.job.state === 'running');
       const can = !r.installed && r.installable && !isRunning;
       const group = needs(r);
-      const mb = group.reduce((n, x) => n + (x.size_mb || 0), 0);
+      // With what pip adds for the packages (deps_mb, approximate).
+      const mb = group.reduce((n, x) => n + (x.size_mb || 0) + (x.deps_mb || 0), 0);
       const redo = r.job && (r.job.state === 'error' || r.job.state === 'cancelled');
       return React.createElement(StRow, { key: r.id, label: r.label + (r.optional ? ' (optional)' : ''), desc: r.purpose },
         React.createElement('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 } },
@@ -18658,7 +18739,7 @@ function LocalVoiceModels() {
           isRunning && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: stop }, 'Stop')),
         ask === r.id && React.createElement('div', { style: { marginTop: 8, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
           React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Download ' + voiceArtifactSize(mb) + '?'),
-          React.createElement('div', null, group.map(x => x.label + ' (' + voiceArtifactSize(x.size_mb) + ')').join(' and ') + ' will be saved on this computer. It comes from ' + (r.source || 'its publisher') + ' under the ' + r.licence + ' licence' + voiceArtifactPinCopy(group) + ' If the download stops, Continue download picks up where it left off.'),
+          React.createElement('div', null, group.map(x => x.label + ' (' + voiceArtifactSize(x.size_mb) + (x.deps_note ? ', ' + x.deps_note : '') + ')').join(' and ') + ' will be saved on this computer. It comes from ' + (r.source || 'its publisher') + ' under the ' + r.licence + ' licence' + voiceArtifactPinCopy(group) + ' If the download stops, Continue download picks up where it left off.'),
           React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
             React.createElement('button', { className: 'settings-btn active', style: { fontSize: 11 }, onClick: () => start(r) }, 'Download ' + voiceArtifactSize(mb)),
             React.createElement('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => setAsk(null) }, 'Not now'))));
@@ -18703,6 +18784,7 @@ function SettingsTabVoice({s,save}){
       </StRow>}
     </StSection>
     <StSection title="Local voice models" desc="The pieces of on-device voice, whichever mode is selected now. Nothing downloads until you confirm its size.">
+      <FeatureModelsNeeded/>
       <VoiceFrontPicker s={s} save={save}/>
       <LocalVoiceModels/>
     </StSection>

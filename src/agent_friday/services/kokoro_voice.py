@@ -51,9 +51,15 @@ import threading
 import time
 
 from agent_friday.services.local_voice import PLAYBACK_RATE, _module_installed
+from agent_friday.services.voice_artifacts import kokoro_pip_command
 from agent_friday.user_errors import ExceptionText
 
 log = logging.getLogger("friday.kokoro_voice")
+
+#: The repair line every message below gives, at the pinned versions
+#: (services/voice_artifacts: kokoro 0.9.4, misaki[en] 0.9.4, espeakng-loader).
+#: Settings > Voice > Local voice models installs the same set with one click.
+KOKORO_PIP = kokoro_pip_command()
 
 #: Kokoro's native output rate. Equal to PLAYBACK_RATE by happy accident, which
 #: is asserted rather than assumed: if either ever changes, the resample that is
@@ -288,9 +294,9 @@ def kokoro_health() -> dict:
             return {
                 "engine": "local-kokoro", "status": "missing",
                 "detail": ("Kokoro voice not installed (missing: "
-                           + ", ".join(missing) + "). Install with "
-                           "`pip install kokoro misaki espeakng-loader` into "
-                           "the server environment."),
+                           + ", ".join(missing) + "). Install it from Settings > "
+                           "Voice > Local voice models, or with `" + KOKORO_PIP
+                           + "` into the server environment."),
                 "deps": deps, "available": False, "gpu_ready": False,
             }
         imp = kokoro_import_status()
@@ -310,12 +316,11 @@ def kokoro_health() -> dict:
                               "likely a transient import race during startup "
                               "rather than a broken install. It is retried "
                               "automatically; if it persists past a restart, "
-                              "reinstall with `pip install kokoro misaki "
-                              "espeakng-loader`. "
+                              "reinstall with `" + KOKORO_PIP + "`. "
                               if _named_dep_is_installed(_miss)
                               else ". This is what a `--no-deps` install looks "
-                                   "like. Reinstall it with its dependencies: "
-                                   "`pip install kokoro misaki espeakng-loader`. ")
+                                   "like. Reinstall it with its dependencies: `"
+                                   + KOKORO_PIP + "`. ")
                            + "Piper is unaffected and remains available."),
                 "deps": deps, "import": imp,
                 "available": False, "gpu_ready": False,
@@ -476,8 +481,9 @@ class KokoroTTS:
             raise KokoroUnavailable(
                 "local_voice_kokoro_missing",
                 "Kokoro is not installed in Friday's server environment. The "
-                "weights are on this machine, but the `kokoro` package is not "
-                "importable from the process that serves voice.")
+                "`kokoro` package is not importable from the process that "
+                "serves voice. Install it from Settings > Voice > Local voice "
+                "models (Kokoro voice engine).")
         if not deps.get("torch"):
             raise KokoroUnavailable(
                 "local_voice_kokoro_missing",
@@ -496,8 +502,8 @@ class KokoroTTS:
                 + (" -- no module named '%s'" % _imp["missing"]
                    if _imp["missing"] else "")
                 + ". This is what a `--no-deps` install leaves behind. "
-                  "Reinstall it with its dependencies: `pip install kokoro "
-                  "misaki espeakng-loader`. (%s)" % _imp["error"])
+                  "Reinstall it with its dependencies: `%s`. (%s)"
+                % (KOKORO_PIP, _imp["error"]))
         if self.cpu_only:
             return "cpu"
         try:
@@ -606,9 +612,8 @@ class KokoroTTS:
                 "local_voice_kokoro_missing",
                 "Kokoro failed to load"
                 + (" -- no module named '%s'" % _missing if _missing else "")
-                + " (%s: %s). Reinstall it with its dependencies: "
-                  "`pip install kokoro misaki espeakng-loader`."
-                  % (type(e).__name__, str(e)[:120])) from e
+                + " (%s: %s). Reinstall it with its dependencies: `%s`."
+                  % (type(e).__name__, str(e)[:120], KOKORO_PIP)) from e
         # A pipeline with no g2p fallback is not a working pipeline: it
         # synthesizes common words and raises TypeError on the rest. Refuse
         # with a reason and an offer rather than shipping a voice that dies

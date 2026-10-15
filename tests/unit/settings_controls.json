@@ -1662,7 +1662,7 @@
   "reader_file": "src/agent_friday/services/voice_installer.py",
   "reader_needle": "def start(target",
   "status": "ok",
-  "note": "Targets voice-local-lite, tier1-models, voice-local-gpu carry no \"artifact\" flag so no consent body is required; the wizard offers them straight from a step row. Label says ~6 GB, TARGETS says disk_gb 12.0 for voice-local-gpu (copy mismatch)."
+  "note": "Targets voice-local-lite and voice-local-gpu carry no \"artifact\" flag so no consent body is required; the wizard offers them straight from a step row. tier1-models carries \"consent\": the wizard first shows the whisper models with sizes and licences (feature_models.first_run_offer) and posts consent: true. Label says ~6 GB, TARGETS says disk_gb 12.0 for voice-local-gpu (copy mismatch)."
  },
  {
   "section": "Voice",
@@ -1997,6 +1997,18 @@
   "reader_needle": "def cancel(",
   "status": "ok",
   "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Features that need a download: Download (per feature)",
+  "kind": "button+confirm",
+  "keys": [],
+  "route": "POST /api/voice/setup/install {target: feature:<id>, consent:true}",
+  "reader_file": "src/agent_friday/services/voice_installer.py",
+  "reader_needle": "for aid in fm.to_install(spec[\"feature\"]):",
+  "status": "ok",
+  "note": "Rows come from GET /api/voice/feature-models (services/feature_models.status). Each names the feature, the missing models and their size; the download starts only after the size confirmation."
  },
  {
   "section": "Voice",

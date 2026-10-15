@@ -430,11 +430,11 @@ either by the installer or on first use, and are governed by their own terms.
 | gemma3:4b (Ollama) | runtime (ladder entry, tools=False) | Gemma Terms of Use - unverified |
 | sentence-transformers/all-MiniLM-L6-v2 | runtime (lazy download on first use; memory tier default) | Apache-2.0 |
 | convaiinnovations/laya checkpoint (~808 MB; encoder answerdotai/ModernBERT-large) | install-time (scripts/prefetch_laya.py; judgment tier default-on when torch present) | Apache-2.0 (model card); base ModernBERT-large Apache-2.0 |
-| Systran/faster-whisper-small (default) and -base | runtime (lazy download on first voice use) | MIT (OpenAI Whisper weights, MIT) - unverified of the Systran card |
+| Systran/faster-whisper-base, -base.en and -small | runtime (pinned commit and per-file SHA-256, fetched by services/voice_installer.py only after the owner confirms the size in Settings > Voice; never downloaded at load) | MIT (OpenAI Whisper weights, MIT) - unverified of the Systran card |
 | Piper voice en_US-amy-medium (default) | runtime (downloaded on first TTS use from huggingface.co/rhasspy/piper-voices) | Voice model MIT (piper-voices); dataset terms per the upstream MODEL_CARD (Mimic 3 voices) - unverified |
 | Piper voice en_US-lessac-medium | not offered (an install that chose it earlier keeps it) | Lessac Blizzard 2013 dataset: non-commercial research only |
 | Silero VAD | runtime (only if silero-vad is installed) | MIT |
-| hexgrad/Kokoro-82M + voices | runtime (optional engine=kokoro) | Apache-2.0 |
+| hexgrad/Kokoro-82M + voices | runtime (optional engine=kokoro; pinned commit and per-file SHA-256, fetched by services/voice_installer.py on the owner's confirmed request) | Apache-2.0 |
 | nvidia/nemotron-3.5-asr-streaming-0.6b | runtime (optional GPU voice tier) | OpenMDW-1.1 per docs - unverified |
 | Nemotron 3.5 streaming ASR, int8 (sherpa-onnx repackaging, k2-fsa/sherpa-onnx GitHub release asr-models) | runtime (local voice ear, fetched on first voice setup) | OpenMDW-1.1 (NVIDIA model card) |
 | faster-whisper large-v3-turbo int8 (CTranslate2 export) | runtime (optional accuracy lane; not offered until its source is pinned) | MIT (OpenAI Whisper weights) |
@@ -464,7 +464,8 @@ either by the installer or on first use, and are governed by their own terms.
 * **ComfyUI** unrecorded - GPL-3.0-only. no (operator-provisioned under ~/.friday/runtime/ComfyUI; driven over HTTP)
 * **ComfyUI-GGUF / ComfyUI-CogVideoXWrapper custom nodes** unrecorded - Apache-2.0 (both, upstream) - confirm. no (operator-provisioned)
 * **kokoro-onnx wheel + voices-v1.0.bin** >=0.4 / model-files-v1.0 - MIT (kokoro-onnx); voices Apache-2.0 (Kokoro-82M). no (optional; fetched by services/voice_installer.py on user request)
-* **phonemizer-fork + espeakng-loader (espeak-ng)** 3.3.2 / 0.2.4 - GPL-3.0-or-later. no (optional pronunciation helper for names; fetched by services/voice_installer.py only on the owner's request, licence shown first; runs as its own program, agent_friday/voice/espeak_helper.py, over a pipe and is never loaded into Friday's process)
+* **phonemizer-fork + espeakng-loader (espeak-ng)** 3.3.2 / 0.2.4 - GPL-3.0-or-later. no (pronunciation helper for names; fetched by services/voice_installer.py only on the owner's request, licence shown first, and installed with Kokoro because misaki[en] 0.9.4 declares both; runs as its own program, agent_friday/voice/espeak_helper.py, over a pipe and is never loaded into Friday's process)
+* **kokoro + misaki[en]** 0.9.4 / 0.9.4 - Apache-2.0. no (the Kokoro voice engine and its English G2P; fetched by services/voice_installer.py on the owner's confirmed request, pinned in services/voice_artifacts.py; kokoro 0.9.4 is the release that installs beside numpy 2.x)
 * **PyTorch CUDA wheels (download.pytorch.org/whl/cu126) + nemo_toolkit** >=2.6 - BSD-3-Clause (torch) + NVIDIA CUDA/cuDNN redistributable EULA; nemo_toolkit Apache-2.0. no (optional GPU voice; fetched by services/voice_installer.py on user request)
 
 ## License texts

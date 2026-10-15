@@ -87,3 +87,26 @@ def test_install_status_endpoint(client):
     r = client.get("/api/voice/setup/install/status")
     assert r.status_code == 200
     assert "state" in r.get_json()
+
+
+def test_setup_status_offers_the_whisper_models_with_their_sizes(client, monkeypatch, tmp_path):
+    """A fresh install: the wizard's model step names each speech recogniser
+    local voice, Alt+T and media transcripts need, with its size, for the
+    confirm box the Download click opens (no download without it)."""
+    import agent_friday.routes.voice as vr
+    import agent_friday.services.local_voice as lv
+    from agent_friday.services import voice_artifacts as va
+    monkeypatch.delenv("FRIDAY_OS_MODE", raising=False)
+    monkeypatch.setattr(lv, "WHISPER_DIR", tmp_path / "whisper")
+    monkeypatch.setattr(va, "hf_hub_cache", lambda: tmp_path / "hf")
+    monkeypatch.setattr(lv, "local_voice_health", lambda: {
+        "engine": "local-voice-lite", "status": "needs_download",
+        "detail": "voice models not downloaded yet (one-time)",
+        "available": True, "models_ready": False})
+    monkeypatch.setattr(vr, "_resolve_voice_engine", lambda *a, **k: {"engine": "local"})
+    body = client.get("/api/voice/setup/status").get_json()
+    step = {s["id"]: s for s in body["steps"]}["models"]
+    offer = step.get("download") or {}
+    assert [i["id"] for i in offer.get("items", [])] == ["whisper-base", "whisper-base.en"]
+    assert offer["target"] == "tier1-models" and offer["size_mb"] > 200
+    assert "whisper base.en" in offer["consent_text"] and "whisper base.en" in step["detail"]
