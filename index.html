@@ -39107,6 +39107,9 @@ function CalendarWS() {
   const timedAll = timed.concat(mediaEvents);
   const openMediaCard = c => { if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: c.id }); };
   const conflicts = timed.filter(e => e.conflict);
+  // Events at the same time sit side by side in the Day view too (every calendar makes overlaps common).
+  const dayLanes = {};
+  if (window.CalendarViews) window.CalendarViews.lanes(timedAll.filter(x => !x.media && x.start_time)).forEach(g => { dayLanes[g.ev.id] = g; });
   const hours = [];
   for (let h = CAL_START_HOUR; h < CAL_END_HOUR; h++) hours.push(h);
   const showNow = !sel; // only show now-line on the actual today view
@@ -39263,6 +39266,7 @@ function CalendarWS() {
     const end = calY(e.end_time) || top + CAL_HOUR_PX;
     const ht = Math.max(34, end - top);
     const open = prepFor === e.id;
+    const lane = dayLanes[e.id];
     return /*#__PURE__*/React.createElement("div", {
       key: e.id,
       className: 'cal-event ' + (e.type || 'normal') + (e.conflict ? ' conflict' : ''),
@@ -39271,7 +39275,8 @@ function CalendarWS() {
         top,
         minHeight: ht,
         height: open ? 'auto' : ht,
-        ...(e.color ? { '--ev': e.color } : {})
+        ...(e.color ? { '--ev': e.color } : {}),
+        ...(lane && lane.of > 1 ? { left: 'calc(68px + (100% - 76px) * ' + lane.lane + ' / ' + lane.of + ')', right: 'auto', width: 'calc((100% - 76px) / ' + lane.of + ' - 4px)' } : {})
       },
       onClick: () => e.media ? openMediaCard(e.media) : e.prep_available && genPrep(e)
     }, /*#__PURE__*/React.createElement("div", {
