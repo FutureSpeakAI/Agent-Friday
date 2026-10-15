@@ -122,7 +122,9 @@ from agent_friday.services.wiki_engine import (
     _mirror_wiki_file,
     _propose_wiki_update,
     _safe_wiki_path,
+    wiki_path_hidden as _we_path_hidden,
     wiki_read_text,
+    wiki_replace_in_page,
     wiki_write_text,
 )  # noqa: E501
 from agent_friday.user_errors import ExceptionText, UserFacingValueError, clip
@@ -2352,6 +2354,8 @@ def _tool_search_wiki(inp):
                 partial = True
                 break
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            if _we_path_hidden(f, root):   # .git, .obsidian, .draft.md: not pages
                 continue
             try:
                 content = wiki_read_text(f)
@@ -7642,7 +7646,20 @@ CLAUDE_TOOLS.append({
 
 
 def _tool_propose_wiki_update(inp):
-    """Queue a wiki update as pending — the user approves it in Knowledge (Pages)."""
+    """One wiki change, one decision.
+
+    When the owner already decided this exact call (an approved card, a scoped
+    grant, a chat yes -- `action_gate.owner_decision()`), it is applied now and
+    nothing is queued in Knowledge: the card was the decision. Otherwise it is
+    queued once as pending for approval in Knowledge (Pages). `old_value` is
+    carried through so an edit replaces that text exactly; an edit whose text is
+    gone is refused as stale rather than appended, and one whose text occurs
+    more than once is refused as ambiguous. Exception: ``replace_file`` on a page
+    that already exists is never applied on a card/grant/chat-yes alone -- it is
+    queued for Knowledge, whose row shows the overwrite and its diff.
+    """
+    from agent_friday.services import wiki_engine as _we
+    from agent_friday.governance import action_gate as _gate_mod
     inp = inp or {}
     file = (inp.get("file") or "").strip()
     new_value = inp.get("new_value") or ""
@@ -7650,9 +7667,67 @@ def _tool_propose_wiki_update(inp):
         return "propose_wiki_update error: 'file' and 'new_value' are required."
     section = (inp.get("section") or "").strip()
     reason = (inp.get("reason") or "Agent-proposed update.").strip()
+    old_value = inp.get("old_value") or ""
+    mode = str(inp.get("mode") or "").strip().lower()
     if _safe_wiki_path(file) is None:
         return f"propose_wiki_update error: invalid wiki path {file!r} (must stay inside ~/wiki/)."
-    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason)
+    if mode and mode not in _we.WIKI_PROPOSAL_MODES:
+        return ("propose_wiki_update error: mode must be one of "
+                + ", ".join(_we.WIKI_PROPOSAL_MODES) + ".")
+    if mode == "edit" and not old_value:
+        return "propose_wiki_update error: mode 'edit' needs old_value, the exact text to replace."
+    item = {"file": file, "section": section, "old_value": old_value,
+            "new_value": new_value, "mode": mode}
+    decided = _gate_mod.owner_decision()
+    if decided:
+        # Plan and apply in ONE hold of the wiki write lock: nothing lands on
+        # the page between what was planned and what is written.
+        res = _we.apply_decided_wiki_proposal(item)
+        if res["status"] == "needs_review":
+            # An overwrite of an existing page is only applied after the owner
+            # has SEEN the overwrite. An approval card, a scoped grant or a chat
+            # yes shows the call's arguments, not what the page loses, so a
+            # decided replace_file on a page that exists (when planned, or by
+            # the time of the write) is queued for Knowledge, whose row shows the
+            # overwrite badge and the full diff. (A replace_file that creates a
+            # new page loses nothing and applies as decided.)
+            pid = _propose_wiki_update(file=file, section=section, new_value=new_value,
+                                       reason=reason, old_value=old_value, mode=mode)
+            logging.getLogger("friday.wiki").info(
+                "propose_wiki_update: decided (%s) replace_file on existing %s queued for "
+                "Knowledge as %s so the owner sees the overwrite before it applies",
+                decided, res["file"], pid)
+            return (f"Wiki update NOT applied yet (id={pid}): it would replace the whole existing "
+                    f"page {res['file']} (+{res['lines_added']} -{res['lines_removed']} lines). "
+                    "An overwrite waits in Knowledge, on its Pages view, where the owner sees "
+                    "exactly what the page loses before approving it. To change part of the page, "
+                    "use old_value (mode 'edit') or mode 'append' instead.")
+        _we._record_wiki_decision(file, section, new_value, reason, old_value, mode, res, decided)
+        logging.getLogger("friday.wiki").info(
+            "propose_wiki_update decided by owner (%s): %s -> %s", decided, file, res["status"])
+        if res["status"] == "applied":
+            return (f"Wiki update applied to {res['file']} (+{res['lines_added']} "
+                    f"-{res['lines_removed']} lines). The approval was the decision; "
+                    "nothing is waiting in Knowledge.")
+        if res["status"] == "unchanged":
+            return f"Wiki update not needed: {res['message']}"
+        return f"propose_wiki_update error ({res['status']}): {res['message']}"
+    # Not decided: plan only (nothing is written here). Refuse up front what
+    # could never apply, rather than ask the owner to approve something that
+    # will fail.
+    plan = _we.plan_wiki_proposal(item)
+    overwrite = plan["mode"] == "replace_file" and plan["exists"] and plan["status"] == "ready"
+    if plan["status"] == "unchanged":
+        return f"Wiki update not needed: {plan['message']}"
+    if plan["status"] in ("stale", "ambiguous"):
+        return f"propose_wiki_update error ({plan['status']}): {plan['message']}"
+    if plan["status"] != "ready":
+        return f"propose_wiki_update error: {plan['message']}"
+    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason,
+                               old_value=old_value, mode=mode)
+    if overwrite:
+        return (f"Wiki update proposed (id={pid}): it REPLACES THE WHOLE PAGE {plan['file']} -- "
+                "awaiting your approval in Knowledge, on its Pages view, where the overwrite is shown.")
     return f"Wiki update proposed (id={pid}) — awaiting your approval in Knowledge, on its Pages view."
 
 
@@ -7679,17 +7754,15 @@ def _tool_correct_wiki(inp):
         for f in WIKI_DIR.rglob('*'):
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
                 continue
-            try:
-                text = wiki_read_text(f)
-            except Exception:
+            if _we_path_hidden(f, WIKI_DIR):   # never rewrite .git/.obsidian files
                 continue
-            if old_text in text:
-                try:
-                    rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
-                    _mirror_wiki_file(rel, text.replace(old_text, new_text))
+            try:
+                # Read, replace and write under the wiki write lock.
+                rel = wiki_replace_in_page(f, old_text, new_text)
+                if rel:
                     modified.append(rel)
-                except Exception:
-                    pass
+            except Exception:
+                pass
     if FRIDAY_DIR.exists():
         for f in FRIDAY_DIR.glob('*.json'):
             if f.name not in CORRECTABLE_JSON:
@@ -7709,12 +7782,14 @@ def _tool_correct_wiki(inp):
 
 CLAUDE_TOOLS.append({
     "name": "propose_wiki_update",
-    "description": "Propose an update to the user's wiki when you learn something new about them (work, family, preferences, projects) that should outlive this conversation. Queued as PENDING for approval in the Knowledge workspace; NOT applied immediately.",
+    "description": "Propose an update to the user's wiki when you learn something new about them (work, family, preferences, projects) that should outlive this conversation. Queued as PENDING for approval in the Knowledge workspace; NOT applied immediately (unless the user already approved this exact call on an approval card, which then applies it). To change existing text pass old_value; never re-append a section that is already there.",
     "input_schema": {
         "type": "object",
         "properties": {
             "file": {"type": "string", "description": "Wiki file path relative to ~/wiki/, e.g., 'identity/core-profile.md'."},
-            "section": {"type": "string", "description": "Optional section name within the file (e.g., 'birthplace'). Used to append under a header if no existing text is matched."},
+            "section": {"type": "string", "description": "Optional section name within the file (e.g., 'birthplace'). An append goes under this header (created if missing, never duplicated)."},
+            "old_value": {"type": "string", "description": "To change existing text: the exact text in the page to replace (read the page first). It must occur exactly once (if it occurs more than once the update is refused as ambiguous: give a longer old_value); if it is no longer there the update is refused as stale, never appended."},
+            "mode": {"type": "string", "enum": ["edit", "append", "replace_file"], "description": "Optional. 'edit' replaces old_value; 'append' adds new_value; 'replace_file' overwrites the whole page with new_value (on a page that already exists it always waits for approval in Knowledge, even after an approval card). Default: edit when old_value is given, otherwise append."},
             "new_value": {"type": "string", "description": "The new content to add or replace with."},
             "reason": {"type": "string", "description": "Why this update is being proposed (e.g., 'User correction during chat')."},
         },
