@@ -19393,7 +19393,8 @@ function PrivacyCloudConsent() {
 function SettingsLocks(){
   const[d,setD]=useState(null);
   const[msg,setMsg]=useState('');
-  useEffect(()=>{apiFetch('/api/locks').then(r=>r.json()).then(setD).catch(()=>setMsg('Could not read the locks.'))},[]);
+  const load=useCallback(()=>{apiFetch('/api/locks').then(r=>r.json()).then(setD).catch(()=>setMsg('Could not read the locks.'))},[]);
+  useEffect(()=>{load()},[load]);
   const openWin=page=>apiFetch('/api/locks/open-windows',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page})})
     .then(r=>r.json()).then(x=>{if(!x.ok)setMsg(x.message||'Windows did not open the page.')}).catch(()=>setMsg('Could not reach the server.'));
   const post=(url,body)=>apiFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.json());
@@ -19407,13 +19408,14 @@ function SettingsLocks(){
       {l.today_words&&<div className="lk-words">{l.today_words}</div>}
       {l.today&&l.today.length>0&&<ul className="lk-sub">{l.today.map(t=><li key={t.destination}>{t.destination+': '+t.sent+' sent'+(t.stopped?', '+t.stopped+' stopped':'')}</li>)}</ul>}
       {l.checks&&<ul className="lk-sub">{l.checks.map(c=><li key={c.name}>{c.name+': '+(c.ok===true?'checks out ('+c.count+' line'+(c.count===1?'':'s')+')':c.ok===false?'changed ('+c.why+')':'could not check')}</li>)}</ul>}
-      {l.held_files&&l.held_files.length>0&&<ul className="lk-sub" aria-label="Held files">{l.held_files.map(f=><li key={f}>{f+' '}<button type="button" className="btn" style={{fontSize:11}} onClick={()=>askHeld(f)}>Ask me about this file</button></li>)}</ul>}
+      {l.held_files&&l.held_files.length>0&&<ul className="lk-sub" aria-label="Held files">{l.held_files.map(f=><li key={f}>{f+' '}<button type="button" className="btn" style={{fontSize:11}} aria-label={'Ask me about '+f} onClick={()=>askHeld(f)}>Ask me about this file</button></li>)}</ul>}
       {l.can_reset&&<button type="button" className="btn" style={{fontSize:11,marginTop:6}} onClick={resetHeld}>Start the list fresh…</button>}
       {l.installer&&<div className="lk-words">{l.installer}</div>}
       {l.open_page&&<button type="button" className="btn" style={{fontSize:11,marginTop:6}} onClick={()=>openWin(l.open_page)}>Open Windows' settings</button>}
     </li>)}</ul>}
     {d&&<p className="lk-limit" role="note"><strong>The honest limit. </strong>{d.honest_limit}</p>}
-    {msg&&d&&<div role="status" aria-live="polite" className="sc-msgline">{msg}</div>}
+    {d&&<div role="status" aria-live="polite" className="sc-msgline">{msg}</div>}
+    {d&&<button type="button" className="btn" style={{fontSize:11,marginTop:6}} onClick={load}>Check again</button>}
   </StSection>;
 }
 

@@ -174,6 +174,13 @@ def request_access(items, *, reason: str = "", requested_by: str = "friday",
         note = ""
         if notes and isinstance(raw, dict):
             note = str(notes.get(str(raw.get("path") or "")) or "")[:200]
+        if not note and it.get("type") == "file":
+            # A mail archive or statement says so on any card that lists it,
+            # whoever asked: the card, not the asker, names what it is.
+            try:
+                note = _fg().raw_card_note(it["path"]) or ""
+            except Exception:
+                note = ""
         if note:
             it["summary"] = (it.get("summary") + "; " if it.get("summary") else "") + note
         key = (it["type"], _norm(it["path"]))

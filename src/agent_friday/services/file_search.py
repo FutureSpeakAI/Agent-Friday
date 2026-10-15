@@ -209,8 +209,9 @@ def _held_raw_record(path) -> bool:
         from agent_friday.services import file_grants
         if not file_grants.raw_record_kind(path):
             return False
-        import hashlib
-        sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        sha = file_grants.file_sha256(path)
+        if sha is None:
+            return True
         c = file_grants.check_grant(path, sha256_hex=sha)
         return not (c.state == "active" and c.grant_kind == "file")
     except Exception:

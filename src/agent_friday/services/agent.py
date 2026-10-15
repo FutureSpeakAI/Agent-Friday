@@ -2540,6 +2540,11 @@ def _tool_run_command(inp):
     # Whatever the command printed, key blocks and vendor tokens are
     # withheld: the path scan above is best-effort, this is the backstop.
     out = _cred.redact_secrets(out)
+    # Output that reads like a mail archive or a statement (a grep through a
+    # mailbox, a cat of an export) is not passed on: decision O7.
+    _raw_out = _fg_raw.raw_output_notice(out)
+    if _raw_out:
+        return _raw_out
     # The executor keeps the END of a command's output (where the error
     # is), names what was cut and saves the whole text; this is only a
     # sanity ceiling against a runaway printer.
@@ -2584,6 +2589,9 @@ def _tool_run_sandboxed(inp):
     for _k in ("stdout", "stderr"):
         if isinstance(res.get(_k), str):
             res[_k] = _cred.redact_secrets(res[_k])
+            _raw_out = _fg_raw.raw_output_notice(res[_k])
+            if _raw_out:
+                res[_k] = _raw_out
     return json.dumps(res, default=str)
 
 
@@ -10496,6 +10504,16 @@ def _tool_codebase_read(inp):
     content = _cb.read(rec["id"], rel)
     if content is None:
         return {"status": "missing", "path": inp.get("path")}
+    # A mail archive or statement inside a codebase is opened the way
+    # read_file opens one: held, asked about, and not passed on (decision O7).
+    from agent_friday.services import file_grants as _fg_raw
+    if _fg_raw.raw_record_kind(p):
+        try:
+            check = _fg_raw.on_file_read(Path(p), str(content))
+        except Exception:
+            check = None
+        if (check is None or check.state == "held_raw_record") and _fg_raw._cloud_possible():
+            return {"status": "held", "path": inp.get("path"), "content": _fg_raw.raw_held_notice(p)}
     return {"status": "ok", "path": inp.get("path"), "content": _redacted_once(p, content)[:60000]}
 
 

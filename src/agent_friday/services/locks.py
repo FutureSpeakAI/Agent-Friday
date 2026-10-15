@@ -254,9 +254,7 @@ def ask_for_held(path: str) -> dict:
     from pathlib import Path
 
     from agent_friday.services import file_grants, judgment_gate
-    held = set(judgment_gate.raw_hold_status().get("held") or [])
-    key = str(path or "").casefold()
-    if key not in held:
+    if not path or file_grants._raw_key(path) not in judgment_gate.held_keys():
         return {"ok": False, "message": "That file isn't held."}
     if not Path(path).is_file():
         return {"ok": False, "message": "That file is no longer there; start the list fresh to let it go."}
