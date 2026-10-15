@@ -99,15 +99,31 @@ def unsubscribe(account_id: str, message_id: str) -> dict:
             return {"status": "error", "method": "one_click",
                     "message": "The list's unsubscribe address is not a public web address, so Friday did not contact it."}
         import requests
+
+        from agent_friday.services import web_safety
         try:
-            r = requests.post(url, data="List-Unsubscribe=One-Click", timeout=12, allow_redirects=False,
-                              headers={"Content-Type": "application/x-www-form-urlencoded",
-                                       "User-Agent": "Friday (List-Unsubscribe one-click)"})
+            # The address judged public above is the address dialled: a name
+            # that answers differently the second time (DNS rebinding) is refused.
+            with web_safety.pinned(url):
+                r = requests.post(url, data="List-Unsubscribe=One-Click", timeout=12, allow_redirects=False,
+                                  stream=True,
+                                  headers={"Content-Type": "application/x-www-form-urlencoded",
+                                           "User-Agent": "Friday (List-Unsubscribe one-click)"})
+                getattr(r, "close", lambda: None)()
+        except web_safety.UnsafeURLError:
+            return {"status": "error", "method": "one_click",
+                    "message": "The list's unsubscribe address is not a public web address, so Friday did not contact it."}
         except Exception as e:
             return {"status": "error", "method": "one_click", "message": ExceptionText("The list did not answer: %s" % e)}
-        if 200 <= r.status_code < 400:
+        if 200 <= r.status_code < 300:
             return {"status": "done", "method": "one_click", "host": opt["host"],
                     "message": "Unsubscribed: %s accepted the request." % opt["host"]}
+        if 300 <= r.status_code < 400:
+            # A redirect is not a confirmation, and following it would send
+            # Friday wherever a mail header pointed.
+            return {"status": "error", "method": "one_click",
+                    "message": "The list sent Friday somewhere else instead of confirming, so it is not "
+                               "unsubscribed yet. Use the list's own page."}
         return {"status": "error", "method": "one_click",
                 "message": "The list refused the request (HTTP %d)." % r.status_code}
     if opt["method"] == "mailto":

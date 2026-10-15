@@ -479,6 +479,14 @@ def run_at_boot() -> dict:
     except Exception as e:
         print(f"  [reconcile] seat-queue re-admission failed: {e}")
         out["queued"] = {"error": str(e)}
+    # The inbox clean-up scan keeps its own checkpoint; one that was reading
+    # when Friday closed carries on from there.
+    try:
+        from agent_friday.services import inbox_cleanup as _ic
+        out["inbox_cleanup"] = {"resumed": _ic.resume_if_interrupted()}
+    except Exception as e:
+        print(f"  [reconcile] inbox clean-up resume failed: {e}")
+        out["inbox_cleanup"] = {"error": str(e)}
     n = len(out.get("research", {}).get("resumed") or []) \
         + len(out.get("tasks", {}).get("interrupted") or [])
     n += len(out.get("queued", {}).get("readmitted") or [])

@@ -68,7 +68,9 @@ GROUPS = ("read", "navigate", "select", "organize", "create", "settings")
 #: What may be written in a `jobs` entry (descriptive; services/visible_jobs is what registers the task).
 JOB_TRIGGERS = ("button", "schedule", "idle", "laya", "voice")
 JOB_HELPERS = ("visible_job", "task")     # task: a TASKS record that is its own visible task (check_visible_jobs ALLOW)
-JOB_MODEL_CLASSES = ("brain", "fast", "encoder", "speech", "image")
+#: "none": a background job that reads data and calls no model (the inbox
+#: clean-up's header scan); it is still a visible job.
+JOB_MODEL_CLASSES = ("brain", "fast", "encoder", "speech", "image", "none")
 
 
 def _read(path: Path):

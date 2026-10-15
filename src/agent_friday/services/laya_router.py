@@ -181,10 +181,16 @@ _WORKSPACE_WORDS = {"podcasts": "media", "podcast": "media"}
 _LAST_MEETING = re.compile(r"^(?:last|latest|most recent|previous|newest)\s+(?:meeting|call|recording)$")
 
 
+#: The inbox clean-up board (Messages > Clean up), named on its own.
+_CLEANUP = re.compile(r"^(?:inbox|mail|email|newsletter)s?\s+clean[\s-]?up$")
+
+
 def _nav_args(text: str, m=None) -> dict:
     q = re.sub(r"\s+", " ", (m.group("q") if m is not None else "").strip().lower()).replace("e-mail", "email")
     if not q:
         return {}
+    if _CLEANUP.match(q):
+        return {"kind": "workspace", "workspace": "messages", "section": "clean up", "query": "messages"}
     if _LAST_MEETING.match(q):
         # a recorded meeting, not a workspace; `query` is the tool's required argument and carries the words
         return {"kind": "meeting", "id": "last", "query": q}
@@ -441,6 +447,9 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
     ("set_chat_tray",
      _POLITE + r"bring\s+(?:the\s+|my\s+)?cards?\s+back" + _END),
     ("media_play", _POLITE + r"play\s+(?:me\s+)?(?:some\s+|the\s+|my\s+)?" + _Q + _END),
+    ("navigate_to",
+     _POLITE + r"(?:open|show(?: me)?|go to|switch to|bring up|take me to|pull up)\s+(?:up\s+)?(?:my\s+|the\s+)?"
+     r"(?P<q>(?:inbox|mail|email|newsletter)s?\s+clean[\s-]?up)(?:\s+(?:list|board|page))?" + _END),
     ("navigate_to",
      _POLITE + r"(?:open|show(?: me)?|go to|switch to|bring up|take me to|pull up)\s+(?:up\s+)?(?:my\s+|the\s+)?"
      r"(?P<q>" + _WORKSPACES + r")(?:\s+(?:workspace|page|tab|screen|app))?" + _END),

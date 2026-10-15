@@ -149,6 +149,7 @@
  ],
  "not_for_laya": [
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
+  {"action": "settings.locks_windows_page", "kind": "by_design", "reason": "Opens a Windows settings page on the owner's own press; the Locks lines themselves are read by opening the section."},
   {
    "action": "settings.local_voice_measure",
    "kind": "by_design",

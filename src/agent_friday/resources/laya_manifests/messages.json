@@ -256,6 +256,22 @@
    "eval": []
   },
   {
+   "id": "messages.cleanup_open",
+   "action": "messages.cleanup_open",
+   "group": "navigate",
+   "ui": {"control": "Clean up (folders side): the inbox clean-up board"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["open the inbox clean up", "show me my email clean-up"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_inbox_cleanup.py::test_the_router_opens_the_clean_up_board_by_voice"]
+  },
+  {
    "id": "messages.accounts",
    "action": "messages.accounts",
    "group": "settings",
@@ -281,6 +297,16 @@
    "task_kind": "message_draft",
    "activity_label": "Message draft",
    "entry": "agent_friday.routes.messages:api_messages_draft"
+  },
+  {
+   "id": "messages.inbox_cleanup",
+   "trigger": "button",
+   "also": ["idle"],
+   "model_class": "none",
+   "helper": "visible_job",
+   "task_kind": "inbox_cleanup",
+   "activity_label": "Inbox clean-up",
+   "entry": "agent_friday.services.inbox_cleanup:start.run"
   }
  ],
  "not_for_laya": [
@@ -300,6 +326,16 @@
    "action": "messages.send_later",
    "kind": "by_design",
    "reason": "Sending, and scheduling a send, stays behind the owner's own approval card."
+  },
+  {
+   "action": "messages.cleanup_read",
+   "kind": "by_design",
+   "reason": "Reading the mail for the clean-up starts from the owner's own click on an account or a Takeout file."
+  },
+  {
+   "action": "messages.cleanup_unsubscribe",
+   "kind": "by_design",
+   "reason": "Each unsubscribe contacts a sender, so each is the owner's own tick (first-run spec E-09); Friday's own request is an approval card listing every sender."
   }
  ],
  "resolver_sources": [],

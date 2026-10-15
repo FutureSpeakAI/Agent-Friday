@@ -233,10 +233,25 @@ _RUNNING: set = set()                 # schedule ids currently dispatched
 _RUNNING_LOCK = threading.Lock()
 
 
+#: The zone schedules run in when the owner has not said theirs.
+DEFAULT_ZONE = "America/Chicago"
+
+
 def _now_central():
+    """Now, in the owner's own time zone (settings `timezone`, which the
+    first-run conversation asks for), else DEFAULT_ZONE."""
     try:
         from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo("America/Chicago"))
+        zone = DEFAULT_ZONE
+        try:
+            from agent_friday.core import _load_settings
+            want = str((_load_settings() or {}).get("timezone") or "").strip()
+            if want:
+                ZoneInfo(want)
+                zone = want
+        except Exception:
+            zone = DEFAULT_ZONE
+        return datetime.now(ZoneInfo(zone))
     except Exception:
         return datetime.now()
 

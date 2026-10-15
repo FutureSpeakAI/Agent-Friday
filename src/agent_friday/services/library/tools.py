@@ -153,6 +153,8 @@ def _cloud_evidence(ev: list[dict], principal: str, settings: dict) -> tuple[lis
             continue                  # a meeting's words never reach a cloud model from the Library
         if doc and fg.check_grant(Path(doc["path"])).state == "active":
             granted.append((e, doc))
+        elif doc and fg.raw_record_kind(Path(doc["path"])):
+            fg.ask_for_raw_source(Path(doc["path"]))          # a raw record asks for its own yes
     held = len(ev) - len(granted)
     fits, cap_note = _apply_cap([e for e, _d in granted], cloud_char_cap(settings))
     by_id = {id(e): d for e, d in granted}

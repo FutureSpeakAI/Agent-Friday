@@ -136,6 +136,18 @@ _PROBE_EXTRA_NEVER: list[str] = []
 _DENY_SPANS: set = set()
 _DENY_LOCK = threading.Lock()
 _DENY_MAX = 20000
+# Which held spans came from where: a user deny mark is permanent for the
+# process; a raw record's hold (raw_records, owner decision O7) is lifted only
+# when that exact file is allowed, and never lifts a span a deny mark holds.
+_USER_DENY_SPANS: set = set()
+_RAW_RECORD_SPANS: set = set()
+
+
+def _span(text) -> str:
+    if not text or not isinstance(text, str):
+        return ""
+    t = text.strip()
+    return t if t and len(t) <= 2000 else ""
 
 
 def register_deny_span(text: str) -> None:
@@ -144,14 +156,41 @@ def register_deny_span(text: str) -> None:
     Call ONLY from file_grants.py, for a paragraph read from a path carrying
     an active user deny mark.
     """
-    if not text or not isinstance(text, str):
-        return
-    t = text.strip()
-    if not t or len(t) > 2000:
+    t = _span(text)
+    if not t:
         return
     with _DENY_LOCK:
         if len(_DENY_SPANS) < _DENY_MAX:
             _DENY_SPANS.add(t)
+            _USER_DENY_SPANS.add(t)
+
+
+def hold_raw_record_span(text: str) -> None:
+    """Hold one paragraph of a raw record (a mail archive, a statement) read
+    without a yes for that file: blocked from every cloud payload, under every
+    posture, exactly as a deny mark is. Call ONLY from file_grants.py."""
+    t = _span(text)
+    if not t:
+        return
+    with _DENY_LOCK:
+        if len(_DENY_SPANS) < _DENY_MAX:
+            _DENY_SPANS.add(t)
+            _RAW_RECORD_SPANS.add(t)
+
+
+def release_raw_record_spans(texts) -> int:
+    """Lift the hold on paragraphs of a raw record the owner has now allowed.
+    A paragraph a user deny mark also holds stays held. Returns how many were
+    lifted. Call ONLY from file_grants.py, for a file with an active file grant."""
+    n = 0
+    with _DENY_LOCK:
+        for text in texts or ():
+            t = _span(text)
+            if t in _RAW_RECORD_SPANS and t not in _USER_DENY_SPANS:
+                _RAW_RECORD_SPANS.discard(t)
+                _DENY_SPANS.discard(t)
+                n += 1
+    return n
 
 
 def never_send_tokens() -> list[str]:

@@ -16,58 +16,233 @@ from __future__ import annotations
 
 # ── Stage names, in order ────────────────────────────────────────────────────
 #
-# `reader` comes after `connect` on purpose: a key connected in the checklist
-# can be the thing that makes a model available to read the answers.
-STAGES = ("welcome", "agent_name", "basics", "connect", "knowledge", "reader",
+# The order is the first-run spec's (A0.2): how to talk, the offer, her
+# identity, who you are, where she may think, then connections and the rest.
+# The lock (the vault passphrase) is on the consent screens, before this chat,
+# so nothing personal is asked before it exists. `reader` comes after
+# `connect` on purpose: a key connected in the checklist can be the thing that
+# makes a model available to read the answers.
+STAGES = ("welcome", "offer", "agent_name", "voice", "pronouns", "framing",
+          "about_name", "about_city", "about_tz", "basics", "posture", "never_send",
+          "connect", "knowledge", "reader",
           "research_ask", "research_seeds", "questions", "style",
-          "research_review", "scheduled_cloud", "room_voice", "brain_warm",
+          "research_review", "money", "scheduled_cloud", "routines",
+          "memory_rules", "household", "room_voice", "brain_warm",
           "finish", "done")
 
 #: What the progress rail shows. Several internal stages share a label.
 STAGE_GROUPS = (
-    ("hello", "Hello", ("welcome", "agent_name", "basics")),
+    ("hello", "Hello", ("welcome", "offer")),
+    ("me", "Me", ("agent_name", "voice", "pronouns", "framing")),
+    ("you", "You", ("about_name", "about_city", "about_tz", "basics")),
+    ("privacy", "Privacy", ("posture", "never_send")),
     ("connect", "Connect", ("connect",)),
     ("knowledge", "Your files", ("knowledge",)),
     ("research", "Research", ("reader", "research_ask", "research_seeds")),
-    ("about", "About you", ("questions",)),
-    ("style", "Your Friday", ("style", "research_review")),
-    ("finish", "Finish", ("scheduled_cloud", "room_voice", "brain_warm",
-                          "finish", "done")),
+    ("about", "Style", ("questions", "style", "research_review")),
+    ("routine", "Money & routines", ("money", "scheduled_cloud", "routines")),
+    ("house", "House rules", ("memory_rules", "household", "room_voice", "brain_warm")),
+    ("finish", "Finish", ("finish", "done")),
 )
 
 SET_UP_LATER = "Set up later"
 SKIP = "Skip"
 RATHER_NOT = "Rather not say"
+#: "Use recommended for the rest": shown only on a step that has a
+#: recommendation; it fills unanswered choices and says which it filled.
+USE_RECOMMENDED = "Use recommended for the rest"
+RECOMMENDED_SUFFIX = " (recommended)"
 
 # Words that, typed on their own, mean "skip this one".
 SKIP_WORDS = ("skip", "pass", "next", "rather not say", "rather not",
               "no comment", "prefer not to say", "n/a")
 
 
-# ── Stage 1: hello ───────────────────────────────────────────────────────────
+# ── Stage 1: hello, the contract, talk or type ───────────────────────────────
+
+#: Said first, before any question (first-run spec A14).
+CONTRACT = (
+    "1. I run on this PC. Nothing about you goes to the people who made me. Ever.\n"
+    "2. You decide where I think: only here, or the cloud for some things.\n"
+    "3. I ask before I send, spend or delete anything.\n"
+    "4. You can see everything I remember, and change or delete it.\n"
+    "5. You can stop setup any time; I'll remember where we were.\n"
+    "6. I'm not a lawyer or a financial adviser. When I help with your rights "
+    "or your money, I'll show you my sources.")
 
 WELCOME = (
-    "Hi. I'm Friday. Let's get me set up, which takes a few minutes and is "
-    "entirely optional: you can type, tap an answer, skip anything, or leave "
-    "with \"Set up later\" whenever you like.\n\n"
-    "First things first: what should I call you?")
+    "Hi. I'm Friday. Six promises before anything else:\n\n" + CONTRACT + "\n\n"
+    "Setup takes about 20 minutes. You can stop at any point and I'll pick up "
+    "where we left off. Whatever you skip uses the safe default and can be "
+    "changed later.\n\n"
+    "Would you rather talk to me or type? You can switch any time.")
 
 WELCOME_BACK = (
     "Welcome back. Nothing you connected or taught me is lost by running "
-    "this again; we'll just revisit each part. What should I call you?")
+    "this again; we'll just revisit each part. The same promises hold:\n\n"
+    + CONTRACT + "\n\nWould you rather talk to me or type?")
 
-AGENT_NAME = (
-    "Nice to meet you, {name}. And what would you like to call me? Most "
-    "people keep Friday.")
+TALK_CHIPS = (("talk", "Talk"), ("type", "Type"),
+              ("screen_reader", "I use a screen reader"))
 
-AGENT_NAME_NO_NAME = (
-    "That's fine, I don't need a name to be useful. What would you like to "
-    "call me? Most people keep Friday.")
+TALK_OK = (
+    "Talking it is. I'll read each line aloud with this computer's own "
+    "built-in voice until my voice is installed; nothing I say leaves this "
+    "PC. To answer by voice, hold Alt+T while you speak if dictation is set up "
+    "here, or just type. Say \"type\" any time to stop me talking.")
+TYPE_OK = "Typing it is. Say \"talk\" any time if you'd rather hear me."
+SCREEN_READER_OK = (
+    "Got it. I won't speak over your screen reader. Every step works with the "
+    "keyboard, nothing here has a time limit, and each new line is announced "
+    "once.")
+
+RESUME = ("We got as far as {where}. Want to carry on? Just answer the "
+          "question above, or use \"Set up later\".")
+
+
+# ── Stage 1b: the offer (first-run spec B0; slice 1 offers the inbox) ─────────
+
+OFFER = (
+    "While we set things up, I can start on something useful. In this "
+    "version that's cleaning up your inbox: I find the newsletters and "
+    "mailing lists you never open, you tick which ones go, and I unsubscribe "
+    "from those the standard one-click way. Finding you money and taking back "
+    "your data are coming in a later update.\n\n"
+    "Want me to clean up your inbox? Or none for now.")
+
+OFFER_CHIPS = (("inbox", "Clean up my inbox"), ("none", "None for now"))
+
+OFFER_INBOX = (
+    "Good. For that I need to read your email, and only read it. When we get "
+    "to connecting things, connect your email and I'll start in the "
+    "background; the list is usually ready 5 to 15 minutes later. Nothing is "
+    "unsubscribed until you tick it.")
+OFFER_NONE = "No problem. I won't ask again. It's in Settings if you change your mind."
+
+
+# ── Stage 2: her identity ────────────────────────────────────────────────────
+
+AGENT_NAME = "First, me. What would you like to call me? Most people keep Friday."
+
+VOICE_ASK = (
+    "{agent} it is. Now pick a voice. These run on this computer: press "
+    "\"Hear it\" beside one to listen, then choose.")
+VOICE_NONE = (
+    "{agent} it is. My own voice isn't installed on this computer yet, so "
+    "there's nothing to listen to right now. You can pick one in Settings > "
+    "Voice once it is.")
+VOICE_LATER = "Choose later"
+VOICE_SET = "{voice} it is."
+VOICE_LATER_OK = "Fine; it waits in Settings > Voice."
+
+PRONOUNS_ASK = (
+    "How should I refer to myself: she, he, they, or something else? If you'd "
+    "rather not choose, I'll just use my name.")
+PRONOUNS_SET = "Thanks. I'll use {p}."
+PRONOUNS_NAME_ONLY = "Then I'll use my name: \"{agent} will look into it.\""
+PRONOUNS_OTHER = (
+    "I can't use those properly yet, so for now I'll use my name instead of a "
+    "pronoun. You can change it in Settings.")
+
+FRAMING_ASK = (
+    "And how do you want to think of me: as an assistant, a colleague, or "
+    "more like family? It changes how I talk about our work, nothing else.")
+FRAMING_SET = "Noted."
+
+
+# ── Stage 3: who you are ─────────────────────────────────────────────────────
+
+ABOUT_NAME = "Now you. What should I call you? A nickname is fine."
+ABOUT_CITY = (
+    "Nice to meet you, {name}. Which city are you in? It helps with weather "
+    "and local news. You can add the state, like \"Springfield, IL\". Skip if "
+    "you'd rather not say.")
+ABOUT_CITY_NO_NAME = (
+    "That's fine. Which city are you in? It helps with weather and local "
+    "news. Skip if you'd rather not say.")
+ABOUT_TZ = "Your time zone looks like {zone} from this computer. Is that right?"
+ABOUT_TZ_ASK = (
+    "Which time zone are you in? For example America/New_York or "
+    "Europe/London.")
+ABOUT_TZ_BAD = (
+    "I don't know that one. Try a name like America/Chicago or Europe/Paris, "
+    "or skip and I'll use this computer's.")
+ABOUT_TZ_CHIPS = (("yes", "Yes"), ("no", "No, it's different"))
+ABOUT_SAVED = (
+    "I've written that on your \"About you\" card, beside this conversation. "
+    "You can change or delete any line. I'll keep your name out of anything I "
+    "send to a cloud model.")
+ABOUT_SAVED_NO_NAME = (
+    "I've written that on your \"About you\" card, beside this conversation. "
+    "You can change or delete any line.")
+ABOUT_NOTHING = "Nothing written about you. You can add it later in Settings."
 
 BASICS = (
-    "{agent} it is. A few quick basics: who this is for, a starting profile "
-    "for how you work, and what this computer can run on its own. You can "
-    "change any of it later in Settings.")
+    "A few quick basics: who this is for, a starting profile for how you "
+    "work, and what this computer can run on its own. You can change any of "
+    "it later in Settings.")
+
+
+# ── Stage 4: where I may think (first-run spec A3) ───────────────────────────
+
+POSTURE_ASK = (
+    "Last big question before we connect anything. Where am I allowed to "
+    "think? There are three choices and nothing is picked for you; the card "
+    "beside this says what each one means and costs. You can change it later "
+    "in Settings.")
+
+POSTURE_LABELS = {"local": "Only on this PC",
+                  "public": "Cloud for public things",
+                  "everything": "Cloud for everything"}
+
+POSTURE_MEANS = {
+    "local": ("Every model runs here. Nothing about you leaves this PC. News "
+              "and podcasts are written by the model on this PC."),
+    "public": ("Your own words, files and mail stay on this PC. When I use the "
+               "cloud for something public, like news or a web search, the "
+               "safeguards hold back anything personal."),
+    "everything": ("Chat and routines may use the cloud. Your never-send list "
+                   "still applies, every call is still checked and logged, and "
+                   "your raw records (mail archives, bank statements) only go "
+                   "if you say yes for that source."),
+}
+#: "Cloud for public things" on a PC that cannot think on its own: what it
+#: really means there, said before the person chooses it.
+POSTURE_MEANS_PUBLIC_NO_LOCAL = (
+    "This PC can't run my thinking model, so our conversations go to the "
+    "cloud with the safeguards on: money, health, legal and identity details "
+    "and your never-send list are held back. Public things (news, web "
+    "searches, briefings) use the cloud too.")
+POSTURE_COSTS = {
+    "local": "No cost. Needs a capable PC, and it's slower.",
+    "public": "Your own cloud bill, for what uses the cloud.",
+    "everything": "Your own cloud bill.",
+}
+POSTURE_LOCAL_PENDING = (
+    "I'm still measuring this computer, so I can't promise that yet. "
+    "Choose another for now, or skip and answer in Settings once it's measured")
+POSTURE_LOCAL_CANT = "This computer can't run {what} well enough on its own"
+POSTURE_SET = {
+    "local": "Done: I think only on this PC.",
+    "public": "Done: your own words stay here; public things may use the cloud, with the safeguards on.",
+    "everything": "Done: I may use the cloud for chat and routines. Your never-send list still applies.",
+}
+POSTURE_UNAVAILABLE = "That one isn't available on this computer: {why}. Pick another, or skip."
+POSTURE_SKIPPED = (
+    "Skipping it for now. Until you choose, every cloud call keeps all the "
+    "safeguards on, and the question waits for you when setup ends.")
+
+NEVER_SEND_ASK = (
+    "Is there anything that must never leave this PC, whatever you chose? "
+    "Names, topics, a client, a project. One per line, or separated by "
+    "commas.\n\n"
+    "Already covered, always: passwords and keys, ID and account numbers, "
+    "your own name and contact details, and the private records in your "
+    "vault.")
+NEVER_SEND_SET = (
+    "Added {n} to your never-send list. If a message to a cloud model "
+    "contains one, I stop it rather than send it.")
+NEVER_SEND_NONE = "Nothing added. The built-in protections still apply."
 
 
 # ── Stage 2: connect everything ──────────────────────────────────────────────
@@ -391,7 +566,7 @@ SCHEDULED_CLOUD_LINE = "- {name}: {model}, about {usd} a month"
 # from another. Skipping keeps the careful answer.
 
 ROOM_VOICE_ASK = (
-    "Last one, and it is about other people. When you talk to me with someone "
+    "On the same subject: when you talk to me with someone "
     "else in the room, I hear everyone, and I cannot yet tell your voice from "
     "theirs.\n\n"
     "That matters for the approvals I ask you for out loud — sending a "
@@ -469,6 +644,86 @@ SCHEDULED_CLOUD_NO = (
 SCHEDULED_CLOUD_SKIPPED = (
     "Skipping it. They stay paused for now, and the question waits in "
     "Settings > Spending.")
+
+
+# ── Money (first-run spec A6; asked only when the cloud is in play) ──────────
+
+MONEY_ASK = (
+    "Some things I can do cost money when they use a cloud model, billed to "
+    "your own account with the provider. Right now nothing is capped. Do you "
+    "want a monthly ceiling? When it's reached, cloud work stops and I tell "
+    "you once; models on this PC keep working.{estimate}")
+MONEY_ESTIMATE = ("\n\nWith what you've chosen so far, my scheduled jobs would "
+                  "cost about {usd} a month. That's an estimate, and it errs high.")
+MONEY_OTHER_HINT = "Or type an amount"
+MONEY_SET = "Set: a ceiling of ${usd:.2f} a month. You can change it in Settings > Spending."
+MONEY_NONE = "No cap, then. You can add one any time in Settings > Spending."
+MONEY_SKIPPED = "Skipping it: nothing is capped. It's in Settings > Spending whenever you want it."
+MONEY_NOT_ASKED = "Nothing I do on this PC costs money, so there's nothing to cap."
+
+
+# ── Routines (first-run spec A7) ─────────────────────────────────────────────
+
+ROUTINES_ASK = (
+    "I can make you a few things on a schedule. Pick any, or none: nothing "
+    "runs unless you tick it. Each one says when it runs and where, and you "
+    "can change the time.")
+ROUTINES_DONE = "Done"
+ROUTINES_NONE = "None for now"
+ROUTINES_SET = "Scheduled: {names}. Everything else is off. You can change any of them in Workflows."
+ROUTINES_SET_NONE = "Nothing is scheduled. You can turn any of these on in Workflows."
+ROUTINE_PODCAST_WHAT = "a short spoken episode of each edition you tick, in my voice"
+ROUTINE_WHERE = {
+    "local": "runs on this PC",
+    "public": "may use the cloud, with the safeguards on",
+    "everything": "may use the cloud",
+    "": "runs on this PC, or waits for it",
+}
+
+
+# ── Memory and approval rules (first-run spec A9) ────────────────────────────
+
+MEMORY_RULES = (
+    "Here's what I remember on my own, and what I always ask about. This is "
+    "how I work today; the card beside this lists both sides.")
+MEMORY_SAVE_WITHOUT_ASKING = (
+    "Things you tell me about yourself, onto your \"About you\" card, which you can see and edit",
+    "Preferences you state, like \"shorter replies\"",
+    "Facts from your sources go to a review queue first, not straight into memory",
+    "My own working notes about how we work together",
+)
+MEMORY_ALWAYS_ASK = (
+    "Anything I'd send: emails, messages, posts, requests, forms",
+    "Anything that spends money",
+    "Anything that deletes or overwrites your files or data",
+    "Any memory change after I've read outside content, like an email or a web page",
+    "Changing a setting, a permission or a rule",
+)
+MEMORY_RULES_CHIPS = (("ok", "Looks right"),)
+MEMORY_RULES_OK = "Good. You can see and change everything I remember in Settings > Privacy & Data."
+
+
+# ── Household (first-run spec A10) ───────────────────────────────────────────
+
+HOUSEHOLD_ASK = "Will anyone else use this PC?"
+HOUSEHOLD_CHIPS = (("no", "No, just me"), ("yes", "Yes"))
+HOUSEHOLD_NO = "Just you, then."
+HOUSEHOLD_YES = (
+    "For now I work for one person per Windows account. The safest way to "
+    "share this PC is for each person to have their own Windows sign-in; each "
+    "gets their own Friday with their own locked data. I can't keep two "
+    "people's things apart inside one account yet. The button beside this "
+    "opens Windows' own page for adding someone. I don't put anything on the "
+    "Windows lock screen.")
+
+
+# ── The receipt (first-run spec A13) ─────────────────────────────────────────
+
+RECEIPT_TITLE = "What we set up"
+RECEIPT_NOTE = ("Each line says who decided: you, the recommended answer you "
+                "accepted, or the safe default because it was skipped. This "
+                "record is kept on this PC and holds no answers, only what "
+                "kind of answer each was.")
 
 
 # ── Stage 6: finish ──────────────────────────────────────────────────────────
