@@ -73,11 +73,18 @@ def test_meeting_code_never_names_a_cloud_provider_or_a_url():
 @pytest.fixture
 def watched(monkeypatch):
     attempts = []
-    # Reading settings during the meeting can ask the local Ollama manager for its model list,
-    # and a stale list (5 s) starts a background refresh of localhost:11434 on its own thread.
-    # That inventory read is not the meeting's, and whether it fires depends on what an earlier
-    # test left in the cache; the canary is about the meeting, so no refresh starts here.
+    # Reading settings during the meeting can ask the local Ollama manager whether it is up and
+    # for its model list; a stale answer starts a background probe of localhost:11434 on its own
+    # thread ('ollama-liveness', 'ollama-models'). Those reads are not the meeting's, and whether
+    # they fire depends on what an earlier test left in the cache; the canary is about the
+    # meeting, so neither probe starts here (a waiter is handed an answered event: not known up).
     from agent_friday.routing import ollama_manager
+
+    def _no_probe(self):
+        done = threading.Event()
+        done.set()
+        return done
+    monkeypatch.setattr(ollama_manager.OllamaManager, "_start_probe", _no_probe)
     monkeypatch.setattr(ollama_manager.OllamaManager, "_start_models_refresh", lambda self: None)
 
     def trip(*a, **k):
