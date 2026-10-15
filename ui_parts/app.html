@@ -12098,7 +12098,8 @@ function CalendarWS(){
 
   const active=sel?dayData:today;
   const events=(active?.events)||[];
-  const gaps=(active?.gaps)||[];
+  // Free time is never drawn from a read that failed.
+  const gaps=active?.read_failed?[]:((active?.gaps)||[]);
   const allDay=events.filter(e=>e.all_day);
   const timed=events.filter(e=>!e.all_day);
   const activeDate=sel||((week.find(d=>d.is_today)||{}).date)||'';
@@ -12109,7 +12110,7 @@ function CalendarWS(){
   const openMediaCard=c=>{if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'media',card:c.id});};
   const conflicts=timed.filter(e=>e.conflict);
   // Events at the same time sit side by side in the Day view too (every calendar makes overlaps common).
-  const dayLanes={};if(window.CalendarViews)window.CalendarViews.lanes(timedAll.filter(x=>!x.media&&x.start_time)).forEach(g=>{dayLanes[g.ev.id]=g;});
+  const dayLanes={};if(window.CalendarViews)window.CalendarViews.lanes(timedAll.filter(x=>!x.media&&x.start_time),{hourPx:CAL_HOUR_PX,minH:34}).forEach(g=>{dayLanes[g.ev.id]=g;});
   const hours=[];for(let h=CAL_START_HOUR;h<CAL_END_HOUR;h++)hours.push(h);
   const showNow=!sel; // only show now-line on the actual today view
   const nowY=calY(now.toISOString());const nowVisible=now.getHours()>=CAL_START_HOUR;
@@ -12154,8 +12155,8 @@ function CalendarWS(){
 
     {/* Timeline */}
     {window.CalendarViews&&((active?.errors)||[]).length>0&&<window.CalendarViews.Errors errors={active.errors}/>}
-    {active?.read_failed&&timedAll.length===0?<div className="msg-empty" role="alert">Couldn't read your calendar. Google did not answer; this day may not be empty. <button className="btn" onClick={()=>reloadDay()}>Try again</button></div>:
-     timedAll.length===0&&gaps.length===0?<div className="msg-empty">No timed events. {sel?'':'Enjoy the open day, or quick-add something above.'}</div>:
+    {active?.read_failed&&<div className="msg-empty" role="alert">Couldn't read your calendar. Google did not answer; this day may not be empty. <button className="btn" onClick={()=>reloadDay()}>Try again</button></div>}
+    {timedAll.length===0&&gaps.length===0?(active?.read_failed?null:<div className="msg-empty">No timed events. {sel?'':'Enjoy the open day, or quick-add something above.'}</div>):
     <div className="cal-timeline" ref={tlRef} style={{position:'relative',height:(CAL_END_HOUR-CAL_START_HOUR)*CAL_HOUR_PX+10}}>
       {hours.map(h=><div key={h} className="cal-hour" style={{height:CAL_HOUR_PX}}>
         <span className="cal-hour-label">{h===12?'12 PM':h===0||h===24?'12 AM':h<12?h+' AM':(h-12)+' PM'}</span>

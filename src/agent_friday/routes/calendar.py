@@ -89,19 +89,27 @@ def _read_state(day):
         return {"read_failed": False, "errors": []}
 
 
+def _annotation(day, events, state):
+    """The day's one-line note; never written (or cached) from a read that failed."""
+    if state.get("read_failed"):
+        return "Couldn't read your calendar for this day, so there is nothing to say about it yet."
+    return _day_annotation(day, events)
+
+
 @calendar_bp.route('/api/calendar/today')
 def api_calendar_today():
     """Today's events + gap analysis + Friday's annotation."""
     today = date.today()
     events = _enrich_events(_events_for_day(today))
-    gaps = _gap_analysis(events, today)
+    state = _read_state(today)
+    gaps = [] if state["read_failed"] else _gap_analysis(events, today)
     return jsonify({
         "status": "ok",
         "date": today.isoformat(),
         "events": events,
         "gaps": gaps,
-        **_read_state(today),
-        "annotation": _day_annotation(today, events),
+        **state,
+        "annotation": _annotation(today, events, state),
         # Was `_google_credentials() is not None`, which asks whether the
         # PRIMARY account can produce a credential - not whether Calendar is
         # usable across the accounts that have it switched on. See
@@ -153,10 +161,11 @@ def api_calendar_day(day_str):
     except Exception:
         return jsonify({"status": "error", "message": "use YYYY-MM-DD"}), 400
     events = _enrich_events(_events_for_day(d))
+    state = _read_state(d)
     return jsonify({
-        "status": "ok", "date": d.isoformat(), "events": events, **_read_state(d),
-        "gaps": _gap_analysis(events, d),
-        "annotation": _day_annotation(d, events),
+        "status": "ok", "date": d.isoformat(), "events": events, **state,
+        "gaps": [] if state["read_failed"] else _gap_analysis(events, d),
+        "annotation": _annotation(d, events, state),
     })
 
 
@@ -210,7 +219,11 @@ def api_calendar_range():
             return api_error(e, "Couldn't read your calendars")
     else:
         for i in range((d1 - d0).days):
-            events.extend(_events_for_day(d0 + timedelta(days=i)))
+            day = d0 + timedelta(days=i)
+            events.extend(_events_for_day(day))
+            if _read_state(day)["read_failed"]:
+                # The older one-calendar connection could not be read: an error, never an empty week.
+                return jsonify({"status": "error", "message": "Couldn't read your calendar."}), 502
     for le in _load_local_events():
         sdt = _parse_dt(le.get("start_time"))
         if sdt and start <= sdt < end and le.get("id") not in {e.get("id") for e in events}:

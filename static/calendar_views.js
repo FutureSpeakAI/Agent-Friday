@@ -141,19 +141,23 @@
 
   // Where an event's block ends on its start day's grid: an end on a later day (midnight included) runs to the
   // bottom; no end means an hour.
-  function endY(ev, top) {
-    if (!ev.end_time) return top + HOUR_PX;
-    if (dayKeyOf(ev.end_time) !== dayKeyOf(ev.start_time)) return (END_HOUR - START_HOUR) * HOUR_PX;
-    return yOf(ev.end_time);
+  function endY(ev, top, hourPx) {
+    const px = hourPx || HOUR_PX;
+    if (!ev.end_time) return top + px;
+    if (dayKeyOf(ev.end_time) !== dayKeyOf(ev.start_time)) return (END_HOUR - START_HOUR) * px;
+    return yOf(ev.end_time) * px / HOUR_PX;
   }
-  // Overlapping timed events share their column: each takes a lane, and the lanes split the width.
-  function lanes(evs) {
-    const sorted = evs.slice().sort((a, b) => yOf(a.start_time) - yOf(b.start_time));
+  // Overlapping timed events share their column: each takes a lane, and the lanes split the width. `opts` gives the
+  // grid's hour height and smallest block (the Day view draws 52 px hours and 34 px blocks; the Week view 48 and 22).
+  function lanes(evs, opts) {
+    const px = (opts && opts.hourPx) || HOUR_PX, minH = (opts && opts.minH) || 22;
+    const y = s => yOf(s) * px / HOUR_PX;
+    const sorted = evs.slice().sort((a, b) => y(a.start_time) - y(b.start_time));
     const out = [], ends = [];
     let group = [], groupEnd = -1;
     const flush = () => { const n = Math.max(1, ...group.map(g => g.lane + 1)); group.forEach(g => { g.of = n; }); group = []; };
     sorted.forEach(ev => {
-      const top = yOf(ev.start_time), bot = Math.max(top + 22, endY(ev, top));
+      const top = y(ev.start_time), bot = Math.max(top + minH, endY(ev, top, px));
       if (top >= groupEnd) { flush(); ends.length = 0; groupEnd = -1; }
       let lane = ends.findIndex(e => e <= top);
       if (lane < 0) { lane = ends.length; ends.push(bot); } else ends[lane] = bot;

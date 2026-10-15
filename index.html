@@ -39097,7 +39097,8 @@ function CalendarWS() {
   };
   const active = sel ? dayData : today;
   const events = active?.events || [];
-  const gaps = active?.gaps || [];
+  // Free time is never drawn from a read that failed.
+  const gaps = active?.read_failed ? [] : active?.gaps || [];
   const allDay = events.filter(e => e.all_day);
   const timed = events.filter(e => !e.all_day);
   const activeDate = sel || (week.find(d => d.is_today) || {}).date || '';
@@ -39109,7 +39110,7 @@ function CalendarWS() {
   const conflicts = timed.filter(e => e.conflict);
   // Events at the same time sit side by side in the Day view too (every calendar makes overlaps common).
   const dayLanes = {};
-  if (window.CalendarViews) window.CalendarViews.lanes(timedAll.filter(x => !x.media && x.start_time)).forEach(g => { dayLanes[g.ev.id] = g; });
+  if (window.CalendarViews) window.CalendarViews.lanes(timedAll.filter(x => !x.media && x.start_time), { hourPx: CAL_HOUR_PX, minH: 34 }).forEach(g => { dayLanes[g.ev.id] = g; });
   const hours = [];
   for (let h = CAL_START_HOUR; h < CAL_END_HOUR; h++) hours.push(h);
   const showNow = !sel; // only show now-line on the actual today view
@@ -39227,15 +39228,15 @@ function CalendarWS() {
     }
   }, "(all day)")))), window.CalendarViews && (active?.errors || []).length > 0 ? /*#__PURE__*/React.createElement(window.CalendarViews.Errors, {
     errors: active.errors
-  }) : null, active?.read_failed && timedAll.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }) : null, active?.read_failed ? /*#__PURE__*/React.createElement("div", {
     className: "msg-empty",
     role: "alert"
   }, "Couldn't read your calendar. ", "Google did not answer; this day may not be empty. ", /*#__PURE__*/React.createElement("button", {
     className: "btn",
     onClick: () => reloadDay()
-  }, "Try again")) : timedAll.length === 0 && gaps.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "Try again")) : null, timedAll.length === 0 && gaps.length === 0 ? (active?.read_failed ? null : /*#__PURE__*/React.createElement("div", {
     className: "msg-empty"
-  }, "No timed events. ", sel ? '' : 'Enjoy the open day, or quick-add something above.') : /*#__PURE__*/React.createElement("div", {
+  }, "No timed events. ", sel ? '' : 'Enjoy the open day, or quick-add something above.')) : /*#__PURE__*/React.createElement("div", {
     className: "cal-timeline",
     ref: tlRef,
     style: {

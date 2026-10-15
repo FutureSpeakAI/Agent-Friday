@@ -146,7 +146,8 @@ def _list_one_account(acct: dict | None) -> tuple[list[dict], dict]:
     """(calendars, account note) for one account; acct None = the legacy token."""
     aid = acct.get("id") if acct else None
     label = (acct or {}).get("label") or (acct or {}).get("email") or "Google"
-    note = {"account_id": aid, "label": label, "email": (acct or {}).get("email") or "",
+    acct_email = (acct or {}).get("email") or ""
+    note = {"account_id": aid, "label": label, "email": acct_email,
             "can_list": bool(acct) and can_list(acct), "reason": ""}
     color = DEFAULT_COLOR
     if acct:
@@ -158,7 +159,7 @@ def _list_one_account(acct: dict | None) -> tuple[list[dict], dict]:
     primary_only = [{"key": key_of(aid, "primary"), "account_id": aid, "account_label": label,
                      "calendar_id": "primary", "name": label, "color": color, "text_color": "#000000",
                      "primary": True, "access_role": "owner", "google_selected": True,
-                     "default_reminders": [], "time_zone": "", "listed": False}]
+                     "default_reminders": [], "time_zone": "", "listed": False, "account_email": acct_email}]
     if not note["can_list"]:
         note["reason"] = ("This connection can read only its main calendar. Reconnect Google in "
                           "Settings > Connections to see the others." if acct else
@@ -198,7 +199,7 @@ def _list_one_account(acct: dict | None) -> tuple[list[dict], dict]:
             "primary": is_primary, "access_role": it.get("accessRole") or "reader",
             "google_selected": bool(it.get("selected")) and not it.get("hidden"),
             "default_reminders": _reminders(it.get("defaultReminders")),
-            "time_zone": it.get("timeZone") or "", "listed": True,
+            "time_zone": it.get("timeZone") or "", "listed": True, "account_email": acct_email,
         })
     cals.sort(key=lambda c: (not c["primary"], c["name"].lower()))
     return (cals or primary_only), note
@@ -231,9 +232,18 @@ def cached_calendars(fresh_for: float = 600) -> dict:
 
 # ── events ───────────────────────────────────────────────────────────────────
 
-def _self_rsvp(ev: dict) -> str:
+def _is_owner(person: dict, cal: dict) -> bool:
+    """Google's `self` means "the calendar this copy sits on", which on a shared calendar
+    is someone else. It is the owner only on her primary calendar, or by her own address."""
+    if not person.get("self"):
+        return False
+    email = str(person.get("email") or "").lower()
+    return bool(cal.get("primary")) or (bool(email) and email == str(cal.get("account_email") or "").lower())
+
+
+def _self_rsvp(ev: dict, cal: dict) -> str:
     for a in ev.get("attendees") or []:
-        if a.get("self"):
+        if _is_owner(a, cal):
             return str(a.get("responseStatus") or "needsAction")
     return ""
 
@@ -249,7 +259,9 @@ def normalize(ev: dict, cal: dict) -> dict | None:
     else:
         reminders, source = _reminders(rem.get("overrides")), "event"
     cid = str(ev.get("colorId") or "")
-    organizer_self = bool((ev.get("organizer") or {}).get("self")) or not ev.get("organizer")
+    org = ev.get("organizer") or {}
+    # The calendar this copy sits on organises it: hers to change if she may write to that calendar.
+    organizer_self = bool(org.get("self")) or not org
     role = cal.get("access_role") or "reader"
     can_edit = role in ("owner", "writer") and (organizer_self or bool(ev.get("guestsCanModify")))
     return {
@@ -272,7 +284,7 @@ def normalize(ev: dict, cal: dict) -> dict | None:
         "color_id": cid,
         "reminders": reminders,
         "reminders_source": source,
-        "self_rsvp": _self_rsvp(ev),
+        "self_rsvp": _self_rsvp(ev, cal),
         "organizer_self": organizer_self,
         "can_edit": can_edit,
         "recurring": bool(ev.get("recurringEventId")),
@@ -311,10 +323,11 @@ def _bounds(start, end) -> tuple[str, str]:
 
 
 def _rank(ev: dict, cal_by_key: dict) -> tuple:
-    """When the same event sits on two calendars (an invitation on a shared one),
-    keep the copy on a calendar the owner can edit, then the primary one."""
+    """When the same event sits on two calendars (an invitation that is also on a shared
+    calendar), keep the owner's own copy on her primary calendar: her reply and what she
+    may change are judged there, never on someone else's copy. Then an editable copy."""
     cal = cal_by_key.get(ev.get("calendar_key")) or {}
-    return (not ev.get("can_edit"), not cal.get("primary"), ev.get("calendar_key") or "")
+    return (not cal.get("primary"), not ev.get("can_edit"), ev.get("calendar_key") or "")
 
 
 def events_in_range(start: datetime, end: datetime, *, keys=None, calendars=None) -> dict:

@@ -70,3 +70,18 @@ def test_switching_a_calendar_writes_friday_only(client, views, tmp_path):
     assert r.status_code == 200 and r.get_json()["visible"] == {"home|fam": False}
     assert (tmp_path / "visible.json").is_file()
     assert client.post("/api/calendar/calendars/visible", json={"changes": {}}).status_code == 400
+
+
+def test_a_day_whose_read_failed_gets_no_free_gaps_and_no_note_written_from_nothing(client, monkeypatch):
+    import agent_friday.routes.calendar as rc
+    from agent_friday.services import calendar_engine as ce
+    from agent_friday.services import calendar_views as cv
+    monkeypatch.setattr(rc, "_events_for_day", lambda d: [])
+    monkeypatch.setattr(ce, "range_failed", lambda s, e: True)
+    monkeypatch.setattr(cv, "errors_for", lambda s, e: [])
+
+    def no_note(*a, **k):
+        raise AssertionError("a note was written from a failed read")
+    monkeypatch.setattr(rc, "_day_annotation", no_note)
+    d = client.get("/api/calendar/day/2026-10-20").get_json()
+    assert d["read_failed"] is True and d["gaps"] == [] and d["annotation"].startswith("Couldn't read")

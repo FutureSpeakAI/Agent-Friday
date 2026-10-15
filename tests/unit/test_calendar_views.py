@@ -235,3 +235,22 @@ def test_the_calendars_that_failed_are_kept_with_their_day_even_when_the_read_is
     ce._fetch_calendar_range(DAY, DAY + timedelta(days=1))
     cv.events_in_range(DAY + timedelta(days=3), DAY + timedelta(days=4))     # another range read in between
     assert [e["name"] for e in cv.errors_for(DAY, DAY + timedelta(days=1))] == ["Family"]
+
+
+def test_on_someone_elses_calendar_googles_self_is_not_the_owner_and_her_own_copy_wins():
+    from agent_friday.services import calendar_views as cv
+    mine = {"key": "home|primary", "primary": True, "account_email": "me@home.example", "access_role": "owner",
+            "calendar_id": "primary", "name": "Home"}
+    shared = {"key": "home|col", "primary": False, "account_email": "me@home.example", "access_role": "writer",
+              "calendar_id": "colleague@work.example", "name": "Colleague"}
+    on_shared = _ev("inv", "Budget review", 14, organizer={"email": "boss@work.example"},
+                    attendees=[{"email": "colleague@work.example", "self": True, "responseStatus": "accepted"},
+                               {"email": "me@home.example", "responseStatus": "needsAction"}])
+    on_mine = _ev("inv", "Budget review", 14, organizer={"email": "boss@work.example"},
+                  attendees=[{"email": "colleague@work.example", "responseStatus": "accepted"},
+                             {"email": "me@home.example", "self": True, "responseStatus": "needsAction"}])
+    a, b = cv.normalize(on_shared, shared), cv.normalize(on_mine, mine)
+    assert a["self_rsvp"] == "", "the colleague's reply is not hers to show or change"
+    assert b["self_rsvp"] == "needsAction"
+    by = {c["key"]: c for c in (mine, shared)}
+    assert sorted([a, b], key=lambda e: cv._rank(e, by))[0]["calendar_key"] == "home|primary"
