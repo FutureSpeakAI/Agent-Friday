@@ -75,3 +75,18 @@ def test_a_move_under_the_owners_permission_uses_this_renders_reload():
 
 def test_only_a_timed_google_event_the_owner_may_edit_can_be_dragged():
     assert "function canMove(ev) { return !!ev && !ev.media && !ev.all_day && ev.can_edit === true && ev.source === 'google'; }" in JS
+
+
+def test_the_owners_permission_is_shown_while_it_lasts_and_can_be_ended():
+    layer = JS[JS.index("function MoveLayer("):JS.index("function QuickAddPreview(")]
+    assert "Moving without asking for " in layer and "'Ask again'" in layer and "moveGrantUntil = 0;" in layer
+
+
+def test_undo_is_said_as_done_only_when_the_receipt_says_complete():
+    layer = JS[JS.index("function MoveLayer("):JS.index("function QuickAddPreview(")]
+    assert "d.result.status === 'complete'" in layer
+
+
+def test_one_move_at_a_time():
+    layer = JS[JS.index("function MoveLayer("):JS.index("function QuickAddPreview(")]
+    assert "if (!p || !p.ev || busyRef.current) return;" in layer

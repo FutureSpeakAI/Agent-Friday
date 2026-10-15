@@ -473,7 +473,7 @@ def api_calendar_move_event(event_id):
         return jsonify({"status": "error", "message": "not an event id"}), 400
     aid, cid = _calendar_of(data.get("calendar_key"))
     if cid is None:
-        return jsonify({"status": "error", "message": "that calendar is not one Friday knows"}), 400
+        return jsonify({"status": "error", "message": "that calendar is not one of the calendars shown here"}), 400
     try:
         out = item_actions.move_event_by_owner(event_id, start=str(data.get("start_time") or ""),
                                                end=str(data.get("end_time") or ""), calendar_id=cid,
