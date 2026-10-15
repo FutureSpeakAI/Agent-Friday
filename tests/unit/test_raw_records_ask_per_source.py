@@ -26,7 +26,7 @@ def _clear():
         jg._DENY_SPANS.clear()
     if hasattr(jg, "_RAW_HOLDS"):
         jg._RAW_HOLDS.clear()
-        jg._RAW_LOADED.update(done=False, overflow=False)
+        jg._RAW_LOADED.update(done=False, overflow=False, unreadable=False)
     getattr(fg, "_RAW_ASKED", {}).clear()
 
 
@@ -71,11 +71,17 @@ def test_what_counts_as_a_raw_record(tmp_path):
     assert rr.kind_of("holiday photos.pdf") is None and rr.kind_of("notes.md") is None
     inbox = tmp_path / "Inbox"
     inbox.write_bytes(b"From someone@example.test Mon Oct 12 10:00:00 2026\nSubject: hi\n\nbody\n")
+    tbird = tmp_path / "Sent"
+    tbird.write_bytes(b"\xef\xbb\xbf\nFrom - Mon Jan 05 10:00:00 2026\nX-Mozilla-Status: 0001\n")
     ofx = tmp_path / "download"
     ofx.write_bytes(b"OFXHEADER:100\nDATA:OFXSGML\n")
     plain = tmp_path / "readme"
     plain.write_bytes(b"From the start, this is just notes.\n")
     assert rr.kind_of(inbox) == "mail" and rr.kind_of(ofx) == "finance" and rr.kind_of(plain) is None
+    assert rr.kind_of(tbird) == "mail", "Thunderbird's separator, after a BOM and a blank line"
+    photo = tmp_path / "holiday.jpg"
+    photo.write_bytes(b"From someone@example.test")
+    assert rr.kind_of(photo) is None, "a file with its own extension is not opened to look"
 
 
 def test_a_folder_permission_does_not_cover_a_mail_archive(cards, tmp_path):
@@ -122,7 +128,7 @@ def test_the_hold_survives_a_restart(cards, tmp_path):
     raw = (tmp_path / "home" / "privacy" / "raw_record_holds.bin").read_bytes()
     assert b"balance" not in raw and b"customer" not in raw, "hashes, encrypted, never the text"
     jg._RAW_HOLDS.clear()
-    jg._RAW_LOADED.update(done=False, overflow=False)        # a new process
+    jg._RAW_LOADED.update(done=False, overflow=False, unreadable=False)        # a new process
     assert jg.never_send_hits(PARA)
 
 
@@ -167,3 +173,58 @@ def test_with_everything_kept_on_this_pc_nothing_is_asked(cards, tmp_path, monke
     p = _archive(tmp_path)
     assert fg.on_file_read(p, ARCHIVE).state == "held_raw_record"
     assert cards == []
+
+
+def test_fridays_own_page_notes_are_never_held(cards, tmp_path):
+    body = ARCHIVE + "\n\n[... 40 more lines: continue with read_file offset=2001.]\n...[extraction truncated to the first pages of this document]"
+    p = _archive(tmp_path, body=body)
+    fg.on_file_read(p, body)
+    assert not jg.never_send_hits("[... 12 more lines: continue with read_file offset=2001.]")
+    assert not jg.never_send_hits("...[extraction truncated to the first pages of this document]")
+    from agent_friday.services.library.envelope import FILE_PREAMBLE
+    assert not jg.never_send_hits(FILE_PREAMBLE)
+    assert jg.never_send_hits(PARA)
+
+
+def test_a_statements_short_lines_are_held_whole(cards, tmp_path):
+    qif = "!Type:Bank\nD01/03/2026\nT-23.99\nPGROCERY 4471\n^\n"
+    p = _archive(tmp_path, "checking.qif", qif)
+    fg.on_file_read(p, qif)
+    assert jg.never_send_hits("the line was\nT-23.99\nin the file")
+    assert not jg.never_send_hits("it cost T-23.99 in total"), "matched only as a whole line"
+
+
+def test_a_json_escaped_payload_is_checked_as_text(cards, tmp_path):
+    import json
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    payload = json.dumps({"tool_result": "Quoted: \u201c" + PARA + "\u201d\n" + PARA})
+    assert jg.never_send_hits(payload)
+
+
+def test_a_store_that_cannot_be_written_fails_closed_until_a_write_succeeds(cards, tmp_path, monkeypatch):
+    from agent_friday.services import credential_store as cs
+    real = cs.write_secret
+    monkeypatch.setattr(cs, "write_secret", lambda *a, **k: (_ for _ in ()).throw(OSError("no key")))
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    assert jg.never_send_hits("An unrelated message that is long enough to count."), "fail closed"
+    jg._RAW_HOLDS.clear()
+    jg._RAW_LOADED.update(done=False, overflow=False, unreadable=False)        # a restart
+    assert jg.never_send_hits("An unrelated message that is long enough to count."), "still closed after a restart"
+    monkeypatch.setattr(cs, "write_secret", real)
+    other = _archive(tmp_path, "Old.mbox", "Another archive with a line that is long enough.")
+    fg.on_file_read(other, "Another archive with a line that is long enough.")
+    assert not jg.never_send_hits("An unrelated message that is long enough to count."), "repaired by a full write"
+    assert jg.never_send_hits("Another archive with a line that is long enough.")
+
+
+def test_an_unreadable_store_is_never_overwritten(cards, tmp_path):
+    store = tmp_path / "home" / "privacy" / "raw_record_holds.bin"
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_bytes(b"not something Friday can decrypt")
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    assert store.read_bytes() == b"not something Friday can decrypt"
+    assert jg.never_send_hits("An unrelated message that is long enough to count.")
+    assert jg.raw_hold_status()["fail_closed"] is True

@@ -124,7 +124,7 @@ def setup_chat_goto():
 @setup_chat_bp.route("/api/setup-chat/use-recommended", methods=["POST"])
 def setup_chat_use_recommended():
     try:
-        return jsonify({"ok": True, **sc.use_recommended()})
+        return jsonify({"ok": True, **sc.use_recommended(str(_body().get("stage") or ""))})
     except sc.Refused as e:
         return _refused(e)
     except sc.Conflict as e:

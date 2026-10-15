@@ -136,7 +136,8 @@ def cached(name: str) -> dict | None:
 
 
 def _versions_path() -> Path:
-    return cache_dir() / "versions.json"
+    # Outside the cache folder on purpose: deleting the cache must not reset it.
+    return friday_home() / "privacy" / "public_list_versions.json"
 
 
 def _highest_seen(name: str) -> int:
@@ -150,6 +151,7 @@ def _highest_seen(name: str) -> int:
 
 def _note_version(name: str, version: int) -> None:
     p = _versions_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
     try:
         seen = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
     except Exception:

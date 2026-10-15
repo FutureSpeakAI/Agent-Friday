@@ -40,7 +40,11 @@ def kind_of(path) -> str | None:
         return "finance"
     if suffix in STATEMENT_SUFFIXES and _STATEMENT_NAME.search(p.stem or ""):
         return "finance"
-    return _sniff(p)
+    # Only a file whose name says nothing is opened to look (a mailbox has no
+    # extension; an export sometimes ends in .txt): never every file a check sees.
+    if suffix in ("", ".txt"):
+        return _sniff(p)
+    return None
 
 
 def _sniff(p: Path) -> str | None:
@@ -54,8 +58,10 @@ def _sniff(p: Path) -> str | None:
             head = f.read(SNIFF_BYTES)
     except OSError:
         return None
+    head = head.lstrip(b"\xef\xbb\xbf").lstrip()
     first = head.split(b"\n", 1)[0]
-    if first.startswith(b"From ") and b"@" in first or first.startswith(b"From MAILER-DAEMON"):
+    # mbox separators: "From addr date", "From - date" (Thunderbird), "From MAILER-DAEMON ..."
+    if first.startswith(b"From ") and (b"@" in first or first.startswith((b"From - ", b"From MAILER-DAEMON"))):
         return "mail"
     if b"OFXHEADER" in head[:100] or head.lstrip().upper().startswith(b"<OFX>"):
         return "finance"
