@@ -278,6 +278,10 @@ def api_calendar_freebusy():
             return api_error(e, "Couldn't read your calendars")
         events, errors = got["events"], got["errors"]
         read = [c for c in got["calendars"] if (c["key"] in (_keys_arg() or [])) or (not _keys_arg() and c.get("on"))]
+        if not read:
+            # Nothing was read (no calendar switched on, or the chosen one is gone): not a free week.
+            return jsonify({"status": "error", "message": "No calendar is switched on, so there is no free time "
+                            "to work out. Switch one on under Calendars."}), 409
         if errors and not events and len(errors) >= len(read):
             # Every calendar failed: an error, never a free week.
             return jsonify({"status": "error", "message": "Couldn't read any of your calendars, so free time "
@@ -291,9 +295,18 @@ def api_calendar_freebusy():
             if ce_range_failed(dstart, dstart + timedelta(days=1)):
                 return jsonify({"status": "error", "message": "Couldn't read your calendar, so free time "
                                 "can't be worked out."}), 502
+    if not _keys_arg():
+        # Events kept on this PC (quick add without Google) take time too, as in the other views.
+        for le in _load_local_events():
+            sdt = _parse_dt(le.get("start_time"))
+            if sdt and start <= sdt < end:
+                events.append(dict(le, start_time=sdt.astimezone().isoformat(),
+                                   end_time=(_parse_dt(le.get("end_time")) or sdt + timedelta(hours=1)).astimezone().isoformat(),
+                                   calendar_name="On this PC"))
     out = cv.free_busy(events, start.astimezone(), end.astimezone())
+    # With some calendars unread, free time is only "free on the calendars read", and says so.
     return jsonify({"status": "ok", "start": d0.isoformat(), "end": d1.isoformat(),
-                    "errors": errors, **out})
+                    "errors": errors, "partial": bool(errors), **out})
 
 
 @calendar_bp.route('/api/calendar/event/<event_id>')

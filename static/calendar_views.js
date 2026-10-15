@@ -551,13 +551,15 @@
     const r = rangeFor('week', props.anchor);
     const [st, setSt] = useState({ loading: true, data: null, failed: '' });
     const keys = (props.keys || []).join(',');
+    const k = r.start + '|' + keys;
     useEffect(() => {
       let live = true;
-      setSt(s => Object.assign({}, s, { loading: true }));
+      // Another week (or other calendars) starts empty while it is worked out; a reread keeps what is shown.
+      setSt(s => (s.key === k ? Object.assign({}, s, { loading: true }) : { loading: true, data: null, failed: '', key: k }));
       api('/api/calendar/freebusy?start=' + r.start + '&end=' + r.end + (keys ? '&keys=' + encodeURIComponent(keys) : ''))
         .then(x => x.json().then(d => ({ ok: x.ok, d })))
-        .then(({ ok, d }) => { if (live) setSt({ loading: false, data: ok ? d : null, failed: ok ? '' : (d.message || 'The calendar did not answer.') }); })
-        .catch(() => { if (live) setSt({ loading: false, data: null, failed: 'The calendar did not answer.' }); });
+        .then(({ ok, d }) => { if (live) setSt({ loading: false, data: ok ? d : null, failed: ok ? '' : (d.message || 'The calendar did not answer.'), key: k }); })
+        .catch(() => { if (live) setSt({ loading: false, data: null, failed: 'The calendar did not answer.', key: k }); });
       return () => { live = false; };
     }, [r.start, keys, props.reloadKey]);
     if (st.loading && !st.data) return h(State, { kind: 'loading', line1: 'Working out your free time…' });
@@ -567,7 +569,9 @@
     const w = d.working || {};
     return h('div', { className: 'calv-week calv-fb', 'data-cal-range': r.start },
       h(Errors, { errors: d.errors }),
-      h('div', { className: 'calv-fb-sum', role: 'status' }, durText(d.free_minutes) + ' free this week inside working hours (' + w.start + '–' + w.end + '). Only calendar names are shown here, never titles.'),
+      h('div', { className: 'calv-fb-sum', role: 'status' }, (d.partial
+        ? durText(d.free_minutes) + ' free on the calendars that could be read, inside working hours (' + w.start + '–' + w.end + '). Some calendars could not be read, so this may not be free.'
+        : durText(d.free_minutes) + ' free this week inside working hours (' + w.start + '–' + w.end + ').') + ' Only calendar names are shown here, never titles.'),
       h('div', { className: 'calv-week-head' }, h('div', { className: 'calv-gutter' }),
         d.days.map(x => { const dt = parseDay(x.date); return h('button', { key: x.date, type: 'button', className: 'calv-dayhead' + (x.date === today ? ' today' : ''), onClick: () => props.onPickDay(x.date) },
           h('span', { className: 'calv-dow' }, dt.toLocaleDateString([], { weekday: 'short' })), h('span', { className: 'calv-dnum' }, dt.getDate()),
