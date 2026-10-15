@@ -174,6 +174,14 @@ def _user_override_tags() -> str:
         return ''
 
 
+def _build_id_script() -> str:
+    """The build this page was served from, recorded before anything runs, so
+    static/js/friday_build_watch.js can tell when the server behind an open tab
+    has been updated (Part 2 #9: stale tabs). `<` is escaped like the others."""
+    data = json.dumps(_build_id()).replace('<', '\\u003c')
+    return f'<script>window.__FRIDAY_BUILD_ID__={data};</script>'
+
+
 def _serve_index(extra_head: str = ''):
     try:
         with open('index.html', encoding='utf-8') as _f:
@@ -182,7 +190,7 @@ def _serve_index(extra_head: str = ''):
             f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";</script>'  # pragma: allowlist secret
         )
         # Inject early in <head> so the token is available before any fetch calls.
-        _html = _html.replace('<head>', f'<head>\n{_token_script}{_local_address_script()}'
+        _html = _html.replace('<head>', f'<head>\n{_token_script}{_build_id_script()}{_local_address_script()}'
                                         f'{_installed_bundles_script()}{_web_fonts_head()}{extra_head}', 1)
         # The person's own css (~/.friday/overrides/static), AFTER the
         # page's own so it wins; services/user_overrides decides what loads.
@@ -715,6 +723,17 @@ def _version_fields():
     return version, release_name
 
 
+def _build_id():
+    """The build of the page this process serves (services/app_version.build_id),
+    hashed from the same directory `_serve_index` and /static read: the working
+    directory. None if it cannot be computed; the page then never prompts."""
+    try:
+        from agent_friday.services.app_version import build_id
+        return build_id(Path(os.path.abspath('.')))
+    except Exception:
+        return None
+
+
 def _health_fallback():
     """An immediate answer while a computation is slow: the last good payload
     marked stale, else the cheap boot verdict marked as still computing."""
@@ -739,6 +758,7 @@ def _health_fallback():
         "computing": True,
         "version": version,
         "release_name": release_name,
+        "build_id": _build_id(),
         "uptime_seconds": int(_time.time() - SERVER_START_TS),
         "server_start": datetime.fromtimestamp(SERVER_START_TS).isoformat(),
     }
@@ -1006,6 +1026,9 @@ def _health_payload():
         },
         "version": _app_version,
         "release_name": _release_name,
+        # An open tab compares this with the id it loaded with
+        # (window.__FRIDAY_BUILD_ID__) and offers a reload when they differ.
+        "build_id": _build_id(),
         "mood": _mood,
         "memory_entries": _memory_entries,
         "vault_count": _vault_count,

@@ -48,6 +48,12 @@ window.addEventListener('error',function(e){
 <!-- The one door for sandboxed frames (docs/development/frame-broker.md).
      Loaded before the app so iframes can register on mount. -->
 <script src="/static/js/friday_frame_broker.js"></script>
+<!-- Stale tabs: offers a reload (never forces one) when the server's build_id
+     differs from window.__FRIDAY_BUILD_ID__, the build this page came from. -->
+<script src="/static/js/friday_build_watch.js" defer></script>
+<!-- The top-bar plugin slot's registry (documented in the file). Not deferred:
+     add-ons may register before the desktop mounts. -->
+<script src="/static/js/friday_topbar_slot.js"></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -5247,7 +5253,16 @@ window.addEventListener('DOMContentLoaded',function(){
             };
             const KIND_IDS = Object.keys(KINDS);
             const DONE_VISIBLE_MS = 300000;
-            const isFinished = p => !!(p && p.ended) || /^(completed|error|failed|cancelled|timeout|interrupted)$/.test((p && p.status) || '');
+            // One spelling of a task's status for everything that reads it. The
+            // server's tasks say "complete" (agent.py, item_actions, scheduler);
+            // the orb code was written against "completed", so a finished task
+            // never earned its success star. Every reader goes through this.
+            const DONE_WORDS = { complete: 1, completed: 1, done: 1, finished: 1, success: 1, succeeded: 1 };
+            const statusOf = p => {
+                const s = String((p && typeof p === 'object' ? p.status : p) || '').trim().toLowerCase();
+                return DONE_WORDS[s] ? 'completed' : s;
+            };
+            const isFinished = p => !!(p && p.ended) || /^(completed|error|failed|cancelled|timeout|interrupted)$/.test(statusOf(p));
             const clamp01 = v => Math.max(0, Math.min(1, v));
             const num = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
             function fnv(s) {
@@ -5502,7 +5517,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 }
             }
 
-            return { HUES, KINDS, KIND_IDS, DONE_VISIBLE_MS, isFinished, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
+            return { HUES, KINDS, KIND_IDS, DONE_VISIBLE_MS, statusOf, isFinished, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
                      progressOf, orbitRadius, receipt, starAt, keepOut, inKeepOut, liftFor, sparkGate, tint,
                      approvalTask, orbForFrame, formParams };
         })();
@@ -5655,8 +5670,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 for (const t of tasks || []) {
                     const id = t && (t.task_id || t.id);
                     if (!id || t.process || stars.has(id)) continue;
-                    const st = String(t.status || '');
-                    if (!/^(completed|done|failed|error|timeout|cancelled)$/.test(st)) continue;
+                    const st = FridayOrbLife.statusOf(t);
+                    if (!/^(completed|failed|error|timeout|cancelled)$/.test(st)) continue;
                     if (!(Number(t.ended) >= t0)) continue;
                     const failed = /^(failed|error|timeout)$/.test(st);
                     const el = document.createElement('div');
@@ -5865,7 +5880,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
             // ---- one line on where a helper is, from what the server says ----
             function statusLine(o, now) {
-                const s = String(o.status || 'running');
+                const s = FridayOrbLife.statusOf(o) || 'running';
                 const who = Name(o), what = String(now || o.label || '').replace(/\s+/g, ' ').trim().slice(0, 120);
                 if (o.approval_id) return who + ' needs your OK.';
                 if (/^(failed|error|timeout)$/.test(s)) return who + ' failed' + (what ? ': ' + what : '.');
@@ -6152,7 +6167,7 @@ window.addEventListener('DOMContentLoaded',function(){
             function finish(o, s) {
                 // Every finished outcome keeps its orbit and stops the form's spin.
                 s.finished = true;
-                if (o.status === 'completed') receipt(o, s);
+                if (FridayOrbLife.statusOf(o) === 'completed') receipt(o, s);
             }
             async function receipt(o, s) {
                 const id = s.row.task_id;
@@ -6888,7 +6903,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     } else o.finishedAt = null;
                 }
                 if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
-                if (upd.status === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
+                if (FridayOrbLife.statusOf(upd) === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
                 else if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
             }
             removeOrb(id) {
@@ -12062,9 +12077,18 @@ function fridayResolveTarget(t) {
     view: t.view || a.view
   });
 }
+// THE ONE NAVIGATION HELPER. window.fridayOpenWorkspace is a thin alias of
+// this, installed by the desktop while it is mounted (callers test for it to
+// know whether a desktop is here). They used to diverge: fridayNavigate only
+// deep-linked a workspace that was ALREADY open, so a click on a closed one
+// silently did nothing. Now the desktop registers its window opener
+// (window.__fridayOpenWsWindow) and every navigation opens the window first.
 function fridayNavigate(target) {
   if (!target || !target.workspace) return;
   target = fridayResolveTarget(target);
+  if (typeof window.__fridayOpenWsWindow === 'function') {
+    try { window.__fridayOpenWsWindow(target.workspace); } catch (_) {}
+  }
   // A workspace tab shows one workspace: a target in another opens that
   // workspace's own page, carrying the same deep-link keys.
   const here = window.__FRIDAY_STANDALONE__;
@@ -15406,6 +15430,31 @@ class Safe extends React.Component {
     }, "Retry"));
     return this.props.children;
   }
+}
+
+// ═══ TOP-BAR PLUGIN SLOT ═══
+// The mount point for add-on controls registered through
+// window.fridayTopBarSlot (static/js/friday_topbar_slot.js, which documents
+// the contract). Each control gets its own Safe boundary.
+function FridayTopBarPlugins() {
+  const slot = window.fridayTopBarSlot;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const on = () => setTick(n => n + 1);
+    window.addEventListener('friday:topbar-slot', on);
+    return () => window.removeEventListener('friday:topbar-slot', on);
+  }, []);
+  const items = slot ? slot.list() : [];
+  return /*#__PURE__*/React.createElement("div", {
+    id: "friday-topbar-slot",
+    "data-friday-slot": "topbar",
+    role: "group",
+    "aria-label": "Add-ons",
+    style: { display: 'flex', alignItems: 'center', gap: 6 }
+  }, items.map(it => /*#__PURE__*/React.createElement(Safe, {
+    key: it.id,
+    name: 'Add-on ' + it.id
+  }, /*#__PURE__*/React.createElement(it.component, { slot: 'topbar', id: it.id }))));
 }
 
 // ═══ CHAT KEYS ═══
@@ -61786,7 +61835,7 @@ function ScheduledCloudSection() {
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap'
     }
-  }, j.name, " \xB7 ", j.model_label, j.enabled ? '' : ' · switched off'), /*#__PURE__*/React.createElement("span", {
+  }, j.name, " \xB7 ", j.model_label, j.basis === 'measured' ? ' · estimate from ' + j.runs_measured + ' recent runs' : ' · estimate', j.enabled ? '' : ' · switched off'), /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#fff',
       flexShrink: 0,
@@ -65691,6 +65740,9 @@ function App() {
         setConnHealth(r.ok ? 'ok' : 'degraded');
         try {
           const d = await r.json();
+          // Stale tabs: a different build_id than this page loaded with
+          // offers a reload (static/js/friday_build_watch.js); never forces one.
+          if (window.fridayBuildWatch) window.fridayBuildWatch.check(d && d.build_id);
           const m = {};
           (d.inference && d.inference.providers || []).forEach(p => {
             if (p && p.provider) m[p.provider] = p;
@@ -68570,15 +68622,14 @@ function App() {
   }, [cameraOn, cameraSource, cameraIntervalSec]);
   // Global workspace opener — lets any child component (e.g. NewsWS "Share to
   // Draft") open + deep-link a workspace without prop-drilling openWs.
+  // fridayNavigate is the one implementation; this registers the desktop's
+  // window opener with it and keeps fridayOpenWorkspace as its alias.
   useEffect(() => {
-    window.fridayOpenWorkspace = t => {
-      if (!t || !t.workspace) return;
-      t = fridayResolveTarget(t);
-      openWs(t.workspace);
-      fridayNavigate(t);
-    };
+    window.__fridayOpenWsWindow = openWs;
+    window.fridayOpenWorkspace = t => fridayNavigate(t);
     return () => {
       if (window.fridayOpenWorkspace) delete window.fridayOpenWorkspace;
+      if (window.__fridayOpenWsWindow) delete window.__fridayOpenWsWindow;
     };
   }, []);
   /* THE PAGE'S HALF OF navigate_to AND check_situation (routes/desktop.py).
@@ -70084,6 +70135,8 @@ function App() {
   }, "|"),
   shellWorkspaceSwitcher,
   window.FridayDisplayStyleControl && React.createElement(window.FridayDisplayStyleControl),
+  // The top-bar plugin slot (static/js/friday_topbar_slot.js): absent until an add-on registers.
+  window.fridayTopBarSlot && window.fridayTopBarSlot.size() > 0 && React.createElement(FridayTopBarPlugins),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry', onClick:() => shellDesktopView('projects')}, 'Projects'),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry fx-shell-activity', onClick:() => shellDesktopView('activity')}, 'Activity'),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry fx-shell-depth', 'aria-label':'Scene and workspace depth', onClick:() => window.FridayHolographicWorkspace && window.FridayHolographicWorkspace.open()}, '◈ Depth'),
