@@ -267,7 +267,9 @@ def test_with_12_gb_free_every_option_is_listed_greyed_with_its_reason_and_cloud
     for u in out["unfit"]:
         assert u["size"] and re.fullmatch(r"needs \d+ GB free", u["reason"]), u
     front = next(u for u in out["unfit"] if u["id"] == "qwen3-4b-instruct-2507")
-    assert front["size"] == "2.8 GB" and front["reason"] == "needs 22 GB free", front   # 8 + 2.8 + 0.65 + 10, rounded up
+    # 3.0 GB: the 4B front plus its companions -- the streaming ear, its runtime
+    # and the two whisper models push-to-transcribe and transcripts need.
+    assert front["size"] == "3.0 GB" and front["reason"] == "needs 22 GB free", front   # 8 + 3.0 + 0.65 + 10, rounded up
     assert len(out["notes"]) == 1, "said once"
     note = out["notes"][0]
     for part in ("12.2 GB free", "Agent Friday itself needs about 8 GB", "their size plus 10 GB left free afterwards",

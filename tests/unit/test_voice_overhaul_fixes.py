@@ -158,9 +158,18 @@ class TestVoiceInstaller:
         # kokoro-onnx candidate (wheel --no-deps + the 27 MB voices file); the
         # rest are exactly the pinned local-voice artifacts the owner approved
         # (services/voice_artifacts, local voice spec D1), each installable
-        # only with its pins set.
+        # only with its pins set. The "feature:<id>" targets are the Settings
+        # "Features that need a download" buttons (services/feature_models):
+        # one per registered feature, no pip stages of their own, and each
+        # fetches only pinned artifacts from that same list.
         from agent_friday.services.voice_artifacts import ARTIFACTS
+        from agent_friday.services import feature_models as fm
+        features = {"feature:" + fid for fid in fm.FEATURES}
         assert set(vi.TARGETS) == ({"voice-local-lite", "voice-local-gpu",
-                                    "tier1-models", "kokoro-onnx"} | set(ARTIFACTS))
+                                    "tier1-models", "kokoro-onnx"} | set(ARTIFACTS) | features)
         for aid in ARTIFACTS:
             assert vi.TARGETS[aid]["artifact"] == aid and not vi.TARGETS[aid]["stages"]
+        for fid in fm.FEATURES:
+            spec = vi.TARGETS["feature:" + fid]
+            assert spec["feature"] == fid and not spec["stages"] and "artifact" not in spec
+            assert set(fm.artifacts_for(fid, optional=True)) <= set(ARTIFACTS), fid

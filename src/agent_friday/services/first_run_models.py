@@ -75,8 +75,12 @@ FRONT_ARTIFACT = {
     "qwen3-1.7b": "voice-front-1.7b",
 }
 
-#: Local voice needs these beside any front: the ear and its runtime.
-FRONT_COMPANIONS = ("voice-ear-streaming", "sherpa-onnx")
+#: Local voice needs these beside any front: the ear and its runtime, and the
+#: pinned whisper recognisers push-to-transcribe / the CPU ear ("whisper-base")
+#: and media transcripts ("whisper-base.en") load by path and never fetch
+#: themselves (services/feature_models). The installer page's size includes
+#: them (resources/voice_front_options.json), so the consent covers them.
+FRONT_COMPANIONS = ("voice-ear-streaming", "sherpa-onnx", "whisper-base", "whisper-base.en")
 
 
 def front_artifacts(model_id: str) -> list:

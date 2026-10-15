@@ -170,6 +170,13 @@ def plain_language_refusal(exc, stage_noun="voice"):
     low = text.lower()
     retry = {"label": "Prove again", "kind": "retry"}
 
+    # A model the feature needs is not installed: its own message already
+    # names the feature, the model and where to install it (and is in
+    # friday.log). A plain str, so the HTTP boundary shows it rather than an
+    # error id.
+    if name == "FeatureModelMissing":
+        return (str(getattr(exc, "message", "") or text), retry)
+
     # The startup import race. transformers is present and healthy; the import
     # simply lost a race with another subsystem reaching for torch at boot.
     # This used to be cached for the life of the process and took the

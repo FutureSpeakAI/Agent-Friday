@@ -3765,11 +3765,17 @@ def voice_transcribe():
         asr = eng._get_asr()
         text = asr.transcribe(pcm)
     except Exception as e:
+        # The client gets a constant sentence only (never exception text): a
+        # missing model is looked up in the feature_models registry by its
+        # feature id; anything else is the generic line. The named reason
+        # goes to friday.log (here, and feature_models.require's own line).
+        msg = "Couldn't transcribe the audio. The reason is in friday.log."
         try:
-            from agent_friday.services.voice_manifest import plain_language_refusal
-            msg, _action = plain_language_refusal(e, "ear")
+            from agent_friday.services import feature_models as _fm
+            if isinstance(e, _fm.FeatureModelMissing):
+                msg = _fm.public_missing_message(getattr(e, "feature", ""))
         except Exception:
-            msg = error_text(e, "Couldn't transcribe the audio")
+            pass
         _log.warning("push-to-transcribe failed: %s: %s", type(e).__name__, e)
         return jsonify(public_result({"status": "error", "error": msg,
                         "engine": "local"}, "Couldn't transcribe the audio")), 503
@@ -3829,12 +3835,26 @@ def voice_setup_status():
             else:
                 models_status = "needs_download"
                 models_detail = lv.get("detail", "Models download on first voice session.")
-            steps.append({
+            models_step = {
                 "id": "models",
-                "label": "ASR / TTS model files (~300 MB, one-time download)",
+                "label": "ASR / TTS model files (one-time download)",
                 "status": models_status,
                 "detail": models_detail,
-            })
+            }
+            # The speech recognisers dictation (local voice, Alt+T) and media
+            # transcripts need, named with sizes and licences, for the
+            # wizard's confirm box (POST tier1-models with consent).
+            try:
+                from agent_friday.services import feature_models as _fm
+                _offer = _fm.first_run_offer()
+                if lv.get("available") and (_offer["items"] or models_status == "needs_download"):
+                    models_step["download"] = _offer
+                    if _offer["items"]:
+                        models_step["detail"] = "Not installed yet: " + ", ".join(
+                            "%s (%s MB)" % (i["short"], i["size_mb"]) for i in _offer["items"]) + "."
+            except Exception as _e:
+                _log.warning("voice_setup_status: feature models offer failed: %s", _e)
+            steps.append(models_step)
             # Tier-2 (GPU/NeMo) — informational: never gates Tier-1 readiness,
             # but a user who owns a capable GPU should SEE the upgrade path
             # (and a user who picked local-gpu should see why they're on CPU).
@@ -3941,7 +3961,10 @@ def voice_setup_install():
     from agent_friday.services import voice_installer
     # A voice artifact is a download of the owner's disk space and bandwidth:
     # it starts only from an explicit click that was shown its size.
-    needs_consent = bool((voice_installer.TARGETS.get(target) or {}).get("artifact"))
+    _t = voice_installer.TARGETS.get(target) or {}
+    # "consent": the first-run wizard's model step (tier1-models), which the
+    # wizard shows with each model's size before posting consent.
+    needs_consent = bool(_t.get("artifact") or _t.get("feature") or _t.get("consent"))
     if needs_consent and data.get("consent") is not True:
         return jsonify({"state": "error",
                         "error": "Downloading needs your confirmation first. "
@@ -3961,6 +3984,19 @@ def voice_artifacts_list():
     from agent_friday.services import voice_installer
     return jsonify({"artifacts": voice_installer.artifact_rows(),
                     "job": voice_installer.status()})
+
+
+@voice_bp.route('/api/voice/feature-models', methods=['GET'])
+@login_required
+def voice_feature_models():
+    """Which features can run, and for each one that cannot, the missing
+    models (name, size, licence), the reason it gives when used, and the one
+    install target that fetches them: POST /api/voice/setup/install
+    {target: "feature:<id>", consent: true}. Reads the disk only."""
+    from agent_friday.services import feature_models, voice_installer
+    out = feature_models.status()
+    out["job"] = voice_installer.status()
+    return jsonify(out)
 
 
 @voice_bp.route('/api/voice/setup/install/status', methods=['GET'])
