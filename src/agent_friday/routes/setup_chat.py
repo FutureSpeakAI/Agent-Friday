@@ -6,6 +6,12 @@
     POST   /api/setup-chat/skip-all               "Set up later": finish with defaults
     POST   /api/setup-chat/rerun                  run the chat again (from Settings)
     POST   /api/setup-chat/goto                   revisit a finished stage {stage}
+    POST   /api/setup-chat/use-recommended        fill this step (and the next ones) with the recommended answers
+    POST   /api/setup-chat/talk                   switch talk / type / screen reader {mode}
+    DELETE /api/setup-chat/about/<id>             delete one line of the About you card
+    POST   /api/setup-chat/open-windows-users     open Windows' own Other users page
+    POST   /api/setup-chat/voice-sample           a short spoken sample of a local voice {voice}
+    GET    /api/setup-chat/record                 the setup record: decisions and whether the chain verifies
     GET    /api/setup-chat/secret-shapes          the key shapes the input guard checks
     POST   /api/setup-chat/style/preview          sample reply for slider values
     GET    /api/setup-chat/research               the opt-in research job, for review
@@ -88,7 +94,8 @@ def setup_chat_answer():
     b = _body()
     try:
         return jsonify({"ok": True, **sc.answer(str(b.get("stage") or ""),
-                                                b.get("value"), str(b.get("text") or ""))})
+                                                b.get("value"), str(b.get("text") or ""),
+                                                client_tz=str(b.get("client_tz") or "")[:64])})
     except sc.Refused as e:
         return _refused(e)
     except sc.Conflict as e:
@@ -112,6 +119,64 @@ def setup_chat_goto():
         return jsonify({"ok": True, **sc.goto(str(_body().get("stage") or ""))})
     except sc.Conflict as e:
         return api_error(e, "Couldn't go to that step", 409, shape="ok", key="message", error="conflict")
+
+
+@setup_chat_bp.route("/api/setup-chat/use-recommended", methods=["POST"])
+def setup_chat_use_recommended():
+    try:
+        return jsonify({"ok": True, **sc.use_recommended()})
+    except sc.Refused as e:
+        return _refused(e)
+    except sc.Conflict as e:
+        return jsonify({"ok": False, "error": "conflict", "message": e.user_message}), 409
+
+
+@setup_chat_bp.route("/api/setup-chat/talk", methods=["POST"])
+def setup_chat_talk():
+    try:
+        return jsonify({"ok": True, **sc.set_talk(str(_body().get("mode") or ""))})
+    except sc.Refused as e:
+        return _refused(e)
+
+
+@setup_chat_bp.route("/api/setup-chat/about/<fact_id>", methods=["DELETE"])
+def setup_chat_forget_about(fact_id):
+    try:
+        out = sc.forget_about_line(fact_id)
+    except sc.Refused as e:
+        return _refused(e)
+    return jsonify({"ok": bool(out["ok"]), "about": out["about"]}), (200 if out["ok"] else 404)
+
+
+@setup_chat_bp.route("/api/setup-chat/open-windows-users", methods=["POST"])
+def setup_chat_open_windows_users():
+    out = sc.open_windows_users()
+    return jsonify(out), (200 if out.get("ok") else 409)
+
+
+@setup_chat_bp.route("/api/setup-chat/voice-sample", methods=["POST"])
+def setup_chat_voice_sample():
+    """A two-second sample of a LOCAL voice, made on this computer. Never a
+    cloud voice: the posture is not chosen yet when the voice step runs."""
+    from flask import Response
+    from agent_friday.services import setup_steps
+    voice = str(_body().get("voice") or "")
+    if voice not in {o["value"] for o in setup_steps.voice_options()}:
+        return jsonify({"ok": False, "error": "not_installed",
+                        "message": "That voice isn't installed on this computer."}), 404
+    try:
+        wav = setup_steps.voice_sample(voice, sc.load_state().get("agent_name") or "Friday")
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "Couldn't play that voice", 503, shape="ok", key="message",
+                         error="sample_failed")
+    return Response(wav, mimetype="audio/wav")
+
+
+@setup_chat_bp.route("/api/setup-chat/record", methods=["GET"])
+def setup_chat_record():
+    from agent_friday.services import setup_record
+    return jsonify({"ok": True, "verify": setup_record.verify(),
+                    "entries": setup_record.entries()})
 
 
 @setup_chat_bp.route("/api/setup-chat/secret-shapes", methods=["GET"])
