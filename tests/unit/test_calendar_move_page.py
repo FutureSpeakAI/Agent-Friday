@@ -39,7 +39,9 @@ def test_quick_add_shows_a_preview_and_only_the_owners_add_writes(page):
 def test_a_drag_only_proposes_and_the_write_happens_in_the_confirmation():
     drag = JS[JS.index("function dragProps("):JS.index("function MoveLayer(")]
     assert "fetch(" not in drag and "api(" not in drag, "a drag never writes by itself"
-    assert "MOVE_EVENT" in drag
+    assert "propose(ev, days, minutes)" in drag and "propose(ev, m[0], m[1])" in drag
+    propose = JS[JS.index("function propose("):JS.index("function dragProps(")]
+    assert "new CustomEvent(MOVE_EVENT" in propose and "fetch(" not in propose and "api(" not in propose
     layer = JS[JS.index("function MoveLayer("):JS.index("function QuickAddPreview(")]
     assert "confirmed: true" in layer
     assert "moveGrantUntil" in layer and "30 minutes" in layer, "the batch permission is the owner's, named, and runs out"
