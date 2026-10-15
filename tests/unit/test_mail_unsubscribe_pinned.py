@@ -17,7 +17,8 @@ def mu(monkeypatch):
     from agent_friday.services import mail_unsubscribe
     headers = {"from": "News <news@list.example.test>",
                "list-unsubscribe": "<https://list.example.test/u/1>",
-               "list-unsubscribe-post": "List-Unsubscribe=One-Click"}
+               "list-unsubscribe-post": "List-Unsubscribe=One-Click",
+               "authentication-results*": ["mx.google.com; dkim=pass header.i=@list.example.test"]}
     monkeypatch.setattr(mail_unsubscribe, "_headers", lambda a, m: dict(headers))
     monkeypatch.setattr(mail_unsubscribe, "_public_host", lambda url: True)
     from agent_friday.services import web_safety
@@ -72,3 +73,22 @@ def test_a_rebinding_answer_at_dial_time_is_refused(mu, monkeypatch):
     _post_returning(monkeypatch, 200, seen)
     out = mu.unsubscribe("acct", "m1")
     assert seen == [] and out["status"] == "error" and "not a public web address" in out["message"]
+
+
+def test_one_click_needs_the_providers_dkim_pass_for_the_sender(mu, monkeypatch):
+    seen = []
+    _post_returning(monkeypatch, 200, seen)
+    forged = {"from": "News <news@list.example.test>",
+              "list-unsubscribe": "<https://list.example.test/u/1>",
+              "list-unsubscribe-post": "List-Unsubscribe=One-Click",
+              "authentication-results*": ["evil.example; dkim=pass header.d=list.example.test"]}
+    monkeypatch.setattr(mu, "_headers", lambda a, m: dict(forged))
+    out = mu.unsubscribe("acct", "m1")
+    assert seen == [] and out["method"] == "link", "no verified sender, no request from Friday"
+
+
+def test_the_post_takes_no_proxy_from_the_environment(mu, monkeypatch):
+    seen = []
+    _post_returning(monkeypatch, 200, seen)
+    mu.unsubscribe("acct", "m1")
+    assert seen[0][1]["proxies"] == {"http": None, "https": None, "all": None}

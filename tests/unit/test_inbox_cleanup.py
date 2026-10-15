@@ -17,7 +17,7 @@ GOOGLE_AR = "mx.google.com; dkim=pass header.i=@{d} header.s=s1 header.b=abc; sp
 
 
 def _msg(ic, domain, *, ts, unread=True, spam=False, one_click=True, url_host=None,
-         auth="google", msg_id="", mailto=False):
+         auth="google", msg_id="", mailto=False, dkim_domain=None, via_gmail=True):
     host = url_host or ("unsub." + domain)
     lu = "<https://%s/u?t=1>" % host
     if mailto:
@@ -26,10 +26,11 @@ def _msg(ic, domain, *, ts, unread=True, spam=False, one_click=True, url_host=No
     if one_click:
         hdrs["list-unsubscribe-post"] = ["List-Unsubscribe=One-Click"]
     if auth == "google":
-        hdrs["authentication-results"] = [GOOGLE_AR.format(d=domain)]
+        hdrs["authentication-results"] = [GOOGLE_AR.format(d=dkim_domain or domain)]
     elif auth == "forged":
         hdrs["authentication-results"] = ["evil.example; dkim=pass header.d=%s" % domain]
-    return ic.normalize(hdrs, msg_id=msg_id or "%s-%s" % (domain, ts), ts=ts, unread=unread, spam=spam)
+    return ic.normalize(hdrs, msg_id=msg_id or "%s-%s" % (domain, ts), ts=ts, unread=unread, spam=spam,
+                        via_gmail=via_gmail)
 
 
 @pytest.fixture
@@ -233,6 +234,7 @@ def test_the_post_is_the_rfc_one_with_no_cookies_and_no_redirects(ic, monkeypatc
     assert pinned == ["https://unsub.shop.example/u"]
     assert seen["data"] == "List-Unsubscribe=One-Click" and seen["allow_redirects"] is False
     assert "cookies" not in seen and "Cookie" not in seen["headers"] and seen["closed"]
+    assert seen["proxies"] == {"http": None, "https": None, "all": None}, "no proxy from the environment"
 
 
 def test_found_keeps_confirmed_and_possible_apart_and_checks_after_14_days(ic, ready, monkeypatch):
@@ -317,3 +319,55 @@ def test_the_router_opens_the_clean_up_board_by_voice():
         assert route.args["workspace"] == "messages" and route.args["section"] == "clean up"
     # the plain workspace rule is untouched
     assert lr._tier0("open messages").args.get("section") is None
+
+
+def test_dkim_must_belong_to_the_senders_own_organisation(ic):
+    def route(**kw):
+        s = {}
+        ic.add_message(s, _msg(ic, "shop.example", ts=1, **kw))
+        return ic.classify(s["shop.example"])
+    # a spoof that passes DKIM for the attacker's domain cannot point one-click there
+    assert route(dkim_domain="evil.example", url_host="unsub.evil.example")["route"] == "spam"
+    assert route(dkim_domain="mail.shop.example")["route"] == "one_click", "a subdomain of the sender is aligned"
+    assert ic.org_domain("mail.shop.co.uk") == "shop.co.uk" and ic.org_domain("a.b.example") == "b.example"
+
+
+def test_mail_that_did_not_come_through_gmail_is_not_trusted_for_dkim(ic):
+    s = {}
+    ic.add_message(s, _msg(ic, "shop.example", ts=1, via_gmail=False))
+    assert ic.classify(s["shop.example"])["route"] == "spam"
+
+
+def test_an_mbox_path_on_another_computer_is_refused(ic):
+    with pytest.raises(ValueError, match="only a file on this computer"):
+        ic.start({"kind": "mbox", "path": "\\\\server\\share\\mail.mbox"})
+
+
+def test_the_card_names_each_host_and_a_changed_host_is_not_sent(ic, ready, monkeypatch):
+    from agent_friday.governance import action_gate
+    raised = []
+
+    class Verdict:
+        action = "card"
+        reason = ""
+    monkeypatch.setattr(action_gate, "authorize_external", lambda a, d, **kw: raised.append((d, kw)) or Verdict())
+    ic.propose(["shop.example"], requested_by="friday")
+    detail, kw = raised[0]
+    assert detail["hosts"] == {"shop.example": "unsub.shop.example"}
+    assert "the request goes to unsub.shop.example" in kw["action_description"]
+    assert detail["urls"] == {"shop.example": "https://unsub.shop.example/u?t=1"}
+    out = ic.unsubscribe(["shop.example"], decided_by="owner approval",
+                         expected_urls={"shop.example": "https://unsub.shop.example/u?t=999"})
+    assert ready["posted"] == [] and "changed after you approved" in out["not_done"][0]["why"]
+    out = ic.unsubscribe(["shop.example"], decided_by="owner approval", expected_urls=detail["urls"])
+    assert [d["id"] for d in out["done"]] == ["shop.example"]
+
+
+def test_a_shared_domain_is_nobodys_organisation(ic):
+    assert ic.org_domain("alice.github.io") == "alice.github.io"
+    assert ic.org_domain("news.bob.uk.com") == "bob.uk.com" and ic.org_domain("x.me.uk") == "x.me.uk"
+    assert ic.org_domain("github.io") == ""
+    s = {}
+    ic.add_message(s, _msg(ic, "alice.github.io", ts=1, dkim_domain="mallory.github.io",
+                           url_host="mallory.github.io"))
+    assert ic.classify(s["alice.github.io"])["route"] == "spam"

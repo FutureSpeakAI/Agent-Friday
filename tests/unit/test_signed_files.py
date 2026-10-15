@@ -142,13 +142,14 @@ def release(monkeypatch):
     served = {}
     monkeypatch.setattr(update_check, "FETCH_ASSET", lambda url, cap: served[url])
 
-    def make(version="1.2.0", seq=120, expires="2099-01-01", sign_version=None, key=None):
+    def make(version="1.2.0", seq=120, expires="2099-01-01", sign_version=None, key=None,
+             comment_name="agent-friday-release"):
         manifest = json.dumps({"name": "agent-friday-release", "version": sign_version or version,
                                "build_sequence": seq, "expires": expires,
                                "files": {"AgentFriday-Setup.exe": "0" * 64}}).encode()
         s_sk, s_kid = key or (sk, kid)
         served["https://dl/m.json"] = manifest
-        served["https://dl/m.json.minisig"] = _sign(s_sk, s_kid, manifest, "name=agent-friday-release").encode()
+        served["https://dl/m.json.minisig"] = _sign(s_sk, s_kid, manifest, "name=%s" % comment_name).encode()
         return {"tag_name": "v" + version, "assets": [
             {"name": "release-manifest.json", "browser_download_url": "https://dl/m.json"},
             {"name": "release-manifest.json.minisig", "browser_download_url": "https://dl/m.json.minisig"}]}
@@ -208,3 +209,27 @@ def test_the_release_manifest_script_writes_what_the_check_reads(tmp_path):
     assert m["version"] == "1.2.0" and m["expires"] == "2027-10-15"
     assert m["files"] == {f.name: hashlib.sha256(b"installer bytes").hexdigest()}
     assert isinstance(m["build_sequence"], int)
+
+
+def test_with_a_release_key_a_missing_manifest_is_refused_not_waved_through(release):
+    uc, make = release
+    assert "unsigned" in uc.refused_states() and "unreachable" in uc.refused_states()
+    out = uc.verify_release({"tag_name": "v1.2.0", "assets": []}, current_sequence=110)
+    assert out["state"] in uc.refused_states()
+
+
+def test_a_signature_for_something_else_or_without_a_build_number_is_refused(release):
+    uc, make = release
+    assert uc.verify_release(make(comment_name="cancellation_pages"), current_sequence=110)["state"] == "bad_signature"
+    assert uc.verify_release(make(seq="120"), current_sequence=110)["state"] == "mismatch"
+
+
+def test_losing_the_cache_does_not_reopen_an_older_list(lists):
+    pl, publish, tmp = lists
+    publish("broker_registries", 9)
+    assert pl.refresh("broker_registries")["ok"]
+    import shutil
+    shutil.rmtree(tmp / "public_lists")                     # the whole cache folder
+    publish("broker_registries", 3)
+    out = pl.refresh("broker_registries")
+    assert not out["ok"] and "older" in out["message"]
