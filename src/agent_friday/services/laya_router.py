@@ -464,7 +464,9 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
     # Which calendars a view shows: "show only my family calendar", "just the work calendar", "show all my calendars".
     ("navigate_to",
      _POLITE + r"(?:(?:show(?: me)?|display)\s+(?:only|just)|only show(?: me)?|just show(?: me)?)\s+(?:my\s+|the\s+)?"
-     r"(?!(?:the|my|a)\s*calendar)(?P<cal>[a-z0-9][a-z0-9 '&-]{0,38}?)\s+calendar" + _END),
+     r"(?!(?:the|my|a)\s*calendar)(?![^?.!]*\b(?:today|tonight|tomorrow|yesterday|this|next|what|whats|when|"
+     r"meetings?|events?|appointments?|on|in|at|for|week|month|day|schedule|agenda)\b)"
+     r"(?P<cal>[a-z0-9][a-z0-9 &-]{0,38}?)\s+calendar" + _END),
     ("navigate_to",
      _POLITE + r"(?:show(?: me)?|display|bring back)\s+(?P<allcals>all|every one of|each of)\s+(?:of\s+)?my\s+calendars(?:\s+again)?" + _END),
     ("navigate_to",
