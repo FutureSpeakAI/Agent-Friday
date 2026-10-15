@@ -144,3 +144,19 @@ def test_friday_needing_a_key_opens_the_form_through_the_notice_registry(monkeyp
     (act,), = sent
     assert act["type"] == "key_form" and act["reason"] == "needed"
     assert act["target"] == "provider:brave" and act["why"].startswith("To search")
+
+
+def test_an_exchange_keeps_no_key_in_its_topic_keywords(tmp_path):
+    """index_exchange takes keywords from both sides together; they must be
+    taken from the withheld text, or a lower-cased key rides in the metadata
+    of both records."""
+    from agent_friday.conversation_memory import ConversationMemory
+    from tests.unit.test_conversation_memory import _FakeEmbedFn
+
+    mem = ConversationMemory(persist_dir=tmp_path / "mem")
+    mem._build_embedding_function = lambda: _FakeEmbedFn()
+    assert mem.index_exchange(f"my key is {ANTHROPIC}", f"Saved {GITHUB} for you")
+    blob = _bytes_under(tmp_path / "mem").lower()
+    assert ANTHROPIC.lower().encode() not in blob
+    assert GITHUB.lower().encode() not in blob
+    assert b"qx7mn2pr9vl4" not in blob and b"a1b2c3d4e5f6" not in blob
