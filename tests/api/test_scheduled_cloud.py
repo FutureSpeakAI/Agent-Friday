@@ -28,12 +28,18 @@ def _reset_answer():
 
 
 @pytest.fixture(autouse=True)
-def _clean_store(friday_dir):
+def _clean_store(friday_dir, monkeypatch):
     for f in (s.SCHEDULES_FILE, s.RUNS_FILE):
         if f.exists():
             f.unlink()
     s._RUNNING.clear()
     _reset_answer()          # the temp home's settings outlive a test
+    # These tests pin the agent_prompt path's seat rule, which the heartbeat
+    # still takes with `heartbeat.precheck: false`. The pre-check path's own
+    # seat choice (the same rule) is pinned in tests/unit/test_heartbeat_precheck.py.
+    from agent_friday.services import heartbeat as hb
+    monkeypatch.setattr(hb, "_settings", lambda: {"precheck": False,
+                                                  "calendar_lookahead_minutes": 120})
     yield
     s._RUNNING.clear()
     _reset_answer()

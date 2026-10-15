@@ -38,6 +38,7 @@ _log = logging.getLogger("friday.scheduler")
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_register, process_update
 from agent_friday.services.visible_jobs import visible_job
+from agent_friday.services.job_prompt import Job as _JobPromptJob
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
@@ -85,6 +86,16 @@ class SeatWaiting(PausedNoLocalModel):
 class RetiredSchedule(SkippedRun):
     """A stored built-in schedule whose task no longer exists. Retired once,
     visibly, rather than failing every day."""
+
+
+class HeldRun(SkippedRun):
+    """A run held on purpose, with a named status and its reason
+    (services/heartbeat.py: connector_unavailable, blocked, budget_cap).
+    Recorded under that status in the run log; not a failure, not retried."""
+
+    def __init__(self, status, reason):
+        self.status = str(status)
+        super().__init__(reason)
 
 
 def _cloud_model_for(rec):
@@ -1440,6 +1451,12 @@ def _run_task_inner(rec):
             raise PausedNoLocalModel(str(exc)) from exc
     if kind == "workflow":
         return _run_workflow(rec, task)
+    # The heartbeat: a deterministic pre-check, and one slim model call only
+    # when something changed (services/heartbeat.py). `heartbeat.precheck:
+    # false` sends it down the agent_prompt path below, as before.
+    from agent_friday.services import heartbeat as _hb
+    if _hb.applies(rec):
+        return _hb.run(rec)
     # agent_prompt — run through the existing background-task machinery so the
     # scheduled run gets its own fresh vault context, orbs, and verification.
     prompt = task.get("prompt") or ""
@@ -1737,6 +1754,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
 
     def _body():
         status, summary, err = "complete", "", None
+        outcome = None              # a job's own outcome word (the heartbeat's)
         rec_live = dict(rec, _active_run_id=run_id, _orb_id=orb_id, _manual=bool(manual))
         if orb_id:
             try:
@@ -1747,6 +1765,8 @@ def dispatch(rec, *, manual=False, require_enabled=False):
         try:
             result = _run_task(rec_live)
             status = result.status if isinstance(result, WorkflowRunResult) else "complete"
+            if isinstance(result, dict) and result.get("outcome"):
+                outcome = str(result["outcome"])
             summary = _summarize(result)
             if _late_slot_day(rec):
                 summary = "Ran late: it came due in %s. " % _cause_words(_late_cause(rec)) + summary
@@ -1834,6 +1854,18 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             status, summary = "skipped", str(e)
             _patch_record(sid, last_status="skipped", last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0)
+        except HeldRun as e:
+            # Held on purpose under a named status (the heartbeat's
+            # connector_unavailable / blocked / budget_cap): recorded as that
+            # status with its reason, not retried, no failure card. A
+            # status-mode schedule's one panel entry says why.
+            status, summary = e.status, str(e)
+            outcome = e.status
+            _log.info("schedule %s held (%s): %s", sid, status, summary)
+            _patch_record(sid, last_status=status, last_summary=summary,
+                          retry_pending=False, retry_count=0, not_before=0)
+            if rec.get("notify") == "status":
+                _notify_status(rec, "Held (%s): %s" % (status, summary))
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"
             # print_exc() writes to stderr, which the packaged app has none
@@ -1872,6 +1904,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                 "duration_ms": int((ended - started) * 1000),
                 "status": status, "summary": summary, "error": err,
                 "manual": manual,
+                **({"outcome": outcome} if outcome else {}),
             })
             if orb_id:
                 try:
@@ -2223,6 +2256,13 @@ def _register_default_builtin_tasks():
         print(f"  [scheduler] laya_personal_refit unavailable: {e}")
 
 
+#: The afternoon briefing on the slim job prompt (services/job_prompt.py).
+_AFTERNOON_BRIEFING_JOB = _JobPromptJob(
+    name="Afternoon briefing",
+    instructions="You write the owner's afternoon briefing from the live data "
+                 "you are given.")
+
+
 @visible_job('Afternoon briefing', kind='briefing', workspace='news')
 def _afternoon_briefing_job():
     """Synthesize the afternoon briefing markdown and persist it (so the
@@ -2245,13 +2285,18 @@ def _afternoon_briefing_job():
         + f"{live_context}"
     )
     # UNATTENDED: this runs daily at 16:00 with nobody watching —
-    # a gating gap here leaks silently, every day, not once. Gate exactly like
-    # every other briefing call site rather than trusting the egress
-    # classifier alone.
-    system = _get_friday_system_prompt(
-        keywords=prompt, workspace="briefing",
-        provider=_predict_route_provider(keywords=prompt, workspace="briefing"),
-        vault_control=_gated_vault_control())
+    # a gating gap here leaks silently, every day, not once. A routine job, so
+    # it gets the slim job prompt (services/job_prompt.py): no vault, persona or
+    # tool catalogue in the system prompt at all, only the live data above.
+    # The owner's `job_prompts.slim: false` brings back the full prompt, gated
+    # exactly like every other briefing call site.
+    from agent_friday.services import job_prompt
+    system = job_prompt.build(
+        _AFTERNOON_BRIEFING_JOB, prompt,
+        full_system=lambda: _get_friday_system_prompt(
+            keywords=prompt, workspace="briefing",
+            provider=_predict_route_provider(keywords=prompt, workspace="briefing"),
+            vault_control=_gated_vault_control())).system
     from agent_friday.services.news_engine import local_news_run
     with local_news_run("Afternoon Briefing"):
         content = _generate_text([{"role": "user", "content": prompt}], system=system,

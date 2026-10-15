@@ -2949,6 +2949,26 @@ DEFAULT_SETTINGS = {
         # False keeps them local-only even then, as before.
         "routine_follows_cloud_mode": True,
     },
+    # ── Slim prompts for routine background jobs (services/job_prompt.py) ──
+    # The Front Page editor, the weekly digest, the afternoon briefing and the
+    # heartbeat's one call after its pre-check (`heartbeat.precheck`) send a
+    # small job prompt (their instructions, the material they are handed, the
+    # agent's name, today's date, only the tools they call) instead of the
+    # ~16.7k-token chat prompt. False brings the full prompt
+    # back for those jobs. Chat and voice are not affected either way.
+    "job_prompts": {
+        "slim": True,
+    },
+    # ── The heartbeat's pre-check (services/heartbeat.py) ──
+    # Each run first checks, in code, Gmail since the last good run, calendar
+    # events starting within `calendar_lookahead_minutes` and background tasks
+    # that finished. Nothing new: no model call at all. Something new: one
+    # slim call on the pinned model. False sends the heartbeat back through
+    # the full agent (tools, ~16.7k-token prompt) on every run, as before.
+    "heartbeat": {
+        "precheck": True,
+        "calendar_lookahead_minutes": 120,
+    },
     # ── Family / Minor mode (§7) ──
     # When on, generation runs an age-appropriate filter ON TOP of the adult harm
     # floor — this half is real and re-checked live on every generation call.
