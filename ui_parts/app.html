@@ -12030,7 +12030,10 @@ const CAL_START_HOUR=6, CAL_END_HOUR=24, CAL_HOUR_PX=52;
 function calY(iso){const d=new Date(iso);if(isNaN(d))return 0;const h=d.getHours()+d.getMinutes()/60;return Math.max(0,(h-CAL_START_HOUR)*CAL_HOUR_PX);}
 function calFmtTime(iso){const d=new Date(iso);if(isNaN(d))return'';return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
 
-fridayDeclareNav('calendar',{keys:['date','view','meeting_id','event','start'],sections:[{id:'meetings',label:'Meetings',key:'view'}]});
+fridayDeclareNav('calendar',{keys:['date','view','meeting_id','event','start'],sections:[{id:'meetings',label:'Meetings',key:'view'},{id:'day',label:'Day',key:'view'},{id:'week',label:'Week',key:'view'},{id:'month',label:'Month',key:'view'}]});
+// The Calendar's views (static/calendar_views.js): Day is the timeline below; Week and Month come from that file.
+const CAL_VIEW_IDS=['day','week','month'];
+function calStoredView(){try{const v=localStorage.getItem('friday_cal_view');return CAL_VIEW_IDS.includes(v)?v:'day';}catch(_){return 'day';}}
 function CalendarWS(){
   const[today,setToday]=useState(null);const[loading,setLoading]=useState(true);
   const[week,setWeek]=useState([]);const[sel,setSel]=useState(null);// selected date iso (null=today)
@@ -12043,9 +12046,14 @@ function CalendarWS(){
   const tlRef=useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   const [shownEvent,setShownEvent]=useState('');
-  useTabState('calendar',()=>({date:sel||'',event:shownEvent})); // what its own tab opens on
+  const[view,setViewRaw]=useState(calStoredView);
+  const[anchor,setAnchor]=useState(()=>window.CalendarViews?window.CalendarViews.iso(new Date()):'');
+  const[rangeTick,setRangeTick]=useState(0);
+  const setView=v=>{if(!CAL_VIEW_IDS.includes(v))return;setViewRaw(v);try{localStorage.setItem('friday_cal_view',v);}catch(_){}};
+  useTabState('calendar',()=>({date:sel||'',event:shownEvent,view})); // what its own tab opens on
   useNavTarget('calendar',t=>{
     setShownEvent('');
+    if(t.view&&CAL_VIEW_IDS.includes(t.view)){setView(t.view);if(t.date)setAnchor(t.date);if(t.view!=='day'&&!t.event)return;}
     if (t.event) {
       // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
       if (t.date) { setSel(t.date); loadDay(t.date); }
@@ -12077,10 +12085,11 @@ function CalendarWS(){
     const t=setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(t)},[]);
 
   const flash=t=>{setToast(t);};
+  const openDay=d=>{const todayIso=window.CalendarViews?window.CalendarViews.iso(new Date()):'';setView('day');setAnchor(d);pickDay(d,d===todayIso);};
   const pickDay=(iso,isToday)=>{if(isToday){setSel(null);setDayData(null)}else{setSel(iso);loadDay(iso)}setPrepFor(null)};
   const quickAdd=async()=>{if(!quick.trim()||adding)return;setAdding(true);
     try{const r=await fetch('/api/calendar/quick-add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:quick})});const d=await r.json();
-      if(d.status==='ok'){flash((d.created_in_google?'Added to Google Calendar':'Added (stored locally)')+': '+d.event.title);setQuick('');loadToday();loadWeek();loadTomorrow();if(sel)loadDay(sel)}
+      if(d.status==='ok'){flash((d.created_in_google?'Added to Google Calendar':'Added (stored locally)')+': '+d.event.title);setQuick('');loadToday();loadWeek();loadTomorrow();setRangeTick(n=>n+1);if(sel)loadDay(sel)}
       else flash('Could not parse that — try “interview with Acme Tuesday 2pm”')}
     catch(e){flash('Quick-add failed')}setAdding(false)};
   const genPrep=async(ev)=>{if(prepFor===ev.id){setPrepFor(null);return}setPrepFor(ev.id);setPrepBusy(true);setPrepText('');
@@ -12112,7 +12121,12 @@ function CalendarWS(){
       <input className="input" style={{flex:1}} value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==='Enter'&&quickAdd()} placeholder="Quick add — e.g. “interview with Acme Tuesday 2pm”"/>
       <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Parsing…':'✨ Add'}</button>
     </div>
-    
+    {window.CalendarViews&&<div className="calv-toolbar">
+      <window.CalendarViews.ViewSwitch view={view} onChange={v=>{if(v==='day')openDay(sel||window.CalendarViews.iso(new Date()));else{setAnchor(sel||anchor);setView(v);}}}/>
+      {view!=='day'&&<window.CalendarViews.Nav title={window.CalendarViews.title(view,anchor)} onStep={dir=>setAnchor(a=>window.CalendarViews.step(view,a,dir))} onToday={()=>setAnchor(window.CalendarViews.iso(new Date()))}/>}
+    </div>}
+    {view==='week'&&window.CalendarViews?<window.CalendarViews.WeekView anchor={anchor} reloadKey={rangeTick} onPickDay={openDay} onRetry={()=>setRangeTick(n=>n+1)} onOpen={ev=>openDay(window.CalendarViews.iso(new Date(ev.start_time)))}/>:
+     view==='month'&&window.CalendarViews?<window.CalendarViews.MonthView anchor={anchor} reloadKey={rangeTick} onPickDay={openDay} onRetry={()=>setRangeTick(n=>n+1)} onOpen={ev=>openDay(String(ev.start_time).length===10?ev.start_time:window.CalendarViews.iso(new Date(ev.start_time)))}/>:<>
     <MeetingsLink/>
 
     <div className="cal-layers"><button className={'btn'+(showMedia?' active':'')} aria-pressed={showMedia} onClick={()=>setShowMedia(v=>{const n=!v;try{localStorage.setItem('friday_cal_media',n?'1':'0');}catch(_){}return n;})}>Media</button><span className="cal-layer-note">{showMedia?mediaCards.length+' timed card'+(mediaCards.length===1?'':'s')+' this week':'Media cards hidden'}</span></div>
@@ -12132,7 +12146,7 @@ function CalendarWS(){
 
     {/* All-day events */}
     {allDay.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
-      {allDay.map(e=><span key={e.id} className={'cal-event '+(e.type||'normal')} style={{position:'static',display:'inline-block'}}>{e.title} <span style={{color:'#8a93a6',fontSize:10}}>(all day)</span></span>)}
+      {allDay.map(e=><span key={e.id} className={'cal-event '+(e.type||'normal')} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:true,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} style={{position:'static',display:'inline-block',...(e.color?{'--ev':e.color}:{})}}>{e.title} <span style={{color:'#8a93a6',fontSize:10}}>(all day)</span></span>)}
     </div>}
 
     {/* Timeline */}
@@ -12149,7 +12163,7 @@ function CalendarWS(){
 
       {/* Events */}
       {timedAll.map(e=>{const top=calY(e.start_time);const end=calY(e.end_time)||top+CAL_HOUR_PX;const ht=Math.max(34,end-top);const open=prepFor===e.id;return(
-        <div key={e.id} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:false,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
+        <div key={e.id} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:false,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht,...(e.color?{'--ev':e.color}:{})}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
           <div className="cal-ev-title">{e.title}</div>
           <div className="cal-ev-meta">
             <span>{calFmtTime(e.start_time)}{e.end_time?(' – '+calFmtTime(e.end_time)):''}</span>
@@ -12187,6 +12201,7 @@ function CalendarWS(){
         {e.prep_available&&<span className="cal-prep-badge">Prep</span>}
       </div>)}
     </div>}
+    </>}
   </div>);
 }
 
