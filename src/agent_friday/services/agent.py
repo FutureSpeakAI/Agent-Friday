@@ -1102,21 +1102,48 @@ def _tool_search_web(inp):
                 f"(backend: {out.get('backend')}).\n"
                 + (f"Backend detail: {detail}\n" if detail else "")
                 + _ws.status_note(out))
-    lines = [f"Search results for '{q}' (backend: {out.get('backend')}, "
-             f"{len(results)} results). URLs below are real and fetchable — "
-             f"pass one verbatim to browse_web:\n"]
+    header = (f"Search results for '{q}' (backend: {out.get('backend')}, "
+              f"{len(results)} results). URLs below are real and fetchable — "
+              f"pass one verbatim to browse_web:")
+    # Each row is its OWN paragraph (a blank line between rows), and that exact
+    # rendered paragraph is registered as published text: the egress gate's
+    # span pass splits a replayed result on blank lines and lets a paragraph
+    # through only when it is exactly a registered string. Nothing exempts a
+    # paragraph because each of its lines is registered on its own.
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception:
+        _eg = None
+    paras = [header]
     for i, r in enumerate(results, 1):
         # `.get`, not `[...]`. web_search normalises every backend's rows to
         # title/url/snippet now, so this should never be missing - but a hard
         # subscript here is what turned one backend's different field name
         # into "Tool error (search_web): 'snippet'" on every search for a day.
         # A renderer should degrade to a blank line, not take down the tool.
-        lines.append(f"{i}. {r.get('title') or r.get('url') or ''}\n"
-                     f"   {r.get('snippet') or r.get('description') or ''}\n"
-                     f"   {r.get('url') or ''}")
+        row = (f"{i}. {r.get('title') or r.get('url') or ''}\n"
+               f"   {r.get('snippet') or r.get('description') or ''}\n"
+               f"   {r.get('url') or ''}")
+        paras.append(row)
+        if _eg is not None:
+            try:
+                _eg.register_public_text(row, origin=f"web-search:{out.get('backend')}")
+            except Exception:
+                pass
+    # The header repeats the query. It replays to the cloud seat as that
+    # seat's own text ONLY when the query is exactly what the seat wrote
+    # (privacy/public_query.cloud_author_of); otherwise it is ordinary text.
+    if _eg is not None:
+        try:
+            from agent_friday.privacy.public_query import cloud_author_of as _pq_author
+            _author = _pq_author(q)
+            if _author:
+                _eg.register_provider_echo(header, _author)
+        except Exception:
+            pass
     if out.get('detail'):
-        lines.append(f"\n[note: {out['detail']}]")
-    return '\n'.join(lines)[:100_000]
+        paras.append(f"[note: {out['detail']}]")
+    return '\n\n'.join(paras)[:100_000]
 
 
 def _tool_browse_web(inp):
@@ -15173,6 +15200,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         # own (privacy/public_provenance). Without a key there
                         # is no exemption and the gate behaves as it always did.
                         taint_key=_taint_mod.ledger_key(session_ctx),
+                        # The name history replays to this seat under, for the
+                        # public-query provenance record (privacy/public_query).
+                        author_provider=_LOOP_PROVIDER.get() or _zt_provider,
                     )
                     _crew_denial = _host_action_denial(tu.name, session_ctx)
                     if _crew_denial:
@@ -15184,11 +15214,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _tool_ms = int((_time.time() - _t_tool) * 1000)
                         _orb_tool_trace(orb_id, tu.name, tu.input, _zt_result, _tool_ms)
                         _ledger_tool_call(tu.name, _zt_result, _tool_ms, orb_id, session_ctx)
+                        from agent_friday.privacy.vault_access import refusal_text as _zt_text
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tu.id,
-                            "content": f"[VAULT ACCESS DENIED] This tool call references {_zt_detail} data. "
-                                       f"Switch to a local model to access sensitive content.",
+                            "content": _zt_text(tu.name, _zt_detail),
                         })
                         continue
 
@@ -15207,7 +15237,14 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 # through: a held action is not work that is happening.
                 _mtok = _CURRENT_MODEL.set(str(kwargs.get("model") or model or ""))
                 try:
-                    result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                    # A cloud seat's search query is its own text (owner decision
+                    # (a), privacy/public_query). The mark records tu.input AS
+                    # SENT, before _execute_tool restores [PII:...] tags: only
+                    # those exact strings are floor-only at the search gates.
+                    from agent_friday.privacy.public_query import for_tool_call as _pq_call
+                    with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
+                                  str(kwargs.get("model") or model or ""), tu.name, tu.input):
+                        result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
                 # Cleared on the SUCCESS path only, deliberately not in a
@@ -15936,6 +15973,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     # See the other call site: the provenance ledger lets the
                     # gate exempt a business's published contact details.
                     taint_key=_taint_mod.ledger_key(session_ctx),
+                    author_provider=_LOOP_PROVIDER.get() or _zt_provider,
                 )
                 _crew_denial = _host_action_denial(tname, session_ctx)
                 if _crew_denial:
@@ -15947,9 +15985,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     _tool_ms = int((_time.time() - _t_tool) * 1000)
                     _orb_tool_trace(orb_id, tname, targs, _zt_result, _tool_ms)
                     _ledger_tool_call(tname, _zt_result, _tool_ms, orb_id, session_ctx)
+                    from agent_friday.privacy.vault_access import refusal_text as _zt_text
                     convo.append({"role": "tool", "tool_call_id": tcid,
-                                  "content": f"[VAULT ACCESS DENIED] references {_zt_detail} "
-                                             f"data — switch to a local model to access it."})
+                                  "content": _zt_text(tname, _zt_detail)})
                     continue
 
             # A TOOL CALLED WITHOUT ITS SCHEMA STILL RUNS - and now arrives
@@ -16004,8 +16042,15 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 # returns what it has by then, marked partial. The budget is read,
                 # never enforced by interruption, so no action is cut off.
                 from agent_friday.services import tool_deadline as _td
+                # A cloud seat's search query is its own text (owner decision
+                # (a), privacy/public_query). The mark records targs AS SENT,
+                # before _execute_tool restores [PII:...] tags: only those
+                # exact strings are floor-only at the search gates.
+                from agent_friday.privacy.public_query import for_tool_call as _pq_call
                 with (_td.budget(_td.LOCAL_TOOL_BUDGET_S) if _compact_seat == "local"
-                      else _ctxlib.nullcontext()):
+                      else _ctxlib.nullcontext()), \
+                        _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
+                                 model or "", tname, targs):
                     result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                            session_ctx=session_ctx)
             finally:
