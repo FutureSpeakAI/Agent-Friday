@@ -68,6 +68,26 @@ def test_an_addition_resting_on_what_friday_read_waits_for_the_owner():
     assert cm.pending()[0]["op"] == "add"
 
 
+def test_spoken_words_never_back_a_silent_addition():
+    """A spoken turn may be someone other than the owner: queued, never saved.
+    (Red before the owner flag: voice lines counted as the owner's words.)"""
+    mr.note_turn("I always file my stories before 6pm.", "Noted.", "s-voice", start=False,
+                 owner=False)
+    window = list(mr._BUFFERS["s-voice"])
+    out = mr.review(window, ask=_answer(add=[{
+        "target": "user", "text": "Files stories before 6pm.",
+        "evidence": "I always file my stories before 6pm"}]))
+    assert out["added"] == 0 and out["queued"] == 1
+    assert cm.entries("user") == []
+
+
+def test_the_voice_turn_reaches_the_review_as_not_the_owners():
+    import inspect
+    from agent_friday.services import voice_engine
+    src = inspect.getsource(voice_engine).replace("\r\n", "\n")
+    assert 'kwargs={"owner": False}' in src, "voice turns would count as the owner's typed words"
+
+
 def test_changes_and_removals_are_never_applied_by_the_review():
     cm.add("user", "Files stories before 5pm.", actor="owner")
     out = mr.review(WINDOW, ask=_answer(

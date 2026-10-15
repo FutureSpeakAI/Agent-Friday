@@ -12,7 +12,9 @@ What it may do, and what it may not:
   words: each addition must quote evidence that appears in a user message of
   the window. An addition that rests on Friday's replies (which can carry what
   she read on a page or in a mail) is queued for the owner instead, so
-  anything learned from content Friday read still asks first.
+  anything learned from content Friday read still asks first. Only TYPED
+  owner lines count as evidence: a spoken turn may be someone other than the
+  owner (a paired phone, a room), so what was said in voice is always queued.
 * It never rewrites or removes a line. Whatever it would change or drop waits
   in the card's review queue (Settings > Privacy & Data > Memory card).
 * It runs on this machine or not at all: the call is inside
@@ -117,7 +119,8 @@ def every_turns(settings: Optional[dict] = None) -> int:
         return EVERY_TURNS
 
 
-def note_turn(message: str, reply: str, session_key: str, *, start: bool = True) -> bool:
+def note_turn(message: str, reply: str, session_key: str, *, start: bool = True,
+              owner: bool = True) -> bool:
     """Record one finished exchange; start a review when one is due.
 
     Called at the end of every chat and voice turn (after the reply). Returns
@@ -137,7 +140,8 @@ def note_turn(message: str, reply: str, session_key: str, *, start: bool = True)
         while len(_BUFFERS) > MAX_SESSIONS:
             old, _ = _BUFFERS.popitem(last=False)
             _COUNTS.pop(old, None)
-        buf.append({"user": message[:TURN_CHARS], "friday": str(reply or "")[:TURN_CHARS]})
+        buf.append({"user": message[:TURN_CHARS], "friday": str(reply or "")[:TURN_CHARS],
+                    "owner": bool(owner)})
         _COUNTS[key] = _COUNTS.get(key, 0) + 1
         due = _COUNTS[key] % every_turns(s) == 0 and key not in _RUNNING
         if not due:
@@ -208,11 +212,12 @@ def _norm(s: str) -> str:
 
 
 def _rests_on_the_user(evidence: str, window: List[Dict[str, str]]) -> bool:
-    """The evidence is the user's own words: it appears in a USER line."""
+    """The evidence is the OWNER's own words: it appears in a USER line the
+    owner typed (a spoken line may be someone else's: it never counts)."""
     ev = _norm(evidence)
     if len(ev) < 6:
         return False
-    return any(ev in _norm(ex.get("user", "")) for ex in window)
+    return any(ev in _norm(ex.get("user", "")) for ex in window if ex.get("owner", True))
 
 
 @visible_job("Memory review", kind="memory_review", workspace="memory")
