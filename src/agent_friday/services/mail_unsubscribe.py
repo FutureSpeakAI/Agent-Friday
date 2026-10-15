@@ -73,15 +73,51 @@ def _headers(account_id: str, message_id: str) -> dict:
     svc = gm._read_svc(account_id)
     msg = gmail_api.execute(svc.users().messages().get(
         userId="me", id=message_id, format="metadata",
-        metadataHeaders=["From", "List-Unsubscribe", "List-Unsubscribe-Post"]))
-    return {h["name"].lower(): h["value"] for h in (msg.get("payload") or {}).get("headers") or []}
+        metadataHeaders=["From", "List-Unsubscribe", "List-Unsubscribe-Post", "Authentication-Results"]))
+    headers = (msg.get("payload") or {}).get("headers") or []
+    out = {h["name"].lower(): h["value"] for h in headers}
+    # Every Authentication-Results header, top to bottom: only the first, the
+    # provider's own, is trusted (inbox_cleanup.dkim_pass_domains).
+    out["authentication-results*"] = [h["value"] for h in headers
+                                      if str(h.get("name") or "").lower() == "authentication-results"]
+    return out
+
+
+def _one_click_allowed(h: dict) -> bool:
+    """The same rule the inbox clean-up applies: DKIM passed for the sender's
+    own organisation, by the provider's verdict, and the address is on that
+    domain or the From domain."""
+    from agent_friday.services import inbox_cleanup as ic
+    hdrs = {"from": [h.get("from", "")], "list-unsubscribe": [h.get("list-unsubscribe", "")],
+            "list-unsubscribe-post": [h.get("list-unsubscribe-post", "")],
+            "authentication-results": list(h.get("authentication-results*") or [])}
+    rows: dict = {}
+    ic.add_message(rows, ic.normalize(hdrs, msg_id="m", ts=1.0, via_gmail=True))
+    row = next(iter(rows.values()), None)
+    return bool(row) and ic.classify(row)["route"] == "one_click"
+
+
+def _post(url: str):
+    """The one POST RFC 8058 defines, with no proxy from the environment, so
+    the pinned address is the address dialled."""
+    import requests
+    return requests.post(url, data="List-Unsubscribe=One-Click", timeout=12, allow_redirects=False,
+                         stream=True, proxies=NO_PROXY,
+                         headers={"Content-Type": "application/x-www-form-urlencoded",
+                                  "User-Agent": "Friday (List-Unsubscribe one-click)"})
+
+
+#: Explicit "no proxy" for every scheme: requests fills proxies from the
+#: environment only where a key is absent, and drops keys set to None.
+NO_PROXY = {"http": None, "https": None, "all": None}
 
 
 def options(account_id: str, message_id: str) -> dict:
     """What leaving this list would involve, for the confirm dialog."""
     h = _headers(account_id, message_id)
     ways = parse_header(h.get("list-unsubscribe", ""))
-    one_click = bool(ways["https"]) and "list-unsubscribe=one-click" in (h.get("list-unsubscribe-post") or "").lower()
+    one_click = (bool(ways["https"]) and "list-unsubscribe=one-click" in (h.get("list-unsubscribe-post") or "").lower()
+                 and _one_click_allowed(h))
     method = "one_click" if one_click else "mailto" if ways["mailto"] else "link" if ways["https"] else None
     return {"status": "ok" if method else "none", "method": method, "sender": h.get("from", ""),
             "mailto": _mailto(ways["mailto"][0]) if ways["mailto"] else None,
@@ -98,17 +134,12 @@ def unsubscribe(account_id: str, message_id: str) -> dict:
         if not _public_host(url):
             return {"status": "error", "method": "one_click",
                     "message": "The list's unsubscribe address is not a public web address, so Friday did not contact it."}
-        import requests
-
         from agent_friday.services import web_safety
         try:
             # The address judged public above is the address dialled: a name
             # that answers differently the second time (DNS rebinding) is refused.
             with web_safety.pinned(url):
-                r = requests.post(url, data="List-Unsubscribe=One-Click", timeout=12, allow_redirects=False,
-                                  stream=True,
-                                  headers={"Content-Type": "application/x-www-form-urlencoded",
-                                           "User-Agent": "Friday (List-Unsubscribe one-click)"})
+                r = _post(url)
                 getattr(r, "close", lambda: None)()
         except web_safety.UnsafeURLError:
             return {"status": "error", "method": "one_click",

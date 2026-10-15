@@ -224,7 +224,7 @@ def _host_matches(host: str, domains) -> bool:
 
 
 def normalize(headers: dict, *, msg_id: str = "", ts: float = 0.0,
-              unread: bool = False, spam: bool = False) -> dict:
+              unread: bool = False, spam: bool = False, via_gmail: bool = True) -> dict:
     """One message as the scan uses it. `headers` maps a lower-cased header
     name to a list of values, top to bottom."""
     def first(name):
@@ -235,7 +235,7 @@ def normalize(headers: dict, *, msg_id: str = "", ts: float = 0.0,
             "list_unsubscribe": first("List-Unsubscribe")[:2000],
             "list_unsubscribe_post": first("List-Unsubscribe-Post")[:200],
             "auth_results": [str(v)[:2000] for v in (headers.get("authentication-results") or [])[:6]],
-            "unread": bool(unread), "spam": bool(spam)}
+            "unread": bool(unread), "spam": bool(spam), "via_gmail": bool(via_gmail)}
 
 
 # ── grouping and classifying ─────────────────────────────────────────────────
@@ -278,7 +278,9 @@ def add_message(senders: dict, msg: dict) -> None:
         row["evidence"] = {"id": msg["id"], "from_domain": key,
                            "list_unsubscribe": msg["list_unsubscribe"],
                            "list_unsubscribe_post": msg["list_unsubscribe_post"],
-                           "dkim": sorted(dkim_pass_domains(msg["auth_results"]))}
+                           "dkim": sorted(dkim_pass_domains(msg["auth_results"])),
+                           # The provider's verdict is trusted only on mail that came through it.
+                           "via_gmail": bool(msg.get("via_gmail", True))}
 
 
 def unread_streak(row: dict) -> int:
@@ -290,6 +292,22 @@ def unread_streak(row: dict) -> int:
     return n
 
 
+#: Second-level labels under a two-letter country code that make a public
+#: suffix of two labels ("co.uk", "com.au"): the organisation is one label more.
+_SECOND_LEVEL = {"co", "com", "net", "org", "ac", "gov", "edu", "ne", "or", "go", "gob", "nic"}
+
+
+def org_domain(domain: str) -> str:
+    """The organisation a domain belongs to, for alignment: "news.shop.example"
+    -> "shop.example", "mail.shop.co.uk" -> "shop.co.uk". No public-suffix list
+    is shipped, so a two-letter country code with a common second level counts
+    as a two-label suffix; anything else is the last two labels."""
+    labels = [x for x in str(domain or "").lower().strip(".").split(".") if x]
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
 def classify(row: dict) -> dict:
     """How this sender can be left: {"route", "url", "host", "mailto", "why"}.
 
@@ -297,12 +315,16 @@ def classify(row: dict) -> dict:
     """
     ev = row.get("evidence") or {}
     ways = parse_list_unsubscribe(ev.get("list_unsubscribe", ""))
-    dkim = set(ev.get("dkim") or [])
+    frm = row.get("domain") or ""
+    # DKIM counts only when the signing domain belongs to the same organisation
+    # as the From address, and only on mail the provider itself received.
+    dkim = {d for d in (ev.get("dkim") or []) if org_domain(d) == org_domain(frm)} \
+        if ev.get("via_gmail", True) else set()
     if row.get("spam") or not dkim:
         return {"route": "spam", "url": "", "host": "", "mailto": "",
                 "why": ("It was in your Spam folder." if row.get("spam") else
                         "Its mail could not be confirmed as really coming from it.")}
-    allowed = dkim | {row.get("domain") or ""}
+    allowed = dkim | {frm}
     for url in ways["https"]:
         host = (urlsplit(url).hostname or "").lower()
         if is_one_click(ev.get("list_unsubscribe_post")) and _host_matches(host, allowed):
@@ -433,9 +455,11 @@ def _mbox_pages(path: str, start: int = 0):
                     ts = 0.0
                 if ts and ts < cutoff:
                     continue
-                labels = {x.strip().lower() for x in str(msg.get("X-Gmail-Labels") or "").split(",")}
+                raw_labels = msg.get("X-Gmail-Labels")
+                labels = {x.strip().lower() for x in str(raw_labels or "").split(",")}
                 batch.append(normalize(hdrs, msg_id=str(k), ts=ts,
-                                       unread="unread" in labels, spam="spam" in labels))
+                                       unread="unread" in labels, spam="spam" in labels,
+                                       via_gmail=raw_labels is not None))
             i = min(len(keys), i + PAGE_SIZE)
             yield i if i < len(keys) else "", batch
     finally:
@@ -529,6 +553,10 @@ def start(source: dict, *, resume: bool = False) -> dict:
     if source.get("kind") not in ("gmail", "mbox"):
         raise ValueError("unknown source")
     if source.get("kind") == "mbox":
+        from agent_friday.services import file_grants
+        why = file_grants.unsafe_path_reason(str(source.get("path") or ""))
+        if why:
+            raise ValueError("Friday reads only a file on this computer: %s." % why)
         p = Path(str(source.get("path") or ""))
         if p.suffix.lower() != ".mbox" or not p.is_file():
             raise ValueError("That isn't a .mbox file Friday can read.")
@@ -596,9 +624,11 @@ def _post_one_click(url: str) -> int:
     import requests
 
     from agent_friday.services import web_safety
+    from agent_friday.services.mail_unsubscribe import NO_PROXY
     with web_safety.pinned(url):
+        # No proxy from the environment: the pinned address is the one dialled.
         r = requests.post(url, data="List-Unsubscribe=One-Click", timeout=12,
-                          allow_redirects=False, stream=True,
+                          allow_redirects=False, stream=True, proxies=NO_PROXY,
                           headers={"Content-Type": "application/x-www-form-urlencoded",
                                    "User-Agent": "Friday (List-Unsubscribe one-click)"})
         try:
@@ -617,7 +647,7 @@ def _egress(host: str, action: str, reason: str) -> None:
         pass
 
 
-def unsubscribe(sender_ids: list, *, decided_by: str) -> dict:
+def unsubscribe(sender_ids: list, *, decided_by: str, expected_hosts: dict | None = None) -> dict:
     """Unsubscribe from each sender in `sender_ids` that is offered one-click.
 
     Every id is re-classified from the stored evidence right now; the caller
@@ -636,6 +666,11 @@ def unsubscribe(sender_ids: list, *, decided_by: str) -> dict:
         name = _display_name(row)
         if c["route"] != "one_click":
             not_done.append({"id": sid, "name": name, "why": c["why"] or "It isn't offered one-click."})
+            continue
+        if expected_hosts is not None and expected_hosts.get(sid) != c["host"]:
+            # The approved card named another address; what was approved is not what would be sent.
+            not_done.append({"id": sid, "name": name,
+                             "why": "Its unsubscribe address changed after you approved, so I didn't send it."})
             continue
         ok, why = web_safety.check_url(c["url"])
         if not ok:
@@ -750,8 +785,9 @@ HANDLER = "inbox_cleanup"
 ACTION = "mail: unsubscribe from mailing lists"
 
 
-def _detail(ids: list) -> dict:
-    return {"handler": HANDLER, "action": "unsubscribe", "senders": sorted(set(ids))}
+def _detail(ids: list, hosts: dict) -> dict:
+    return {"handler": HANDLER, "action": "unsubscribe", "senders": sorted(set(ids)),
+            "hosts": {i: hosts.get(i, "") for i in sorted(set(ids))}}
 
 
 def propose(sender_ids: list, *, requested_by: str, reason: str = "") -> dict:
@@ -764,8 +800,10 @@ def propose(sender_ids: list, *, requested_by: str, reason: str = "") -> dict:
     ids = [s for s in dict.fromkeys(str(x) for x in sender_ids or []) if s in rows][:50]
     if not ids:
         return {"status": "error", "message": "None of those senders are in the last scan."}
-    detail = _detail(ids)
-    listing = "\n".join("- %s (%s)" % (_display_name(rows[s]), s) for s in ids)
+    hosts = {s: classify(rows[s])["host"] for s in ids}
+    detail = _detail(ids, hosts)
+    listing = "\n".join("- %s (%s), the request goes to %s" % (_display_name(rows[s]), s, hosts[s] or "nowhere: not offered one-click")
+                         for s in ids)
     v = action_gate.authorize_external(
         ACTION, detail, requested_by=requested_by or "friday",
         title="Unsubscribe you from %d mailing list%s" % (len(ids), "" if len(ids) == 1 else "s"),
@@ -774,7 +812,8 @@ def propose(sender_ids: list, *, requested_by: str, reason: str = "") -> dict:
                                 listing, ("\n\nWhy: " + reason.strip()) if reason.strip() else "")),
         description="Nothing is sent unless you approve this card.")
     if v.action == "allow":
-        return {"status": "done", "result": unsubscribe(ids, decided_by="owner approval")}
+        return {"status": "done", "result": unsubscribe(ids, decided_by="owner approval",
+                                                         expected_hosts=detail["hosts"])}
     if v.action == "deny":
         return {"status": "refused", "message": "Friday's governance check held this: %s" % v.reason}
     return {"status": "pending_approval", "message": "Waiting for your approval card."}
@@ -790,7 +829,8 @@ def _on_decision(record: dict) -> None:
                                            approval_id=record.get("approval_id"))
         if v.action != "allow":
             return
-        out = unsubscribe(detail.get("senders") or [], decided_by="owner approval")
+        out = unsubscribe(detail.get("senders") or [], decided_by="owner approval",
+                          expected_hosts=dict(detail.get("hosts") or {}))
         _notify("Inbox clean-up: %d unsubscribed" % len(out["done"]),
                 ("%d couldn't be done here; they're listed in Messages > Clean up."
                  % len(out["not_done"])) if out["not_done"] else "Each one has a receipt.")
