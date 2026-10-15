@@ -500,11 +500,11 @@
     };
     const accounts = props.accounts || [];
     const groups = accounts.length ? accounts : [{ account_id: null, label: '' }];
-    return h('div', { className: 'calv-cals', role: 'dialog', 'aria-label': 'Calendars shown in Friday',
+    return h('div', { className: 'calv-cals', role: 'dialog', 'aria-label': 'Calendars shown here',
       onKeyDown: e => { if (e.key === 'Escape' && props.onClose) { e.stopPropagation(); props.onClose(); } } },
-      h('div', { className: 'calv-cals-head' }, h('span', null, 'Calendars shown in Friday'),
+      h('div', { className: 'calv-cals-head' }, h('span', null, 'Calendars shown here'),
         h('button', { type: 'button', className: 'btn', 'aria-label': 'Close', onClick: props.onClose }, '×')),
-      h('div', { className: 'calv-modal-dim' }, 'Switching one here changes Friday only, never Google.'),
+      h('div', { className: 'calv-modal-dim' }, 'Switching one here changes only what shows here, never Google.'),
       groups.map(a => h('div', { key: a.account_id || 'legacy', className: 'calv-cals-group' },
         a.label ? h('div', { className: 'calv-cals-account' }, a.label) : null,
         a.reason ? h('div', { className: 'calv-modal-dim' }, a.reason) : null,
