@@ -52,7 +52,7 @@ def _format(hits) -> str:
                      f"{', ' + h['title'] if h.get('title') else ''}): {h['text']}" for h in hits)
 
 
-def _tool_search_past_conversations(inp=None) -> str:
+def _tool_search_conversations_typed(inp=None) -> str:
     inp = inp if isinstance(inp, dict) else {}
     query = str(inp.get("query") or "").strip()
     if not query:
@@ -76,7 +76,7 @@ def _tool_search_past_conversations(inp=None) -> str:
     return "\n\n".join(parts)
 
 
-HANDLERS = {"search_past_conversations": _tool_search_past_conversations}
+HANDLERS = {"search_past_conversations": _tool_search_conversations_typed}
 
 
 def register(claude_tools, handlers, rings):

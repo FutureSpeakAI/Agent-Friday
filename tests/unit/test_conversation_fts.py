@@ -130,8 +130,8 @@ def test_the_text_tool_gives_a_cloud_model_only_what_it_already_saw(monkeypatch)
     _wait_built()
     monkeypatch.setattr(cst, "_loop_is_local", lambda: False)
     monkeypatch.setattr(cst, "_provider", lambda: "anthropic")
-    out = cst._tool_search_past_conversations({"query": "orchard"})
+    out = cst._tool_search_conversations_typed({"query": "orchard"})
     assert "budget" in out and "deed" not in out and "1 more match" in out
     monkeypatch.setattr(cst, "_loop_is_local", lambda: True)
-    out = cst._tool_search_past_conversations({"query": "orchard"})
+    out = cst._tool_search_conversations_typed({"query": "orchard"})
     assert "budget" in out and "deed" in out
