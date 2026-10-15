@@ -67,7 +67,7 @@ def test_a_due_reminder_is_raised_once_through_the_registry_and_opens_the_event(
     out = cr.tick(NOW)
     assert out["raised"] == 2 and out["errors"] == 0
     by = {p["target"]["event"]: p for p in pushed}
-    assert by["e1"]["title"] == "Dentist in 30 minutes"
+    assert by["e1"]["title"] == "Dentist in 29 minutes", "worded from the time actually left"
     assert by["e1"]["emitter"] == "CR1" and by["e1"]["kind"] == "calendar_reminder"
     assert by["e1"]["dedupe_key"] == "calendar-reminder:e1:30"
     assert by["e1"]["target"] == {"workspace": "calendar", "event": "e1", "date": "2026-10-20"}
@@ -137,3 +137,14 @@ def test_a_five_minute_reminder_cannot_fall_between_two_ticks():
     hits = [m for m in range(0, 7) if cr.due([ev], start - timedelta(minutes=5) + timedelta(minutes=m))]
     # every tick from the reminder's moment until the start sees it due; ticks are 2 minutes apart
     assert hits == [0, 1, 2, 3, 4]
+
+
+def test_reminders_that_came_due_together_raise_one_notice_worded_from_the_time_left(ticking, monkeypatch):
+    cr, pushed = ticking
+    from agent_friday.services import calendar_engine as ce
+    soon = _ev("m1", "Standup", NOW + timedelta(minutes=8),
+               [{"method": "popup", "minutes": 1440}, {"method": "popup", "minutes": 60}, {"method": "popup", "minutes": 10}])
+    monkeypatch.setattr(ce, "_events_for_day", lambda d: [soon] if d == NOW.date() else [])
+    assert cr.tick(NOW)["raised"] == 1
+    assert pushed[0]["title"] == "Standup in 8 minutes"
+    assert cr.tick(NOW + timedelta(minutes=1))["raised"] == 0, "the day-before and hour-before ones are not raised late"
