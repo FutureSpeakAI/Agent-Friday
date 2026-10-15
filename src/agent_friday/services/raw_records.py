@@ -84,8 +84,10 @@ def named_in(text: str, cwd=None) -> list:
         if not tok or tok in seen or len(tok) > 400:
             continue
         seen.add(tok)
-        if "://" in tok or "(" in tok:
+        if "://" in tok or "(" in tok or "\x00" in tok:
             continue
+        if tok.replace("/", "\\").startswith("\\\\"):
+            continue                     # a network or device path is never touched to look
         try:
             p = Path(tok).expanduser()
             if cwd and not p.is_absolute():

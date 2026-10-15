@@ -185,10 +185,13 @@ _JSON_U = re.compile(r"\\u([0-9a-fA-F]{4})")
 # never held, or one held read would stop every later read of any file.
 # Matched against a whole unit, so a real record line that merely mentions
 # one of these words is still held.
+# Bounded throughout: a unit is untrusted text, so no part of this may
+# backtrack over a long run of digits or commas.
 _BOILERPLATE = re.compile(
-    r"^(?:\[?(?:showing |shown )?lines? [\d,]+\s*(?:-|to)\s*[\d,]+ of [\d,]+.*|\[?extraction truncated.*"
-    r"|</?evidence-[\w-]*>?|(?:\.\.\.|\u2026)\s*\[.*|\(?use read_file with (?:offset|page)\b.*"
-    r"|continue with (?:\w+ )?offset=\d+.*|(?:\.\.\.\s*)?[\d,]+ more (?:lines|characters)\b.*)$", re.I)
+    r"^(?:\[?(?:showing |shown )?lines? [\d,]{1,15} ?(?:-|to) ?[\d,]{1,15} of [\d,]{1,15}\b"
+    r"|\[?extraction truncated\b|</?evidence-[\w-]{0,40}>?$|(?:\.\.\.|\u2026) ?\["
+    r"|\(?use read_file with (?:offset|page)\b|continue with (?:\w{1,20} )?offset=\d{1,12}\b"
+    r"|(?:\.\.\. ?)?[\d,]{1,15} more (?:lines|characters)\b)", re.I)
 # Words every inbox and statement share: holding them would stop the
 # person's own "Thanks for reaching out." at the cloud, and they say nothing
 # about anyone. Small talk is let go only when SHORT (under RAW_SPECIFIC):
@@ -550,6 +553,14 @@ def raw_hold_status() -> dict:
             why = "the hold could not be kept in full"
         return {"files": len(files), "held": files[:200], "units": len(_RAW_HOLDS),
                 "fail_closed": bool(_RAW_LOADED["overflow"]), "why": why}
+
+
+def held_names() -> dict:
+    """{file key: the path as the person spelled it} for every held file."""
+    with _RAW_LOCK:
+        _raw_load()
+        keys = {k for ks in _RAW_HOLDS.values() for k in ks}
+        return {k: _RAW_NAMES.get(k, k) for k in keys}
 
 
 def held_keys() -> set:

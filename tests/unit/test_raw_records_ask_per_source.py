@@ -581,3 +581,13 @@ def test_developer_output_is_not_withheld(cards):
     block = "From: a@x.test\nTo: b@x.test\nSubject: rent\n\nThe rent is late."
     assert fg.raw_output_notice(block)
     assert fg.raw_output_notice("Downloads/Chase_Activity_2026.csv:3:10/01,AMAZON,23.99")
+
+
+def test_the_locks_page_asks_only_about_a_file_it_holds(cards, tmp_path):
+    from agent_friday.services import locks
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    shown = [x for x in locks.view()["lines"] if x["key"] == "held"][0]["held_files"]
+    assert shown == [str(p)], "shown as spelled, not folded to lower case"
+    assert locks.ask_for_held(shown[0])["ok"] and len(cards) == 2
+    assert locks.ask_for_held(str(tmp_path / "other.mbox"))["ok"] is False
