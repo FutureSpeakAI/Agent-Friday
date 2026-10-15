@@ -186,7 +186,15 @@ def _nav_args(text: str, m=None) -> dict:
     view = gd.get("view") or gd.get("view2") or gd.get("view3")
     if view:
         # "show my calendar's month view": the Calendar workspace, opened on that view (its declared section)
-        return {"kind": "workspace", "workspace": "calendar", "query": "calendar", "section": view.lower()}
+        view = "freebusy" if view.lower().startswith("free") else view.lower()
+        return {"kind": "workspace", "workspace": "calendar", "query": "calendar", "section": view}
+    if gd.get("allcals"):
+        return {"kind": "workspace", "workspace": "calendar", "query": "calendar", "section": "all"}
+    if gd.get("cal"):
+        # "show only my family calendar": the Calendar narrowed to that calendar (a section the page declares
+        # for each calendar it has; an unknown name comes back NAV_FAIL with the names it has)
+        return {"kind": "workspace", "workspace": "calendar", "query": "calendar",
+                "section": re.sub(r"\s+", " ", gd["cal"].strip().lower())}
     q = re.sub(r"\s+", " ", (gd.get("q") or "").strip().lower()).replace("e-mail", "email")
     if not q:
         return {}
@@ -450,9 +458,15 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
     # of my calendar". Only with "calendar" or "view" in the words, so "show me my week" stays a calendar READ.
     ("navigate_to",
      _POLITE + r"(?:open|show(?: me)?|go to|switch(?: me)? to|change to|bring up|take me to|pull up|put)\s+(?:up\s+)?"
-     r"(?:my\s+|the\s+)?(?:(?:calendar(?:'s)?)\s+(?:(?:in|by|to|for)\s+(?:the\s+|a\s+)?)?(?P<view>day|week|month)(?:ly)?(?:\s+view)?"
-     r"|(?:calendar\s+)?(?P<view2>day|week|month)(?:ly)?\s+view(?:\s+(?:of|on|in|for)\s+(?:my\s+|the\s+)?calendar)?"
+     r"(?:my\s+|the\s+)?(?:(?:calendar(?:'s)?)\s+(?:(?:in|by|to|for)\s+(?:the\s+|a\s+)?)?(?P<view>day|week|month|free[ -]?/?[ -]?busy)(?:ly)?(?:\s+view)?"
+     r"|(?:calendar\s+)?(?P<view2>day|week|month|free[ -]?/?[ -]?busy)(?:ly)?\s+(?:view|time)(?:\s+(?:of|on|in|for)\s+(?:my\s+|the\s+)?calendar)?"
      r"|(?:the\s+|my\s+)?(?P<view3>week|month)\s+(?:on|in)\s+(?:my\s+|the\s+)?calendar)" + _END),
+    # Which calendars a view shows: "show only my family calendar", "just the work calendar", "show all my calendars".
+    ("navigate_to",
+     _POLITE + r"(?:(?:show(?: me)?|display)\s+(?:only|just)|only show(?: me)?|just show(?: me)?)\s+(?:my\s+|the\s+)?"
+     r"(?!(?:the|my|a)\s*calendar)(?P<cal>[a-z0-9][a-z0-9 '&-]{0,38}?)\s+calendar" + _END),
+    ("navigate_to",
+     _POLITE + r"(?:show(?: me)?|display|bring back)\s+(?P<allcals>all|every one of|each of)\s+(?:of\s+)?my\s+calendars(?:\s+again)?" + _END),
     ("navigate_to",
      _POLITE + r"(?:open|show(?: me)?|go to|switch to|bring up|take me to|pull up)\s+(?:up\s+)?(?:my\s+|the\s+)?"
      r"(?P<q>" + _WORKSPACES + r")(?:\s+(?:workspace|page|tab|screen|app))?" + _END),
