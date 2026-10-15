@@ -119,10 +119,13 @@ def _push(**kw) -> None:
     ne.push(**kw)
 
 
-def notice_for(ev: dict, minutes: int) -> dict:
-    """The notification for one due reminder: what, when, where it is, and the way to its prep."""
+def notice_for(ev: dict, minutes: int, now: datetime | None = None) -> dict:
+    """The notification for one due reminder: what, when (in the time actually left, on this PC's clock),
+    where it is, and the way to its prep."""
     start = _aware(ev.get("start_time"))
-    when = start.strftime("%I:%M %p").lstrip("0") if start else ""
+    if start is not None and now is not None:
+        minutes = max(0, int((start - now).total_seconds() // 60))
+    when = start.astimezone().strftime("%I:%M %p").lstrip("0") if start else ""
     where = ev.get("calendar_name") or ""
     body = when + ((" · " + where) if where else "")
     if ev.get("location"):
@@ -152,12 +155,24 @@ def tick(now: datetime | None = None) -> dict:
     with _LOCK:
         fired = _load_fired()
         changed = False
+        # Several reminders of one event can come due together (the PC slept, or "1 day", "1 hour" and
+        # "10 minutes" all passed): raise only the nearest one, and count the others as raised.
+        nearest: dict[str, tuple[dict, int, list[int]]] = {}
         for ev, minutes in due(events, now):
             result["due"] += 1
+            k_ev = "%s|%s" % (ev.get("calendar_key") or "", ev.get("id") or "")
+            if k_ev not in nearest or minutes < nearest[k_ev][1]:
+                prior = nearest.get(k_ev, (None, None, []))[2]
+                nearest[k_ev] = (ev, minutes, prior + ([nearest[k_ev][1]] if k_ev in nearest else []))
+            else:
+                nearest[k_ev][2].append(minutes)
+        for ev, minutes, others in nearest.values():
             k = _key(ev, minutes)
             if k in fired:
                 continue
-            n = notice_for(ev, minutes)
+            for m in others:
+                fired[_key(ev, m)] = now.date().isoformat()
+            n = notice_for(ev, minutes, now)
             try:
                 _push(title=n["title"], body=n["body"], priority="medium", source="calendar",
                       kind="calendar_reminder", emitter="CR1",
