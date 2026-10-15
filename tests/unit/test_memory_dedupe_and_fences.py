@@ -43,10 +43,18 @@ def test_friday_does_not_store_the_same_fact_twice():
     r = cm.add("user", "Prefers tea over coffee.", actor="friday")
     assert r["ok"] and r.get("unchanged") and r["duplicate_of"] == "Prefers tea to coffee."
     assert cm.entries("user") == ["Prefers tea to coffee."]
+    from agent_friday.services import agent
     from agent_friday.services import core_memory_tools as cmt
-    out = cmt._tool_update_core_memory({"action": "add", "target": "user",
-                                         "text": "Prefers tea over coffee!"})
-    assert out.startswith("Not saved: your core memory already says this")
+    # The owner's own typed words, on a clean ledger: the save path, not the queue.
+    t1 = agent._CURRENT_TOOL_CONTEXT.set({"session_id": "dd", "taint_key": "dd-clean", "surface": "chat"})
+    t2 = agent._CURRENT_OWNER_TEXT.set("remember I prefer tea over coffee")
+    try:
+        out = cmt._tool_update_core_memory({"action": "add", "target": "user",
+                                             "text": "Prefers tea over coffee!"})
+    finally:
+        agent._CURRENT_OWNER_TEXT.reset(t2)
+        agent._CURRENT_TOOL_CONTEXT.reset(t1)
+    assert out.startswith("Not saved: your core memory already says this"), out
 
 
 def test_the_owner_may_add_what_they_like():
