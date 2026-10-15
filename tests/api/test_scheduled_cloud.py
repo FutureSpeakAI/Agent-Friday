@@ -40,6 +40,11 @@ def _clean_store(friday_dir):
 
 
 def _consent(monkeypatch, *, allow, answered=None, **extra):
+    """The owner's answer, in a LOCAL routing mode: the question is asked
+    there. Under a cloud mode the mode itself is the consent
+    (tests/unit/test_mode_truth.py)."""
+    from agent_friday.services import cloud_intent
+    monkeypatch.setattr(cloud_intent, "_stored_mode", lambda: "local_preferred")
     cfg = sc.defaults()
     cfg.update(answered=allow if answered is None else answered, allow=allow, **extra)
     monkeypatch.setattr(sc, "settings", lambda: dict(cfg))

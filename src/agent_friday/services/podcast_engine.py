@@ -9,11 +9,16 @@ and `charts/` in data mode.
 
 The invariants this module keeps:
 
-* **The script is written locally.** `_llm_json` calls `local_call` on the
-  model `scheduler._resolve_local_seat()` finds serving, inside
-  `local_only_guard.local_only`, so any cloud transport reached by accident
-  refuses. There is no cloud writer. No local model, no episode: the episode
-  fails with that reason; it does not go to the cloud.
+* **The script is written locally in a local routing mode.** `_llm_json`
+  calls `local_call` on the model `scheduler._resolve_local_seat()` finds
+  serving, inside `local_only_guard.local_only`, so any cloud transport
+  reached by accident refuses. No local model, no episode: the episode fails
+  with that reason; it does not go to the cloud. Under a cloud_only mode the
+  owner chose (not the factory value), that choice is the consent: a
+  non-private episode is written on the routine cloud model
+  (`cloud_intent.background_route`, `writer_scope`), with a larger output
+  budget (`cloud_writer_tokens`). A private episode is written locally in
+  every mode.
 * **Every spoken line is accountable.** Each line carries the source ids it
   rests on. A line citing a source that does not exist is cut, a line with a
   number and no citation is cut, and in data mode a line with a number that is
@@ -586,8 +591,8 @@ def _refuse_cloud_voice(private: bool) -> None:
             "This episode is built from your private material, so it is spoken "
             "on this computer only. A cloud voice is not available for it.")
     try:
-        from agent_friday.core import _load_settings
-        mode = ((_load_settings() or {}).get("model_routing") or {}).get("mode")
+        from agent_friday.services import cloud_intent
+        mode = cloud_intent.normalize_mode(cloud_intent._stored_mode())
     except Exception:
         mode = "local_only"
     if mode == "local_only":
@@ -618,10 +623,111 @@ def delete(eid: str) -> bool:
     return not d.exists()
 
 
-# ── writing (local model only) ──────────────────────────────────────────────
+# ── writing (the local model; the cloud only under a chosen cloud_only) ────
+
+#: A cloud writer's output budget: three times the local one, and never under
+#: 8,000 tokens. The local budgets are sized to a slow seat; a cloud model's
+#: JSON for the same outline ran past 2,000 tokens, came back cut off, and the
+#: episode failed with "did not return a usable script".
+CLOUD_WRITER_FACTOR = 3
+CLOUD_WRITER_MIN_TOKENS = 8000
+
+_wlog = logging.getLogger("friday.podcast")
+
+#: The writer's route for the episode being written on this thread (set by
+#: `_write` through `writer_scope`). Unset means the local model: Discuss, the
+#: private summary and every other caller of `_llm_json` stay local.
+_WRITER = threading.local()
+
+
+def cloud_writer_tokens(max_tokens: int) -> int:
+    return max(CLOUD_WRITER_FACTOR * int(max_tokens or 0), CLOUD_WRITER_MIN_TOKENS)
+
+
+def writer_route(ep: dict):
+    """Where this episode's script is written: `cloud_intent.background_route`
+    for a podcast, or None (the local model) for a private episode, which stays
+    on this computer in every mode."""
+    if (ep or {}).get("privacy") == "private":
+        return None
+    try:
+        from agent_friday.services import cloud_intent
+        from agent_friday.services.scheduler import _resolve_local_seat
+        return cloud_intent.background_route("podcast", local_serving=_resolve_local_seat)
+    except Exception as e:
+        _wlog.debug("podcast writer route unavailable: %s", e)
+        return None
+
+
+def writer_is_cloud(route) -> bool:
+    return route is not None and getattr(route, "route", "") == "cloud"
+
+
+class writer_scope:
+    """`with writer_scope(route):` -- `_llm_json` calls inside write on that route."""
+
+    def __init__(self, route):
+        self.route = route
+        self.used_cloud = False
+
+    def __enter__(self):
+        self._prev = (getattr(_WRITER, "route", None), getattr(_WRITER, "used_cloud", False))
+        _WRITER.route = self.route
+        _WRITER.used_cloud = False
+        return self
+
+    def __exit__(self, *exc):
+        self.used_cloud = bool(getattr(_WRITER, "used_cloud", False))
+        _WRITER.route, _WRITER.used_cloud = self._prev
+        return False
+
+
+def _unusable(raw, where: str, budget: int) -> None:
+    """Say in friday.log what came back when a reply was not usable JSON: its
+    length and first characters, never the prompt."""
+    text = raw if isinstance(raw, str) else ("" if raw is None else repr(raw))
+    _wlog.warning("podcast writer: the %s model's reply was not usable JSON "
+                  "(%d chars, max_tokens=%d): %r", where, len(text), budget,
+                  text[:160])
+
+
+def _cloud_llm_json(system: str, user: str, *, max_tokens: int):
+    """One JSON call to the routine cloud model, inside the routine scope that
+    a cloud routing mode releases and pins. Returns (parsed, model name), or
+    None when the scope was not released (the mode changed): write locally."""
+    from agent_friday.services import local_call, local_only_guard
+    from agent_friday.services import reasoning_trace as _rt
+    from agent_friday.services.model_router import _generate_text
+    budget = cloud_writer_tokens(max_tokens)
+    with local_only_guard.local_only("Podcast", kind="routine", job="podcast") as scope, \
+            _rt.scope("podcast", "Podcast script"):
+        if not scope.released:
+            return None
+        model = local_only_guard.pinned_model()
+        raw = _generate_text([{"role": "user", "content": user}], system=system,
+                             model=model or None, max_tokens=budget,
+                             orb_label="Podcast script", workspace="podcasts")
+        out = local_call.extract_json(raw) if isinstance(raw, str) else None
+        if out is None:
+            _rt.set_reason("the cloud model did not return a usable script")
+    if out is None:
+        _unusable(raw, "cloud", budget)
+        raise render.RenderError("writer_failed",
+                                 "The cloud model did not return a usable script.")
+    _WRITER.used_cloud = True
+    return out, model or "cloud"
+
 
 def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, str]:
-    """One JSON call to the LOCAL model. Returns (parsed, model name)."""
+    """One JSON call to the writer. Returns (parsed, model name).
+
+    The LOCAL model, unless the episode being written on this thread is not
+    private and the owner chose cloud_only (`writer_scope`, set by
+    `_write`): then the routine cloud model, with `cloud_writer_tokens`."""
+    if writer_is_cloud(getattr(_WRITER, "route", None)):
+        got = _cloud_llm_json(system, user, max_tokens=max_tokens)
+        if got is not None:
+            return got
     from agent_friday.services import local_call, local_only_guard
     from agent_friday.services.scheduler import _resolve_local_seat
     seat = _resolve_local_seat()
@@ -640,6 +746,7 @@ def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, 
         else:
             _rt.model_call(seat, provider="local", seat="local")
     if out is None:
+        _unusable(None, "local", max_tokens)
         raise render.RenderError("writer_failed",
                                  "The local model did not return a usable script.")
     return out, seat
@@ -1809,15 +1916,27 @@ def queue_job(ep: dict) -> dict:
 def _write(eid: str, ep: dict, orb: str, stop) -> dict | None:
     """The writing stage: sources, the script, the gate. Returns the updated
     episode, or None when it was stopped while writing."""
-    ep = _update(eid, status="writing", stage_detail="the local model is writing")
+    route = writer_route(ep)
+    ep = _update(eid, status="writing", stage_detail=(
+        "the cloud model is writing" if writer_is_cloud(route)
+        else "the local model is writing"))
     docs = _gather(ep)
     if not docs:
         raise render.RenderError("no_sources", "There was nothing to talk about.")
+    if writer_is_cloud(route) and any(d.get("private") for d in docs):
+        # A private source (a dataset's facts, a file) keeps the script on
+        # this computer, whatever the routing mode.
+        route = None
+        ep = _update(eid, stage_detail="the local model is writing")
     if (ep.get("attached") or {}).get("routine") and not ep.get("open"):
         ep = _update(eid, open=stamp_open(dict(ep))["open"])
-    script = write_script(ep, docs, progress=lambda i, n: (
-        _update(eid, progress={"stage": "writing", "done": i, "of": n}),
-        _orb(orb, "progress", ep, (i / n) * 0.4)), stop=stop)
+    if writer_is_cloud(route):
+        _wlog.info("podcast %s: the script is written on the cloud model %s: %s",
+                   eid, route.model or "(configured)", route.reason)
+    with writer_scope(route) as _ws:
+        script = write_script(ep, docs, progress=lambda i, n: (
+            _update(eid, progress={"stage": "writing", "done": i, "of": n}),
+            _orb(orb, "progress", ep, (i / n) * 0.4)), stop=stop)
     if stop():
         return None
     hard = [p for p in script["script_check"]["problems"] if p["code"] in quality.HARD_CODES]
@@ -1843,6 +1962,7 @@ def _write(eid: str, ep: dict, orb: str, stop) -> dict | None:
                  # Which stories were told from their full article, which from a summary.
                  articles=script.get("depth") or None,
                  writer_model=script["model"],
+                 writer_where="cloud" if _ws.used_cloud else "this computer",
                  facts=[{k: f[k] for k in ("id", "text", "expr") if k in f}
                         for f in ep.get("_facts") or [] if not f.get("names_only")] or None,
                  charts=ep.get("charts"), data=ep.get("data"),
@@ -2254,7 +2374,7 @@ def _write_provenance(ep: dict, audio: Path) -> None:
     try:
         from agent_friday.services import provenance
         chain = [{"tool": "podcast_engine.write_script", "model": ep.get("writer_model"),
-                  "where": "this computer"}]
+                  "where": ep.get("writer_where") or "this computer"}]
         if ep.get("voice_engine") == "cloud":
             chain.append({"tool": "gemini_tts", "where": "cloud (owner's choice)"})
         else:

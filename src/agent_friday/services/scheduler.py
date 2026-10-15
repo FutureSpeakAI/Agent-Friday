@@ -88,25 +88,45 @@ class RetiredSchedule(SkippedRun):
 
 
 def _cloud_model_for(rec):
-    """The cloud model this local-only run may use instead, or None.
-
-    Only for the built-in jobs the owner's `scheduled_cloud` answer covers, and
-    only when that answer is yes. The caller has already established that no
-    local seat is serving; a serving local seat always wins.
-    """
+    """The cloud model the owner's `scheduled_cloud` answer allows this
+    local-only built-in onto in a LOCAL routing mode when no seat serves, or
+    None. Only the jobs the owner was shown when answering are covered. A
+    reading of `cloud_intent.background_route`, which decides; kept for the
+    callers that ask this one question."""
     try:
-        from agent_friday.services import scheduled_cloud as _sc
-        # Only the jobs the owner was shown when answering: a job added to
-        # LOCAL_ONLY_BY_DEFAULT later is not silently covered by that answer.
-        if (rec or {}).get("id") not in {sid for sid, _ in _sc.JOBS}:
-            return None
-        cfg = _sc.settings()
-        if not cfg.get("allow"):
-            return None
-        return _sc.model_for(rec.get("id"), cfg) or None
+        from agent_friday.services import cloud_intent as _ci
+        r = _ci.background_route((rec or {}).get("id"), local_serving=False,
+                                 mode="local_preferred")
+        return (r.model or None) if r.route == "cloud" else None
     except Exception as e:
         _log.debug("scheduled_cloud unavailable: %s", e)
         return None
+
+
+def _routine_route(rec):
+    """`cloud_intent.background_route` for a built-in routine job, or None for
+    any other schedule (an owner's own local-only job is local in every mode).
+    The local seat is probed only when the answer depends on it."""
+    sid = (rec or {}).get("id")
+    if sid not in LOCAL_ONLY_BY_DEFAULT:
+        return None
+    try:
+        from agent_friday.services import cloud_intent as _ci
+        return _ci.background_route(sid, local_serving=_resolve_local_seat)
+    except Exception as e:
+        _log.debug("background route unavailable for %s: %s", sid, e)
+        return None
+
+
+def _catch_up_ready(rec):
+    """May a run that waited for the local seat go now? Under a cloud routing
+    mode a routine job does not need the seat, so it goes."""
+    r = _routine_route(rec)
+    if r is None:
+        return _parked_reason() is None and bool(_resolve_local_seat())
+    if r.route == "cloud":
+        return True
+    return r.route == "local" and _parked_reason() is None
 
 
 def _paused(rec, reason, *, no_local_model=True):
@@ -467,7 +487,10 @@ def delete_schedule(sid) -> bool:
 #:
 #: local-only means STRICTLY local: if no local seat is serving, the run is
 #: SKIPPED with a reason rather than quietly sent to a paid provider. Cloud is
-#: only ever used when a job is explicitly opted in.
+#: only ever used when a job is explicitly opted in -- and the owner CHOOSING
+#: cloud_only IS that opt-in for the News routines and the heartbeat (not daily
+#: creation): they then run on their pinned cloud model. `cloud_intent.background_route`
+#: is the one place that decides (`_routine_route`).
 #:
 #: For scale: a cloud heartbeat cost $438.76 over 2,357 runs; pinned local, 46 of
 #: 47 runs cost $0.00. The one that escaped went through `_generate_agent`'s
@@ -715,9 +738,12 @@ def _cloud_cadence_holds(rec, now) -> bool:
     """
     if not (rec.get("task") or {}).get("local_only"):
         return False
-    if rec.get("id") != "sch_heartbeat" or not _cloud_model_for(rec):
+    if rec.get("id") != "sch_heartbeat":
         return False
-    if _resolve_local_seat():
+    # The heartbeat runs in the cloud under a chosen cloud_only, or by the
+    # owner's opt-in with no seat serving: either way, at the cloud cadence.
+    _r = _routine_route(rec)
+    if _r is None or _r.route != "cloud":
         return False
     try:
         from agent_friday.services import scheduled_cloud as _sc
@@ -792,7 +818,7 @@ def _late_run_due(rec, now) -> bool:
     if cu:
         if cu.get("date") != now.strftime("%Y-%m-%d"):
             return False
-        return _parked_reason() is None and bool(_resolve_local_seat())
+        return _catch_up_ready(rec)
     if rec.get("trigger") == "interval" and _cloud_cadence_holds(rec, now):
         return False
     return True
@@ -918,7 +944,7 @@ def _is_due_on_schedule(rec, now) -> bool:
             return False          # the tick records it missed
         if (rec.get("not_before") or 0) > now.timestamp():
             return False
-        return _parked_reason() is None and bool(_resolve_local_seat())
+        return _catch_up_ready(rec)
 
     if (rec.get("not_before") or 0) > now.timestamp():
         return False
@@ -1368,14 +1394,19 @@ def _run_task_inner(rec):
                 # the cloud transports refuse inside.
                 if task.get("local_only"):
                     from agent_friday.services import local_only_guard as _log_guard
-                    # The owner allowed these jobs onto a cloud model when no local
-                    # one serves: run on exactly that model, and NOT inside the
-                    # local-only guard, which would refuse it.
-                    # News routines never take the cloud pin: News is local-only
-                    # and waits for the seat instead (`local_news_run`).
-                    _cm = None if rec.get("id") in NEWS_ROUTINES else _cloud_model_for(rec)
-                    if _cm and not _resolve_local_seat():
-                        with _log_guard.cloud_pinned(_cm, meta.get("label") or ref):
+                    # Where a built-in routine runs is `cloud_intent.background_route`:
+                    # under a cloud_only the owner chose, the mode is the consent; otherwise
+                    # mode the owner may have allowed daily creation and the heartbeat
+                    # onto a cloud model when no local one serves (News is not covered
+                    # and waits for the seat, `local_news_run`). Either way the run is
+                    # pinned to exactly that model, and NOT inside the local-only
+                    # guard, which would refuse it.
+                    _route = _routine_route(rec)
+                    if _route is not None and _route.route == "cloud":
+                        _log.info("scheduled %s runs on the cloud model %s: %s",
+                                  rec.get("id"), _route.model or "(configured)",
+                                  _route.reason)
+                        with _log_guard.cloud_pinned(_route.model, meta.get("label") or ref):
                             return meta["fn"]()
                     _label = meta.get("label") or ref
                     with _log_guard.local_only(_label):
@@ -1437,16 +1468,24 @@ def _run_task_inner(rec):
     _model = task.get("model")
     _cloud = None
     if task.get("local_only"):
-        _model = _resolve_local_seat()
-        if not _model:
-            # No local seat. The owner may have allowed this job onto one
-            # cloud model; otherwise it is skipped, as before.
-            _cloud = _cloud_model_for(rec)
-            if not _cloud:
-                _paused(rec,
-                        "local_only schedule skipped: no local seat is serving "
-                        "right now, and this job is not permitted to run in "
-                        "the cloud")
+        # A built-in routine (the heartbeat) asks `cloud_intent.background_route`:
+        # under a cloud_only the owner chose it runs on its cloud model (the mode is
+        # the consent); otherwise on the serving seat, or on the cloud model the
+        # owner allowed when none serves, or it is skipped. An owner's own
+        # local-only schedule is local in every mode.
+        _route = _routine_route(rec)
+        if _route is not None and _route.route == "cloud":
+            _cloud = _route.model or None
+            _log.info("scheduled %s runs on the cloud model %s: %s",
+                      rec.get("id"), _cloud or "(none configured)", _route.reason)
+        else:
+            _model = _route.local_model if _route is not None else _resolve_local_seat()
+        if not _cloud and not _model:
+            _paused(rec,
+                    "local_only schedule skipped: no local seat is serving "
+                    "right now, and this job is not permitted to run in "
+                    "the cloud")
+        if _cloud:
             _model = _cloud
     # Pinning the model at spawn is not the same as forbidding cloud for the
     # whole run: `_generate_agent`'s fallback ladder can retry a failed leg on
