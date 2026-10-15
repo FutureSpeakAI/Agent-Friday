@@ -622,7 +622,7 @@
 .calv-undo.failed{border-color:var(--fr-error)}
 .calv-undo span{flex:1}
 .cal-ev-remind{color:var(--fr-dim)}
-.calv-cals{position:absolute;right:0;top:44px;z-index:30;background:var(--fr-glass);backdrop-filter:blur(var(--fr-glass-blur,12px));border:1px solid var(--fr-glass-edge);border-radius:var(--fr-radius,10px);padding:12px;min-width:280px;max-height:60vh;overflow:auto;color:var(--fr-text)}
+.calv-cals{position:absolute;right:0;top:44px;z-index:30;background:color-mix(in srgb,var(--fr-surface) 94%,transparent);box-shadow:0 12px 32px color-mix(in srgb,var(--fr-surface) 70%,transparent);backdrop-filter:blur(var(--fr-glass-blur,12px));border:1px solid var(--fr-glass-edge);border-radius:var(--fr-radius,10px);padding:12px;min-width:280px;max-height:60vh;overflow:auto;color:var(--fr-text)}
 .calv-cals-head{display:flex;justify-content:space-between;align-items:center;font-weight:600}
 .calv-cals-account{font-size:var(--fr-text-2xs,10px);letter-spacing:var(--fr-track-label,.08em);color:var(--fr-dim);margin:10px 0 4px}
 .calv-cals-row{display:flex;align-items:center;gap:8px;min-height:var(--fr-row-h-dense,28px);cursor:pointer}
