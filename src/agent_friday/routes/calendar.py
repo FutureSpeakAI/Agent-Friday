@@ -146,6 +146,75 @@ def api_calendar_day(day_str):
     })
 
 
+@calendar_bp.route('/api/calendar/calendars')
+def api_calendar_calendars():
+    """Every calendar of every connected account, its Google colour and whether
+    it is switched on in Friday; plus why an account shows only its main one."""
+    from agent_friday.services import calendar_views as cv
+    try:
+        listing = cv.cached_calendars()
+    except Exception as e:
+        return api_error(e, "Couldn't read your calendars")
+    return jsonify({"status": "ok", "calendars": listing.get("calendars") or [],
+                    "accounts": listing.get("accounts") or [], "errors": cv.last_errors()})
+
+
+@calendar_bp.route('/api/calendar/calendars/visible', methods=['POST'])
+def api_calendar_calendars_visible():
+    """Switch calendars on or off in Friday. Nothing is written to Google.
+    Body: {changes: {<calendar key>: true|false}}."""
+    from agent_friday.services import calendar_views as cv
+    data = request.get_json(silent=True) or {}
+    try:
+        chosen = cv.set_visible(data.get("changes") or {})
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    return jsonify({"status": "ok", "visible": chosen})
+
+
+@calendar_bp.route('/api/calendar/range')
+def api_calendar_range():
+    """Events of the switched-on calendars from `start` to `end` (YYYY-MM-DD,
+    end exclusive, at most 62 days), for the week and month views."""
+    from agent_friday.services import calendar_views as cv
+    try:
+        d0 = date.fromisoformat(request.args.get("start") or "")
+        d1 = date.fromisoformat(request.args.get("end") or "")
+    except ValueError:
+        return jsonify({"status": "error", "message": "use start and end as YYYY-MM-DD"}), 400
+    if d1 <= d0 or (d1 - d0).days > cv.MAX_RANGE_DAYS:
+        return jsonify({"status": "error",
+                        "message": "end must be after start, at most %d days" % cv.MAX_RANGE_DAYS}), 400
+    start = datetime(d0.year, d0.month, d0.day)
+    end = datetime(d1.year, d1.month, d1.day)
+    events, errors = [], []
+    if cv.multi_calendar_available():
+        try:
+            got = cv.events_in_range(start, end, calendars=cv.cached_calendars())
+            events, errors = got["events"], got["errors"]
+        except Exception as e:
+            return api_error(e, "Couldn't read your calendars")
+    else:
+        for i in range((d1 - d0).days):
+            events.extend(_events_for_day(d0 + timedelta(days=i)))
+    for le in _load_local_events():
+        sdt = _parse_dt(le.get("start_time"))
+        if sdt and start <= sdt < end and le.get("id") not in {e.get("id") for e in events}:
+            events.append(dict(le))
+    seen, merged = set(), []
+    for ev in events:
+        k = ev.get("id") or (ev.get("title", "") + ev.get("start_time", ""))
+        if k in seen:
+            continue
+        seen.add(k)
+        ev = dict(ev)
+        ev["type"] = ev.get("type") or _classify_event(ev)
+        merged.append(ev)
+    merged.sort(key=lambda e: str(e.get("start_time") or ""))
+    return jsonify({"status": "ok", "start": d0.isoformat(), "end": d1.isoformat(),
+                    "events": _enrich_events(merged), "errors": errors})
+
+
 @calendar_bp.route('/api/calendar/event/<event_id>')
 def api_calendar_event(event_id):
     """Single event detail (searches today + the next 7 days + local)."""

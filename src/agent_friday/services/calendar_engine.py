@@ -778,7 +778,19 @@ def _fetch_calendar_range(start, end):
 
 
 def _fetch_calendar_range_live(start, end):
-    """One live Google Calendar list call for [start, end)."""
+    """Live Google Calendar read for [start, end).
+
+    With the multi-account store, every calendar switched on in Friday is read,
+    each event in its Google colour (services/calendar_views). The legacy
+    single-token install keeps the one primary-calendar read below."""
+    from agent_friday.services import calendar_views as _cv
+    if _cv.multi_calendar_available():
+        got = _cv.events_in_range(start, end, calendars=_cv.cached_calendars())
+        if got["errors"] and not got["events"] and len(got["errors"]) >= len(
+                [c for c in got["calendars"] if c.get("on")]):
+            # Every calendar failed: raised, so the cache never keeps "no events".
+            raise RuntimeError("calendar fetch failed: " + got["errors"][0]["error"])
+        return got["events"]
     creds = _google_credentials()
     if not creds:
         return []
