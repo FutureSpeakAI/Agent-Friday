@@ -30,7 +30,8 @@ def test_the_button_only_proposes_and_the_confirmation_names_the_event_and_sends
     assert "ev.can_edit !== true" in button, "no delete on an event she cannot change"
     layer = JS[JS.index("function DeleteLayer("):]
     layer = layer[:layer.index("// ── styles")]
-    assert "'Delete \\u201c' + pending.ev.title + '\\u201d?'" in layer
+    assert ("'Delete \u201c' + pending.ev.title + '\u201d?'" in layer
+            or "'Delete \\u201c' + pending.ev.title + '\\u201d?'" in layer), "the question names the event"
     assert "confirmed: true" in layer and "calendar_id: ev.calendar_id" in layer
     assert "role: 'alertdialog'" in layer and "calv-danger" in layer
     assert ".calv-delete{" in JS and "var(--fr-error)" in JS[JS.index(".calv-delete{"):][:200]
