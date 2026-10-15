@@ -645,3 +645,63 @@ def test_a_folder_too_large_to_check_is_not_handed_over(cards, tmp_path, monkeyp
     (tmp_path / "Inbox").write_bytes(b"From someone@example.test Mon Oct 12 10:00:00 2026\n")
     found, complete = fg.raw_records_in(tmp_path)
     assert any(p.name == "Inbox" for p in found), "a mailbox with no extension"
+
+
+# ── round 7 of the review (v8) ───────────────────────────────────────────────
+
+def test_a_windows_search_of_a_thunderbird_folder_is_caught(cards, tmp_path, monkeypatch):
+    prof = tmp_path / "Profile" / "Mail"
+    prof.mkdir(parents=True)
+    (prof / "Inbox").write_bytes(b"From someone@example.test Mon Oct 12 10:00:00 2026\nSubject: hi\n\nbody\n")
+    monkeypatch.setenv("FRPROFILE", str(tmp_path / "Profile"))
+    assert fg.raw_refusal_for_command('findstr /si balance "%FRPROFILE%\\Mail\\*"'.replace("\\", "/")) or \
+        fg.raw_refusal_for_command("findstr /si balance $env:FRPROFILE/Mail")
+    out = "C:\\Profile\\Mail\\Inbox:12:From: bank@example.test\nC:\\Profile\\Mail\\Inbox:13:Subject: overdue"
+    assert fg.raw_output_notice(out), "a mailbox named Inbox, by its name"
+    grep = ("Mail/Archive2:1:From sam@example.test Mon Oct 12 10:00:00 2026\n"
+            "Mail/Archive2:2:Subject: the results\n")
+    assert fg.raw_output_notice(grep), "a mailbox by its separator, inside grep's prefix"
+
+
+def test_a_program_that_walks_a_mail_folder_is_not_run(cards, tmp_path):
+    mail = tmp_path / "Mail"
+    mail.mkdir()
+    (mail / "old.mbox").write_text(ARCHIVE, encoding="utf-8")
+    code = "import mailbox, pathlib\nfor p in pathlib.Path(r'%s').rglob('*'):\n    print(p.read_text())" % mail
+    assert fg.raw_refusal_for_command(code)
+
+
+def test_attributes_and_sentences_are_not_taken_for_files(cards):
+    for out in ("    self.msg: str = ''", "if e.msg:\n    pass", "error.msg: oops",
+                "Wrote statement.pdf: 3 pages", "total 4\n-rw-r--r-- 1 sam sam 120 notes.txt"):
+        assert fg.raw_output_notice(out) is None, out
+    assert fg.raw_output_notice("Downloads/statement_march.pdf:2:Balance 4,210.55")
+
+
+def test_ordinary_recursive_commands_in_a_repo_run(cards, tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "target").mkdir()
+    for i in range(30):
+        (repo / "target" / ("f%d.eml" % i)).write_text("x", encoding="utf-8")
+    (repo / "src" / "a.py").write_text("# TODO", encoding="utf-8")
+    assert fg.raw_refusal_for_command("grep -rn TODO src", cwd=repo) is None
+    assert fg.raw_refusal_for_command("cp -r src backup", cwd=repo) is None
+    assert fg.raw_refusal_for_command("grep -rn TODO .", cwd=repo) is None, "build output is not walked"
+    assert fg.raw_refusal_for_command("rg foo ~"), "the whole home folder is refused at once"
+
+
+def test_the_flag_check_is_linear():
+    import time
+    t0 = time.monotonic()
+    fg._recursive_flag("grep " + "-" + "r" * 8000 + "! x")
+    assert time.monotonic() - t0 < 0.5
+
+
+def test_an_address_line_goes_but_a_finding_next_to_an_address_stays(cards, tmp_path):
+    body = (ARCHIVE + "\nchristopher montgomery <chris@example.test>\n"
+            "chris@example.test diagnosed: melanoma, stage two\n")
+    p = _archive(tmp_path, body=body)
+    fg.on_file_read(p, body)
+    assert not jg.never_send_hits("Christopher Montgomery <chris@other.example>")
+    assert jg.never_send_hits("chris@example.test diagnosed: melanoma, stage two")

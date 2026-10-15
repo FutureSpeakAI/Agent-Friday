@@ -62,6 +62,14 @@ _ATTR = re.compile(r"^[A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)+$")     # e.msg, self.msg
 
 #: How many files one pattern ("~/Downloads/*.csv") is expanded to, to judge it.
 GLOB_LIMIT = 500
+_PS_ENV = re.compile(r"\$env:([A-Za-z_][A-Za-z0-9_]{0,60})", re.I)
+
+
+def expand(tok: str) -> str:
+    """A path as the shell would see it: ~, %VAR%, $VAR and PowerShell's $env:VAR."""
+    import os
+    t = _PS_ENV.sub(lambda m: os.environ.get(m.group(1), m.group(0)), str(tok))
+    return os.path.expanduser(os.path.expandvars(t))
 
 
 def named_in(text: str, cwd=None) -> list:
@@ -89,11 +97,14 @@ def named_in(text: str, cwd=None) -> list:
         if tok.replace("/", "\\").startswith("\\\\"):
             continue                     # a network or device path is never touched to look
         try:
-            p = Path(tok).expanduser()
+            p = Path(expand(tok))
             if cwd and not p.is_absolute():
                 p = Path(cwd) / p
-            pathy = "/" in tok or "\\" in tok or tok.startswith("~")
+            pathy = "/" in tok or "\\" in tok or tok.startswith(("~", "$", "%"))
             globby = "*" in tok or "?" in tok
+            if globby and sum(1 for part in p.parts[:-1] if "*" in part or "?" in part) > 1:
+                out.append((tok, "too_many", None))          # a pattern over many folders: not walked
+                continue
             if globby:
                 kind = kind_of(Path(tok).name.replace("*", "x").replace("?", "x")) \
                     if "." in Path(tok).name else None
@@ -176,16 +187,42 @@ def _header_block(lines: list) -> bool:
     return False
 
 
-def _prefixed_by_record(line: str) -> str | None:
-    """grep -r / findstr / rg print "path:line" or "path:number:line": the
-    kind of the file a line came from, judged by its name alone."""
+#: Mail clients' own names for a mailbox file with no extension.
+MAILBOX_NAMES = frozenset({"inbox", "sent", "sent mail", "sent items", "drafts", "trash", "archive",
+                           "archives", "all mail", "junk", "spam", "outbox", "deleted items"})
+_LINE_NO = re.compile(r"\d{1,9}[:-]")
+
+
+def _split_prefix(line: str):
+    """(path, rest) for a line grep -r / findstr / rg printed as "path:line"
+    or "path:number:line", else None. The path must look like one: no
+    leading space, and a space only inside a path with a folder in it."""
+    if not line or line[0] in " \t":
+        return None
     start = 2 if line[1:3] in (":\\", ":/") else 0     # "C:\..." keeps its drive colon
     cut = line.find(":", start)
     if cut <= 0 or cut > 400:
         return None
-    name = line[:cut]
+    name, rest = line[:cut], line[cut + 1:]
+    if " " in name and "/" not in name and "\\" not in name:
+        return None                      # "Wrote statement.pdf: 3 pages" is a sentence
+    return name, rest
+
+
+def _prefixed_by_record(line: str) -> str | None:
+    """The kind of the file a "path:line" output line says it came from,
+    judged by its name ("e.msg:" in code is an attribute, not a message)."""
+    sp = _split_prefix(line)
+    if sp is None:
+        return None
+    name, rest = sp
+    base = re.split(r"[\\/]", name)[-1]          # either separator, on any system
+    if base.casefold() in MAILBOX_NAMES:
+        return "mail"
     suffix = Path(name).suffix.lower()
-    if suffix in ("", ".txt") or not suffix:
+    if suffix in ("", ".txt"):
+        return None
+    if suffix == ".msg" and _ATTR.match(name) and not _LINE_NO.match(rest):
         return None
     try:
         return kind_of(name)
@@ -207,6 +244,16 @@ def looks_like(text: str) -> str | None:
         return "mail"
     lines = t.splitlines()[:OUTPUT_LINES]
     if _header_block(lines):
+        return "mail"
+    # The same shapes inside grep's "path:" / "path:number:" prefix: a mailbox
+    # whose name says nothing still prints its separators and headers.
+    bare = []
+    for line in lines:
+        sp = _split_prefix(line)
+        rest = sp[1] if sp else line
+        m = _LINE_NO.match(rest)
+        bare.append(rest[m.end():] if m else rest)
+    if _MBOX_SEP.search("\n".join(bare)) or _header_block(bare):
         return "mail"
     for line in lines:
         k = _prefixed_by_record(line)
