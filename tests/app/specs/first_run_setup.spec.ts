@@ -179,7 +179,10 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
 
   await waitStage(page, 'routines');
   const boxes = page.locator('.sc-side input[type="checkbox"]');
-  await expect.soft(boxes.first()).toBeInViewport();
+  // A scratch home may have no routines yet (the scheduler seeds them on a
+  // real install); then the card says so, and it is the card that must show.
+  if (await boxes.count()) await expect.soft(boxes.first()).toBeInViewport();
+  else await expect.soft(page.locator('.sc-side .sc-card').first()).toBeInViewport();
   await newestInView(page, info, '12');
   for (let i = 0; i < await boxes.count(); i++) {
     expect(await boxes.nth(i).isChecked(), 'no routine is ticked until the person ticks it').toBe(false);
