@@ -51361,6 +51361,12 @@ function SetupChat({
   }, []);
   const nMsgs = st ? (st.transcript || []).length + notes.length : 0;
   const stage = st && st.stage;
+  // A new step's card starts at its top: the last card may have been
+  // scrolled down to its button, and the next one would open scrolled away.
+  const sideRef = React.useRef(null);
+  React.useEffect(() => {
+    if (sideRef.current) sideRef.current.scrollTop = 0;
+  }, [stage]);
   // Newest message into view; focus to wherever the next answer goes.
   React.useEffect(() => {
     if (!st) return;
@@ -51460,7 +51466,9 @@ function SetupChat({
   const useRecommended = async () => {
     setErr('');
     setBusy(true);
-    const r = await scJSON('/api/setup-chat/use-recommended', 'POST', { stage: st.stage });
+    const r = await scJSON('/api/setup-chat/use-recommended', 'POST', {
+      stage: st.stage
+    });
     setBusy(false);
     if (!r.ok) {
       setErr(r.data.message || 'Could not use the recommended answers.');
@@ -51776,11 +51784,13 @@ function SetupChat({
     }
   }, 'Question ' + (p.index + 1) + ' of ' + p.total + '. Type "skip" to skip.')), cardEl && /*#__PURE__*/React.createElement("aside", {
     className: "sc-side",
+    ref: sideRef,
     "aria-label": "Details for this step"
   }, cardEl)));
 }
 
 // ── Settings: the setup checklist and "Your profile" ────────────────────────
+
 function SettingsSetupChecklist({
   s
 }) {
