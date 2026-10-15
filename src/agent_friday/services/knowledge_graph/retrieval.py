@@ -59,8 +59,12 @@ def _match_entities(question: str, store: KnowledgeGraphStore,
         from agent_friday.conversation_memory import ConversationMemory
         cm = ConversationMemory()
         if cm._ensure():
+            from .indexer import kg_vectors
             coll = cm._client.get_or_create_collection("knowledge-graph")
-            res = coll.query(query_texts=[question], n_results=top_n)
+            # Vectors from Friday's own MiniLM, never Chroma's default
+            # embedder (indexer.kg_vectors says why).
+            res = coll.query(query_embeddings=kg_vectors([question]),
+                             n_results=top_n)
             ids = (res.get("ids") or [[]])[0]
             hits = [by_id[i] for i in ids if i in by_id]
             if hits:

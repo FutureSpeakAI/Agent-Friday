@@ -1537,10 +1537,13 @@ def _log_context(event_type, data):
         CONTEXT_LOG_DIR.mkdir(parents=True, exist_ok=True)
         today = date.today().isoformat()
         log_file = CONTEXT_LOG_DIR / f"{today}.jsonl"
+        # A key anywhere in the event is withheld before the line is written
+        # (services/pasted_secrets): this log is kept and searchable.
+        from agent_friday.services.pasted_secrets import scrub as _scrub
         entry = {
             "ts": datetime.utcnow().isoformat() + "Z",
             "type": event_type,
-            "data": data,
+            "data": _scrub(data),
         }
         with open(log_file, "a", encoding='utf-8') as f:
             f.write(json.dumps(entry, default=str) + "\n")
@@ -4695,6 +4698,12 @@ def _save_chat_history(messages):
     Rows marked off_record stay in memory and are never written.
     """
     messages = [m for m in (messages or []) if not (isinstance(m, dict) and m.get('off_record'))]
+    # A key in a row's text is withheld in the row itself, so the copy in
+    # memory that /api/chat/history serves matches the file.
+    from agent_friday.services.pasted_secrets import withhold as _withhold
+    for m in messages:
+        if isinstance(m, dict) and isinstance(m.get('text'), str):
+            m['text'] = _withhold(m['text'])[0]
     with _CHAT_HISTORY_LOCK:
         CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         _tmp = CHAT_HISTORY_FILE.with_suffix('.json.tmp')

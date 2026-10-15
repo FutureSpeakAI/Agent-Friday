@@ -200,10 +200,15 @@ class ConversationMemory:
         That is the pinned ONNX session when it is on disk, else the one shared
         sentence-transformers model (already a hard dependency and almost
         certainly already cached on disk), so we don't trigger ChromaDB's
-        separate ONNX model download and never load a copy of our own. Fall
-        back to ChromaDB's default embedder if that path is unavailable.
+        separate ONNX model download and never load a copy of our own.
 
-        Either way the embedder runs on the inference thread
+        There is no fallback to ChromaDB's default embedder: on first use it
+        downloads an ONNX model from Chroma's S3 bucket with no notice to the
+        user. Without the shared model, conversation memory is unavailable
+        and says why (`_ensure` reports it); it works again once the model is
+        on disk through the noticed fetch.
+
+        The embedder runs on the inference thread
         (services/inference_executor.py), whichever thread Chroma calls it on.
         """
         from chromadb.utils import embedding_functions
@@ -218,9 +223,10 @@ class ConversationMemory:
                 model_name=self.model_name, device="cpu"
             )
         except Exception as e:
-            print(f"  [MEMORY] sentence-transformers embedder unavailable, "
-                  f"using ChromaDB default: {e}")
-            return routed(embedding_functions.DefaultEmbeddingFunction)()
+            raise RuntimeError(
+                "the local memory model %s is not on this PC (%s); conversation "
+                "memory stays off rather than fetch Chroma's default model "
+                "without notice" % (self.model_name, e)) from e
 
     # ── embedding-space integrity (decision D5) ──────────────────────
     def _current_dimension(self):
@@ -306,6 +312,11 @@ class ConversationMemory:
         msg_id         stable id for idempotent upserts; uuid when omitted
         """
         text = (text or "").strip()
+        # A key is withheld before it is embedded, stored as a document,
+        # added to the full-text index or turned into topic keywords; the
+        # knowledge graph reads its conversation source from here too.
+        from agent_friday.services.pasted_secrets import withhold
+        text = withhold(text)[0]
         if not text:
             return None
         if not self._ensure():

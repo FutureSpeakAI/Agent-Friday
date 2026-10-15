@@ -306,6 +306,11 @@ def append(cid: str, message: dict, *, settings: dict | None = None, before_writ
             return _off.remember(cid, message)
         if conv is None:
             conv = create(cid=cid)
+        # A key in the text is withheld before the line is written: this file
+        # is the transcript every later read, search and title comes from.
+        if isinstance(message.get("text"), str):
+            from agent_friday.services.pasted_secrets import withhold
+            message["text"] = withhold(message["text"])[0]
         message.setdefault("id", secrets.token_hex(8))
         message.setdefault("ts", time.time())
         with open(_dir(cid) / "messages.jsonl", "a", encoding="utf-8") as fh:

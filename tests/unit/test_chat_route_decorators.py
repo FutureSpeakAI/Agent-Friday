@@ -45,11 +45,14 @@ def test_the_turn_catalogue_helper_is_a_plain_function():
     assert helper.decorator_list == [], "a decorator meant for a route handler sits on the helper"
 
 
-def test_the_chat_handler_keeps_all_four_wrappers():
+def test_the_chat_handler_keeps_all_its_wrappers():
     fns = {n.name: n for n in _tree().body if isinstance(n, ast.FunctionDef)}
     names = []
     for d in fns["chat"].decorator_list:
         target = d.func if isinstance(d, ast.Call) else d
         names.append(target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "?"))
+    # _withhold_pasted_keys comes first: it cleans the message before any
+    # other wrapper (the trace, the privacy hold) reads the request.
     # per_turn (cloud_intent) opens each turn with no cloud intent and drops what the turn set.
-    assert names == ["route", "_traced_turn", "_privacy_hold_turn", "per_turn"], names
+    assert names == ["route", "_withhold_pasted_keys", "_traced_turn", "_privacy_hold_turn",
+                     "per_turn"], names

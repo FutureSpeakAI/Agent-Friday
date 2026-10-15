@@ -1343,6 +1343,12 @@ window.addEventListener('DOMContentLoaded',function(){
         .keys-sheet-close:hover, .keys-sheet-close:focus-visible {
             color: #fff; background: var(--fr-cyan-soft); outline: none;
         }
+        /* The secure key form (KeyFormHost) uses the same sheet, narrower and
+           solid, above every desktop layer: it is asking for a secret. */
+        .key-form-overlay { z-index: 10000; }
+        .key-form-sheet { width: min(560px, calc(100vw - 32px)); background: var(--fr-surface); }
+        .key-form-body { overflow-y: auto; padding: 14px 20px 18px; }
+        .key-form-body > .sc-sub { margin: 0 0 12px; }
         .keys-sheet-body {
             overflow-y: auto; padding: 4px 20px 14px;
             columns: 2 360px; column-gap: 32px;
