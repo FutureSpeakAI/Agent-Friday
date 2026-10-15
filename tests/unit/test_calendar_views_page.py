@@ -77,7 +77,7 @@ def test_a_day_whose_read_failed_says_so_instead_of_no_timed_events(page):
 
 def test_a_late_night_event_runs_to_the_bottom_of_the_grid_not_one_hour():
     js = VIEWS.read_text(encoding="utf-8")
-    assert "function endY(ev, top)" in js and "dayKeyOf(ev.end_time) !== dayKeyOf(ev.start_time)" in js
+    assert "function endY(ev, top, hourPx)" in js and "dayKeyOf(ev.end_time) !== dayKeyOf(ev.start_time)" in js
 
 
 @pytest.mark.parametrize("page", ["index.html", "ui_parts/app.html"])
