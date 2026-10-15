@@ -164,6 +164,25 @@ def runtime_dir() -> Path:
         return friday_home() / "runtime"
 
 
+def overrides_dir() -> Path:
+    """The person's own customisations, which no update ever touches.
+
+    `friday_home() / "overrides"`: per-model serve overrides (`models.json`),
+    opt-in stylesheets the page loads after its own
+    (`static/`), and the copies an update made of installed files somebody
+    had changed (`replaced-<version>/`). It lives in the data home, not the
+    install folder, because the installer deletes and re-copies the install
+    folder on every upgrade. See services/user_overrides.py and the README
+    written into the folder on first use.
+
+    Overridable via FRIDAY_OVERRIDES_DIR, like the other directories here.
+    """
+    env = os.environ.get("FRIDAY_OVERRIDES_DIR")
+    if env:
+        return Path(os.path.expanduser(env))
+    return friday_home() / "overrides"
+
+
 def contained(root, rel, *, allow_root: bool = False) -> Path:
     """Join a caller-supplied name or relative path under a Friday-owned root.
 

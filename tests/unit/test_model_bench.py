@@ -51,6 +51,18 @@ def test_a_bench_records_a_measurement_row_and_a_receipt(installed):
     assert receipt["status"] == "measured" and receipt["result"]["decode_tok_s"] == 33.2
 
 
+def test_a_bench_row_says_which_offload_its_peak_was_taken_at(installed):
+    """The planner reads a llama-server row as the whole model's cost only
+    when it was taken with every layer on the GPU; the row must say so."""
+    from agent_friday.services import local_sizing as lz
+    run = _runner({"prompt_tok_s": 467.0, "decode_tok_s": 33.2, "peak_vram_delta_mib": 8900, "wall_s": 41.0})
+    mb.bench("bonsai2:27b", profile=fx.P1, runner=run, through_lease=False)
+    row = installed["recorded"][0][2]
+    assert row["n_gpu_layers"] == 99 and row["kv_type"] == "q8_0"
+    assert lz.whole_model_row(row)
+    assert not lz.whole_model_row({k: v for k, v in row.items() if k != "n_gpu_layers"})
+
+
 def test_a_bench_calibrates_every_about_speed(installed):
     before = mf.decode_estimate(5946648928, fx.P1, gpu_name="NVIDIA GeForce RTX 4070")
     assert before["calibration"]["basis"] == "uncalibrated"

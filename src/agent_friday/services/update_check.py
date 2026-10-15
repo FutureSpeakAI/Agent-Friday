@@ -296,6 +296,9 @@ def _announce(result: dict) -> None:
     )
     if truth.get("disagreement"):
         body += "\n\nAlso worth knowing: " + truth["disagreement"]
+    changes = _local_changes()
+    if changes.get("message"):
+        body += "\n\nBefore you update: " + changes["message"]
 
     _push_notification(
         title=f"Agent Friday {version} is available",
@@ -394,7 +397,22 @@ def status() -> dict[str, Any]:
         "releases_page": RELEASES_PAGE,
         "schedule_id": SCHEDULE_ID,
         "enabled": is_enabled(),
+        # Installed files that differ from what this release shipped, which
+        # the next update will replace (after backing them up). Local disk
+        # only: no network, and nothing leaves the machine.
+        "local_changes": _local_changes(),
     }
+
+
+def _local_changes() -> dict:
+    """services/update_guard.summary(), or an empty answer. Never raises."""
+    try:
+        from agent_friday.services import update_guard as _ug
+        return _ug.summary()
+    except Exception as e:                                  # noqa: BLE001
+        _log.info("update check: could not compare the installed files (%s)", e)
+        return {"basis": "none", "count": 0, "files": [], "more": 0,
+                "backup_dir": "", "message": ""}
 
 
 def initial_enabled() -> bool:
