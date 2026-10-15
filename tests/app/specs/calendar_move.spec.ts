@@ -22,9 +22,9 @@ const EVENTS = [
 const json = (body: unknown, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
 type Write = { method: string, path: string, body: any };
-async function openWeek(page: Page) {
+async function openWeek(page: Page, view = 'week') {
   const writes: Write[] = [];
-  await page.addInitScript(() => { try { localStorage.setItem('friday_cal_view', 'week'); } catch (_) { /* none */ } });
+  await page.addInitScript(v => { try { localStorage.setItem('friday_cal_view', v); } catch (_) { /* none */ } }, view);
   await page.route('**/*', r => {
     const req = r.request();
     if (req.method() === 'GET') return r.fallback();
@@ -46,11 +46,11 @@ async function openWeek(page: Page) {
   await page.route('**/api/calendar/range?*', r => r.fulfill(json({ status: 'ok', events: EVENTS, errors: [] })));
   await page.route('**/api/media/calendar?*', r => r.fulfill(json({ cards: [] })));
   await page.goto(`${BASE}/w/calendar`, { waitUntil: 'domcontentloaded' });
-  await page.locator('.calv-week [data-fr-ref="event:e1"]').waitFor({ timeout: 60000 });
+  await page.locator(`${view === 'week' ? '.calv-week' : '.cal-timeline'} [data-fr-ref="event:e1"]`).waitFor({ timeout: 60000 });
   return writes;
 }
-async function drag(page: Page, ref: string, dy: number, dx = 0) {
-  const box = (await page.locator(`.calv-week [data-fr-ref="${ref}"]`).boundingBox())!;
+async function drag(page: Page, ref: string, dy: number, dx = 0, scope = '.calv-week') {
+  const box = (await page.locator(`${scope} [data-fr-ref="${ref}"]`).boundingBox())!;
   const x = box.x + box.width / 2, y = box.y + 10;
   await page.mouse.move(x, y);
   await page.mouse.down();
@@ -85,13 +85,15 @@ test('a drag asks first: Cancel changes nothing, Move sends exactly the shown ti
 });
 
 test('a slipped drag, Esc mid-drag, and an event she cannot edit ask nothing and send nothing', async ({ page }) => {
-  const writes = await openWeek(page);
-  await drag(page, 'event:e1', 3);                   // a twitch
-  await drag(page, 'event:e1', 5, 2);
+  // In the Day view, where a click on an event without prep does nothing, so only the drag is under test.
+  const writes = await openWeek(page, 'day');
+  const day = '.cal-timeline';
+  await drag(page, 'event:e1', 3, 0, day);           // a twitch
+  await drag(page, 'event:e1', 9, 2, day);           // under one 15-minute step (13 px here)
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await drag(page, 'event:e2', 96);                  // a shared event she may not change
+  await drag(page, 'event:e2', 104, 0, day);         // a shared event she may not change
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  const box = (await page.locator('.calv-week [data-fr-ref="event:e1"]').boundingBox())!;
+  const box = (await page.locator(`${day} [data-fr-ref="event:e1"]`).boundingBox())!;
   await page.mouse.move(box.x + 20, box.y + 10);
   await page.mouse.down();
   await page.mouse.move(box.x + 20, box.y + 120, { steps: 5 });

@@ -310,6 +310,8 @@
         // A press on a control or on the prep card inside the event is that control's, never a drag.
         if (e.target && e.target.closest && e.target.closest('button, a, input, select, textarea, label, [data-no-drag]')) return;
         const el = e.currentTarget, y0 = e.clientY, x0 = e.clientX, pid = e.pointerId;
+        // A drag is never a text selection (a selected title would start the browser's own drag and cancel ours).
+        try { const sel = window.getSelection && window.getSelection(); if (sel && sel.removeAllRanges) sel.removeAllRanges(); } catch (_) { /* none */ }
         const col0 = el.closest('[data-cal-day]');
         const stepPx = o.hourPx * STEP_MIN / 60;        // a drag starts only after one whole 15-minute step
         let moving = false, minutes = 0, days = 0;
@@ -504,7 +506,7 @@
 .calv-cell.today .calv-cell-num{color:var(--fr-cyan);font-weight:600}
 .calv-more{background:none;border:0;color:var(--fr-dim);font-size:11px;text-align:left;cursor:pointer;padding:0 6px}
 .calv-dragging{opacity:.85;z-index:20;cursor:grabbing;box-shadow:var(--fr-focus);pointer-events:none}
-[data-cal-drag="on"]{touch-action:none}
+[data-cal-drag="on"]{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
 .calv-dragging[data-cal-drag-time]::after{content:attr(data-cal-drag-time);position:absolute;right:4px;top:2px;font-family:var(--fr-font-mono,monospace);font-size:10px;color:var(--fr-text)}
 .calv-modal-back{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--fr-surface) 55%,transparent)}
 .calv-modal,.calv-preview{background:var(--fr-glass);backdrop-filter:blur(var(--fr-glass-blur,12px));border:1px solid var(--fr-glass-edge);border-radius:var(--fr-radius,10px);padding:16px;min-width:300px;max-width:440px;color:var(--fr-text)}
