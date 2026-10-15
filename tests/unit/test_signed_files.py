@@ -228,8 +228,8 @@ def test_losing_the_cache_does_not_reopen_an_older_list(lists):
     pl, publish, tmp = lists
     publish("broker_registries", 9)
     assert pl.refresh("broker_registries")["ok"]
-    for f in ("broker_registries.json", "broker_registries.json.minisig"):
-        (tmp / "public_lists" / f).unlink()
+    import shutil
+    shutil.rmtree(tmp / "public_lists")                     # the whole cache folder
     publish("broker_registries", 3)
     out = pl.refresh("broker_registries")
     assert not out["ok"] and "older" in out["message"]
