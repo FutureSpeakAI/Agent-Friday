@@ -52,6 +52,8 @@ class _Google:
     def __init__(self, calendars, events, fail=()):
         self.calendars, self.events_by_cal, self.fail = calendars, events, set(fail)
         self.read = []
+        # Google answers "primary" for the account's own calendar, whatever its id is
+        self.primary = next((c["id"] for c in calendars if c.get("primary")), "primary")
 
     def calendarList(self):
         return self
@@ -68,7 +70,7 @@ class _Events:
         self.g = g
 
     def list(self, **kw):
-        cid = kw["calendarId"]
+        cid = self.g.primary if kw["calendarId"] == "primary" else kw["calendarId"]
         self.g.read.append(cid)
         if cid in self.g.fail:
             return _Exec(None, boom=RuntimeError("HttpError 500"))
