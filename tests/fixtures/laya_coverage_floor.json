@@ -3,7 +3,7 @@
  "workspaces": {
   "news": {"laya": 4, "pct": 28.6},
   "messages": {"laya": 11, "pct": 68.8},
-  "calendar": {"laya": 3, "pct": 42.9},
+  "calendar": {"laya": 4, "pct": 50.0},
   "family": {"laya": 0, "pct": 0.0},
   "health": {"laya": 0, "pct": 0.0},
   "finance": {"laya": 0, "pct": 0.0},

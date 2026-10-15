@@ -13,6 +13,26 @@ includes calendar read and write permission and Google Tasks. An account
 connected with read-only calendar permission is reported when Friday tries to
 make a change, and **Reconnect** fixes it.
 
+## Day, Week and Month
+
+The switch at the top of the Calendar shows one day (the timeline, with gaps,
+prep cards and tomorrow's preview), a week (seven columns on the same hours,
+all-day entries above) or a month (each day with its first events and a count
+of the rest). The arrows and **Today** move through weeks and months; clicking
+a day opens it in the Day view. Friday remembers the view you used last.
+
+Every calendar of every connected account is read, and each event wears the
+colour it has in Google Calendar: its own colour if you gave it one, otherwise
+its calendar's. Calendars you have unticked in Google stay hidden until you
+switch them on. If one calendar cannot be read, the view names it; it is never
+shown as an empty day.
+
+By voice: "show me my calendar by month", "switch to the week view".
+
+An account connected before the full calendar permission existed shows only
+its main calendar and says so; **Settings > Connections > Reconnect** adds the
+others.
+
 ## What Friday can do
 
 | Action | Needs your approval? |

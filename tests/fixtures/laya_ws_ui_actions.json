@@ -73,7 +73,8 @@
    {"id": "calendar.quick_add", "group": "create", "label": "quick add event", "audit_status": "M"},
    {"id": "calendar.meeting_prep", "group": "create", "label": "generate meeting prep", "audit_status": "M"},
    {"id": "calendar.delete_event", "group": "organize", "label": "delete event / meeting", "audit_status": "N"},
-   {"id": "calendar.move_event", "group": "organize", "label": "move / shift event", "audit_status": "M"}
+   {"id": "calendar.move_event", "group": "organize", "label": "move / shift event", "audit_status": "M"},
+   {"id": "calendar.switch_view", "group": "navigate", "label": "switch day / week / month view", "audit_status": "new"}
   ],
   "family": [
    {"id": "family.view", "group": "read", "label": "view members / dates / countdowns", "audit_status": "N"},
