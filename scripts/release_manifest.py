@@ -75,7 +75,7 @@ def main(argv=None) -> int:
     except minisign.SignatureError as e:
         print("NOT VERIFIED: %s" % e)
         return 1
-    print("verified: key %s, trusted comment %r" % (out["key_id"], out["trusted_comment"]))
+    print("verified; signed comment: %r" % out["meta"])
     return 0
 
 
