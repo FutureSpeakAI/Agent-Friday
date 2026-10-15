@@ -17337,7 +17337,7 @@ function SetupChat({ onDone }) {
   const useRecommended = async () => {
     setErr('');
     setBusy(true);
-    const r = await scJSON('/api/setup-chat/use-recommended', 'POST', {});
+    const r = await scJSON('/api/setup-chat/use-recommended', 'POST', { stage: st.stage });
     setBusy(false);
     if (!r.ok) { setErr(r.data.message || 'Could not use the recommended answers.'); return; }
     setNotes([]);
@@ -17478,7 +17478,7 @@ function SetupChat({ onDone }) {
           )}
           {p.recommended && (
             <div className="sc-row">
-              <button type="button" className="sc-btn quiet" disabled={busy} onClick={useRecommended}>{cp.use_recommended || 'Use recommended for the rest'}</button>
+              <button type="button" className="sc-btn quiet" disabled={busy} onClick={useRecommended}>{cp.use_recommended || 'Use the recommended answer'}</button>
             </div>
           )}
           {err && card !== 'research_seeds' && <div role="alert" className="sc-msgline bad">{err}</div>}

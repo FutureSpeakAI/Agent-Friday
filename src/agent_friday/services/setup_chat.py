@@ -1483,14 +1483,17 @@ def skip_all() -> dict:
     return view()
 
 
-def use_recommended() -> dict:
-    """"Use recommended for the rest": apply the recommended answer to the
-    step on screen (and only that one: a question the person has not seen is
-    never answered for them), and say so."""
+def use_recommended(stage: str = "") -> dict:
+    """"Use the recommended answer": apply the recommended answer to the step
+    on screen (and only that one: a question the person has not seen is never
+    answered for them), and say so. `stage` is the step the page showed; a
+    press for a step the chat has moved past is a conflict, not an answer."""
     with _LOCK:
         st = load_state()
         if not st["consent_done"] or st["completed"]:
             raise Conflict("setup is not running")
+        if stage and stage != st["stage"]:
+            raise Conflict("the chat is on %r, not %r" % (st["stage"], stage))
         if steps.recommended_for(st["stage"]) is None:
             msg = "There's no recommended answer for this one; it's yours to choose."
             raise Refused(msg, {"error": "no_recommendation", "message": msg})
