@@ -38956,6 +38956,8 @@ function CalendarWS() {
   const [fillTick, setFillTick] = useState(0);
   useEffect(() => window.fridayStage ? window.fridayStage.registerField('calendar', { key: 'quickadd', label: 'Quick add', read: () => quickRef.current, write: t => { setQuick(String(t).replace(/\s+/g, ' ').trim()); setFillTick(n => n + 1); } }) : undefined, []);
   const [adding, setAdding] = useState(false);
+  // Quick add reads the sentence and shows what it would add; only the owner's Add writes (slice: no silent writes).
+  const [qaPreview, setQaPreview] = useState(null);
   const [prepFor, setPrepFor] = useState(null);
   const [prepText, setPrepText] = useState('');
   const [prepBusy, setPrepBusy] = useState(false);
@@ -39045,17 +39047,44 @@ function CalendarWS() {
         })
       });
       const d = await r.json();
-      if (d.status === 'ok') {
-        flash((d.created_in_google ? 'Added to Google Calendar' : 'Added (stored locally)') + ': ' + d.event.title);
-        setQuick('');
-        loadToday();
-        loadWeek();
-        loadTomorrow();
-        setRangeTick(n => n + 1);
-        if (sel) loadDay(sel);
-      } else flash('Could not parse that — try “interview with Acme Tuesday 2pm”');
+      if (d.status === 'ok' && d.preview) setQaPreview({ preview: d.preview, calendars: d.calendars || [] });
+      else flash(d.message || 'Could not read that — try “interview with Acme Tuesday 2pm”');
     } catch (e) {
-      flash('Quick-add failed');
+      flash('Quick add could not reach Friday');
+    }
+    setAdding(false);
+  };
+  const reloadAll = () => {
+    loadToday();
+    loadWeek();
+    loadTomorrow();
+    setRangeTick(n => n + 1);
+    if (sel) loadDay(sel);
+  };
+  const addPreview = async calKey => {
+    if (!qaPreview || adding) return;
+    setAdding(true);
+    try {
+      const r = await fetch('/api/calendar/events', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(Object.assign({}, qaPreview.preview, {
+          calendar_key: calKey,
+          confirmed: true
+        }))
+      });
+      const d = await r.json();
+      if (r.ok && d.status === 'ok') {
+        const cal = (qaPreview.calendars.find(c => c.key === calKey) || {}).name;
+        flash((d.created_in_google ? 'Added to ' + (cal || 'Google Calendar') : 'Kept on this PC') + ': ' + d.event.title);
+        setQuick('');
+        setQaPreview(null);
+        reloadAll();
+      } else flash("Couldn't add it: " + (d.message || 'Google did not take it') + '. Nothing was added.');
+    } catch (e) {
+      flash("Couldn't reach Friday to add it. Nothing was added.");
     }
     setAdding(false);
   };
@@ -39128,7 +39157,15 @@ function CalendarWS() {
     className: "btn active",
     onClick: quickAdd,
     disabled: adding
-  }, adding ? 'Parsing…' : '✨ Add')), window.CalendarViews ? /*#__PURE__*/React.createElement("div", {
+  }, adding ? 'Reading…' : '✨ Add')), qaPreview && window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.QuickAddPreview, {
+    preview: qaPreview.preview,
+    calendars: qaPreview.calendars,
+    busy: adding,
+    onAdd: addPreview,
+    onCancel: () => setQaPreview(null)
+  }) : null, window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.MoveLayer, {
+    onMoved: reloadAll
+  }) : null, window.CalendarViews ? /*#__PURE__*/React.createElement("div", {
     className: "calv-toolbar"
   }, /*#__PURE__*/React.createElement(window.CalendarViews.ViewSwitch, {
     view: view,
@@ -39254,6 +39291,7 @@ function CalendarWS() {
       key: e.id,
       className: 'cal-event ' + (e.type || 'normal') + (e.conflict ? ' conflict' : ''),
       ...(e.media ? {} : fridayRow('event', e.id, e.title, { kind: e.type || 'normal', all_day: false, has_guests: !!(e.attendees && e.attendees.length), when: fridayWhen(e.start_time) })),
+      ...(window.CalendarViews ? window.CalendarViews.dragProps(e, { mode: 'day', hourPx: CAL_HOUR_PX }) : {}),
       style: {
         top,
         minHeight: ht,
