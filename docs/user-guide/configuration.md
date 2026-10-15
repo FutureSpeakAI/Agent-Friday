@@ -234,7 +234,7 @@ Grants for scheduled jobs are not a setting; they are kept in
 |---|---|---|
 | `cost_budget` | alert at $5/day and $50/month (both off); hard stop $0 (off); loop guard on | The alert cap warns at 80% and alerts at 100% and never blocks. The hard stop, when enabled, refuses further cloud calls for the rest of its period. Local models are never affected. The loop guard (`loop_guard_enabled`) stops a model that repeats the same call without the conversation moving on; it fires on that pattern, never on an amount. |
 | `daily_creation_free_choice` | `true` | Daily creation chooses freely across media. |
-| `daily_creation_budget_usd` | `0.50` | Soft cap on a day's creative spend. |
+| `daily_creation_budget_usd` | `null` | Soft cap on a day's creative spend; `null` or `0` is no cap. Off unless you set it (asked about during setup). |
 
 ### Scheduled and background work
 

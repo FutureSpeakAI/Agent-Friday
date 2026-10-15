@@ -312,9 +312,10 @@ def check_format(routine: str, fmt: str) -> None:
 
 def _save_podcasts(change: dict) -> None:
     """Write `change` into the owner's podcasts settings. The settings store
-    replaces a top-level block it does not deep-merge, so the block is
-    written whole: setting one show's format or length never resets the
-    other shows, the hosts or the routines' switches."""
+    deep-merges the podcasts block (core._DEEP_MERGED_BLOCKS); the block is
+    still written whole here so the one-time length migration is saved with
+    it: setting one show's format or length never resets the other shows,
+    the hosts or the routines' switches."""
     from agent_friday.core import _load_settings, _save_settings
     own, _ = _migrate_length(copy.deepcopy((_load_settings() or {}).get("podcasts") or {}))
     _merge_into(own, change)

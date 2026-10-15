@@ -1576,7 +1576,7 @@
   "keys": [],
   "route": "POST /api/budget/policy",
   "reader_file": "src/agent_friday/services/budget_enforcer.py",
-  "reader_needle": "if current_spend + amount_mψ > policy[\"monthly_cap_mψ\"]:",
+  "reader_needle": "if monthly_cap > 0 and current_spend + amount_mψ > monthly_cap:",
   "status": "ok",
   "note": "Enforced by budget_enforcer.reserve_budget, called from services/orchestrator.py before each worker starts. Cap applies to orchestrator workers only, not to chat or the dollar budgets in Spending."
  },
@@ -1588,7 +1588,7 @@
   "keys": [],
   "route": "POST /api/budget/policy",
   "reader_file": "src/agent_friday/services/budget_enforcer.py",
-  "reader_needle": "\"per_task_cap_mψ\": policy[\"per_task_cap_mψ\"],",
+  "reader_needle": "if task_cap > 0 and amount_mψ > task_cap:",
   "status": "fixed",
   "note": "reserve_budget now refuses a reservation above the per-task cap."
  },
