@@ -306,6 +306,9 @@ _ALL = [
        "meeting-calendar:info", source="meetings", pk="info"),
     _e("MC2", "services/meeting_calendar.py:_notify:held", "meeting_calendar_failed", NEEDS_YOU,
        "meeting-calendar:warning", source="meetings", pk="warning"),
+    # ── calendar: a reminder Google has for an event, raised in Friday's tray ──
+    _e("CR1", "services/calendar_reminders.py:tick", "calendar_reminder", UPDATES,
+       "calendar-reminder:{event_id}:{minutes}", source="calendar"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),
