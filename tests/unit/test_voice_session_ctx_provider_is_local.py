@@ -9,6 +9,7 @@ machine. The provider now follows the resolved local seat, and the route pins
 the turn to that seat so the label stays true.
 """
 import inspect
+import re
 
 from agent_friday.services.prompt_cache import VOLATILE_MARKER
 
@@ -46,7 +47,9 @@ def test_an_explicit_seat_wins(monkeypatch):
 def test_the_local_handler_pins_the_turn_and_builds_the_prompt_for_its_seat():
     import agent_friday.routes.voice as rv
     src = inspect.getsource(rv)
-    assert "_build_voice_system_prompt(settings, seat=_brain)" in src
+    # The handler builds the prompt for its seat (other keywords, such as the conversation whose
+    # memory is frozen for the call, may follow on the same call).
+    assert re.search(r"_build_voice_system_prompt\(\s*settings,\s*seat=_brain[,)]", src)
     # The prefix warm is always on the seat. A turn is on the seat unless the owner took the spoken
     # "send it to Claude" offer for that one turn (cloud_once, under a recorded cloud intent).
     assert src.count('"pin_to_seat": True') >= 1, "the prefix warm must be pinned to the seat"
