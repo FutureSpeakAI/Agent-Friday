@@ -75,6 +75,11 @@ sent until you press **Send reply**. You can change a reply any time. Replies
 are a click, not something Friday sends by voice, because they reach another
 person.
 
+**Deleting an event.** An event you can change has **Delete** on it. Friday
+asks "Delete ... ?" with its time and calendar (Cancel is in focus) and
+deletes only when you press **Delete event**. For a repeating event, only the
+one occurrence you clicked is deleted.
+
 If you are moving several things, tick **Move without asking for the next 30
 minutes** in the confirmation. That permission lives only in this window and
 runs out by itself; every move still gets its Undo.

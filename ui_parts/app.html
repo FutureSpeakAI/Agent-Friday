@@ -12156,6 +12156,7 @@ function CalendarWS(){
     {qaPreview&&window.CalendarViews&&<window.CalendarViews.QuickAddPreview preview={qaPreview.preview} calendars={qaPreview.calendars} busy={adding} onAdd={addPreview} onCancel={()=>setQaPreview(null)}/>}
     {window.CalendarViews&&<window.CalendarViews.MoveLayer onMoved={reloadAll}/>}
     {window.CalendarViews&&<window.CalendarViews.RsvpLayer onReplied={reloadAll}/>}
+    {window.CalendarViews&&<window.CalendarViews.DeleteLayer onDeleted={reloadAll}/>}
     {window.CalendarViews&&<div className="calv-toolbar">
       <window.CalendarViews.ViewSwitch view={view} onChange={v=>{if(v==='day')openDay(sel||window.CalendarViews.iso(new Date()));else{setAnchor(sel||anchor);setView(v);}}}/>
       {view!=='day'&&<window.CalendarViews.Nav title={window.CalendarViews.title(view,anchor)} onStep={dir=>setAnchor(a=>window.CalendarViews.step(view,a,dir))} onToday={()=>setAnchor(window.CalendarViews.iso(new Date()))}/>}
@@ -12213,6 +12214,7 @@ function CalendarWS(){
             {e.countdown&&<span className="cal-countdown">⏳ {e.title.split(' ')[0]} in {e.countdown}</span>}
             {window.CalendarViews&&window.CalendarViews.reminderText(e)&&<span className="cal-ev-remind">{window.CalendarViews.reminderText(e)}</span>}
             {window.CalendarViews&&<window.CalendarViews.RsvpButtons ev={e}/>}
+            {window.CalendarViews&&<window.CalendarViews.DeleteButton ev={e}/>}
             {e.prep_available&&<span className="cal-prep-badge">Prep available</span>}
             {e.related_emails&&e.related_emails.length>0&&<span style={{color:'#00d4ff'}}>✉ {e.related_emails.length} related</span>}
           </div>
