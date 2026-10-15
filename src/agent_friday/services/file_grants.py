@@ -863,10 +863,11 @@ def revoke(target_id: str) -> dict:
 
 @dataclass
 class GrantCheck:
-    state: str                    # 'active' | 'stale' | 'denied' | 'none'
+    state: str                    # 'active' | 'stale' | 'denied' | 'none' | 'held_raw_record'
     grant_id: str | None = None
     deny_id: str | None = None
     never_send_override: bool = False
+    grant_kind: str = ""          # 'file' | 'scope' for an active grant
 
 
 def check_grant(path: Path, sha256_hex: str | None = None) -> GrantCheck:
@@ -881,15 +882,34 @@ def check_grant(path: Path, sha256_hex: str | None = None) -> GrantCheck:
             if sha256_hex is not None and g.get("sha256") != sha256_hex:
                 return GrantCheck(state="stale", grant_id=g["id"])
             return GrantCheck(state="active", grant_id=g["id"],
-                               never_send_override=bool(g.get("never_send_override")))
+                               never_send_override=bool(g.get("never_send_override")),
+                               grant_kind="file")
+    # A raw record (a mail archive, a bank statement) needs a yes for that
+    # one file: a folder's permission does not cover it (owner decision O7).
+    if _raw_kind(path):
+        return GrantCheck(state="none")
     now = time.time()
     for g in state.grants.values():
         if g.get("event") == "grant_scope" and _covers(g, path):
             expires = g.get("expires_ts")
             if expires and now > expires:
                 continue
-            return GrantCheck(state="active", grant_id=g["id"], never_send_override=False)
+            return GrantCheck(state="active", grant_id=g["id"], never_send_override=False,
+                              grant_kind="scope")
     return GrantCheck(state="none")
+
+
+def raw_record_kind(path) -> str | None:
+    """"mail" / "finance" for a raw personal record (services/raw_records), else None."""
+    return _raw_kind(path)
+
+
+def _raw_kind(path) -> str | None:
+    try:
+        from agent_friday.services import raw_records
+        return raw_records.kind_of(path)
+    except Exception:
+        return None
 
 
 # A granted paragraph is page-sized prose (extract_text joins pages on
@@ -927,11 +947,90 @@ def on_file_read(path: Path, text: str) -> GrantCheck:
     except Exception:
         sha = None
     result = check_grant(path, sha256_hex=sha)
+    raw = _raw_kind(path)
     if result.state == "denied":
         _register_deny_spans(text)
+    elif raw and not (result.state == "active" and result.grant_kind == "file"):
+        # A raw record with no yes for this file: held from every cloud
+        # payload under every posture, and the owner is asked, on a card that
+        # names the file and who would read it.
+        _hold_raw_spans(text)
+        ask_for_raw_source(path, raw)
+        result = GrantCheck(state="held_raw_record", grant_id=result.grant_id)
     elif result.state == "active":
+        if raw:
+            _release_raw_spans(text)
         _register_grant_spans(text, result.grant_id, result.never_send_override)
     return result
+
+
+def _hold_raw_spans(text: str) -> None:
+    from agent_friday.services import judgment_gate as _jg
+    for p in _split_paragraphs(text):
+        _jg.hold_raw_record_span(p)
+
+
+def _release_raw_spans(text: str) -> None:
+    from agent_friday.services import judgment_gate as _jg
+    _jg.release_raw_record_spans(_split_paragraphs(text))
+
+
+#: (normalised path, sha256) -> when the card for it was raised.
+_RAW_ASKED: dict = {}
+_RAW_ASK_EVERY_S = 24 * 3600
+
+
+def _cloud_possible() -> bool:
+    """False only when the owner chose to keep every model on this PC: then
+    nothing could leave and there is nothing to ask."""
+    try:
+        from agent_friday.core import _load_settings
+        mode = ((_load_settings() or {}).get("model_routing") or {}).get("mode")
+        return mode != "local_only"
+    except Exception:
+        return True
+
+
+def _provider_words() -> str:
+    try:
+        from agent_friday.services import one_key
+        name = {"anthropic": "Anthropic", "openrouter": "OpenRouter"}.get(one_key.key_in_use() or "")
+    except Exception:
+        name = None
+    return name or "the cloud model you set up"
+
+
+def ask_for_raw_source(path, kind: str | None = None) -> dict | None:
+    """Raise one file-access card for a raw record, at most once a day per
+    version of the file. The card lists the file as Friday resolved it, with
+    the classifier's own findings; the reason says what it is and where it
+    would go. Approving it is a click on screen (file_grant_requests)."""
+    kind = kind or _raw_kind(path)
+    if not kind or not _cloud_possible():
+        return None
+    try:
+        p = Path(path).resolve()
+        if p.stat().st_size > MAX_GRANT_BYTES:
+            return None                      # too large to allow at all: it simply stays here
+        sha = hashlib.sha256(p.read_bytes()).hexdigest()
+    except Exception:
+        return None
+    key = (str(p).lower(), sha)
+    now = time.time()
+    if now - _RAW_ASKED.get(key, 0) < _RAW_ASK_EVERY_S:
+        return None
+    _RAW_ASKED[key] = now
+    from agent_friday.services import file_grant_requests, raw_records
+    what = raw_records.KIND_WORDS.get(kind, "a raw record")
+    reason = ("%s is %s. Even when I may use the cloud for everything, a whole %s goes to a "
+              "cloud model only with your yes for this one file. Approving lets %s read it when "
+              "I open it; your never-send list still applies. Until then it stays on this PC." % (
+                  p.name, what, "mail archive" if kind == "mail" else "statement", _provider_words()))
+    try:
+        return file_grant_requests.request_access([{"path": str(p), "type": "file"}], reason=reason,
+                                                  requested_by="friday:raw-record")
+    except Exception:
+        return None
 
 
 # ── Listing / audit ─────────────────────────────────────────────────────────────
