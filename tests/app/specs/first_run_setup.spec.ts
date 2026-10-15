@@ -23,6 +23,35 @@ async function shot(page: Page, info: any, name: string) {
 
 const chat = (page: Page) => page.locator('.sc-root');
 
+/** Where the newest line and the step's card sit, and every scrolling box
+ *  from the conversation up: kept with the screenshots, so a layout that
+ *  hides either can be read without rerunning. */
+async function layout(page: Page, info: any, name: string) {
+  const data = await page.evaluate(() => {
+    const box = (el: Element | null) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el as HTMLElement);
+      return { cls: (el as HTMLElement).className, top: Math.round(r.top), bottom: Math.round(r.bottom),
+               h: Math.round(r.height), sh: (el as HTMLElement).scrollHeight, st: (el as HTMLElement).scrollTop,
+               ch: (el as HTMLElement).clientHeight, overflowY: cs.overflowY, position: cs.position };
+    };
+    const chain: any[] = [];
+    let el: Element | null = document.querySelector('.sc-log');
+    while (el && chain.length < 14) { chain.push(box(el)); el = el.parentElement; }
+    const msgs = document.querySelectorAll('.sc-log .sc-msg');
+    return { viewport: { w: innerWidth, h: innerHeight }, chain,
+             newest: box(msgs[msgs.length - 1] || null), side: box(document.querySelector('.sc-side')) };
+  });
+  await info.attach(name + '-layout.json', { body: JSON.stringify(data, null, 1), contentType: 'application/json' });
+}
+
+/** The newest line of the conversation is on screen (soft: the walk goes on). */
+async function newestInView(page: Page, info: any, name: string) {
+  await layout(page, info, name);
+  await expect.soft(page.locator('.sc-log .sc-msg').last(), name + ': the newest line is on screen').toBeInViewport();
+}
+
 async function stage(page: Page): Promise<string> {
   const st = await (await page.request.get(`${BASE}/api/setup-chat/state`)).json();
   return st.stage;
@@ -103,7 +132,8 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
   await waitStage(page, 'about_tz');
   await expect(page.locator('.sc-side')).toContainText('Goes by Sam');
   // The card "beside this" must be on screen, not scrolled away above the newest message.
-  await expect(page.locator('.sc-side').getByText('Goes by Sam')).toBeInViewport();
+  await expect.soft(page.locator('.sc-side').getByText('Goes by Sam')).toBeInViewport();
+  await newestInView(page, info, '07');
   await shot(page, info, '07-about-you-card-and-time-zone');
   await chip(page, 'Yes');
 
@@ -116,7 +146,8 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
   await expect(cards).toHaveCount(3);
   expect(await page.locator('.sc-side .sc-option.on').count(), 'nothing is pre-selected').toBe(0);
   await expect(page.locator('.sc-side .sc-rec')).toHaveCount(1);
-  await expect(cards.first()).toBeInViewport();
+  await expect.soft(cards.first()).toBeInViewport();
+  await newestInView(page, info, '09');
   await shot(page, info, '09-where-she-may-think');
   await chip(page, /^Cloud for public things/);
 
@@ -148,7 +179,8 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
 
   await waitStage(page, 'routines');
   const boxes = page.locator('.sc-side input[type="checkbox"]');
-  await expect(boxes.first()).toBeInViewport();
+  await expect.soft(boxes.first()).toBeInViewport();
+  await newestInView(page, info, '12');
   for (let i = 0; i < await boxes.count(); i++) {
     expect(await boxes.nth(i).isChecked(), 'no routine is ticked until the person ticks it').toBe(false);
   }
@@ -157,6 +189,7 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
   await page.locator('.sc-side').getByRole('button', { name: /^Schedule/ }).click();
 
   await waitStage(page, 'memory_rules');
+  await newestInView(page, info, '13');
   await shot(page, info, '13-what-she-remembers-and-asks');
   await chip(page, 'Looks right');
 
