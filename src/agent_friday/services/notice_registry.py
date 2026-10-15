@@ -306,6 +306,11 @@ _ALL = [
        "meeting-calendar:info", source="meetings", pk="info"),
     _e("MC2", "services/meeting_calendar.py:_notify:held", "meeting_calendar_failed", NEEDS_YOU,
        "meeting-calendar:warning", source="meetings", pk="warning"),
+    # ── Friday needs a key: the secure key form (services/pasted_secrets) ────
+    # A form, never the value: the card's secure field posts straight to the
+    # credential endpoint. One per service at a time.
+    _e("PK1", "services/pasted_secrets.py:ask_for_key", "key_needed", NEEDS_YOU,
+       "key-needed:{target}", route=BUS, source="credentials"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),

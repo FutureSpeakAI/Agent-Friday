@@ -128,11 +128,12 @@ def ask_for_key(target: str, label: str, why: str = "") -> dict:
     For server code that finds a key missing (a provider with no key, a
     connector asked for by name). The value goes from the form straight to
     the credential endpoint on the checklist card, never through a
-    conversation. Returns desktop_bus.send's answer (whether a page took it).
+    conversation. Sent through the notice registry (emitter PK1), like every
+    desktop notice. Returns the bus's answer (whether a page took it).
     """
-    from agent_friday.services import desktop_bus
+    from agent_friday.services import notice_registry
     act = key_form_action([{"id": "needed", "label": label, "target": target}],
                           reason="needed")
     if why:
         act["why"] = str(why)[:300]
-    return desktop_bus.send([act])
+    return notice_registry.bus_send("PK1", [act])

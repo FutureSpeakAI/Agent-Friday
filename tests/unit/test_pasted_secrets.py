@@ -131,3 +131,16 @@ def test_conversation_memory_never_embeds_or_indexes_the_key(tmp_path):
     blob = _bytes_under(tmp_path / "mem")
     assert OPENAI.encode() not in blob and b"Zx9Yw8Vu7Ts6" not in blob
     assert not mem.find_ids("Zx9Yw8Vu7Ts6")
+
+
+def test_friday_needing_a_key_opens_the_form_through_the_notice_registry(monkeypatch):
+    from agent_friday.services import desktop_bus, notice_registry
+    sent, noted = [], []
+    monkeypatch.setattr(desktop_bus, "send", lambda actions, **k: sent.append(actions) or
+                        {"delivered": True, "acked": True})
+    monkeypatch.setattr(notice_registry, "note", lambda emitter, delivered=True, **k: noted.append(emitter))
+    ps.ask_for_key("provider:brave", "Brave Search key", why="To search the web I need it.")
+    assert noted == ["PK1"]
+    (act,), = sent
+    assert act["type"] == "key_form" and act["reason"] == "needed"
+    assert act["target"] == "provider:brave" and act["why"].startswith("To search")
