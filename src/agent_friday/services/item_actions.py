@@ -2034,7 +2034,7 @@ def move_event_by_owner(event_id: str, *, start: str, end: str, calendar_id: str
     if ne <= ns:
         raise Refused("the event would end before it starts")
     if ne - ns > timedelta(days=14):
-        raise Refused("that is longer than an event Friday moves by dragging")
+        raise Refused("that is longer than an event can be moved by dragging")
     ev = _cw().get_event(_event_id(event_id), account_id=account or None, calendar_id=calendar_id or "primary")
     if not ev.get("ok"):
         raise Refused(ev.get("error") or "that event could not be read")

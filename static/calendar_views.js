@@ -396,11 +396,18 @@
       setPending(null);
     };
     const runRef = useRef(null);
-    runRef.current = run;              // the listener below is registered once; it calls this render's run
+    runRef.current = run;
+    const busyRef = useRef(false);
+    busyRef.current = busy || !!pending;      // one move at a time: a held Alt+arrow or a second drag waits
+    const [grantLeft, setGrantLeft] = useState(0);
+    useEffect(() => {                          // the owner's permission, shown while it lasts, with a way to end it
+      const t = setInterval(() => setGrantLeft(Math.max(0, moveGrantUntil - Date.now())), 15000);
+      return () => clearInterval(t);
+    }, []);              // the listener below is registered once; it calls this render's run
     useEffect(() => {
       const on = e => {
         const p = e.detail;
-        if (!p || !p.ev) return;
+        if (!p || !p.ev || busyRef.current) return;
         if (Date.now() < moveGrantUntil) runRef.current(p); else { setGrant(false); setPending(p); }
       };
       window.addEventListener(MOVE_EVENT, on);
@@ -414,11 +421,16 @@
       if (!rid) return;
       try {
         const r = await api('/api/actions/receipts/' + encodeURIComponent(rid) + '/undo', { method: 'POST' });
-        setDone(r.ok ? { text: 'Put back where it was.' } : { text: "Couldn't put it back. Open the event in Google Calendar to check it.", failed: true });
+        let d = {};
+        try { d = await r.json(); } catch (_) { d = {}; }
+        // The receipt answers 200 even when Google refused the put-back: only a complete undo is said as done.
+        const back = r.ok && d.result && d.result.status === 'complete';
+        setDone(back ? { text: 'Put back where it was.' } : { text: "Couldn't put it back. Open the event in Google Calendar to check it.", failed: true });
         if (props.onMoved) props.onMoved();
       } catch (_) { setDone({ text: "Couldn't put it back.", failed: true }); }
     };
-    const confirm = () => { if (grant) moveGrantUntil = Date.now() + GRANT_MS; run(pending); };
+    const confirm = () => { if (grant) { moveGrantUntil = Date.now() + GRANT_MS; setGrantLeft(GRANT_MS); } run(pending); };
+    const endGrant = () => { moveGrantUntil = 0; setGrantLeft(0); };
     const guests = pending && pending.ev.attendees && pending.ev.attendees.length;
     return h(R().Fragment, null,
       pending ? h('div', { className: 'calv-modal-back', onClick: () => !busy && setPending(null) },
@@ -435,6 +447,9 @@
           h('div', { className: 'calv-modal-actions' },
             h('button', { type: 'button', className: 'btn', ref: cancelRef, onClick: () => setPending(null), disabled: busy }, 'Cancel'),
             h('button', { type: 'button', className: 'btn active', onClick: confirm, disabled: busy }, busy ? 'Moving…' : 'Move')))) : null,
+      grantLeft > 0 ? h('div', { className: 'calv-grant', role: 'status' },
+        h('span', null, 'Moving without asking for ' + Math.ceil(grantLeft / 60000) + ' more min.'),
+        h('button', { type: 'button', className: 'btn', onClick: endGrant }, 'Ask again')) : null,
       done ? h('div', { className: 'calv-undo' + (done.failed ? ' failed' : ''), role: done.failed ? 'alert' : 'status' },
         h('span', null, done.text),
         done.receipt ? h('button', { type: 'button', className: 'btn', onClick: undo }, 'Undo') : null,
@@ -519,6 +534,8 @@
 .calv-preview-cal{font-size:var(--fr-text-sm,12px);color:var(--fr-dim);margin-right:auto}
 .calv-undo{position:sticky;bottom:8px;display:flex;gap:8px;align-items:center;margin-top:10px;padding:8px 12px;border-radius:var(--fr-radius,10px);background:var(--fr-glass);border:1px solid var(--fr-glass-edge);color:var(--fr-text);font-size:var(--fr-text-sm,12px)}
 .calv-undo.failed{border-color:var(--fr-error)}
+.calv-grant{display:flex;gap:8px;align-items:center;margin:0 0 8px;padding:6px 10px;border-radius:var(--fr-radius,10px);border:1px solid var(--fr-cyan);font-size:var(--fr-text-sm,12px);color:var(--fr-text)}
+.calv-grant span{flex:1}
 .calv-undo span{flex:1}
 @container (max-width:719px){.calv-cell{min-height:64px}.calv-chip-time{display:none}}
 `;
