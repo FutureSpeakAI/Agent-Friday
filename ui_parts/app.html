@@ -12041,6 +12041,8 @@ function CalendarWS(){
   const[tomorrow,setTomorrow]=useState(null);
   const[now,setNow]=useState(new Date());
   const[quick,setQuick]=useState('');const[adding,setAdding]=useState(false);
+  // Quick add reads the sentence and shows what it would add; only the owner's Add writes.
+  const[qaPreview,setQaPreview]=useState(null);
   const[prepFor,setPrepFor]=useState(null);const[prepText,setPrepText]=useState('');const[prepBusy,setPrepBusy]=useState(false);
   const setToast = useFridayToast();
   const tlRef=useRef(null);
@@ -12090,9 +12092,15 @@ function CalendarWS(){
   const pickDay=(iso,isToday)=>{if(isToday){setSel(null);setDayData(null)}else{setSel(iso);loadDay(iso)}setPrepFor(null)};
   const quickAdd=async()=>{if(!quick.trim()||adding)return;setAdding(true);
     try{const r=await fetch('/api/calendar/quick-add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:quick})});const d=await r.json();
-      if(d.status==='ok'){flash((d.created_in_google?'Added to Google Calendar':'Added (stored locally)')+': '+d.event.title);setQuick('');loadToday();loadWeek();loadTomorrow();setRangeTick(n=>n+1);if(sel)loadDay(sel)}
-      else flash('Could not parse that — try “interview with Acme Tuesday 2pm”')}
-    catch(e){flash('Quick-add failed')}setAdding(false)};
+      if(d.status==='ok'&&d.preview)setQaPreview({preview:d.preview,calendars:d.calendars||[]});
+      else flash(d.message||'Could not read that — try “interview with Acme Tuesday 2pm”')}
+    catch(e){flash('Quick add could not reach Friday')}setAdding(false)};
+  const reloadAll=()=>{loadToday();loadWeek();loadTomorrow();setRangeTick(n=>n+1);if(sel)loadDay(sel)};
+  const addPreview=async(calKey)=>{if(!qaPreview||adding)return;setAdding(true);
+    try{const r=await fetch('/api/calendar/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({},qaPreview.preview,{calendar_key:calKey,confirmed:true}))});const d=await r.json();
+      if(r.ok&&d.status==='ok'){const cal=(qaPreview.calendars.find(c=>c.key===calKey)||{}).name;flash((d.created_in_google?'Added to '+(cal||'Google Calendar'):'Kept on this PC')+': '+d.event.title);setQuick('');setQaPreview(null);reloadAll()}
+      else flash("Couldn't add it: "+(d.message||'Google did not take it')+'. Nothing was added.')}
+    catch(e){flash("Couldn't reach Friday to add it. Nothing was added.")}setAdding(false)};
   const genPrep=async(ev)=>{if(prepFor===ev.id){setPrepFor(null);return}setPrepFor(ev.id);setPrepBusy(true);setPrepText('');
     try{const r=await fetch('/api/calendar/prep/'+ev.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();setPrepText(d.prep||('[Error: '+(d.message||'prep failed')+']'))}catch(e){setPrepText('[Error generating prep]')}setPrepBusy(false)};
 
@@ -12122,8 +12130,10 @@ function CalendarWS(){
     {/* Quick add */}
     <div className="cal-quickadd">
       <input className="input" style={{flex:1}} value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==='Enter'&&quickAdd()} placeholder="Quick add — e.g. “interview with Acme Tuesday 2pm”"/>
-      <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Parsing…':'✨ Add'}</button>
+      <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Reading…':'✨ Add'}</button>
     </div>
+    {qaPreview&&window.CalendarViews&&<window.CalendarViews.QuickAddPreview preview={qaPreview.preview} calendars={qaPreview.calendars} busy={adding} onAdd={addPreview} onCancel={()=>setQaPreview(null)}/>}
+    {window.CalendarViews&&<window.CalendarViews.MoveLayer onMoved={reloadAll}/>}
     {window.CalendarViews&&<div className="calv-toolbar">
       <window.CalendarViews.ViewSwitch view={view} onChange={v=>{if(v==='day')openDay(sel||window.CalendarViews.iso(new Date()));else{setAnchor(sel||anchor);setView(v);}}}/>
       {view!=='day'&&<window.CalendarViews.Nav title={window.CalendarViews.title(view,anchor)} onStep={dir=>setAnchor(a=>window.CalendarViews.step(view,a,dir))} onToday={()=>setAnchor(window.CalendarViews.iso(new Date()))}/>}
@@ -12168,7 +12178,7 @@ function CalendarWS(){
 
       {/* Events */}
       {timedAll.map(e=>{const top=calY(e.start_time);const end=calY(e.end_time)||top+CAL_HOUR_PX;const ht=Math.max(34,end-top);const open=prepFor===e.id;const lane=dayLanes[e.id];return(
-        <div key={e.id} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:false,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht,...(e.color?{'--ev':e.color}:{}),...(lane&&lane.of>1?{left:'calc(68px + (100% - 76px) * '+lane.lane+' / '+lane.of+')',right:'auto',width:'calc((100% - 76px) / '+lane.of+' - 4px)'}:{})}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
+        <div key={e.id} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:false,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} {...(window.CalendarViews?window.CalendarViews.dragProps(e,{mode:'day',hourPx:CAL_HOUR_PX}):{})} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht,...(e.color?{'--ev':e.color}:{}),...(lane&&lane.of>1?{left:'calc(68px + (100% - 76px) * '+lane.lane+' / '+lane.of+')',right:'auto',width:'calc((100% - 76px) / '+lane.of+' - 4px)'}:{})}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
           <div className="cal-ev-title">{e.title}</div>
           <div className="cal-ev-meta">
             <span>{calFmtTime(e.start_time)}{e.end_time?(' – '+calFmtTime(e.end_time)):''}</span>
