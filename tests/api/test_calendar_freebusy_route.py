@@ -39,3 +39,15 @@ def test_friday_s_only_chip_narrows_the_read(client, views):
 def test_a_range_it_cannot_mean_is_refused(client, views, q):
     assert client.get("/api/calendar/freebusy?" + q).status_code == 400
     assert views == []
+
+
+def test_when_every_calendar_failed_it_is_an_error_never_a_free_week(client, monkeypatch, views):
+    from agent_friday.services import calendar_views as cv
+    monkeypatch.setattr(cv, "cached_calendars", lambda fresh_for=600: {"calendars": [
+        {"key": "home|primary", "on": True}, {"key": "home|fam", "on": True}], "accounts": []})
+    monkeypatch.setattr(cv, "events_in_range", lambda start, end, keys=None, calendars=None: {
+        "events": [], "errors": [{"calendar_key": "home|primary", "name": "Home", "error": "x"},
+                                 {"calendar_key": "home|fam", "name": "Family", "error": "x"}],
+        "calendars": [{"key": "home|primary", "on": True}, {"key": "home|fam", "on": True}]})
+    r = client.get("/api/calendar/freebusy?start=2026-10-18&end=2026-10-25")
+    assert r.status_code == 502 and "free_minutes" not in r.get_json()
