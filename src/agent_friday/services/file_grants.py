@@ -1104,17 +1104,47 @@ def file_sha256(path, cap: int | None = None) -> str | None:
 _CONTENT_READERS = re.compile(
     r"\b(?:grep|egrep|fgrep|rg|ag|ack|findstr|select-string|sls|get-content|gc|cat|type|git\s+grep)\b", re.I)
 _ALWAYS_RECURSIVE = re.compile(r"\b(?:rg|ag|ack|git\s+grep)\b", re.I)
-_RECURSIVE_FLAG = re.compile(r"(?:^|\s)(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive|-recurse|/s)(?=\s|$)", re.I)
+# Code that walks a folder itself (run_sandboxed): Path.rglob, os.walk, a mailbox reader.
+_WALKERS = re.compile(r"\b(?:rglob|glob|walk|listdir|iterdir|scandir|mailbox)\b")
+
+
+def _recursive_flag(text: str) -> bool:
+    """-r / -R / -rn / --recursive / -Recurse, or findstr's /s (/si, /sn ...),
+    judged token by token (no pattern over the whole command)."""
+    findstr = "findstr" in text.lower()
+    for tok in text.split():
+        low = tok.lower()
+        if low in ("--recursive", "-recurse", "-recursive"):
+            return True
+        if 2 <= len(tok) <= 8 and tok[0] == "-" and tok[1:].isalpha() and "r" in low[1:]:
+            if low not in ("-raw", "-force", "-werror", "-erroraction"):
+                return True
+        if findstr and 2 <= len(tok) <= 8 and tok[0] == "/" and tok[1:].isalpha() and "s" in low[1:]:
+            return True
+    return False
+
+
+#: Folders too broad to walk before a command: refused at once ("narrow it").
+def _too_broad(p: Path) -> bool:
+    try:
+        r = p.resolve()
+        return r == Path.home().resolve() or r.parent == r
+    except Exception:
+        return True
 
 
 def _recursive_dirs(text: str, cwd=None) -> list:
     """Folders a command reads the contents of recursively (grep -r, rg,
-    findstr /s, Select-String -Recurse ...)."""
+    findstr /s, Select-String -Recurse, a program that walks a folder).
+    Without `cwd` (run_command and run_sandboxed run in an empty scratch
+    folder) a relative name names nothing and is not judged."""
     t = str(text or "")
-    if not _CONTENT_READERS.search(t):
-        return []
-    if not (_ALWAYS_RECURSIVE.search(t) or _RECURSIVE_FLAG.search(t)):
-        return []
+    walks = bool(_WALKERS.search(t))
+    if not walks:
+        if not _CONTENT_READERS.search(t):
+            return []
+        if not (_ALWAYS_RECURSIVE.search(t) or _recursive_flag(t)):
+            return []
     from agent_friday.services import raw_records
     out = []
     quoted = [a or b for a, b in raw_records._QUOTED.findall(t)]
@@ -1123,8 +1153,10 @@ def _recursive_dirs(text: str, cwd=None) -> list:
         if not tok or "://" in tok or tok.replace("/", "\\").startswith("\\\\") or len(tok) > 400:
             continue
         try:
-            p = Path(tok).expanduser()
-            if cwd and not p.is_absolute():
+            p = Path(raw_records.expand(tok))
+            if not p.is_absolute():
+                if not cwd:
+                    continue
                 p = Path(cwd) / p
             if p.is_dir():
                 out.append(p)
@@ -1169,6 +1201,9 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
             pass
         held.append(Path(str(label)).name if p is not None else str(label))
     for folder in folders:
+        if _too_broad(folder):
+            too_many.append(str(folder))
+            continue
         found, complete = raw_records_in(folder)
         if not complete:
             too_many.append(str(folder))
@@ -1187,6 +1222,14 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
             "nothing from it leaves this PC until they say yes." % ", ".join(held[:3]))
 
 
+#: Build output, caches and installed packages: never a person's records.
+_WALK_SKIP = frozenset({".git", "node_modules", ".venv", "venv", "__pycache__", ".friday", "target", "dist",
+                        "build", ".next", ".nuxt", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+                        ".cache", "site-packages", ".gradle", ".idea", ".vs", "coverage", ".turbo"})
+#: How long a folder walk may take before its answer is incomplete.
+WALK_BUDGET_S = 3.0
+
+
 def raw_records_in(folder, limit: int = 20000) -> tuple:
     """(raw records under `folder` the owner has not allowed, whether the
     whole folder was looked at). For a tool that hands a folder to another
@@ -1196,13 +1239,13 @@ def raw_records_in(folder, limit: int = 20000) -> tuple:
     treats an incomplete answer as a refusal."""
     import os
     out, seen = [], 0
-    skip = {".git", "node_modules", ".venv", "venv", "__pycache__", ".friday"}
+    deadline = time.monotonic() + WALK_BUDGET_S
     try:
         for root, dirs, files in os.walk(str(folder)):
-            dirs[:] = [d for d in dirs if d not in skip]
+            dirs[:] = [d for d in dirs if d not in _WALK_SKIP]
             for f in files:
                 seen += 1
-                if seen > limit:
+                if seen > limit or time.monotonic() > deadline:
                     return out, False
                 p = Path(root) / f
                 if not _raw_kind_by_name(p):
