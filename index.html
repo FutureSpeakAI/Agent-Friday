@@ -51370,43 +51370,74 @@ function SetupChat({
   // The log stays at its newest line while the person has not scrolled up,
   // also when the step's card appears beside it and narrows it (the lines
   // re-wrap taller after the scroll was set) or a card loads late.
+  // The conversation stays at its newest line while the person has not
+  // scrolled up: also when the step's card appears and narrows it, and in
+  // the spatial desktop, where the panel around the log scrolls instead of
+  // the log itself. Every box from the log up to the setup's own frame that
+  // scrolls is taken to its end; the card beside it is sticky (CSS).
   const pinnedRef = React.useRef(true);
+  const scrollers = () => {
+    const out = [];
+    let el = logRef.current;
+    while (el) {
+      if (el.scrollHeight > el.clientHeight + 1) {
+        const oy = getComputedStyle(el).overflowY;
+        if (oy === 'auto' || oy === 'scroll') out.push(el);
+      }
+      if (el.classList && el.classList.contains('sc-root')) break;
+      el = el.parentElement;
+    }
+    return out;
+  };
+  const toEnd = () => {
+    scrollers().forEach(el => {
+      el.scrollTop = el.scrollHeight;
+    });
+  };
   React.useEffect(() => {
     const log = logRef.current;
     if (!log) return undefined;
-    const onScroll = () => {
-      pinnedRef.current = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    const root = log.closest('.sc-root') || log;
+    const onScroll = e => {
+      const el = e.target;
+      if (!el || el === document || !(el.contains && el.contains(log))) return; // the card beside it scrolls on its own
+      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     };
-    log.addEventListener('scroll', onScroll);
+    root.addEventListener('scroll', onScroll, true);
     let ro = null;
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => {
-        if (pinnedRef.current) log.scrollTop = log.scrollHeight;
+        if (pinnedRef.current) toEnd();
       });
       ro.observe(log);
     }
     return () => {
-      log.removeEventListener('scroll', onScroll);
+      root.removeEventListener('scroll', onScroll, true);
       if (ro) ro.disconnect();
     };
   }, [!!st]);
   // Newest message into view; focus to wherever the next answer goes.
   React.useEffect(() => {
     if (!st) return;
-    const log = logRef.current;
     pinnedRef.current = true;
-    if (log) log.scrollTop = log.scrollHeight;
+    toEnd();
     const late = setTimeout(() => {
-      if (log && pinnedRef.current) log.scrollTop = log.scrollHeight;
+      if (pinnedRef.current) toEnd();
     }, 250);
     const t = setTimeout(() => {
       const p = st.prompt || {};
       if (p.input === 'text' && inputRef.current) {
-        inputRef.current.focus();
+        inputRef.current.focus({
+          preventScroll: true
+        });
         return;
       }
       const el = document.querySelector('.sc-root [data-sc-focus]');
-      if (el) el.focus();
+      // The card's heading is at the top of the card, which starts at its
+      // top on every step: focusing it must not scroll the conversation away.
+      if (el) el.focus({
+        preventScroll: true
+      });
     }, 40);
     return () => {
       clearTimeout(t);
