@@ -177,7 +177,7 @@
       style: Object.assign({ top: g.top, height: g.height, left: 'calc(' + (g.lane * w) + '% + 2px)', width: 'calc(' + w + '% - 4px)' }, colorStyle(ev)),
       onClick: () => onOpen && onOpen(ev),
       onKeyDown: e => { if (e.key === 'Enter' && onOpen) onOpen(ev); },
-    }, rowProps(ev)),
+    }, rowProps(ev), dragProps(ev, { mode: 'week' })),
       h('div', { className: 'cal-ev-title' }, ev.title),
       g.height >= 34 ? h('div', { className: 'cal-ev-meta' }, timeOf(ev.start_time)) : null);
   }
@@ -265,6 +265,183 @@
       })));
   }
 
+  // ── moving an event: drag, or Alt+arrows; always a confirmation unless the owner allowed a batch ─────
+  // A drag only PROPOSES a move. The proposal goes to MoveLayer (one per Calendar), which asks
+  // "Move <title> from <when> to <when>?" and writes only on Move. A drag of less than one 15-minute step
+  // proposes nothing, so a slipped click never moves a meeting. "Don't ask again for 30 minutes" is the owner's
+  // batch permission: it lives in this page's memory only and runs out; each move still gets an Undo.
+  const STEP_MIN = 15;
+  const MOVE_EVENT = 'friday:cal-propose-move';
+  let suppressClickUntil = 0;
+  function canMove(ev) { return !!ev && !ev.media && !ev.all_day && ev.can_edit === true && ev.source === 'google'; }
+  function shifted(isoText, days, minutes) {
+    const d = new Date(isoText);
+    d.setDate(d.getDate() + days);
+    d.setMinutes(d.getMinutes() + minutes);
+    return d;
+  }
+  function withOffset(d) {      // local wall time with its UTC offset, as Google takes it
+    const off = -d.getTimezoneOffset(), s = off >= 0 ? '+' : '-', a = Math.abs(off);
+    return iso(d) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':00' + s + pad(Math.floor(a / 60)) + ':' + pad(a % 60);
+  }
+  function propose(ev, days, minutes) {
+    if (!days && !minutes) return;
+    const ns = shifted(ev.start_time, days, minutes), ne = shifted(ev.end_time || ev.start_time, days, minutes);
+    window.dispatchEvent(new CustomEvent(MOVE_EVENT, { detail: { ev, start: withOffset(ns), end: withOffset(ne) } }));
+  }
+  function dragProps(ev, opts) {
+    if (!canMove(ev)) return {};
+    const o = Object.assign({ mode: 'day', hourPx: HOUR_PX }, opts || {});
+    return {
+      'data-cal-drag': 'on',
+      'aria-description': 'Drag, or Alt and an arrow key, to move it. You confirm before anything changes.',
+      onClickCapture: e => { if (Date.now() < suppressClickUntil) { e.stopPropagation(); e.preventDefault(); } },
+      onKeyDownCapture: e => {
+        if (!e.altKey) return;
+        const map = { ArrowUp: [0, -STEP_MIN], ArrowDown: [0, STEP_MIN], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+        const m = map[e.key];
+        if (!m) return;
+        e.preventDefault(); e.stopPropagation();
+        propose(ev, m[0], m[1]);
+      },
+      onPointerDown: e => {
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;   // Ctrl/Cmd-click ticks the row
+        const el = e.currentTarget, y0 = e.clientY, x0 = e.clientX;
+        const col0 = el.closest('[data-cal-day]');
+        let moving = false, minutes = 0, days = 0;
+        const label = t => el.setAttribute('data-cal-drag-time', t);
+        function onMove(m) {
+          const dy = m.clientY - y0, dx = m.clientX - x0;
+          if (!moving && Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+          moving = true;
+          el.classList.add('calv-dragging');
+          minutes = Math.round((dy / o.hourPx) * 60 / STEP_MIN) * STEP_MIN;
+          days = 0;
+          let shiftX = 0;
+          if (o.mode === 'week' && col0) {
+            const hit = document.elementsFromPoint(m.clientX, m.clientY).map(n => n.closest && n.closest('[data-cal-day]')).find(Boolean);
+            if (hit && hit !== col0 && hit.parentNode === col0.parentNode) {
+              days = Math.round((parseDay(hit.getAttribute('data-cal-day')) - parseDay(col0.getAttribute('data-cal-day'))) / 86400000);
+              shiftX = hit.getBoundingClientRect().left - col0.getBoundingClientRect().left;
+            }
+          }
+          el.style.transform = 'translate(' + shiftX + 'px,' + (minutes / 60 * o.hourPx) + 'px)';
+          label(timeOf(shifted(ev.start_time, days, minutes).toISOString()));
+        }
+        function end(cancel) {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('keydown', onKey, true);
+          el.classList.remove('calv-dragging');
+          el.style.transform = '';
+          el.removeAttribute('data-cal-drag-time');
+          if (moving) suppressClickUntil = Date.now() + 400;
+          if (!cancel && moving) propose(ev, days, minutes);
+        }
+        function onUp() { end(false); }
+        function onKey(k) { if (k.key === 'Escape') { k.stopPropagation(); end(true); } }
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('keydown', onKey, true);
+      },
+    };
+  }
+  const whenText = s => { const d = new Date(s); return isNaN(d) ? String(s) : d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  let moveGrantUntil = 0;           // the owner's batch permission, page memory only
+  const GRANT_MS = 30 * 60 * 1000;
+
+  function MoveLayer(props) {
+    const { useState, useEffect, useRef } = R();
+    const [pending, setPending] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [grant, setGrant] = useState(false);
+    const [done, setDone] = useState(null);       // {text, receipt, failed}
+    const cancelRef = useRef(null);
+    const run = async (p) => {
+      setBusy(true);
+      try {
+        const r = await api('/api/calendar/events/' + encodeURIComponent(p.ev.id) + '/move', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calendar_key: p.ev.calendar_key, start_time: p.start, end_time: p.end, confirmed: true }),
+        });
+        const d = await r.json();
+        if (r.ok && d.status === 'ok') {
+          setDone({ text: 'Moved “' + p.ev.title + '” to ' + whenText(p.start) + '.', receipt: d.receipt_id });
+          if (props.onMoved) props.onMoved();
+        } else setDone({ text: "Couldn't move “" + p.ev.title + '”: ' + (d.message || 'Google did not take the change') + '. Nothing changed.', failed: true });
+      } catch (_) {
+        setDone({ text: "Couldn't reach Friday to move “" + p.ev.title + '”. Nothing changed.', failed: true });
+      }
+      setBusy(false);
+      setPending(null);
+    };
+    useEffect(() => {
+      const on = e => {
+        const p = e.detail;
+        if (!p || !p.ev) return;
+        if (Date.now() < moveGrantUntil) run(p); else { setGrant(false); setPending(p); }
+      };
+      window.addEventListener(MOVE_EVENT, on);
+      return () => window.removeEventListener(MOVE_EVENT, on);
+    }, []);
+    useEffect(() => { if (pending && cancelRef.current) cancelRef.current.focus(); }, [pending]);
+    useEffect(() => { if (!done) return; const t = setTimeout(() => setDone(null), done.failed ? 15000 : 10000); return () => clearTimeout(t); }, [done]);
+    const undo = async () => {
+      const rid = done && done.receipt;
+      setDone(null);
+      if (!rid) return;
+      try {
+        const r = await api('/api/actions/receipts/' + encodeURIComponent(rid) + '/undo', { method: 'POST' });
+        setDone(r.ok ? { text: 'Put back where it was.' } : { text: "Couldn't put it back. Open the event in Google Calendar to check it.", failed: true });
+        if (props.onMoved) props.onMoved();
+      } catch (_) { setDone({ text: "Couldn't put it back.", failed: true }); }
+    };
+    const confirm = () => { if (grant) moveGrantUntil = Date.now() + GRANT_MS; run(pending); };
+    const guests = pending && pending.ev.attendees && pending.ev.attendees.length;
+    return h(R().Fragment, null,
+      pending ? h('div', { className: 'calv-modal-back', onClick: () => !busy && setPending(null) },
+        h('div', { className: 'calv-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'calv-move-title',
+          onClick: e => e.stopPropagation(),
+          onKeyDown: e => { if (e.key === 'Escape') { e.stopPropagation(); if (!busy) setPending(null); } } },
+          h('div', { id: 'calv-move-title', className: 'calv-modal-title' }, 'Move “' + pending.ev.title + '”?'),
+          h('div', { className: 'calv-modal-line' }, 'From ' + whenText(pending.ev.start_time)),
+          h('div', { className: 'calv-modal-line' }, 'To ' + whenText(pending.start)),
+          pending.ev.calendar_name ? h('div', { className: 'calv-modal-dim' }, 'On ' + pending.ev.calendar_name) : null,
+          guests ? h('div', { className: 'calv-modal-dim' }, guests + (guests === 1 ? ' guest is' : ' guests are') + ' on this event. Google will not email them about the change.') : null,
+          h('label', { className: 'calv-modal-grant' }, h('input', { type: 'checkbox', checked: grant, onChange: e => setGrant(e.target.checked) }),
+            ' Move without asking for the next 30 minutes'),
+          h('div', { className: 'calv-modal-actions' },
+            h('button', { type: 'button', className: 'btn', ref: cancelRef, onClick: () => setPending(null), disabled: busy }, 'Cancel'),
+            h('button', { type: 'button', className: 'btn active', onClick: confirm, disabled: busy }, busy ? 'Moving…' : 'Move')))) : null,
+      done ? h('div', { className: 'calv-undo' + (done.failed ? ' failed' : ''), role: done.failed ? 'alert' : 'status' },
+        h('span', null, done.text),
+        done.receipt ? h('button', { type: 'button', className: 'btn', onClick: undo }, 'Undo') : null,
+        h('button', { type: 'button', className: 'btn', 'aria-label': 'Dismiss', onClick: () => setDone(null) }, '×')) : null);
+  }
+
+  // ── quick add: the owner sees what will be added, and where, before anything is written ─────────────
+  function QuickAddPreview(props) {
+    const { useState, useEffect } = R();
+    const p = props.preview || {};
+    const cals = props.calendars || [];
+    const [cal, setCal] = useState(cals.length ? cals[0].key : '');
+    useEffect(() => { setCal(cals.length ? cals[0].key : ''); }, [props.preview]);
+    const where = cals.length ? null : h('div', { className: 'calv-modal-dim' }, 'Google Calendar cannot be written to from here, so it will be kept on this PC.');
+    return h('div', { className: 'calv-preview', role: 'group', 'aria-label': 'Check the event before adding it' },
+      h('div', { className: 'calv-preview-title' }, p.title),
+      h('div', { className: 'calv-modal-line' }, whenText(p.start_time) + ' – ' + timeOf(p.end_time)),
+      p.location ? h('div', { className: 'calv-modal-dim' }, p.location) : null,
+      p.attendees && p.attendees.length ? h('div', { className: 'calv-modal-dim' }, 'Guests: ' + p.attendees.join(', ') + ' (Google will not email them)') : null,
+      where,
+      h('div', { className: 'calv-modal-actions' },
+        cals.length ? h('label', { className: 'calv-preview-cal' }, 'Calendar ',
+          h('select', { className: 'input', value: cal, onChange: e => setCal(e.target.value) },
+            cals.map(c => h('option', { key: c.key, value: c.key }, c.name)))) : null,
+        h('button', { type: 'button', className: 'btn', onClick: props.onCancel, disabled: props.busy }, 'Cancel'),
+        h('button', { type: 'button', className: 'btn active', onClick: () => props.onAdd(cal), disabled: props.busy },
+          props.busy ? 'Adding…' : 'Add to ' + ((cals.find(c => c.key === cal) || {}).name || 'this PC'))));
+  }
+
   // ── styles (tokens only; the event colour arrives as --ev) ─────────────────
   const CSS = `
 .calv-toolbar{display:flex;align-items:center;gap:var(--fr-gap,8px);flex-wrap:wrap;margin:0 0 10px}
@@ -306,6 +483,21 @@
 .calv-cell-num{align-self:flex-start;background:none;border:0;color:var(--fr-text);cursor:pointer;font-size:12px;padding:1px 5px;border-radius:6px}
 .calv-cell.today .calv-cell-num{color:var(--fr-cyan);font-weight:600}
 .calv-more{background:none;border:0;color:var(--fr-dim);font-size:11px;text-align:left;cursor:pointer;padding:0 6px}
+.calv-dragging{opacity:.85;z-index:20;cursor:grabbing;box-shadow:var(--fr-focus)}
+[data-cal-drag="on"]{touch-action:none}
+.calv-dragging[data-cal-drag-time]::after{content:attr(data-cal-drag-time);position:absolute;right:4px;top:2px;font-family:var(--fr-font-mono,monospace);font-size:10px;color:var(--fr-text)}
+.calv-modal-back{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--fr-surface) 55%,transparent)}
+.calv-modal,.calv-preview{background:var(--fr-glass);backdrop-filter:blur(var(--fr-glass-blur,12px));border:1px solid var(--fr-glass-edge);border-radius:var(--fr-radius,10px);padding:16px;min-width:300px;max-width:440px;color:var(--fr-text)}
+.calv-preview{max-width:none;margin:0 0 12px}
+.calv-modal-title,.calv-preview-title{font-weight:600;margin-bottom:6px}
+.calv-modal-line{font-size:var(--fr-text-md,13px)}
+.calv-modal-dim{font-size:var(--fr-text-sm,12px);color:var(--fr-dim);margin-top:4px}
+.calv-modal-grant{display:flex;gap:6px;align-items:center;font-size:var(--fr-text-sm,12px);color:var(--fr-dim);margin-top:10px}
+.calv-modal-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px;flex-wrap:wrap}
+.calv-preview-cal{font-size:var(--fr-text-sm,12px);color:var(--fr-dim);margin-right:auto}
+.calv-undo{position:sticky;bottom:8px;display:flex;gap:8px;align-items:center;margin-top:10px;padding:8px 12px;border-radius:var(--fr-radius,10px);background:var(--fr-glass);border:1px solid var(--fr-glass-edge);color:var(--fr-text);font-size:var(--fr-text-sm,12px)}
+.calv-undo.failed{border-color:var(--fr-error)}
+.calv-undo span{flex:1}
 @container (max-width:719px){.calv-cell{min-height:64px}.calv-chip-time{display:none}}
 `;
   function injectStyle() {
@@ -317,5 +509,5 @@
   }
   if (document.head) injectStyle(); else document.addEventListener('DOMContentLoaded', injectStyle);
 
-  window.CalendarViews = { VIEWS, ViewSwitch, Nav, WeekView, MonthView, State, Errors, useRange, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
+  window.CalendarViews = { VIEWS, ViewSwitch, Nav, WeekView, MonthView, State, Errors, useRange, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
 })();
