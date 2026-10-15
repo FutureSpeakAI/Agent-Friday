@@ -51376,15 +51376,16 @@ function SetupChat({
   // the log itself. Every box from the log up to the setup's own frame that
   // scrolls is taken to its end; the card beside it is sticky (CSS).
   const pinnedRef = React.useRef(true);
+  // Boxes below the setup's own frame only: scrolling the frame itself would
+  // move its header and the whole conversation off screen.
   const scrollers = () => {
     const out = [];
     let el = logRef.current;
-    while (el) {
+    while (el && !(el.classList && el.classList.contains('sc-root'))) {
       if (el.scrollHeight > el.clientHeight + 1) {
         const oy = getComputedStyle(el).overflowY;
         if (oy === 'auto' || oy === 'scroll') out.push(el);
       }
-      if (el.classList && el.classList.contains('sc-root')) break;
       el = el.parentElement;
     }
     return out;
@@ -51393,6 +51394,8 @@ function SetupChat({
     scrollers().forEach(el => {
       el.scrollTop = el.scrollHeight;
     });
+    const root = logRef.current && logRef.current.closest('.sc-root');
+    if (root && root.scrollTop) root.scrollTop = 0; // the frame keeps its header in view
   };
   React.useEffect(() => {
     const log = logRef.current;
