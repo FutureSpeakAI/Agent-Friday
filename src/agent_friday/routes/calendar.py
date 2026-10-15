@@ -76,6 +76,19 @@ def _calendar_health():
 
 
 
+def _read_state(day):
+    """{read_failed, errors} for one day's read: whether Google could not be read at
+    all, and which calendars failed, so the page never draws a failure as a free day."""
+    start = datetime(day.year, day.month, day.day)
+    end = start + timedelta(days=1)
+    try:
+        from agent_friday.services import calendar_engine as ce
+        from agent_friday.services import calendar_views as cv
+        return {"read_failed": ce.range_failed(start, end), "errors": cv.errors_for(start, end)}
+    except Exception:
+        return {"read_failed": False, "errors": []}
+
+
 @calendar_bp.route('/api/calendar/today')
 def api_calendar_today():
     """Today's events + gap analysis + Friday's annotation."""
@@ -87,6 +100,7 @@ def api_calendar_today():
         "date": today.isoformat(),
         "events": events,
         "gaps": gaps,
+        **_read_state(today),
         "annotation": _day_annotation(today, events),
         # Was `_google_credentials() is not None`, which asks whether the
         # PRIMARY account can produce a credential - not whether Calendar is
@@ -140,7 +154,7 @@ def api_calendar_day(day_str):
         return jsonify({"status": "error", "message": "use YYYY-MM-DD"}), 400
     events = _enrich_events(_events_for_day(d))
     return jsonify({
-        "status": "ok", "date": d.isoformat(), "events": events,
+        "status": "ok", "date": d.isoformat(), "events": events, **_read_state(d),
         "gaps": _gap_analysis(events, d),
         "annotation": _day_annotation(d, events),
     })

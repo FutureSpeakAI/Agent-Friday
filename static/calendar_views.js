@@ -84,10 +84,11 @@
     const [st, setSt] = useState({ loading: true, events: [], errors: [], failed: '' });
     useEffect(() => {
       let live = true;
-      setSt(s => Object.assign({}, s, { loading: true }));
+      // A new week or month starts empty and says it is reading; a reread of the same one keeps what is shown.
+      setSt(s => (s.key === start + end ? Object.assign({}, s, { loading: true }) : { loading: true, events: [], errors: [], failed: '', key: start + end }));
       api('/api/calendar/range?start=' + start + '&end=' + end).then(r => r.json().then(d => ({ ok: r.ok, d })))
-        .then(({ ok, d }) => { if (live) setSt({ loading: false, events: ok ? (d.events || []) : [], errors: d.errors || [], failed: ok ? '' : (d.message || 'The calendar did not answer.') }); })
-        .catch(() => { if (live) setSt({ loading: false, events: [], errors: [], failed: 'The calendar did not answer.' }); });
+        .then(({ ok, d }) => { if (live) setSt({ loading: false, events: ok ? (d.events || []) : [], errors: d.errors || [], failed: ok ? '' : (d.message || 'The calendar did not answer.'), key: start + end }); })
+        .catch(() => { if (live) setSt({ loading: false, events: [], errors: [], failed: 'The calendar did not answer.', key: start + end }); });
       return () => { live = false; };
     }, [start, end, reloadKey]);
     return st;
@@ -138,6 +139,13 @@
       errs.length === 1 ? errs[0].error : errs.length + ' calendars could not be read: ' + errs.map(e => e.name).join(', ') + '.');
   }
 
+  // Where an event's block ends on its start day's grid: an end on a later day (midnight included) runs to the
+  // bottom; no end means an hour.
+  function endY(ev, top) {
+    if (!ev.end_time) return top + HOUR_PX;
+    if (dayKeyOf(ev.end_time) !== dayKeyOf(ev.start_time)) return (END_HOUR - START_HOUR) * HOUR_PX;
+    return yOf(ev.end_time);
+  }
   // Overlapping timed events share their column: each takes a lane, and the lanes split the width.
   function lanes(evs) {
     const sorted = evs.slice().sort((a, b) => yOf(a.start_time) - yOf(b.start_time));
@@ -145,7 +153,7 @@
     let group = [], groupEnd = -1;
     const flush = () => { const n = Math.max(1, ...group.map(g => g.lane + 1)); group.forEach(g => { g.of = n; }); group = []; };
     sorted.forEach(ev => {
-      const top = yOf(ev.start_time), bot = Math.max(top + 22, yOf(ev.end_time) || top + HOUR_PX);
+      const top = yOf(ev.start_time), bot = Math.max(top + 22, endY(ev, top));
       if (top >= groupEnd) { flush(); ends.length = 0; groupEnd = -1; }
       let lane = ends.findIndex(e => e <= top);
       if (lane < 0) { lane = ends.length; ends.push(bot); } else ends[lane] = bot;

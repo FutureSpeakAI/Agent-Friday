@@ -39014,6 +39014,7 @@ function CalendarWS() {
   const flash = t => {
     setToast(t);
   };
+  const reloadDay = () => { if (sel) loadDay(sel); else loadToday(); };
   const openDay = d => {
     const todayIso = window.CalendarViews ? window.CalendarViews.iso(new Date()) : '';
     setView('day');
@@ -39208,7 +39209,15 @@ function CalendarWS() {
       color: '#8a93a6',
       fontSize: 10
     }
-  }, "(all day)")))), timedAll.length === 0 && gaps.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "(all day)")))), window.CalendarViews && (active?.errors || []).length > 0 ? /*#__PURE__*/React.createElement(window.CalendarViews.Errors, {
+    errors: active.errors
+  }) : null, active?.read_failed && timedAll.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "msg-empty",
+    role: "alert"
+  }, "Couldn't read your calendar. ", "Google did not answer; this day may not be empty. ", /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => reloadDay()
+  }, "Try again")) : timedAll.length === 0 && gaps.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "msg-empty"
   }, "No timed events. ", sel ? '' : 'Enjoy the open day, or quick-add something above.') : /*#__PURE__*/React.createElement("div", {
     className: "cal-timeline",
