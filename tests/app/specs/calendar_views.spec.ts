@@ -64,6 +64,10 @@ test('Day, Week and Month draw the events in their Google colours, and looking w
   await expect(dentist).toBeVisible();
   expect(await dentist.evaluate(el => (el as HTMLElement).style.getPropertyValue('--ev'))).toBe(HOME);
   expect(await page.locator('.cal-timeline [data-fr-ref="event:e2"]').evaluate(el => (el as HTMLElement).style.getPropertyValue('--ev'))).toBe(BANANA);
+  // Two events at the same time sit side by side, not one on top of the other
+  const d1 = await dentist.boundingBox();
+  const d5 = await page.locator('.cal-timeline [data-fr-ref="event:e5"]').boundingBox();
+  expect(d1 && d5 && Math.abs(d1.y - d5.y) < 2 && (d1.x + d1.width <= d5.x + 1 || d5.x + d5.width <= d1.x + 1)).toBeTruthy();
   await page.screenshot({ path: info.outputPath('calendar-day.png'), fullPage: false });
 
   // Week: seven columns, overlapping events side by side, the all-day entry above
