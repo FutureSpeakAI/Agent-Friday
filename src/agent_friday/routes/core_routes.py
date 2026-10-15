@@ -166,6 +166,14 @@ def _web_fonts_head() -> str:
         return ''
 
 
+def _user_override_tags() -> str:
+    try:
+        from agent_friday.services import user_overrides as _uo
+        return _uo.page_tags()
+    except Exception:
+        return ''
+
+
 def _serve_index(extra_head: str = ''):
     try:
         with open('index.html', encoding='utf-8') as _f:
@@ -176,6 +184,12 @@ def _serve_index(extra_head: str = ''):
         # Inject early in <head> so the token is available before any fetch calls.
         _html = _html.replace('<head>', f'<head>\n{_token_script}{_local_address_script()}'
                                         f'{_installed_bundles_script()}{_web_fonts_head()}{extra_head}', 1)
+        # The person's own css (~/.friday/overrides/static), AFTER the
+        # page's own so it wins; services/user_overrides decides what loads.
+        _user_tags = _user_override_tags()
+        if _user_tags and '</body>' in _html:
+            _i = _html.rfind('</body>')
+            _html = _html[:_i] + _user_tags + _html[_i:]
         return Response(_html, content_type='text/html')
     except FileNotFoundError:
         return ("index.html not found. It is tracked in git — restore it with "
@@ -189,6 +203,36 @@ def serve_static_asset(filename):
     # (inside the package) — not the process cwd that serve_ui's
     # open('index.html') uses — so this route 404'd everything. Anchor to cwd.
     return send_from_directory(os.path.abspath('static'), filename)
+
+
+@core_bp.route('/user-overrides/static/<name>')
+def serve_user_override_asset(name):
+    """One stylesheet from ~/.friday/overrides/static, only if it is loaded
+    now (plain .css name, overrides.static_css on, resolved inside the
+    folder). Never a script, never a directory walk. The file is the one the
+    folder listing names (static_asset), served through send_from_directory."""
+    try:
+        from agent_friday.services import user_overrides as _uo
+        found = _uo.static_asset(name)
+    except Exception:
+        found = None
+    if found is None:
+        return "Not an override file that is switched on.", 404
+    folder, listed = found
+    resp = send_from_directory(str(folder), listed, max_age=0)
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@core_bp.route('/api/overrides/status')
+def overrides_status():
+    """What ~/.friday/overrides holds and what of it is applied. Read-only."""
+    try:
+        from agent_friday.services import user_overrides as _uo
+        return jsonify({"status": "ok", **_uo.status()})
+    except Exception as e:  # noqa: BLE001
+        traceback.print_exc()
+        return api_error(e, "Couldn't read the overrides folder")
 
 
 @core_bp.route('/assets/<path:filename>')

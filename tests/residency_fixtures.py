@@ -210,6 +210,42 @@ def catalog(profile: dict) -> list:
     return out
 
 
+#: A synthetic small helper (<= 2B parameters), measured whole on the GPU.
+#: Not part of `catalog()`, so the committed golden plans do not move; the
+#: local-sizing tests add it to a fixture catalog to check that a helper this
+#: small does not change a plan on a machine with room for everything.
+SMALL_HELPER_ID = "example-helper:1.5b"
+
+
+def small_helper_entry(profile: dict) -> dict:
+    artifact = int(1.1 * 1024 ** 3)
+    return {
+        "model_id": SMALL_HELPER_ID,
+        "backend": rc.BACKEND_OLLAMA,
+        "artifact_bytes": artifact,
+        "quantization": "Q4_K_M",
+        "params_total_b": 1.5,
+        "params_active_b": None,
+        "is_moe": False,
+        "context_window": 32768,
+        "modalities": ["completion", "tools"],
+        "can_generate": True,
+        "is_embedding": False,
+        "needs_think_disabled": False,
+        "profile_fingerprint": rc.profile_fingerprint(profile),
+        "measured": [
+            {"num_ctx": 8192, "vram_mib": 1420, "total_mib": 1420,
+             "pct_gpu": 100, "tok_s_median": 140.0, "ms_per_token": 7.1,
+             "backend": rc.BACKEND_OLLAMA, "measured_at": "2026-10-01"},
+            {"num_ctx": 32768, "vram_mib": 1690, "total_mib": 1690,
+             "pct_gpu": 100, "backend": rc.BACKEND_OLLAMA,
+             "measured_at": "2026-10-01"},
+        ],
+        "baseline_ms_per_token": 7.1,
+        "est_load_s": rc.est_load_s(artifact, profile, False),
+    }
+
+
 def offline_machine(monkeypatch) -> None:
     """Keep an Arbiter under test off the real machine.
 

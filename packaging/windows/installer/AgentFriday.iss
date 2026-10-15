@@ -115,6 +115,9 @@ Source: "{#RepoRoot}\assets\icons\futurespeak.ico"; DestDir: "{app}"; DestName: 
 ; Extracted early, for the model page.
 Source: "{#RepoRoot}\packaging\windows\lib\ModelPicker.ps1"; Flags: dontcopy
 Source: "probe-hardware.ps1"; Flags: dontcopy
+; Extracted early, for the Ready page's "files you changed" warning.
+Source: "{#RepoRoot}\packaging\windows\lib\AppFiles.ps1"; Flags: dontcopy
+Source: "check-modified.ps1"; Flags: dontcopy
 Source: "{#RepoRoot}\src\agent_friday\resources\model_shortlist.json"; Flags: dontcopy
 Source: "{#RepoRoot}\src\agent_friday\resources\voice_front_options.json"; Flags: dontcopy
 
@@ -187,6 +190,9 @@ var
   ChosenCloud, ChosenConsent, ChosenDeepComp: Boolean;
   ChosenFast, ChosenFastPack, ChosenDeep, ChosenDeepPack, ChosenDeepPick, ChosenTier: String;
   ChosenTotal: Int64;
+  ChangedChecked: Boolean;
+  ChangedCount: Integer;
+  ChangedList, ChangedDir, ChangedBasis: String;
 
 // ---------------------------------------------------------------------------
 //  Small helpers
@@ -867,9 +873,72 @@ begin
   ChosenTotal := TotalBytesChosen();
 end;
 
+// ---------------------------------------------------------------------------
+//  The update guard: installed files somebody changed (lib\AppFiles.ps1)
+// ---------------------------------------------------------------------------
+
+// Runs installer\check-modified.ps1 once against the installed app folder and
+// keeps the answer. install.ps1 makes the same comparison again and backs the
+// files up before it deletes anything; this is only so the Ready page can say
+// so first. A probe that fails says nothing here (the engine still backs up).
+procedure CheckChangedFiles();
+var
+  Lines: TArrayOfString;
+  I, Code, Shown: Integer;
+  L, Kind, OutFile, Params, AppDir: String;
+begin
+  if ChangedChecked then Exit;
+  ChangedChecked := True;
+  ChangedCount := 0; ChangedList := ''; ChangedDir := ''; ChangedBasis := '';
+  AppDir := ExistingInstallRoot() + '\app';
+  if not DirExists(AppDir) then Exit;
+  try
+    ExtractTemporaryFile('AppFiles.ps1');
+    ExtractTemporaryFile('check-modified.ps1');
+    OutFile := ExpandConstant('{tmp}\changed-files.txt');
+    DeleteFile(OutFile);
+    Params := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\check-modified.ps1') + '"' +
+      ' -AppDir "' + AppDir + '" -OutFile "' + OutFile + '" -LibPath "' + ExpandConstant('{tmp}\AppFiles.ps1') + '"';
+    if (not Exec(PowerShellExe(), Params, ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+    begin
+      Log('The changed-files check did not run (exit ' + IntToStr(Code) + ').');
+      Exit;
+    end;
+    if not LoadStringsFromFile(OutFile, Lines) then Exit;
+  except
+    Log('The changed-files check failed: ' + GetExceptionMessage);
+    Exit;
+  end;
+  Shown := 0;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    L := Lines[I];
+    Kind := NextField(L);
+    if Kind = 'BASIS' then
+      ChangedBasis := L
+    else if Kind = 'OVERRIDES' then
+      ChangedDir := L
+    else if Kind = 'FILE' then
+    begin
+      NextField(L);
+      ChangedCount := ChangedCount + 1;
+      if Shown < 12 then
+      begin
+        if ChangedList <> '' then ChangedList := ChangedList + #13#10;
+        ChangedList := ChangedList + L;
+        Shown := Shown + 1;
+      end;
+    end;
+  end;
+  if ChangedCount > Shown then
+    ChangedList := ChangedList + #13#10 + 'and ' + IntToStr(ChangedCount - Shown) + ' more';
+  Log('Changed installed files: ' + IntToStr(ChangedCount) + ' (compared by ' + ChangedBasis + ').');
+end;
+
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 var
-  S: String;
+  S, Item, Rest: String;
+  P: Integer;
 begin
   ResolveChoice();
   S := 'Installing {#ReleaseName} for this Windows user only.' + NewLine + NewLine;
@@ -879,8 +948,26 @@ begin
     if PrevSequence = {#BuildSequence} then
       S := S + 'Reinstalling over the same release. Your data is kept.' + NewLine + NewLine
     else
+    begin
       S := S + 'Updating Agent Friday ' + PrevVersion + ' in place.' + NewLine +
         Space + 'Setup first stops Agent Friday and copies your data to a backup folder, then checks it is unchanged afterwards.' + NewLine + NewLine;
+      // Only an update replaces the installed files (a same-release reinstall keeps them).
+      CheckChangedFiles();
+      if ChangedCount > 0 then
+      begin
+        S := S + IntToStr(ChangedCount) + ' file(s) you or a helper changed will be replaced:' + NewLine;
+        Rest := ChangedList;
+        while Rest <> '' do
+        begin
+          P := Pos(#13#10, Rest);
+          if P = 0 then begin Item := Rest; Rest := ''; end
+          else begin Item := Copy(Rest, 1, P - 1); Delete(Rest, 1, P + 1); end;
+          S := S + Space + Item + NewLine;
+        end;
+        S := S + Space + 'They are backed up to ' + ChangedDir + '\replaced-' + PrevVersion + '\ before anything is replaced.' + NewLine +
+          Space + 'Keep customisations in that overrides folder from now on: updates never touch it.' + NewLine + NewLine;
+      end;
+    end;
   end;
   if ChosenCloud then
     S := S + 'AI models:' + NewLine + Space + 'A cloud model. Nothing is downloaded; you add a key in Settings.' + NewLine + NewLine

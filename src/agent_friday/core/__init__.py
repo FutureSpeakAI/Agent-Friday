@@ -2305,6 +2305,31 @@ DEFAULT_SETTINGS = {
     "away_drain": {                       # P5 — drains queued heavy work on a
         "enabled": False,                 # timer. Default OFF: it takes the GPU.
     },
+    # ~/.friday/overrides (services/user_overrides.py): the person's own
+    # model serve overrides and page stylesheets, which updates never touch.
+    # The folder's path is shown by GET /api/overrides/status. Stylesheets
+    # are opt-in (they can restyle approval cards). Scripts are not supported
+    # at all and have no key: a script in the page holds the session token.
+    "overrides": {
+        "enabled": True,
+        "models": True,
+        "static_css": False,
+    },
+    # How local models are sized and placed (services/local_sizing.py): never
+    # a window below Friday's own prompt (tools + system prompt, plus this
+    # margin); a small helper goes to the CPU when it and the big model do not
+    # fit one card; an unmeasured model is planned from an estimate and
+    # marked "estimated" rather than refused. Per-model numbers still win
+    # from ~/.friday/overrides/models.json.
+    "local_sizing": {
+        "enabled": True,
+        "prompt_margin_pct": 25,
+        "min_room_tokens": 4096,
+        "small_helper_max_params_b": 2.0,
+        "helpers_to_cpu_when_tight": True,
+        "plan_unmeasured_from_estimate": True,
+        "cpu_seats_hide_gpu": True,
+    },
     # Empty on purpose: services/knowledge_graph/__init__.py:kg_settings() owns
     # the real defaults (KG_DEFAULT_SETTINGS) and layers the user's saved block
     # on top. This entry exists only so that block SURVIVES the whitelist two
