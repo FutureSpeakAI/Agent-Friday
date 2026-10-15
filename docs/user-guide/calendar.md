@@ -33,6 +33,26 @@ An account connected before the full calendar permission existed shows only
 its main calendar and says so; **Settings > Connections > Reconnect** adds the
 others.
 
+## Adding and moving events yourself
+
+**Quick add.** Type a sentence ("lunch with Dana Tuesday 12pm") and press
+Enter. Friday reads it, by code first and with a small model only for what
+code could not find, and shows the event: its title, when, and a list of the
+calendars you can add to. Nothing is written until you press **Add to ...**.
+Guests named in the sentence are added without an email from Google.
+
+**Drag to reschedule.** In the Day and Week views, drag an event to a new
+time (in Week, to another day too), or focus it and press Alt with an arrow
+key. Friday then asks "Move ... ?" with the old and new times; **Cancel** is
+the button in focus, and nothing changes until you press **Move**. A drag of
+less than a quarter of an hour, Esc during a drag, or an event you can't
+change (one someone else organises) asks nothing and changes nothing. After a
+move, **Undo** puts the event back.
+
+If you are moving several things, tick **Move without asking for the next 30
+minutes** in the confirmation. That permission lives only in this window and
+runs out by itself; every move still gets its Undo.
+
 ## What Friday can do
 
 | Action | Needs your approval? |
