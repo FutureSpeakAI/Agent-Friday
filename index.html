@@ -48,6 +48,12 @@ window.addEventListener('error',function(e){
 <!-- The one door for sandboxed frames (docs/development/frame-broker.md).
      Loaded before the app so iframes can register on mount. -->
 <script src="/static/js/friday_frame_broker.js"></script>
+<!-- Stale tabs: offers a reload (never forces one) when the server's build_id
+     differs from window.__FRIDAY_BUILD_ID__, the build this page came from. -->
+<script src="/static/js/friday_build_watch.js" defer></script>
+<!-- The top-bar plugin slot's registry (documented in the file). Not deferred:
+     add-ons may register before the desktop mounts. -->
+<script src="/static/js/friday_topbar_slot.js"></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -12072,9 +12078,18 @@ function fridayResolveTarget(t) {
     view: t.view || a.view
   });
 }
+// THE ONE NAVIGATION HELPER. window.fridayOpenWorkspace is a thin alias of
+// this, installed by the desktop while it is mounted (callers test for it to
+// know whether a desktop is here). They used to diverge: fridayNavigate only
+// deep-linked a workspace that was ALREADY open, so a click on a closed one
+// silently did nothing. Now the desktop registers its window opener
+// (window.__fridayOpenWsWindow) and every navigation opens the window first.
 function fridayNavigate(target) {
   if (!target || !target.workspace) return;
   target = fridayResolveTarget(target);
+  if (typeof window.__fridayOpenWsWindow === 'function') {
+    try { window.__fridayOpenWsWindow(target.workspace); } catch (_) {}
+  }
   // A workspace tab shows one workspace: a target in another opens that
   // workspace's own page, carrying the same deep-link keys.
   const here = window.__FRIDAY_STANDALONE__;
@@ -15416,6 +15431,31 @@ class Safe extends React.Component {
     }, "Retry"));
     return this.props.children;
   }
+}
+
+// ═══ TOP-BAR PLUGIN SLOT ═══
+// The mount point for add-on controls registered through
+// window.fridayTopBarSlot (static/js/friday_topbar_slot.js, which documents
+// the contract). Each control gets its own Safe boundary.
+function FridayTopBarPlugins() {
+  const slot = window.fridayTopBarSlot;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const on = () => setTick(n => n + 1);
+    window.addEventListener('friday:topbar-slot', on);
+    return () => window.removeEventListener('friday:topbar-slot', on);
+  }, []);
+  const items = slot ? slot.list() : [];
+  return /*#__PURE__*/React.createElement("div", {
+    id: "friday-topbar-slot",
+    "data-friday-slot": "topbar",
+    role: "group",
+    "aria-label": "Add-ons",
+    style: { display: 'flex', alignItems: 'center', gap: 6 }
+  }, items.map(it => /*#__PURE__*/React.createElement(Safe, {
+    key: it.id,
+    name: 'Add-on ' + it.id
+  }, /*#__PURE__*/React.createElement(it.component, { slot: 'topbar', id: it.id }))));
 }
 
 // ═══ CHAT KEYS ═══
@@ -61796,7 +61836,7 @@ function ScheduledCloudSection() {
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap'
     }
-  }, j.name, " \xB7 ", j.model_label, j.enabled ? '' : ' · switched off'), /*#__PURE__*/React.createElement("span", {
+  }, j.name, " \xB7 ", j.model_label, j.basis === 'measured' ? ' · estimate from ' + j.runs_measured + ' recent runs' : ' · estimate', j.enabled ? '' : ' · switched off'), /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#fff',
       flexShrink: 0,
@@ -65701,6 +65741,9 @@ function App() {
         setConnHealth(r.ok ? 'ok' : 'degraded');
         try {
           const d = await r.json();
+          // Stale tabs: a different build_id than this page loaded with
+          // offers a reload (static/js/friday_build_watch.js); never forces one.
+          if (window.fridayBuildWatch) window.fridayBuildWatch.check(d && d.build_id);
           const m = {};
           (d.inference && d.inference.providers || []).forEach(p => {
             if (p && p.provider) m[p.provider] = p;
@@ -68580,15 +68623,14 @@ function App() {
   }, [cameraOn, cameraSource, cameraIntervalSec]);
   // Global workspace opener — lets any child component (e.g. NewsWS "Share to
   // Draft") open + deep-link a workspace without prop-drilling openWs.
+  // fridayNavigate is the one implementation; this registers the desktop's
+  // window opener with it and keeps fridayOpenWorkspace as its alias.
   useEffect(() => {
-    window.fridayOpenWorkspace = t => {
-      if (!t || !t.workspace) return;
-      t = fridayResolveTarget(t);
-      openWs(t.workspace);
-      fridayNavigate(t);
-    };
+    window.__fridayOpenWsWindow = openWs;
+    window.fridayOpenWorkspace = t => fridayNavigate(t);
     return () => {
       if (window.fridayOpenWorkspace) delete window.fridayOpenWorkspace;
+      if (window.__fridayOpenWsWindow) delete window.__fridayOpenWsWindow;
     };
   }, []);
   /* THE PAGE'S HALF OF navigate_to AND check_situation (routes/desktop.py).
@@ -70094,6 +70136,8 @@ function App() {
   }, "|"),
   shellWorkspaceSwitcher,
   window.FridayDisplayStyleControl && React.createElement(window.FridayDisplayStyleControl),
+  // The top-bar plugin slot (static/js/friday_topbar_slot.js): absent until an add-on registers.
+  window.fridayTopBarSlot && window.fridayTopBarSlot.size() > 0 && React.createElement(FridayTopBarPlugins),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry', onClick:() => shellDesktopView('projects')}, 'Projects'),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry fx-shell-activity', onClick:() => shellDesktopView('activity')}, 'Activity'),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry fx-shell-depth', 'aria-label':'Scene and workspace depth', onClick:() => window.FridayHolographicWorkspace && window.FridayHolographicWorkspace.open()}, '◈ Depth'),

@@ -395,6 +395,11 @@ def _status_for_google(defn: dict) -> dict:
             health = rec.get("health") or {}
             if ok:
                 acct_state, acct_summary = "connected", "Connected"
+            elif ga.last_problem(aid) == "unreachable":
+                # Google could not be reached to refresh the token (the first
+                # minute after a restart): not judged, so not "reconnect".
+                acct_state = "checking"
+                acct_summary = "Checking: could not reach Google yet"
             else:
                 acct_state = health.get("state") or "needs_reauth"
                 acct_summary = health.get("summary") or "Needs reauthorisation"
@@ -430,6 +435,12 @@ def _status_for_google(defn: dict) -> dict:
         if not broken:
             status = "connected"
             detail = f"{connected_n}/{total_n} account(s) connected — Gmail + Calendar"
+        elif all(a["status"] == "checking" for a in broken):
+            # Only unreached accounts are not working: still being checked,
+            # which is neither "connected" nor a reason to reconnect.
+            status = "connecting"
+            detail = (f"{connected_n}/{total_n} account(s) connected — checking the rest "
+                      f"(could not reach Google yet)")
         elif any_connected:
             status = "error"
             names = ", ".join(a.get("email") or a.get("label") or "?" for a in broken[:3])
