@@ -188,10 +188,14 @@ _JSON_U = re.compile(r"\\u([0-9a-fA-F]{4})")
 # Bounded throughout: a unit is untrusted text, so no part of this may
 # backtrack over a long run of digits or commas.
 _BOILERPLATE = re.compile(
-    r"^(?:\[?(?:showing |shown )?lines? [\d,]{1,15} ?(?:-|to) ?[\d,]{1,15} of [\d,]{1,15}\b"
-    r"|\[?extraction truncated\b|</?evidence-[\w-]{0,40}>?$|(?:\.\.\.|\u2026) ?\["
-    r"|\(?use read_file with (?:offset|page)\b|continue with (?:\w{1,20} )?offset=\d{1,12}\b"
-    r"|(?:\.\.\. ?)?[\d,]{1,15} more (?:lines|characters)\b)", re.I)
+    r"^(?:\[?(?:showing |shown )?lines? [\d,]{1,15} ?(?:-|to) ?[\d,]{1,15} of [\d,]{1,15}"
+    r"(?: \([\d,]{1,15} chars\))?(?:[.:] ?(?:continue with (?:\w{1,20} )?offset=\d{1,12}\.?"
+    r"|the end of the file\.?))?\]?\.?"
+    r"|\[?extraction truncated[^\n]{0,80}|</?evidence-[\w-]{0,40}>?"
+    r"|(?:\.\.\.|\u2026) ?\[(?:extraction )?truncated[^\n]{0,60}"
+    r"|\(?use read_file with (?:offset|page)\b[^\n]{0,120}"
+    r"|continue with (?:\w{1,20} )?offset=\d{1,12}[^\n]{0,160}"
+    r"|(?:\.\.\. ?)?[\d,]{1,15} more (?:lines|characters)\b[^\n]{0,80})$", re.I)
 # Words every inbox and statement share: holding them would stop the
 # person's own "Thanks for reaching out." at the cloud, and they say nothing
 # about anyone. Small talk is let go only when SHORT (under RAW_SPECIFIC):
@@ -288,9 +292,11 @@ def _lines(text: str) -> list:
     return [re.sub(r"^[\s>]+", "", ln) for ln in re.split(r"\r?\n|\\n", str(text or ""))]
 
 
+# Only a line that is nothing but a separator, or the bare phrase a mail
+# client writes around a forward or a quote. Linear: no two unbounded runs.
 _SEPARATOR = re.compile(
-    r"^(?:[-=_*~]{3,}.*|.*[-=_*~]{3,}|begin forwarded message:?|original message|forwarded message"
-    r"|on .{0,80} wrote:)$", re.I)
+    r"^(?:[-=_*~ ]{3,200}|[-=_*~ ]{0,20}(?:begin forwarded message|original message|forwarded message)"
+    r"[-=_*~ :]{0,20}|on [^\n]{0,80} wrote:)$", re.I)
 _WORD = re.compile(r"[^\W\d_]{2,}")
 
 
@@ -306,8 +312,8 @@ def _skip(u: str, finance: bool) -> bool:
         return True                      # a footer that carries a figure is content
     if len(u) < RAW_SPECIFIC and _COMMON.match(u):
         return True
-    if len(u) >= RAW_UNIT_MIN and _words(u) < 4 and not (finance and any(c.isdigit() for c in u)):
-        return True                      # a name and an address, a header with nothing in it
+    if "~pii~" in u and _words(u) <= 3 and not any(c.isdigit() for c in u):
+        return True                      # a name and an address ("to: Sam Doe <~pii~"), nothing more
     if finance and len(u) < RAW_UNIT_MIN and (not any(c.isdigit() for c in u) or _FINANCE_SHAPE.match(u)):
         return True
     return False

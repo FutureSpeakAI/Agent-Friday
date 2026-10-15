@@ -100,7 +100,12 @@ def named_in(text: str, cwd=None) -> list:
                 if kind:
                     out.append((tok, kind, None))
                     continue
-                for m in _glob.glob(str(p))[:GLOB_LIMIT]:
+                import itertools
+                matches = list(itertools.islice(_glob.iglob(str(p)), GLOB_LIMIT + 1))
+                if len(matches) > GLOB_LIMIT:
+                    out.append((tok, "too_many", None))      # too many files to judge: not run
+                    continue
+                for m in matches:
                     k = kind_of(m)
                     if k:
                         out.append((m, k, Path(m)))
@@ -146,43 +151,65 @@ def _sniff(p: Path) -> str | None:
 # Anchored at the start of a line, so a diff ("+<TRNAMT>"), a grep of source
 # code or a quoted string does not count.
 _MBOX_SEP = re.compile(r"^From \S+@\S+ |^From - \w{3} ", re.M)
-_HEADER_LINE = re.compile(r"(?:From|To|Cc|Subject|Date|Message-ID|Received|Reply-To):[ \t]", re.I)
+_ANY_HEADER = re.compile(r"^[A-Za-z][\w-]{0,40}:(?:[ \t]|$)")
+_CORE_HEADERS = {"from", "to", "cc", "subject", "date", "message-id", "received", "reply-to"}
 _OFX = re.compile(r"^(?:OFXHEADER:\d|<OFX>|<STMTTRN>|<BANKTRANLIST>)", re.M | re.I)
 _QIF = re.compile(r"^!Type:(?:Bank|CCard|Cash|Invst)\s*$", re.M | re.I)
-# grep's "path:line:" / "path-line-": a line that starts with such a file's name.
-_RAW_PATH_PREFIX = re.compile(
-    r"^[^\n:]*(?:\.(?:mbox|mbx|eml|emlx|pst|ost|ofx|qfx|qif|qbo)"
-    r"|(?:statement|stmt|transaction|activity|checking|savings|bank)[^\n:/\\]*\.(?:csv|pdf|xlsx?))[:\-]\d+[:\-]",
-    re.I | re.M)
-_MAIL_PREFIX = re.compile(r"^[^\n:]*\.(?:mbox|mbx|eml|emlx|pst|ost)[:\-]\d+[:\-]", re.I | re.M)
+#: How many lines of a program's output are looked at, line by line.
+OUTPUT_LINES = 20000
 
 
-def _header_block(t: str) -> bool:
-    """Three or more message headers on consecutive lines, then a blank line:
-    a message, not a log line that happens to say "Date:"."""
-    run, names = 0, set()
-    for line in t.splitlines():
-        if _HEADER_LINE.match(line):
-            run += 1
+def _header_block(lines: list) -> bool:
+    """A run of message headers (folded continuation lines and any other
+    header inside it included) with From and at least three different
+    message headers: a message, not a log line that happens to say "Date:"."""
+    names: set = set()
+    for line in lines:
+        if line[:1] in (" ", "\t") and names:
+            continue                     # a folded header line
+        if _ANY_HEADER.match(line):
             names.add(line.split(":", 1)[0].lower())
+            if "from" in names and len(names & _CORE_HEADERS) >= 3:
+                return True
             continue
-        if not line.strip() and run >= 3 and len(names) >= 3 and "from" in names:
-            return True
-        run, names = 0, set()
+        names = set()
     return False
+
+
+def _prefixed_by_record(line: str) -> str | None:
+    """grep -r / findstr / rg print "path:line" or "path:number:line": the
+    kind of the file a line came from, judged by its name alone."""
+    start = 2 if line[1:3] in (":\\", ":/") else 0     # "C:\..." keeps its drive colon
+    cut = line.find(":", start)
+    if cut <= 0 or cut > 400:
+        return None
+    name = line[:cut]
+    suffix = Path(name).suffix.lower()
+    if suffix in ("", ".txt") or not suffix:
+        return None
+    try:
+        return kind_of(name)
+    except (OSError, ValueError):
+        return None
 
 
 def looks_like(text: str) -> str | None:
     """"mail" / "finance" when program output reads like a mail archive or a
-    statement (grep through an mbox or a statement export, a cat of a
-    mailbox, an OFX download), else None. Judged on shape only."""
+    statement (a recursive grep through a mail folder or statement exports,
+    a cat of a mailbox or a message, an OFX download), else None. Judged on
+    shape and on the names of the files lines say they came from."""
     t = str(text or "")
     if not t:
         return None
     if _OFX.search(t) or _QIF.search(t):
         return "finance"
-    if _MBOX_SEP.search(t) or _header_block(t):
+    if _MBOX_SEP.search(t):
         return "mail"
-    if _RAW_PATH_PREFIX.search(t):
-        return "mail" if _MAIL_PREFIX.search(t) else "finance"
+    lines = t.splitlines()[:OUTPUT_LINES]
+    if _header_block(lines):
+        return "mail"
+    for line in lines:
+        k = _prefixed_by_record(line)
+        if k:
+            return k
     return None

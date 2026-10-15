@@ -591,3 +591,57 @@ def test_the_locks_page_asks_only_about_a_file_it_holds(cards, tmp_path):
     assert shown == [str(p)], "shown as spelled, not folded to lower case"
     assert locks.ask_for_held(shown[0])["ok"] and len(cards) == 2
     assert locks.ask_for_held(str(tmp_path / "other.mbox"))["ok"] is False
+
+
+# ── round 6 of the review (v7) ───────────────────────────────────────────────
+
+def test_a_recursive_search_through_a_mail_folder_is_caught(cards, tmp_path):
+    mail = tmp_path / "Mail"
+    mail.mkdir()
+    (mail / "inbox.mbox").write_text(ARCHIVE, encoding="utf-8")
+    assert fg.raw_refusal_for_command("grep -ri balance %s" % mail)
+    assert fg.raw_refusal_for_command('rg balance "%s"' % mail)
+    assert fg.raw_refusal_for_command("grep balance %s" % mail) is None, "not recursive: reads no file"
+    assert fg.raw_output_notice("inbox.mbox:Your biopsy came back positive, call the surgery.")
+    assert fg.raw_output_notice("C:\\Mail\\inbox.mbox:12:Your balance is due on the 14th.")
+    assert fg.raw_output_notice("src/app.py:12:    return balance") is None
+
+
+def test_short_lines_with_figures_or_findings_in_a_mailbox_are_held(cards, tmp_path):
+    lines = ["Overdraft fee charged: $35 today", "Diagnosis: pancreatic carcinoma, stage two",
+             "Total due: $4,382.17 by 11/30/2026"]
+    body = ARCHIVE + "\n" + "\n".join(lines)
+    p = _archive(tmp_path, body=body)
+    fg.on_file_read(p, body)
+    for line in lines:
+        assert jg.never_send_hits(line), line
+
+
+def test_a_long_dash_line_is_quick_and_a_starred_line_is_still_held(cards, tmp_path):
+    import time
+    line = "*** Your biopsy came back positive, please call Dr Lee ***"
+    p = _archive(tmp_path, body=ARCHIVE + "\n" + line)
+    fg.on_file_read(p, ARCHIVE + "\n" + line)
+    assert jg.never_send_hits(line)
+    t0 = time.monotonic()
+    jg.never_send_hits("a" + "-" * 20000 + "x")
+    assert time.monotonic() - t0 < 1.0
+
+
+def test_a_printed_message_with_folded_and_extra_headers_is_withheld(cards):
+    eml = ("Received: from mx.example.test\n by mx2.example.test with SMTP\nFrom: a@x.test\n"
+           "To: b@x.test\nSubject: rent\nDate: Mon, 12 Oct 2026 10:00:00 +0000\n"
+           "MIME-Version: 1.0\nContent-Type: text/plain\n\nThe rent is late.")
+    assert fg.raw_output_notice(eml)
+
+
+def test_a_folder_too_large_to_check_is_not_handed_over(cards, tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for i in range(5):
+        (repo / ("f%d.py" % i)).write_text("x", encoding="utf-8")
+    found, complete = fg.raw_records_in(repo, limit=3)
+    assert complete is False
+    (tmp_path / "Inbox").write_bytes(b"From someone@example.test Mon Oct 12 10:00:00 2026\n")
+    found, complete = fg.raw_records_in(tmp_path)
+    assert any(p.name == "Inbox" for p in found), "a mailbox with no extension"
