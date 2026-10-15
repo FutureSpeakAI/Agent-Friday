@@ -776,7 +776,8 @@ def _ask_friday_local(question: str, session: dict) -> str:
     settings = _load_settings() or {}
     delivery = session_preferences(session)
     with using_preferences(delivery):
-        system, _meta = _build_voice_system_prompt(settings, seat=seat)
+        system, _meta = _build_voice_system_prompt(
+            settings, seat=seat, conversation_id=(session or {}).get("conversation_id"))
         user = _voice_user_message(
             "Friday's fast voice handed you this question during a live call because "
             "it needs your full memory or deeper thought. Answer in plain spoken prose, "
@@ -843,7 +844,8 @@ def _tool_ask_friday(inp, session=None):
     from agent_friday.routes.voice import _voice_user_message
     delivery = session_preferences(session)
     with using_preferences(delivery):
-        system, _meta = _build_voice_system_prompt(settings, seat=seat)
+        system, _meta = _build_voice_system_prompt(
+            settings, seat=seat, conversation_id=(session or {}).get("conversation_id"))
         user = _voice_user_message(
             "You are answering a question RELAYED from a cloud voice session. "
             "Answer in plain spoken prose with no markdown, sized to the question as "

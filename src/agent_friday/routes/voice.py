@@ -2602,7 +2602,8 @@ def _resolve_voice_engine(settings=None):
         "cloud provider in Settings if you would rather use one.")}
 
 
-def _build_voice_system_prompt(settings=None, description=None, seat=None):
+def _build_voice_system_prompt(settings=None, description=None, seat=None,
+                               conversation_id=None):
     """The LOCAL voice system prompt, assembled prefix-stable (clean-sheet §4.4).
 
     Order: (1) the manifest's self-description — changes only when a proof
@@ -2615,6 +2616,11 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None):
     Used by the ws handler AND registered as the manifest's prompt builder so
     the capability contract (§3.3) is measured against the prompt actually
     served, not a stand-in.
+
+    ``conversation_id`` is the chat the call belongs to: Friday's memory
+    blocks are frozen for it (services/prompt_freeze), so a save made during
+    the call, or between two ask_friday questions, does not change the
+    system text the seat has cached.
     """
     settings = settings if settings is not None else (_load_settings() or {})
     # WHO ANSWERS IS THE SEAT, NOT THE ORCHESTRATOR SETTING. A local voice
@@ -2654,7 +2660,8 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None):
     try:
         full_ctx = _get_friday_system_prompt(
             provider=_prov, vault_control=_vault_control,
-            vault_fallback=_vault_cloud_fallback())
+            vault_fallback=_vault_cloud_fallback(),
+            freeze_key=conversation_id)
     except Exception as e:
         full_ctx = f"(context load failed: {e})"
     # The same length rule and persona as the cloud voice: the text-chat
@@ -4376,7 +4383,8 @@ if sock is not None:
                 # The front's prompt was built at arm; it is a local seat.
                 system_prompt, _prov = _front["prompt"], "local"
             else:
-                system_prompt, _pmeta = _build_voice_system_prompt(settings, seat=_brain)
+                system_prompt, _pmeta = _build_voice_system_prompt(
+                    settings, seat=_brain, conversation_id=_open_cid[0])
                 _prov = _pmeta["provider"]
             _timings = {}
             # What is serving, stated once at open (and again by later frames
@@ -4400,7 +4408,8 @@ if sock is not None:
                 if _vol["text"] is None or now - _vol["at"] > 30.0:
                     try:
                         _vol["text"] = _build_voice_system_prompt(
-                            settings, seat=_brain)[1].get("volatile") or ""
+                            settings, seat=_brain,
+                            conversation_id=_open_cid[0])[1].get("volatile") or ""
                     except Exception:
                         _vol["text"] = ""
                     _vol["at"] = now

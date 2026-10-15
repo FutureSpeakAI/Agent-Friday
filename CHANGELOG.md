@@ -13,6 +13,17 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+### Changed
+
+- **What Friday remembers about you is fixed for the length of a
+  conversation.** Her instructions open with what she has learned about you
+  (your style, your strong subjects, your usual workspaces, the lessons she
+  keeps). Those used to shift a little on every turn, which made a local model
+  re-read the whole prompt each time. Now they are taken once, when a
+  conversation starts, in text chat and in voice. Anything Friday saves during
+  the conversation is stored at once and used from the next conversation. Your
+  own edits and deletions apply straight away.
+
 ---
 
 ## [1.1.0-beta.1] - Agent Friday Beta 1.1 (2026-10-14)

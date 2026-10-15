@@ -488,6 +488,14 @@ def _on_proposal_decided(card: Dict[str, Any]) -> None:
             conn.close()
         except Exception:
             return
+    if new_status != row["status"]:
+        # The owner decided this card, so the change reaches the prompt of
+        # every conversation now, not next conversation (services/prompt_freeze).
+        try:
+            from agent_friday.services import prompt_freeze
+            prompt_freeze.owner_changed("learned heuristic decided")
+        except Exception:
+            pass
     if activated:
         _ingest_active(sid)
 

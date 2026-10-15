@@ -38,7 +38,7 @@ def test_ask_friday_is_egress_gated(monkeypatch):
     monkeypatch.setattr("agent_friday.services.agent._generate_agent", fake_generate)
     monkeypatch.setattr("agent_friday.services.local_seats.resolve", lambda role: "seat-x")
     monkeypatch.setattr(rv, "_build_voice_system_prompt",
-                        lambda settings=None, description=None, seat=None: ("VOICE PROMPT", {}))
+                        lambda settings=None, description=None, seat=None, conversation_id=None: ("VOICE PROMPT", {}))
     monkeypatch.setattr(rv, "_voice_reply_cap", fake_reply_cap)
     gated = {}
 
@@ -80,7 +80,7 @@ def test_ask_friday_reports_mind_busy_to_the_hud(monkeypatch):
     monkeypatch.setattr("agent_friday.services.agent._generate_agent",
                         lambda *a, **k: ("fine", []))
     monkeypatch.setattr(rv, "_build_voice_system_prompt",
-                        lambda settings=None, description=None, seat=None: ("P", {}))
+                        lambda settings=None, description=None, seat=None, conversation_id=None: ("P", {}))
     monkeypatch.setattr(rv, "_gate_voice_tool_result", lambda r, f: r)
     frames = []
     out = ve._voice_tool_run("ask_friday", {"question": "q"}, frames.append)
