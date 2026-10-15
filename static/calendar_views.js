@@ -306,20 +306,29 @@
       },
       onPointerDown: e => {
         if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;   // Ctrl/Cmd-click ticks the row
-        const el = e.currentTarget, y0 = e.clientY, x0 = e.clientX;
+        // A press on a control or on the prep card inside the event is that control's, never a drag.
+        if (e.target && e.target.closest && e.target.closest('button, a, input, select, textarea, label, [data-no-drag]')) return;
+        const el = e.currentTarget, y0 = e.clientY, x0 = e.clientX, pid = e.pointerId;
         const col0 = el.closest('[data-cal-day]');
+        const stepPx = o.hourPx * STEP_MIN / 60;        // a drag starts only after one whole 15-minute step
         let moving = false, minutes = 0, days = 0;
         const label = t => el.setAttribute('data-cal-drag-time', t);
         function onMove(m) {
+          if (m.pointerId !== undefined && m.pointerId !== pid) return;
+          if (m.buttons === 0) { end(true); return; }   // the release was lost (another window, alt-tab): abandon
           const dy = m.clientY - y0, dx = m.clientX - x0;
-          if (!moving && Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+          const colW = col0 ? col0.getBoundingClientRect().width : Infinity;
+          if (!moving && Math.abs(dy) < stepPx && !(o.mode === 'week' && Math.abs(dx) >= colW / 2)) return;
           moving = true;
           el.classList.add('calv-dragging');
-          minutes = Math.round((dy / o.hourPx) * 60 / STEP_MIN) * STEP_MIN;
+          minutes = Math.trunc(dy / stepPx) * STEP_MIN;
           days = 0;
           let shiftX = 0;
           if (o.mode === 'week' && col0) {
-            const hit = document.elementsFromPoint(m.clientX, m.clientY).map(n => n.closest && n.closest('[data-cal-day]')).find(Boolean);
+            // The dragged block itself is under the pointer; it does not take pointer events while dragging
+            // (.calv-dragging), so the column found is the one beneath it.
+            const hit = document.elementsFromPoint(m.clientX, m.clientY)
+              .filter(n => n !== el && !el.contains(n)).map(n => n.closest && n.closest('[data-cal-day]')).find(Boolean);
             if (hit && hit !== col0 && hit.parentNode === col0.parentNode) {
               days = Math.round((parseDay(hit.getAttribute('data-cal-day')) - parseDay(col0.getAttribute('data-cal-day'))) / 86400000);
               shiftX = hit.getBoundingClientRect().left - col0.getBoundingClientRect().left;
@@ -328,9 +337,14 @@
           el.style.transform = 'translate(' + shiftX + 'px,' + (minutes / 60 * o.hourPx) + 'px)';
           label(timeOf(shifted(ev.start_time, days, minutes).toISOString()));
         }
+        let ended = false;
         function end(cancel) {
+          if (ended) return;
+          ended = true;
           window.removeEventListener('pointermove', onMove);
           window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onCancel);
+          window.removeEventListener('blur', onCancel);
           window.removeEventListener('keydown', onKey, true);
           el.classList.remove('calv-dragging');
           el.style.transform = '';
@@ -338,10 +352,13 @@
           if (moving) suppressClickUntil = Date.now() + 400;
           if (!cancel && moving) propose(ev, days, minutes);
         }
-        function onUp() { end(false); }
+        function onUp(u) { if (u.pointerId === undefined || u.pointerId === pid) end(false); }
+        function onCancel() { end(true); }
         function onKey(k) { if (k.key === 'Escape') { k.stopPropagation(); end(true); } }
         window.addEventListener('pointermove', onMove);
         window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
+        window.addEventListener('blur', onCancel);
         window.addEventListener('keydown', onKey, true);
       },
     };
@@ -375,11 +392,13 @@
       setBusy(false);
       setPending(null);
     };
+    const runRef = useRef(null);
+    runRef.current = run;              // the listener below is registered once; it calls this render's run
     useEffect(() => {
       const on = e => {
         const p = e.detail;
         if (!p || !p.ev) return;
-        if (Date.now() < moveGrantUntil) run(p); else { setGrant(false); setPending(p); }
+        if (Date.now() < moveGrantUntil) runRef.current(p); else { setGrant(false); setPending(p); }
       };
       window.addEventListener(MOVE_EVENT, on);
       return () => window.removeEventListener(MOVE_EVENT, on);
@@ -483,7 +502,7 @@
 .calv-cell-num{align-self:flex-start;background:none;border:0;color:var(--fr-text);cursor:pointer;font-size:12px;padding:1px 5px;border-radius:6px}
 .calv-cell.today .calv-cell-num{color:var(--fr-cyan);font-weight:600}
 .calv-more{background:none;border:0;color:var(--fr-dim);font-size:11px;text-align:left;cursor:pointer;padding:0 6px}
-.calv-dragging{opacity:.85;z-index:20;cursor:grabbing;box-shadow:var(--fr-focus)}
+.calv-dragging{opacity:.85;z-index:20;cursor:grabbing;box-shadow:var(--fr-focus);pointer-events:none}
 [data-cal-drag="on"]{touch-action:none}
 .calv-dragging[data-cal-drag-time]::after{content:attr(data-cal-drag-time);position:absolute;right:4px;top:2px;font-family:var(--fr-font-mono,monospace);font-size:10px;color:var(--fr-text)}
 .calv-modal-back{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--fr-surface) 55%,transparent)}
