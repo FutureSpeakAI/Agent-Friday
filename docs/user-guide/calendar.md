@@ -53,6 +53,24 @@ If you are moving several things, tick **Move without asking for the next 30
 minutes** in the confirmation. That permission lives only in this window and
 runs out by itself; every move still gets its Undo.
 
+## Reminders and prep cards
+
+Friday uses the reminders you already have in Google Calendar: an event's own
+("30 minutes before"), or its calendar's default. The Day view shows each
+event's reminder, and when one comes due Friday puts it in her tray: "Dentist
+in 30 minutes". Each reminder comes once. Friday adds no reminder Google does
+not have, says nothing for an invitation you declined, and leaves email
+reminders to Google. Quiet hours hold reminders like any other notice.
+
+An event with other people in it (or about your career) is one that matters:
+its reminder says the prep card is one click away, and clicking the reminder
+opens the event with its prep card (the "Meeting prep" job, which you can see
+in Activity). Friday makes no prep card by herself.
+
+To stop Friday's reminders, switch off **Calendar reminders** in the
+Workflows workspace, under Friday's built-in routines
+([Scheduled jobs](scheduled-jobs.md)); Google's own reminders are unchanged.
+
 ## What Friday can do
 
 | Action | Needs your approval? |
