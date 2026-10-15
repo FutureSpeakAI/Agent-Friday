@@ -274,6 +274,17 @@ def _launch_script_env(name: str) -> str:
     return ""
 
 
+def _claim_setup_lock() -> None:
+    """Hold agent_friday.setup_lock for the life of this console. Never stops
+    setup: a lock another console holds is only noted."""
+    try:
+        from agent_friday import setup_lock
+        if not setup_lock.claim():
+            console.print("  [yellow]Setup also seems to be open in another window.[/yellow]")
+    except Exception:
+        pass
+
+
 def cmd_start():
     """Launch the server and open the browser."""
     # Seed the bundled skills (career pipeline, etc.) into ~/.friday/skills the
@@ -284,6 +295,9 @@ def cmd_start():
     ensure_seed_skills_installed()
 
     if not _is_existing_user():
+        # Held until this console exits, so a second click on the Desktop
+        # icon (friday_tray --open) does not open a second setup.
+        _claim_setup_lock()
         console.print()
         console.print(Panel(
             "[cyan]Agent Friday isn't set up yet.[/cyan]\n\n"
@@ -368,6 +382,7 @@ def cmd_start():
 
 def cmd_setup(quick: bool = False):
     """Run the interactive setup wizard."""
+    _claim_setup_lock()
     wizard_script = HERE / "setup_wizard.py"
     if not wizard_script.exists():
         console.print("  [red]setup_wizard.py not found.[/red]")

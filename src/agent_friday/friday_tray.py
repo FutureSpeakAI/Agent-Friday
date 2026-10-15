@@ -178,6 +178,156 @@ def _wait_for_health(timeout: float = SERVER_START_TIMEOUT_S,
     return False, f"NOT RESPONDING after {timeout:.0f}s (process still alive)"
 
 
+# ── --open: what the Desktop / Start menu icon runs ─────────────────────────
+# `Agent Friday (tray).cmd` starts this module with --open. The sign-in start
+# (`Agent Friday (background).cmd`) does not pass it and behaves as before.
+
+#: Under the "friday" logger tree so the lines land in friday.log next to the
+#: server's own. The tray has no other file log (pythonw has no console).
+_open_log = logging.getLogger("friday.tray.open")
+
+#: Windows: a new console for the child (subprocess.CREATE_NEW_CONSOLE).
+CREATE_NEW_CONSOLE = 0x00000010
+
+
+class _AppendAndCloseHandler(logging.FileHandler):
+    """Append one record and let go of the file.
+
+    The server rotates friday.log by renaming it, and Windows refuses to
+    rename a file another process holds open. The tray outlives the server, so
+    a handle kept open here would stop the rotation for the life of the tray.
+    """
+
+    def emit(self, record):
+        try:
+            super().emit(record)
+        finally:
+            self.close()
+
+
+def _attach_friday_log() -> None:
+    root = logging.getLogger("friday.tray")
+    if any(isinstance(h, _AppendAndCloseHandler) for h in root.handlers):
+        return
+    try:
+        home = friday_home()
+        home.mkdir(parents=True, exist_ok=True)
+        fh = _AppendAndCloseHandler(home / "friday.log", encoding="utf-8",
+                                    delay=True)
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S"))
+        root.addHandler(fh)
+        if root.level == logging.NOTSET or root.level > logging.INFO:
+            root.setLevel(logging.INFO)
+    except Exception:
+        pass  # a log that cannot be opened must not stop Friday starting
+
+
+def _ui_url() -> str:
+    """Friday's own address (https://agent.<name>, services/local_address)
+    when it is proven to reach the same Friday as the loopback URL; the
+    loopback URL otherwise."""
+    base = _server_url()
+    try:
+        from agent_friday.services.local_address import open_url
+        return open_url(base)
+    except Exception:
+        return base
+
+
+def _first_run_pending() -> bool:
+    """True when setup has not been completed on this computer.
+
+    The console launcher's own test (cli._is_existing_user), so the two
+    launchers can never disagree about what counts as set up. If that cannot
+    be loaded, the setup marker alone decides - erring towards the console,
+    which is never harmful: it starts Friday and opens the browser too.
+    """
+    try:
+        from agent_friday.cli import _is_existing_user
+        return not _is_existing_user()
+    except Exception as e:
+        _open_log.warning("tray --open: could not load the setup check from "
+                          "the console launcher (%s); using the setup marker "
+                          "alone", e)
+        return not (friday_home() / ".setup_complete").exists()
+
+
+def _setup_already_open() -> bool:
+    """True when a console setup is open now (agent_friday.setup_lock)."""
+    try:
+        from agent_friday import setup_lock
+        return setup_lock.is_held()
+    except Exception as e:
+        _open_log.warning("tray --open: could not read the setup lock (%s); "
+                          "treating setup as not open", e)
+        return False
+
+
+def _hand_over_to_console() -> bool:
+    """Start the console launcher, which runs the setup wizard. True if started.
+
+    Installed: `<install root>\\Agent Friday.cmd`, the same file the
+    post-install "Start Agent Friday now" box runs. A source checkout has no
+    such file: `python -m agent_friday.cli` in a new console instead.
+    """
+    launcher = PROJECT_DIR.parent / "Agent Friday.cmd"  # brand: plain (a file name)
+    try:
+        if sys.platform == "win32" and launcher.exists():
+            os.startfile(str(launcher))  # type: ignore[attr-defined]
+            _open_log.info("tray --open: started %s for first-run setup", launcher)
+            return True
+        exe = Path(sys.executable)
+        if exe.name.lower() == "pythonw.exe" and exe.with_name("python.exe").exists():
+            exe = exe.with_name("python.exe")  # pythonw cannot show the wizard
+        flags = CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
+        subprocess.Popen([str(exe), "-m", "agent_friday.cli"],
+                         cwd=str(PROJECT_DIR), creationflags=flags)
+        _open_log.info("tray --open: started '%s -m agent_friday.cli' for "
+                       "first-run setup", exe)
+        return True
+    except Exception as e:
+        _open_log.warning("tray --open: could not start the console launcher "
+                          "for first-run setup (%s); starting the tray anyway",
+                          e)
+        return False
+
+
+def _seed_skills() -> None:
+    """Copy the bundled skills into ~/.friday/skills if that folder is absent.
+
+    The console launcher does this on every start (cli.cmd_start); the tray
+    icon must not be the one way in that skips it. A no-op once seeded.
+    """
+    try:
+        from agent_friday.seed import ensure_seed_skills_installed
+        ensure_seed_skills_installed()
+    except Exception as e:
+        _open_log.warning("tray --open: bundled skills were not seeded (%s)", e)
+
+
+def _open_running_ui() -> None:
+    """Another tray owns Friday: open her page instead of exiting silently.
+
+    Waits for /api/health first (a sign-in start may still be booting). If it
+    never answers, the page is opened anyway: this process has no tray icon
+    to say so on, and a browser tab that cannot connect is a visible answer
+    where a silent exit was none. The reason is in friday.log.
+    """
+    healthy, detail = _wait_for_health()
+    url = _ui_url() if healthy else _server_url()
+    if healthy:
+        _open_log.info("tray --open: Friday is already running in the tray; "
+                       "opening %s", url)
+    else:
+        _open_log.warning("tray --open: Friday is already running in the tray "
+                          "but did not answer (%s); opening %s anyway", detail,
+                          url)
+    webbrowser.open(url)
+
+
 # ── Push-to-transcribe ──────────────────────────────────────────────────────
 # The tray is where a system-wide hotkey belongs: it is the one Friday process
 # that is always running and has a desktop session to send keystrokes into.
@@ -348,6 +498,10 @@ def recording_icon(base: Image.Image) -> Image.Image:
 
 
 class FridayTray:
+    #: Set by main() for `--open` (the Desktop / Start menu icon): open the UI
+    #: in the browser once the server is healthy. Off for the sign-in start.
+    open_on_ready = False
+
     def __init__(self) -> None:
         self.server_proc: subprocess.Popen | None = None
         self._child_err = None
@@ -454,20 +608,26 @@ class FridayTray:
 
     # ── Menu actions ──────────────────────────────────────────────────
     def _open_ui(self, _icon, _item) -> None:
-        # Friday's own address (https://agent.<name>, services/local_address)
-        # when it is proven to reach the same Friday as the loopback URL; the
-        # loopback URL otherwise. Checked on a thread so a slow answer never
-        # freezes the menu.
-        def go():
-            base = _server_url()
-            url = base
-            try:
-                from agent_friday.services.local_address import open_url
-                url = open_url(base)
-            except Exception:
-                pass
+        # Checked on a thread so a slow answer never freezes the menu.
+        threading.Thread(target=lambda: webbrowser.open(_ui_url()),
+                         name="friday-open-ui", daemon=True).start()
+
+    def _open_when_ready(self) -> None:
+        """--open: show Friday in the browser once, when she answers.
+
+        A server that never became healthy is said out loud on the icon
+        rather than answered with a browser tab that cannot connect.
+        """
+        healthy, detail = _wait_for_health()
+        if healthy:
+            url = _ui_url()
+            _open_log.info("tray --open: Friday answered; opening %s", url)
             webbrowser.open(url)
-        threading.Thread(target=go, name="friday-open-ui", daemon=True).start()
+            return
+        _open_log.warning("tray --open: not opening the browser; the server "
+                          "did not become healthy (%s)", detail)
+        self._notify("Friday did not start (%s). Use Restart in the tray "
+                     "menu." % detail)
 
     def _restart(self, _icon, _item) -> None:
         threading.Thread(target=self.restart_server, daemon=True).start()
@@ -701,6 +861,9 @@ class FridayTray:
         threading.Thread(target=self._watchdog, daemon=True).start()
         threading.Thread(target=self._start_push_to_transcribe,
                          daemon=True).start()
+        if self.open_on_ready:
+            threading.Thread(target=self._open_when_ready,
+                             name="friday-open-when-ready", daemon=True).start()
 
         self.icon.run()
 
@@ -837,7 +1000,13 @@ def _acquire_single_instance() -> bool:
     return True
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    # `--open` comes from `Agent Friday (tray).cmd` (the Desktop and Start
+    # menu icon). Looked for as a token rather than parsed, so an unrelated
+    # argument (a test runner's own argv) is never a reason not to start.
+    args = list(sys.argv[1:] if argv is None else argv)
+    open_ui = "--open" in args
+
     # Kiosk image (FRIDAY_OS_MODE=1): there is no desktop to put a tray icon
     # on — see core/os_mode.py. The sealed Linux image starts server.py
     # directly (systemd unit / `friday` CLI), never this tray, so skipping
@@ -848,10 +1017,35 @@ def main() -> None:
               "(no desktop to put it on in kiosk mode).")
         return
 
+    if open_ui:
+        _attach_friday_log()
+
+    # The single-instance guard comes first: a tray already running is
+    # Friday, and a click opens her page rather than anything new.
     if not _acquire_single_instance():
+        if open_ui:
+            _open_running_ui()
         return
 
+    if open_ui:
+        # Setup asks questions, and pythonw has nowhere to ask them: the
+        # console launcher runs the wizard (and then starts Friday).
+        if _first_run_pending():
+            # The console holds the setup lock while it is open; this tray
+            # exits after handing over, so its own guard does not cover it.
+            if _setup_already_open():
+                _open_log.info("tray --open: setup is already open in its console "
+                               "window (setup lock held); not starting a second one")
+                return
+            _open_log.info("tray --open: setup has not been completed on this "
+                           "computer; handing over to the console launcher")
+            if _hand_over_to_console():
+                return
+        _seed_skills()
+
     tray = FridayTray()
+    if open_ui:
+        tray.open_on_ready = True
 
     def _on_signal(_sig, _frm):
         # Being told to stop is a quit, not a restart: hand the memory back.
