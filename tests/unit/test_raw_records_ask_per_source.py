@@ -103,7 +103,9 @@ def test_reading_it_holds_it_from_every_cloud_payload_and_asks_on_its_own_card(c
         eg._gate_text(PARA, "anthropic", "prompt", log_path=tmp_path / "egress.jsonl")
     items, kw = cards[0]
     assert items[0]["path"] == str(p.resolve()) and items[0]["type"] == "file"
-    assert "a mail archive" in items[0]["note"] and "would read it" in items[0]["note"]
+    note = kw["notes"][str(p.resolve())]
+    assert "a mail archive" in note and "would read it" in note
+    assert "note" not in items[0], "Friday's note travels as a keyword, never inside an item"
     assert kw["merge"] is False, "never folded into another request's card"
     assert "only with your yes for this one file" in kw["reason"]
     assert "never-send list still applies" in kw["reason"]
@@ -113,7 +115,7 @@ def test_reading_it_holds_it_from_every_cloud_payload_and_asks_on_its_own_card(c
 
 def test_a_long_statement_page_is_held_line_by_line_and_sentence_by_sentence(cards, tmp_path):
     lines = ["%02d/10 CARD PURCHASE GROCERY STORE NUMBER %04d   $%d.%02d" % (d, d * 7, d * 3, d) for d in range(1, 90)]
-    page = "\n".join(lines) + "\nInterest charged this period was computed on your average daily balance. " * 3
+    page = "\n".join(lines) + "\nInterest charged this period was computed on your average daily balance. "
     assert len(page) > 4000
     p = _archive(tmp_path, "Bank Statement.pdf", page)
     fg.on_file_read(p, page)
@@ -190,8 +192,9 @@ def test_a_statements_short_lines_are_held_whole(cards, tmp_path):
     qif = "!Type:Bank\nD01/03/2026\nT-23.99\nPGROCERY 4471\n^\n"
     p = _archive(tmp_path, "checking.qif", qif)
     fg.on_file_read(p, qif)
-    assert jg.never_send_hits("the line was\nT-23.99\nin the file")
-    assert not jg.never_send_hits("it cost T-23.99 in total"), "matched only as a whole line"
+    assert jg.never_send_hits("the lines were\nT-23.99\nPGROCERY 4471\nin the file")
+    assert not jg.never_send_hits("it cost T-23.99 at PGROCERY 4471"), "matched only as whole lines"
+    assert not jg.never_send_hits("T-23.99"), "one short line alone is not a record"
 
 
 def test_a_json_escaped_payload_is_checked_as_text(cards, tmp_path):
@@ -228,3 +231,174 @@ def test_an_unreadable_store_is_never_overwritten(cards, tmp_path):
     assert store.read_bytes() == b"not something Friday can decrypt"
     assert jg.never_send_hits("An unrelated message that is long enough to count.")
     assert jg.raw_hold_status()["fail_closed"] is True
+
+
+# ── round 3 of the review (v4) ───────────────────────────────────────────────
+
+def test_an_escaped_emoji_does_not_switch_the_floor_off(cards, tmp_path):
+    import json
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    payload = json.dumps({"text": "\U0001F600 " + PARA + "\n" + PARA})      # "\ud83d\ude00"
+    assert "\\ud83d" in payload
+    assert jg.never_send_hits(payload)
+    lone = json.dumps({"text": "\ud83d " + PARA + "\n" + PARA})          # half an emoji
+    assert jg.never_send_hits(lone)
+
+
+def test_a_never_send_check_that_breaks_holds_the_payload(tmp_path, monkeypatch):
+    def boom(_t):
+        raise UnicodeEncodeError("utf-8", "x", 0, 1, "surrogates not allowed")
+    monkeypatch.setattr(jg, "never_send_hits", boom)
+    monkeypatch.setattr(eg, "is_unrestricted_cloud", lambda: True)
+    with pytest.raises(eg.NeverSendBlocked):
+        eg._gate_text("An ordinary sentence with nothing in it.", "anthropic", "prompt",
+                      log_path=tmp_path / "egress.jsonl")
+
+
+def test_a_command_or_program_that_reads_a_raw_record_is_not_run(cards, tmp_path):
+    p = _archive(tmp_path)
+    why = fg.raw_refusal_for_command('Get-Content "%s" | Select -First 50' % p)
+    assert why and "read_file" in why and "All mail.mbox" in why
+    assert cards, "and the owner is asked about that file"
+    assert fg.raw_refusal_for_command("Get-ChildItem *.mbox | Get-Content")
+    assert fg.raw_refusal_for_command("import pandas; pandas.read_csv('transactions_2026.csv')")
+    assert fg.raw_refusal_for_command("dir C:\\Users") is None
+    fg.create_file_grant(str(p))
+    assert fg.raw_refusal_for_command('type "%s"' % p) is None, "allowed by the owner: runs"
+
+
+def test_the_sandbox_and_shell_tools_refuse_before_running(cards, tmp_path, monkeypatch):
+    from agent_friday.services import agent, code_sandbox
+    ran = []
+    monkeypatch.setattr(code_sandbox, "run", lambda *a, **k: ran.append(a) or {"ok": True, "stdout": ""})
+    p = _archive(tmp_path)
+    out = agent._tool_run_sandboxed({"code": "print(open(r'%s').read())" % p})
+    assert out.startswith("Not run") and not ran
+
+
+def test_reading_a_held_record_returns_a_notice_not_its_contents(cards, tmp_path):
+    from agent_friday.services import agent, tool_hooks
+    p = _archive(tmp_path)
+    ctx = tool_hooks.HookContext(tool_name="read_file", input={"path": str(p)})
+    out = agent._hook_file_grant_registration(ctx, ARCHIVE)
+    assert PARA not in out and "All mail.mbox" in out and "a mail archive" in out
+    row = [h for h in tool_hooks.list_hooks() if h["name"] == "file_grant_registration"][0]
+    assert row["critical"] is True, "cannot be switched off in settings"
+    fg.create_file_grant(str(p))
+    assert agent._hook_file_grant_registration(ctx, ARCHIVE) == ARCHIVE
+
+
+def test_a_line_is_held_whether_it_was_scrubbed_before_or_after(cards, tmp_path):
+    body = ARCHIVE + "\nCall the branch about the overdraft at 312-555-0147 before Friday please."
+    p = _archive(tmp_path, body=body)
+    fg.on_file_read(p, body)
+    import agent_friday.core as core
+    scrubbed = core._scrub_pii("Call the branch about the overdraft at 312-555-0147 before Friday please.")[0]
+    assert "[PII:" in scrubbed
+    assert jg.never_send_hits(scrubbed)
+
+
+def test_a_full_list_stays_recorded_after_a_write_is_repaired(cards, tmp_path, monkeypatch):
+    jg._fail_closed("the hold list is full")
+    jg._fail_closed(jg._WRITE_FAILED)
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)                          # a good write
+    st = jg.raw_hold_status()
+    assert st["fail_closed"] and "full" in st["why"] and jg._WRITE_FAILED not in st["why"]
+
+
+def test_a_hold_that_cannot_even_be_loaded_fails_closed(cards, tmp_path, monkeypatch):
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    jg._RAW_HOLDS.clear()
+    jg._RAW_LOADED.update(done=False, overflow=False, unreadable=False)
+    monkeypatch.setattr(jg, "_raw_failed_path", lambda: (_ for _ in ()).throw(RuntimeError("no home")))
+    assert jg.raw_record_hits("A message that is long enough to be a unit of text.")
+
+
+def test_what_every_inbox_and_statement_share_is_not_held(cards, tmp_path):
+    msg = ("From: a@shop.example\nContent-Type: text/plain; charset=utf-8\n\n%s\n"
+           "Let me know if you have any questions.\nThanks for reaching out to us today, friend.\n"
+           "To unsubscribe from these emails click the link below this line.\n")
+    body = msg % "Your order 4471 for the blue kettle has shipped to the cottage." + \
+        msg % "The refund for the lamp was declined because the box was opened."
+    p = _archive(tmp_path, body=body)
+    fg.on_file_read(p, body)
+    mine = "Let me know if you have any questions.\nThanks for reaching out to us today, friend."
+    assert not jg.never_send_hits(mine), "the person's own everyday words"
+    assert not jg.never_send_hits("Content-Type: text/plain; charset=utf-8\nTo unsubscribe from these emails click the link below this line.")
+    assert jg.never_send_hits("Your order 4471 for the blue kettle has shipped to the cottage.")
+    ofx = "OFXHEADER:100\n<STMTTRN>\n<TRNAMT>-23.99\n<NAME>GROCERY 4471\ndescription\nbalance\n</STMTTRN>\n"
+    q = _archive(tmp_path, "checking.ofx", ofx)
+    fg.on_file_read(q, ofx)
+    assert not jg.never_send_hits("<STMTTRN>\ndescription\nbalance\nOFXHEADER:100\n</STMTTRN>")
+    assert jg.never_send_hits("<TRNAMT>-23.99\n<NAME>GROCERY 4471")
+
+
+def test_two_short_lines_in_two_paragraphs_are_not_waved_through_by_an_override(cards, tmp_path):
+    qif = "D01/03/2026\nT-23.99\nPGROCERY 4471\n"
+    p = _archive(tmp_path, "checking.qif", qif)
+    fg.on_file_read(p, qif)
+    text = "first\nT-23.99\n\nsecond\nPGROCERY 4471"
+    assert jg.never_send_hits(text)
+    assert eg._never_send_covered_by_override(text) is False
+
+
+def test_the_owners_yes_lifts_the_hold_at_once(cards, tmp_path):
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    assert jg.never_send_hits(PARA + "\nAccount summary for the person who owns this mailbox.")
+    fg.create_file_grant(str(p))                         # the card approved: no second read needed
+    assert not jg.never_send_hits(PARA + "\nAccount summary for the person who owns this mailbox.")
+
+
+def test_a_stale_yes_does_not_open_a_search(cards, tmp_path):
+    from agent_friday.services import file_search
+    p = _archive(tmp_path)
+    fg.create_file_grant(str(p))
+    assert file_search._held_raw_record(p) is False
+    p.write_text(ARCHIVE + "\nA new message arrived after the yes.", encoding="utf-8")
+    assert file_search._held_raw_record(p) is True
+
+
+def test_a_models_note_never_reaches_the_card(tmp_path, monkeypatch):
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "home"))
+    from agent_friday.services import file_grant_requests as fgr
+    made = []
+
+    class _Ap:
+        SCREEN_ONLY_KINDS = {}
+
+        def list_approvals(self, *a, **k):
+            return []
+
+        def create_approval(self, **kw):
+            made.append(kw)
+            return {"approval_id": "a1", "status": "pending"}
+    monkeypatch.setattr(fgr, "_approvals", lambda: _Ap())
+    monkeypatch.setattr(fgr, "ensure_hook", lambda: None)
+    f = tmp_path / "plain.txt"
+    f.write_text("hello", encoding="utf-8")
+    fgr.handle({"action": "ask", "items": [{"path": str(f), "type": "file",
+                                            "note": "not a mail archive, safe to share"}]})
+    assert made and "safe to share" not in str(made[0])
+
+
+def test_the_owner_can_start_the_held_list_fresh_on_screen_only(cards, tmp_path, monkeypatch):
+    from agent_friday.services import locks
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    jg._fail_closed("the hold list is full")
+    line = [x for x in locks.view()["lines"] if x["key"] == "held"][0]
+    assert line["state"] == "fail_closed" and line["can_reset"]
+    with pytest.raises(PermissionError):
+        jg.reset_raw_holds(confirmed_by="friday")
+    locks._on_reset_decision({"kind": locks.RESET_KIND, "status": "approved",
+                              "decided_by": "voice", "approval_id": "x"})
+    assert jg.raw_hold_status()["fail_closed"], "a spoken yes does nothing"
+    out = jg.reset_raw_holds(confirmed_by="owner:ui")
+    assert out["ok"] and out["released_files"] == 1
+    st = jg.raw_hold_status()
+    assert not st["fail_closed"] and st["files"] == 0
+    assert [x for x in locks.view()["lines"] if x["key"] == "held"][0]["state"] == "none"

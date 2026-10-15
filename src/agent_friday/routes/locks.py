@@ -2,6 +2,8 @@
 
     GET  /api/locks                    every line of the page, read from the stores that decide it
     POST /api/locks/open-windows       {page: device_encryption | other_users}: open that Windows page
+    POST /api/locks/raw-holds/ask      {path}: raise the file-access card for one held raw record
+    POST /api/locks/raw-holds/reset    raise the card that starts the held list fresh (approved on screen only)
 """
 from __future__ import annotations
 
@@ -12,6 +14,10 @@ from flask import Blueprint, g, jsonify, request
 from agent_friday.services import locks
 
 locks_bp = Blueprint("locks", __name__)
+try:
+    locks.ensure_hook()
+except Exception:  # noqa: BLE001 - the route raises it again when used
+    pass
 
 
 @locks_bp.before_request
@@ -42,3 +48,14 @@ def locks_view():
 def locks_open_windows():
     out = locks.open_windows_page(str((request.get_json(silent=True) or {}).get("page") or ""))
     return jsonify(out), (200 if out.get("ok") else 400)
+
+
+@locks_bp.route("/api/locks/raw-holds/ask", methods=["POST"])
+def locks_raw_ask():
+    out = locks.ask_for_held(str((request.get_json(silent=True) or {}).get("path") or ""))
+    return jsonify(out), (200 if out.get("ok") else 400)
+
+
+@locks_bp.route("/api/locks/raw-holds/reset", methods=["POST"])
+def locks_raw_reset():
+    return jsonify(locks.request_reset(requested_by="owner:locks")), 202

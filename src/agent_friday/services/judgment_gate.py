@@ -182,22 +182,61 @@ _RAW_SPLIT = re.compile(r"(?<=[.!?;:])\s+|\t+|\s{2,}|\s\|\s")
 _JSON_U = re.compile(r"\\u([0-9a-fA-F]{4})")
 # Friday's own words around a file's text (page notes, the Library's fence):
 # never held, or one held read would stop every later read of any file.
-_BOILERPLATE = re.compile(r"read_file|\[extraction truncated|^<?/?evidence-|^\.\.\.\[", re.I)
+# Matched against a whole unit, so a real record line that merely mentions
+# one of these words is still held.
+_BOILERPLATE = re.compile(
+    r"^(?:\[?(?:showing |shown )?lines? \d+\s*(?:-|to)\s*\d+ of \d+.*|\[extraction truncated.*"
+    r"|</?evidence-[\w-]*>?|\.\.\.\[.*|\(?use read_file with (?:offset|page)\b.*)$", re.I)
+# Words every inbox and statement share: holding them would stop the
+# person's own "Thanks for reaching out." at the cloud, and they say nothing
+# about anyone. A sentence that starts this way is not held.
+_COMMON = re.compile(
+    r"^(?:thanks?(?: you)?\b|thank you\b|let me know\b|please (?:do not|don't) reply\b"
+    r"|if you have any questions\b|this (?:e-?mail|message) was sent\b|you(?:'re| are) receiving\b"
+    r"|to unsubscribe\b|unsubscribe\b|view (?:this|it)? ?in (?:your )?browser\b|sent from my\b"
+    r"|all rights reserved\b|privacy policy\b|best regards\b|kind regards\b|have a (?:great|good|nice)\b"
+    r"|looking forward\b|hope you(?:'re| are)? (?:well|doing)\b|page \d+ of \d+$)", re.I)
+# Mail headers that every message carries in the same shape.
+_GENERIC_HEADER = re.compile(
+    r"^(?:content-[\w-]+|mime-version|x-[\w-]+|received|dkim-signature|arc-[\w-]+|authentication-results"
+    r"|return-path|list-[\w-]+|delivered-to|precedence|feedback-id|message-id|in-reply-to|references"
+    r"|thread-[\w-]+|importance|auto-submitted)\s*:", re.I)
+# A statement's bare structure: "<STMTTRN>", "ofxheader:100", "!type:bank".
+_FINANCE_SHAPE = re.compile(r"^(?:</?[\w.]+>|!?[\w.]+:[\w.-]*)$")
+#: A unit this long is specific enough that one match is a leak; shorter
+#: units must match at least two distinct held units to stop a payload.
+RAW_LONG_UNIT = 40
 
 
 #: Quote marks and brackets around a unit are not part of it: a line quoted,
 #: or closing a JSON string, is the same line.
 _UNIT_EDGES = " \"'\u201c\u201d\u2018\u2019{}[]()<>,;`"
+_PII_TAG = re.compile(r"\[PII:[a-z]+:[0-9a-f]+\]")
 
 
 def _norm_unit(piece: str) -> str:
     return " ".join(str(piece).split()).strip(_UNIT_EDGES).casefold()
 
 
+def _pii_neutral(text: str) -> str:
+    """The text with every phone number, address and e-mail (raw or already
+    scrubbed to a [PII:...] tag) as one fixed token, so a held line matches
+    whether the posture scrubbed it at read time, at send time, or never."""
+    t = str(text or "")
+    try:
+        from agent_friday.core import _scrub_pii
+        t = _scrub_pii(t)[0]
+    except Exception:
+        pass
+    return _PII_TAG.sub("~pii~", t)
+
+
 def _unescaped(text: str) -> str:
     """A JSON-escaped payload as text, so a held line is found inside a tool
-    result that was serialised before it reached the gate."""
+    result that was serialised before it reached the gate. An escaped emoji
+    is a surrogate pair; it is joined, and a lone half is dropped."""
     t = _JSON_U.sub(lambda m: chr(int(m.group(1), 16)), text)
+    t = t.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
     return (t.replace('\\"', '"').replace("\\t", "\t").replace("\\/", "/")
             .replace("\\r", "").replace("\\\\", "\\"))
 
@@ -206,17 +245,27 @@ def _lines(text: str) -> list:
     return [re.sub(r"^[\s>]+", "", ln) for ln in re.split(r"\r?\n|\\n", str(text or ""))]
 
 
+def _skip(u: str, finance: bool) -> bool:
+    if _BOILERPLATE.match(u) or _COMMON.match(u) or _GENERIC_HEADER.match(u):
+        return True
+    if finance and len(u) < RAW_UNIT_MIN and (not any(c.isdigit() for c in u) or _FINANCE_SHAPE.match(u)):
+        return True
+    return False
+
+
 def raw_units(text: str, *, line_min: int = RAW_UNIT_MIN) -> list:
     """The units a raw record is held by: each line of `line_min` or more
-    characters, and each sentence of RAW_UNIT_MIN or more."""
+    characters, and each sentence of RAW_UNIT_MIN or more. A short line
+    (a statement's) counts only when it carries a figure."""
+    finance = line_min < RAW_UNIT_MIN
     out = []
-    for line in _lines(text):
+    for line in _lines(_pii_neutral(text)):
         whole = _norm_unit(line)
-        if len(whole) >= line_min and not _BOILERPLATE.search(whole):
+        if len(whole) >= line_min and not _skip(whole, finance):
             out.append(whole)
         for piece in _RAW_SPLIT.split(line):
             u = _norm_unit(piece)
-            if len(u) >= RAW_UNIT_MIN and u != whole and not _BOILERPLATE.search(u):
+            if len(u) >= RAW_UNIT_MIN and u != whole and not _skip(u, finance):
                 out.append(u)
     return out
 
@@ -239,7 +288,7 @@ def _payload_units(text: str) -> list:
 
 def _unit_hash(u: str) -> bytes:
     import hashlib
-    return hashlib.sha256(u.encode("utf-8")).digest()
+    return hashlib.sha256(u.encode("utf-8", "surrogatepass")).digest()
 
 
 def _raw_store_path():
@@ -251,42 +300,63 @@ def _raw_failed_path():
     return _raw_store_path().with_name("raw_record_holds.failed")
 
 
-def _fail_closed(why: str) -> None:
-    _RAW_LOADED["overflow"] = True
+def _marker_reasons() -> list:
     try:
         p = _raw_failed_path()
+        if not p.exists():
+            return []
+        return [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()] or [
+            "the hold could not be kept in full"]
+    except Exception:
+        return ["the hold could not be kept in full"]
+
+
+def _fail_closed(why: str) -> None:
+    """Fail closed for `why`, keeping every other reason already recorded."""
+    _RAW_LOADED["overflow"] = True
+    try:
+        reasons = _marker_reasons()
+        if why not in reasons:
+            reasons.append(why)
+        p = _raw_failed_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(why + "\n", encoding="utf-8")
-    except OSError:
+        p.write_text("\n".join(reasons) + "\n", encoding="utf-8")
+    except Exception:
         pass
 
 
 def _raw_load() -> None:
     if _RAW_LOADED["done"]:
         return
-    _RAW_LOADED["done"] = True
-    if _raw_failed_path().exists():
-        _RAW_LOADED["overflow"] = True
-    p = _raw_store_path()
-    if not p.exists():
-        return
     try:
-        from agent_friday.services import credential_store as cs
-        data = json.loads(cs.read_secret(p).decode("utf-8"))
-        for key, hashes in (data.get("files") or {}).items():
-            for h in hashes:
-                _RAW_HOLDS.setdefault(bytes.fromhex(h), set()).add(key)
+        if _raw_failed_path().exists():
+            _RAW_LOADED["overflow"] = True
+        p = _raw_store_path()
+        if p.exists():
+            try:
+                from agent_friday.services import credential_store as cs
+                data = json.loads(cs.read_secret(p).decode("utf-8"))
+                for key, hashes in (data.get("files") or {}).items():
+                    for h in hashes:
+                        _RAW_HOLDS.setdefault(bytes.fromhex(h), set()).add(key)
+            except Exception:
+                # A store that cannot be read must not silently release what
+                # it held, and must not be overwritten by a shorter one.
+                _RAW_LOADED["unreadable"] = True
+                _fail_closed("the store of held raw records could not be read")
     except Exception:
-        # A store that cannot be read must not silently release what it held,
-        # and must not be overwritten by a shorter one.
+        # Not even the place it lives could be worked out: hold everything.
         _RAW_LOADED["unreadable"] = True
-        _fail_closed("the store of held raw records could not be read")
+        _RAW_LOADED["overflow"] = True
+    _RAW_LOADED["done"] = True
 
 
 _WRITE_FAILED = "the store of held raw records could not be written"
 
 
 def _raw_save() -> None:
+    """Write the whole hold. One process (the server) reads files and holds
+    them; the store is its copy on disk, not a place two writers share."""
     if _RAW_LOADED["unreadable"]:
         return
     files: dict = {}
@@ -301,24 +371,37 @@ def _raw_save() -> None:
         _fail_closed(_WRITE_FAILED)
         return
     # A write that failed earlier is repaired by this one: the whole hold, as
-    # this process holds it, is on disk again. A full list or an unreadable
-    # store is not repaired by a write.
+    # this process holds it, is on disk again. Only that reason is lifted; a
+    # full list or an unreadable store stays recorded.
     try:
-        fp = _raw_failed_path()
-        if fp.exists() and fp.read_text(encoding="utf-8").strip() == _WRITE_FAILED:
-            fp.unlink()
-            _RAW_LOADED["overflow"] = False
-    except OSError:
+        reasons = _marker_reasons()
+        if _WRITE_FAILED in reasons:
+            rest = [r for r in reasons if r != _WRITE_FAILED]
+            fp = _raw_failed_path()
+            if rest:
+                fp.write_text("\n".join(rest) + "\n", encoding="utf-8")
+            else:
+                fp.unlink()
+                _RAW_LOADED["overflow"] = False
+    except Exception:
         pass
 
 
 def hold_raw_record(file_key: str, text: str, *, kind: str = "mail") -> int:
     """Hold every unit of `text` (read from the raw record `file_key`) from
     every cloud payload until release_raw_record(file_key). Returns how many
-    units are held for it. Call ONLY from file_grants.py."""
+    units are held for it. Call ONLY from file_grants.py.
+
+    A unit that appears more than once in the same file (a footer under every
+    message, a header every message carries) is the file's furniture, not
+    its content, and is not held."""
     skip = _boilerplate_units()
     units = [u for u in raw_units(text, line_min=RAW_LINE_MIN if kind == "finance" else RAW_UNIT_MIN)
              if u not in skip]
+    counts: dict = {}
+    for u in units:
+        counts[u] = counts.get(u, 0) + 1
+    units = [u for u, n in counts.items() if n == 1]
     hashes = [_unit_hash(u) for u in units]
     with _RAW_LOCK:
         _raw_load()
@@ -350,38 +433,72 @@ def release_raw_record(file_key: str) -> int:
     return n
 
 
+_HIT_WORDS = "part of a raw record (a mail archive or statement) you haven't allowed"
+
+
 def raw_record_hits(text: str) -> list:
-    with _RAW_LOCK:
-        _raw_load()
-        if not _RAW_HOLDS and not _RAW_LOADED["overflow"]:
-            return []
-        failed = _RAW_LOADED["overflow"]
-    # The payload's units are worked out outside the lock: other calls wait
-    # only for the membership test.
-    units = _payload_units(text)
-    if failed and units:
-        return ["a raw record is held and its hold could not be kept in full"]
-    hashes = [_unit_hash(u) for u in units]
-    with _RAW_LOCK:
-        if any(h in _RAW_HOLDS for h in hashes):
-            return ["part of a raw record (a mail archive or statement) you haven't allowed"]
-    return []
+    """Non-empty when `text` quotes a held raw record. One long held line is
+    enough; short ones must be at least two different held lines, so one
+    common sentence the person also writes does not stop their message.
+    Never raises: a check that cannot run holds the payload."""
+    try:
+        with _RAW_LOCK:
+            _raw_load()
+            if not _RAW_HOLDS and not _RAW_LOADED["overflow"]:
+                return []
+            failed = _RAW_LOADED["overflow"]
+        # The payload's units are worked out outside the lock: other calls
+        # wait only for the membership test.
+        units = _payload_units(text)
+        if failed and units:
+            return ["a raw record is held and its hold could not be kept in full"]
+        pairs = [(len(u), _unit_hash(u)) for u in units]
+        with _RAW_LOCK:
+            hit = {h: n for n, h in pairs if h in _RAW_HOLDS}
+        if any(n >= RAW_LONG_UNIT for n in hit.values()) or len(hit) >= 2:
+            return [_HIT_WORDS]
+        return []
+    except Exception:
+        return ["the check for held raw records could not run"]
 
 
 def raw_hold_status() -> dict:
-    """For the Locks page: how many files are held, and whether the hold is
+    """For the Locks page: which files are held, and whether the hold is
     failing closed (and why)."""
     with _RAW_LOCK:
         _raw_load()
-        files = {k for keys in _RAW_HOLDS.values() for k in keys}
-        why = ""
-        if _RAW_LOADED["overflow"]:
-            try:
-                why = _raw_failed_path().read_text(encoding="utf-8").strip()
-            except OSError:
-                why = "the hold could not be kept in full"
-        return {"files": len(files), "units": len(_RAW_HOLDS),
+        files = sorted({k for keys in _RAW_HOLDS.values() for k in keys})
+        why = "; ".join(_marker_reasons()) if _RAW_LOADED["overflow"] else ""
+        if _RAW_LOADED["overflow"] and not why:
+            why = "the hold could not be kept in full"
+        return {"files": len(files), "held": files[:200], "units": len(_RAW_HOLDS),
                 "fail_closed": bool(_RAW_LOADED["overflow"]), "why": why}
+
+
+def reset_raw_holds(*, confirmed_by: str) -> dict:
+    """The owner's own press on the Locks page: start the hold list fresh.
+    Every held file is let go and the fail-closed state is lifted; a file
+    read again is held again. Call ONLY from routes/locks.py."""
+    if not str(confirmed_by or "").startswith("owner:"):
+        raise PermissionError("only the owner, on screen, can start the hold list fresh")
+    with _RAW_LOCK:
+        n = len({k for keys in _RAW_HOLDS.values() for k in keys})
+        _RAW_HOLDS.clear()
+        _RAW_LOADED.update({"done": True, "overflow": False, "unreadable": False})
+        try:
+            p = _raw_store_path()
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+        try:
+            fp = _raw_failed_path()
+            if fp.exists():
+                fp.unlink()
+        except Exception:
+            pass
+        _raw_save()
+        return {"ok": not _RAW_LOADED["overflow"], "released_files": n}
 
 
 def never_send_tokens() -> list[str]:
