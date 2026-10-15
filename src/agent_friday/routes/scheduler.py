@@ -5,7 +5,6 @@ CRUD over the schedule registry plus run-now and run-history. Reads are open
 """
 import traceback
 from flask import Blueprint, jsonify, request
-from agent_friday.services.pasted_secrets import withholds_request_body
 from agent_friday.core import login_required
 from agent_friday.services import scheduler as _sched
 from agent_friday.routes._errors import api_error
@@ -26,7 +25,6 @@ def list_schedules():
 
 @scheduler_bp.route('/api/schedules', methods=['POST'])
 @login_required
-@withholds_request_body
 def create_schedule():
     """Create a user-defined schedule. Body: a schedule record (see spec A.2)."""
     data = request.get_json(silent=True) or {}

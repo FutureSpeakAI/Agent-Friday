@@ -4801,10 +4801,6 @@ if sock is not None:
         def _vlog(msg):
             if not _voice_debug:
                 return
-            # Typed and spoken text reaches these lines; a key in it is
-            # withheld before the debug log or the console keeps it.
-            from agent_friday.services.pasted_secrets import withhold as _withhold
-            msg = _withhold(str(msg))[0]
             line = f"{_time.strftime('%H:%M:%S')} {msg}\n"
             try:
                 with open(_vlog_path, 'a', encoding='utf-8') as _f:

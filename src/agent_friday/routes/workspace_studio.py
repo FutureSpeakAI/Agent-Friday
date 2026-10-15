@@ -1,7 +1,6 @@
 ﻿import traceback
 
 from flask import Blueprint, jsonify, request
-from agent_friday.services.pasted_secrets import withholds_request_body
 
 from agent_friday.core import login_required
 from agent_friday.services.workspace_studio import (
@@ -106,7 +105,6 @@ def ws_chat_get(ws_id):
 
 @ws_studio_bp.route('/api/workspace/<ws_id>/chat', methods=['POST'])
 @login_required
-@withholds_request_body
 def ws_chat_post(ws_id):
     check_ws_id(ws_id)
     """Send a message to the workspace-scoped chat. Friday may reply with a live

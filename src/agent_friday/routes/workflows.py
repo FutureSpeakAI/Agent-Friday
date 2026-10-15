@@ -24,7 +24,6 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
-from agent_friday.services.pasted_secrets import withholds_request_body
 
 _log = logging.getLogger("friday.routes.workflows")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
@@ -81,7 +80,6 @@ workflows_bp = Blueprint('workflows', __name__)
 
 @workflows_bp.route('/api/draft', methods=['POST'])
 @login_required
-@withholds_request_body
 def draft_generate():
     """Generate a draft via Claude — spawns as a background task, returns task_id immediately."""
     try:
@@ -798,7 +796,6 @@ def workflow_chains_list():
 
 @workflows_bp.route('/api/workflows/chains', methods=['POST'])
 @login_required
-@withholds_request_body
 def workflow_chains_create():
     """Create/update a chain. Body: {name, description?, steps:[{name?, prompt,
     with_context?}, ...]}."""

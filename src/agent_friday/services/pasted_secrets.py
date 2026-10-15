@@ -24,15 +24,12 @@ it found (shape id, label, connection id), never the key.
 from __future__ import annotations
 
 import re
-from functools import wraps
 from typing import Any
 
 from agent_friday.services import secret_patterns, secret_shapes
 
 #: What replaces a withheld key everywhere it would have been kept.
 MARKER = secret_patterns.WITHHELD
-
-_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
 def _kinds(text: str) -> list[dict]:
@@ -67,12 +64,10 @@ def withhold(text: Any) -> tuple[Any, list[dict]]:
     clean = secret_patterns.redact(text)
     if clean == text and not kinds:
         hit = secret_shapes.looks_like_secret(text)
-        # A bare hex run (a hash, a commit id) or a UUID is an identifier far
-        # more often than a key in conversation; the hex keys that matter
-        # have shapes of their own.
+        # A bare hex run is a hash or a commit id far more often than a key
+        # in conversation; the hex keys that matter have shapes of their own.
         if hit and hit["id"] == secret_shapes.GENERIC[0] \
-                and not re.fullmatch(r"[0-9a-fA-F]+", text.strip()) \
-                and not _UUID.fullmatch(text.strip()):
+                and not re.fullmatch(r"[0-9a-fA-F]+", text.strip()):
             return MARKER, [hit]
         return text, []
     if not kinds:
@@ -142,71 +137,3 @@ def ask_for_key(target: str, label: str, why: str = "") -> dict:
     if why:
         act["why"] = str(why)[:300]
     return notice_registry.bus_send("PK1", [act])
-
-
-#: Where a request's withheld key kinds are kept (see routes/chat for why the
-#: WSGI environ and not flask.g).
-REQUEST_KEYS_ENV = "friday.pasted_key_kinds"
-
-
-def withholds_request_body(fn):
-    """A route whose JSON body carries the owner's text (a prompt, a steer, a
-    schedule, a workflow step) keeps no key from it.
-
-    Every string in the parsed body is withheld in place before the handler
-    runs, in the object every later `request.get_json` returns. A JSON reply
-    then carries `key_withheld` (kinds only) and a `key_form` action, as the
-    chat routes' replies do.
-    """
-    @wraps(fn)
-    def _inner(*args, **kwargs):
-        from flask import jsonify, request
-        data = request.get_json(silent=True)
-        if isinstance(data, (dict, list)):
-            kinds = _body_kinds(data)
-            if kinds:
-                clean = scrub(data)
-                if isinstance(data, dict):
-                    data.clear()
-                    data.update(clean)
-                else:
-                    data[:] = clean
-                request.environ.setdefault(REQUEST_KEYS_ENV, []).extend(kinds)
-        rv = fn(*args, **kwargs)
-        kinds = request.environ.get(REQUEST_KEYS_ENV)
-        if not kinds:
-            return rv
-        resp, extra = (rv[0], rv[1:]) if isinstance(rv, tuple) else (rv, ())
-        if getattr(resp, "mimetype", "") != "application/json":
-            return rv
-        d = resp.get_json(silent=True)
-        if not isinstance(d, dict) or "key_withheld" in d:
-            return rv
-        d["key_withheld"] = {"kinds": [dict(k) for k in kinds], "note": note(kinds)}
-        d["actions"] = list(d.get("actions") or []) + [key_form_action(kinds)]
-        out = jsonify(d)
-        if extra and isinstance(extra[0], int):
-            out.status_code = extra[0]
-            extra = extra[1:]
-        return (out, *extra) if extra else out
-    return _inner
-
-
-def _body_kinds(value) -> list:
-    """The kinds of key in every string inside `value`, once each."""
-    found, seen = [], set()
-
-    def walk(v):
-        if isinstance(v, str):
-            for k in withhold(v)[1]:
-                if k["id"] not in seen:
-                    seen.add(k["id"])
-                    found.append(k)
-        elif isinstance(v, dict):
-            for x in v.values():
-                walk(x)
-        elif isinstance(v, (list, tuple)):
-            for x in v:
-                walk(x)
-    walk(value)
-    return found

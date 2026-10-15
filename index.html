@@ -69159,12 +69159,12 @@ function App() {
     /* A key never leaves the chat box. The same shapes the setup chat checks
        (/api/setup-chat/secret-shapes); a match is not sent anywhere, not even
        to the pause forecast, and the secure key form opens instead. A bare hex
-       run (a hash, a commit id) or a UUID is an identifier, not a key. The server withholds keys too
+       run is a hash or a commit id, not a key. The server withholds keys too
        (routes/chat._withhold_pasted_keys) for any caller that skips this. */
     if (!opts.alreadyShown) {
       const shapes = await scLoadShapes();
       let hit = scDetectSecret(m, shapes);
-      if (hit && hit.id === 'generic' && (/^[0-9a-fA-F]+$/.test(m) || /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(m))) hit = null;
+      if (hit && hit.id === 'generic' && /^[0-9a-fA-F]+$/.test(m)) hit = null;
       if (hit) {
         if (!opts.preserveDraft) setChatIn('');
         setTurnMsgs(p => [...p, {

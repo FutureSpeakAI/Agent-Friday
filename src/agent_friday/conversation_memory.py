@@ -334,8 +334,6 @@ class ConversationMemory:
                 kw_str = ", ".join(str(k) for k in topic_keywords)
             else:
                 kw_str = str(topic_keywords or "")
-            # Keywords a caller hands in were not drawn from the withheld text.
-            kw_str = withhold(kw_str)[0]
             doc_id = str(msg_id) if msg_id else uuid.uuid4().hex
             # Normalise role to a small, queryable vocabulary.
             role_norm = "friday" if role in ("friday", "assistant") else (
@@ -382,13 +380,7 @@ class ConversationMemory:
         both, so a follow-up retrieves the pair as a coherent exchange. Returns
         the list of stored ids (may be shorter than 2 if a side was empty).
         """
-        # Keys are withheld before the keywords are taken: index() withholds
-        # each side's text, but keywords drawn from the raw text would carry a
-        # (lower-cased) key into both records' metadata.
-        from agent_friday.services.pasted_secrets import withhold
-        user_text = withhold(user_text or "")[0]
-        assistant_text = withhold(assistant_text or "")[0]
-        combined = f"{user_text}\n{assistant_text}"
+        combined = f"{user_text or ''}\n{assistant_text or ''}"
         shared_kw = extract_keywords(combined)
         ids = []
         uid = self.index(user_text, "user", session_id=session_id,
