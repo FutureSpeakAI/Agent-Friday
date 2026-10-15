@@ -52,6 +52,8 @@ class _Google:
     def __init__(self, calendars, events, fail=()):
         self.calendars, self.events_by_cal, self.fail = calendars, events, set(fail)
         self.read = []
+        # Google answers "primary" for the account's own calendar, whatever its id is
+        self.primary = next((c["id"] for c in calendars if c.get("primary")), "primary")
 
     def calendarList(self):
         return self
@@ -68,7 +70,7 @@ class _Events:
         self.g = g
 
     def list(self, **kw):
-        cid = kw["calendarId"]
+        cid = self.g.primary if kw["calendarId"] == "primary" else kw["calendarId"]
         self.g.read.append(cid)
         if cid in self.g.fail:
             return _Exec(None, boom=RuntimeError("HttpError 500"))
@@ -212,3 +214,24 @@ def test_no_new_google_scope_is_requested():
                                 "https://www.googleapis.com/auth/calendar.events"]
     assert FULL in ga.GOOGLE_MULTI_SCOPES
     assert not any("calendarlist" in s or "freebusy" in s for s in ga.GOOGLE_MULTI_SCOPES)
+
+
+def test_a_day_whose_read_failed_is_marked_so_the_page_never_draws_it_as_free(world):
+    world["home"].fail.update({"me@home.example", "family123@group.calendar.google.com"})
+    world["old"].fail.add("primary")
+    assert ce._fetch_calendar_range(DAY, DAY + timedelta(days=1)) == []
+    assert ce.range_failed(DAY, DAY + timedelta(days=1)) is True
+    world["home"].fail.clear()
+    world["old"].fail.clear()
+    from agent_friday.services import swr_cache
+    swr_cache.invalidate("calendar.")
+    assert ce._fetch_calendar_range(DAY, DAY + timedelta(days=1))
+    assert ce.range_failed(DAY, DAY + timedelta(days=1)) is False
+
+
+def test_the_calendars_that_failed_are_kept_with_their_day_even_when_the_read_is_cached(world):
+    from agent_friday.services import calendar_views as cv
+    world["home"].fail.add("family123@group.calendar.google.com")
+    ce._fetch_calendar_range(DAY, DAY + timedelta(days=1))
+    cv.events_in_range(DAY + timedelta(days=3), DAY + timedelta(days=4))     # another range read in between
+    assert [e["name"] for e in cv.errors_for(DAY, DAY + timedelta(days=1))] == ["Family"]
