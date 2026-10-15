@@ -27,11 +27,30 @@ its calendar's. Calendars you have unticked in Google stay hidden until you
 switch them on. If one calendar cannot be read, the view names it; it is never
 shown as an empty day.
 
-By voice: "show me my calendar by month", "switch to the week view".
+By voice: "show me my calendar by month", "switch to the week view",
+"show my free busy time".
 
 An account connected before the full calendar permission existed shows only
 its main calendar and says so; **Settings > Connections > Reconnect** adds the
 others.
+
+## Which calendars, and free/busy
+
+**Calendars** in the toolbar lists every calendar of every connected account
+with its colour. Tick or untick one to show it in Friday or not; that changes
+Friday only, never Google. A calendar you have hidden in Google starts
+unticked and says so.
+
+By voice, "show only my family calendar" narrows the view without changing
+your ticks: a chip says "Only Family · by Friday", and its × (or "show all my
+calendars") brings the rest back. Friday never switches a calendar off by
+herself.
+
+**Free/busy** shows the week as time taken and time open. Busy blocks name
+their calendars, never the titles of events, so it is safe to show on a shared
+screen; free time is counted inside your working hours on working days (the
+same `scheduling` settings Friday uses to offer meeting times). It is worked
+out on this computer from the events already read; nothing is asked of Google.
 
 ## Adding and moving events yourself
 
