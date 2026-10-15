@@ -17,11 +17,15 @@ from agent_friday.services import setup_profile as profile
 FAKE_KEY = "sk-" + "ant-" + "Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2Rr1Qq0Pp"   # pragma: allowlist secret
 
 
+from setup_walk_helpers import PREAMBLE, answer_through
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     import agent_friday.core as core
     from agent_friday.services import setup_connections, setup_reader
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import user_model as _um
+    monkeypatch.setattr(_um, "DB_PATH", tmp_path / "user_model.db")
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(core, "_SETUP_MARKER", tmp_path / ".setup_complete")
     monkeypatch.setattr(core, "_save_settings", lambda delta: None)
@@ -36,9 +40,7 @@ def home(tmp_path, monkeypatch):
 
 def _to_connect(mode):
     sc.begin(mode, "")
-    sc.answer("welcome", None, "Sam")
-    sc.answer("agent_name", "Friday", "")
-    sc.answer("basics", {"minor_mode": False, "distribution": "default"}, "")
+    answer_through(sc, PREAMBLE)
     assert sc.load_state()["stage"] == "connect"
 
 

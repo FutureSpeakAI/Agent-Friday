@@ -79,6 +79,21 @@ jobs:
       - name: Build the setup program
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\build-installer.ps1 -BuildPython python
+      # Authenticode with Microsoft Artifact Signing, once a certificate exists
+      # (owner decision O1). Without the secrets the script says so and the
+      # installer ships unsigned with its SHA-256, exactly as before.
+      - name: Sign the setup program (only when a certificate is configured)
+        shell: pwsh
+        env:
+          ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ secrets.ARTIFACT_SIGNING_PROFILE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $exe = Get-ChildItem packaging/windows/dist/AgentFriday-Setup-*.exe | Select-Object -First 1
+          ./packaging/windows/sign-installer.ps1 -Path $exe.FullName
       - name: The checksum matches the file
         shell: pwsh
         run: |
@@ -210,6 +225,15 @@ jobs:
           sed -i "s|<SHA256 PLACEHOLDER[^>]*>|$hash|" "$RUNNER_TEMP/notes.md"
           if grep -q 'PLACEHOLDER' "$RUNNER_TEMP/notes.md"; then echo "a placeholder is left in the notes"; exit 1; fi
           grep -n "$hash" "$RUNNER_TEMP/notes.md"
+      # The manifest the update check verifies. CI writes it; it is signed on
+      # an offline machine with minisign and its .minisig uploaded beside it
+      # (docs/development/release-signing.md). Until then the update check
+      # says the release's manifest is unsigned.
+      - name: Write the release manifest (signed offline, not here)
+        run: |
+          python3 scripts/release_manifest.py build --version "${{ github.ref_name }}" \
+            --out artifact/release-manifest.json artifact/AgentFriday-Setup-*.exe
+          cat artifact/release-manifest.json
       # Beta 1.0.x replaces the 5.x line, so it is the latest release: the README's
       # Download link (releases/latest) must land on it, and GitHub skips
       # pre-releases for "latest". Published, never a draft.
@@ -218,5 +242,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
+            artifact/release-manifest.json \
             --repo "${{ github.repository }}" --verify-tag --latest \
             --title "Agent Friday Beta 1.1" --notes-file "$RUNNER_TEMP/notes.md"

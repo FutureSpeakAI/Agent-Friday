@@ -1261,6 +1261,28 @@ window.addEventListener('DOMContentLoaded',function(){
         .sc-option.on { border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.06); }
         .sc-option-label { font-size: 13px; color: #fff; }
         .sc-option-desc { font-size: 11.5px; color: var(--st-dim); margin-top: 2px; }
+        .lk-lines { list-style: none; margin: 0; padding: 0; }
+        .lk-line { padding: 10px 0; border-bottom: 1px solid var(--st-line); }
+        .lk-title { font-size: 13px; color: var(--st-text); font-weight: 600; }
+        .lk-words { font-size: 12px; color: var(--st-label); line-height: 1.6; margin-top: 2px; }
+        .lk-sub { margin: 4px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--st-dim); }
+        .lk-line.lk-off .lk-title, .lk-line.lk-changed .lk-title { color: var(--st-warn); }
+        .lk-line.lk-not_built .lk-title { color: var(--st-dim); }
+        .lk-limit { font-size: 12px; line-height: 1.6; color: var(--st-label); margin: 12px 0 0;
+            padding: 10px 12px; border: 1px solid var(--st-line); border-radius: 8px; }
+        .sc-option.off { opacity: .6; cursor: default; }
+        .sc-option .sc-why { color: var(--st-warn); }
+        .sc-rec { margin-left: 8px; font-size: 10.5px; padding: 1px 7px; border-radius: 10px;
+            border: 1px solid rgba(0,212,255,0.35); color: var(--st-accent); vertical-align: middle; }
+        .sc-chip.rec { border-style: dashed; }
+        .sc-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+        .sc-about { list-style: none; margin: 0; padding: 0; }
+        .sc-about li { padding: 6px 0; border-bottom: 1px solid var(--st-line); }
+        .sc-receipt-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+        .sc-receipt-table th, .sc-receipt-table td { text-align: left; padding: 5px 8px 5px 0;
+            border-bottom: 1px solid var(--st-line); vertical-align: top; }
+        .sc-receipt-table thead th { color: var(--st-faint); font-weight: 500; font-size: 11px; }
+        .sc-receipt-table tbody th { font-weight: 500; color: var(--st-label); }
         .sc-summary { font-size: 13.5px; line-height: 1.65; margin: 10px 0; }
         .sc-sample { font-size: 13.5px; line-height: 1.65; padding: 12px 14px; border-left: 2px solid rgba(0,212,255,0.5);
             background: rgba(0,212,255,0.04); border-radius: 0 8px 8px 0; margin: 8px 0 12px; }
@@ -3775,6 +3797,7 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
     <script src="/static/friday3d_records.js"></script>
     <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
+    <script src="/static/friday_inbox_cleanup.js"></script>
     <script src="/static/friday_mail.js"></script>
     <!-- The chart renderer the panel and published chart pages share (defines window.FridayChart). -->
     <script src="/static/friday_chart.js"></script>
@@ -49626,7 +49649,7 @@ function ConsentFlow({ onDone }) {
     // The recommended answer is labelled, never pre-selected; the acks route
     // writes the choice to settings, where call_watch reads it.
     if (s.name === 'calls') ack({ call_mode_choice: calls });
-    if (last) { onDone({ vault_passphrase: pass, routing_mode: mode || 'cloud_only' }); return; }
+    if (last) { onDone({ vault_passphrase: pass, routing_mode: mode || '' }); return; }
     setI(i + 1);
   };
 
@@ -50963,6 +50986,38 @@ const SC_RESEARCH_LINE = {
   failed: 'It stopped with an error; you can run it again from Settings.',
   not_asked: 'Not run.'
 };
+function SetupReceipt({
+  rows,
+  title,
+  note
+}) {
+  if (!rows || !rows.length) return null;
+  return /*#__PURE__*/React.createElement("section", {
+    className: "sc-receipt",
+    "aria-label": title || 'What we set up'
+  }, /*#__PURE__*/React.createElement("h3", {
+    className: "sc-group"
+  }, title || 'What we set up'), /*#__PURE__*/React.createElement("table", {
+    className: "sc-receipt-table"
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    scope: "col"
+  }, "Step"), /*#__PURE__*/React.createElement("th", {
+    scope: "col"
+  }, "Answer"), /*#__PURE__*/React.createElement("th", {
+    scope: "col"
+  }, "Who decided"))), /*#__PURE__*/React.createElement("tbody", null, rows.map((r, i) => /*#__PURE__*/React.createElement("tr", {
+    key: i
+  }, /*#__PURE__*/React.createElement("th", {
+    scope: "row"
+  }, r.label), /*#__PURE__*/React.createElement("td", null, r.value || '—'), /*#__PURE__*/React.createElement("td", {
+    className: "sc-dim"
+  }, r.how))))), note && /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub",
+    style: {
+      marginTop: 8
+    }
+  }, note));
+}
 function SetupFinishCard({
   state,
   onFinish,
@@ -50980,6 +51035,7 @@ function SetupFinishCard({
   const r = state.research || {};
   let researchLine = SC_RESEARCH_LINE[r.state] || SC_RESEARCH_LINE.not_asked;
   if (r.state === 'reviewed') researchLine = (r.accepted || 0) + ' finding(s) kept, each with its source.';
+  const cp = state.copy || {};
   return /*#__PURE__*/React.createElement("div", {
     className: "sc-card"
   }, /*#__PURE__*/React.createElement("h2", {
@@ -50987,7 +51043,14 @@ function SetupFinishCard({
     "data-sc-focus": ""
   }, "All set"), /*#__PURE__*/React.createElement("dl", {
     className: "sc-summary-list"
-  }, /*#__PURE__*/React.createElement("dt", null, "Name"), /*#__PURE__*/React.createElement("dd", null, state.agent_name), /*#__PURE__*/React.createElement("dt", null, "Connected"), /*#__PURE__*/React.createElement("dd", null, conn ? connected.length ? connected.join(', ') : 'Nothing yet' : 'Checking…', skipped ? ' (' + skipped + ' skipped, waiting in Settings)' : ''), /*#__PURE__*/React.createElement("dt", null, "Research"), /*#__PURE__*/React.createElement("dd", null, researchLine), /*#__PURE__*/React.createElement("dt", null, "Your style"), /*#__PURE__*/React.createElement("dd", null, state.style_saved ? 'Saved. It keeps evolving as you work together.' : 'My default style for now.')), window.FridayAgentWorkspacePermission && React.createElement(window.FridayAgentWorkspacePermission, {apiFetch, disabled:busy}), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("dt", null, "Name"), /*#__PURE__*/React.createElement("dd", null, state.agent_name), /*#__PURE__*/React.createElement("dt", null, "Connected"), /*#__PURE__*/React.createElement("dd", null, conn ? connected.length ? connected.join(', ') : 'Nothing yet' : 'Checking…', skipped ? ' (' + skipped + ' skipped, waiting in Settings)' : ''), /*#__PURE__*/React.createElement("dt", null, "Research"), /*#__PURE__*/React.createElement("dd", null, researchLine), /*#__PURE__*/React.createElement("dt", null, "Your style"), /*#__PURE__*/React.createElement("dd", null, state.style_saved ? 'Saved. It keeps evolving as you work together.' : 'My default style for now.')), /*#__PURE__*/React.createElement(SetupReceipt, {
+    rows: state.receipt,
+    title: cp.receipt_title,
+    note: cp.receipt_note
+  }), window.FridayAgentWorkspacePermission && /*#__PURE__*/React.createElement(window.FridayAgentWorkspacePermission, {
+    apiFetch: apiFetch,
+    disabled: busy
+  }), /*#__PURE__*/React.createElement("div", {
     className: "sc-row"
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -50995,6 +51058,282 @@ function SetupFinishCard({
     disabled: busy,
     onClick: onFinish
   }, "Open my desktop")));
+}
+
+// ── First-run conversation: the step cards ────────────────────────────────
+// Each card offers the same choices as the chips under the conversation, so
+// every step can be answered by voice, by keyboard or by pointer. Nothing is
+// selected until the person chooses; the recommended option is labelled.
+function SetupVoicesCard({
+  voices,
+  busy,
+  onPick
+}) {
+  const [playing, setPlaying] = React.useState('');
+  const [msg, setMsg] = React.useState('');
+  const hear = async v => {
+    setMsg('');
+    setPlaying(v);
+    try {
+      const r = await apiFetch('/api/setup-chat/voice-sample', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          voice: v
+        })
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setMsg(d.message || 'Could not play that voice.');
+        setPlaying('');
+        return;
+      }
+      const url = URL.createObjectURL(await r.blob());
+      const a = new Audio(url);
+      a.onended = () => {
+        setPlaying('');
+        URL.revokeObjectURL(url);
+      };
+      a.play().catch(() => setPlaying(''));
+    } catch (e) {
+      setMsg('Could not play that voice.');
+      setPlaying('');
+    }
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "Pick a voice"), /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, "These voices run on this computer. Listening to one sends nothing anywhere."), (voices || []).map(v => /*#__PURE__*/React.createElement("div", {
+    key: v.value,
+    className: "sc-item"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-item-head"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-item-title"
+  }, v.label), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    disabled: !!playing,
+    onClick: () => hear(v.value),
+    "aria-label": 'Hear ' + v.name
+  }, playing === v.value ? 'Playing…' : 'Hear it'), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy,
+    onClick: () => onPick(v.value)
+  }, 'Choose ' + v.name)))), msg && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    className: "sc-msgline bad"
+  }, msg));
+}
+function SetupAboutCard({
+  about,
+  onChanged
+}) {
+  const [msg, setMsg] = React.useState('');
+  const del = async id => {
+    const r = await apiFetch('/api/setup-chat/about/' + encodeURIComponent(id), {
+      method: 'DELETE'
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      setMsg(d.message || 'Could not delete that line.');
+      return;
+    }
+    setMsg('Deleted.');
+    onChanged(d.about || []);
+  };
+  const lines = about || [];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "About you"), /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, 'What ' + fridayName() + ' writes down about you during setup, as she writes it. Delete any line and it is gone from her memory too.'), lines.length === 0 && /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, "Nothing yet."), /*#__PURE__*/React.createElement("ul", {
+    className: "sc-about",
+    "aria-live": "polite"
+  }, lines.map(l => /*#__PURE__*/React.createElement("li", {
+    key: l.id,
+    className: "sc-item-head"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "sc-item-title"
+  }, l.text), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: () => del(l.id),
+    "aria-label": 'Delete: ' + l.text
+  }, "Delete")))), msg && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    className: "sc-msgline ok"
+  }, msg));
+}
+function SetupPostureCard({
+  posture,
+  busy,
+  onPick
+}) {
+  const cards = posture && posture.cards || [];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "Where may I think?"), /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, "Nothing is picked for you. The never-send list and the check on every cloud call apply whichever you choose."), cards.map(c => /*#__PURE__*/React.createElement("div", {
+    key: c.value,
+    className: 'sc-option' + (c.available ? '' : ' off'),
+    "aria-disabled": !c.available
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "sc-option-label"
+  }, c.label, c.recommended && /*#__PURE__*/React.createElement("span", {
+    className: "sc-rec"
+  }, "recommended")), /*#__PURE__*/React.createElement("div", {
+    className: "sc-option-desc"
+  }, c.means), /*#__PURE__*/React.createElement("div", {
+    className: "sc-option-desc"
+  }, /*#__PURE__*/React.createElement("strong", null, "Cost:"), " ", c.costs), !c.available && /*#__PURE__*/React.createElement("div", {
+    className: "sc-option-desc sc-why"
+  }, c.reason + '.'), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy || !c.available,
+    onClick: () => onPick(c.value)
+  }, 'Choose: ' + c.label)))));
+}
+function SetupRoutinesCard({
+  routines,
+  busy,
+  onSave
+}) {
+  const [picks, setPicks] = React.useState({});
+  const set = (id, patch) => setPicks(p => ({
+    ...p,
+    [id]: {
+      ...(p[id] || {}),
+      ...patch
+    }
+  }));
+  const list = routines || [];
+  const on = list.filter(r => (picks[r.id] || {}).on);
+  const save = () => {
+    const out = {};
+    list.forEach(r => {
+      const p = picks[r.id] || {};
+      out[r.id] = {
+        on: !!p.on,
+        time: p.time || r.time || '',
+        finish_notice: p.finish_notice !== undefined ? !!p.finish_notice : !!r.finish_notice
+      };
+    });
+    onSave({
+      routines: out
+    });
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "Routines"), /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub"
+  }, "Nothing runs unless you tick it. You can change any of these later in Workflows."), list.map(r => {
+    const p = picks[r.id] || {};
+    const id = 'sc-rt-' + r.id;
+    return /*#__PURE__*/React.createElement("div", {
+      key: r.id,
+      className: 'sc-option' + (p.on ? ' on' : '')
+    }, /*#__PURE__*/React.createElement("label", {
+      className: "sc-optional",
+      htmlFor: id
+    }, /*#__PURE__*/React.createElement("input", {
+      id: id,
+      type: "checkbox",
+      checked: !!p.on,
+      onChange: e => set(r.id, {
+        on: e.target.checked
+      })
+    }), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+      className: "sc-option-label"
+    }, r.label), " ", /*#__PURE__*/React.createElement("em", null, r.when), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
+      className: "sc-option-desc"
+    }, r.what + ' · ' + r.where))), p.on && r.time && /*#__PURE__*/React.createElement("label", {
+      className: "sc-field"
+    }, /*#__PURE__*/React.createElement("span", null, 'Time for ' + r.label), /*#__PURE__*/React.createElement("input", {
+      className: "sc-input",
+      type: "time",
+      value: p.time || r.time,
+      onChange: e => set(r.id, {
+        time: e.target.value
+      })
+    })), p.on && r.id !== 'podcast' && /*#__PURE__*/React.createElement("label", {
+      className: "sc-optional"
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "checkbox",
+      checked: p.finish_notice !== undefined ? !!p.finish_notice : !!r.finish_notice,
+      onChange: e => set(r.id, {
+        finish_notice: e.target.checked
+      })
+    }), /*#__PURE__*/React.createElement("span", null, "Tell me when it finishes")));
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy,
+    onClick: save
+  }, on.length ? 'Schedule ' + on.length + ' ticked' : 'Schedule none')));
+}
+function SetupMemoryRulesCard({
+  rules
+}) {
+  const r = rules || {
+    save: [],
+    ask: []
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-card"
+  }, /*#__PURE__*/React.createElement("h2", {
+    tabIndex: -1,
+    "data-sc-focus": ""
+  }, "What I remember, and what I always ask"), /*#__PURE__*/React.createElement("div", {
+    className: "sc-columns"
+  }, /*#__PURE__*/React.createElement("section", null, /*#__PURE__*/React.createElement("h3", {
+    className: "sc-group"
+  }, "I save without asking"), /*#__PURE__*/React.createElement("ul", {
+    className: "sc-perms"
+  }, r.save.map((t, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, t)))), /*#__PURE__*/React.createElement("section", null, /*#__PURE__*/React.createElement("h3", {
+    className: "sc-group"
+  }, "I always ask"), /*#__PURE__*/React.createElement("ul", {
+    className: "sc-perms"
+  }, r.ask.map((t, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, t))))));
+}
+
+// Speaks Friday's new lines with this computer's own built-in voice (never a
+// cloud voice: where she may think is not chosen yet). Off for a screen reader.
+function scLocalVoice() {
+  try {
+    const vs = window.speechSynthesis && window.speechSynthesis.getVoices() || [];
+    return vs.find(v => v.localService && /^en/i.test(v.lang || '')) || vs.find(v => v.localService) || null;
+  } catch (e) {
+    return null;
+  }
 }
 function SetupChat({
   onDone
@@ -51007,12 +51346,15 @@ function SetupChat({
   const [err, setErr] = React.useState('');
   const [leaving, setLeaving] = React.useState(false);
   const [shapes, setShapes] = React.useState(null);
+  const [about, setAbout] = React.useState(null);
   const logRef = React.useRef(null);
   const inputRef = React.useRef(null);
   const doneRef = React.useRef(false);
+  const spokenRef = React.useRef(-1);
   const apply = d => {
     if (!d || !d.stage) return;
     setSt(d);
+    if (d.about) setAbout(d.about);
     if (d.completed && !doneRef.current) {
       doneRef.current = true;
       if (onDone) onDone(d);
@@ -51021,25 +51363,121 @@ function SetupChat({
   React.useEffect(() => {
     scJSON('/api/setup-chat/state').then(r => apply(r.data));
     scLoadShapes().then(setShapes);
+    return () => {
+      try {
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+      } catch (e) {/* nothing to stop */}
+    };
   }, []);
   const nMsgs = st ? (st.transcript || []).length + notes.length : 0;
   const stage = st && st.stage;
+  // A new step's card starts at its top: the last card may have been
+  // scrolled down to its button, and the next one would open scrolled away.
+  const sideRef = React.useRef(null);
+  React.useEffect(() => {
+    if (sideRef.current) sideRef.current.scrollTop = 0;
+  }, [stage]);
+  // The log stays at its newest line while the person has not scrolled up,
+  // also when the step's card appears beside it and narrows it (the lines
+  // re-wrap taller after the scroll was set) or a card loads late.
+  // The conversation stays at its newest line while the person has not
+  // scrolled up: also when the step's card appears and narrows it, and in
+  // the spatial desktop, where the panel around the log scrolls instead of
+  // the log itself. Every box from the log up to the setup's own frame that
+  // scrolls is taken to its end; the card beside it is sticky (CSS).
+  const pinnedRef = React.useRef(true);
+  // Boxes below the setup's own frame only: scrolling the frame itself would
+  // move its header and the whole conversation off screen.
+  const scrollers = () => {
+    const out = [];
+    let el = logRef.current;
+    while (el && !(el.classList && el.classList.contains('sc-root'))) {
+      if (el.scrollHeight > el.clientHeight + 1) {
+        const oy = getComputedStyle(el).overflowY;
+        if (oy === 'auto' || oy === 'scroll') out.push(el);
+      }
+      el = el.parentElement;
+    }
+    return out;
+  };
+  const toEnd = () => {
+    scrollers().forEach(el => {
+      el.scrollTop = el.scrollHeight;
+    });
+    const root = logRef.current && logRef.current.closest('.sc-root');
+    if (root && root.scrollTop) root.scrollTop = 0; // the frame keeps its header in view
+  };
+  React.useEffect(() => {
+    const log = logRef.current;
+    if (!log) return undefined;
+    const root = log.closest('.sc-root') || log;
+    const onScroll = e => {
+      const el = e.target;
+      if (!el || el === document || !(el.contains && el.contains(log))) return; // the card beside it scrolls on its own
+      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    };
+    root.addEventListener('scroll', onScroll, true);
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        if (pinnedRef.current) toEnd();
+      });
+      ro.observe(log);
+    }
+    return () => {
+      root.removeEventListener('scroll', onScroll, true);
+      if (ro) ro.disconnect();
+    };
+  }, [!!st]);
   // Newest message into view; focus to wherever the next answer goes.
   React.useEffect(() => {
     if (!st) return;
-    const log = logRef.current;
-    if (log) log.scrollTop = log.scrollHeight;
+    pinnedRef.current = true;
+    toEnd();
+    const late = setTimeout(() => {
+      if (pinnedRef.current) toEnd();
+    }, 250);
     const t = setTimeout(() => {
       const p = st.prompt || {};
       if (p.input === 'text' && inputRef.current) {
-        inputRef.current.focus();
+        inputRef.current.focus({
+          preventScroll: true
+        });
         return;
       }
       const el = document.querySelector('.sc-root [data-sc-focus]');
-      if (el) el.focus();
+      // The card's heading is at the top of the card, which starts at its
+      // top on every step: focusing it must not scroll the conversation away.
+      if (el) el.focus({
+        preventScroll: true
+      });
     }, 40);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(late);
+    };
   }, [nMsgs, stage]);
+  // Talk mode: say each new line of hers once, on this computer.
+  const talking = !!(st && st.talk === 'talk' && !st.screen_reader);
+  React.useEffect(() => {
+    if (!st) return;
+    const tr = st.transcript || [];
+    if (spokenRef.current < 0 || !talking) {
+      spokenRef.current = tr.length;
+      return;
+    }
+    const fresh = tr.slice(spokenRef.current).filter(m => m.role === 'friday');
+    spokenRef.current = tr.length;
+    const voice = scLocalVoice();
+    if (!voice || !fresh.length) return;
+    try {
+      fresh.forEach(m => {
+        const u = new SpeechSynthesisUtterance(String(m.text || ''));
+        u.voice = voice;
+        window.speechSynthesis.speak(u);
+      });
+    } catch (e) {/* speech is a courtesy; the words are on screen */}
+  }, [nMsgs, talking]);
   // The research runs in the background; keep its status fresh while it does.
   const rstate = st && st.research && st.research.state;
   React.useEffect(() => {
@@ -51061,18 +51499,30 @@ function SetupChat({
     text: textLine,
     target: target || ''
   }]));
+  const zone = () => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    } catch (e) {
+      return '';
+    }
+  };
   const answer = async (value, typed) => {
     setErr('');
     setBusy(true);
     const r = await scJSON('/api/setup-chat/answer', 'POST', {
       stage: st.stage,
       value: value,
-      text: typed || ''
+      text: typed || '',
+      client_tz: zone()
     });
     setBusy(false);
     if (r.status === 422 && r.data.error === 'key_shaped') {
       note(r.data.message, r.data.shape && r.data.shape.target);
       setText('');
+      return;
+    }
+    if (r.status === 422 && r.data.message) {
+      setErr(r.data.message);
       return;
     }
     if (r.status === 409 && r.data.stage) {
@@ -51087,6 +51537,33 @@ function SetupChat({
     setNotes([]);
     apply(r.data);
   };
+  const useRecommended = async () => {
+    setErr('');
+    setBusy(true);
+    const r = await scJSON('/api/setup-chat/use-recommended', 'POST', {
+      stage: st.stage
+    });
+    setBusy(false);
+    if (!r.ok) {
+      setErr(r.data.message || 'Could not use the recommended answers.');
+      return;
+    }
+    setNotes([]);
+    apply(r.data);
+  };
+  const setTalk = mode => scJSON('/api/setup-chat/talk', 'POST', {
+    mode: mode
+  }).then(r => {
+    if (r.ok) apply(r.data);
+    if (mode !== 'talk') {
+      try {
+        window.speechSynthesis && window.speechSynthesis.cancel();
+      } catch (e) {/* nothing to stop */}
+    }
+  });
+  const openWindowsUsers = () => scJSON('/api/setup-chat/open-windows-users', 'POST', {}).then(r => {
+    if (!r.ok) note(r.data && r.data.message || 'Windows did not open the page.');
+  });
   const send = e => {
     if (e) e.preventDefault();
     const t = text.trim();
@@ -51107,12 +51584,16 @@ function SetupChat({
       note(cp.use_options || 'Tap one of the options.');
       return;
     }
+    if (chip) {
+      answer(chip.value, '');
+      return;
+    }
     answer(null, t);
   };
+  // "Set up later" asks once; nothing on this screen times out.
   const leave = () => {
     if (!leaving) {
       setLeaving(true);
-      setTimeout(() => setLeaving(false), 6000);
       return;
     }
     scJSON('/api/setup-chat/skip-all', 'POST', {}).then(r => apply(r.data));
@@ -51159,6 +51640,33 @@ function SetupChat({
       initial: st,
       busy: busy,
       onDone: v => answer(v, '')
+    });
+  } else if (card === 'voices') {
+    cardEl = /*#__PURE__*/React.createElement(SetupVoicesCard, {
+      voices: p.voices,
+      busy: busy,
+      onPick: v => answer(v, '')
+    });
+  } else if (card === 'about') {
+    cardEl = /*#__PURE__*/React.createElement(SetupAboutCard, {
+      about: about || st.about,
+      onChanged: setAbout
+    });
+  } else if (card === 'posture') {
+    cardEl = /*#__PURE__*/React.createElement(SetupPostureCard, {
+      posture: p.posture,
+      busy: busy,
+      onPick: v => answer(v, '')
+    });
+  } else if (card === 'routines') {
+    cardEl = /*#__PURE__*/React.createElement(SetupRoutinesCard, {
+      routines: p.routines,
+      busy: busy,
+      onSave: v => answer(v, '')
+    });
+  } else if (card === 'memory_rules') {
+    cardEl = /*#__PURE__*/React.createElement(SetupMemoryRulesCard, {
+      rules: p.rules
     });
   } else if (card === 'research_seeds') {
     cardEl = /*#__PURE__*/React.createElement(SetupResearchSeeds, {
@@ -51221,7 +51729,7 @@ function SetupChat({
     className: "st-root sc-root",
     role: "dialog",
     "aria-modal": "true",
-    "aria-label": ("Set up " + fridayName())
+    "aria-label": "Set up " + fridayName()
   }, /*#__PURE__*/React.createElement("header", {
     className: "sc-head"
   }, /*#__PURE__*/React.createElement("div", {
@@ -51242,7 +51750,16 @@ function SetupChat({
   }, g.label))), st.reader && /*#__PURE__*/React.createElement("span", {
     className: "sc-badge",
     title: "Who reads your answers"
-  }, 'Reader: ' + st.reader.badge), /*#__PURE__*/React.createElement("button", {
+  }, 'Reader: ' + st.reader.badge), st.talk && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    "aria-pressed": talking,
+    onClick: () => setTalk(talking ? 'type' : 'talk')
+  }, talking ? 'Stop talking' : 'Talk to me'), leaving && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: () => setLeaving(false)
+  }, "Keep going"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: 'sc-btn ' + (leaving ? 'danger' : 'quiet'),
     onClick: leave
@@ -51250,7 +51767,7 @@ function SetupChat({
     className: "sc-body"
   }, /*#__PURE__*/React.createElement("section", {
     className: "sc-chat",
-    "aria-label": ("Conversation with " + fridayName())
+    "aria-label": "Conversation with " + fridayName()
   }, /*#__PURE__*/React.createElement("div", {
     className: "sc-log",
     ref: logRef,
@@ -51266,7 +51783,13 @@ function SetupChat({
     className: "sc-badge"
   }, 'Read by ' + m.model), m.task_id && /*#__PURE__*/React.createElement("div", {
     className: "sc-badge"
-  }, "Running as a background task: see the tray"))), notes.map((n, i) => /*#__PURE__*/React.createElement("div", {
+  }, "Running as a background task: see the tray"), m.link === 'windows_users' && /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    onClick: openWindowsUsers
+  }, "Open Windows' Other users page")))), notes.map((n, i) => /*#__PURE__*/React.createElement("div", {
     key: 'n' + i,
     className: "sc-msg note",
     role: "alert"
@@ -51288,11 +51811,18 @@ function SetupChat({
   }, p.chips.map((c, i) => /*#__PURE__*/React.createElement("button", {
     key: c.value + i,
     type: "button",
-    className: 'sc-chip' + (/^(skip|rather_not|skip_rest|rules)$/.test(c.value) ? ' quiet' : ''),
+    className: 'sc-chip' + (/^(skip|rather_not|skip_rest|rules|later|none)$/.test(c.value) ? ' quiet' : '') + (c.recommended ? ' rec' : ''),
     disabled: busy,
     "data-sc-focus": i === 0 && p.input !== 'text' && !card ? '' : undefined,
     onClick: () => answer(c.value, '')
-  }, c.label))), err && card !== 'research_seeds' && /*#__PURE__*/React.createElement("div", {
+  }, c.label))), p.recommended && /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    disabled: busy,
+    onClick: useRecommended
+  }, cp.use_recommended || 'Use the recommended answer')), err && card !== 'research_seeds' && /*#__PURE__*/React.createElement("div", {
     role: "alert",
     className: "sc-msgline bad"
   }, err), busy && /*#__PURE__*/React.createElement("div", {
@@ -51328,11 +51858,13 @@ function SetupChat({
     }
   }, 'Question ' + (p.index + 1) + ' of ' + p.total + '. Type "skip" to skip.')), cardEl && /*#__PURE__*/React.createElement("aside", {
     className: "sc-side",
+    ref: sideRef,
     "aria-label": "Details for this step"
   }, cardEl)));
 }
 
 // ── Settings: the setup checklist and "Your profile" ────────────────────────
+
 function SettingsSetupChecklist({
   s
 }) {
@@ -57429,6 +57961,113 @@ function KeystoreWrapPanel() {
     msg && E('div', { style: { fontSize: 11, color: '#cfefff', marginTop: 8 } }, msg));
 }
 
+// ── Privacy & Data > Locks: how things are locked on this PC, in plain words ──
+// Read from /api/locks (services/locks.py): every line comes from the store that
+// decides it, and a line Friday cannot read says so. The honest limit is always shown.
+function SettingsLocks() {
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const load = useCallback(() => {
+    apiFetch('/api/locks').then(r => r.json()).then(setD).catch(() => setMsg('Could not read the locks.'));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const openWin = page => apiFetch('/api/locks/open-windows', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      page
+    })
+  }).then(r => r.json()).then(x => {
+    if (!x.ok) setMsg(x.message || 'Windows did not open the page.');
+  }).catch(() => setMsg('Could not reach the server.'));
+  const post = (url, body) => apiFetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body || {})
+  }).then(r => r.json());
+  const askHeld = path => post('/api/locks/raw-holds/ask', {
+    path
+  }).then(x => setMsg(x.ok ? 'A card asking about that file is on screen.' : x.message || 'No card could be raised.')).catch(() => setMsg('Could not reach the server.'));
+  const resetHeld = () => post('/api/locks/raw-holds/reset').then(x => setMsg(x.ok ? 'A card is on screen that says exactly what starting fresh lets go. Nothing changes until you approve it there.' : 'No card could be raised.')).catch(() => setMsg('Could not reach the server.'));
+  return /*#__PURE__*/React.createElement(StSection, {
+    title: "Locks",
+    desc: "How your things are locked on this PC, in plain words, and what that cannot stop."
+  }, !d && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub"
+  }, msg || 'Reading…'), d && /*#__PURE__*/React.createElement("ul", {
+    className: "lk-lines"
+  }, (d.lines || []).map(l => /*#__PURE__*/React.createElement("li", {
+    key: l.key,
+    className: 'lk-line lk-' + l.state
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "lk-title"
+  }, l.title), /*#__PURE__*/React.createElement("div", {
+    className: "lk-words"
+  }, l.words), l.today_words && /*#__PURE__*/React.createElement("div", {
+    className: "lk-words"
+  }, l.today_words), l.today && l.today.length > 0 && /*#__PURE__*/React.createElement("ul", {
+    className: "lk-sub"
+  }, l.today.map(t => /*#__PURE__*/React.createElement("li", {
+    key: t.destination
+  }, t.destination + ': ' + t.sent + ' sent' + (t.stopped ? ', ' + t.stopped + ' stopped' : '')))), l.checks && /*#__PURE__*/React.createElement("ul", {
+    className: "lk-sub"
+  }, l.checks.map(c => /*#__PURE__*/React.createElement("li", {
+    key: c.name
+  }, c.name + ': ' + (c.ok === true ? 'checks out (' + c.count + ' line' + (c.count === 1 ? '' : 's') + ')' : c.ok === false ? 'changed (' + c.why + ')' : 'could not check')))), l.held_files && l.held_files.length > 0 && /*#__PURE__*/React.createElement("ul", {
+    className: "lk-sub",
+    "aria-label": "Held files"
+  }, l.held_files.map(f => /*#__PURE__*/React.createElement("li", {
+    key: f
+  }, f + ' ', /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    "aria-label": 'Ask me about ' + f,
+    onClick: () => askHeld(f)
+  }, "Ask me about this file")))), l.can_reset && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    style: {
+      fontSize: 11,
+      marginTop: 6
+    },
+    onClick: resetHeld
+  }, "Start the list fresh\u2026"), l.installer && /*#__PURE__*/React.createElement("div", {
+    className: "lk-words"
+  }, l.installer), l.open_page && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    style: {
+      fontSize: 11,
+      marginTop: 6
+    },
+    onClick: () => openWin(l.open_page)
+  }, "Open Windows' settings")))), d && /*#__PURE__*/React.createElement("p", {
+    className: "lk-limit",
+    role: "note"
+  }, /*#__PURE__*/React.createElement("strong", null, "The honest limit. "), d.honest_limit), d && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "polite",
+    className: "sc-msgline"
+  }, msg), d && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    style: {
+      fontSize: 11,
+      marginTop: 6
+    },
+    onClick: load
+  }, "Check again"));
+}
+
 function SettingsTabPrivacy({
   s,
   save
@@ -57481,7 +58120,7 @@ function SettingsTabPrivacy({
     }).then(r => r.json()).then(d => setEraseMsg(d.status === 'ok' ? '✓ ' + (d.message || 'Erased.') : '✗ ' + (d.message || 'Failed'))).catch(() => setEraseMsg('✗ Could not reach the server.'));
   };
   const armed = vaultStatus && vaultStatus.encryption === 'AES-256-GCM';
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Vault"
   }, vaultStatus && /*#__PURE__*/React.createElement("div", {
     style: {

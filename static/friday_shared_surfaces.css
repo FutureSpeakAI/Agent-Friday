@@ -306,6 +306,11 @@ body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spat
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.sc-head, .sc-rail) { flex-wrap: wrap; }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .sc-body { box-sizing: border-box; flex-wrap: wrap; gap: 20px; padding: 20px; overflow: auto; }
 body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) :is(.sc-chat, .sc-side) { min-width: min(320px, 100%); }
+/* The panel scrolls here, not the log: the card beside the conversation stays
+ * in view while the conversation scrolls to its newest line. */
+body.friday-experience-enabled[data-friday-spatial-layout]:not([data-friday-spatial-layout="classic"]) .sc-side {
+  position: sticky; top: 0; align-self: flex-start; max-height: calc(var(--fs-work-inner-height, 80vh) - 60px); overflow-y: auto;
+}
 
 /* Fixed utility panels share a safe leading or trailing edge. Native open,
  * disabled, focus and outside-click behavior is unchanged. */
