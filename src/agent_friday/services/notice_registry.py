@@ -311,6 +311,9 @@ _ALL = [
     # credential endpoint. One per service at a time.
     _e("PK1", "services/pasted_secrets.py:ask_for_key", "key_needed", NEEDS_YOU,
        "key-needed:{target}", route=BUS, source="credentials"),
+    # ── calendar: a reminder Google has for an event, raised in Friday's tray ──
+    _e("CR1", "services/calendar_reminders.py:tick", "calendar_reminder", UPDATES,
+       "calendar-reminder:{event_id}:{minutes}", source="calendar"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),

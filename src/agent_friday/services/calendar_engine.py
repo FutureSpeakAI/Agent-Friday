@@ -768,17 +768,41 @@ def _fetch_calendar_range(start, end):
     Returns [] (not an error sentinel) when Google isn't linked, so callers can
     merge with local events transparently."""
     from agent_friday.services import swr_cache
+    key = "calendar.range:%s/%s" % (start.isoformat(), end.isoformat())
     try:
-        events, _ = swr_cache.get("calendar.range:%s/%s" % (start.isoformat(), end.isoformat()),
-                                  lambda: _fetch_calendar_range_live(start, end),
+        events, _ = swr_cache.get(key, lambda: _fetch_calendar_range_live(start, end),
                                   fresh_for=60, max_age=1800)
     except Exception:
+        # Still [] for the callers that merge local events; range_failed() lets a
+        # page say "couldn't read your calendar" instead of drawing an empty day.
+        _RANGE_FAILED.add(key)
         return []
+    _RANGE_FAILED.discard(key)
     return [dict(e) for e in events]
 
 
+_RANGE_FAILED: set = set()
+
+
+def range_failed(start, end) -> bool:
+    """Whether the last read of [start, end) failed outright (every calendar, or Google itself)."""
+    return ("calendar.range:%s/%s" % (start.isoformat(), end.isoformat())) in _RANGE_FAILED
+
+
 def _fetch_calendar_range_live(start, end):
-    """One live Google Calendar list call for [start, end)."""
+    """Live Google Calendar read for [start, end).
+
+    With the multi-account store, every calendar switched on in Friday is read,
+    each event in its Google colour (services/calendar_views). The legacy
+    single-token install keeps the one primary-calendar read below."""
+    from agent_friday.services import calendar_views as _cv
+    if _cv.multi_calendar_available():
+        got = _cv.events_in_range(start, end, calendars=_cv.cached_calendars())
+        if got["errors"] and not got["events"] and len(got["errors"]) >= len(
+                [c for c in got["calendars"] if c.get("on")]):
+            # Every calendar failed: raised, so the cache never keeps "no events".
+            raise RuntimeError("calendar fetch failed: " + got["errors"][0]["error"])
+        return got["events"]
     creds = _google_credentials()
     if not creds:
         return []

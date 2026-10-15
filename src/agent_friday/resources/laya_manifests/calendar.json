@@ -59,6 +59,54 @@
    "point_verb": "open"
   },
   {
+   "id": "calendar.switch_view",
+   "action": "calendar.switch_view",
+   "group": "navigate",
+   "ui": {"control": "Day / Week / Month switch"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["show me my calendar by month", "switch to the week view", "open the day view of my calendar"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["laya_router_eval.json#show me my calendar by month", "laya_router_eval.json#can you switch to the week view", "laya_router_eval.json#open the day view of my calendar"]
+  },
+  {
+   "id": "calendar.free_busy",
+   "action": "calendar.free_busy",
+   "group": "navigate",
+   "ui": {"control": "Free/busy in the view switch"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["switch to the free/busy view", "show my free busy time"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["laya_router_eval.json#show me the free/busy view"]
+  },
+  {
+   "id": "calendar.only_calendars",
+   "action": "calendar.only_calendars",
+   "group": "select",
+   "ui": {"control": "Only these calendars (a chip by Friday, cleared with x)"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["show only my family calendar", "show all my calendars"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["laya_router_eval.json#can you show me just the family calendar", "laya_router_eval.json#bring back all my calendars"]
+  },
+  {
    "id": "calendar.select_events",
    "action": "calendar.select_events",
    "group": "select",
@@ -79,7 +127,7 @@
    "id": "calendar.quick_add",
    "action": "calendar.quick_add",
    "group": "create",
-   "ui": {"control": "quick add event"},
+   "ui": {"control": "quick add event (preview, then Add)"},
    "tool": "create_calendar_event",
    "also_tools": [],
    "gate": {"class": "outward", "ring": 2, "card": "required"},
@@ -111,7 +159,7 @@
    "id": "calendar.move_event",
    "action": "calendar.move_event",
    "group": "organize",
-   "ui": {"control": "move / shift event"},
+   "ui": {"control": "move / shift event (drag or Alt+arrows, then confirm)"},
    "tool": "organize_calendar",
    "also_tools": ["update_calendar_event"],
    "gate": {"class": "self_gated", "ring": 1, "card": "own_card"},
@@ -155,6 +203,16 @@
   }
  ],
  "not_for_laya": [
+  {
+   "action": "calendar.toggle_calendar",
+   "kind": "by_design",
+   "reason": "Which calendars Friday reads is the owner's tick; by voice she narrows a view (only_calendars), never what she reads."
+  },
+  {
+   "action": "calendar.rsvp",
+   "kind": "by_design",
+   "reason": "A reply to an invitation reaches the organiser, so it stays the owner's click and confirmation, like sending mail."
+  },
   {
    "action": "calendar.delete_event",
    "kind": "gap",

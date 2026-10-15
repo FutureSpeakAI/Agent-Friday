@@ -2169,6 +2169,18 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] relationship_sync unavailable: {e}")
 
+    # calendar reminders: every 2 minutes, raise in Friday's tray each pop-up
+    # reminder Google has for an event that has come due (services/calendar_reminders).
+    # Reads only, runs no model; silent because the reminders are the notices.
+    try:
+        from agent_friday.services.calendar_reminders import tick as _cal_remind
+        register_builtin_task("calendar_reminders", _cal_remind,
+                              label="Calendar reminders",
+                              default_trigger="interval",
+                              default_spec={"every_minutes": 2}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] calendar_reminders unavailable: {e}")
+
     # laya-personal refit (swot spec d.2/d.4): rebuilds Laya's personal phrasings
     # and calibration from the owner's own corrections. An idle-daily job in the
     # Local AI queue (a visible job, kind laya_personal_refit); it runs only with

@@ -34,6 +34,17 @@ from agent_friday.services.calendar_engine import (
 FULL_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 
 
+def _cal(calendar_id) -> str:
+    """The calendar a write lands on: a Google calendar id, "primary" when none is
+    named, "" for something that cannot be one (refused, never redirected)."""
+    if calendar_id is None or str(calendar_id).strip() == "":
+        return "primary"
+    cid = str(calendar_id).strip()
+    if len(cid) > 400 or any(c in cid for c in "\r\n/\\"):
+        return ""
+    return cid
+
+
 def write_ready() -> tuple:
     """(ready, reason). Does the STORED token hold the write scope?
 
@@ -392,10 +403,13 @@ def _gate_calendar_field(text: str, field: str) -> tuple[str, str]:
 
 def create_event(*, title: str, start: str, end: str = "", location: str = "",
                  description: str = "", attendees=None,
-                 account_id=None) -> dict:
+                 account_id=None, calendar_id: str = "primary") -> dict:
     """Create an event. `start`/`end` are ISO 8601 datetimes.
 
-    `account_id` names the calendar; see `resolve_write_account`."""
+    `account_id` names the account; see `resolve_write_account`. `calendar_id`
+    names one of that account's calendars (its primary one by default)."""
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
     ready, why = write_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
@@ -429,18 +443,20 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
     if attendees:
         body["attendees"] = [{"email": a} for a in attendees if a]
     try:
-        ev = svc.events().insert(calendarId="primary", body=body).execute()
+        ev = svc.events().insert(calendarId=_cal(calendar_id), body=body).execute()
     except Exception as e:
         return {"error": "could not create the event: %s" % e}
     _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
-            "account_id": aid, "html_link": ev.get("htmlLink"),
+            "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
             "start": start, "end": end}
 
 
-def get_event(event_id: str, *, account_id=None) -> dict:
+def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary") -> dict:
     """One event as the planner needs it: its title, when it starts and ends, its time zone, whether it is an
     all-day entry and how many guests it has. Reads only."""
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
     ready, why = write_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
@@ -451,19 +467,20 @@ def get_event(event_id: str, *, account_id=None) -> dict:
     if svc is None:
         return {"error": err}
     try:
-        ev = svc.events().get(calendarId="primary", eventId=event_id).execute()
+        ev = svc.events().get(calendarId=_cal(calendar_id), eventId=event_id).execute()
     except Exception as e:
         return {"error": "could not read event %s: %s" % (event_id, e)}
     st, en = ev.get("start") or {}, ev.get("end") or {}
     return {"ok": True, "id": ev.get("id") or event_id, "title": ev.get("summary") or "(no title)",
             "start": st.get("dateTime") or "", "end": en.get("dateTime") or "",
             "tz": st.get("timeZone") or "", "all_day": not st.get("dateTime"),
-            "guests": len(ev.get("attendees") or []), "account_id": aid}
+            "guests": len(ev.get("attendees") or []), "account_id": aid, "calendar_id": _cal(calendar_id)}
 
 
 def update_event(event_id: str, *, title=None, start=None, end=None,
                  location=None, description=None,
-                 allow_clearing: bool = False, account_id=None) -> dict:
+                 allow_clearing: bool = False, account_id=None,
+                 calendar_id: str = "primary") -> dict:
     """Update one event. CLEARING a field requires `allow_clearing=True`.
 
     The asymmetry is the design: setting a value is recoverable from the
@@ -473,6 +490,8 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
     `account_id` names the calendar the event lives on; see
     `resolve_write_account`.
     """
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
     ready, why = write_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
@@ -483,7 +502,7 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
     if svc is None:
         return {"error": err}
     try:
-        before = svc.events().get(calendarId="primary",
+        before = svc.events().get(calendarId=_cal(calendar_id),
                                   eventId=event_id).execute()
     except Exception as e:
         return {"error": "could not read event %s: %s" % (event_id, e)}
@@ -507,20 +526,95 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
                           "allow_clearing=True if erasing is intended."
                           % ", ".join(would_clear)),
                 "needs_confirmation": True, "fields": would_clear}
+    # A patch replaces the whole start/end object: keep the event's own time zone, or a move (and its
+    # Undo) would leave the event in the calendar's zone instead of the one it was made in.
     if start:
-        patch["start"] = {"dateTime": start}
+        patch["start"] = dict({"dateTime": start}, **({"timeZone": (before.get("start") or {})["timeZone"]}
+                                                       if (before.get("start") or {}).get("timeZone") else {}))
     if end:
-        patch["end"] = {"dateTime": end}
+        patch["end"] = dict({"dateTime": end}, **({"timeZone": (before.get("end") or {})["timeZone"]}
+                                                   if (before.get("end") or {}).get("timeZone") else {}))
     if not patch:
         return {"ok": True, "unchanged": True, "id": event_id}
     try:
-        ev = svc.events().patch(calendarId="primary", eventId=event_id,
+        ev = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
                                 body=patch).execute()
     except Exception as e:
         return {"error": "could not update the event: %s" % e}
     _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
-            "account_id": aid, "set": patch,
+            "account_id": aid, "calendar_id": _cal(calendar_id), "set": patch,
             "before": {"summary": before.get("summary"),
                        "location": before.get("location") or "",
                        "description": (before.get("description") or "")[:300]}}
+
+
+RSVP_RESPONSES = ("accepted", "tentative", "declined")
+
+
+def _account_email(account_id) -> str:
+    """The connected account's own address, lowercased; '' when it is not known."""
+    try:
+        from agent_friday.services import google_accounts as ga
+        for a in ga.list_accounts() or []:
+            if isinstance(a, dict) and a.get("id") == account_id:
+                return str(a.get("email") or "").lower()
+    except Exception:
+        pass
+    return ""
+
+
+def respond_to_event(event_id: str, response: str, *, account_id=None,
+                     calendar_id: str = "primary") -> dict:
+    """The owner's reply to an invitation: going, maybe or not going.
+
+    Changes only the owner's own row in the guest list (the attendee Google
+    marks `self`), and Google tells the organiser. Refused when the event has
+    no invitation for the owner (her own event, or one she is not on).
+    `before` is the reply it replaced, so the page can say what changed."""
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
+    response = str(response or "").strip().lower()
+    if response not in RSVP_RESPONSES:
+        return {"error": "a reply is one of: " + ", ".join(RSVP_RESPONSES)}
+    ready, why = write_ready()
+    if not ready:
+        return {"error": why, "needs_reconnect": True}
+    aid, acct_err = resolve_write_account(account_id)
+    if acct_err:
+        return {"error": acct_err, "needs_account": True}
+    svc, err = _service(aid)
+    if svc is None:
+        return {"error": err}
+    try:
+        ev = svc.events().get(calendarId=_cal(calendar_id), eventId=event_id).execute()
+    except Exception as e:
+        return {"error": "could not read event %s: %s" % (event_id, e)}
+    attendees = [dict(a) for a in (ev.get("attendees") or [])]
+    # Google's `self` is "the calendar this copy sits on". On a calendar shared with her that is someone
+    # else, so the row is hers only on her own primary calendar or when it carries her own address.
+    own = _account_email(aid)
+    mine = [a for a in attendees if a.get("self") and (_cal(calendar_id) == "primary"
+                                                       or (own and str(a.get("email") or "").lower() == own))]
+    if not mine:
+        return {"error": "there is no invitation for you on “%s” to reply to"
+                % (ev.get("summary") or "this event")}
+    org = ev.get("organizer") or {}
+    if org.get("self") and (_cal(calendar_id) == "primary" or (own and str(org.get("email") or "").lower() == own)
+                            or mine[0].get("organizer")):
+        return {"error": "you organise “%s”; there is no invitation to reply to"
+                % (ev.get("summary") or "this event")}
+    before = mine[0].get("responseStatus") or "needsAction"
+    if before == response:
+        return {"ok": True, "unchanged": True, "id": event_id, "response": response, "before": before}
+    for a in attendees:
+        if a is mine[0]:
+            a["responseStatus"] = response
+    try:
+        out = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
+                                 body={"attendees": attendees}, sendUpdates="all").execute()
+    except Exception as e:
+        return {"error": "could not send the reply: %s" % e}
+    _drop_calendar_cache()
+    return {"ok": True, "id": out.get("id") or event_id, "title": out.get("summary") or ev.get("summary"),
+            "response": response, "before": before, "account_id": aid, "calendar_id": _cal(calendar_id)}
