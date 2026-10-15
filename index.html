@@ -3768,6 +3768,7 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/library_ws.js"></script>
     <!-- Meetings: the notes pad, polished notes with their transcript lines, the meetings archive (defines window.MeetingsExtras). -->
     <script src="/static/meetings_ws.js"></script>
+    <script src="/static/calendar_views.js"></script>
     <!-- Library shelves: the 3D view of the Library (defines window.LibraryShelves3D). -->
     <script src="/static/library_shelves.js"></script>
     <!-- The one 3D file browser: every workspace's 3D view (defines window.FridayFiles3D). -->
@@ -38935,8 +38936,25 @@ fridayDeclareNav('calendar', {
     id: 'meetings',
     label: 'Meetings',
     key: 'view'
+  }, {
+    id: 'day',
+    label: 'Day',
+    key: 'view'
+  }, {
+    id: 'week',
+    label: 'Week',
+    key: 'view'
+  }, {
+    id: 'month',
+    label: 'Month',
+    key: 'view'
   }]
 });
+// The Calendar's views (static/calendar_views.js): Day is the timeline below; Week and Month come from that file.
+const CAL_VIEW_IDS = ['day', 'week', 'month'];
+function calStoredView() {
+  try { const v = localStorage.getItem('friday_cal_view'); return CAL_VIEW_IDS.includes(v) ? v : 'day'; } catch (_) { return 'day'; }
+}
 function CalendarWS() {
   const [today, setToday] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -38959,9 +38977,14 @@ function CalendarWS() {
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   // what its own tab (↗) opens on: the keys useNavTarget below reads
   const [shownEvent, setShownEvent] = useState('');
-  useTabState('calendar', () => ({ date: sel || '', event: shownEvent }));
+  const [view, setViewRaw] = useState(calStoredView);
+  const [anchor, setAnchor] = useState(() => window.CalendarViews ? window.CalendarViews.iso(new Date()) : '');
+  const [rangeTick, setRangeTick] = useState(0);
+  const setView = v => { if (!CAL_VIEW_IDS.includes(v)) return; setViewRaw(v); try { localStorage.setItem('friday_cal_view', v); } catch (_) {} };
+  useTabState('calendar', () => ({ date: sel || '', event: shownEvent, view }));
   useNavTarget('calendar', t => {
     setShownEvent('');
+    if (t.view && CAL_VIEW_IDS.includes(t.view)) { setView(t.view); if (t.date) setAnchor(t.date); if (t.view !== 'day' && !t.event) return; }
     if (t.event) {
       // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
       if (t.date) { setSel(t.date); loadDay(t.date); }
@@ -39004,6 +39027,13 @@ function CalendarWS() {
   const flash = t => {
     setToast(t);
   };
+  const reloadDay = () => { if (sel) loadDay(sel); else loadToday(); };
+  const openDay = d => {
+    const todayIso = window.CalendarViews ? window.CalendarViews.iso(new Date()) : '';
+    setView('day');
+    setAnchor(d);
+    pickDay(d, d === todayIso);
+  };
   const pickDay = (iso, isToday) => {
     if (isToday) {
       setSel(null);
@@ -39034,6 +39064,7 @@ function CalendarWS() {
         loadToday();
         loadWeek();
         loadTomorrow();
+        setRangeTick(n => n + 1);
         if (sel) loadDay(sel);
       } else flash('Could not parse that — try “interview with Acme Tuesday 2pm”');
     } catch (e) {
@@ -39066,7 +39097,8 @@ function CalendarWS() {
   };
   const active = sel ? dayData : today;
   const events = active?.events || [];
-  const gaps = active?.gaps || [];
+  // Free time is never drawn from a read that failed.
+  const gaps = active?.read_failed ? [] : active?.gaps || [];
   const allDay = events.filter(e => e.all_day);
   const timed = events.filter(e => !e.all_day);
   const activeDate = sel || (week.find(d => d.is_today) || {}).date || '';
@@ -39076,6 +39108,9 @@ function CalendarWS() {
   const timedAll = timed.concat(mediaEvents);
   const openMediaCard = c => { if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'media', card: c.id }); };
   const conflicts = timed.filter(e => e.conflict);
+  // Events at the same time sit side by side in the Day view too (every calendar makes overlaps common).
+  const dayLanes = {};
+  if (window.CalendarViews) window.CalendarViews.lanes(timedAll.filter(x => !x.media && x.start_time), { hourPx: CAL_HOUR_PX, minH: 34 }).forEach(g => { dayLanes[g.ev.id] = g; });
   const hours = [];
   for (let h = CAL_START_HOUR; h < CAL_END_HOUR; h++) hours.push(h);
   const showNow = !sel; // only show now-line on the actual today view
@@ -39110,7 +39145,28 @@ function CalendarWS() {
     className: "btn active",
     onClick: quickAdd,
     disabled: adding
-  }, adding ? 'Parsing…' : '✨ Add')), /*#__PURE__*/React.createElement(MeetingsLink, null), /*#__PURE__*/React.createElement("div", {
+  }, adding ? 'Parsing…' : '✨ Add')), window.CalendarViews ? /*#__PURE__*/React.createElement("div", {
+    className: "calv-toolbar"
+  }, /*#__PURE__*/React.createElement(window.CalendarViews.ViewSwitch, {
+    view: view,
+    onChange: v => { if (v === 'day') openDay(sel || window.CalendarViews.iso(new Date())); else { setAnchor(sel || anchor); setView(v); } }
+  }), view !== 'day' ? /*#__PURE__*/React.createElement(window.CalendarViews.Nav, {
+    title: window.CalendarViews.title(view, anchor),
+    onStep: dir => setAnchor(a => window.CalendarViews.step(view, a, dir)),
+    onToday: () => setAnchor(window.CalendarViews.iso(new Date()))
+  }) : null) : null, view === 'week' && window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.WeekView, {
+    anchor: anchor,
+    reloadKey: rangeTick,
+    onPickDay: openDay,
+    onRetry: () => setRangeTick(n => n + 1),
+    onOpen: ev => openDay(window.CalendarViews.iso(new Date(ev.start_time)))
+  }) : view === 'month' && window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.MonthView, {
+    anchor: anchor,
+    reloadKey: rangeTick,
+    onPickDay: openDay,
+    onRetry: () => setRangeTick(n => n + 1),
+    onOpen: ev => openDay(String(ev.start_time).length === 10 ? ev.start_time : window.CalendarViews.iso(new Date(ev.start_time)))
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(MeetingsLink, null), /*#__PURE__*/React.createElement("div", {
     className: "cal-layers"
   }, /*#__PURE__*/React.createElement("button", {
     className: 'btn' + (showMedia ? ' active' : ''),
@@ -39159,18 +39215,28 @@ function CalendarWS() {
   }, allDay.map(e => /*#__PURE__*/React.createElement("span", {
     key: e.id,
     className: 'cal-event ' + (e.type || 'normal'),
+    ...(e.media ? {} : fridayRow('event', e.id, e.title, { kind: e.type || 'normal', all_day: true, has_guests: !!(e.attendees && e.attendees.length), when: fridayWhen(e.start_time) })),
     style: {
       position: 'static',
-      display: 'inline-block'
+      display: 'inline-block',
+      ...(e.color ? { '--ev': e.color } : {})
     }
   }, e.title, " ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#8a93a6',
       fontSize: 10
     }
-  }, "(all day)")))), timedAll.length === 0 && gaps.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "(all day)")))), window.CalendarViews && (active?.errors || []).length > 0 ? /*#__PURE__*/React.createElement(window.CalendarViews.Errors, {
+    errors: active.errors
+  }) : null, active?.read_failed ? /*#__PURE__*/React.createElement("div", {
+    className: "msg-empty",
+    role: "alert"
+  }, "Couldn't read your calendar. ", "Google did not answer; this day may not be empty. ", /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => reloadDay()
+  }, "Try again")) : null, timedAll.length === 0 && gaps.length === 0 ? (active?.read_failed ? null : /*#__PURE__*/React.createElement("div", {
     className: "msg-empty"
-  }, "No timed events. ", sel ? '' : 'Enjoy the open day, or quick-add something above.') : /*#__PURE__*/React.createElement("div", {
+  }, "No timed events. ", sel ? '' : 'Enjoy the open day, or quick-add something above.')) : /*#__PURE__*/React.createElement("div", {
     className: "cal-timeline",
     ref: tlRef,
     style: {
@@ -39201,6 +39267,7 @@ function CalendarWS() {
     const end = calY(e.end_time) || top + CAL_HOUR_PX;
     const ht = Math.max(34, end - top);
     const open = prepFor === e.id;
+    const lane = dayLanes[e.id];
     return /*#__PURE__*/React.createElement("div", {
       key: e.id,
       className: 'cal-event ' + (e.type || 'normal') + (e.conflict ? ' conflict' : ''),
@@ -39208,7 +39275,9 @@ function CalendarWS() {
       style: {
         top,
         minHeight: ht,
-        height: open ? 'auto' : ht
+        height: open ? 'auto' : ht,
+        ...(e.color ? { '--ev': e.color } : {}),
+        ...(lane && lane.of > 1 ? { left: 'calc(68px + (100% - 76px) * ' + lane.lane + ' / ' + lane.of + ')', right: 'auto', width: 'calc((100% - 76px) / ' + lane.of + ' - 4px)' } : {})
       },
       onClick: () => e.media ? openMediaCard(e.media) : e.prep_available && genPrep(e)
     }, /*#__PURE__*/React.createElement("div", {
@@ -39312,7 +39381,7 @@ function CalendarWS() {
     }
   }, "\uD83D\uDCCD ", e.location)), e.prep_available && /*#__PURE__*/React.createElement("span", {
     className: "cal-prep-badge"
-  }, "Prep")))));
+  }, "Prep"))))));
 }
 
 // ═══ MEETINGS (services/meeting_capture.py) ═══

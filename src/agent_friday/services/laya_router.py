@@ -182,7 +182,12 @@ _LAST_MEETING = re.compile(r"^(?:last|latest|most recent|previous|newest)\s+(?:m
 
 
 def _nav_args(text: str, m=None) -> dict:
-    q = re.sub(r"\s+", " ", (m.group("q") if m is not None else "").strip().lower()).replace("e-mail", "email")
+    gd = m.groupdict() if m is not None else {}
+    view = gd.get("view") or gd.get("view2") or gd.get("view3")
+    if view:
+        # "show my calendar's month view": the Calendar workspace, opened on that view (its declared section)
+        return {"kind": "workspace", "workspace": "calendar", "query": "calendar", "section": view.lower()}
+    q = re.sub(r"\s+", " ", (gd.get("q") or "").strip().lower()).replace("e-mail", "email")
     if not q:
         return {}
     if _LAST_MEETING.match(q):
@@ -441,6 +446,13 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
     ("set_chat_tray",
      _POLITE + r"bring\s+(?:the\s+|my\s+)?cards?\s+back" + _END),
     ("media_play", _POLITE + r"play\s+(?:me\s+)?(?:some\s+|the\s+|my\s+)?" + _Q + _END),
+    # The Calendar's views by name: "show my calendar by month", "switch to the week view", "open the month view
+    # of my calendar". Only with "calendar" or "view" in the words, so "show me my week" stays a calendar READ.
+    ("navigate_to",
+     _POLITE + r"(?:open|show(?: me)?|go to|switch(?: me)? to|change to|bring up|take me to|pull up|put)\s+(?:up\s+)?"
+     r"(?:my\s+|the\s+)?(?:(?:calendar(?:'s)?)\s+(?:(?:in|by|to|for)\s+(?:the\s+|a\s+)?)?(?P<view>day|week|month)(?:ly)?(?:\s+view)?"
+     r"|(?:calendar\s+)?(?P<view2>day|week|month)(?:ly)?\s+view(?:\s+(?:of|on|in|for)\s+(?:my\s+|the\s+)?calendar)?"
+     r"|(?:the\s+|my\s+)?(?P<view3>week|month)\s+(?:on|in)\s+(?:my\s+|the\s+)?calendar)" + _END),
     ("navigate_to",
      _POLITE + r"(?:open|show(?: me)?|go to|switch to|bring up|take me to|pull up)\s+(?:up\s+)?(?:my\s+|the\s+)?"
      r"(?P<q>" + _WORKSPACES + r")(?:\s+(?:workspace|page|tab|screen|app))?" + _END),
