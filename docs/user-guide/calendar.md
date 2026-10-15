@@ -68,6 +68,13 @@ less than a quarter of an hour, Esc during a drag, or an event you can't
 change (one someone else organises) asks nothing and changes nothing. After a
 move, **Undo** puts the event back.
 
+**Replying to an invitation.** An event someone else invited you to shows
+your reply and three buttons: **Going**, **Maybe**, **Not going**. Friday
+asks "Reply ... ?" and says Google will let the organiser know; nothing is
+sent until you press **Send reply**. You can change a reply any time. Replies
+are a click, not something Friday sends by voice, because they reach another
+person.
+
 If you are moving several things, tick **Move without asking for the next 30
 minutes** in the confirmation. That permission lives only in this window and
 runs out by itself; every move still gets its Undo.

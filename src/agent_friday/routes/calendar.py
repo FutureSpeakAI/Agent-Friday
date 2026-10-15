@@ -501,6 +501,27 @@ def api_calendar_create_event():
     return jsonify({"status": "ok", "created_in_google": False, "event": event})
 
 
+@calendar_bp.route('/api/calendar/events/<event_id>/rsvp', methods=['POST'])
+def api_calendar_rsvp(event_id):
+    """The owner's confirmed reply to an invitation (going, maybe, not going).
+    Google tells the organiser. Body: {calendar_key, response, confirmed}."""
+    from agent_friday.services import calendar_write as cw
+    data = request.get_json(silent=True) or {}
+    if data.get("confirmed") is not True:
+        return jsonify({"status": "error", "message": "a reply is sent only after the owner confirms"}), 400
+    if not event_id or len(event_id) > 300:
+        return jsonify({"status": "error", "message": "not an event id"}), 400
+    aid, cid = _calendar_of(data.get("calendar_key"))
+    if cid is None:
+        return jsonify({"status": "error", "message": "that calendar is not one Friday knows"}), 400
+    out = cw.respond_to_event(event_id, str(data.get("response") or ""), account_id=aid, calendar_id=cid)
+    if out.get("error"):
+        return jsonify({"status": "error", "message": str(out["error"])[:300]}), 409
+    _drop_calendar_cache()
+    return jsonify({"status": "ok", "response": out.get("response"), "before": out.get("before"),
+                    "unchanged": bool(out.get("unchanged"))})
+
+
 @calendar_bp.route('/api/calendar/events/<event_id>/move', methods=['POST'])
 def api_calendar_move_event(event_id):
     """The owner's confirmed drag: move one event to the times shown in the
