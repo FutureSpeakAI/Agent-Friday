@@ -13108,18 +13108,51 @@ function fridaySceneKey(e) {
 function fridayName() {
   return fridayNameInText(window.__FRIDAY_AGENT_NAME);
 }
-function fridaySetName(name) {
+// True when the owner gave her a name of her own (not her default name) AND
+// asked for it on the wordmark and titles (identity.name_in_lockup, off by
+// default: the wordmark is the product's, BRAND.md). Spoken and written lines
+// use her name whatever this says (fridayName).
+function fridayHasOwnName() {
+  if (!window.__FRIDAY_NAME_IN_LOCKUP) return false;
+  const n = String(window.__FRIDAY_AGENT_NAME || '').trim().toUpperCase().replace(/^AGENT\s+/, '');
+  return !!n && n !== 'FRIDAY';
+}
+// The wordmark's name: her own, in capitals and with no mark (it is not the
+// product's), when the owner named her; '' for the default, so the lockup
+// shows the product with its mark.
+function fridayLockupName() {
+  return fridayHasOwnName() ? String(window.__FRIDAY_AGENT_NAME).trim().toUpperCase() : '';
+}
+// What the window's and a tab's title end with: her own name, or the product.
+function fridayTitleName() {
+  return fridayHasOwnName() ? fridayName() : ((window.FRIDAY_BRAND || {}).name || '');
+}
+// A title that ends with `before` ends with the current title name instead.
+function fridayRetitle(before) {
+  if (typeof document === 'undefined' || !before) return;
+  const t = String(document.title || ''), after = fridayTitleName();
+  if (after && after !== before && t.slice(-before.length) === before) {
+    document.title = t.slice(0, t.length - before.length) + after;
+  }
+}
+function fridaySetName(name, inLockup) {
   const n = String(name || '').trim();
-  if (!n || n === window.__FRIDAY_AGENT_NAME) return;
+  const lock = !!inLockup;
+  if (!n || (n === window.__FRIDAY_AGENT_NAME && lock === !!window.__FRIDAY_NAME_IN_LOCKUP)) return;
+  const before = fridayTitleName();
+  window.__FRIDAY_NAME_IN_LOCKUP = lock;
   window.__FRIDAY_AGENT_NAME = n;
   try {
     localStorage.setItem('friday_agent_name', n);
   } catch (_) {}
+  fridayRetitle(before);
 }
 try {
   window.__FRIDAY_AGENT_NAME = window.__FRIDAY_AGENT_NAME || localStorage.getItem('friday_agent_name') || '';
 } catch (_) {}
+fridayRetitle((window.FRIDAY_BRAND || {}).name || '');
 window.fridayName = fridayName;
+window.fridayTitleName = fridayTitleName;
 /* fridayHerName:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
@@ -13165,7 +13198,9 @@ function FridayLockup({
   title
 }) {
   const b = window.FRIDAY_BRAND;
-  const name = [b.product.toUpperCase(), /*#__PURE__*/React.createElement("span", {
+  // Her own name when the owner gave her one, with no mark; the product otherwise.
+  const own = fridayLockupName();
+  const name = own ? [own] : [b.product.toUpperCase(), /*#__PURE__*/React.createElement("span", {
     key: "tm",
     className: "fr-lockup-tm"
   }, b.mark)];
@@ -65056,7 +65091,7 @@ function StandaloneShell({ ws, histOpen, onCloseHistory, children }) {
       const q = new URLSearchParams(window.location.search);
       item = q.get('subject') || q.get('title') || q.get('creation') || q.get('file') || '';
     } catch (e) {}
-    document.title = (item ? item.slice(0, 80) + ' \u00B7 ' : '') + ws.label + ' \u00B7 ' + window.FRIDAY_BRAND.name;
+    document.title = (item ? item.slice(0, 80) + ' \u00B7 ' : '') + ws.label + ' \u00B7 ' + fridayTitleName();
   }, [ws.id]);
   const maxedTab = (() => {
     try {
@@ -65874,7 +65909,7 @@ function App() {
   // Her name for every line that speaks of her, before anything below
   // renders, once settings have come from the server (workspace_layouts is
   // only in theirs); until then the name this browser last saw stands.
-  if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name);
+  if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name, ((agentSettings.identity || {}).name_in_lockup));
   useEffect(() => { fridaySetOffRecord(fridayOffRecordFrom(agentSettings)); },
     [agentSettings.off_record, agentSettings.off_record_stops_storage]);
   // Mic / Speaker test state (used by the Audio & Voice section).

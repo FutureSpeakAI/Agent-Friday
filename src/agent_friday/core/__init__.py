@@ -2512,7 +2512,11 @@ DEFAULT_SETTINGS = {
     # dict does not declare is a control that saves, reports success, and
     # reverts on the next read (docs/decisions/2026-09-04-five-dead-settings.md).
     "local_voice_tts_engine": "piper",   # the CPU tier's voice; Kokoro is chosen explicitly (services/local_voice.py)
-    "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
+    # Kokoro voice id, used when engine=kokoro. Blank is "not chosen": she
+    # speaks af_heart, or her cloud voice's local twin (services/agent_identity.
+    # local_kokoro_voice). The seed and every save write the whole defaults
+    # table, so a non-blank default here would read as the owner's choice.
+    "local_voice_kokoro_voice": "",
     "local_voice_kokoro_allow_cpu": True,     # Kokoro may run on the CPU when the card is busy (slower; the session says so) rather than Piper speaking
     # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
     # tier. Override the ASR id to a sibling (e.g. the English-only streaming
@@ -2855,6 +2859,15 @@ DEFAULT_SETTINGS = {
                                            # separate Ring-3 step (/api/control/permission).
     # ── Agent Identity & Model Selection ──
     "agent_name": "AGENT FRIDAY",  # brand: plain (her default name, not the product)
+    # Her identity beyond the name (services/agent_identity.py). pronouns:
+    # "auto" (from her voice: she/her, he/him, or they/them for a voice not
+    # known) or one of those three. local_voice_matches_cloud: with the
+    # default local voice and a cloud voice chosen, speak locally with the
+    # cloud voice's twin (Puck -> am_puck) when it is installed.
+    "identity": {"pronouns": "auto", "local_voice_matches_cloud": True,
+                 # Her own name on the wordmark and window titles. Off: the
+                 # wordmark is the product's (BRAND.md); on is the owner's choice.
+                 "name_in_lockup": False},
     # The workspaces the owner set to fill the screen with the chat tray docked
     # beside them (docs/design/active/unified-shell.md §5): id -> "fullscreen_chat".
     "workspace_layouts": {},
@@ -2931,17 +2944,20 @@ DEFAULT_SETTINGS = {
     "podcasts": {
         "enabled_for_routines": {"front_page": True, "briefing": True,
                                  "weekly": True, "editorial": True},
-        # Who is on each show: "solo" (Friday alone) or "duo" (two hosts).
+        # Who is on each show: "solo" (her alone) or "duo" (two hosts).
         # "any" is every episode not made by a routine. Recommended values;
-        # podcast_engine.RECOMMENDED_FORMAT is the same table.
+        # podcast_engine.RECOMMENDED_FORMAT is the same table. One episode can
+        # ask for the other ("hosts": solo|duo on make_podcast).
         "format": {"briefing": "solo", "front_page": "solo", "editorial": "solo",
-                   "weekly": "duo", "any": "duo"},
+                   "weekly": "duo", "any": "solo"},
         # How long each show runs, and "any" for an episode the owner asks for:
         # "short" (about 2 minutes), "standard" (about 5, recommended) or
         # "long" (about 10). podcast_engine.LENGTH_MINUTES is the same table.
         "length": {"front_page": "standard", "briefing": "standard",
                    "weekly": "standard", "editorial": "standard", "any": "standard"},
-        "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
+        # Host "a" is her: blank name and voice follow her identity (her name,
+        # and her local voice: services/agent_identity.local_kokoro_voice).
+        "hosts": {"a": {"name": "", "voice": ""},
                   "b": {"name": "Emma", "voice": "bf_emma"}},
         "on_ready": "notify",
         "cloud_voice": False,
