@@ -151,14 +151,17 @@ def _recent_pending() -> list:
 
 
 def request_access(items, *, reason: str = "", requested_by: str = "friday",
-                   replaces: list | None = None, merge: bool = True) -> dict:
+                   replaces: list | None = None, merge: bool = True,
+                   notes: dict | None = None) -> dict:
     """Raise ONE pending card listing every requested path. Grants nothing.
 
     `replaces` names notice ids (file_grants.notices) the new grants answer, so
     approving the card also closes those questions. `merge=False` raises a
     card of its own that no later request folds into its card (a raw record's
-    card keeps its own words). An item's "note" is shown after the
-    classifier's findings, never in their place."""
+    card keeps its own words). `notes` (path -> words) is Friday's own note
+    for an item, shown after the classifier's findings, never in their
+    place. It is a keyword only: a "note" inside an item (which a model's
+    request could carry) is ignored, so a model cannot write on the card."""
     ensure_hook()
     rows = items if isinstance(items, list) else [items]
     rows = rows[:MAX_ITEMS]
@@ -168,7 +171,9 @@ def request_access(items, *, reason: str = "", requested_by: str = "friday",
         if not it.get("ok"):
             bad.append({"path": it.get("path"), "error": it.get("error")})
             continue
-        note = str(raw.get("note") or "")[:200] if isinstance(raw, dict) else ""
+        note = ""
+        if notes and isinstance(raw, dict):
+            note = str(notes.get(str(raw.get("path") or "")) or "")[:200]
         if note:
             it["summary"] = (it.get("summary") + "; " if it.get("summary") else "") + note
         key = (it["type"], _norm(it["path"]))

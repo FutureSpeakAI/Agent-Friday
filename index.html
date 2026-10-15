@@ -57907,6 +57907,17 @@ function SettingsLocks() {
   }).then(r => r.json()).then(x => {
     if (!x.ok) setMsg(x.message || 'Windows did not open the page.');
   }).catch(() => setMsg('Could not reach the server.'));
+  const post = (url, body) => apiFetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body || {})
+  }).then(r => r.json());
+  const askHeld = path => post('/api/locks/raw-holds/ask', {
+    path
+  }).then(x => setMsg(x.ok ? 'A card asking about that file is on screen.' : x.message || 'No card could be raised.')).catch(() => setMsg('Could not reach the server.'));
+  const resetHeld = () => post('/api/locks/raw-holds/reset').then(x => setMsg(x.ok ? 'A card is on screen that says exactly what starting fresh lets go. Nothing changes until you approve it there.' : 'No card could be raised.')).catch(() => setMsg('Could not reach the server.'));
   return /*#__PURE__*/React.createElement(StSection, {
     title: "Locks",
     desc: "How your things are locked on this PC, in plain words, and what that cannot stop."
@@ -57931,7 +57942,27 @@ function SettingsLocks() {
     className: "lk-sub"
   }, l.checks.map(c => /*#__PURE__*/React.createElement("li", {
     key: c.name
-  }, c.name + ': ' + (c.ok === true ? 'checks out (' + c.count + ' line' + (c.count === 1 ? '' : 's') + ')' : c.ok === false ? 'changed (' + c.why + ')' : 'could not check')))), l.installer && /*#__PURE__*/React.createElement("div", {
+  }, c.name + ': ' + (c.ok === true ? 'checks out (' + c.count + ' line' + (c.count === 1 ? '' : 's') + ')' : c.ok === false ? 'changed (' + c.why + ')' : 'could not check')))), l.held_files && l.held_files.length > 0 && /*#__PURE__*/React.createElement("ul", {
+    className: "lk-sub",
+    "aria-label": "Held files"
+  }, l.held_files.map(f => /*#__PURE__*/React.createElement("li", {
+    key: f
+  }, f + ' ', /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    onClick: () => askHeld(f)
+  }, "Ask me about this file")))), l.can_reset && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    style: {
+      fontSize: 11,
+      marginTop: 6
+    },
+    onClick: resetHeld
+  }, "Start the list fresh\u2026"), l.installer && /*#__PURE__*/React.createElement("div", {
     className: "lk-words"
   }, l.installer), l.open_page && /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -57945,10 +57976,12 @@ function SettingsLocks() {
     className: "lk-limit",
     role: "note"
   }, /*#__PURE__*/React.createElement("strong", null, "The honest limit. "), d.honest_limit), msg && d && /*#__PURE__*/React.createElement("div", {
-    role: "alert",
-    className: "sc-msgline bad"
+    role: "status",
+    "aria-live": "polite",
+    className: "sc-msgline"
   }, msg));
 }
+
 function SettingsTabPrivacy({
   s,
   save

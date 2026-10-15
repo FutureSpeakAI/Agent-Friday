@@ -806,7 +806,16 @@ def create_file_grant(path: str, never_send_override: bool = False,
         "ack_never_send_matches": list(ack_never_send_matches or []) if override else [],
         "findings_summary": findings.get("summary"),
     }
-    return _append_event(event)
+    out = _append_event(event)
+    if _raw_kind(p):
+        # The owner's yes for this one raw record lifts its hold now, not on
+        # the next read: what was held while the card waited may go.
+        try:
+            from agent_friday.services import judgment_gate as _jg
+            _jg.release_raw_record(_raw_key(p))
+        except Exception:
+            pass
+    return out
 
 
 def create_scope_grant(path_or_pattern: str, kind: str, expiry_days: float) -> dict:
@@ -966,6 +975,16 @@ def on_file_read(path: Path, text: str) -> GrantCheck:
     return result
 
 
+def raw_held_notice(path, kind: str | None = None) -> str:
+    """What read_file returns, in place of the contents, for a raw record
+    the owner has not allowed."""
+    from agent_friday.services import raw_records
+    what = raw_records.KIND_WORDS.get(kind or _raw_kind(path) or "", "a raw record")
+    return ("%s is %s. Its contents stay on this PC until the owner says a cloud model may read "
+            "this one file; a card asking them is on screen (or was, today). Tell them so in one "
+            "sentence, and read the file again once they approve." % (Path(path).name, what))
+
+
 def _raw_key(path) -> str:
     """One key per file, however it was spelled."""
     try:
@@ -999,7 +1018,7 @@ def _provider_words() -> str:
     return name or "the cloud model you set up"
 
 
-def ask_for_raw_source(path, kind: str | None = None) -> dict | None:
+def ask_for_raw_source(path, kind: str | None = None, *, force: bool = False) -> dict | None:
     """Raise one file-access card for a raw record, at most once a day per
     version of the file. The card lists the file as Friday resolved it, with
     the classifier's own findings; the reason says what it is and where it
@@ -1018,7 +1037,7 @@ def ask_for_raw_source(path, kind: str | None = None) -> dict | None:
     # again (the card itself pins the content it shows).
     key = (str(p).casefold(), st.st_size, st.st_mtime_ns)
     now = time.time()
-    if now - _RAW_ASKED.get(key, 0) < _RAW_ASK_EVERY_S:
+    if not force and now - _RAW_ASKED.get(key, 0) < _RAW_ASK_EVERY_S:
         return None
     _RAW_ASKED[key] = now
     from agent_friday.services import file_grant_requests, raw_records
@@ -1031,11 +1050,45 @@ def ask_for_raw_source(path, kind: str | None = None) -> dict | None:
     try:
         # merge=False: this card is never folded into another request's card,
         # so its own words (what the file is, who would read it) stay on it.
-        return file_grant_requests.request_access([{"path": str(p), "type": "file", "note": note}],
+        return file_grant_requests.request_access([{"path": str(p), "type": "file"}],
                                                   reason=reason, requested_by="friday:raw-record",
-                                                  merge=False)
+                                                  merge=False, notes={str(p): note})
     except Exception:
         return None
+
+
+def raw_refusal_for_command(text: str) -> str | None:
+    """A shell command or program that names a raw record (a mail archive or
+    a statement) the owner has not allowed reads it around read_file, so it
+    is not run: the model is told to open the file with read_file, which
+    asks the owner on screen. None when nothing such is named, when every
+    such file has the owner's yes, or when every model stays on this PC."""
+    try:
+        from agent_friday.services import raw_records
+        named = raw_records.named_in(str(text or ""))
+    except Exception:
+        return None
+    if not named or not _cloud_possible():
+        return None
+    held = []
+    for token, kind in named:
+        try:
+            p = Path(token).expanduser()
+            if p.is_file():
+                p = p.resolve()
+                sha = hashlib.sha256(p.read_bytes()).hexdigest()
+                c = check_grant(p, sha256_hex=sha)
+                if c.state == "active" and c.grant_kind == "file":
+                    continue
+                ask_for_raw_source(p, kind)
+        except Exception:
+            pass
+        held.append(token)
+    if not held:
+        return None
+    return ("Not run: it reads %s, a mail archive or statement the owner hasn't let a cloud model "
+            "read. Open one file at a time with read_file instead; that asks them on screen, and "
+            "nothing from it leaves this PC until they say yes." % ", ".join(held[:3]))
 
 
 # ── Listing / audit ─────────────────────────────────────────────────────────────

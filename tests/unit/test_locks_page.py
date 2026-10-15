@@ -31,7 +31,7 @@ def _lines(view):
 def test_every_line_is_there_and_the_honest_limit_is_always_shown(locks):
     v = locks.view()
     assert [x["key"] for x in v["lines"]] == ["lock", "recovery", "stores", "disk", "where", "keys",
-                                               "records", "updates", "forget"]
+                                               "records", "held", "updates", "forget"]
     assert "anything you run on this PC under your own Windows account could read" in v["honest_limit"]
 
 

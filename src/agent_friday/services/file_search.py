@@ -209,7 +209,9 @@ def _held_raw_record(path) -> bool:
         from agent_friday.services import file_grants
         if not file_grants.raw_record_kind(path):
             return False
-        c = file_grants.check_grant(path)
+        import hashlib
+        sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        c = file_grants.check_grant(path, sha256_hex=sha)
         return not (c.state == "active" and c.grant_kind == "file")
     except Exception:
         return True
@@ -249,13 +251,13 @@ def _search_content(roots, query, content_query, newest_first, limit, deadline, 
         # file's full read passes; its content-search snippet still gates
         # normally. Safe (fails toward gating, not toward leaking) but
         # incomplete — do not remove this comment when closing the gap.
+        if _held_raw_record(path):
+            # A mail archive or statement is not searched inside without the
+            # owner's yes for that file (owner decision O7): even "it contains
+            # this word" says what is in it.
+            continue
         idx = text.lower().find(cq)
         if idx == -1:
-            continue
-        if _held_raw_record(path):
-            # A mail archive or statement shows no content without the owner's
-            # yes for that file (owner decision O7): its name is the result.
-            candidates.append((path, "(a raw record: its contents are shown only with your yes for this file)"))
             continue
         start = max(0, idx - 80)
         snippet = _cred.redact_secrets(text[start:idx + len(content_query) + 80].strip())

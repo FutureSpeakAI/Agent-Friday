@@ -161,7 +161,10 @@ def _cloud_evidence(ev: list[dict], principal: str, settings: dict) -> tuple[lis
     keep = []
     for e in fits:
         doc = by_id.get(id(e)) or next((d for ee, d in granted if ee["label"] == e["label"]), None)
-        fg.on_file_read(Path(doc["path"]), e["text"])        # only what is sent is registered as sendable
+        r = fg.on_file_read(Path(doc["path"]), e["text"])    # only what is sent is registered as sendable
+        if getattr(r, "state", "") == "held_raw_record":
+            held += 1
+            continue                  # a raw record whose file changed since the yes: asked again
         keep.append(e)
     notes = []
     if held:

@@ -2500,6 +2500,10 @@ def _tool_run_command(inp):
     _cred_why = _cred.scan_command(cmd)
     if _cred_why:
         return _cred.refusal_command(_cred_why)
+    from agent_friday.services import file_grants as _fg_raw
+    _raw_why = _fg_raw.raw_refusal_for_command(cmd)
+    if _raw_why:
+        return _raw_why
     bad = blocked_command_token(cmd)
     if bad is not None:
         return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
@@ -2564,6 +2568,12 @@ def _tool_run_sandboxed(inp):
     _why = _cred.scan_code(str(inp.get("code") or ""))
     if _why:
         return _cred.refusal_command(_why)
+    # A mail archive or statement is opened with read_file, which asks the
+    # owner; a program that reads one around it is not run (decision O7).
+    from agent_friday.services import file_grants as _fg_raw
+    _raw_why = _fg_raw.raw_refusal_for_command(str(inp.get("code") or ""))
+    if _raw_why:
+        return _raw_why
     res = _sbx.run(str(inp.get("code") or ""),
                    timeout_s=inp.get("timeout_seconds") or _sbx.DEFAULT_TIMEOUT_S,
                    memory_mb=inp.get("memory_mb") or _sbx.DEFAULT_MEMORY_MB,
@@ -13488,15 +13498,38 @@ def _hook_file_grant_registration(ctx, result):
     so a granted CV's summary section stays withheld after the grant is
     created (see _tool_read_file's note).
     """
+    from agent_friday.services import file_grants as _fg
+    path = (ctx.input or {}).get("path")
+    p = None
+    raw = None
     try:
-        from agent_friday.services import file_grants as _fg
-        path = (ctx.input or {}).get("path")
         if path:
             p = Path(path).expanduser().resolve()
-            if p.is_file():
-                _fg.on_file_read(p, result)
+            raw = _fg.raw_record_kind(p)
     except Exception:
-        pass
+        p = None
+    if p is None:
+        return result
+    try:
+        if not p.is_file():
+            return result
+        check = _fg.on_file_read(p, result)
+    except Exception:
+        if not raw:
+            return result
+        check = None
+    if raw and (check is None or check.state == "held_raw_record"):
+        # A raw record without the owner's yes: its contents do not enter the
+        # conversation at all (the hold also stops any quote of it), so a
+        # cloud turn is never blocked by what one read left in its history.
+        # (A post hook that raises is passed over, so this one never raises.)
+        try:
+            if not _fg._cloud_possible():
+                return result
+            return _fg.raw_held_notice(p, raw)
+        except Exception:
+            return ("That file is a mail archive or statement; its contents stay on this PC "
+                    "until the owner allows it on screen.")
     return result
 
 
@@ -13544,9 +13577,11 @@ def _register_builtin_tool_hooks():
     _hooks.register_post_hook(_hook_verifier_record, name="call_verifier_record",
                               priority=99)
     _hooks.register_post_hook(_hook_pii_scrub, name="pii_scrub", priority=95)
+    # Critical: it holds raw records from the cloud (decision O7), so it can
+    # neither be switched off nor fail open.
     _hooks.register_post_hook(_hook_file_grant_registration,
                               name="file_grant_registration", priority=96,
-                              tools={"read_file"})
+                              tools={"read_file"}, critical=True)
 
 
 _register_builtin_tool_hooks()

@@ -47,6 +47,35 @@ def kind_of(path) -> str | None:
     return None
 
 
+_QUOTED = re.compile(r"\"([^\"\r\n]{1,400})\"|'([^'\r\n]{1,400})'")
+_TOKEN_EDGES = "()[]{},;`|<>&"
+
+
+def named_in(text: str) -> list:
+    """[(token, kind)] for every path-like piece of a command or program that
+    names a raw record: a quoted path, a bare word, or a pattern
+    ("*.mbox"). Only names are judged here; a file is opened to look only
+    when the token is an existing file whose name says nothing."""
+    t = str(text or "")
+    tokens = [a or b for a, b in _QUOTED.findall(t)]
+    tokens += [w.strip(_TOKEN_EDGES) for w in _QUOTED.sub(" ", t).split()]
+    out, seen = [], set()
+    for tok in tokens:
+        tok = tok.strip()
+        if not tok or tok in seen or len(tok) > 400:
+            continue
+        seen.add(tok)
+        try:
+            if "." not in tok and not (("/" in tok or "\\" in tok) and Path(tok).is_file()):
+                continue                 # a bare word is not opened to look
+            kind = kind_of(tok)
+        except (OSError, ValueError):
+            continue
+        if kind:
+            out.append((tok, kind))
+    return out
+
+
 def _sniff(p: Path) -> str | None:
     """A file whose name says nothing: an mbox starts with a "From " line
     (Thunderbird's Inbox, the mbox inside an Apple Mail folder), an OFX

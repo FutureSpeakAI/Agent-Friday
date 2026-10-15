@@ -162,15 +162,6 @@ def _records() -> dict:
         checks.append({"name": "Inbox clean-up receipts", "ok": v["ok"], "count": v["count"], "why": v["reason"]})
     except Exception as e:  # noqa: BLE001
         checks.append({"name": "Inbox clean-up receipts", "ok": None, "why": type(e).__name__})
-    try:
-        from agent_friday.services import judgment_gate
-        rh = judgment_gate.raw_hold_status()
-        checks.append({"name": "Raw records held from the cloud", "ok": not rh["fail_closed"],
-                       "count": rh["files"],
-                       "why": (rh["why"] + "; every cloud message that quotes a line is held until this is fixed")
-                       if rh["fail_closed"] else ""})
-    except Exception as e:  # noqa: BLE001
-        checks.append({"name": "Raw records held from the cloud", "ok": None, "why": type(e).__name__})
     bad = [c for c in checks if c["ok"] is False]
     if bad:
         words = "One record was changed after it was written: %s (%s)." % (bad[0]["name"], bad[0]["why"])
@@ -180,6 +171,29 @@ def _records() -> dict:
     else:
         words, state = "All records check out: nothing was changed after it was written.", "ok"
     return _line("records", "My records", state, words, checks=checks)
+
+
+def _held() -> dict:
+    """Mail archives and statements read without the owner's yes, held from
+    every cloud payload (decision O7), and whether the hold is failing closed."""
+    from agent_friday.services import judgment_gate
+    rh = judgment_gate.raw_hold_status()
+    files = list(rh.get("held") or [])
+    if rh["fail_closed"]:
+        return _line("held", "Held from the cloud", "fail_closed",
+                     "I couldn't keep the list of held mail archives and statements in full (%s), so "
+                     "every cloud message is stopped while this lasts. Start the list fresh to clear it."
+                     % rh["why"], held_files=files, can_reset=True)
+    if not files:
+        return _line("held", "Held from the cloud", "none",
+                     "No mail archive or statement is held: none has been opened without your yes.",
+                     held_files=[], can_reset=False)
+    n = len(files)
+    return _line("held", "Held from the cloud", "held",
+                 "%d mail archive%s or statement%s I opened %s held: nothing from %s goes to a cloud "
+                 "model until you allow that file." % (n, "" if n == 1 else "s", "" if n == 1 else "s",
+                                                       "is" if n == 1 else "are", "it" if n == 1 else "them"),
+                 held_files=files, can_reset=True)
 
 
 def _updates() -> dict:
@@ -210,7 +224,7 @@ def _forget() -> dict:
 def view() -> dict:
     """Every line of the Locks page, in the order the page shows them."""
     lines = []
-    for fn in (_lock, _recovery, _everything_else, _disk, _where, _keys, _records, _updates, _forget):
+    for fn in (_lock, _recovery, _everything_else, _disk, _where, _keys, _records, _held, _updates, _forget):
         try:
             lines.append(fn())
         except Exception as e:  # noqa: BLE001
@@ -218,6 +232,75 @@ def view() -> dict:
             lines.append(_line(fn.__name__.strip("_"), fn.__name__.strip("_").title(), "unknown",
                                "I couldn't read this one."))
     return {"lines": lines, "honest_limit": HONEST_LIMIT, "at": time.time()}
+
+
+RESET_KIND = "raw_holds_reset"
+RESET_WORDS = (
+    "Start the list of held mail archives and statements fresh. Lines from the %d file%s held "
+    "now could then reach a cloud model when something quotes them, and the warning that the "
+    "hold could not be kept in full is cleared. Any of those files read again is held again "
+    "until you allow it. Your never-send list is not changed.")
+_HOOKED = {"done": False}
+
+
+def held_records() -> dict:
+    """The raw records held from the cloud, by file, for the Locks page."""
+    from agent_friday.services import judgment_gate
+    return judgment_gate.raw_hold_status()
+
+
+def ask_for_held(path: str) -> dict:
+    """Raise the file-access card for one held file now (the owner's press)."""
+    from pathlib import Path
+
+    from agent_friday.services import file_grants, judgment_gate
+    held = set(judgment_gate.raw_hold_status().get("held") or [])
+    key = str(path or "").casefold()
+    if key not in held:
+        return {"ok": False, "message": "That file isn't held."}
+    if not Path(path).is_file():
+        return {"ok": False, "message": "That file is no longer there; start the list fresh to let it go."}
+    card = file_grants.ask_for_raw_source(Path(path), force=True)
+    if not card or not card.get("ok"):
+        return {"ok": False, "message": "No card could be raised for that file."}
+    return {"ok": True, "approval_id": card.get("approval_id")}
+
+
+def request_reset(*, requested_by: str = "owner") -> dict:
+    """Raise the one card that starts the hold list fresh. Changes nothing
+    until the owner approves it on screen."""
+    import uuid
+
+    from agent_friday.services import approvals
+    ensure_hook()
+    n = int(held_records().get("files") or 0)
+    words = RESET_WORDS % (n, "" if n == 1 else "s")
+    card = approvals.create_approval(
+        kind=RESET_KIND, subject_type="privacy", subject_id="raw-holds-%s" % uuid.uuid4().hex[:12],
+        title="Start the held-records list fresh", description=words, action_description=words,
+        payload={"handler": RESET_KIND, "files": n}, requested_by=requested_by,
+        action_class="irreversible", force_gate=True)
+    return {"ok": True, "approval_id": card.get("approval_id"), "status": card.get("status")}
+
+
+def _on_reset_decision(record: dict) -> None:
+    from agent_friday.services import approvals, judgment_gate
+    if record.get("kind") != RESET_KIND or record.get("status") != "approved":
+        return
+    if record.get("decided_by") not in approvals.SCREEN_ONLY_KINDS.get(RESET_KIND, frozenset()):
+        return
+    if not approvals.claim_for_execution(record["approval_id"]):
+        return
+    out = judgment_gate.reset_raw_holds(confirmed_by=record["decided_by"])
+    approvals.mark_used(record["approval_id"], "locks", out)
+
+
+def ensure_hook() -> None:
+    if _HOOKED["done"]:
+        return
+    from agent_friday.services import approvals
+    approvals.register_decision_hook(RESET_KIND, _on_reset_decision)
+    _HOOKED["done"] = True
 
 
 def open_windows_page(name: str) -> dict:
