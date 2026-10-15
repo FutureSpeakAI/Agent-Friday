@@ -41,6 +41,32 @@ and never fall back to a paid cloud model on their own.
 
 When a local model is running, they run there, whatever you chose below.
 
+That holds in every routing mode but one. If you **chose Cloud only** (in
+Settings or during setup), that choice is your consent for the News routines
+(front pages, briefings, the weekly digest and editorial), podcast scripts and
+the heartbeat to use the cloud: they run on the scheduled-jobs cloud model
+below (Claude Haiku 4.5 by default), whether or not a local model is running,
+and the heartbeat keeps its cloud cadence. Daily creation is not part of that
+consent; it follows your answer below. A podcast made from your own private
+material is still written on this PC, and the Front Page read-aloud still uses
+this PC's voice. To keep these jobs local even in Cloud only, set
+`scheduled_cloud.routine_follows_cloud_mode` to `false`.
+
+Cloud only is also what a new install starts on. That starting value is not a
+choice: until you pick a routing mode yourself (picking Cloud only again
+counts), these jobs follow the other rows of the table. Cloud preferred is not
+consent either.
+
+| Routing mode | Local model running | You allowed a cloud model (heartbeat, daily creation) | Where they run |
+|---|---|---|---|
+| Cloud only, chosen by you (News, podcasts, heartbeat) | either | either | the cloud model |
+| any other case | yes | either | this PC |
+| any other case | no | yes | the cloud model |
+| any other case | no | no | skipped (News waits and catches up) |
+
+A job allowed onto the cloud with no cloud model set for it is skipped, and
+the skip says so.
+
 **Daily creation** runs while you are away from the computer: after 10 minutes
 without activity, between 09:00 and 23:00. This window is the `idle_work`
 setting.
@@ -105,7 +131,7 @@ and where to change that. It is updated in place, so a skip never adds a row or
 a failure notice.
 
 You can let the **heartbeat** and **daily creation** use a cloud model instead.
-News never uses a cloud model.
+In a local routing mode News never uses a cloud model.
 
 - The [setup chat](setup-chat.md) asks once, on a PC with no local model, and
   shows which model each job would use and its estimated monthly cost. The

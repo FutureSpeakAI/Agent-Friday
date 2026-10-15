@@ -1343,10 +1343,10 @@
    "scheduled_cloud.at"
   ],
   "route": "POST /api/costs/scheduled-cloud",
-  "reader_file": "src/agent_friday/services/scheduler.py",
-  "reader_needle": "if not cfg.get(\"allow\"):",
+  "reader_file": "src/agent_friday/services/cloud_intent.py",
+  "reader_needle": "if covered and cfg.get(\"allow\"):",
   "status": "ok",
-  "note": "scheduled_cloud is deep-merged by _save_settings; scheduler._cloud_model_for runs the built-in jobs on the chosen cloud model only when this is true and no local seat serves."
+  "note": "scheduled_cloud is deep-merged by _save_settings; cloud_intent.background_route (the one reader the scheduler asks) runs the built-in jobs on the chosen cloud model only when this is true and no local seat serves, with no local seat serving, and with a cloud model set (otherwise a skip that says so). Under a cloud_only the owner chose, that choice is the consent for News, podcasts and the heartbeat."
  },
  {
   "section": "Spending",
@@ -1576,7 +1576,7 @@
   "keys": [],
   "route": "POST /api/budget/policy",
   "reader_file": "src/agent_friday/services/budget_enforcer.py",
-  "reader_needle": "if current_spend + amount_mψ > policy[\"monthly_cap_mψ\"]:",
+  "reader_needle": "if monthly_cap > 0 and current_spend + amount_mψ > monthly_cap:",
   "status": "ok",
   "note": "Enforced by budget_enforcer.reserve_budget, called from services/orchestrator.py before each worker starts. Cap applies to orchestrator workers only, not to chat or the dollar budgets in Spending."
  },
@@ -1588,7 +1588,7 @@
   "keys": [],
   "route": "POST /api/budget/policy",
   "reader_file": "src/agent_friday/services/budget_enforcer.py",
-  "reader_needle": "\"per_task_cap_mψ\": policy[\"per_task_cap_mψ\"],",
+  "reader_needle": "if task_cap > 0 and amount_mψ > task_cap:",
   "status": "fixed",
   "note": "reserve_budget now refuses a reservation above the per-task cap."
  },
@@ -1662,7 +1662,7 @@
   "reader_file": "src/agent_friday/services/voice_installer.py",
   "reader_needle": "def start(target",
   "status": "ok",
-  "note": "Targets voice-local-lite, tier1-models, voice-local-gpu carry no \"artifact\" flag so no consent body is required; the wizard offers them straight from a step row. Label says ~6 GB, TARGETS says disk_gb 12.0 for voice-local-gpu (copy mismatch)."
+  "note": "Targets voice-local-lite and voice-local-gpu carry no \"artifact\" flag so no consent body is required; the wizard offers them straight from a step row. tier1-models carries \"consent\": the wizard first shows the whisper models with sizes and licences (feature_models.first_run_offer) and posts consent: true. Label says ~6 GB, TARGETS says disk_gb 12.0 for voice-local-gpu (copy mismatch)."
  },
  {
   "section": "Voice",
@@ -1997,6 +1997,18 @@
   "reader_needle": "def cancel(",
   "status": "ok",
   "note": ""
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
+  "label": "Features that need a download: Download (per feature)",
+  "kind": "button+confirm",
+  "keys": [],
+  "route": "POST /api/voice/setup/install {target: feature:<id>, consent:true}",
+  "reader_file": "src/agent_friday/services/voice_installer.py",
+  "reader_needle": "for aid in fm.to_install(spec[\"feature\"]):",
+  "status": "ok",
+  "note": "Rows come from GET /api/voice/feature-models (services/feature_models.status). Each names the feature, the missing models and their size; the download starts only after the size confirmation."
  },
  {
   "section": "Voice",

@@ -280,7 +280,8 @@ class CallBridge:
         from agent_friday.services.channels.manager import _gated_system_prompt
         msgs = [{"role": "user" if h["who"] == "caller" else "assistant",
                  "content": h["text"]} for h in history[-12:]]
-        msgs[0]["content"] = CALL_NOTE + "\n\n" + msgs[0]["content"]
+        from agent_friday.services.agent_identity import named
+        msgs[0]["content"] = named(CALL_NOTE) + "\n\n" + msgs[0]["content"]
         last = history[-1]["text"] if history else ""
         reply, _ = _generate_agent(
             msgs, session_ctx={"origin": "phone", "authenticated": False},

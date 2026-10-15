@@ -148,7 +148,8 @@ function New-Shortcut {
         [string] $Arguments        = '',
         [string] $WorkingDirectory = '',
         [string] $Description      = '',
-        [string] $IconLocation     = ''
+        [string] $IconLocation     = '',
+        [int]    $WindowStyle      = 0
     )
     try {
         $dir = Split-Path -Parent $LinkPath
@@ -161,6 +162,9 @@ function New-Shortcut {
         if ($WorkingDirectory) { $sc.WorkingDirectory = $WorkingDirectory }
         if ($Description)      { $sc.Description      = $Description }
         if ($IconLocation)     { $sc.IconLocation     = $IconLocation }
+        # 7 = minimised: the .cmd's own window stays out of sight while it
+        # hands over to pythonw. 0 leaves the shell's default (normal).
+        if ($WindowStyle)      { $sc.WindowStyle      = $WindowStyle }
         $sc.Save()
         [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
 
@@ -188,7 +192,12 @@ function Install-Shortcuts {
     )
     $created = @()
 
-    $launcher  = Join-Path $InstallRoot 'Agent Friday.cmd'
+    # The tray launcher, not the console one: no black window, a tray icon,
+    # and the browser opens once Friday answers. A click while Friday already
+    # runs opens the page instead of doing nothing. When setup has not been
+    # completed the tray hands over to 'Agent Friday.cmd' so the wizard can
+    # ask its questions (friday_tray.main, --open).
+    $launcher  = Join-Path $InstallRoot 'Agent Friday (tray).cmd'
     $uninst    = Join-Path $InstallRoot 'Uninstall Agent Friday.cmd'
     $autotog   = Join-Path $InstallRoot 'Start Friday when I sign in.cmd'
 
@@ -202,7 +211,7 @@ function Install-Shortcuts {
     if ($desktop) {
         $p = New-Shortcut -LinkPath (Join-Path $desktop 'Agent Friday.lnk') `
                           -TargetPath $launcher -WorkingDirectory $InstallRoot `
-                          -Description 'Start Agent Friday' -IconLocation $IconPath
+                          -Description 'Start Agent Friday' -IconLocation $IconPath -WindowStyle 7
         if (-not $p) {
             # The link did not land. Ask the shell where the Desktop is NOW and
             # try that folder before giving up: the first answer can be a
@@ -212,7 +221,7 @@ function Install-Shortcuts {
                 Write-Log "Desktop shortcut failed in $desktop; retrying in the shell's Desktop $alt" 'WARN'
                 $p = New-Shortcut -LinkPath (Join-Path $alt 'Agent Friday.lnk') `
                                   -TargetPath $launcher -WorkingDirectory $InstallRoot `
-                                  -Description 'Start Agent Friday' -IconLocation $IconPath
+                                  -Description 'Start Agent Friday' -IconLocation $IconPath -WindowStyle 7
             }
         }
         if ($p) { $created += $p }
@@ -224,7 +233,7 @@ function Install-Shortcuts {
     if ($startMenu) {
         $p = New-Shortcut -LinkPath (Join-Path $startMenu 'Agent Friday.lnk') `
                           -TargetPath $launcher -WorkingDirectory $InstallRoot `
-                          -Description 'Start Agent Friday' -IconLocation $IconPath
+                          -Description 'Start Agent Friday' -IconLocation $IconPath -WindowStyle 7
         if ($p) { $created += $p }
 
         $p = New-Shortcut -LinkPath (Join-Path $startMenu 'Uninstall Agent Friday.lnk') `
@@ -257,6 +266,12 @@ function Test-ShortcutsInstalled {
         [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
         if (-not $target -or -not (Test-Path -LiteralPath $target)) {
             Write-Log "Desktop shortcut exists but its target '$target' does not." 'FAIL'
+            return $false
+        }
+        # An older install pointed it at the console launcher. Not "installed"
+        # until it points at the tray launcher, so an upgrade repoints it.
+        if ((Split-Path -Leaf $target) -ne 'Agent Friday (tray).cmd') {
+            Write-Log "Desktop shortcut points at '$target', not the tray launcher; it will be recreated." 'WARN'
             return $false
         }
     } catch {
@@ -529,6 +544,21 @@ cd /d "%~dp0app"
 start "" "%~dp0$pywRel" "%~dp0app\friday_tray.py"
 "@
 
+    # What the Desktop and Start menu icons run. Same quiet tray as the sign-in
+    # start, plus --open: the browser opens once Friday answers, and when a
+    # tray is already running the click opens the page instead of exiting
+    # silently. Setup not done yet -> the tray hands over to 'Agent Friday.cmd'
+    # so the wizard runs in a window that can ask questions.
+    $tray = @"
+@echo off
+rem Agent Friday - what the desktop icon runs. pythonw.exe has no console
+rem window; Friday lives in the tray and opens in your browser.
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
+cd /d "%~dp0app"
+start "" "%~dp0$pywRel" "%~dp0app\friday_tray.py" --open
+"@
+
     $autostartToggle = @"
 @echo off
 rem Turns the automatic start on or off. This is here so that turning it off
@@ -550,6 +580,7 @@ if exist "%~dp0unins000.exe" (
     $map = @{
         'Agent Friday.cmd'                    = $console
         'Agent Friday (background).cmd'       = $background
+        'Agent Friday (tray).cmd'             = $tray
         'Start Friday when I sign in.cmd'     = $autostartToggle
         'Uninstall Agent Friday.cmd'          = $uninstall
     }
@@ -568,7 +599,7 @@ if exist "%~dp0unins000.exe" (
 
 function Test-LauncherScripts {
     param([Parameter(Mandatory)][string] $InstallRoot)
-    foreach ($n in @('Agent Friday.cmd','Agent Friday (background).cmd',
+    foreach ($n in @('Agent Friday.cmd','Agent Friday (background).cmd','Agent Friday (tray).cmd',
                      'Start Friday when I sign in.cmd','Uninstall Agent Friday.cmd')) {
         if (-not (Test-Path -LiteralPath (Join-Path $InstallRoot $n))) {
             Write-Log "Missing launcher: $n" 'FAIL'

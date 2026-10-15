@@ -1303,8 +1303,82 @@ def _gate_tool_use(part: dict, provider: str, field: str,
     inp = part.get("input")
     if not isinstance(inp, (dict, list, str)):
         return part
-    return {**part, "input": _gate_arg_values(
-        inp, provider, f"{field}.tool_use.input", log_path)}
+    return {**part, "input": _gate_tool_args(
+        part.get("name"), inp, provider, f"{field}.tool_use.input", log_path)}
+
+
+def _gate_tool_args(tool_name, args, provider: str, field: str,
+                    log_path: Path | None = None):
+    """Gate a replayed tool call's arguments: a public query field the
+    receiving provider itself wrote by the public-query floor, everything
+    else by _gate_arg_values.
+
+    Owner decision (a), 2026-10-15 (privacy/public_query.py): the query text
+    of search_web / search_news / deep_research is not private because of its
+    topic. Without this, the vault gate let a cloud seat's Medicaid search
+    run and then this replay withheld the same query from the same seat on
+    the next turn.
+
+    PROVENANCE, NOT TOOL NAME. History can hold a search_web call a LOCAL
+    seat wrote from private context, one a different provider wrote, or one
+    check_action refused. Those were never this provider's text. So a public
+    field's value is floor-only here ONLY when public_query.is_cloud_query
+    (provider, value): `provider` (the one this history is being sent to)
+    wrote exactly that string and check_action passed it. Any other value,
+    every other argument and every other tool is gated by _gate_arg_values,
+    exactly as before. A floor refusal withholds the value (and names
+    privacy.public_query in friday.log and the egress log).
+    """
+    try:
+        from agent_friday.privacy import public_query as _pq
+        fields = _pq.public_fields(str(tool_name or ""))
+    except Exception:
+        fields = frozenset()
+    if not fields or not isinstance(args, dict):
+        return _gate_arg_values(args, provider, field, log_path)
+
+    def _one(text: str, sub: str):
+        try:
+            mine = _pq.is_cloud_query(provider, text)
+        except Exception:
+            mine = False                 # unknown provenance: ordinary gate
+        if mine:
+            return _gate_public_query_value(text, tool_name, provider, sub, log_path)
+        return _gate_arg_values(text, provider, sub, log_path)
+
+    out = {}
+    for k, v in args.items():
+        sub = f"{field}.{k}"
+        if k in fields and isinstance(v, str):
+            out[k] = _one(v, sub)
+        elif k in fields and isinstance(v, list) and all(isinstance(x, str) for x in v):
+            out[k] = [_one(x, f"{sub}[{i}]") for i, x in enumerate(v)]
+        else:
+            out[k] = _gate_arg_values(v, provider, sub, log_path)
+    return out
+
+
+def _gate_public_query_value(text: str, tool_name, provider: str, field: str,
+                             log_path: Path | None = None) -> str:
+    """One public query string `provider` itself wrote (see _gate_tool_args):
+    the floor decides, topic is not consulted."""
+    if not text:
+        return text
+    try:
+        from agent_friday.privacy import public_query as _pq
+        refusal = _pq.check(text, action=str(tool_name or ""),
+                            provider=provider, surface=field)
+        why = None if refusal is None else f"{refusal.component} refused: {refusal.reason}"
+    except Exception as e:           # fail closed
+        why = f"privacy.public_query unavailable ({type(e).__name__})"
+    if why is None:
+        _log(provider, field, Tier.PUBLIC, "allow",
+             "public query text: never-send floor and owner identifiers "
+             "checked, topic not classified (owner decision 2026-10-15)",
+             log_path)
+        return text
+    _log(provider, field, Tier.SENSITIVE, "redact", why, log_path)
+    return _ARG_WITHHELD
 
 
 def _gate_tool_calls(tool_calls: list, provider: str, field: str,
@@ -1339,15 +1413,17 @@ def _gate_tool_calls(tool_calls: list, provider: str, field: str,
         if isinstance(args, str):
             parsed = _try_json(args)
             if parsed is not None:
-                gated_args = json.dumps(_gate_arg_values(
-                    parsed, provider, f"{field}.function.arguments", log_path))
+                gated_args = json.dumps(_gate_tool_args(
+                    fn.get("name"), parsed, provider,
+                    f"{field}.function.arguments", log_path))
             else:
                 g = _gate_text(args, provider,
                                f"{field}.function.arguments", log_path)
                 gated_args = g if (not args or g) else _ARG_WITHHELD
         elif isinstance(args, (dict, list)):
-            gated_args = _gate_arg_values(
-                args, provider, f"{field}.function.arguments", log_path)
+            gated_args = _gate_tool_args(
+                fn.get("name"), args, provider,
+                f"{field}.function.arguments", log_path)
         else:
             gated.append(tc)
             continue
