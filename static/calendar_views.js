@@ -620,6 +620,63 @@
         h('span', null, done.text), h('button', { type: 'button', className: 'btn', 'aria-label': 'Dismiss', onClick: () => setDone(null) }, '×')) : null);
   }
 
+  // ── deleting an event: on the item, styled as destructive, and a confirmation that names what goes ──────
+  // The delete itself is POST /api/calendar/events/<id>/delete (calendar_write.delete_event), built by the
+  // field bug-log work; this file only asks and sends exactly the event shown.
+  const DELETE_EVENT = 'friday:cal-propose-delete';
+  function DeleteButton(props) {
+    const ev = props.ev;
+    if (!ev || ev.source !== 'google' || ev.can_edit !== true || ev.media) return null;
+    return h('button', { type: 'button', className: 'calv-delete', 'aria-label': 'Delete “' + ev.title + '”',
+      onClick: e => { e.stopPropagation(); window.dispatchEvent(new CustomEvent(DELETE_EVENT, { detail: { ev } })); } }, 'Delete');
+  }
+  function DeleteLayer(props) {
+    const { useState, useEffect, useRef } = R();
+    const [pending, setPending] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [done, setDone] = useState(null);
+    const cancelRef = useRef(null);
+    const onDeleted = useRef(props.onDeleted);
+    onDeleted.current = props.onDeleted;
+    useEffect(() => {
+      const on = e => { if (e.detail && e.detail.ev) setPending(e.detail); };
+      window.addEventListener(DELETE_EVENT, on);
+      return () => window.removeEventListener(DELETE_EVENT, on);
+    }, []);
+    useEffect(() => { if (pending && cancelRef.current) cancelRef.current.focus(); }, [pending]);
+    useEffect(() => { if (!done) return; const t = setTimeout(() => setDone(null), done.failed ? 15000 : 8000); return () => clearTimeout(t); }, [done]);
+    const send = async () => {
+      const ev = pending.ev;
+      setBusy(true);
+      try {
+        const r = await api('/api/calendar/events/' + encodeURIComponent(ev.id) + '/delete', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calendar_id: ev.calendar_id || 'primary', account_id: ev.account_id || null, confirmed: true }),
+        });
+        let d = {};
+        try { d = await r.json(); } catch (_) { d = {}; }
+        if (r.ok && (d.ok || d.status === 'ok')) { setDone({ text: 'Deleted “' + ev.title + '”.' }); if (onDeleted.current) onDeleted.current(); }
+        else setDone({ text: "Couldn't delete “" + ev.title + '”: ' + (d.message || d.error || 'Google did not take it') + '. Nothing was deleted.', failed: true });
+      } catch (_) { setDone({ text: "Couldn't reach " + who() + ' to delete it. Nothing was deleted.', failed: true }); }
+      setBusy(false);
+      setPending(null);
+    };
+    const guests = pending && pending.ev.attendees && pending.ev.attendees.length;
+    return h(R().Fragment, null,
+      pending ? h('div', { className: 'calv-modal-back', onClick: () => !busy && setPending(null) },
+        h('div', { className: 'calv-modal', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'calv-del-title', onClick: e => e.stopPropagation(),
+          onKeyDown: e => { if (e.key === 'Escape') { e.stopPropagation(); if (!busy) setPending(null); } } },
+          h('div', { id: 'calv-del-title', className: 'calv-modal-title' }, 'Delete “' + pending.ev.title + '”?'),
+          h('div', { className: 'calv-modal-line' }, whenText(pending.ev.start_time) + (pending.ev.calendar_name ? ' · ' + pending.ev.calendar_name : '')),
+          h('div', { className: 'calv-modal-dim' }, 'It is removed from Google Calendar.' + (pending.ev.recurring ? ' Only this one occurrence is deleted.' : '')),
+          guests ? h('div', { className: 'calv-modal-dim' }, guests + (guests === 1 ? ' guest is' : ' guests are') + ' on this event.') : null,
+          h('div', { className: 'calv-modal-actions' },
+            h('button', { type: 'button', className: 'btn', ref: cancelRef, onClick: () => setPending(null), disabled: busy }, 'Cancel'),
+            h('button', { type: 'button', className: 'btn calv-danger', onClick: send, disabled: busy }, busy ? 'Deleting…' : 'Delete event')))) : null,
+      done ? h('div', { className: 'calv-undo' + (done.failed ? ' failed' : ''), role: done.failed ? 'alert' : 'status' },
+        h('span', null, done.text), h('button', { type: 'button', className: 'btn', 'aria-label': 'Dismiss', onClick: () => setDone(null) }, '×')) : null);
+  }
+
   // ── styles (tokens only; the event colour arrives as --ev) ─────────────────
   const CSS = `
 .calv-toolbar{position:relative;display:flex;align-items:center;gap:var(--fr-gap,8px);flex-wrap:wrap;margin:0 0 10px}
@@ -694,6 +751,9 @@
 .calv-rsvp-btn{background:none;border:1px solid var(--fr-glass-edge);border-radius:6px;color:var(--fr-text);font-size:10px;padding:1px 6px;cursor:pointer;min-height:20px}
 .calv-rsvp-btn.on{border-color:var(--fr-cyan);color:var(--fr-cyan);cursor:default}
 .calv-rsvp-btn:focus-visible{box-shadow:var(--fr-focus);outline:none}
+.calv-delete{background:none;border:1px solid transparent;border-radius:6px;color:var(--fr-error);font-size:10px;padding:1px 6px;cursor:pointer;min-height:20px}
+.calv-delete:hover,.calv-delete:focus-visible{border-color:var(--fr-error);outline:none}
+.calv-danger{color:var(--fr-error);border-color:var(--fr-error)}
 @container (max-width:719px){.calv-cell{min-height:64px}.calv-chip-time{display:none}}
 `;
   function injectStyle() {
@@ -705,5 +765,5 @@
   }
   if (document.head) injectStyle(); else document.addEventListener('DOMContentLoaded', injectStyle);
 
-  window.CalendarViews = { RsvpButtons, RsvpLayer, VIEWS, ViewSwitch, Nav, WeekView, MonthView, FreeBusyView, CalendarsPanel, OnlyChip, useCalendars, slug, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
+  window.CalendarViews = { DeleteButton, DeleteLayer, RsvpButtons, RsvpLayer, VIEWS, ViewSwitch, Nav, WeekView, MonthView, FreeBusyView, CalendarsPanel, OnlyChip, useCalendars, slug, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
 })();
