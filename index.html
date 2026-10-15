@@ -38931,7 +38931,7 @@ function calFmtTime(iso) {
   });
 }
 fridayDeclareNav('calendar', {
-  keys: ['date', 'view', 'meeting_id', 'event', 'start'],
+  keys: ['date', 'view', 'meeting_id', 'event', 'start', 'prep'],
   sections: [{
     id: 'meetings',
     label: 'Meetings',
@@ -38979,6 +38979,8 @@ function CalendarWS() {
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   // what its own tab (↗) opens on: the keys useNavTarget below reads
   const [shownEvent, setShownEvent] = useState('');
+  // A reminder's "open its prep" (notification target prep: '1') opens that event's prep card once it is on screen.
+  const [prepWanted, setPrepWanted] = useState('');
   const [view, setViewRaw] = useState(calStoredView);
   const [anchor, setAnchor] = useState(() => window.CalendarViews ? window.CalendarViews.iso(new Date()) : '');
   const [rangeTick, setRangeTick] = useState(0);
@@ -38989,6 +38991,8 @@ function CalendarWS() {
     if (t.view && CAL_VIEW_IDS.includes(t.view)) { setView(t.view); if (t.date) setAnchor(t.date); if (t.view !== 'day' && !t.event) return; }
     if (t.event) {
       // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
+      if (view !== 'day') setView('day');
+      if (t.prep) setPrepWanted(String(t.event));
       if (t.date) { setSel(t.date); loadDay(t.date); }
       const ref = 'event:' + encodeURIComponent(String(t.event));
       [400, 900, 1800].forEach(ms => setTimeout(() => {
@@ -39126,6 +39130,13 @@ function CalendarWS() {
   };
   const active = sel ? dayData : today;
   const events = active?.events || [];
+  useEffect(() => {
+    if (!prepWanted) return;
+    const ev = events.find(x => String(x.id) === prepWanted);
+    if (!ev) return;
+    setPrepWanted('');
+    if (ev.prep_available && prepFor !== ev.id) genPrep(ev);
+  }, [prepWanted, active]);
   // Free time is never drawn from a read that failed.
   const gaps = active?.read_failed ? [] : active?.gaps || [];
   const allDay = events.filter(e => e.all_day);
@@ -39324,7 +39335,9 @@ function CalendarWS() {
       className: "cal-ev-meta"
     }, /*#__PURE__*/React.createElement("span", null, calFmtTime(e.start_time), e.end_time ? ' – ' + calFmtTime(e.end_time) : ''), e.location && /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCCD ", e.location), e.attendees && e.attendees.length > 0 && /*#__PURE__*/React.createElement("span", null, "\uD83D\uDC65 ", e.attendees.length), e.countdown && /*#__PURE__*/React.createElement("span", {
       className: "cal-countdown"
-    }, "\u23F3 ", e.title.split(' ')[0], " in ", e.countdown), e.prep_available && /*#__PURE__*/React.createElement("span", {
+    }, "\u23F3 ", e.title.split(' ')[0], " in ", e.countdown), window.CalendarViews && window.CalendarViews.reminderText(e) && /*#__PURE__*/React.createElement("span", {
+      className: "cal-ev-remind"
+    }, window.CalendarViews.reminderText(e)), e.prep_available && /*#__PURE__*/React.createElement("span", {
       className: "cal-prep-badge"
     }, "Prep available"), e.related_emails && e.related_emails.length > 0 && /*#__PURE__*/React.createElement("span", {
       style: {
