@@ -25,9 +25,11 @@
   var loaded = (typeof root.__FRIDAY_BUILD_ID__ === 'string' && root.__FRIDAY_BUILD_ID__) || null;
   var state = { loaded: loaded, seen: null, shownFor: null, dismissedFor: null, lastFed: 0, lastPoll: 0 };
 
+  // The notice names the application, so it carries the mark: the page's
+  // FRIDAY_BRAND.name (brand.PAGE_NAMES), never the unmarked .product.
   function productName() {
     var b = root.FRIDAY_BRAND || {};
-    return b.product || 'Agent Friday';
+    return b.name || 'Agent Friday™';
   }
 
   function reducedMotion() {

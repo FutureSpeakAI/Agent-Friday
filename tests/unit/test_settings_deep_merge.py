@@ -73,15 +73,21 @@ def test_one_host_voice_keeps_that_hosts_name(friday_dir):
     assert hosts["b"] == _PODCASTS["hosts"]["b"]
 
 
-def test_a_partial_block_on_a_file_without_that_block_starts_from_the_defaults(friday_dir):
-    # A settings.json written before the block existed: the save must not
-    # persist the one field as the whole block.
+def test_a_partial_block_on_a_file_without_that_block_stores_only_what_was_saved(friday_dir):
+    # A settings.json written before the block existed: the save stores the
+    # delta, not the default block (a default saved to disk would read as the
+    # owner's choice and never follow a later default), and the reader fills
+    # the rest from its defaults.
+    from agent_friday.services import podcast_engine as pe
     _write_file({"agent_name": "TEST AGENT"})
     core._save_settings({"podcasts": {"on_ready": "silent"}})
-    pod = _on_disk()["podcasts"]
-    assert pod["on_ready"] == "silent"
-    assert pod["format"] == core.DEFAULT_SETTINGS["podcasts"]["format"]
-    assert pod["hosts"] == core.DEFAULT_SETTINGS["podcasts"]["hosts"]
+    assert _on_disk()["podcasts"] == {"on_ready": "silent"}
+    core._invalidate_settings_cache()
+    cfg = pe.settings()
+    assert cfg["on_ready"] == "silent"
+    assert cfg["format"] == pe.DEFAULTS["format"]
+    assert cfg["length"] == pe.DEFAULTS["length"]
+    assert cfg["hosts"]["b"] == pe.DEFAULTS["hosts"]["b"]
 
 
 def test_other_partial_writers_keep_their_siblings(friday_dir):

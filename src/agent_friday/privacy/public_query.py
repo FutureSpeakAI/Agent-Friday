@@ -371,10 +371,12 @@ def _owner_identifiers() -> tuple[list, list, str]:
     return watch, idents, cell
 
 
-def _identifier_pattern(token: str) -> "re.Pattern":
-    esc = re.escape(token)
-    left = r"\b" if token[:1].isalnum() else ""
-    right = r"\b" if token[-1:].isalnum() else ""
+def _identifier_pattern(word: str) -> "re.Pattern":
+    """A watchlist word or owner identifier (never a credential), matched
+    whole where its ends are word characters."""
+    esc = re.escape(word)
+    left = r"\b" if word[:1].isalnum() else ""
+    right = r"\b" if word[-1:].isalnum() else ""
     return re.compile(left + esc + right, re.IGNORECASE)
 
 

@@ -163,7 +163,7 @@ const all = [];
 const body = new El('body');
 global.window = {
   __FRIDAY_BUILD_ID__: process.argv[3],
-  FRIDAY_BRAND: { product: 'Agent Friday' },
+  FRIDAY_BRAND: { product: 'Agent Friday', name: 'Agent Friday™' },
   location: { reloads: 0, reload() { this.reloads++; } },
   matchMedia: () => ({ matches: true }),
   addEventListener() {}, setInterval() {}, fetch: undefined,

@@ -4111,7 +4111,7 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():
         if (k in _DEEP_MERGED_BLOCKS and isinstance(v, dict)
-                and isinstance(merged.get(k), dict)):
+                and isinstance(existing.get(k), dict)):
             # Deep-merge per key: a partial delta (the wizard and the Settings
             # sections send only the fields they edited) must not reset every
             # untouched sibling back to defaults.
@@ -4122,10 +4122,15 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             # block, silently resetting `mode` — so changing a privacy switch
             # could move every future turn to a different provider.
             #
-            # The base is the stored block, or the default block when the file
-            # has none yet (a block added by a later version): merging onto
-            # nothing would persist the partial delta as the whole block.
-            merged[k] = _deep_merge_block(merged[k], v, k)
+            # The base is the block as STORED. A file with no such block yet
+            # stores the delta alone (the else branch), never the default
+            # block: what is on disk is what was saved, so a default that
+            # changes in a later version still reaches every key the owner
+            # never set. Readers fill the rest from their defaults
+            # (podcast_engine.settings, hologram_tools.current); the tracking
+            # tests (test_partial_tracking_settings_preserve_siblings_on_disk,
+            # test_concurrent_tracking_saves) hold this.
+            merged[k] = _deep_merge_block(existing[k], v, k)
         else:
             merged[k] = v
     # Reconcile capability_routing ⇄ flat *_model keys before persisting so the

@@ -246,6 +246,19 @@ MIGRATION_STAMP = "defaults_off_migrated"
 #: The shipped default this migration clears (origin/main before caps shipped off).
 OLD_DAILY_CREATION_DEFAULT = 0.5
 
+#: The one stamp this process gives the migration. Until the stamp is on disk
+#: (the persist is tried once per process and can fail), every read applies the
+#: migration in memory again; each of those must carry the SAME value, or two
+#: reads of an unchanged settings.json differ, and a later save persists
+#: whichever stamp it happened to see.
+_PROCESS_STAMP: List[str] = []
+
+
+def _migration_stamp() -> str:
+    if not _PROCESS_STAMP:
+        _PROCESS_STAMP.append(datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    return _PROCESS_STAMP[0]
+
 
 def migrate_settings(settings: dict) -> Optional[Dict[str, Any]]:
     """Clear the old shipped daily creation ceiling, once. Pure apart from the
@@ -254,14 +267,16 @@ def migrate_settings(settings: dict) -> Optional[Dict[str, Any]]:
     `settings` is the merged settings dict and is updated in place (the
     spending_caps block is replaced by a new dict, never mutated, since it may
     be DEFAULT_SETTINGS' own). Returns the delta to persist, or None when the
-    migration has already run. The delta always carries the stamp, so even a
-    run that changes nothing is recorded and never repeated.
+    migration has already run (the stored block carries the stamp: it is never
+    re-stamped). The delta always carries the stamp, so even a run that changes
+    nothing is recorded and never repeated. Until it is persisted, every
+    in-memory application in this process uses the same stamp value.
     """
     blk = _block(settings, "spending_caps")
     if blk.get(MIGRATION_STAMP):
         return None
     answered = blk.get("answered") if isinstance(blk.get("answered"), dict) else {}
-    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    stamp = _migration_stamp()
     delta: Dict[str, Any] = {"spending_caps": {MIGRATION_STAMP: stamp}}
     v = (settings or {}).get("daily_creation_budget_usd")
     try:

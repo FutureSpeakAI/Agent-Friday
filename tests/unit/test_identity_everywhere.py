@@ -208,7 +208,8 @@ def test_the_podcast_tool_takes_hosts_for_one_episode():
     from agent_friday.core import DEFAULT_SETTINGS
     from agent_friday.services import podcast_engine as pe
     assert DEFAULT_SETTINGS["podcasts"]["format"]["any"] == pe.RECOMMENDED_FORMAT["any"] == "solo"
-    assert DEFAULT_SETTINGS["identity"] == {"pronouns": "auto", "local_voice_matches_cloud": True}
+    assert DEFAULT_SETTINGS["identity"] == {"pronouns": "auto", "local_voice_matches_cloud": True,
+                                         "name_in_lockup": False}
 
 
 # ── pronouns and the local voice ─────────────────────────────────────────────

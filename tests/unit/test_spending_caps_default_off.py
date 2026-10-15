@@ -176,6 +176,41 @@ def test_an_old_install_loses_the_shipped_creation_ceiling_once_and_is_asked(
     assert core._load_settings()["daily_creation_budget_usd"] == 0.5
 
 
+def test_the_migration_stamp_is_one_value_until_it_is_saved(friday_dir, monkeypatch):
+    """The persist is tried once per process. When it has already been tried
+    (another settings file earlier in this process, or a write that failed),
+    every read applies the migration in memory again -- and must carry the
+    same stamp each time, so an unrelated save does not change the block."""
+    from datetime import datetime as _real_dt, timedelta, timezone
+    from agent_friday.services import spending_caps as sc
+    monkeypatch.setattr(core, "_CAPS_MIGRATION_TRIED", [True], raising=False)
+    tick = [0]
+
+    class _Clock(_real_dt):
+        @classmethod
+        def now(cls, tz=None):
+            tick[0] += 1
+            return _real_dt(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=tick[0])
+
+    monkeypatch.setattr(sc, "datetime", _Clock)
+    monkeypatch.setattr(sc, "_PROCESS_STAMP", [], raising=False)
+    _fresh_settings({"agent_name": "TEST AGENT", "daily_creation_budget_usd": 0.5})
+
+    first = core._load_settings_raw()["spending_caps"].get(sc.MIGRATION_STAMP)
+    core._invalidate_settings_cache()
+    second = core._load_settings_raw()["spending_caps"].get(sc.MIGRATION_STAMP)
+    assert first and first == second, "each read re-stamped the migration: %r -> %r" % (first, second)
+    core._save_settings({"agent_name": "TEST AGENT 2"})
+    core._invalidate_settings_cache()
+    assert core._load_settings_raw()["spending_caps"].get(sc.MIGRATION_STAMP) == first
+
+    # A stamp already stored is never replaced.
+    _fresh_settings({"agent_name": "TEST AGENT",
+                     "spending_caps": {sc.MIGRATION_STAMP: "2025-01-01T00:00:00+00:00"}})
+    assert core._load_settings_raw()["spending_caps"][sc.MIGRATION_STAMP] == \
+        "2025-01-01T00:00:00+00:00"
+
+
 def test_an_answered_creation_ceiling_of_fifty_cents_is_kept(friday_dir, monkeypatch):
     from agent_friday.services import spending_caps as sc
     monkeypatch.setattr(core, "_CAPS_MIGRATION_TRIED", [False], raising=False)

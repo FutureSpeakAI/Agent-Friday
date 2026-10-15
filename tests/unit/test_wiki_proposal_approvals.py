@@ -369,8 +369,23 @@ def test_every_write_is_under_the_pending_lock(wiki, client, monkeypatch):
 # ── the page approved is the page the owner saw (before_sha256) ─────────────
 
 def _sha(text):
+    """The documented preview hash: SHA-256 of the UTF-8 text with line endings
+    normalised to LF (Path.write_text writes CRLF on Windows; the hash must not care)."""
     import hashlib
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_the_preview_hash_is_the_same_for_a_page_saved_with_windows_line_endings(wiki, client):
+    """A page saved with CRLF (any Windows editor, or Path.write_text there)
+    previews with the same hash as its LF twin, and approving from that preview
+    applies -- on every platform, not only where the test happens to run."""
+    (wiki / PAGE).write_bytes(BODY.replace("\n", "\r\n").encode("utf-8"))
+    pid = _queue("replace_file")
+    seen = _row(client, pid)["preview"]["before_sha256"]
+    assert seen == _sha(BODY) == we.wiki_before_sha256(BODY)
+    r = client.post(f"/api/wiki/pending/{pid}/approve", json={"before_sha256": seen})
+    assert r.status_code == 200 and r.get_json()["status"] == "applied", r.get_json()
 
 
 def _row(client, pid):

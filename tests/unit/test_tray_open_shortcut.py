@@ -65,7 +65,9 @@ def test_inno_desktop_and_start_menu_icons_run_the_tray_launcher():
 
 def test_inno_sign_in_start_and_first_run_are_unchanged():
     assert r'Filename: "{app}\Agent Friday (background).cmd"' in _icon_line(r"{userstartup}\{#AppName}")
-    run = SCRIPT[SCRIPT.index("[Run]"):]
+    # The section header itself, at the start of a line: the [Icons] comment
+    # mentions "[Run]" too.
+    run = SCRIPT[re.search(r"(?m)^\[Run\][ \t]*\r?$", SCRIPT).start():]
     first = run.splitlines()[1]
     assert r'Filename: "{app}\Agent Friday.cmd"' in first and "postinstall" in first, \
         "the first start after setup stays on the console launcher, where the wizard can ask its questions"

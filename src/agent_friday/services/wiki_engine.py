@@ -595,8 +595,17 @@ def apply_decided_wiki_proposal(item):
 
 def wiki_before_sha256(text):
     """The hash a preview carries of the page it was computed against
-    (``plan["before"]``; the empty string for a page that does not exist)."""
-    return _hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+    (``plan["before"]``; the empty string for a page that does not exist).
+
+    Definition (platform-independent): SHA-256 of the page's decoded text as
+    UTF-8, with line endings normalised to ``\\n`` (CRLF and lone CR become LF).
+    That is the page as the preview shows it -- the diff is line-based -- so a
+    page saved with Windows line endings hashes the same as on Linux/macOS, and
+    a client can recompute it from the text it displays. A change of line
+    endings alone is not a change the owner could have seen, so it is not stale.
+    """
+    norm = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    return _hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
 
 def _hash_refusal(plan, before_sha256, require):

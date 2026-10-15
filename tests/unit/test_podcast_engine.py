@@ -183,7 +183,8 @@ def test_an_episode_is_produced_with_timed_lines_captions_and_a_check(monkeypatc
     monkeypatch.setattr(provenance, "write", lambda path, **kw: signed.append((Path(path), kw)) or
                         {"artifact": {"content_hash": "h"}, "signature": "sig"})
 
-    ep = _text_ep(length="short")
+    # Two hosts asked for this episode: "any" is one voice by default now.
+    ep = _text_ep(length="short", hosts="duo")
     assert ep["status"] == "queued" and ep["privacy"] == "private"
     done = pe.produce(ep["id"])
     assert done["status"] == "ready", done.get("error")
