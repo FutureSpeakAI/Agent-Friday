@@ -2918,6 +2918,11 @@ DEFAULT_SETTINGS = {
         "heartbeat_every_minutes": 240,
         "heartbeat_from_hour": 8,
         "heartbeat_to_hour": 20,
+        # Under a cloud_only the owner CHOSE (model_routing.mode_chosen), News,
+        # podcast scripts and the heartbeat run on the models above: choosing
+        # that mode is the consent (cloud_intent.background_route).
+        # False keeps them local-only even then, as before.
+        "routine_follows_cloud_mode": True,
     },
     # ── Family / Minor mode (§7) ──
     # When on, generation runs an age-appropriate filter ON TOP of the adult harm
@@ -3876,6 +3881,28 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                 _mr_in = dict(_mr_in)
                 _mr_in.pop("mode", None)
                 data["model_routing"] = _mr_in
+    # THE RECORD THAT THE OWNER CHOSE THE MODE (model_routing.mode_chosen).
+    #
+    # cloud_only is also the factory default every fresh install seeds, so the
+    # stored mode alone is not evidence of a choice. Choosing cloud_only is the
+    # owner's consent for routine jobs to use the cloud
+    # (cloud_intent.background_route), and the consent needs this record to
+    # name the stored mode. It is written HERE, from the mode itself, only on an
+    # owner routing change; every other write has it stripped (a client cannot
+    # send it), and DEFAULT_SETTINGS never carries it.
+    _mr_in = (data or {}).get("model_routing")
+    if isinstance(_mr_in, dict):
+        _new_mode = str(_mr_in.get("mode") or "").strip().lower()
+        if owner_routing_change and _new_mode:
+            data = dict(data)
+            _mr_in = dict(_mr_in, mode_chosen=_new_mode,
+                          mode_chosen_at=datetime.now().isoformat(timespec="seconds"))
+            data["model_routing"] = _mr_in
+        elif "mode_chosen" in _mr_in or "mode_chosen_at" in _mr_in:
+            data = dict(data)
+            _mr_in = {k: v for k, v in _mr_in.items()
+                      if k not in ("mode_chosen", "mode_chosen_at")}
+            data["model_routing"] = _mr_in
     # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
     #
     # `laya_safe_writes` lets Laya raise approval cards for changes to the

@@ -1250,18 +1250,25 @@ WEEKLY_DIGESTS_DIR = FRONT_PAGES_DIR / "weekly"
 # archive including banned sources, and that is disclosed in the output.
 WEEKLY_EDITORIAL_HOUR = 19
 EDITORIALS_DIR = FRIDAY_DIR / "editorials"
-# Every News path writes and speaks on this computer and costs nothing: the
-# routines (Front Page, Briefing, Weekly Digest, Editorial), the News buttons,
-# the article deep dive and the read-aloud, whoever started them. There is no
-# cloud fallback, no cloud voice and no opt-out; a News run that cannot reach
-# the local seat waits for it and says so. Every run is inside the guard the
-# cloud transports refuse in, which also lifts any scheduled cloud pin for its
-# duration. Fetching the articles still reaches the web: that is reading the
+# In a local routing mode every News path writes and speaks on this computer
+# and costs nothing: the routines (Front Page, Briefing, Weekly Digest,
+# Editorial), the News buttons, the article deep dive and the read-aloud,
+# whoever started them. There is no cloud fallback and no cloud voice; a News
+# run that cannot reach the local seat waits for it and says so. Every run is
+# inside the guard the cloud transports refuse in, which also lifts any
+# scheduled cloud pin for its duration.
+#
+# Under a cloud_only mode the OWNER CHOSE, that choice is the consent: the
+# guard is a "routine" scope, released and pinned
+# to the routine cloud model (cloud_intent.background_route, the one reader).
+# The read-aloud passes kind="private" and stays on this computer's voice in
+# every mode. Fetching the articles still reaches the web: that is reading the
 # news, not writing it.
-def local_news_run(label):
-    """Context manager: this News run's model and voice calls are local-only."""
+def local_news_run(label, kind="routine"):
+    """Context manager: this News run's model and voice calls are local-only
+    in a local routing mode (and always, for kind="private")."""
     from agent_friday.services import local_only_guard
-    return local_only_guard.local_only(label)
+    return local_only_guard.local_only(label, kind=kind, job="news")
 
 
 def _local_news(label):

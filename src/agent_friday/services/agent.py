@@ -169,7 +169,8 @@ def _generate_crew_agent(messages, *, system, max_tokens, temperature,
     if session_ctx.get("crew_binding") != binding:
         raise RuntimeError("The Crew reasoning binding changed; start a new turn.")
     settings = _load_settings()
-    if str((settings.get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+    from agent_friday.services.cloud_intent import normalize_mode as _nm
+    if _nm((settings.get("model_routing") or {}).get("mode")) == "local_only":
         raise RuntimeError("Local-only mode is on. Cloud Crew is unavailable; no offline substitution was made.")
     provider, model = binding["provider"], binding["model"]
     refuse_if_active(provider, model)
@@ -6302,7 +6303,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         # this caller can hand work to a fresh worker thread.
         from agent_friday.services.local_only_guard import refuse_if_active, apply_pin, CloudRefused
         from agent_friday.user_errors import UserFacingPermissionError
-        if str((_load_settings().get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+        from agent_friday.services.cloud_intent import normalize_mode as _nm
+        if _nm((_load_settings().get("model_routing") or {}).get("mode")) == "local_only":
             raise UserFacingPermissionError("Local-only mode is on. Cloud Crew is unavailable.", status=403)
         try:
             refuse_if_active(profile["provider"], profile["model"])
@@ -14500,7 +14502,8 @@ def _crew_model_authority(session_ctx):
         crew_runtime.require_public_host_origin(sc.get("_crew_host_origin"))
     for aid, revision in (sc.get("crew_context_sources") or {}).items():
         crew_access.validate_dispatch(aid, binding["project_id"], revision)
-    if str((_load_settings().get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+    from agent_friday.services.cloud_intent import normalize_mode as _nm
+    if _nm((_load_settings().get("model_routing") or {}).get("mode")) == "local_only":
         raise crew_runtime.CrewRoomError("Local-only mode is on. This Crew model request was stopped.")
     refuse_if_active(profile["provider"], profile["model"])
     if apply_pin(profile["provider"], profile["model"]) != profile["model"]:

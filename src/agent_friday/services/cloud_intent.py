@@ -8,7 +8,9 @@ Routing modes (Beta 1.1, routing-modes addendum 2.1 / 2.4):
                          implicit), with one difference: when the cloud cannot be
                          reached the local brain may answer, and the reply says so in
                          the fixed words of ``laya_templates.OUTAGE_LOCAL`` (``outage_local``).
-                         Background work behaves as ``cloud_only``. Not offered in the UI
+                         Routine background work follows the local rows of
+                         ``background_route`` (it is not the consent ``cloud_only``
+                         is). Not offered in the UI
                          until the lead turns it on (``UI_HIDDEN_MODES``).
 * ``local_preferred`` -- local is the default for every model call. The cloud is
   called only with a recorded INTENT.
@@ -41,6 +43,59 @@ becomes an OFFER, not a cloud call.
 
 ``tests/unit/test_every_cloud_transport_requires_intent.py`` walks ``src/`` and
 fails by name on any transport that does not call ``require``.
+
+Routine background jobs (``background_route``)
+-----------------------------------------------
+
+The routine jobs (News front pages and briefings, the weekly digest and
+editorial, podcast scripts, the heartbeat, daily creation) ship local-only to
+save money (``scheduler.LOCAL_ONLY_BY_DEFAULT``). Where they run is answered
+HERE, once, and the scheduler, the News engine, the podcast writer and the
+local-only guard all ask ``background_route(job)``:
+
+=========================  ==========  ===================  ===================  ========
+mode                       job (**)    a local seat serves  scheduled_cloud      route
+                                                            .allow (*)
+=========================  ==========  ===================  ===================  ========
+cloud_only, owner chose it released    either               either               cloud
+any other                  any         yes                  either               local
+any other                  any         no                   yes                  cloud
+any other                  any         no                   no                   skip
+=========================  ==========  ===================  ===================  ========
+
+"Any other" is every other case: a local mode, ``cloud_preferred``, a
+``cloud_only`` nobody chose (below), and a job ``cloud_only`` does not release.
+
+(*) ``scheduled_cloud.allow`` is the owner's explicit opt-in, and it covers
+only the jobs it was asked about (``scheduled_cloud.JOBS``: daily creation and
+the heartbeat). For every other routine job it reads as "no".
+
+(**) The jobs a chosen ``cloud_only`` releases (``CLOUD_ONLY_RELEASES``): the
+News routines (front pages, briefings, the weekly digest and editorial),
+podcast scripts and the heartbeat. Daily creation is not among them: it was
+not named in the owner's decision and stays on its explicit opt-in.
+
+Owner decision (2026-10-15): choosing ``cloud_only`` IS consent for news,
+podcasts, briefings and the heartbeat to use the cloud. Those jobs then run on
+the cloud, pinned to the one cloud model ``scheduled_cloud`` names for them
+(``heartbeat_model`` or ``job_model``), so an unattended run can never escalate
+to a dearer model; with no model set there the job is skipped and says so.
+``scheduled_cloud.routine_follows_cloud_mode: false`` keeps them local even
+under ``cloud_only`` (the old behaviour).
+
+The consent is the CHOOSING. ``cloud_only`` is also the factory default that
+every fresh install writes into settings.json, so the stored mode alone proves
+nothing. ``model_routing.mode_chosen`` is the evidence: core._save_settings
+writes it only on an owner routing change (the Settings mode control, the
+setup chat / setup completion) and strips it from every other write; the
+defaults never carry it. The consent row needs ``mode_chosen`` to name the
+stored mode (``mode_was_chosen``). A blank mode, a factory ``cloud_only``, a
+mode moved by anything but the owner, and an unreadable (degraded) settings
+read are all NOT chosen, and keep the other rows.
+
+What is NOT routine stays local in every mode: a ``local_only`` scope opened
+for privacy (compaction, meeting capture, memory review, citations, a private
+podcast episode) and a local-only schedule the owner wrote themselves.
 """
 
 from __future__ import annotations
@@ -333,6 +388,35 @@ def _stored_mode():
     return ((core._load_settings() or {}).get("model_routing") or {}).get("mode")
 
 
+#: The record of the owner's own routing choice (``core._save_settings`` writes
+#: it on an owner routing change only). Not in DEFAULT_SETTINGS.
+MODE_CHOSEN_KEY = "mode_chosen"
+
+
+def _chosen_mode():
+    """The mode the owner's own routing change recorded, or "". A degraded
+    (unreadable) settings read has no evidence of a choice: ""."""
+    from agent_friday import core
+    raw = core._load_settings_raw() or {}
+    if core._is_degraded_settings(raw):
+        return ""
+    mr = raw.get("model_routing")
+    return str((mr or {}).get(MODE_CHOSEN_KEY) or "") if isinstance(mr, dict) else ""
+
+
+def mode_was_chosen(mode=None) -> bool:
+    """True when the owner chose ``mode`` (default: the stored mode) through an
+    owner routing change. A blank mode is never chosen; any fault is "no"."""
+    try:
+        stored = _stored_mode() if mode is None else mode
+        if not str(stored or "").strip():
+            return False
+        chosen = str(_chosen_mode() or "").strip()
+        return bool(chosen) and normalize_mode(chosen) == normalize_mode(stored)
+    except Exception:
+        return False
+
+
 def mode_is_unset() -> bool:
     """True when the owner has not chosen a mode (a blank or missing setting).
 
@@ -398,6 +482,128 @@ def allows(mode: str, intent: Intent | None) -> bool:
             return False
         return intent.intent == "scheduled_cloud" or intent.confirmed
     return intent.intent in EXPLICIT_INTENTS
+
+
+# ── routine background jobs ──────────────────────────────────────────────────
+
+#: Routine jobs by the name the code passes. The scheduler's ids for the
+#: built-in routines are routine too (``is_routine_job``).
+ROUTINE_JOBS = frozenset({"news", "podcast", "briefing", "heartbeat",
+                          "daily_creation"})
+
+#: The routine jobs a CHOSEN ``cloud_only`` releases onto the cloud (owner
+#: decision 2026-10-15: "news, podcasts, briefings and the heartbeat"): the
+#: News routines by name and by scheduler id, podcast scripts, the heartbeat.
+#: Daily creation is not named and keeps its explicit opt-in.
+CLOUD_ONLY_RELEASES = frozenset({
+    "news", "briefing", "podcast", "heartbeat",
+    "sch_news_morning", "sch_front_page_evening", "sch_afternoon_briefing",
+    "sch_weekly_digest", "sch_weekly_editorial", "sch_heartbeat",
+})
+
+
+@dataclass(frozen=True)
+class BackgroundRoute:
+    """Where a routine background job runs, and why (for the log and the UI)."""
+    route: str             # "local" | "cloud" | "skip"
+    reason: str
+    mode: str
+    model: str = ""        # the cloud model the run is pinned to (route == "cloud")
+    local_model: str = ""  # the serving local seat (route == "local"), when known
+
+
+def is_routine_job(job) -> bool:
+    j = str(job or "").strip()
+    if j in ROUTINE_JOBS:
+        return True
+    try:
+        from agent_friday.services.scheduler import LOCAL_ONLY_BY_DEFAULT
+        return j in LOCAL_ONLY_BY_DEFAULT
+    except Exception:
+        return False
+
+
+def _background_mode(mode=None) -> str:
+    """The OWNER's mode, not the guard-shadowed one: a local-only scope makes
+    ``routing_mode`` say ``local_only`` while it is open, which is the scope's
+    effect, not the owner's choice. Unreadable fails closed to ``local_only``."""
+    if mode is not None:
+        return normalize_mode(mode)
+    try:
+        return normalize_mode(_stored_mode())
+    except Exception:
+        return "local_only"
+
+
+def background_route(job, *, local_serving=None, mode=None) -> BackgroundRoute:
+    """Where routine background job ``job`` runs right now. The truth table is
+    in this module's docstring; this function is the only place it is written.
+
+    ``job`` is a scheduler id (``sch_heartbeat``) or a routine name
+    (``"news"``, ``"podcast"``). ``local_serving`` is the serving local seat:
+    a bool, a model name, a callable returning either, or None to ask the
+    scheduler (``_resolve_local_seat``). It is asked only when the answer
+    depends on it, so the consent row never probes the seat.
+
+    ``mode`` given explicitly is the caller's own question ("what would this
+    mode do?") and is taken as chosen; None reads the owner's stored mode and
+    needs the ``mode_chosen`` record for the consent row.
+
+    A cloud answer always names a non-empty model to pin the run to; with no
+    model set for the job the answer is skip, and it says so.
+    """
+    job = str(job or "").strip()
+    m = _background_mode(mode)
+    try:
+        from agent_friday.services import scheduled_cloud as _sc
+        cfg = _sc.settings()
+        covered = job in {sid for sid, _ in _sc.JOBS}
+        model = str(_sc.model_for(job, cfg) or "").strip()
+    except Exception:
+        cfg, covered, model = {}, False, ""
+    unchosen = ""
+    if (m == "cloud_only" and job in CLOUD_ONLY_RELEASES
+            and cfg.get("routine_follows_cloud_mode", True)):
+        # Consent is the CHOOSING of cloud_only, not the factory value.
+        chosen = True if mode is not None else mode_was_chosen()
+        if not chosen:
+            unchosen = (" (the starting setting, not one you chose in Settings "
+                        "or setup, so it is not consent)")
+        else:
+            if not model:
+                return BackgroundRoute(
+                    "skip", "the routing mode is cloud only, but no cloud model is "
+                    "set for this job (Settings > Spending)", m)
+            return BackgroundRoute(
+                "cloud", "the routing mode is cloud only, and choosing it is consent "
+                "for News, podcasts, briefings and the heartbeat to use the cloud",
+                m, model)
+    serving = local_serving
+    if serving is None:
+        try:
+            from agent_friday.services.scheduler import _resolve_local_seat
+            serving = _resolve_local_seat
+        except Exception:
+            serving = False
+    if callable(serving):
+        try:
+            serving = serving()
+        except Exception:
+            serving = False
+    if serving:
+        return BackgroundRoute("local", "a local model is serving", m,
+                               local_model=serving if isinstance(serving, str) else "")
+    if covered and cfg.get("allow"):
+        if not model:
+            return BackgroundRoute(
+                "skip", "no local model is serving, and no cloud model is set for "
+                "this job (Settings > Spending)", m)
+        return BackgroundRoute(
+            "cloud", "no local model is serving and you allowed this job onto %s "
+            "(Settings > Spending)" % model, m, model)
+    return BackgroundRoute(
+        "skip", "no local model is serving, the routing mode is %s%s, and this job "
+        "is not allowed onto a cloud model" % (m.replace("_", " "), unchosen), m)
 
 
 def opens_cloud(mode: str | None = None) -> bool:

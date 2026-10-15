@@ -1,11 +1,15 @@
 """Whether the built-in scheduled jobs may use a cloud model, and what it costs.
 
-Daily creation and the heartbeat are local-only by default
-(`scheduler.LOCAL_ONLY_BY_DEFAULT`): on a PC with a local model serving they
-run there at no cost, and that does not change here. On a PC with no local
-model they are skipped, because running them in the cloud costs money and
-nobody chose that. The News routines (front pages and briefings) are not
-covered by this answer: they always run locally and wait for a local model.
+Where a routine job runs is decided in ONE place,
+`cloud_intent.background_route` (its docstring has the truth table); this
+module holds the settings it reads. In short: when the owner CHOSE cloud_only
+(Settings or setup; the factory value is not a choice), that choice is the
+consent, and the News routines, podcast scripts and the heartbeat run on the
+cloud model named here. Otherwise (and always for daily creation) daily
+creation and the heartbeat run on the local model when one serves, at no cost;
+with none serving they are skipped unless the owner answered yes below. The
+News routines are not covered by that answer: they run locally and wait for a
+local model.
 
 This module holds the owner's explicit answer to "may they use a cloud model
 instead?" -- the `scheduled_cloud` settings block -- and the monthly cost
@@ -26,6 +30,11 @@ Settings -> Spending).
                hours, daytime only. An hourly heartbeat around the clock on a
                frontier model is how one install ran up $438.76 over 2,357
                runs; the cloud cadence exists so that cannot recur by default.
+    routine_follows_cloud_mode
+               True (the default): under a cloud_only the owner chose, News,
+               podcast scripts and the heartbeat run on the models above
+               without this question being asked.
+               False keeps them local-only even then.
 """
 from __future__ import annotations
 
@@ -37,8 +46,9 @@ from agent_friday.user_errors import UserFacingValueError
 _log = logging.getLogger("friday.scheduled_cloud")
 
 #: The jobs this choice covers, in the order they are shown, with plain names.
-#: The jobs the owner may allow onto a cloud model. News is not among them:
-#: every News path is local-only and waits for the local seat.
+#: The jobs the owner may allow onto a cloud model in a local routing mode.
+#: News is not among them: in a local mode every News path is local-only and
+#: waits for the local seat (under a chosen cloud_only the mode is the consent).
 JOBS = (
     ("sch_daily_creation", "Daily creation"),
     ("sch_heartbeat", "Heartbeat"),
@@ -155,6 +165,7 @@ def settings() -> dict:
         out.update({k: v for k, v in blk.items() if k in out})
     out["answered"] = bool(out.get("answered"))
     out["allow"] = bool(out.get("allow")) and out["answered"]
+    out["routine_follows_cloud_mode"] = bool(out.get("routine_follows_cloud_mode", True))
     try:
         out["heartbeat_every_minutes"] = max(60, int(out.get("heartbeat_every_minutes") or 240))
     except (TypeError, ValueError):
@@ -316,8 +327,17 @@ def view() -> dict:
         local = setup_reader.local_model()
     except Exception:
         local = None
+    # Whether the routing mode itself sends the routine jobs to the cloud, so
+    # the panel says what actually happens (cloud_intent.background_route).
+    try:
+        from agent_friday.services import cloud_intent
+        route = cloud_intent.background_route("sch_heartbeat", local_serving=True)
+        by_mode = route.route == "cloud"
+    except Exception:
+        by_mode = False
     return {"settings": cfg, "estimate": estimate(cfg),
             "local_model": local or "",
+            "cloud_by_mode": by_mode,
             "cadences": list(HEARTBEAT_CADENCES)}
 
 
