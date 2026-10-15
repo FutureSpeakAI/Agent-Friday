@@ -87,7 +87,10 @@ def test_a_partial_block_on_a_file_without_that_block_stores_only_what_was_saved
     assert cfg["on_ready"] == "silent"
     assert cfg["format"] == pe.DEFAULTS["format"]
     assert cfg["length"] == pe.DEFAULTS["length"]
-    assert cfg["hosts"]["b"] == pe.DEFAULTS["hosts"]["b"]
+    # The default second host is filled in (the reader may add derived keys,
+    # e.g. pronouns from the voice, so compare the stored fields).
+    for k, v in pe.DEFAULTS["hosts"]["b"].items():
+        assert cfg["hosts"]["b"][k] == v, k
 
 
 def test_other_partial_writers_keep_their_siblings(friday_dir):
