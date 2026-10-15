@@ -94,3 +94,13 @@ def test_the_same_reply_twice_sends_nothing_the_second_time(client, google):
     client.post("/api/calendar/events/inv/rsvp", json=body)
     r = client.post("/api/calendar/events/inv/rsvp", json=body)
     assert r.get_json()["unchanged"] is True and len(log) == 1
+
+
+def test_on_a_calendar_shared_with_her_the_row_google_marks_self_is_not_hers_to_answer(client, google):
+    store, log = google
+    store[("fam", "col")] = {"id": "col", "summary": "Team sync", "organizer": {"email": "boss@example.com"},
+                             "attendees": [{"email": "colleague@example.com", "self": True, "responseStatus": "accepted"},
+                                           {"email": "boss@example.com", "organizer": True, "responseStatus": "accepted"}]}
+    r = client.post("/api/calendar/events/col/rsvp", json={"calendar_key": "home|fam", "response": "declined", "confirmed": True})
+    assert r.status_code == 409 and log == []
+    assert store[("fam", "col")]["attendees"][0]["responseStatus"] == "accepted"
