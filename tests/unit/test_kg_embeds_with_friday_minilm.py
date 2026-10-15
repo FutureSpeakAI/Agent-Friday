@@ -14,6 +14,10 @@ import math
 
 import pytest
 
+# Chroma is an optional install (the memory tier); without it there is no
+# embedder to check, and the knowledge graph and conversation memory are off.
+pytest.importorskip("chromadb")
+
 
 @pytest.fixture(autouse=True)
 def _own_memory_dir(monkeypatch, tmp_path):
