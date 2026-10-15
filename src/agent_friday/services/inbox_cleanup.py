@@ -294,7 +294,15 @@ def unread_streak(row: dict) -> int:
 
 #: Second-level labels under a two-letter country code that make a public
 #: suffix of two labels ("co.uk", "com.au"): the organisation is one label more.
-_SECOND_LEVEL = {"co", "com", "net", "org", "ac", "gov", "edu", "ne", "or", "go", "gob", "nic"}
+_SECOND_LEVEL = {"co", "com", "net", "org", "ac", "gov", "edu", "ne", "or", "go", "gob", "nic",
+                 "me", "ltd", "plc", "sch"}
+#: Shared domains where unrelated tenants each get a subdomain: the tenant is
+#: the organisation, never the shared domain.
+_SHARED_SUFFIXES = {"uk.com", "us.com", "eu.com", "gb.net", "github.io", "gitlab.io", "blogspot.com",
+                    "herokuapp.com", "netlify.app", "vercel.app", "pages.dev", "workers.dev", "web.app",
+                    "firebaseapp.com", "appspot.com", "azurewebsites.net", "cloudfront.net",
+                    "amazonaws.com", "duckdns.org", "ddns.net", "no-ip.org", "freedns.org",
+                    "mailchimpsites.com", "wordpress.com", "substack.com", "beehiiv.com"}
 
 
 def org_domain(domain: str) -> str:
@@ -303,8 +311,11 @@ def org_domain(domain: str) -> str:
     is shipped, so a two-letter country code with a common second level counts
     as a two-label suffix; anything else is the last two labels."""
     labels = [x for x in str(domain or "").lower().strip(".").split(".") if x]
-    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
+    if len(labels) >= 3 and (".".join(labels[-2:]) in _SHARED_SUFFIXES
+                             or (len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL)):
         return ".".join(labels[-3:])
+    if len(labels) == 2 and ".".join(labels) in _SHARED_SUFFIXES:
+        return ""                    # the shared domain itself is nobody's organisation
     return ".".join(labels[-2:])
 
 
@@ -318,7 +329,8 @@ def classify(row: dict) -> dict:
     frm = row.get("domain") or ""
     # DKIM counts only when the signing domain belongs to the same organisation
     # as the From address, and only on mail the provider itself received.
-    dkim = {d for d in (ev.get("dkim") or []) if org_domain(d) == org_domain(frm)} \
+    org = org_domain(frm)
+    dkim = {d for d in (ev.get("dkim") or []) if org and org_domain(d) == org} \
         if ev.get("via_gmail", True) else set()
     if row.get("spam") or not dkim:
         return {"route": "spam", "url": "", "host": "", "mailto": "",
@@ -647,7 +659,7 @@ def _egress(host: str, action: str, reason: str) -> None:
         pass
 
 
-def unsubscribe(sender_ids: list, *, decided_by: str, expected_hosts: dict | None = None) -> dict:
+def unsubscribe(sender_ids: list, *, decided_by: str, expected_urls: dict | None = None) -> dict:
     """Unsubscribe from each sender in `sender_ids` that is offered one-click.
 
     Every id is re-classified from the stored evidence right now; the caller
@@ -667,7 +679,7 @@ def unsubscribe(sender_ids: list, *, decided_by: str, expected_hosts: dict | Non
         if c["route"] != "one_click":
             not_done.append({"id": sid, "name": name, "why": c["why"] or "It isn't offered one-click."})
             continue
-        if expected_hosts is not None and expected_hosts.get(sid) != c["host"]:
+        if expected_urls is not None and expected_urls.get(sid) != c["url"]:
             # The approved card named another address; what was approved is not what would be sent.
             not_done.append({"id": sid, "name": name,
                              "why": "Its unsubscribe address changed after you approved, so I didn't send it."})
@@ -785,9 +797,12 @@ HANDLER = "inbox_cleanup"
 ACTION = "mail: unsubscribe from mailing lists"
 
 
-def _detail(ids: list, hosts: dict) -> dict:
+def _detail(ids: list, targets: dict) -> dict:
+    """The approved change, exactly: each sender and the one address its
+    request would go to. A run sends only to that address."""
     return {"handler": HANDLER, "action": "unsubscribe", "senders": sorted(set(ids)),
-            "hosts": {i: hosts.get(i, "") for i in sorted(set(ids))}}
+            "urls": {i: targets.get(i, {}).get("url", "") for i in sorted(set(ids))},
+            "hosts": {i: targets.get(i, {}).get("host", "") for i in sorted(set(ids))}}
 
 
 def propose(sender_ids: list, *, requested_by: str, reason: str = "") -> dict:
@@ -800,8 +815,9 @@ def propose(sender_ids: list, *, requested_by: str, reason: str = "") -> dict:
     ids = [s for s in dict.fromkeys(str(x) for x in sender_ids or []) if s in rows][:50]
     if not ids:
         return {"status": "error", "message": "None of those senders are in the last scan."}
-    hosts = {s: classify(rows[s])["host"] for s in ids}
-    detail = _detail(ids, hosts)
+    targets = {s: classify(rows[s]) for s in ids}
+    hosts = {s: targets[s]["host"] for s in ids}
+    detail = _detail(ids, targets)
     listing = "\n".join("- %s (%s), the request goes to %s" % (_display_name(rows[s]), s, hosts[s] or "nowhere: not offered one-click")
                          for s in ids)
     v = action_gate.authorize_external(
@@ -813,7 +829,7 @@ def propose(sender_ids: list, *, requested_by: str, reason: str = "") -> dict:
         description="Nothing is sent unless you approve this card.")
     if v.action == "allow":
         return {"status": "done", "result": unsubscribe(ids, decided_by="owner approval",
-                                                         expected_hosts=detail["hosts"])}
+                                                         expected_urls=detail["urls"])}
     if v.action == "deny":
         return {"status": "refused", "message": "Friday's governance check held this: %s" % v.reason}
     return {"status": "pending_approval", "message": "Waiting for your approval card."}
@@ -830,7 +846,7 @@ def _on_decision(record: dict) -> None:
         if v.action != "allow":
             return
         out = unsubscribe(detail.get("senders") or [], decided_by="owner approval",
-                          expected_hosts=dict(detail.get("hosts") or {}))
+                          expected_urls=dict(detail.get("urls") or {}))
         _notify("Inbox clean-up: %d unsubscribed" % len(out["done"]),
                 ("%d couldn't be done here; they're listed in Messages > Clean up."
                  % len(out["not_done"])) if out["not_done"] else "Each one has a receipt.")
