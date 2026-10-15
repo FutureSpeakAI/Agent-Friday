@@ -27,7 +27,7 @@ def brain(monkeypatch):
     monkeypatch.setattr("agent_friday.services.agent._generate_agent", fake_generate)
     monkeypatch.setattr("agent_friday.routes.voice._gate_voice_tool_result", fake_gate)
     monkeypatch.setattr("agent_friday.routes.voice._build_voice_system_prompt",
-                        lambda settings=None, description=None, seat=None: ("P", {"volatile": ""}))
+                        lambda settings=None, description=None, seat=None, conversation_id=None: ("P", {"volatile": ""}))
     monkeypatch.setattr(ve, "_brain_serving", lambda: "bonsai2:27b")
     return calls
 

@@ -1990,18 +1990,13 @@ def chat():
             # flagship interactive path FED observe_message() but never USED what
             # it learned. Best-effort, TIER_1 text, and still scrubbed/gated below
             # before any cloud send. Guarded so it can never break a chat turn.
+            # Frozen for this conversation (services/prompt_freeze): every
+            # turn nudges the style traits and workspace counters, and a
+            # memory saved mid-conversation lands on disk now and reaches the
+            # prompt next conversation, so the head stays the same bytes.
             try:
-                from agent_friday.services.user_model import render_user_model_prompt
-                _um_block = render_user_model_prompt()
-                if _um_block:
-                    head = head + "\n\n== USER MODEL ==\n" + _um_block + "\n"
-            except Exception:
-                pass
-            try:
-                from agent_friday.services.learning_loop import render_heuristics_prompt
-                _heur_block = render_heuristics_prompt(task_type=workspace or None)
-                if _heur_block:
-                    head = head + "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur_block + "\n"
+                from agent_friday.services.model_router import memory_head_blocks
+                head = head + memory_head_blocks(workspace, _conversation_id)
             except Exception:
                 pass
             # What this chat's panel holds rides in the tail, with what this

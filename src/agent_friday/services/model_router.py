@@ -3291,8 +3291,44 @@ def _log_policy_failure():
         pass
 
 
+def memory_head_blocks(workspace='', freeze_key=None) -> str:
+    """The USER MODEL and LEARNED HEURISTICS blocks for the prompt head.
+
+    Both are TIER_1 behavioural text (never raw PII), best-effort, and empty
+    when their subsystem is off or has learned nothing. With a `freeze_key`
+    (the conversation id) each block is the one this conversation started
+    with: memory written mid-conversation reaches the next conversation, and
+    the head stays the same bytes for the seat's cache. An owner's own edit
+    or delete applies at once (services/prompt_freeze). /api/chat and every
+    `_get_friday_system_prompt` caller share this one renderer.
+    """
+    from agent_friday.services import prompt_freeze as _pf
+    out = ''
+
+    def _um():
+        from agent_friday.services.user_model import render_user_model_prompt
+        return render_user_model_prompt()
+
+    def _heur():
+        from agent_friday.services.learning_loop import render_heuristics_prompt
+        return render_heuristics_prompt(task_type=workspace or None)
+
+    um = _pf.frozen(freeze_key, "user_model", _um)
+    if um:
+        out += "\n\n== USER MODEL ==\n" + um + "\n"
+    heur = _pf.frozen(freeze_key, "heuristics:" + str(workspace or ''), _heur)
+    if heur:
+        # Learned heuristics are RSI output: Friday's own writing, fed back
+        # into Friday's own prompt. That is precisely the loop that must not
+        # be able to grant new authority.
+        out += ("\n\n== LEARNED HEURISTICS (advisory) ==\n"
+                + _strip_overrides(heur, "learned-heuristics") + "\n")
+    return out
+
+
 def _get_friday_system_prompt(keywords='', workspace='', *, provider,
-                              vault_control, vault_fallback='redact', tools_block=True):
+                              vault_control, vault_fallback='redact', tools_block=True,
+                              freeze_key=None):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
@@ -3319,6 +3355,8 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
         waiting for whatever code path happens to call this next.
     vault_fallback: 'redact' (default) | 'deny' | 'warn' — see
         VaultAccessControl.gate_content.
+    freeze_key: the conversation this prompt serves, if any. Its memory
+        blocks are frozen for that conversation (`memory_head_blocks`).
     """
     settings = _load_settings()
     personality = _load_agent_personality()
@@ -3361,9 +3399,18 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     from agent_friday.services.workflow_tools import CAPABILITY_INDEX
     from agent_friday.services.voice_delivery import PRESENCE_RULE
     prefix += "\n" + CAPABILITY_INDEX + "\n" + PRESENCE_RULE
-    try:
+    # WHAT YOU ACTUALLY ARE reports the seats' status and probed capabilities,
+    # so it can change while a conversation runs (a seat loads or parks). It
+    # is frozen for the conversation like the memory blocks: the head stays
+    # the same bytes, and the live truth rides in CAPABILITY STATE after the
+    # clock marker (prompt audit 2026-10-04, item 3). It stays in the head
+    # because the local voice front's digest is cut from the head.
+    def _acct_live():
         from agent_friday.services.self_account import describe as _self_account
-        _acct = _self_account()
+        return _self_account() or ''
+    try:
+        from agent_friday.services import prompt_freeze as _pf
+        _acct = _pf.frozen(freeze_key, "self_account", _acct_live)
         if _acct:
             prefix += "\n== WHAT YOU ACTUALLY ARE ==\n" + _acct + "\n"
     except Exception:
@@ -3381,27 +3428,9 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     except Exception:
         pass
 
-    # v5 personalization — fold in the LOCAL user model + learned heuristics.
-    # Both are TIER_1 behavioral text (never raw PII), both best-effort, and both
-    # skip themselves when their subsystem is disabled or has learned nothing.
-    try:
-        from agent_friday.services.user_model import render_user_model_prompt
-        _um = render_user_model_prompt()
-        if _um:
-            prefix += "\n\n== USER MODEL ==\n" + _um + "\n"
-    except Exception:
-        pass
-    try:
-        from agent_friday.services.learning_loop import render_heuristics_prompt
-        _heur = render_heuristics_prompt(task_type=workspace or None)
-        if _heur:
-            # Learned heuristics are RSI output: Friday's own writing, fed back
-            # into Friday's own prompt. That is precisely the loop that must not
-            # be able to grant new authority.
-            prefix += ("\n\n== LEARNED HEURISTICS (advisory) ==\n"
-                       + _strip_overrides(_heur, "learned-heuristics") + "\n")
-    except Exception:
-        pass
+    # v5 personalization — the LOCAL user model + learned heuristics, frozen
+    # for the conversation `freeze_key` names (services/prompt_freeze).
+    prefix += memory_head_blocks(workspace, freeze_key)
 
     try:
         system_prompt, _ = _build_context_prompt(
