@@ -2457,6 +2457,12 @@ DEFAULT_SETTINGS = {
     # back; only a quit releases it (services/residency_arbiter.
     # release_for_quit).
     "keep_brain_warm_between_sessions": False,
+    # The first-run download card counts a seat as done when a working local
+    # model already serves it (the chosen model under another id such as
+    # bonsai2-27b for bonsai2:27b, or the model the seat is set to), not only
+    # when the literal chosen id finished downloading. Off restores the
+    # literal check (services/first_run_models.seat_served_by).
+    "first_run_seat_satisfied_by_serving": True,
     # ── Voice engine selection ──
     # LOCAL is the default; cloud (Gemini Live) is the opt-in. The mic button
     # resolves this via GET /api/voice/session-info → /ws/voice-local (local) or

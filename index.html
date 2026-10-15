@@ -13372,10 +13372,15 @@ function fridayFirstRunModelsCard(st) {
       var line = document.createElement('div');
       var pct = r.bytes_total ? Math.min(100, Math.round(100 * (r.bytes_done || 0) / r.bytes_total)) : 0;
       var gb = r.bytes_total ? ' (' + (r.bytes_total / 1073741824).toFixed(1) + ' GB)' : '';
-      var what = r.state === 'installed' ? 'ready'
-        : r.state === 'failed' ? 'stopped' + (r.error ? ': ' + r.error : '')
-        : r.state === 'waiting' ? 'waiting'
-        : (r.phase === 'verifying' ? 'checking the download' : pct + '%');
+      // A seat a working model already serves (perhaps the same model under
+      // another id) is ready; the card names which model that is. A seat the
+      // owner's own model serves while the chosen download continues says so.
+      var by = r.served_by && r.served_by !== r.model_id ? ' (served by ' + r.served_by + ')' : '';
+      var what = r.state === 'installed'
+          ? 'ready' + by
+        : r.state === 'failed' ? 'stopped' + (r.error ? ': ' + r.error : '') + by
+        : r.state === 'waiting' ? 'waiting' + by
+        : (r.phase === 'verifying' ? 'checking the download' : pct + '%') + by;
       line.textContent = r.label + ' — ' + (r.model_label || r.model_id) + gb + ': ' + what;
       card.appendChild(line);
     });
