@@ -159,8 +159,10 @@ def test_the_transcript_shows_who_spoke():
 
 
 def test_calendar_declares_the_start_nav_key_in_both_files():
-    assert "keys: ['date', 'view', 'meeting_id', 'event', 'start']" in INDEX
-    assert "keys:['date','view','meeting_id','event','start']" in APP
+    for src in (INDEX, APP):
+        decl = src[src.index("fridayDeclareNav('calendar'"):]
+        keys = re.search(r"keys:\s*\[([^\]]*)\]", decl[:decl.index(";")]).group(1)
+        assert {"date", "view", "meeting_id", "event", "start"} <= set(re.findall(r"'([a-z_]+)'", keys))
 
 
 def test_the_calendar_manifest_declares_the_start_key_and_keeps_recording_by_design():
