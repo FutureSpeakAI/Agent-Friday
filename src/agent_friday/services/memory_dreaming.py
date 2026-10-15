@@ -141,38 +141,26 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
         facts = _mine_facts(turns)
         pruned = _count_noise(turns)
 
-        # Hand durable, high-confidence facts to the user model. The source is
-        # day-scoped ("dream:<day>") so RE-running the same day does not inflate
-        # fact confidence — user_model.note_fact only reinforces on a new source.
+        # A regex over yesterday's turns is not a review. Nothing it finds is
+        # written into what Friday knows (the user model, the knowledge graph):
+        # each candidate waits in the memory card's review queue, and only the
+        # owner's Keep puts it on the card (services/core_memory). Queuing is
+        # idempotent, so re-running a day files nothing twice.
         consolidated = []
         for f in facts:
             consolidated.append(f)
             if f["confidence"] >= 0.6:
                 try:
-                    from agent_friday.services import user_model
-                    user_model.note_fact(f["category"], f["text"],
-                                          confidence=f["confidence"],
-                                          source=f"dream:{day}")
+                    from agent_friday.services import core_memory
+                    core_memory.queue("user", "add", text=f["text"], source=f"dream:{day}",
+                                      reason="Nightly dreaming found this in your "
+                                             "conversations. Keep it only if it is true.")
                 except Exception:
                     pass
 
         summary = _summarize(day, len(turns), topics, consolidated, pruned)
         _persist(day, len(turns), topics, consolidated, pruned, summary)
         _write_markdown(day, len(turns), topics, consolidated, pruned, summary)
-
-        # Post-step: high-confidence facts become knowledge-graph nodes and
-        # ignite live in the 3D explorer (idempotent by content hash).
-        for f in consolidated:
-            if f.get("confidence", 0) >= 0.6:
-                try:
-                    from agent_friday.services.knowledge_graph.integration import (
-                        ingest_fact)
-                    ingest_fact(f.get("text", ""),
-                                source_kind="conversation",
-                                source_key=f"dream:{day}",
-                                category=f.get("category", "fact"))
-                except Exception:
-                    pass
 
         return {"ok": True, "day": day, "turns_reviewed": len(turns),
                 "topics": topics, "consolidated": consolidated,

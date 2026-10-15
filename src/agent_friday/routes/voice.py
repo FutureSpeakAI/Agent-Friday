@@ -2634,7 +2634,14 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None,
             seat = _seats.resolve("brain")
         except Exception:
             seat = None
-    _is_local_brain = bool(seat)
+    # A cloud-tagged model served through the local daemon ("glm-4.6:cloud")
+    # runs off this PC: its prompt is gated as cloud, like /api/chat's.
+    try:
+        from agent_friday.services.local_only_guard import is_cloud_model_tag as _icmt
+        _cloud_tagged = bool(seat) and _icmt(str(seat))
+    except Exception:
+        _cloud_tagged = False
+    _is_local_brain = bool(seat) and not _cloud_tagged
     _prov = "local" if _is_local_brain else "cloud"
     _vault_control = None if _is_local_brain else (
         _get_vault_control() if _vault_local_only() else None)
@@ -2661,7 +2668,7 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None,
         full_ctx = _get_friday_system_prompt(
             provider=_prov, vault_control=_vault_control,
             vault_fallback=_vault_cloud_fallback(),
-            freeze_key=conversation_id)
+            freeze_key=conversation_id, model=str(seat or ''))
     except Exception as e:
         full_ctx = f"(context load failed: {e})"
     # The same length rule and persona as the cloud voice: the text-chat
