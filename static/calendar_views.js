@@ -604,7 +604,7 @@
         const d = await r.json();
         if (r.ok && d.status === 'ok') { setDone({ text: 'Replied “' + RSVP_WORDS[p.response] + '” to “' + p.ev.title + '”. You can change it any time.' }); if (props.onReplied) props.onReplied(); }
         else setDone({ text: "Couldn't send the reply: " + (d.message || 'Google did not take it') + '. Nothing was sent.', failed: true });
-      } catch (_) { setDone({ text: "Couldn't reach Friday to send the reply. Nothing was sent.", failed: true }); }
+      } catch (_) { setDone({ text: "Couldn't reach " + who() + ' to send the reply. Nothing was sent.', failed: true }); }
       setBusy(false);
       setPending(null);
     };
