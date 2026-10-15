@@ -543,3 +543,56 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
             "before": {"summary": before.get("summary"),
                        "location": before.get("location") or "",
                        "description": (before.get("description") or "")[:300]}}
+
+
+RSVP_RESPONSES = ("accepted", "tentative", "declined")
+
+
+def respond_to_event(event_id: str, response: str, *, account_id=None,
+                     calendar_id: str = "primary") -> dict:
+    """The owner's reply to an invitation: going, maybe or not going.
+
+    Changes only the owner's own row in the guest list (the attendee Google
+    marks `self`), and Google tells the organiser. Refused when the event has
+    no invitation for the owner (her own event, or one she is not on).
+    `before` is the reply it replaced, so the page can say what changed."""
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
+    response = str(response or "").strip().lower()
+    if response not in RSVP_RESPONSES:
+        return {"error": "a reply is one of: " + ", ".join(RSVP_RESPONSES)}
+    ready, why = write_ready()
+    if not ready:
+        return {"error": why, "needs_reconnect": True}
+    aid, acct_err = resolve_write_account(account_id)
+    if acct_err:
+        return {"error": acct_err, "needs_account": True}
+    svc, err = _service(aid)
+    if svc is None:
+        return {"error": err}
+    try:
+        ev = svc.events().get(calendarId=_cal(calendar_id), eventId=event_id).execute()
+    except Exception as e:
+        return {"error": "could not read event %s: %s" % (event_id, e)}
+    attendees = [dict(a) for a in (ev.get("attendees") or [])]
+    mine = [a for a in attendees if a.get("self")]
+    if not mine:
+        return {"error": "there is no invitation for you on “%s” to reply to"
+                % (ev.get("summary") or "this event")}
+    if (ev.get("organizer") or {}).get("self"):
+        return {"error": "you organise “%s”; there is no invitation to reply to"
+                % (ev.get("summary") or "this event")}
+    before = mine[0].get("responseStatus") or "needsAction"
+    if before == response:
+        return {"ok": True, "unchanged": True, "id": event_id, "response": response, "before": before}
+    for a in attendees:
+        if a.get("self"):
+            a["responseStatus"] = response
+    try:
+        out = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
+                                 body={"attendees": attendees}, sendUpdates="all").execute()
+    except Exception as e:
+        return {"error": "could not send the reply: %s" % e}
+    _drop_calendar_cache()
+    return {"ok": True, "id": out.get("id") or event_id, "title": out.get("summary") or ev.get("summary"),
+            "response": response, "before": before, "account_id": aid, "calendar_id": _cal(calendar_id)}

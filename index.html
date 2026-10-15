@@ -39200,6 +39200,8 @@ function CalendarWS() {
     onCancel: () => setQaPreview(null)
   }) : null, window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.MoveLayer, {
     onMoved: reloadAll
+  }) : null, window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.RsvpLayer, {
+    onReplied: reloadAll
   }) : null, window.CalendarViews ? /*#__PURE__*/React.createElement("div", {
     className: "calv-toolbar"
   }, /*#__PURE__*/React.createElement(window.CalendarViews.ViewSwitch, {
@@ -39356,7 +39358,9 @@ function CalendarWS() {
       className: "cal-countdown"
     }, "\u23F3 ", e.title.split(' ')[0], " in ", e.countdown), window.CalendarViews && window.CalendarViews.reminderText(e) && /*#__PURE__*/React.createElement("span", {
       className: "cal-ev-remind"
-    }, window.CalendarViews.reminderText(e)), e.prep_available && /*#__PURE__*/React.createElement("span", {
+    }, window.CalendarViews.reminderText(e)), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.RsvpButtons, {
+      ev: e
+    }), e.prep_available && /*#__PURE__*/React.createElement("span", {
       className: "cal-prep-badge"
     }, "Prep available"), e.related_emails && e.related_emails.length > 0 && /*#__PURE__*/React.createElement("span", {
       style: {
