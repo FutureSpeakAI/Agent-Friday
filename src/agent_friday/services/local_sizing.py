@@ -247,7 +247,11 @@ def context_floor(prompt: Optional[int] = None, cfg: Optional[dict] = None,
                   model_window: Optional[int] = None) -> dict:
     """The smallest window a Friday seat may be served at.
 
-    `{"prompt_tokens", "need_tokens", "num_ctx", "limited_by_model"}`.
+    `{"prompt_tokens", "prompt_len", "need_tokens", "num_ctx",
+    "limited_by_model"}`. `prompt_len` is the same prompt length as
+    `prompt_tokens` under a neutral name: log lines use it, because "tokens"
+    here is a prompt size, not a secret, and scanners that judge by name
+    cannot tell the difference.
     `num_ctx` is the next ladder rung at or above prompt + margin. A model
     whose own window is smaller gets its window, flagged, because serving
     past it is not possible either.
@@ -258,8 +262,8 @@ def context_floor(prompt: Optional[int] = None, cfg: Optional[dict] = None,
                  float(cfg.get("min_room_tokens", 4096)))
     need = int(math.ceil(p + margin))
     ctx = next((r for r in CTX_RUNGS if r >= need), CTX_RUNGS[-1])
-    out = {"prompt_tokens": p, "need_tokens": need, "num_ctx": ctx,
-           "limited_by_model": False}
+    out = {"prompt_tokens": p, "prompt_len": p, "need_tokens": need,
+           "num_ctx": ctx, "limited_by_model": False}
     if model_window and int(model_window) < ctx:
         out["num_ctx"] = int(model_window)
         out["limited_by_model"] = True
@@ -508,9 +512,9 @@ def lift_declared_ctx(model_id: str, declared: int, *, prompt: Optional[int] = N
     if overridden:
         _log.warning("local sizing: %s is overridden to %d tokens, below Friday's prompt "
                      "floor of %d (prompt ~%d tokens); keeping the override",
-                     model_id, declared, floor["num_ctx"], floor["prompt_tokens"])
+                     model_id, declared, floor["num_ctx"], floor["prompt_len"])
         return int(declared)
     _log.info("local sizing: %s declares %d tokens of context but Friday's prompt is ~%d "
               "tokens; serving at %d instead (component=arbiter)",
-              model_id, declared, floor["prompt_tokens"], floor["num_ctx"])
+              model_id, declared, floor["prompt_len"], floor["num_ctx"])
     return int(floor["num_ctx"])

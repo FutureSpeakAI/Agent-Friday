@@ -678,6 +678,21 @@ def test_the_search_gate_refusal_is_logged_without_the_value(caplog):
     assert FAKE_KEY not in text
 
 
+def test_log_refusal_writes_only_fixed_vocabulary(caplog):
+    """Reason and kinds are logged from constant tables: an unexpected value
+    on a Refusal is written as "other", never echoed."""
+    from agent_friday.privacy import public_query as pq
+    odd = pq.Refusal("not-a-reason-xyz", kinds=("card", "weird-kind-xyz"),
+                     count=2)
+    with caplog.at_level(logging.WARNING, logger="friday.privacy"):
+        pq.log_refusal(odd, action="search_web")
+    text = " ".join(r.getMessage() for r in caplog.records
+                    if r.name.startswith("friday.privacy"))
+    assert "reason=other" in text and "kinds=card,other" in text
+    assert "count=2" in text
+    assert "xyz" not in text
+
+
 def test_the_model_is_told_the_component_reason_and_to_report_it():
     from agent_friday.privacy.vault_access import refusal_text
     msg = refusal_text("search_web", "public_query_refused:owner_identifier")

@@ -241,6 +241,23 @@ def test_stylesheets_are_opt_in_and_say_how_to_turn_them_on(home, monkeypatch):
     assert uo.static_path("user.css") is not None
 
 
+def test_the_served_file_is_the_one_the_folder_listing_names(home, monkeypatch):
+    """static_asset hands back the folder and the LISTED entry name, so the
+    route serves through send_from_directory and never builds a path from
+    the request; a name the listing does not hold is None."""
+    from agent_friday import core
+    from agent_friday.services import user_overrides as uo
+    static = _static(home)
+    monkeypatch.setattr(core, "_load_settings",
+                        lambda: {"overrides": {"static_css": True}}, raising=False)
+    folder, listed = uo.static_asset("user.css")
+    assert listed == "user.css" and listed in [e.name for e in static.iterdir()]
+    assert folder.resolve() == static.resolve()
+    assert uo.static_asset("nope.css") is None
+    assert uo.static_asset("../static/user.css") is None
+    assert uo.static_path("user.css") == (static / "user.css").resolve()
+
+
 def test_a_script_is_never_injected_or_served_even_when_settings_say_yes(home, monkeypatch):
     """Any /api/settings POST can change the overrides block, so no setting
     may put a script (which holds the session token) into Friday's page."""

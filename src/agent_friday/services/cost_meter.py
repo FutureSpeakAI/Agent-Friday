@@ -496,16 +496,20 @@ def _intent_purpose(model):
 def _note_unattributed(provider, model, caller):
     """friday.log names the code that spent money without saying why, once an
     hour per call site, so the fix (pass purpose= or push_attribution) has an
-    address."""
-    key = caller or "unknown"
+    address.
+
+    Only the call site (module.function names from the stack) is logged; the
+    provider and model are already in the cost_calls row stored alongside the
+    same caller, so nothing passed in by the caller is echoed into the log."""
+    site = str(caller or "unknown")
     now = _time.monotonic()
-    last = _UNATTRIBUTED_SEEN.get(key)
+    last = _UNATTRIBUTED_SEEN.get(site)
     if last is not None and now - last < _UNATTRIBUTED_EVERY_S:
         return
-    _UNATTRIBUTED_SEEN[key] = now
-    _log.warning("unattributed model call: %s/%s from %s (no workspace, kind, schedule, "
-                 "run or purpose; recorded with purpose='unattributed')",
-                 provider or "?", model or "?", key)
+    _UNATTRIBUTED_SEEN[site] = now
+    _log.warning("unattributed model call from %s (no workspace, kind, schedule, "
+                 "run or purpose; recorded with purpose='unattributed' in the "
+                 "cost meter with its provider and model)", site)
 
 
 # ── SQLite store + buffered writer ───────────────────────────────────────────

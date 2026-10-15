@@ -3764,11 +3764,17 @@ def voice_transcribe():
         asr = eng._get_asr()
         text = asr.transcribe(pcm)
     except Exception as e:
+        # The client gets a constant sentence only (never exception text): a
+        # missing model is looked up in the feature_models registry by its
+        # feature id; anything else is the generic line. The named reason
+        # goes to friday.log (here, and feature_models.require's own line).
+        msg = "Couldn't transcribe the audio. The reason is in friday.log."
         try:
-            from agent_friday.services.voice_manifest import plain_language_refusal
-            msg, _action = plain_language_refusal(e, "ear")
+            from agent_friday.services import feature_models as _fm
+            if isinstance(e, _fm.FeatureModelMissing):
+                msg = _fm.public_missing_message(getattr(e, "feature", ""))
         except Exception:
-            msg = error_text(e, "Couldn't transcribe the audio")
+            pass
         _log.warning("push-to-transcribe failed: %s: %s", type(e).__name__, e)
         return jsonify(public_result({"status": "error", "error": msg,
                         "engine": "local"}, "Couldn't transcribe the audio")), 503

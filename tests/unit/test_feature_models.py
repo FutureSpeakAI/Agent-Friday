@@ -395,3 +395,56 @@ def test_a_stray_file_in_the_whisper_cache_is_not_a_ready_ear(no_models, monkeyp
     (snap / "model.bin").write_bytes(b"w")
     (snap / "config.json").write_text("{}")
     assert eng.models_ready() is True
+
+
+# ── push-to-transcribe returns constant text only ────────────────────────────
+
+def _transcribe_client(monkeypatch, exc):
+    from flask import Flask
+    import agent_friday.routes.voice as rv
+
+    class _ASR:
+        def transcribe(self, pcm):
+            raise exc
+
+    class _Eng:
+        def _get_asr(self):
+            return _ASR()
+    monkeypatch.setattr(lv, "get_local_voice_engine", lambda: _Eng())
+    app = Flask(__name__)
+    app.secret_key = "test"                 # login_required keeps a session on loopback
+    app.register_blueprint(rv.voice_bp)
+    return app.test_client()
+
+
+def test_push_to_transcribe_names_a_missing_model_from_the_registry(monkeypatch):
+    """A missing model is answered with the registry's fixed sentence for that
+    feature, never with the exception's own text."""
+    fm = _fm()
+    secret_marker = "detail-from-the-exception-xyz"
+    exc = fm.FeatureModelMissing("dictation", ["whisper-base"], secret_marker)
+    client = _transcribe_client(monkeypatch, exc)
+    r = client.post("/api/voice/transcribe", data=b"\x01\x00" * 1600,
+                    content_type="application/octet-stream")
+    assert r.status_code == 503
+    body = r.get_json()
+    assert body["error"] == fm.FEATURE_MESSAGES["dictation"]
+    assert "Dictation unavailable" in body["error"]
+    assert fm.SETTINGS_PATH in body["error"]
+    assert secret_marker not in r.get_data(as_text=True)
+
+
+def test_push_to_transcribe_never_returns_other_exception_text(monkeypatch):
+    marker = "C:/some/internal/path-xyz"
+    client = _transcribe_client(monkeypatch, RuntimeError(marker))
+    r = client.post("/api/voice/transcribe", data=b"\x01\x00" * 1600,
+                    content_type="application/octet-stream")
+    assert r.status_code == 503
+    assert marker not in r.get_data(as_text=True)
+    assert "friday.log" in r.get_json()["error"]
+
+
+def test_public_missing_message_falls_back_for_an_unknown_feature():
+    fm = _fm()
+    assert fm.public_missing_message("no-such-feature") == fm.MISSING_MODEL_MESSAGE
+    assert set(fm.FEATURE_MESSAGES) == set(fm.FEATURES)

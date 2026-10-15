@@ -217,15 +217,17 @@ def serve_static_asset(filename):
 def serve_user_override_asset(name):
     """One stylesheet from ~/.friday/overrides/static, only if it is loaded
     now (plain .css name, overrides.static_css on, resolved inside the
-    folder). Never a script, never a directory walk."""
+    folder). Never a script, never a directory walk. The file is the one the
+    folder listing names (static_asset), served through send_from_directory."""
     try:
         from agent_friday.services import user_overrides as _uo
-        p = _uo.static_path(name)
+        found = _uo.static_asset(name)
     except Exception:
-        p = None
-    if p is None:
+        found = None
+    if found is None:
         return "Not an override file that is switched on.", 404
-    resp = send_file(str(p), max_age=0)
+    folder, listed = found
+    resp = send_from_directory(str(folder), listed, max_age=0)
     resp.headers['Cache-Control'] = 'no-store'
     return resp
 

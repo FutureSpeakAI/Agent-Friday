@@ -175,6 +175,12 @@ def _account_id(email: str) -> str:
     return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:16]
 
 
+def _log_ref(acct: str) -> str:
+    """Short sha256 prefix used to name an account in friday.log lines, so the
+    log never carries the stored id itself (it still tells two accounts apart)."""
+    return hashlib.sha256(str(acct or "").encode("utf-8")).hexdigest()[:8]
+
+
 #: `_account_id` is sixteen lowercase hex digits. A caller-supplied id that is
 #: anything else (a path, a drive, a newline) never reaches the filesystem.
 _ACCOUNT_ID = re.compile(r"[0-9a-f]{16}")
@@ -675,9 +681,9 @@ def credentials_for(account_id: str):
                 # grant, so the stored status stays as it was and the caller
                 # hears "could not check yet", not "needs reconnecting".
                 _LAST_PROBLEM[account_id] = "unreachable"
-                _log.warning("google account %s: token refresh could not reach Google "
+                _log.warning("google account ref=%s: token refresh could not reach Google "
                              "(%s); status left unchanged, will retry on next use",
-                             account_id, type(e).__name__)
+                             _log_ref(account_id), type(e).__name__)
                 return None
             _LAST_PROBLEM[account_id] = "needs_reauth"
             _mark_status(account_id, "needs_reauth")
@@ -689,8 +695,8 @@ def credentials_for(account_id: str):
             # concurrent reader can hold the file during the atomic replace).
             # The credential in hand is valid, so use it; the next refresh
             # writes it again.
-            _log.warning("google account %s: refreshed token could not be saved (%s); "
-                         "using it in memory", account_id, type(e).__name__)
+            _log.warning("google account ref=%s: refreshed token could not be saved (%s); "
+                         "using it in memory", _log_ref(account_id), type(e).__name__)
         _mark_status(account_id, "connected", touch_sync=True)
         cs.audit_event(_AUDIT_CATEGORY, "refresh", account_id=account_id, success=True)
     if not creds or not creds.valid:

@@ -65,6 +65,25 @@ FEATURES: Dict[str, dict] = {
     },
 }
 
+#: feature -> a fixed sentence for HTTP clients when the feature's model is
+#: missing. Built only from the constants above, so a route can return it
+#: without echoing any exception text; the detailed message (which model, how
+#: big) is the one ``require`` writes to friday.log and keeps in status().
+FEATURE_MESSAGES: Dict[str, str] = {
+    fid: ("%s unavailable: a model it needs is not installed - %s, Download. "
+          "Nothing is downloaded without that click." % (f["name"], SETTINGS_PATH))
+    for fid, f in FEATURES.items()
+}
+MISSING_MODEL_MESSAGE = ("A model this feature needs is not installed - %s, "
+                         "Download." % SETTINGS_PATH)
+
+
+def public_missing_message(feature) -> str:
+    """The constant client-facing sentence for a missing model of ``feature``
+    (the id is only used as a lookup key)."""
+    return FEATURE_MESSAGES.get(str(feature or ""), MISSING_MODEL_MESSAGE)
+
+
 #: The short name a message uses for each artifact.
 SHORT = {
     "whisper-base.en": "whisper base.en",

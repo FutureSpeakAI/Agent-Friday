@@ -519,12 +519,51 @@ def log_refusal(refusal: Refusal, *, action: str = "", provider: str = "",
                 surface: str = "") -> None:
     """One WARNING line in friday.log naming the component and the reason.
 
-    Kinds and a count only -- never the matched value.
+    Kinds and a count only -- never the matched value. Reason and kinds are
+    written as constants looked up from fixed tables (anything unknown is
+    logged as "other"), so no text derived from the inspected value can reach
+    the log line.
     """
+    reason_code = _LOG_REASON_CODES.get(str(refusal.reason), "other")
+    kind_codes = sorted({_LOG_KIND_CODES.get(str(k), "other")
+                         for k in refusal.kinds})
+    try:
+        count = int(refusal.count)
+    except (TypeError, ValueError):
+        count = 0
     _log.warning("REFUSED component=%s reason=%s kinds=%s count=%d tool=%s "
                  "provider=%s surface=%s",
-                 refusal.component, refusal.reason, ",".join(refusal.kinds),
-                 refusal.count, action or "-", provider or "-", surface or "-")
+                 COMPONENT, reason_code, ",".join(kind_codes),
+                 count, action or "-", provider or "-", surface or "-")
+
+
+#: Fixed log vocabulary for log_refusal: the logged reason/kind is always one
+#: of these constant strings, never text taken from the refusal itself.
+_LOG_REASON_CODES = {r: r for r in REASONS}
+_LOG_KIND_CODES = {
+    # what _hits() reports
+    "never_send": "never_send",
+    "secret": "secret",
+    "api_key": "api_key",
+    "ssn": "ssn",
+    "routing": "routing",
+    "card": "card",
+    "watchlist": "watchlist",
+    "email": "email",
+    "identity": "identity",
+    "phone": "phone",
+    # floor_unavailable carries the failing exception's type name
+    "ImportError": "ImportError",
+    "ModuleNotFoundError": "ModuleNotFoundError",
+    "AttributeError": "AttributeError",
+    "TypeError": "TypeError",
+    "ValueError": "ValueError",
+    "KeyError": "KeyError",
+    "OSError": "OSError",
+    "RuntimeError": "RuntimeError",
+    "RecursionError": "RecursionError",
+    "UnicodeError": "UnicodeError",
+}
 
 
 def gate_outbound(text: str, provider: str, field: str) -> tuple[str, str]:

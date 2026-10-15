@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 from pathlib import Path
@@ -604,26 +605,48 @@ def static_files() -> dict:
     return out
 
 
-def static_path(name: str) -> Optional[Path]:
-    """The file to serve for `/user-overrides/static/<name>`, or None.
+def static_asset(name: str) -> Optional[tuple]:
+    """`(folder, listed_name)` to serve for `/user-overrides/static/<name>`,
+    or None.
 
     Only a name `static_files()` loads right now (so never a script, and
     nothing while stylesheets are off), and only when the resolved file is
     still inside overrides/static: a symlink or junction swapped in after the
     listing is refused here too.
+
+    The requested `name` is only compared against the folder's own listing;
+    the path is built from the LISTED entry name, never from the request.
     """
     if not isinstance(name, str) or name.lower().endswith(".js"):
         return None
-    files = static_files()
-    if name not in files["css"]:
-        return None
+    loaded = static_files()["css"]
     d = overrides_dir() / STATIC_DIR
-    p = d / name
-    if not _inside(p, d):
-        _log.warning("overrides: component=ui refused to serve %s: it resolves outside %s",
-                     name, d)
+    listed = None
+    try:
+        with os.scandir(d) as it:
+            for entry in it:
+                if entry.name == name and entry.name in loaded:
+                    listed = entry.name
+                    break
+    except OSError:
         return None
-    return p.resolve()
+    if listed is None:
+        return None
+    if not _inside(d / listed, d):
+        _log.warning("overrides: component=ui refused to serve %s: it resolves outside %s",
+                     listed, d)
+        return None
+    return d, listed
+
+
+def static_path(name: str) -> Optional[Path]:
+    """The file to serve for `/user-overrides/static/<name>`, or None (see
+    `static_asset`; the path comes from the folder listing)."""
+    found = static_asset(name)
+    if found is None:
+        return None
+    d, listed = found
+    return (d / listed).resolve()
 
 
 _ENSURED = [False]
