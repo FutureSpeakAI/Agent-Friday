@@ -285,7 +285,7 @@
 .calv-allday-label{font-size:var(--fr-text-2xs,10px);color:var(--fr-dim);align-self:center;text-align:right;padding-right:6px}
 .calv-allday-cell{min-height:20px;display:flex;flex-direction:column;gap:2px}
 .calv-week-body{max-height:62vh;overflow-y:auto;position:relative;padding-top:8px}
-.cal-timeline>.cal-event,.cal-timeline>.cal-gap{left:68px}
+.cal-timeline>.cal-event,.cal-timeline>.cal-gap{left:68px;box-sizing:border-box}
 .calv-hours{position:relative}
 .calv-hour-label{position:absolute;right:6px;transform:translateY(-6px);font-size:var(--fr-text-2xs,10px);color:var(--fr-faint,var(--fr-dim));font-family:var(--fr-font-mono,monospace)}
 .calv-col{position:relative;border-left:1px solid var(--fr-glass-edge);background:repeating-linear-gradient(to bottom,transparent 0,transparent ${HOUR_PX - 1}px,var(--fr-glass-edge) ${HOUR_PX - 1}px,var(--fr-glass-edge) ${HOUR_PX}px)}
