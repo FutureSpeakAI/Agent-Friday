@@ -195,6 +195,11 @@ def api_calendar_calendars_visible():
     return jsonify({"status": "ok", "visible": chosen})
 
 
+def ce_range_failed(start, end):
+    from agent_friday.services import calendar_engine as ce
+    return ce.range_failed(start, end)
+
+
 def _keys_arg():
     """The calendars a view is narrowed to (Friday's "only these"), from ?keys=a,b; None for all switched on."""
     keys = [k for k in (request.args.get("keys") or "").split(",") if k and "|" in k][:50]
@@ -272,10 +277,20 @@ def api_calendar_freebusy():
         except Exception as e:
             return api_error(e, "Couldn't read your calendars")
         events, errors = got["events"], got["errors"]
+        read = [c for c in got["calendars"] if (c["key"] in (_keys_arg() or [])) or (not _keys_arg() and c.get("on"))]
+        if errors and not events and len(errors) >= len(read):
+            # Every calendar failed: an error, never a free week.
+            return jsonify({"status": "error", "message": "Couldn't read any of your calendars, so free time "
+                            "can't be worked out.", "errors": errors}), 502
     else:
         events = []
         for i in range((d1 - d0).days):
-            events.extend(_events_for_day(d0 + timedelta(days=i)))
+            day = d0 + timedelta(days=i)
+            events.extend(_events_for_day(day))
+            dstart = datetime(day.year, day.month, day.day)
+            if ce_range_failed(dstart, dstart + timedelta(days=1)):
+                return jsonify({"status": "error", "message": "Couldn't read your calendar, so free time "
+                                "can't be worked out."}), 502
     out = cv.free_busy(events, start.astimezone(), end.astimezone())
     return jsonify({"status": "ok", "start": d0.isoformat(), "end": d1.isoformat(),
                     "errors": errors, **out})

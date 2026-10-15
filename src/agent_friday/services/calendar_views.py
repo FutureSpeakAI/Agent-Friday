@@ -459,8 +459,9 @@ def free_busy(events, start, end, *, working=None) -> dict:
                 merged.append([s2, e2, [cal] if cal else []])
         free = []
         if day.weekday() in wdays:
-            cur = lo.replace(hour=ws[0], minute=ws[1])
-            stop = lo.replace(hour=we[0], minute=we[1])
+            # Built from the wall clock each day, so a clock change keeps working hours where they are.
+            cur = datetime(day.year, day.month, day.day, ws[0], ws[1]).astimezone()
+            stop = datetime(day.year, day.month, day.day, we[0], we[1]).astimezone()
             for s, e, _ in merged:
                 if s > cur and cur < stop:
                     free.append((cur, min(s, stop)))
