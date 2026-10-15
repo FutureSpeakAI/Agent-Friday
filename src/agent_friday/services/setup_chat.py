@@ -281,7 +281,7 @@ def _prompt(st: dict) -> dict:
         opts = steps.voice_options()
         p.update(input="text", chips=[{"value": o["value"], "label": o["name"]} for o in opts]
                  + _chips((("later", copy.VOICE_LATER),)),
-                 card="voices" if opts else None)
+                 card="voices" if opts else None, voices=opts)
     elif stage == "pronouns":
         p.update(input="text", placeholder="Or type them",
                  chips=_chips(steps.PRONOUN_CHOICES))

@@ -70,7 +70,13 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def steps(monkeypatch):
-    from agent_friday.services import setup_steps
+    try:
+        from agent_friday.services import setup_steps
+    except ImportError:
+        # A tree without the conversation's steps: each test then fails on
+        # what the conversation does, not on this import.
+        from types import SimpleNamespace
+        return SimpleNamespace(about_lines=lambda: [])
     monkeypatch.setattr(setup_steps, "INSTALLED_VOICES", lambda: ["af_heart", "am_michael"])
     monkeypatch.setattr(setup_steps, "CAPABILITY", lambda: {
         "capable": False, "roles": {"text": {"ok": False}}, "chain_why": None})
