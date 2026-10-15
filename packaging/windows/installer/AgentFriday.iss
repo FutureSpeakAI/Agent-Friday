@@ -122,8 +122,13 @@ Source: "{#RepoRoot}\src\agent_friday\resources\model_shortlist.json"; Flags: do
 Source: "{#RepoRoot}\src\agent_friday\resources\voice_front_options.json"; Flags: dontcopy
 
 [Icons]
-Name: "{userdesktop}\{#AppName}"; Filename: "{app}\Agent Friday.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\AgentFriday.ico"; Comment: "Start Agent Friday"
-Name: "{userprograms}\{#AppName}\{#AppName}"; Filename: "{app}\Agent Friday.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\AgentFriday.ico"; Comment: "Start Agent Friday"
+; The Desktop and Start menu icons start the tray (no console window) and open
+; Friday in the browser; a second click while Friday runs just opens the page.
+; The very first start after setup stays on the console launcher ([Run] below),
+; where the setup wizard can ask its questions; the tray hands over to it too
+; whenever setup has not been completed.
+Name: "{userdesktop}\{#AppName}"; Filename: "{app}\Agent Friday (tray).cmd"; WorkingDir: "{app}"; IconFilename: "{app}\AgentFriday.ico"; Comment: "Start Agent Friday"; Flags: runminimized
+Name: "{userprograms}\{#AppName}\{#AppName}"; Filename: "{app}\Agent Friday (tray).cmd"; WorkingDir: "{app}"; IconFilename: "{app}\AgentFriday.ico"; Comment: "Start Agent Friday"; Flags: runminimized
 Name: "{userprograms}\{#AppName}\Uninstall {#AppName}"; Filename: "{uninstallexe}"; IconFilename: "{app}\AgentFriday.ico"; Comment: "Remove Agent Friday from this computer"
 Name: "{userprograms}\{#AppName}\Start Friday when I sign in"; Filename: "{app}\Start Friday when I sign in.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\AgentFriday.ico"; Comment: "Turn the automatic start on or off"
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\Agent Friday (background).cmd"; WorkingDir: "{app}"; IconFilename: "{app}\AgentFriday.ico"; Comment: "Start Agent Friday quietly when you sign in"; Tasks: autostart
