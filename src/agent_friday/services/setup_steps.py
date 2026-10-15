@@ -352,7 +352,8 @@ def apply_posture(posture: str) -> dict:
     except cloud_consent.ConsentRejected as e:
         raise PostureUnavailable(str(e)) from e
     mode = routing_for(posture, view["capable"])
-    _save({"model_routing": {"mode": mode}}, owner_routing_change=True)
+    from agent_friday.services import setup_complete
+    setup_complete.save_routing_answer(mode)
     try:
         from agent_friday.services import scheduled_cloud
         scheduled_cloud.save({"allow": posture != "local"})
