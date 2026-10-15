@@ -132,7 +132,7 @@ jobs:
           settings_walk.spec.ts smoke.spec.ts
           fill_in_place.spec.ts messages_friday_select.spec.ts open_only_stage.spec.ts
           point_and_chips.spec.ts settings_highlight.spec.ts step_panel.spec.ts
-          studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts
+          studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
       - name: Keep the Settings walk table and failure traces
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
