@@ -78,7 +78,8 @@ def podcasts_create():
                        length=str(data.get("length") or ""),   # "": the owner's setting
                        mode=str(data.get("mode") or "auto"),
                        instructions=str(data.get("instructions") or ""),
-                       voice_engine=str(data.get("voice") or "local"), origin="user")
+                       voice_engine=str(data.get("voice") or "local"),
+                       hosts=str(data.get("hosts") or ""), origin="user")
     except Exception as e:
         return api_error(e, "Couldn't start the episode", status=400)
     return jsonify(public_result({"status": "ok", "episode": pe.summary(ep)},

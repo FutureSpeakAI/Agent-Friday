@@ -191,6 +191,7 @@ def _tool_make_podcast(inp):
                        mode=str(inp.get("mode") or "auto"),
                        instructions=str(inp.get("instructions") or ""),
                        voice_engine=str(inp.get("voice") or "local"),
+                       hosts=str(inp.get("hosts") or ""),
                        origin="user")
     except pe.PodcastRefused as e:
         return json.dumps({"status": "refused", "message": str(e)})
@@ -392,7 +393,7 @@ def _tool_podcast_source(inp):
 TOOLS = [
     {"name": "make_podcast",
      "description": (
-         "Make a two-host podcast episode (chapters, transcript, a source per claim) "
+         "Make a podcast episode (chapters, transcript, a source per claim) "
          "from any sources: files, wiki pages, graph entries, a conversation, "
          "creations, datasets (CSV/XLSX: data mode, only computed numbers), web "
          "pages or text; or `topic` for the owner's wiki notes. Made locally; "
@@ -412,9 +413,11 @@ TOOLS = [
          "instructions": {"type": "string", "description": "Angle or emphasis the owner asked for."},
          "voice": {"type": "string", "enum": ["local", "cloud"],
                    "description": "local (default). cloud only if the owner asks and has switched cloud voices on."},
+         "hosts": {"type": "string", "enum": ["solo", "duo"],
+                   "description": "This episode only."},
      }}},
     {"name": "podcast_format",
-     "description": ("Who is on each show: solo (Friday alone) or duo (two hosts). No "
+     "description": ("Who is on each show: solo (you alone) or duo (two hosts). No "
                      "format: read all, with the recommended one. With routine and format: set it."),
      "input_schema": {"type": "object", "properties": {
          "routine": {"type": "string", "enum": ["briefing", "front_page", "editorial", "weekly", "any"]},

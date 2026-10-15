@@ -183,7 +183,8 @@ def test_an_episode_is_produced_with_timed_lines_captions_and_a_check(monkeypatc
     monkeypatch.setattr(provenance, "write", lambda path, **kw: signed.append((Path(path), kw)) or
                         {"artifact": {"content_hash": "h"}, "signature": "sig"})
 
-    ep = _text_ep(length="short")
+    # Two hosts asked for this episode: "any" is one voice by default now.
+    ep = _text_ep(length="short", hosts="duo")
     assert ep["status"] == "queued" and ep["privacy"] == "private"
     done = pe.produce(ep["id"])
     assert done["status"] == "ready", done.get("error")
@@ -556,7 +557,7 @@ def test_every_episode_opens_and_signs_off_the_same_way(monkeypatch):
     _fake_speaker(monkeypatch)
     real = render.listen_back
     monkeypatch.setattr(render, "listen_back", lambda wav, s, transcribe=None: real(wav, s, transcribe=lambda p: s))
-    done = pe.produce(_text_ep(show="The Front Page")["id"])
+    done = pe.produce(_text_ep(show="The Front Page", hosts="duo")["id"])
     first, second, last = done["lines"][0], done["lines"][1], done["lines"][-1]
     assert first["signature"] and first["speaker"] == "a"
     # The show is credited to the product in plain words; she is herself.
