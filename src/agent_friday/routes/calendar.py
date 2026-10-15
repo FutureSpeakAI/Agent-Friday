@@ -186,6 +186,12 @@ def api_calendar_calendars_visible():
     return jsonify({"status": "ok", "visible": chosen})
 
 
+def _keys_arg():
+    """The calendars a view is narrowed to (Friday's "only these"), from ?keys=a,b; None for all switched on."""
+    keys = [k for k in (request.args.get("keys") or "").split(",") if k and "|" in k][:50]
+    return keys or None
+
+
 @calendar_bp.route('/api/calendar/range')
 def api_calendar_range():
     """Events of the switched-on calendars from `start` to `end` (YYYY-MM-DD,
@@ -204,14 +210,14 @@ def api_calendar_range():
     events, errors = [], []
     if cv.multi_calendar_available():
         try:
-            got = cv.events_in_range(start, end, calendars=cv.cached_calendars())
+            got = cv.events_in_range(start, end, keys=_keys_arg(), calendars=cv.cached_calendars())
             events, errors = got["events"], got["errors"]
         except Exception as e:
             return api_error(e, "Couldn't read your calendars")
     else:
         for i in range((d1 - d0).days):
             events.extend(_events_for_day(d0 + timedelta(days=i)))
-    for le in _load_local_events():
+    for le in ([] if _keys_arg() else _load_local_events()):
         sdt = _parse_dt(le.get("start_time"))
         if sdt and start <= sdt < end and le.get("id") not in {e.get("id") for e in events}:
             events.append(dict(le))
@@ -227,6 +233,39 @@ def api_calendar_range():
     merged.sort(key=lambda e: str(e.get("start_time") or ""))
     return jsonify({"status": "ok", "start": d0.isoformat(), "end": d1.isoformat(),
                     "events": _enrich_events(merged), "errors": errors})
+
+
+@calendar_bp.route('/api/calendar/freebusy')
+def api_calendar_freebusy():
+    """Busy blocks (calendar names, never titles) and the free time inside
+    working hours, per day, from `start` to `end` (YYYY-MM-DD, end exclusive, at
+    most 14 days). Worked out from the switched-on calendars' events on this PC;
+    no free/busy query is sent anywhere."""
+    from agent_friday.services import calendar_views as cv
+    try:
+        d0 = date.fromisoformat(request.args.get("start") or "")
+        d1 = date.fromisoformat(request.args.get("end") or "")
+    except ValueError:
+        return jsonify({"status": "error", "message": "use start and end as YYYY-MM-DD"}), 400
+    if d1 <= d0 or (d1 - d0).days > cv.MAX_FREEBUSY_DAYS:
+        return jsonify({"status": "error",
+                        "message": "end must be after start, at most %d days" % cv.MAX_FREEBUSY_DAYS}), 400
+    start = datetime(d0.year, d0.month, d0.day)
+    end = datetime(d1.year, d1.month, d1.day)
+    errors = []
+    if cv.multi_calendar_available():
+        try:
+            got = cv.events_in_range(start, end, keys=_keys_arg(), calendars=cv.cached_calendars())
+        except Exception as e:
+            return api_error(e, "Couldn't read your calendars")
+        events, errors = got["events"], got["errors"]
+    else:
+        events = []
+        for i in range((d1 - d0).days):
+            events.extend(_events_for_day(d0 + timedelta(days=i)))
+    out = cv.free_busy(events, start.astimezone(), end.astimezone())
+    return jsonify({"status": "ok", "start": d0.isoformat(), "end": d1.isoformat(),
+                    "errors": errors, **out})
 
 
 @calendar_bp.route('/api/calendar/event/<event_id>')

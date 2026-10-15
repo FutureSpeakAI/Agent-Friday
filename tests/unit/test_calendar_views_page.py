@@ -35,9 +35,9 @@ def test_the_calendar_offers_week_and_month_beside_day(page):
     body = _calendar_ws(src)
     assert "CalendarViews.ViewSwitch" in body
     assert "CalendarViews.WeekView" in body and "CalendarViews.MonthView" in body
-    decl = src[src.index("fridayDeclareNav('calendar'"):]
-    decl = decl[:decl.index(";")]
-    for view in ("day", "week", "month"):
+    decl = src[src.index("const CAL_NAV_SECTIONS"):]
+    decl = decl[:decl.index("];")]
+    for view in ("day", "week", "month", "freebusy"):
         assert re.search(r"id:\s*'%s'" % view, decl), "Friday can open the %s view by name" % view
 
 
