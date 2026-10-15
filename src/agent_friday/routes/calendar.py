@@ -346,11 +346,11 @@ def api_calendar_quick_add():
             if not fields.get(k) and isinstance(model.get(k), str):
                 fields[k] = model[k][:200]
         parsed_by = "code+model"
-    sdt = _parse_dt(fields.get("start_time"))
+    sdt = _local_dt(fields.get("start_time"))
     if not sdt:
         return jsonify({"status": "unparsed", "message": "Say a day and a time, like \u201clunch with Dana Tuesday 12pm\u201d.",
                         "fields": fields})
-    edt = _parse_dt(fields.get("end_time"))
+    edt = _local_dt(fields.get("end_time"))
     if not edt or edt <= sdt:
         edt = sdt + timedelta(hours=1)
     preview = {"title": (fields.get("title") or text)[:200],
@@ -360,6 +360,18 @@ def api_calendar_quick_add():
                "attendees": [a for a in (fields.get("attendees") or []) if a][:20]}
     return jsonify({"status": "ok", "preview": preview, "parsed_by": parsed_by,
                     "calendars": _writable_calendars()})
+
+
+def _local_dt(text):
+    """A time as this PC's wall clock: an offset or Z is converted (a model may answer in UTC), a bare
+    time is already local. None for something that is not a time."""
+    if not text:
+        return None
+    try:
+        d = datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return _parse_dt(text)
+    return d.astimezone().replace(tzinfo=None) if d.tzinfo else d
 
 
 def _writable_calendars():
@@ -407,14 +419,22 @@ def api_calendar_create_event():
     if data.get("confirmed") is not True:
         return jsonify({"status": "error", "message": "an event is added only from the owner's Add"}), 400
     title = " ".join(str(data.get("title") or "").split())[:200]
-    sdt, edt = _parse_dt(data.get("start_time")), _parse_dt(data.get("end_time"))
+    sdt, edt = _local_dt(data.get("start_time")), _local_dt(data.get("end_time"))
     if not title or not sdt:
         return jsonify({"status": "error", "message": "a title and a start time are required"}), 400
     if not edt or edt <= sdt:
         edt = sdt + timedelta(hours=1)
     attendees = [str(a)[:200] for a in (data.get("attendees") or []) if a][:20]
     location = str(data.get("location") or "")[:300]
-    if _writable_calendars():
+    writable = _writable_calendars()
+    if data.get("calendar_key") and not writable:
+        # The preview offered Google calendars and Google can no longer be written to: say so, never
+        # quietly keep on this PC an event she asked to put on a calendar.
+        return jsonify({"status": "error", "message": "Google Calendar cannot be written to right now; "
+                        "reconnect Google in Settings > Connections. Nothing was added."}), 409
+    if writable:
+        if data.get("calendar_key") not in {c["key"] for c in writable}:
+            return jsonify({"status": "error", "message": "choose a calendar you can add to"}), 400
         aid, cid = _calendar_of(data.get("calendar_key"))
         if cid is None:
             return jsonify({"status": "error", "message": "choose a calendar from the list"}), 400

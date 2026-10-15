@@ -48,8 +48,25 @@ def test_a_drag_only_proposes_and_the_write_happens_in_the_confirmation():
 
 def test_a_slipped_drag_proposes_nothing_and_ctrl_click_still_ticks():
     drag = JS[JS.index("function dragProps("):JS.index("function MoveLayer(")]
-    assert "Math.abs(dy) < 6 && Math.abs(dx) < 6" in drag
+    assert "const stepPx = o.hourPx * STEP_MIN / 60;" in drag and "Math.abs(dy) < stepPx" in drag, \
+        "a drag starts only after one whole step, so a twitch never becomes a 15-minute move"
+    assert "Math.trunc(dy / stepPx) * STEP_MIN" in drag
     assert "e.ctrlKey || e.metaKey" in drag
+
+
+def test_a_press_on_a_button_or_the_prep_card_is_never_a_drag_and_a_lost_release_abandons_it():
+    drag = JS[JS.index("function dragProps("):JS.index("function MoveLayer(")]
+    assert "closest('button, a, input, select, textarea, label, [data-no-drag]')" in drag
+    assert "m.buttons === 0" in drag and "'pointercancel'" in drag and "'blur'" in drag
+    assert ".calv-dragging{" in JS and "pointer-events:none" in JS[JS.index(".calv-dragging{"):][:200]
+    for page in ("index.html", "ui_parts/app.html"):
+        src = (ROOT / page).read_text(encoding="utf-8")
+        assert "'data-no-drag': 'on'" in src or 'data-no-drag="on"' in src, page
+
+
+def test_a_move_under_the_owners_permission_uses_this_renders_reload():
+    layer = JS[JS.index("function MoveLayer("):JS.index("function QuickAddPreview(")]
+    assert "runRef.current = run;" in layer and "runRef.current(p)" in layer
     assert "if (!days && !minutes) return;" in JS
     assert "const STEP_MIN = 15;" in JS
 
