@@ -94,7 +94,17 @@ HEARTBEAT_OUTPUT_TOKENS = 600
 HEARTBEAT_TOOLS_FALLBACK_TOKENS = 1_200
 BRIEFING_CONTEXT_TOKENS = 4_000
 
+#: A job with at least MEASURE_MIN_RUNS recorded runs in costs.db over the
+#: last MEASURE_DAYS days is estimated from what those runs actually sent and
+#: received; the constants above are only the fallback. The constants were off
+#: by 2-4x on a real install (field install report, Part 2 #12).
+MEASURE_DAYS = 30
+MEASURE_MIN_RUNS = 3
+
 ASSUMPTIONS = (
+    "Where this PC has recorded at least 3 runs of a job in the last 30 days, "
+    "its tokens per run are the average of those runs (costs.db); otherwise "
+    "the figures below are used.",
     "Friday's system prompt is about 13,550 tokens and every job sends it.",
     "The Front Page editor's request was measured at 25,410 tokens.",
     "A heartbeat takes 3 model rounds; each tool result adds about 1,000 tokens.",
@@ -144,6 +154,45 @@ def per_run_tokens(sid: str, rec: dict | None = None) -> dict:
     if sid == "sch_daily_creation":
         return {"input": 2 * (SYSTEM_PROMPT_TOKENS + 1_000), "output": 600 + 3_000}
     return {"input": SYSTEM_PROMPT_TOKENS, "output": 1_000}
+
+
+def measured_per_run(sid: str, days: int = MEASURE_DAYS,
+                     min_runs: int = MEASURE_MIN_RUNS) -> dict | None:
+    """What one run of `sid` actually sent and received, averaged over its
+    recorded runs in costs.db, or None with fewer than `min_runs` runs.
+
+    {'input', 'output', 'runs', 'usd'}: input counts cached reads and cache
+    writes too (they are prompt tokens the job sent), and `usd` is what those
+    runs were billed on average, whatever model they ran on. Runs on a local
+    seat count for size; they are the same job sending the same prompt.
+    Never raises.
+    """
+    import time as _t
+    try:
+        from agent_friday.services import cost_meter
+        cost_meter.flush()
+        conn = cost_meter._conn()
+        since = _t.time() - max(1, int(days)) * 86400
+        with cost_meter._CONN_LOCK:
+            rows = conn.execute(
+                "SELECT run_id, "
+                "COALESCE(SUM(input_tokens),0) + COALESCE(SUM(cache_read_tokens),0) "
+                "+ COALESCE(SUM(cache_write_tokens),0), "
+                "COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost_usd),0) "
+                "FROM cost_calls WHERE schedule_id=? AND ts>=? "
+                "AND run_id IS NOT NULL AND run_id<>'' GROUP BY run_id",
+                (sid, since)).fetchall()
+    except Exception as e:
+        _log.debug("measured tokens for %s unavailable: %s", sid, e)
+        return None
+    rows = [r for r in rows if (r[1] or 0) > 0]
+    if len(rows) < max(1, int(min_runs)):
+        return None
+    n = len(rows)
+    return {"input": int(round(sum(r[1] for r in rows) / n)),
+            "output": int(round(sum(r[2] for r in rows) / n)),
+            "runs": n,
+            "usd": round(sum(r[3] for r in rows) / n, 6)}
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -273,13 +322,18 @@ def runs_per_month(sid: str, rec: dict | None, cfg: dict) -> float:
 
 # ── The estimate ──────────────────────────────────────────────────────────────
 
-def estimate(cfg: dict | None = None, records: list | None = None) -> dict:
+def estimate(cfg: dict | None = None, records: list | None = None,
+             measured: dict | None = None) -> dict:
     """Estimated monthly cost of running these jobs on their cloud models.
 
     For each job: runs per month (from its schedule, or the cloud cadence for
-    the heartbeat) x the per-run token estimate (`per_run_tokens`, whose
-    constants document where each number comes from) x the model's published
-    price (cost_meter.PRICING). A job switched off is listed but not counted.
+    the heartbeat) x tokens per run x the model's published price
+    (cost_meter.PRICING). Tokens per run come from this PC's recorded runs
+    (`measured_per_run`, basis "measured") when there are enough of them, else
+    from `per_run_tokens`, whose constants document where each number comes
+    from (basis "assumed"). Either way it is labelled an estimate. A job
+    switched off is listed but not counted. `measured` ({sid: measurement or
+    None}) replaces the costs.db lookup, for callers that already have it.
     """
     from agent_friday.services import cost_meter
     cfg = cfg or settings()
@@ -295,7 +349,11 @@ def estimate(cfg: dict | None = None, records: list | None = None) -> dict:
         rec = by_id.get(sid)
         model = model_for(sid, cfg)
         price = cost_meter.price_for(model) or {"in": 0.0, "out": 0.0}
-        toks = per_run_tokens(sid, rec)
+        meas = (measured or {}).get(sid) if measured is not None else measured_per_run(sid)
+        if meas:
+            toks, basis = {"input": meas["input"], "output": meas["output"]}, "measured"
+        else:
+            toks, basis = per_run_tokens(sid, rec), "assumed"
         per_run = toks["input"] / 1000.0 * price["in"] + toks["output"] / 1000.0 * price["out"]
         runs = runs_per_month(sid, rec, cfg)
         enabled = bool((rec or {}).get("enabled", True))
@@ -310,8 +368,13 @@ def estimate(cfg: dict | None = None, records: list | None = None) -> dict:
             "output_tokens_per_run": toks["output"],
             "usd_per_run": round(per_run, 4),
             "usd_per_month": round(monthly, 2),
+            # Where the token figures came from: this PC's recorded runs, or
+            # the documented constants. Both are estimates of a future bill.
+            "basis": basis,
+            "runs_measured": (meas or {}).get("runs", 0),
         })
     return {"jobs": jobs, "total_usd_per_month": round(total, 2),
+            "is_estimate": True,
             "heartbeat_every_minutes": cfg["heartbeat_every_minutes"],
             "heartbeat_window": [cfg["heartbeat_from_hour"], cfg["heartbeat_to_hour"]],
             "heartbeat_runs_per_day": heartbeat_runs_per_day(cfg),
