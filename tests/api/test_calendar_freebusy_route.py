@@ -16,8 +16,10 @@ def views(monkeypatch):
         asked.append(keys)
         return {"events": [{"title": "Private thing", "start_time": "2026-10-19T10:00:00-05:00",
                             "end_time": "2026-10-19T11:00:00-05:00", "calendar_name": "Family"}],
-                "errors": [], "calendars": []}
+                "errors": [], "calendars": [{"key": "home|primary", "on": True}, {"key": "home|fam", "on": True}]}
     monkeypatch.setattr(cv, "events_in_range", fake)
+    import agent_friday.routes.calendar as rc
+    monkeypatch.setattr(rc, "_load_local_events", lambda: [])
     return asked
 
 
@@ -51,3 +53,31 @@ def test_when_every_calendar_failed_it_is_an_error_never_a_free_week(client, mon
         "calendars": [{"key": "home|primary", "on": True}, {"key": "home|fam", "on": True}]})
     r = client.get("/api/calendar/freebusy?start=2026-10-18&end=2026-10-25")
     assert r.status_code == 502 and "free_minutes" not in r.get_json()
+
+
+def test_with_no_calendar_switched_on_there_is_no_free_week(client, monkeypatch, views):
+    from agent_friday.services import calendar_views as cv
+    monkeypatch.setattr(cv, "events_in_range", lambda start, end, keys=None, calendars=None: {
+        "events": [], "errors": [], "calendars": [{"key": "home|primary", "on": False}]})
+    assert client.get("/api/calendar/freebusy?start=2026-10-18&end=2026-10-25").status_code == 409
+
+
+def test_some_calendars_unread_marks_the_free_time_partial(client, monkeypatch, views):
+    from agent_friday.services import calendar_views as cv
+    monkeypatch.setattr(cv, "events_in_range", lambda start, end, keys=None, calendars=None: {
+        "events": [{"title": "x", "start_time": "2026-10-19T10:00:00-05:00", "end_time": "2026-10-19T11:00:00-05:00",
+                    "calendar_name": "Home"}],
+        "errors": [{"calendar_key": "home|fam", "name": "Family", "error": "x"}],
+        "calendars": [{"key": "home|primary", "on": True}, {"key": "home|fam", "on": True}]})
+    d = client.get("/api/calendar/freebusy?start=2026-10-18&end=2026-10-25").get_json()
+    assert d["partial"] is True and d["errors"][0]["name"] == "Family"
+
+
+def test_an_event_kept_on_this_pc_takes_its_time_too(client, monkeypatch, views):
+    import agent_friday.routes.calendar as rc
+    monkeypatch.setattr(rc, "_load_local_events", lambda: [
+        {"id": "local-1", "title": "Kept here", "start_time": "2026-10-20T13:00", "end_time": "2026-10-20T14:00"}])
+    d = client.get("/api/calendar/freebusy?start=2026-10-18&end=2026-10-25").get_json()
+    tue = [x for x in d["days"] if x["date"] == "2026-10-20"][0]
+    assert any("On this PC" in b["calendars"] for b in tue["busy"])
+    assert "Kept here" not in str(d)
