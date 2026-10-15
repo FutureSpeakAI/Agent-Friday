@@ -271,6 +271,7 @@
   // proposes nothing, so a slipped click never moves a meeting. "Don't ask again for 30 minutes" is the owner's
   // batch permission: it lives in this page's memory only and runs out; each move still gets an Undo.
   const STEP_MIN = 15;
+  const who = () => (window.fridayName ? window.fridayName() : 'Friday');
   const MOVE_EVENT = 'friday:cal-propose-move';
   let suppressClickUntil = 0;
   function canMove(ev) { return !!ev && !ev.media && !ev.all_day && ev.can_edit === true && ev.source === 'google'; }
@@ -387,7 +388,7 @@
           if (props.onMoved) props.onMoved();
         } else setDone({ text: "Couldn't move “" + p.ev.title + '”: ' + (d.message || 'Google did not take the change') + '. Nothing changed.', failed: true });
       } catch (_) {
-        setDone({ text: "Couldn't reach Friday to move “" + p.ev.title + '”. Nothing changed.', failed: true });
+        setDone({ text: "Couldn't reach " + who() + ' to move “' + p.ev.title + '”. Nothing changed.', failed: true });
       }
       setBusy(false);
       setPending(null);

@@ -39063,7 +39063,7 @@ function CalendarWS() {
       if (d.status === 'ok' && d.preview) setQaPreview({ preview: d.preview, calendars: d.calendars || [] });
       else flash(d.message || 'Could not read that — try “interview with Acme Tuesday 2pm”');
     } catch (e) {
-      flash('Quick add could not reach Friday');
+      flash('Quick add could not reach ' + fridayName());
     }
     setAdding(false);
   };
@@ -39097,7 +39097,7 @@ function CalendarWS() {
         reloadAll();
       } else flash("Couldn't add it: " + (d.message || 'Google did not take it') + '. Nothing was added.');
     } catch (e) {
-      flash("Couldn't reach Friday to add it. Nothing was added.");
+      flash("Couldn't reach " + fridayName() + " to add it. Nothing was added.");
     }
     setAdding(false);
   };
