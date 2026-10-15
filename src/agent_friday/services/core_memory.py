@@ -42,6 +42,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import uuid
 from contextvars import ContextVar
 from pathlib import Path
@@ -72,6 +73,11 @@ ACTORS = ("owner", "friday", "review", "dream")
 #: knows the caller is not a conversation (it may then only add).
 ACTOR: ContextVar[str] = ContextVar("core_memory_actor", default="friday")
 
+#: False while a model that is not known to be on this PC will read the
+#: result: refusals then list Friday's own lessons but not the lines about the
+#: owner (set by core_memory_tools around a call).
+REVEAL_USER: ContextVar[bool] = ContextVar("core_memory_reveal_user", default=True)
+
 _LOCK = threading.RLock()
 
 
@@ -85,8 +91,13 @@ def _path(target: str) -> Path:
 
 # ── reading ───────────────────────────────────────────────────────────────────
 def _clean(text: Any) -> str:
-    """One line of text: whitespace collapsed, a leading bullet dropped."""
-    s = " ".join(str(text or "").split())
+    """One line of text: NFKC-normalised, invisible format characters (zero
+    width, bidi controls: Unicode category Cf) removed, whitespace collapsed,
+    a leading bullet dropped. The checks below then see the text a model will
+    read, not a disguised spelling of it."""
+    s = unicodedata.normalize("NFKC", str(text or ""))
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Cf")
+    s = " ".join(s.split())
     s = re.sub(r"^[-*•]\s+", "", s)
     return s.strip()
 
@@ -107,6 +118,16 @@ def entries(target: str) -> List[str]:
         if e:
             out.append(e)
     return out
+
+
+_SMALL_WORDS = {"a", "an", "the", "and", "or", "to", "of", "in", "on", "at", "for", "is", "are",
+                "was", "be", "it", "that", "this", "with", "as", "by", "my", "i", "me", "user",
+                "users", "they", "their", "them", "he", "she", "his", "her", "prefers", "likes"}
+
+
+def content_words(text: Any) -> set:
+    """The words that carry a line's meaning (lower case, small words dropped)."""
+    return {w for w in re.findall(r"[a-z0-9]+", _clean(text).lower()) if w not in _SMALL_WORDS}
 
 
 def used(items: List[str]) -> int:
@@ -195,7 +216,11 @@ def refusal(text: str) -> Optional[str]:
 
 def _full_message(target: str, items: List[str], need: int) -> str:
     cap = CAPS[target]
-    listing = "\n".join(f"{i + 1}. {e}" for i, e in enumerate(items)) or "(empty)"
+    if target == "user" and not REVEAL_USER.get():
+        listing = (f"({len(items)} entries, withheld from this model: the lines about the user stay "
+                   "on this PC; a local model or the user can consolidate them)")
+    else:
+        listing = "\n".join(f"{i + 1}. {e}" for i, e in enumerate(items)) or "(empty)"
     return (f"NOT SAVED: the {target} memory is full ({used(items):,}/{cap:,} characters; this "
             f"change needs {need:,} more). Consolidate first: merge related entries with "
             f"action=replace, or drop stale ones with action=remove, then try again in this turn. "
@@ -215,6 +240,8 @@ def _match(items: List[str], old: str):
         return hits[0], None
     if not hits:
         return None, "no entry contains that text"
+    if not REVEAL_USER.get():
+        return None, f"that text is in {len(hits)} entries; quote more of the one you mean"
     return None, ("that text is in more than one entry; quote more of the one you mean: "
                   + " | ".join(items[i] for i in hits[:5]))
 

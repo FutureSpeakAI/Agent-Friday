@@ -3361,7 +3361,7 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
 
 def _get_friday_system_prompt(keywords='', workspace='', *, provider,
                               vault_control, vault_fallback='redact', tools_block=True,
-                              freeze_key=None):
+                              freeze_key=None, model=''):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
@@ -3390,6 +3390,8 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
         VaultAccessControl.gate_content.
     freeze_key: the conversation this prompt serves, if any. Its memory
         blocks are frozen for that conversation (`memory_head_blocks`).
+    model: the model the prompt is for, when the caller knows it; a
+        cloud-tagged model is gated as cloud in the memory blocks.
     """
     settings = _load_settings()
     personality = _load_agent_personality()
@@ -3463,8 +3465,11 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
 
     # v5 personalization — the LOCAL user model + learned heuristics, frozen
     # for the conversation `freeze_key` names (services/prompt_freeze).
+    # `model` too: a cloud-tagged model served through the local daemon
+    # ("glm-4.6:cloud") is a cloud reader whatever the provider name says.
     prefix += memory_head_blocks(workspace, freeze_key, provider=provider,
-                                 vault_control=vault_control, vault_fallback=vault_fallback)
+                                 vault_control=vault_control, vault_fallback=vault_fallback,
+                                 model=str(model or ''))
 
     try:
         system_prompt, _ = _build_context_prompt(
