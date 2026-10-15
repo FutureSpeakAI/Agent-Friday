@@ -254,11 +254,15 @@ def ask_for_held(path: str) -> dict:
     from pathlib import Path
 
     from agent_friday.services import file_grants, judgment_gate
-    if not path or file_grants._raw_key(path) not in judgment_gate.held_keys():
+    # The page sends back a name it was shown; only a held file's own
+    # recorded path is ever opened, never the text that came in.
+    want = str(path or "").casefold()
+    match = next((name for name in judgment_gate.held_names().values() if str(name).casefold() == want), None)
+    if match is None:
         return {"ok": False, "message": "That file isn't held."}
-    if not Path(path).is_file():
+    if not Path(match).is_file():
         return {"ok": False, "message": "That file is no longer there; start the list fresh to let it go."}
-    card = file_grants.ask_for_raw_source(Path(path), force=True)
+    card = file_grants.ask_for_raw_source(Path(match), force=True)
     if not card or not card.get("ok"):
         return {"ok": False, "message": "No card could be raised for that file."}
     return {"ok": True, "approval_id": card.get("approval_id")}

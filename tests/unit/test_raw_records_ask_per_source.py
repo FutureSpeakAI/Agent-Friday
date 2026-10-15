@@ -503,3 +503,91 @@ def test_any_card_that_lists_a_record_says_what_it_is(tmp_path, monkeypatch):
     fgr.handle({"action": "ask", "items": [{"path": str(p), "type": "file"}],
                 "reason": "just some notes"})
     assert "a mail archive" in made[0]["action_description"]
+
+
+# ── round 5 of the review (v6) ───────────────────────────────────────────────
+
+def test_a_pattern_is_judged_by_the_files_it_matches(cards, tmp_path):
+    d = tmp_path / "Downloads"
+    d.mkdir()
+    (d / "Chase_Activity_2026.csv").write_text("date,amount\n10/01,23.99\n", encoding="utf-8")
+    (d / "recipes.csv").write_text("name\nsoup\n", encoding="utf-8")
+    assert fg.raw_refusal_for_command("Get-Content %s | Select-String Amazon" % (d / "*.csv"))
+    assert cards, "the owner is asked about the matching file"
+    (d / "Chase_Activity_2026.csv").unlink()
+    assert fg.raw_refusal_for_command("Get-Content %s" % (d / "*.csv")) is None
+
+
+def test_a_codebase_command_that_reads_a_record_is_not_run(cards, tmp_path, monkeypatch):
+    from agent_friday.services import codebases
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "inbox.mbox").write_text(ARCHIVE, encoding="utf-8")
+    monkeypatch.setattr(codebases, "load", lambda cid: {"id": cid})
+    monkeypatch.setattr(codebases, "repo_path", lambda cid: repo)
+    monkeypatch.setattr(codebases, "is_friday_checkout", lambda r: False)
+    out = codebases.run("cb1", "cat inbox.mbox")
+    assert out["status"] == "refused" and "inbox.mbox" in out["say"]
+
+
+def test_claudes_agent_is_not_handed_a_folder_with_a_record_in_it(cards, tmp_path, monkeypatch):
+    from agent_friday.services import agent, claude_engine, codebases
+    repo = tmp_path / "repo"
+    (repo / "data").mkdir(parents=True)
+    (repo / "data" / "checking.ofx").write_text("OFXHEADER:100\n", encoding="utf-8")
+    monkeypatch.setattr(agent, "_codebase_in_scope", lambda inp: {"id": "cb1", "seats": {"engine": "claude_agent"}})
+    monkeypatch.setattr(codebases, "repo_path", lambda cid: repo)
+    ran = []
+    monkeypatch.setattr(claude_engine, "run_task", lambda *a, **k: ran.append(a) or {"status": "ok"})
+    monkeypatch.setattr(agent, "_codebase_task_gate", lambda *a, **k: None)
+    out = agent._tool_codebase_agent({"task": "tidy up"})
+    assert out["status"] == "refused" and "checking.ofx" in out["say"] and not ran
+
+
+def test_names_addresses_and_separators_are_not_held(cards, tmp_path):
+    body = ("From: Christopher Montgomery <chris@example.test>\nTo: Sam Doe <sam@example.test>\n\n"
+            "-----Original Message-----\n---------- Forwarded message ---------\n"
+            "The surveyor found damp in the north wall and wants another visit.\n")
+    p = _archive(tmp_path, "one.eml", body)
+    fg.on_file_read(p, body)
+    for line in ("-----Original Message-----", "From: Christopher Montgomery <chris@example.test>",
+                 "To: Sam Doe <sam@other.example>", "---------- Forwarded message ---------"):
+        assert not jg.never_send_hits(line), line
+    assert jg.never_send_hits("The surveyor found damp in the north wall and wants another visit.")
+
+
+def test_a_footer_with_a_figure_in_it_is_held(cards, tmp_path):
+    line = "You are receiving this because account 1234 is $4,210 past due as of today."
+    p = _archive(tmp_path, body=ARCHIVE + "\n" + line)
+    fg.on_file_read(p, ARCHIVE + "\n" + line)
+    assert jg.never_send_hits(line)
+
+
+def test_a_line_that_looks_like_a_street_is_still_held(cards, tmp_path):
+    body = ARCHIVE + "\nThe 2 reports from Dr Smith came back and the lump is benign.\n"
+    p = _archive(tmp_path, body=body)
+    fg.on_file_read(p, body)
+    assert jg.never_send_hits("The 2 reports from Dr Smith came back and the lump is benign.")
+
+
+def test_developer_output_is_not_withheld(cards):
+    gitlog = ("commit 0123abcd\nAuthor: Dev <dev@example.test>\nDate:   Mon Oct 12 10:00 2026\n\n"
+              "    Fix the parser\n")
+    diff = ("diff --git a/x.py b/x.py\n+    if '<STMTTRN>' in text:\n+OFXHEADER = 'OFXHEADER:100'\n"
+            " <TRNAMT> stays\n")
+    grep_src = "src/raw_records.py:12:_OFX = re.compile(r'<STMTTRN>')"
+    for out in (gitlog, diff, grep_src, "report.msg-2026.txt\nnotes.md\n"):
+        assert fg.raw_output_notice(out) is None, out
+    block = "From: a@x.test\nTo: b@x.test\nSubject: rent\n\nThe rent is late."
+    assert fg.raw_output_notice(block)
+    assert fg.raw_output_notice("Downloads/Chase_Activity_2026.csv:3:10/01,AMAZON,23.99")
+
+
+def test_the_locks_page_asks_only_about_a_file_it_holds(cards, tmp_path):
+    from agent_friday.services import locks
+    p = _archive(tmp_path)
+    fg.on_file_read(p, ARCHIVE)
+    shown = [x for x in locks.view()["lines"] if x["key"] == "held"][0]["held_files"]
+    assert shown == [str(p)], "shown as spelled, not folded to lower case"
+    assert locks.ask_for_held(shown[0])["ok"] and len(cards) == 2
+    assert locks.ask_for_held(str(tmp_path / "other.mbox"))["ok"] is False

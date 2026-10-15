@@ -185,10 +185,13 @@ _JSON_U = re.compile(r"\\u([0-9a-fA-F]{4})")
 # never held, or one held read would stop every later read of any file.
 # Matched against a whole unit, so a real record line that merely mentions
 # one of these words is still held.
+# Bounded throughout: a unit is untrusted text, so no part of this may
+# backtrack over a long run of digits or commas.
 _BOILERPLATE = re.compile(
-    r"^(?:\[?(?:showing |shown )?lines? [\d,]+\s*(?:-|to)\s*[\d,]+ of [\d,]+.*|\[?extraction truncated.*"
-    r"|</?evidence-[\w-]*>?|(?:\.\.\.|\u2026)\s*\[.*|\(?use read_file with (?:offset|page)\b.*"
-    r"|continue with (?:\w+ )?offset=\d+.*|(?:\.\.\.\s*)?[\d,]+ more (?:lines|characters)\b.*)$", re.I)
+    r"^(?:\[?(?:showing |shown )?lines? [\d,]{1,15} ?(?:-|to) ?[\d,]{1,15} of [\d,]{1,15}\b"
+    r"|\[?extraction truncated\b|</?evidence-[\w-]{0,40}>?$|(?:\.\.\.|\u2026) ?\["
+    r"|\(?use read_file with (?:offset|page)\b|continue with (?:\w{1,20} )?offset=\d{1,12}\b"
+    r"|(?:\.\.\. ?)?[\d,]{1,15} more (?:lines|characters)\b)", re.I)
 # Words every inbox and statement share: holding them would stop the
 # person's own "Thanks for reaching out." at the cloud, and they say nothing
 # about anyone. Small talk is let go only when SHORT (under RAW_SPECIFIC):
@@ -234,20 +237,41 @@ def _norm_unit(piece: str) -> str:
 
 
 def _pii_neutral(text: str) -> str:
-    """The text with every [PII:...] tag and every phone number, e-mail,
-    street address, SSN and card-like number as one fixed token, so a held
-    line matches whether the posture scrubbed it at read time, at send time,
-    or never. Only fixed patterns: nothing here depends on a setting (the
-    watchlist, the owner's addresses) that could change between the two."""
-    t = _PII_TAG.sub("~pii~", str(text or ""))
+    """The text with every [PII:...] tag and every e-mail, phone number, SSN
+    and card number as one fixed token, line by line, so a held line matches
+    whether the posture scrubbed it at read time, at send time, or never.
+    Fixed patterns only, validated as the scrub validates them (a card number
+    passes Luhn, an international number has 8-15 digits); nothing depends
+    on a setting (the watchlist, the owner's addresses) that could change in
+    between. Street addresses are left as they are: that pattern reaches
+    across words ("2 reports from Dr Smith") and would hide what is held."""
     try:
         from agent_friday import core
-        for rx in (core._EMAIL_RE, core._SSN_RE, core._INTL_PHONE_RE, core._PHONE_RE,
-                   core._STREET_RE, core._CC_RE):
-            t = rx.sub("~pii~", t)
     except Exception:
-        pass
-    return t
+        core = None
+
+    def _cc(m):
+        d = re.sub(r"\D", "", m.group(0))
+        return "~pii~" if (13 <= len(d) <= 19 and core._luhn_ok(d)) else m.group(0)
+
+    def _intl(m):
+        d = re.sub(r"\D", "", m.group(0))
+        return "~pii~" if 8 <= len(d) <= 15 else m.group(0)
+
+    out = []
+    for line in str(text or "").split("\n"):
+        line = _PII_TAG.sub("~pii~", line)
+        if core is not None:
+            try:
+                line = core._EMAIL_RE.sub("~pii~", line)
+                line = core._SSN_RE.sub("~pii~", line)
+                line = core._CC_RE.sub(_cc, line)
+                line = core._INTL_PHONE_RE.sub(_intl, line)
+                line = core._PHONE_RE.sub("~pii~", line)
+            except Exception:
+                pass
+        out.append(line)
+    return "\n".join(out)
 
 
 def _unescaped(text: str) -> str:
@@ -264,11 +288,26 @@ def _lines(text: str) -> list:
     return [re.sub(r"^[\s>]+", "", ln) for ln in re.split(r"\r?\n|\\n", str(text or ""))]
 
 
+_SEPARATOR = re.compile(
+    r"^(?:[-=_*~]{3,}.*|.*[-=_*~]{3,}|begin forwarded message:?|original message|forwarded message"
+    r"|on .{0,80} wrote:)$", re.I)
+_WORD = re.compile(r"[^\W\d_]{2,}")
+
+
+def _words(u: str) -> int:
+    """Words of two or more letters, not counting the PII token."""
+    return len([w for w in _WORD.findall(u.replace("~pii~", " ")) if w != "pii"])
+
+
 def _skip(u: str, finance: bool) -> bool:
-    if _BOILERPLATE.match(u) or _GENERIC_HEADER.match(u):
+    if _BOILERPLATE.match(u) or _GENERIC_HEADER.match(u) or _SEPARATOR.match(u):
         return True
-    if _FOOTER.match(u) or (len(u) < RAW_SPECIFIC and _COMMON.match(u)):
+    if _FOOTER.match(u) and not any(c.isdigit() for c in u):
+        return True                      # a footer that carries a figure is content
+    if len(u) < RAW_SPECIFIC and _COMMON.match(u):
         return True
+    if len(u) >= RAW_UNIT_MIN and _words(u) < 4 and not (finance and any(c.isdigit() for c in u)):
+        return True                      # a name and an address, a header with nothing in it
     if finance and len(u) < RAW_UNIT_MIN and (not any(c.isdigit() for c in u) or _FINANCE_SHAPE.match(u)):
         return True
     return False
@@ -514,6 +553,14 @@ def raw_hold_status() -> dict:
             why = "the hold could not be kept in full"
         return {"files": len(files), "held": files[:200], "units": len(_RAW_HOLDS),
                 "fail_closed": bool(_RAW_LOADED["overflow"]), "why": why}
+
+
+def held_names() -> dict:
+    """{file key: the path as the person spelled it} for every held file."""
+    with _RAW_LOCK:
+        _raw_load()
+        keys = {k for ks in _RAW_HOLDS.values() for k in ks}
+        return {k: _RAW_NAMES.get(k, k) for k in keys}
 
 
 def held_keys() -> set:

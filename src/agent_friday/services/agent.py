@@ -10854,6 +10854,23 @@ def _tool_codebase_agent(inp):
     if (rec.get("seats") or {}).get("engine") != "claude_agent":
         return {"status": "refused", "blocker": "needs_user_input",
                 "say": "This codebase's engine is Friday. Say \"use Claude's agent for this codebase\" first; it runs as a process on this PC."}
+    # Claude's agent reads the whole folder itself, around every check here:
+    # a folder holding a mail archive or statement the owner has not allowed
+    # is not handed over, and the owner is asked about each such file.
+    from agent_friday.services import file_grants as _fg_raw
+    try:
+        _raw_files = _fg_raw.raw_records_in(_cb.repo_path(rec["id"])) if _fg_raw._cloud_possible() else []
+    except Exception:
+        _raw_files = []
+    if _raw_files:
+        for _p in _raw_files[:5]:
+            _fg_raw.ask_for_raw_source(_p)
+        return {"status": "refused", "blocker": "needs_user_input",
+                "say": ("This codebase's folder holds %d mail archive or statement file%s (%s) that a cloud "
+                        "model may not read yet. A card for each is on screen; once they are allowed, or "
+                        "moved out of the folder, ask again." % (
+                            len(_raw_files), "" if len(_raw_files) == 1 else "s",
+                            ", ".join(p.name for p in _raw_files[:3])))}
     waiting = _codebase_task_gate(rec, "codebase_agent", {"task": str(inp.get("task") or "")})
     if waiting is not None:
         return waiting
