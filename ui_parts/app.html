@@ -7451,25 +7451,43 @@ function KnowledgePages({
     }
     setSaving(false);
   };
+  // The toast says what the server did, never "Approved" on an answer that
+  // was not a success: applied, already applied, stale (page changed), failed.
+  // The approve carries the hash of the page the row's preview was computed
+  // against; if the page changed since, the server answers 409 stale and
+  // writes nothing (the refreshed row then shows the page as it is now).
   const approvePending = async id => {
     try {
-      await apiFetch('/api/wiki/pending/' + id + '/approve', {
-        method: 'POST'
+      const row = pending.find(x => x.id === id);
+      const before = row && row.preview && row.preview.before_sha256 || '';
+      const r = await apiFetch('/api/wiki/pending/' + id + '/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(before ? {
+          before_sha256: before
+        } : {})
       });
-      showToast('Approved');
+      const d = await r.json().catch(() => ({}));
+      const st = d.status || 'error';
+      if (r.ok && st === 'applied') {
+        showToast(d.already ? 'Already applied \xB7 nothing written' : 'Applied' + (d.file ? ' \xB7 ' + d.file : ''));
+        refreshStructure();
+        onChanged && onChanged(null, 'approved');
+      } else if (st === 'stale') showToast('Not applied (stale): ' + (d.message || 'the page changed since this was proposed'));else if (st === 'rejected') showToast('Not applied: this proposal was rejected');else showToast('Not applied: ' + (d.message || st));
       refreshPending();
-      refreshStructure();
-      onChanged && onChanged(null, 'approved');
     } catch (e) {
       showToast('Approve failed');
     }
   };
   const rejectPending = async id => {
     try {
-      await apiFetch('/api/wiki/pending/' + id + '/reject', {
+      const r = await apiFetch('/api/wiki/pending/' + id + '/reject', {
         method: 'POST'
       });
-      showToast('Rejected');
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.status === 'rejected') showToast(d.already ? 'Already rejected' : 'Rejected');else showToast('Not rejected: ' + (d.message || d.status || 'error'));
       refreshPending();
     } catch (e) {
       showToast('Reject failed');
@@ -7559,13 +7577,29 @@ function KnowledgePages({
       showToast('Create failed');
     }
   };
-  const renderDiff = p => h('div', {
-    className: 'kw-diff'
-  }, h('div', {
-    className: 'kw-diff-old'
-  }, p.old_value || h('em', null, '(empty — will append)')), h('div', {
-    className: 'kw-diff-new'
-  }, p.new_value || ''));
+  // What approving does, from the server's preview: a badge (new / edit /
+  // append / overwrite), the headline with line counts, and the unified diff.
+  // Without a preview the row still says it by mode: a replace_file proposal
+  // reads "Replaces the whole page", never "will append".
+  const renderDiff = p => {
+    const pv = p.preview || null;
+    const mode = pv && pv.mode || p.mode || (p.old_value ? 'edit' : 'append');
+    const badge = pv && pv.badge || (mode === 'replace_file' ? 'overwrite' : mode);
+    const head = h('div', {
+      className: 'kw-small kw-pending-badge',
+      'data-badge': badge
+    }, h('strong', null, badge.toUpperCase()), ' \xB7 ', pv && pv.headline ? pv.headline : mode === 'replace_file' ? 'Replaces the whole page ' + (p.file || '') : mode === 'edit' ? 'Change text in ' + (p.file || '') : 'Add to ' + (p.file || ''));
+    if (pv && pv.diff) return h('div', null, head, h('div', {
+      className: 'kw-diff-new kw-diff-unified'
+    }, pv.diff));
+    return h('div', null, head, h('div', {
+      className: 'kw-diff'
+    }, h('div', {
+      className: 'kw-diff-old'
+    }, mode === 'replace_file' ? h('em', null, 'Replaces the whole page') : mode === 'append' ? h('em', null, '(nothing removed \u2014 will append)') : p.old_value || ''), h('div', {
+      className: 'kw-diff-new'
+    }, p.new_value || '')));
+  };
   // Links inside a page open the page they point at, here.
   const onReaderClick = e => {
     const a = e.target && e.target.closest ? e.target.closest('a') : null;
