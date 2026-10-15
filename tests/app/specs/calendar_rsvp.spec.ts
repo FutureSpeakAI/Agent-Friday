@@ -40,7 +40,7 @@ test('a reply asks first, says the organiser will know, and sends exactly the ch
 
   await expect(lunch.getByRole('group', { name: 'Your reply to Lunch with Dana' })).toContainText('Not replied');
   await expect(page.locator('.cal-timeline [data-fr-ref="event:mine"] .calv-rsvp')).toHaveCount(0);   // she organises it
-  await lunch.getByRole('button', { name: 'Going' }).click();
+  await lunch.getByRole('button', { name: 'Going', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('Reply “Going” to “Lunch with Dana”?');
   await expect(dialog).toContainText('Google will let the organiser know.');
@@ -49,7 +49,7 @@ test('a reply asks first, says the organiser will know, and sends exactly the ch
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   expect(writes.filter(w => /rsvp/.test(w.path))).toEqual([]);
 
-  await lunch.getByRole('button', { name: 'Maybe' }).click();
+  await lunch.getByRole('button', { name: 'Maybe', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Send reply' }).click();
   await expect.poll(() => writes.filter(w => /rsvp/.test(w.path)).length).toBe(1);
   expect(writes.find(w => /rsvp/.test(w.path))).toEqual({ path: '/api/calendar/events/inv/rsvp',
