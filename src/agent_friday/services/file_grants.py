@@ -954,25 +954,24 @@ def on_file_read(path: Path, text: str) -> GrantCheck:
         # A raw record with no yes for this file: held from every cloud
         # payload under every posture, and the owner is asked, on a card that
         # names the file and who would read it.
-        _hold_raw_spans(text)
+        from agent_friday.services import judgment_gate as _jg
+        _jg.hold_raw_record(_raw_key(path), text)
         ask_for_raw_source(path, raw)
         result = GrantCheck(state="held_raw_record", grant_id=result.grant_id)
     elif result.state == "active":
         if raw:
-            _release_raw_spans(text)
+            from agent_friday.services import judgment_gate as _jg
+            _jg.release_raw_record(_raw_key(path))
         _register_grant_spans(text, result.grant_id, result.never_send_override)
     return result
 
 
-def _hold_raw_spans(text: str) -> None:
-    from agent_friday.services import judgment_gate as _jg
-    for p in _split_paragraphs(text):
-        _jg.hold_raw_record_span(p)
-
-
-def _release_raw_spans(text: str) -> None:
-    from agent_friday.services import judgment_gate as _jg
-    _jg.release_raw_record_spans(_split_paragraphs(text))
+def _raw_key(path) -> str:
+    """One key per file, however it was spelled."""
+    try:
+        return str(Path(path).resolve()).casefold()
+    except Exception:
+        return str(path).casefold()
 
 
 #: (normalised path, sha256) -> when the card for it was raised.
@@ -1026,9 +1025,13 @@ def ask_for_raw_source(path, kind: str | None = None) -> dict | None:
               "cloud model only with your yes for this one file. Approving lets %s read it when "
               "I open it; your never-send list still applies. Until then it stays on this PC." % (
                   p.name, what, "mail archive" if kind == "mail" else "statement", _provider_words()))
+    note = "%s; %s would read it" % (what, _provider_words())
     try:
-        return file_grant_requests.request_access([{"path": str(p), "type": "file"}], reason=reason,
-                                                  requested_by="friday:raw-record")
+        # merge=False: this card is never folded into another request's card,
+        # so its own words (what the file is, who would read it) stay on it.
+        return file_grant_requests.request_access([{"path": str(p), "type": "file", "note": note}],
+                                                  reason=reason, requested_by="friday:raw-record",
+                                                  merge=False)
     except Exception:
         return None
 

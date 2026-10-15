@@ -272,7 +272,7 @@ def check_for_update() -> dict:
         result["update_available"] = True
         result["reason"] = "update_available"
         result["verification"] = verify_release(newest, current_sequence=result["current_sequence"])
-        if result["verification"]["state"] in REFUSED_STATES:
+        if result["verification"]["state"] in refused_states():
             # A manifest that is present and fails is not a release to recommend.
             result["update_available"] = False
             result["reason"] = "release_not_verified"
@@ -289,6 +289,18 @@ MANIFEST_ASSET = "release-manifest.json"
 MANIFEST_MAX_BYTES = 256 * 1024
 #: A manifest that is present and fails one of these is refused outright.
 REFUSED_STATES = ("bad_signature", "expired", "downgrade", "mismatch")
+#: The name the release key signs into each manifest's trusted comment.
+MANIFEST_NAME = "agent-friday-release"
+
+
+def refused_states() -> tuple:
+    """Once this copy has a release key, a release whose manifest is missing
+    or cannot be read is refused too: stripping the signature must not be a
+    way past checking it."""
+    from agent_friday.services import trust_keys
+    if trust_keys.RELEASE_KEYS:
+        return REFUSED_STATES + ("unsigned", "unreachable")
+    return REFUSED_STATES
 
 #: Test seam: callable(url, max_bytes) -> bytes. None means a plain GET.
 FETCH_ASSET = None
@@ -337,11 +349,14 @@ def verify_release(release: dict, *, current_sequence=None, today=None) -> dict:
         _log.info("update check: manifest unreachable (%s)", type(e).__name__)
         return {"state": "unreachable", "words": "I couldn't read the release's signed manifest."}
     try:
-        minisign.verify(body, sig, trust_keys.RELEASE_KEYS)
+        signed = minisign.verify(body, sig, trust_keys.RELEASE_KEYS)
         manifest = json.loads(body.decode("utf-8"))
     except (minisign.SignatureError, ValueError, UnicodeDecodeError) as e:
         return {"state": "bad_signature",
                 "words": "The release's manifest does not verify (%s). I won't recommend it." % e}
+    if signed["meta"].get("name") != MANIFEST_NAME:
+        return {"state": "bad_signature",
+                "words": "The signature is not for a release manifest. I won't recommend it."}
     tag = str(release.get("tag_name") or "").lstrip("vV")
     if not isinstance(manifest, dict) or str(manifest.get("version") or "").lstrip("vV") != tag:
         return {"state": "mismatch", "words": "The signed manifest names a different version. I won't recommend it."}
@@ -352,7 +367,9 @@ def verify_release(release: dict, *, current_sequence=None, today=None) -> dict:
     if expires < (today or datetime.now(timezone.utc).date()):
         return {"state": "expired", "words": "The release's signed manifest expired on %s." % expires.isoformat()}
     seq = manifest.get("build_sequence")
-    if current_sequence is not None and isinstance(seq, int) and seq <= current_sequence:
+    if not isinstance(seq, int) or isinstance(seq, bool):
+        return {"state": "mismatch", "words": "The signed manifest has no build number. I won't recommend it."}
+    if current_sequence is not None and seq <= current_sequence:
         return {"state": "downgrade", "words": "The signed manifest is for a build no newer than yours."}
     return {"state": "verified", "words": "Its release manifest is signed by FutureSpeak and verified.",
             "files": dict(manifest.get("files") or {})}

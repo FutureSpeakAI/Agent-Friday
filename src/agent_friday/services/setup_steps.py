@@ -290,22 +290,29 @@ def posture_view() -> dict:
             "recommended": rec, "cards": cards}
 
 
-_POSTURE_WORDS = (
-    ("local", ("only on this pc", "only on this computer", "this pc", "local",
-               "on this pc", "private", "only here", "here")),
-    ("public", ("public", "cloud for public things", "public things", "guarded",
-                "safeguards")),
-    ("everything", ("everything", "cloud for everything", "all of it", "unrestricted",
-                    "the cloud")),
-)
+#: The words that answer the posture question, matched WHOLE: a choice that
+#: changes where everything goes is never read out of a longer sentence
+#: ("everything stays local" must not mean "cloud for everything").
+_POSTURE_WORDS = {
+    "local": ("local", "only on this pc", "only on this computer", "only here", "on this pc only",
+              "this pc only", "keep it local", "private"),
+    "public": ("public", "cloud for public things", "public things", "the cloud for public things"),
+    "everything": ("everything", "cloud for everything", "the cloud for everything"),
+}
 
 
 def parse_posture(text: str) -> str | None:
+    """The posture a typed or spoken answer names, or None (Friday asks again).
+
+    Only a whole answer counts: the chip's value, its label, or one of the
+    plain phrases above, ignoring case, punctuation and a trailing
+    "(recommended)"."""
     t = " ".join(re.sub(r"[^a-z ]", " ", str(text or "").lower()).split())
+    t = re.sub(r"\s*recommended$", "", t).strip()
     if t in POSTURES:
         return t
-    for value, words in _POSTURE_WORDS:
-        if any(t == w or t.startswith(w + " ") for w in words):
+    for value, words in _POSTURE_WORDS.items():
+        if t in words:
             return value
     return None
 

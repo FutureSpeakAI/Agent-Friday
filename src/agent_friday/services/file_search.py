@@ -204,6 +204,17 @@ def search_files(query: str = "", root: str | None = None,
     }
 
 
+def _held_raw_record(path) -> bool:
+    try:
+        from agent_friday.services import file_grants
+        if not file_grants.raw_record_kind(path):
+            return False
+        c = file_grants.check_grant(path)
+        return not (c.state == "active" and c.grant_kind == "file")
+    except Exception:
+        return True
+
+
 def _search_content(roots, query, content_query, newest_first, limit, deadline, budget):
     from agent_friday.services.file_extraction import extract_text
     cq = content_query.lower()
@@ -240,6 +251,11 @@ def _search_content(roots, query, content_query, newest_first, limit, deadline, 
         # incomplete — do not remove this comment when closing the gap.
         idx = text.lower().find(cq)
         if idx == -1:
+            continue
+        if _held_raw_record(path):
+            # A mail archive or statement shows no content without the owner's
+            # yes for that file (owner decision O7): its name is the result.
+            candidates.append((path, "(a raw record: its contents are shown only with your yes for this file)"))
             continue
         start = max(0, idx - 80)
         snippet = _cred.redact_secrets(text[start:idx + len(content_query) + 80].strip())

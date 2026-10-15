@@ -355,7 +355,9 @@ def test_one_click_unsubscribe_posts_once_to_a_public_host(client, monkeypatch):
     import socket
     MSG_HEADERS.update({"From": "News <news@list.example.test>",
                         "List-Unsubscribe": "<https://list.example.test/u/1>",
-                        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"})
+                        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                        # one-click needs the provider's own DKIM pass for the sender (inbox_cleanup.classify)
+                        "Authentication-Results": "mx.google.com; dkim=pass header.i=@list.example.test"})
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
     posts = []
 
@@ -377,7 +379,9 @@ def test_unsubscribe_never_posts_into_the_local_network(monkeypatch):
     from agent_friday.services import mail_unsubscribe as mu
     import socket
     import requests
-    MSG_HEADERS.update({"List-Unsubscribe": "<https://intranet.example.test/u>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"})
+    MSG_HEADERS.update({"From": "News <news@intranet.example.test>",
+                        "List-Unsubscribe": "<https://intranet.example.test/u>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                        "Authentication-Results": "mx.google.com; dkim=pass header.i=@intranet.example.test"})
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("192.168.1.10", 443))])
     monkeypatch.setattr(requests, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not post")))
     d = mu.unsubscribe("acct_r", "m1")

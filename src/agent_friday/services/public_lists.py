@@ -135,13 +135,39 @@ def cached(name: str) -> dict | None:
         return None
 
 
+def _versions_path() -> Path:
+    return cache_dir() / "versions.json"
+
+
+def _highest_seen(name: str) -> int:
+    """The highest version of `name` ever accepted here, kept apart from the
+    cache, so deleting or losing the cache does not reopen an older list."""
+    try:
+        return int((json.loads(_versions_path().read_text(encoding="utf-8")) or {}).get(name) or 0)
+    except Exception:
+        return 0
+
+
+def _note_version(name: str, version: int) -> None:
+    p = _versions_path()
+    try:
+        seen = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except Exception:
+        seen = {}
+    seen[name] = max(int(seen.get(name) or 0), int(version))
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(seen, sort_keys=True), encoding="utf-8")
+    tmp.replace(p)
+
+
 def _cached_version(name: str) -> int:
     body_p, sig_p = _paths(name)
     try:
         meta = minisign.verify(body_p.read_bytes(), sig_p.read_text(encoding="utf-8"), _keys())["meta"]
-        return int(meta.get("version") or 0)
+        cached_v = int(meta.get("version") or 0)
     except Exception:
-        return 0
+        cached_v = 0
+    return max(cached_v, _highest_seen(name))
 
 
 #: Test seam: callable(url, max_bytes) -> bytes. None means the guarded GET.
@@ -195,9 +221,16 @@ def refresh(name: str) -> dict:
     body_p, sig_p = _paths(name)
     with _LOCK:
         body_p.parent.mkdir(parents=True, exist_ok=True)
+        _note_version(name, out["version"])
+        # Both halves are written in full before either replaces the cached
+        # pair; a crash between the two renames leaves a pair that does not
+        # verify, which reads as "no cached list", never as a wrong one.
+        tmps = []
         for p, data in ((body_p, body), (sig_p, sig.encode("utf-8"))):
             tmp = p.with_name(p.name + ".tmp")
             tmp.write_bytes(data)
+            tmps.append((tmp, p))
+        for tmp, p in tmps:
             tmp.replace(p)
     return {"ok": True, "version": out["version"], "expires": out["expires"],
             "message": "The %s list is up to date (version %d)." % (name, out["version"]),
