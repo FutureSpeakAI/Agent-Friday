@@ -70,7 +70,7 @@ test('the owner ticks calendars, Friday narrows a view with a chip, and free/bus
 
   // The owner's ticks: every calendar, grouped by account, with the old connection's reason
   await page.locator('[data-cal-calendars="toggle"]').click();
-  const panel = page.getByRole('dialog', { name: 'Calendars shown in Friday' });
+  const panel = page.getByRole('dialog', { name: 'Calendars shown here' });
   await expect(panel).toContainText('never Google');
   await expect(panel).toContainText('Reconnect Google');
   await expect(panel.getByRole('checkbox', { name: 'Holidays' })).not.toBeChecked();
