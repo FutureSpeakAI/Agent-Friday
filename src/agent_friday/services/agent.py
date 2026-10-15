@@ -11342,6 +11342,23 @@ try:
 except Exception as _llte:  # never let optional deps break the agent import
     print(f"  [LAYA-LEARNING] registration skipped: {_llte}")
 
+# Friday's core memory card (update_core_memory): two capped files always in the
+# prompt head. A shared text tool; voice reaches it through ask_friday and, on
+# the cloud voice, more_tools. See services/core_memory_tools.py.
+try:
+    from agent_friday.services import core_memory_tools as _core_memory_tools
+    _core_memory_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _cmte:  # never let optional deps break the agent import
+    print(f"  [CORE-MEMORY] registration skipped: {_cmte}")
+
+# Full-text search over every conversation, in text chat (voice has its own
+# handler of the same name). See services/conversation_search_tool.py.
+try:
+    from agent_friday.services import conversation_search_tool as _conv_search_tool
+    _conv_search_tool.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _cste:  # never let optional deps break the agent import
+    print(f"  [CONVERSATION-SEARCH] registration skipped: {_cste}")
+
 # Can voice run locally, measure it, and the cloud voice choice (local_voice_readiness):
 # status, measure, ask "just this call, or always?" and take the answers (just this call,
 # always, switch back, keep cloud) on the owner's own words; the spoken side of
@@ -13272,7 +13289,7 @@ def _taint_title(name, inp):
         return f"Make {what} with a cloud service"
     if name == "run_command":
         return f"Run a command: {_short_txt(inp.get('command'))}"
-    if name in ("learn_skill", "correct_wiki", "propose_wiki_update"):
+    if name in ("learn_skill", "correct_wiki", "propose_wiki_update", "update_core_memory"):
         return "Save something into Friday's memory"
     if name == "spawn_task":
         return f"Start a background task: {_short_txt(inp.get('name') or inp.get('description'))}"
