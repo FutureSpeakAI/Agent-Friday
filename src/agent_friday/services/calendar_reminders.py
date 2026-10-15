@@ -33,6 +33,10 @@ FIRED_FILE = CALENDAR_DIR / "reminders_fired.json"
 MAX_MINUTES = 24 * 60
 #: A reminder found this late (the PC was asleep) is still useful until the event starts.
 KEEP_DAYS = 2
+#: How often the scheduler runs tick (minutes); a reminder's window is at least this wide, so none falls between.
+TICK_MINUTES = 2
+#: How long after its start an "at the start" reminder is still raised.
+AT_START_GRACE = timedelta(minutes=TICK_MINUTES + 1)
 _LOCK = threading.Lock()
 
 
@@ -58,7 +62,7 @@ def due(events, now: datetime) -> list[tuple[dict, int]]:
         if ev.get("all_day") or ev.get("self_rsvp") == "declined":
             continue
         start = _aware(ev.get("start_time"))
-        if start is None or start <= now:
+        if start is None or start + AT_START_GRACE <= now:
             continue
         for r in ev.get("reminders") or []:
             if (r.get("method") or "popup") != "popup":
@@ -67,7 +71,11 @@ def due(events, now: datetime) -> list[tuple[dict, int]]:
                 minutes = int(r.get("minutes"))
             except (TypeError, ValueError):
                 continue
-            if 0 <= minutes <= MAX_MINUTES and start - timedelta(minutes=minutes) <= now:
+            if not 0 <= minutes <= MAX_MINUTES or start - timedelta(minutes=minutes) > now:
+                continue
+            # A reminder before the start is due until the event starts; Google's "at the start" one
+            # (0 minutes) is due for a few minutes after, so a tick that lands just after still raises it.
+            if now < start or (minutes == 0 and now < start + AT_START_GRACE):
                 out.append((ev, minutes))
     return out
 

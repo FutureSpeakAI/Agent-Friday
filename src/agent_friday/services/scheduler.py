@@ -2169,7 +2169,7 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] relationship_sync unavailable: {e}")
 
-    # calendar reminders: every 5 minutes, raise in Friday's tray each pop-up
+    # calendar reminders: every 2 minutes, raise in Friday's tray each pop-up
     # reminder Google has for an event that has come due (services/calendar_reminders).
     # Reads only, runs no model; silent because the reminders are the notices.
     try:
@@ -2177,7 +2177,7 @@ def _register_default_builtin_tasks():
         register_builtin_task("calendar_reminders", _cal_remind,
                               label="Calendar reminders",
                               default_trigger="interval",
-                              default_spec={"every_minutes": 5}, notify="silent")
+                              default_spec={"every_minutes": 2}, notify="silent")
     except Exception as e:
         print(f"  [scheduler] calendar_reminders unavailable: {e}")
 
