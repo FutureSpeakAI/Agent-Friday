@@ -19,7 +19,9 @@ from pathlib import Path
 MAIL_SUFFIXES = frozenset({".mbox", ".mbx", ".eml", ".emlx", ".msg", ".pst", ".ost"})
 FINANCE_SUFFIXES = frozenset({".ofx", ".qfx", ".qif", ".qbo"})
 STATEMENT_SUFFIXES = frozenset({".pdf", ".csv", ".xlsx", ".xls"})
-_STATEMENT_NAME = re.compile(r"statement|transactions?|account[ _-]?history|bank", re.I)
+_STATEMENT_NAME = re.compile(r"statement|stmt|transactions?|account[ _-]?history|bank", re.I)
+#: How much of a file without a telling extension is read to recognise it.
+SNIFF_BYTES = 512
 
 KIND_WORDS = {"mail": "a mail archive", "finance": "a bank or card statement"}
 
@@ -30,11 +32,31 @@ def kind_of(path) -> str | None:
         p = Path(path)
     except TypeError:
         return None
+    suffixes = {x.lower() for x in p.suffixes}
     suffix = p.suffix.lower()
-    if suffix in MAIL_SUFFIXES:
+    if suffix in MAIL_SUFFIXES or suffixes & MAIL_SUFFIXES:          # "x.mbox.txt" too
         return "mail"
-    if suffix in FINANCE_SUFFIXES:
+    if suffix in FINANCE_SUFFIXES or suffixes & FINANCE_SUFFIXES:
         return "finance"
     if suffix in STATEMENT_SUFFIXES and _STATEMENT_NAME.search(p.stem or ""):
+        return "finance"
+    return _sniff(p)
+
+
+def _sniff(p: Path) -> str | None:
+    """A file whose name says nothing: an mbox starts with a "From " line
+    (Thunderbird's Inbox, the mbox inside an Apple Mail folder), an OFX
+    statement with its header."""
+    try:
+        if not p.is_file():
+            return None
+        with open(p, "rb") as f:
+            head = f.read(SNIFF_BYTES)
+    except OSError:
+        return None
+    first = head.split(b"\n", 1)[0]
+    if first.startswith(b"From ") and b"@" in first or first.startswith(b"From MAILER-DAEMON"):
+        return "mail"
+    if b"OFXHEADER" in head[:100] or head.lstrip().upper().startswith(b"<OFX>"):
         return "finance"
     return None

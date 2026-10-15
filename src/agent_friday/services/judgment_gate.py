@@ -136,18 +136,6 @@ _PROBE_EXTRA_NEVER: list[str] = []
 _DENY_SPANS: set = set()
 _DENY_LOCK = threading.Lock()
 _DENY_MAX = 20000
-# Which held spans came from where: a user deny mark is permanent for the
-# process; a raw record's hold (raw_records, owner decision O7) is lifted only
-# when that exact file is allowed, and never lifts a span a deny mark holds.
-_USER_DENY_SPANS: set = set()
-_RAW_RECORD_SPANS: set = set()
-
-
-def _span(text) -> str:
-    if not text or not isinstance(text, str):
-        return ""
-    t = text.strip()
-    return t if t and len(t) <= 2000 else ""
 
 
 def register_deny_span(text: str) -> None:
@@ -156,41 +144,135 @@ def register_deny_span(text: str) -> None:
     Call ONLY from file_grants.py, for a paragraph read from a path carrying
     an active user deny mark.
     """
-    t = _span(text)
-    if not t:
+    if not text or not isinstance(text, str):
+        return
+    t = text.strip()
+    if not t or len(t) > 2000:
         return
     with _DENY_LOCK:
         if len(_DENY_SPANS) < _DENY_MAX:
             _DENY_SPANS.add(t)
-            _USER_DENY_SPANS.add(t)
 
 
-def hold_raw_record_span(text: str) -> None:
-    """Hold one paragraph of a raw record (a mail archive, a statement) read
-    without a yes for that file: blocked from every cloud payload, under every
-    posture, exactly as a deny mark is. Call ONLY from file_grants.py."""
-    t = _span(text)
-    if not t:
+# ── Raw personal records (owner decision O7, first-run spec E-03) ──────────
+# A mail archive or a bank statement read without the owner's yes for that
+# one file is held from every cloud payload, under every posture. The hold is
+# kept as hashes of the record's lines and sentences (never the text), keyed
+# by file, so it survives a restart, costs little memory, catches an excerpt
+# as well as the whole, and is lifted for exactly the file the owner allowed:
+# a line two held files share stays held while either is held. Lines and
+# sentences shorter than RAW_UNIT_MIN are too common to hold ("Thanks,").
+RAW_UNIT_MIN = 24
+#: Past this many held units, every cloud payload with a line of RAW_UNIT_MIN
+#: or more is held (fail closed) until holds are released.
+RAW_HOLD_MAX = 500_000
+_RAW_LOCK = threading.RLock()
+_RAW_HOLDS: dict = {}          # unit hash (bytes) -> {file key}
+_RAW_LOADED = {"done": False, "overflow": False}
+_RAW_SPLIT = re.compile(r"(?<=[.!?;:])\s+|\t+|\s{2,}|\s\|\s")
+
+
+def raw_units(text: str) -> list:
+    """The units a raw record is held by, and a payload is checked by."""
+    out = []
+    for line in re.split(r"\r?\n|\\n", str(text or "")):
+        line = re.sub(r"^[\s>]+", "", line)
+        for piece in [line] + _RAW_SPLIT.split(line):
+            u = " ".join(piece.split()).casefold()
+            if len(u) >= RAW_UNIT_MIN:
+                out.append(u)
+    return out
+
+
+def _unit_hash(u: str) -> bytes:
+    import hashlib
+    return hashlib.sha256(u.encode("utf-8")).digest()
+
+
+def _raw_store_path():
+    from agent_friday.paths import friday_home
+    return friday_home() / "privacy" / "raw_record_holds.bin"
+
+
+def _raw_load() -> None:
+    if _RAW_LOADED["done"]:
         return
-    with _DENY_LOCK:
-        if len(_DENY_SPANS) < _DENY_MAX:
-            _DENY_SPANS.add(t)
-            _RAW_RECORD_SPANS.add(t)
+    _RAW_LOADED["done"] = True
+    p = _raw_store_path()
+    if not p.exists():
+        return
+    try:
+        from agent_friday.services import credential_store as cs
+        data = json.loads(cs.read_secret(p).decode("utf-8"))
+        for key, hashes in (data.get("files") or {}).items():
+            for h in hashes:
+                _RAW_HOLDS.setdefault(bytes.fromhex(h), set()).add(key)
+    except Exception:
+        # A store that cannot be read must not silently release what it held.
+        _RAW_LOADED["overflow"] = True
 
 
-def release_raw_record_spans(texts) -> int:
-    """Lift the hold on paragraphs of a raw record the owner has now allowed.
-    A paragraph a user deny mark also holds stays held. Returns how many were
-    lifted. Call ONLY from file_grants.py, for a file with an active file grant."""
+def _raw_save() -> None:
+    files: dict = {}
+    for h, keys in _RAW_HOLDS.items():
+        for k in keys:
+            files.setdefault(k, []).append(h.hex())
+    try:
+        from agent_friday.services import credential_store as cs
+        p = _raw_store_path()
+        cs.write_secret(p, json.dumps({"files": files}).encode("utf-8"), harden=not p.exists())
+    except Exception:
+        pass
+
+
+def hold_raw_record(file_key: str, text: str) -> int:
+    """Hold every unit of `text` (read from the raw record `file_key`) from
+    every cloud payload until release_raw_record(file_key). Returns how many
+    units are held for it. Call ONLY from file_grants.py."""
+    units = raw_units(text)
+    with _RAW_LOCK:
+        _raw_load()
+        for u in units:
+            h = _unit_hash(u)
+            if h not in _RAW_HOLDS and len(_RAW_HOLDS) >= RAW_HOLD_MAX:
+                _RAW_LOADED["overflow"] = True
+                break
+            _RAW_HOLDS.setdefault(h, set()).add(str(file_key))
+        _raw_save()
+    return len(units)
+
+
+def release_raw_record(file_key: str) -> int:
+    """Lift the hold of one raw record the owner has now allowed. A unit
+    another held file shares stays held. Call ONLY from file_grants.py, for a
+    file with an active file grant."""
     n = 0
-    with _DENY_LOCK:
-        for text in texts or ():
-            t = _span(text)
-            if t in _RAW_RECORD_SPANS and t not in _USER_DENY_SPANS:
-                _RAW_RECORD_SPANS.discard(t)
-                _DENY_SPANS.discard(t)
+    with _RAW_LOCK:
+        _raw_load()
+        for h in list(_RAW_HOLDS):
+            keys = _RAW_HOLDS[h]
+            if str(file_key) in keys:
+                keys.discard(str(file_key))
                 n += 1
+                if not keys:
+                    del _RAW_HOLDS[h]
+        if n:
+            _raw_save()
     return n
+
+
+def raw_record_hits(text: str) -> list:
+    with _RAW_LOCK:
+        _raw_load()
+        if not _RAW_HOLDS and not _RAW_LOADED["overflow"]:
+            return []
+        units = raw_units(text)
+        if _RAW_LOADED["overflow"] and units:
+            return ["a raw record is held and the hold list is full"]
+        for u in units:
+            if _unit_hash(u) in _RAW_HOLDS:
+                return ["part of a raw record (a mail archive or statement) you haven't allowed"]
+    return []
 
 
 def never_send_tokens() -> list[str]:
@@ -236,6 +318,7 @@ def never_send_hits(text: str) -> list[str]:
     hits += [m for m in _VAULT_DOC_MARKERS if m in low]
     with _DENY_LOCK:
         hits += [d for d in _DENY_SPANS if d in text]
+    hits += raw_record_hits(text)
     return hits
 
 
