@@ -84,8 +84,13 @@ def add(kind: str, tokens, source: str) -> list:
     added = []
     with _LOCK:
         data = _read()
-        cur = [str(x) for x in (data.get(kind) or []) if isinstance(x, (str, int, float))]
-        have = {c.casefold() for c in cur}
+        existing = data.get(kind)
+        if existing is not None and not isinstance(existing, list):
+            # Not the list its readers expect: leave the owner's file exactly
+            # as it is rather than guess (a string would be read letter by letter).
+            raise RuntimeError("privacy_shield.json %s is not a list; it was left as it is" % kind)
+        cur = list(existing or [])                  # every entry kept, whatever its shape
+        have = {str(c).casefold() for c in cur if isinstance(c, (str, int, float))}
         src = dict((data.get("sources") or {}).get(kind) or {})
         for t in tokens or []:
             t = _norm(t)
@@ -111,8 +116,11 @@ def remove(kind: str, token: str) -> bool:
     t = _norm(token)
     with _LOCK:
         data = _read()
-        cur = [str(x) for x in (data.get(kind) or [])]
-        keep = [c for c in cur if c.casefold() != t.casefold()]
+        existing = data.get(kind)
+        if existing is not None and not isinstance(existing, list):
+            raise RuntimeError("privacy_shield.json %s is not a list; it was left as it is" % kind)
+        cur = list(existing or [])
+        keep = [c for c in cur if not (isinstance(c, (str, int, float)) and str(c).casefold() == t.casefold())]
         if len(keep) == len(cur):
             return False
         data[kind] = keep
