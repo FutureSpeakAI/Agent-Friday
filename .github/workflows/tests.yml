@@ -140,6 +140,24 @@ jobs:
           name: app-specs-results
           path: test-results/app
           if-no-files-found: ignore
+      # The first-run walk finishes setup, so it runs on its own scratch home
+      # (a separate Playwright run starts a separate scratch server). Its
+      # screenshots of every setup step are kept for a person to look at.
+      - name: Run the first-run walk (its own scratch home)
+        if: ${{ !cancelled() }}
+        env:
+          FRIDAY_PYTHON: python
+          FRIDAY_FIRST_RUN_WALK: "1"
+        run: >
+          npx playwright test --config=playwright.app.config.ts --workers=1
+          --timeout=600000 --output=test-results/first-run first_run_setup.spec.ts
+      - name: Keep the first-run screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
+        with:
+          name: first-run-screens
+          path: test-results/first-run
+          if-no-files-found: ignore
 
   package:
     name: package build
