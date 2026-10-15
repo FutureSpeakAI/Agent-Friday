@@ -597,15 +597,20 @@ def _pick(value, text, options: dict):
     if value is not None and str(value) in options:
         return str(value)
     t = " ".join(re.sub(r"[^a-z0-9/ ]", " ", str(text or "").lower()).split())
+    # A polite lead-in is not part of the answer ("I'd rather talk" is "talk");
+    # anything else must be the whole answer, so a longer sentence that merely
+    # contains an option's words ("I don't want to clean up my inbox") is not it.
+    t = _LEAD_IN.sub("", t).strip()
     if not t:
         return None
     for opt, words in options.items():
         if t == opt or t in words:
             return opt
-    for opt, words in options.items():
-        if any(len(w) > 3 and w in t for w in words):
-            return opt
     return None
+
+
+_LEAD_IN = re.compile(r"^(?:(?:please|ok|okay|yes|um|well)\s+)?(?:(?:i d|i would|i ll|i will|let s|lets|i want to|i d like to)\s+)?"
+                      r"(?:(?:rather|prefer to|like to)\s+)?")
 
 
 def _refuse_choice(labels) -> None:
@@ -1479,9 +1484,9 @@ def skip_all() -> dict:
 
 
 def use_recommended() -> dict:
-    """"Use recommended for the rest": apply the recommended answer to this
-    step and to each following step that has one, say which were filled, and
-    stop at the first step that is the person's own choice."""
+    """"Use recommended for the rest": apply the recommended answer to the
+    step on screen (and only that one: a question the person has not seen is
+    never answered for them), and say so."""
     with _LOCK:
         st = load_state()
         if not st["consent_done"] or st["completed"]:
@@ -1490,19 +1495,16 @@ def use_recommended() -> dict:
             msg = "There's no recommended answer for this one; it's yours to choose."
             raise Refused(msg, {"error": "no_recommendation", "message": msg})
         transcript = profile.load_transcript()
-        filled = []
+        # Only the step on screen: the next step's question has not been seen,
+        # so nothing is answered for it.
+        stage = st["stage"]
         st["_applying_recommended"] = True
         try:
-            while True:
-                stage = st["stage"]
-                rec = steps.recommended_for(stage)
-                if rec is None or stage in ("finish", "done"):
-                    break
-                before = len(transcript)
-                _HANDLERS[stage](st, transcript, rec, "")
-                # The chat's own echo of the answer is replaced by one summary.
-                del transcript[before:before + 1]
-                filled.append(_where(stage).strip('"'))
+            before = len(transcript)
+            _HANDLERS[stage](st, transcript, steps.recommended_for(stage), "")
+            # The chat's own echo of the answer is replaced by one summary.
+            del transcript[before:before + 1]
+            filled = [_where(stage).strip('"')]
         finally:
             st.pop("_applying_recommended", None)
         if filled:

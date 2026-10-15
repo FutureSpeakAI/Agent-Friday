@@ -406,3 +406,44 @@ def test_the_receipt_says_who_decided_each_line(home, steps, monkeypatch):
     assert rows["Monthly ceiling"]["value"] == "$10.00 a month"
     assert rows["My pronouns"]["how"] == "default because skipped"
     assert rows["Routines"]["value"] == "none scheduled"
+
+
+# ── answers are whole answers; a recommendation answers only what was shown ──
+
+@pytest.mark.parametrize("said", ["everything stays local", "everything except my bank",
+                                  "I don't want the cloud for everything", "cloud for public things please"])
+def test_a_longer_sentence_never_picks_a_posture(home, steps, monkeypatch, said):
+    got = _consents(monkeypatch)
+    _walk("posture")
+    with pytest.raises(sc.Refused):
+        sc.answer("posture", None, said)
+    assert got == [] and sc.load_state()["stage"] == "posture"
+
+
+def test_a_sentence_that_mentions_an_offer_is_not_a_yes(home):
+    _walk("offer")
+    with pytest.raises(sc.Refused):
+        sc.answer("offer", None, "I don't want to clean up my inbox")
+    assert sc.load_state()["offer"] == ""
+
+
+def test_use_recommended_never_answers_the_next_question(home, steps, monkeypatch):
+    monkeypatch.setattr(sc, "_scheduled_cloud_wanted", lambda st: True)
+    monkeypatch.setattr(sc, "_scheduled_cloud_question", lambda: "May they use a cloud model?")
+    _walk("money")
+    v = sc.use_recommended()
+    assert home["settings"]["cost_budget"]["hard_stop_monthly"] == 10.0
+    assert v["stage"] == "scheduled_cloud", "the next question is asked, not answered"
+    assert "scheduled_cloud" not in home["settings"] or not home["settings"]["scheduled_cloud"].get("answered")
+
+
+def test_the_shield_never_rewrites_a_file_it_cannot_read_as_lists(home):
+    from agent_friday.services import privacy_shield_store as ps
+    p = ps.shield_path()
+    p.write_text(json.dumps({"watchlist": "Sam", "never_send": [{"note": "kept"}, "Bluebird"]}), encoding="utf-8")
+    before = p.read_text(encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        ps.add("watchlist", ["Sam"], source="setup")
+    assert p.read_text(encoding="utf-8") == before
+    assert ps.add("never_send", ["Acme"], source="setup") == ["Acme"]
+    assert json.loads(p.read_text(encoding="utf-8"))["never_send"] == [{"note": "kept"}, "Bluebird", "Acme"]
