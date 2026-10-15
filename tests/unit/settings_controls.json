@@ -1343,10 +1343,10 @@
    "scheduled_cloud.at"
   ],
   "route": "POST /api/costs/scheduled-cloud",
-  "reader_file": "src/agent_friday/services/scheduler.py",
-  "reader_needle": "if not cfg.get(\"allow\"):",
+  "reader_file": "src/agent_friday/services/cloud_intent.py",
+  "reader_needle": "if covered and cfg.get(\"allow\"):",
   "status": "ok",
-  "note": "scheduled_cloud is deep-merged by _save_settings; scheduler._cloud_model_for runs the built-in jobs on the chosen cloud model only when this is true and no local seat serves."
+  "note": "scheduled_cloud is deep-merged by _save_settings; cloud_intent.background_route (the one reader the scheduler asks) runs the built-in jobs on the chosen cloud model only when this is true and no local seat serves, with no local seat serving, and with a cloud model set (otherwise a skip that says so). Under a cloud_only the owner chose, that choice is the consent for News, podcasts and the heartbeat."
  },
  {
   "section": "Spending",

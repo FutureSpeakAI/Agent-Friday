@@ -12,6 +12,11 @@ Two layers:
     guarded. A new call site that is not fails here by name.
   * RUNTIME: the guard refuses and logs at the transports, the voice included,
     and no setting or scheduled cloud pin lifts it for a News run.
+
+All of this is the LOCAL routing modes. Under a cloud routing mode the owner's
+choice of mode is the consent and a News run's routine scope is released
+(cloud_intent.background_route; tests/unit/test_mode_truth.py), so the runtime
+tests here pin the mode to local_preferred.
 """
 from __future__ import annotations
 
@@ -175,7 +180,15 @@ def test_the_podcast_cloud_voice_is_refused_for_a_news_episode():
 
 # ── runtime ───────────────────────────────────────────────────────────────────
 
-def test_no_setting_turns_news_local_only_off(monkeypatch):
+@pytest.fixture
+def local_mode(monkeypatch):
+    """The owner chose a local routing mode (the stored mode, as
+    cloud_intent reads it)."""
+    from agent_friday.services import cloud_intent
+    monkeypatch.setattr(cloud_intent, "_stored_mode", lambda: "local_preferred")
+
+
+def test_no_setting_turns_news_local_only_off(monkeypatch, local_mode):
     import agent_friday.core as core
     from agent_friday.services import news_engine as ne
     monkeypatch.setattr(core, "_load_settings", lambda: {"news_local_only": False})
@@ -183,7 +196,7 @@ def test_no_setting_turns_news_local_only_off(monkeypatch):
         assert guard.is_active() and not guard.pinned_model()
 
 
-def test_a_scheduled_cloud_pin_does_not_reach_a_news_run():
+def test_a_scheduled_cloud_pin_does_not_reach_a_news_run(local_mode):
     from agent_friday.services import news_engine as ne
     with guard.cloud_pinned("claude-haiku-4-5-20251001", "Scheduled"):
         with ne.local_news_run("Front Page"):
@@ -229,7 +242,7 @@ def test_no_local_voice_is_a_visible_refusal_not_gemini(monkeypatch):
 
 
 @pytest.mark.parametrize("quick", [False, True])
-def test_the_article_deep_dive_runs_local_only(monkeypatch, tmp_path, quick):
+def test_the_article_deep_dive_runs_local_only(monkeypatch, tmp_path, quick, local_mode):
     """Both reads, the full one and the spoken quick one on its own thread."""
     from agent_friday.services import news_engine as ne
     seen = []
