@@ -66,3 +66,15 @@ def test_the_views_add_no_colour_of_their_own():
     css = VIEWS.read_text(encoding="utf-8").split("const CSS = `", 1)[1].split("`;", 1)[0]
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", css), re.findall(r"#[0-9a-fA-F]{3,8}\b", css)
     assert not re.search(r"rgba?\(", css)
+
+
+@pytest.mark.parametrize("page", ["index.html", "ui_parts/app.html"])
+def test_a_day_whose_read_failed_says_so_instead_of_no_timed_events(page):
+    body = _calendar_ws(_src(page))
+    assert "read_failed" in body and "Couldn't read your calendar." in body
+    assert body.index("read_failed") < body.index("No timed events.")
+
+
+def test_a_late_night_event_runs_to_the_bottom_of_the_grid_not_one_hour():
+    js = VIEWS.read_text(encoding="utf-8")
+    assert "function endY(ev, top)" in js and "dayKeyOf(ev.end_time) !== dayKeyOf(ev.start_time)" in js

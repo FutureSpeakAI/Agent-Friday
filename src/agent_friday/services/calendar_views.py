@@ -59,6 +59,7 @@ MAX_RANGE_DAYS = 62
 MAX_PAGES = 4
 _LOCK = threading.Lock()
 _LAST_ERRORS: list[dict] = []
+_ERRORS_BY_RANGE: dict = {}
 
 
 # ── accounts and tokens ──────────────────────────────────────────────────────
@@ -344,12 +345,21 @@ def events_in_range(start: datetime, end: datetime, *, keys=None, calendars=None
     events = sorted(best.values(), key=lambda e: (str(e.get("start_time") or ""), e.get("title") or ""))
     with _LOCK:
         _LAST_ERRORS[:] = errors
+        _ERRORS_BY_RANGE[(t_min, t_max)] = list(errors)
+        while len(_ERRORS_BY_RANGE) > 64:
+            _ERRORS_BY_RANGE.pop(next(iter(_ERRORS_BY_RANGE)))
     return {"events": events, "errors": errors, "calendars": cals}
 
 
 def last_errors() -> list[dict]:
     with _LOCK:
         return list(_LAST_ERRORS)
+
+
+def errors_for(start, end) -> list[dict]:
+    """The calendars that could not be read the last time [start, end) was read (a cached read keeps them)."""
+    with _LOCK:
+        return list(_ERRORS_BY_RANGE.get(_bounds(start, end), []))
 
 
 def multi_calendar_available() -> bool:
