@@ -43,6 +43,7 @@ def test_two_keys_in_one_message_are_both_withheld():
     "Can you explain how API keys work and where Friday stores them?",
     "The password is required on the login form.",
     "8634f130a5478a047f673843995fa45deb5b0000",   # a bare commit id
+    "123e4567-e89b-12d3-a456-426614174000",       # a UUID on its own
     "See https://example.com/docs/sk-learn for the guide",
     "",
 ])
