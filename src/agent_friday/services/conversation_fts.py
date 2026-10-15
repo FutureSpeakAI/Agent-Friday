@@ -59,10 +59,16 @@ def _path() -> Path:
         return friday_home() / "conversations" / "index.sqlite"
 
 
+def _redactor():
+    """The shared key redactor (services/pasted_secrets.scrub)."""
+    from agent_friday.services.pasted_secrets import scrub
+    return scrub
+
+
 def _clean(text: str) -> Optional[str]:
     """The text as it may be indexed, or None when it may not be (fail closed)."""
     try:
-        from agent_friday.services.pasted_secrets import scrub
+        scrub = _redactor()
     except Exception:
         _log.error("conversation search: the key redactor is unavailable; nothing is indexed")
         return None

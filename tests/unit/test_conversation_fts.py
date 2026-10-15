@@ -51,18 +51,15 @@ def test_a_pasted_key_never_reaches_the_index(tmp_path):
 
 
 def test_nothing_is_indexed_when_the_redactor_is_unavailable(monkeypatch):
-    import builtins
-    real = builtins.__import__
-
-    def no_redactor(name, *a, **k):
-        if name.endswith("pasted_secrets"):
-            raise ImportError("gone")
-        return real(name, *a, **k)
     c = cv.create("x")["id"]
     fts.ensure_built()                       # empty index, built before the append
-    monkeypatch.setattr(builtins, "__import__", no_redactor)
+
+    def gone():
+        raise ImportError("the redactor could not be loaded")
+    real = fts._redactor
+    monkeypatch.setattr(fts, "_redactor", gone)
     _say(c, "user", "ordinary words about gardening")
-    monkeypatch.setattr(builtins, "__import__", real)
+    monkeypatch.setattr(fts, "_redactor", real)
     assert fts.search("gardening") == [], "the index took text it could not clean"
 
 
