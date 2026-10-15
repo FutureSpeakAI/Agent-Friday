@@ -48,9 +48,9 @@ STAGE_GROUPS = (
 SET_UP_LATER = "Set up later"
 SKIP = "Skip"
 RATHER_NOT = "Rather not say"
-#: "Use recommended for the rest": shown only on a step that has a
-#: recommendation; it fills unanswered choices and says which it filled.
-USE_RECOMMENDED = "Use recommended for the rest"
+#: Shown only on a step that has a recommendation; it answers that step
+#: (and no other) with the recommended choice, and says so.
+USE_RECOMMENDED = "Use the recommended answer"
 RECOMMENDED_SUFFIX = " (recommended)"
 
 # Words that, typed on their own, mean "skip this one".

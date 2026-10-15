@@ -51470,7 +51470,7 @@ function SetupChat({
   const useRecommended = async () => {
     setErr('');
     setBusy(true);
-    const r = await scJSON('/api/setup-chat/use-recommended', 'POST', {});
+    const r = await scJSON('/api/setup-chat/use-recommended', 'POST', { stage: st.stage });
     setBusy(false);
     if (!r.ok) {
       setErr(r.data.message || 'Could not use the recommended answers.');
@@ -51750,7 +51750,7 @@ function SetupChat({
     className: "sc-btn quiet",
     disabled: busy,
     onClick: useRecommended
-  }, cp.use_recommended || 'Use recommended for the rest')), err && card !== 'research_seeds' && /*#__PURE__*/React.createElement("div", {
+  }, cp.use_recommended || 'Use the recommended answer')), err && card !== 'research_seeds' && /*#__PURE__*/React.createElement("div", {
     role: "alert",
     className: "sc-msgline bad"
   }, err), busy && /*#__PURE__*/React.createElement("div", {

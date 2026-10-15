@@ -355,6 +355,19 @@ def test_the_card_names_each_host_and_a_changed_host_is_not_sent(ic, ready, monk
     detail, kw = raised[0]
     assert detail["hosts"] == {"shop.example": "unsub.shop.example"}
     assert "the request goes to unsub.shop.example" in kw["action_description"]
+    assert detail["urls"] == {"shop.example": "https://unsub.shop.example/u?t=1"}
     out = ic.unsubscribe(["shop.example"], decided_by="owner approval",
-                         expected_hosts={"shop.example": "unsub.other.example"})
+                         expected_urls={"shop.example": "https://unsub.shop.example/u?t=999"})
     assert ready["posted"] == [] and "changed after you approved" in out["not_done"][0]["why"]
+    out = ic.unsubscribe(["shop.example"], decided_by="owner approval", expected_urls=detail["urls"])
+    assert [d["id"] for d in out["done"]] == ["shop.example"]
+
+
+def test_a_shared_domain_is_nobodys_organisation(ic):
+    assert ic.org_domain("alice.github.io") == "alice.github.io"
+    assert ic.org_domain("news.bob.uk.com") == "bob.uk.com" and ic.org_domain("x.me.uk") == "x.me.uk"
+    assert ic.org_domain("github.io") == ""
+    s = {}
+    ic.add_message(s, _msg(ic, "alice.github.io", ts=1, dkim_domain="mallory.github.io",
+                           url_host="mallory.github.io"))
+    assert ic.classify(s["alice.github.io"])["route"] == "spam"

@@ -458,3 +458,11 @@ def test_the_shield_never_rewrites_a_file_it_cannot_read_as_lists(home):
     assert p.read_text(encoding="utf-8") == before
     assert ps.add("never_send", ["Acme"], source="setup") == ["Acme"]
     assert json.loads(p.read_text(encoding="utf-8"))["never_send"] == [{"note": "kept"}, "Bluebird", "Acme"]
+
+
+def test_a_recommendation_pressed_for_a_step_the_chat_has_left_is_a_conflict(home, steps, monkeypatch):
+    _consents(monkeypatch)
+    _walk("posture")
+    with pytest.raises(sc.Conflict):
+        sc.use_recommended("money")
+    assert sc.load_state()["stage"] == "posture"
