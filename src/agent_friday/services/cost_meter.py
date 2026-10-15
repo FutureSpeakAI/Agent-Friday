@@ -22,7 +22,9 @@ Stdlib ``sqlite3`` only — no new dependency.
 """
 
 import json
+import logging
 import sqlite3
+import sys
 import threading
 import time as _time
 from datetime import datetime, timezone
@@ -428,13 +430,82 @@ def _resolve_attr(session_ctx, explicit):
     tid = sc.get("task_id")
     if tid:
         attr.update(lookup_task_attribution(tid))
-    for key in ("workspace", "kind", "schedule_id", "run_id", "key_profile", "codebase"):
+    for key in ("workspace", "kind", "schedule_id", "run_id", "key_profile", "codebase", "purpose"):
         if sc.get(key) is not None:
             attr[key] = sc.get(key)
     for key, val in (explicit or {}).items():
         if val is not None:
             attr[key] = val
     return attr
+
+
+# ── Purpose and call site (every cloud call says what it was for) ───────────
+_log = logging.getLogger("friday.cost_meter")
+#: Frames that are plumbing, not a caller worth naming.
+_PLUMBING = ("threading", "concurrent.", "asyncio", "contextlib", "functools", "runpy")
+_UNATTRIBUTED_SEEN: dict = {}
+_UNATTRIBUTED_EVERY_S = 3600.0
+#: A cloud-intent receipt older than this is not the call being metered.
+_INTENT_FRESH_S = 900.0
+
+
+def _call_site(depth=3):
+    """Up to ``depth`` frames above the meter, innermost first, as
+    "module.function < module.function". Never raises; "" when unknown."""
+    out = []
+    try:
+        f = sys._getframe(1)
+    except ValueError:
+        return ""
+    try:
+        while f is not None and len(out) < depth:
+            mod = str(f.f_globals.get("__name__", "") or "")
+            if mod != __name__ and not mod.startswith(_PLUMBING):
+                if mod.startswith("agent_friday."):
+                    mod = mod[len("agent_friday."):]
+                out.append(f"{mod}.{f.f_code.co_name}")
+            f = f.f_back
+    except Exception:
+        pass
+    return " < ".join(out)
+
+
+def _intent_purpose(model):
+    """The purpose the cloud checkpoint (services/cloud_intent.require) recorded
+    for this call on this thread, when a fresh receipt names the same model."""
+    try:
+        from agent_friday.services import attribution as _attribution
+        rows = _attribution.cloud_intents()
+    except Exception:
+        return None
+    now = _time.time()
+    for tok in reversed(rows or []):
+        try:
+            if now - float(tok.get("at") or 0) > _INTENT_FRESH_S:
+                break
+        except (TypeError, ValueError):
+            continue
+        if model and tok.get("model") and str(tok.get("model")) != str(model):
+            continue
+        p = str(tok.get("purpose") or "").strip()
+        if p and p != "model call":
+            return p[:120]
+    return None
+
+
+def _note_unattributed(provider, model, caller):
+    """friday.log names the code that spent money without saying why, once an
+    hour per call site, so the fix (pass purpose= or push_attribution) has an
+    address."""
+    key = caller or "unknown"
+    now = _time.monotonic()
+    last = _UNATTRIBUTED_SEEN.get(key)
+    if last is not None and now - last < _UNATTRIBUTED_EVERY_S:
+        return
+    _UNATTRIBUTED_SEEN[key] = now
+    _log.warning("unattributed model call: %s/%s from %s (no workspace, kind, schedule, "
+                 "run or purpose; recorded with purpose='unattributed')",
+                 provider or "?", model or "?", key)
 
 
 # ── SQLite store + buffered writer ───────────────────────────────────────────
@@ -490,6 +561,15 @@ def _conn():
                        "cached_prompt_tokens", "tool_use_prompt_tokens"):
                 if _c not in _cols:
                     _CONN.execute(f"ALTER TABLE cost_calls ADD COLUMN {_c} INT")
+            # ── What the call was for, and where it was made. ──
+            # A row with no workspace and the default kind could not say who
+            # spent the money (field install report: five Sonnet calls, ~$0.17, nobody
+            # attributed). `purpose` is the job's own word for the call;
+            # `caller` is the code that made it. Added by migration; NULL on
+            # every older row.
+            for _c in ("purpose", "caller"):
+                if _c not in _cols:
+                    _CONN.execute(f"ALTER TABLE cost_calls ADD COLUMN {_c} TEXT")
             _CONN.commit()
         return _CONN
 
@@ -525,8 +605,8 @@ def flush():
             "output_tokens, cost_usd, duration_ms, workspace, kind, "
             "schedule_id, run_id, cache_read_tokens, cache_write_tokens, "
             "key_profile, codebase, prompt_audio_tokens, prompt_text_tokens, "
-            "cached_prompt_tokens, tool_use_prompt_tokens) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "cached_prompt_tokens, tool_use_prompt_tokens, purpose, caller) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         conn.commit()
     return len(rows)
 
@@ -536,8 +616,16 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
            run_id=None, cost_usd=None, cache_read_tokens=0,
            cache_write_tokens=0, speed=None, key_profile=None, codebase=None,
            prompt_audio_tokens=None, prompt_text_tokens=None,
-           cached_prompt_tokens=None, tool_use_prompt_tokens=None):
+           cached_prompt_tokens=None, tool_use_prompt_tokens=None,
+           purpose=None):
     """Record one model call. Buffered; flushed off the hot path.
+
+    Every row says what the call was for (``purpose``) and which code made it
+    (``caller``). The purpose is, in order: the ``purpose`` argument, one set
+    through ``push_attribution``/``session_ctx``, or the purpose the cloud
+    checkpoint recorded for this call on this thread. A call with no
+    workspace, kind, schedule, run or purpose is stored as
+    ``purpose='unattributed'`` and named, with its call site, in friday.log.
 
     The four ``prompt_*`` / ``*_prompt_tokens`` arguments describe what the
     provider reported about the prompt's composition (Gemini Live today). They
@@ -558,7 +646,16 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
         cache_write_tokens = int(cache_write_tokens or 0)
         attr = _resolve_attr(session_ctx, {
             "workspace": workspace, "kind": kind,
-            "schedule_id": schedule_id, "run_id": run_id, "key_profile": key_profile, "codebase": codebase})
+            "schedule_id": schedule_id, "run_id": run_id, "key_profile": key_profile, "codebase": codebase,
+            "purpose": purpose})
+        caller = _call_site()
+        why = attr.get("purpose") or _intent_purpose(model)
+        if not why and not any(attr.get(k) for k in ("workspace", "kind", "schedule_id", "run_id")):
+            why = "unattributed"
+            try:
+                _note_unattributed(provider, model, caller)
+            except Exception:
+                pass
         if cost_usd is not None:
             cost = round(float(cost_usd), 6)
         else:
@@ -594,7 +691,8 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
                cache_read_tokens, cache_write_tokens,
                attr.get("key_profile"), attr.get("codebase"),
                _opt(prompt_audio_tokens), _opt(prompt_text_tokens),
-               _opt(cached_prompt_tokens), _opt(tool_use_prompt_tokens))
+               _opt(cached_prompt_tokens), _opt(tool_use_prompt_tokens),
+               (str(why)[:120] if why else None), (caller[:300] or None))
         with _BUFFER_LOCK:
             _BUFFER.append(row)
             over = len(_BUFFER) >= 50
@@ -620,7 +718,7 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
         return 0.0
 
 
-def meter(provider, model, usage, *, duration_ms=0, session_ctx=None, kind=None):
+def meter(provider, model, usage, *, duration_ms=0, session_ctx=None, kind=None, purpose=None):
     """Record from a provider ``usage`` object/dict. Maps both Anthropic
     (input_tokens/output_tokens) and OpenAI (prompt_tokens/completion_tokens)
     shapes onto the per-direction schema. An OpenRouter-style ``usage.cost``
@@ -655,7 +753,8 @@ def meter(provider, model, usage, *, duration_ms=0, session_ctx=None, kind=None)
                   prompt_audio_tokens=_reported("prompt_audio_tokens"),
                   prompt_text_tokens=_reported("prompt_text_tokens"),
                   cached_prompt_tokens=_reported("cached_prompt_tokens"),
-                  tool_use_prompt_tokens=_reported("tool_use_prompt_tokens"))
+                  tool_use_prompt_tokens=_reported("tool_use_prompt_tokens"),
+                  purpose=purpose)
 
 
 def modality_split(details):
@@ -749,6 +848,9 @@ def summary(rng="today", frm=None, to=None):
             "by_workspace": _group("workspace"),
             "by_model": _group("model"),
             "by_kind": _group("kind"),
+            # What each call was for; "unattributed" is spend nobody named
+            # (friday.log carries the call site).
+            "by_purpose": _group("purpose"),
             # Whose key paid, and for which codebase (salon spec §4.7).
             "by_key_profile": _group("key_profile"),
             "by_codebase": _group("codebase"),
@@ -918,5 +1020,6 @@ def reset_for_tests():
                 pass
         _CONN = None
     _LAST_ALERT.clear()
+    _UNATTRIBUTED_SEEN.clear()
     with _TASK_ATTR_LOCK:
         _TASK_ATTR.clear()

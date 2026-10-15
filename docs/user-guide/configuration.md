@@ -33,7 +33,8 @@ file while Friday is stopped.
   block is replaced whole by a partial write, so send the complete block.
 - **Some values are written by exactly one code path.**
   `model_routing.cloud_consent` is set only by the consent screen and is
-  removed from any other save.
+  removed from any other save. `model_routing.mode_chosen` is written only
+  when you change the routing mode yourself, and removed from any other save.
 - **Mirrored keys.** `orchestrator_model`, `subagent_model`, `creative_model`,
   `music_model` and `voice_model` are kept in step with `capability_routing`
   (`reasoning`, `subagent`, `creative_image`, `creative_music`, `voice`).
@@ -128,6 +129,7 @@ A capability that is not in the defaults is removed on the next save.
 | `work_order_privacy_class` | `""` | How much of a finished work order may go back to the cloud model. `""` means you have not chosen: rough counts (none, 1-4, 5-19, 20 or more) and fixed words only (P1). `P1_aggregate` is the same, chosen. `P2_summary` lets a summary with personal details removed go back, after you approve its exact text on a card (a share you allowed earlier does not stand in for it), in every mode that uses a cloud model. `P3_local_only` sends back only a handle. Material from the vault or marked private is always P3, whatever this says. Nothing is preselected; there is no Settings control for it yet. |
 | `cloud_consent` | not answered | *Internal.* Your recorded answer to the unrestricted-cloud screen. The only thing that can turn the egress gate's safeguards off. |
 | `unrestricted_cloud` | `false` | *Internal.* Legacy; read once to migrate into `cloud_consent`. |
+| `mode_chosen`, `mode_chosen_at` | absent | *Internal.* The record that you chose the routing mode yourself (the Settings mode control, setup, the setup chat) and when. A new install's starting `cloud_only` does not have it. Only a chosen `cloud_only` is consent for routine jobs to use the cloud ([scheduled jobs](scheduled-jobs.md)). Removed from any other save. |
 
 #### Who answers, in each mode
 
@@ -232,7 +234,7 @@ Grants for scheduled jobs are not a setting; they are kept in
 |---|---|---|
 | `cost_budget` | alert at $5/day and $50/month (both off); hard stop $0 (off); loop guard on | The alert cap warns at 80% and alerts at 100% and never blocks. The hard stop, when enabled, refuses further cloud calls for the rest of its period. Local models are never affected. The loop guard (`loop_guard_enabled`) stops a model that repeats the same call without the conversation moving on; it fires on that pattern, never on an amount. |
 | `daily_creation_free_choice` | `true` | Daily creation chooses freely across media. |
-| `daily_creation_budget_usd` | `0.50` | Soft cap on a day's creative spend. |
+| `daily_creation_budget_usd` | `null` | Soft cap on a day's creative spend; `null` or `0` is no cap. Off unless you set it (asked about during setup). |
 
 ### Scheduled and background work
 
@@ -240,12 +242,13 @@ Grants for scheduled jobs are not a setting; they are kept in
 |---|---|---|
 | `idle_work` | on; after 600 s idle; between 09:00 and 23:00 | Work that runs once a day while you are away, such as daily creation. |
 | `scheduled_cloud.answered` | `false` | Whether you have answered "may daily creation and the heartbeat use a cloud model when this PC has no local model?". Skipping the question leaves it `false`. |
-| `scheduled_cloud.allow` | `false` | Your answer. When `true` and no local model is serving, daily creation and the heartbeat run on the cloud models below. A local model that is serving is always used first. News is not covered: it always runs on this PC. Ignored until `answered` is `true`. |
+| `scheduled_cloud.allow` | `false` | Your answer. When `true` and no local model is serving, daily creation and the heartbeat run on the cloud models below. In a local routing mode a local model that is serving is always used first, and News is not covered: it always runs on this PC. Under a cloud routing mode see `routine_follows_cloud_mode` below. Ignored until `answered` is `true`. |
 | `scheduled_cloud.at` | `null` | When you answered (ISO time). |
 | `scheduled_cloud.heartbeat_model` | `claude-haiku-4-5-20251001` | The one cloud model the heartbeat may use. |
 | `scheduled_cloud.job_model` | `claude-haiku-4-5-20251001` | The one cloud model daily creation may use. |
 | `scheduled_cloud.heartbeat_every_minutes` | `240` | How often the heartbeat runs while it runs in the cloud (60, 120, 240, 360, 480, 720 or 1440). |
 | `scheduled_cloud.heartbeat_from_hour`, `heartbeat_to_hour` | `8`, `20` | The heartbeat runs in the cloud only between these hours. |
+| `scheduled_cloud.routine_follows_cloud_mode` | `true` | When you chose `cloud_only` yourself (`model_routing.mode_chosen` records it; the factory value does not count), that choice is your consent for the heartbeat, the News routines and podcast scripts to run on the models above, without the question above. Daily creation and `cloud_preferred` are not covered. `false` keeps them local-only even then. A podcast from private material and the Front Page read-aloud stay on this PC either way. See [scheduled jobs](scheduled-jobs.md) for the full table. |
 | `away_drain` | off | Drain queued heavy GPU work on a timer. |
 | `away_drain_after_s` | `900` | Idle time before queued work may take the GPU. |
 | `repo_sync` | no repositories | Git working trees the repo-sync job pulls. |

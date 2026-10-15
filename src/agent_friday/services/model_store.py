@@ -200,8 +200,21 @@ def _save(data: dict) -> None:
 
 
 def all_models() -> dict:
-    """model_id -> entry, for every model in the registry (present or not)."""
-    return (_load().get("models") or {})
+    """model_id -> entry, for every model in the registry (present or not).
+
+    The person's overrides (`~/.friday/overrides/models.json`, see
+    services/user_overrides.py) are merged over each record HERE, on read, and
+    never in `_load()`: `register`, `retire` and `forget` read through `_load()`
+    and `_save()` the result, so merging there would bake an override into the
+    generated registry. Read-time merging is what makes an override survive
+    every regeneration of this file.
+    """
+    models = (_load().get("models") or {})
+    try:
+        from agent_friday.services import user_overrides as _uo
+        return _uo.apply_to_registry(models)
+    except Exception:
+        return models
 
 
 def _usable(rec: dict) -> bool:

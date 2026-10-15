@@ -29,6 +29,13 @@ Two gaps this closes.
 So the flag becomes a property of the RUN, not of one dispatch decision, and the
 refusal lands at the cloud transports themselves -- the last place before the
 money is spent, and the one place no new fallback path can route around.
+
+Under a cloud_only mode the OWNER CHOSE (not the factory value), that choice
+is the consent for News, podcasts, briefings and the heartbeat to use the
+cloud, so a `kind="routine"` scope for one of those is released and the run is
+pinned to its routine cloud model (`local_only.KINDS`). It is never released
+without a non-empty model to pin to. Scopes opened for privacy (the default
+kind) never are. The one place that decides is `cloud_intent.background_route`.
 """
 
 from __future__ import annotations
@@ -77,24 +84,74 @@ def label() -> str:
     return str(getattr(_state, "label", "") or "this job")
 
 
+#: The two kinds of local-only scope.
+#:   private  -- local because of what the data is (compaction, meeting capture,
+#:               memory review, citations, a private podcast). Local in EVERY
+#:               mode. The default.
+#:   routine  -- local only to save money (News, briefings, podcast scripts,
+#:               the heartbeat, daily creation). Under a cloud_only mode the
+#:               owner chose, that choice is the consent for the jobs it
+#:               covers, so the scope is RELEASED: it does not refuse the
+#:               cloud, and the run is pinned to the routine cloud model
+#:               instead (`cloud_pinned`). Where it runs is
+#:               `cloud_intent.background_route`, the one reader.
+KINDS = ("private", "routine")
+
+
 class local_only:
     """Context manager marking everything inside as local-only.
 
     Thread-local, and re-entrant. Scheduled jobs each run on their own thread, so
     one job being local-only never constrains an interactive turn on another.
+
+    ``kind="routine"`` (with ``job``, the routine it is: ``"news"``,
+    ``"podcast"``, a scheduler id) is released under a cloud routing mode; see
+    ``KINDS``. A routine scope opened inside an active local-only scope stays
+    local: the stricter mark wins. ``released`` says which happened.
     """
 
-    def __init__(self, job_label: str = ""):
+    def __init__(self, job_label: str = "", *, kind: str = "private", job: str = ""):
         self.job_label = job_label or "this job"
+        self.kind = kind if kind in KINDS else "private"
+        self.job = str(job or "")
+        self.released = False
+        self.route = None
         self._prev = None
         self._prev_label = None
+
+    def _release_route(self):
+        """The cloud route a routine scope is released to, or None."""
+        if self.kind != "routine" or is_active():
+            return None
+        try:
+            from agent_friday.services import cloud_intent as _ci
+            # Assume a local seat serves: only a cloud MODE releases the scope.
+            # The local-mode opt-in (scheduled_cloud.allow with no seat) is the
+            # scheduler's to apply, before it opens the scope.
+            r = _ci.background_route(self.job or self.job_label, local_serving=True)
+        except Exception:
+            return None
+        # Never released unpinned: a cloud route with no model stays local.
+        if r.route != "cloud" or not str(r.model or "").strip():
+            return None
+        return r
 
     def __enter__(self):
         self._prev = getattr(_state, "active", False)
         self._prev_label = getattr(_state, "label", "")
+        self._prev_pin = (getattr(_state, "pin", ""), getattr(_state, "pin_label", ""))
+        self.route = self._release_route()
+        if self.route is not None:
+            self.released = True
+            model = str(self.route.model).strip()
+            _state.pin = model
+            _state.pin_label = self.job_label
+            _state.active = False
+            _log.info("local-only scope released for %s (%s): %s; running on %s",
+                      self.job_label, self.job or "routine", self.route.reason, model)
+            return self
         # The stricter mark wins: a local-only scope inside a cloud pin is
         # local-only for its duration, so the pin is lifted until it exits.
-        self._prev_pin = (getattr(_state, "pin", ""), getattr(_state, "pin_label", ""))
         _state.pin, _state.pin_label = "", ""
         _state.active = True
         _state.label = self.job_label

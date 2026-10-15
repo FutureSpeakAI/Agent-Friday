@@ -47,6 +47,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from agent_friday.services import model_ids
+
 log = logging.getLogger("friday.first_run_models")
 
 REQUEST_NAME = "first-run.json"
@@ -75,8 +77,12 @@ FRONT_ARTIFACT = {
     "qwen3-1.7b": "voice-front-1.7b",
 }
 
-#: Local voice needs these beside any front: the ear and its runtime.
-FRONT_COMPANIONS = ("voice-ear-streaming", "sherpa-onnx")
+#: Local voice needs these beside any front: the ear and its runtime, and the
+#: pinned whisper recognisers push-to-transcribe / the CPU ear ("whisper-base")
+#: and media transcripts ("whisper-base.en") load by path and never fetch
+#: themselves (services/feature_models). The installer page's size includes
+#: them (resources/voice_front_options.json), so the consent covers them.
+FRONT_COMPANIONS = ("voice-ear-streaming", "sherpa-onnx", "whisper-base", "whisper-base.en")
 
 
 def front_artifacts(model_id: str) -> list:
@@ -284,6 +290,133 @@ def _register_reflex(model_id: str) -> Optional[str]:
     return model_id
 
 
+# ── is the seat already served? ─────────────────────────────────────────────
+
+#: Setting: a first-run seat counts as done when a working local model already
+#: serves it (the requested model under another spelling, or the model the
+#: seat's capability names), rather than only when the literal requested id
+#: finished downloading. On by default; off restores the literal-id check.
+SERVED_SETTING = "first_run_seat_satisfied_by_serving"
+
+#: (seat, requested, served) triples already written to friday.log, so a card
+#: polled every few seconds does not repeat the same line.
+_NOTED: set = set()
+
+
+def _note_once(seat: str, wanted: str, got: str, how: str) -> None:
+    sig = (seat, wanted, got, how)
+    if sig in _NOTED:
+        return
+    _NOTED.add(sig)
+    log.info("first run: the %s seat asked for %s and is satisfied by %s (%s)",
+             SEATS.get(seat, (seat,))[0].lower(), wanted, got, how)
+
+
+def _served_setting_on() -> bool:
+    try:
+        from agent_friday import core
+        return (core._load_settings() or {}).get(SERVED_SETTING, True) is not False
+    except Exception:
+        return True
+
+
+def installed_equivalent(model_id: str) -> Optional[str]:
+    """The model-store key of an installed model that is ``model_id`` under
+    any spelling (``bonsai2-27b`` for ``bonsai2:27b``), or None."""
+    from agent_friday.services import model_store
+    from agent_friday.services.model_ids import find_equivalent
+    try:
+        return find_equivalent(model_id, model_store.available())
+    except Exception as e:  # noqa: BLE001 - an unreadable registry is "not installed"
+        log.debug("first run: model store unreadable: %s", e)
+        return None
+
+
+def _served_ids() -> list:
+    """Model ids a working local seat is serving now, from the Arbiter's own
+    view. Read-only: it adopts nothing and starts nothing, and a model merely
+    present in a daemon's list is not counted as serving.
+
+      * a seat this process's Arbiter spawned counts: that is the Arbiter's
+        own record of what it put on that port;
+      * a seat another Friday process published counts only when the server
+        on that port says it holds that model (``residency_arbiter.
+        _model_on_port``, its ``/v1/models``; the Arbiter starts every seat
+        with ``--alias <model id>``). A port reused by something else that
+        answers ``/health`` is not the published model.
+
+    The published ports are asked at once, so a stale port costs one timeout
+    for the whole call, not one per entry. Call it once per question and pass
+    the list on (``seat_served_by(..., served=...)``).
+    """
+    out: list = []
+    try:
+        from agent_friday.services import residency_arbiter as ra
+        arb = ra.get_arbiter()
+        procs = dict(getattr(getattr(arb, "llama", None), "procs", {}) or {}) if arb is not None else {}
+        out.extend(str(m) for m in procs)
+        our_ports = set()
+        for entry in procs.values():
+            try:
+                our_ports.add(int(entry[1]))
+            except Exception:
+                continue
+        foreign = []
+        for mid, base in (ra._read_published() or {}).items():
+            port = ra._endpoint_port(base)
+            if str(mid) in out or not port or port in our_ports:
+                continue
+            foreign.append((str(mid), port))
+        if foreign:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(8, len(foreign))) as pool:
+                said = list(pool.map(lambda mp: ra._model_on_port(mp[1]), foreign))
+            for (mid, port), held in zip(foreign, said):
+                if held and model_ids.same(held, mid):
+                    out.append(mid)
+                else:
+                    log.debug("first run: port %s was published for %s but serves %s; not counted",
+                              port, mid, held or "no model id")
+    except Exception as e:  # noqa: BLE001 - no answer is "not served"
+        log.debug("first run: serving check unavailable: %s", e)
+    return [m for m in out if not m.startswith("voice-front:")]
+
+
+def seat_served_by(seat: str, model_id: str, served: Optional[list] = None) -> Optional[str]:
+    """The id of a working local model that serves ``seat`` now, or None.
+
+    "Serves" is the Arbiter's verified view (``_served_ids``); pass
+    ``served`` to reuse one survey for several seats. A served model
+    satisfies the seat when it is the requested model under any spelling, or
+    the local model the seat's capability already names (the owner's own
+    choice; ``model_ids.same`` tells the two apart). The fast seat is the
+    voice front, which is not an Arbiter seat, so it is judged by its own
+    download only.
+    """
+    capability = SEATS.get(seat, (None, None))[1]
+    if not capability or not _served_setting_on():
+        return None
+    from agent_friday.services.model_ids import find_equivalent
+    if served is None:
+        served = _served_ids()
+    if not served:
+        return None
+    hit = find_equivalent(model_id, served)
+    if hit:
+        return hit
+    try:
+        from agent_friday import core
+        cr = (core._load_settings() or {}).get("capability_routing") or {}
+        configured = (cr.get(capability) or {}).get("model")
+    except Exception:
+        configured = None
+    if configured:
+        from agent_friday.services.local_seats import _names_a_cloud_model
+        if not _names_a_cloud_model(configured):
+            return find_equivalent(configured, served)
+    return None
+
+
 # ── the status the UI reads ─────────────────────────────────────────────────
 
 def _write_status(status: dict) -> None:
@@ -365,9 +498,39 @@ def status() -> dict:
             row["eta_s"] = job.get("eta_s")
             row["phase"] = job.get("phase")
         out.append(row)
-    states = {r["state"] for r in out}
     with _LOCK:
         alive = _WORKER is not None and _WORKER.is_alive()
+    # The card asks "is this seat working", not "did this exact id download".
+    # A download still in flight (or queued behind one) is left to finish,
+    # which also keeps the 4 s poll off the survey; the survey itself runs at
+    # most once per call, and only when a row needs it.
+    pending = [r for r in out if r.get("state") != "installed"
+               and not (alive and r.get("state") in ("downloading", "waiting"))
+               and SEATS.get(r["seat"], (None, None))[1]]
+    served = _served_ids() if (pending and _served_setting_on()) else []
+    satisfied = False
+    for row in pending:
+        got = seat_served_by(row["seat"], row["model_id"], served=served)
+        if not got:
+            continue
+        row["served_by"] = got
+        if model_ids.same(got, row["model_id"]):
+            # The requested model itself, under another spelling: the
+            # download is done in every sense that matters.
+            _note_once(row["seat"], row["model_id"], got, "the same model serves the seat")
+            row.update(state="installed", error=None, bytes_done=row.get("bytes_total") or 0)
+            satisfied = True
+        else:
+            # The owner's own, different model serves the seat. The card says
+            # so, but the requested download is not marked done: whether to
+            # drop it stays the owner's call.
+            _note_once(row["seat"], row["model_id"], got, "the owner's configured model serves the seat")
+    states = {r["state"] for r in out}
+    if satisfied and not alive and out and states == {"installed"}:
+        # Persist it: the next boot must not start a download for a seat the
+        # same model already fills (run_at_boot reads the request file).
+        _write_status({"seats": out})
+        _retire_request()
     if out and states == {"installed"}:
         state = "done"
     elif "failed" in states and not alive:
@@ -418,12 +581,35 @@ def _run(req: dict) -> None:
                 _run_front(row, rows)
                 _write_status({"seats": rows})
                 continue
-            if row["model_id"] in model_store.available():
+            have = (row["model_id"] if row["model_id"] in model_store.available()
+                    else installed_equivalent(row["model_id"]))
+            if have:
+                # Installed already, perhaps under another spelling
+                # (bonsai2-27b for bonsai2:27b): seat the record that exists.
+                if have != row["model_id"]:
+                    _note_once(row["seat"], row["model_id"], have, "installed under an equivalent id")
+                    row["served_by"] = have
                 row["state"] = "installed"
                 row["bytes_done"] = row["bytes_total"]
-                apply_seat(row["seat"], row["model_id"])
+                apply_seat(row["seat"], have)
                 _write_status({"seats": rows})
                 continue
+            served = seat_served_by(row["seat"], row["model_id"])
+            if served and model_ids.same(served, row["model_id"]):
+                # The requested model, under another name, already serves
+                # this seat: nothing to fetch, and the seat is pointed at it.
+                _note_once(row["seat"], row["model_id"], served, "the same model serves the seat")
+                row.update(state="installed", served_by=served, bytes_done=row["bytes_total"])
+                apply_seat(row["seat"], served)
+                _write_status({"seats": rows})
+                continue
+            if served:
+                # The owner's own, different model serves the seat. The card
+                # names it, but the download that was asked for still runs:
+                # cancelling it is the owner's choice, not ours.
+                _note_once(row["seat"], row["model_id"], served,
+                           "the owner's configured model serves the seat; the requested download still runs")
+                row["served_by"] = served
             row["state"] = "downloading"
             # No thread of its own: the next model is queued after this one
             # has registered, so the runtime this one installs is already
@@ -451,12 +637,18 @@ def _run(req: dict) -> None:
         _write_status({"seats": rows})
 
     if rows and all(r["state"] == "installed" for r in rows):
-        src, dst = request_path(), _sibling(DONE_NAME)
-        try:
-            if src and dst:
-                os.replace(src, dst)
-        except OSError as e:
-            log.warning("first run: could not retire the request file: %s", e)
+        _retire_request()
+
+
+def _retire_request() -> None:
+    """Move the request to the done marker, so no later boot starts it again."""
+    src, dst = request_path(), _sibling(DONE_NAME)
+    try:
+        if src and dst and src.exists():
+            os.replace(src, dst)
+            log.info("first run: every seat is filled; the request is retired to %s", dst.name)
+    except OSError as e:
+        log.warning("first run: could not retire the request file: %s", e)
 
 
 def run_at_boot(*, blocking: bool = False) -> dict:

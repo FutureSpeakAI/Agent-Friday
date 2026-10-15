@@ -74,6 +74,11 @@ def residency_status_payload(arb=_ARBITER) -> dict:
             "vram_mib": s.get("vram_mib"), "backend": s.get("backend"),
             "context": s.get("context"), "offload": s.get("offload"),
             "pin_unenforced": s.get("pin_unenforced"),
+            # services/local_sizing: GPU layers (99 = all, 0 = CPU) and, for a
+            # seat planned from an estimate, basis "estimated" plus the
+            # measure-later step to show beside it.
+            "n_gpu_layers": s.get("n_gpu_layers"),
+            "sizing": s.get("sizing"),
         }
 
     resident = {}

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import threading
 from datetime import datetime, timedelta, timezone
@@ -258,6 +259,42 @@ def _classify_credential_error(exc: BaseException) -> str:
     """
     return ("unreadable" if type(exc).__name__ in _LOCAL_STORAGE_ERRORS
             else "needs_reauth")
+
+
+_log = logging.getLogger("friday.google_accounts")
+
+#: Why credentials_for last returned None for an account, in THIS process:
+#: "unreachable" (Google could not be reached; the grant was not judged),
+#: "needs_reauth", "unreadable" or "disconnected". Cleared by a success.
+_LAST_PROBLEM: dict = {}
+
+#: Exception names from a token refresh that mean "could not reach Google",
+#: not "Google said no". google.auth wraps transport failures in TransportError.
+_TRANSIENT_REFRESH_ERRORS = ("TransportError", "ConnectionError", "Timeout",
+                             "ReadTimeout", "ConnectTimeout", "TimeoutError",
+                             "SSLError", "ProxyError")
+
+
+def _refresh_failure_is_transient(exc: BaseException) -> bool:
+    """A refresh that never got an answer from Google is not a revoked grant.
+
+    Right after a restart (or a laptop resume) the network can be a few
+    seconds behind the server, and the first refresh failed with a transport
+    error; filing that as needs_reauth told the owner to reconnect an account
+    that was fine. Only a RefreshError that is not marked retryable is Google
+    actually refusing the token."""
+    if getattr(exc, "retryable", False):
+        return True
+    name = type(exc).__name__
+    if name == "RefreshError":
+        return False
+    return name in _TRANSIENT_REFRESH_ERRORS or isinstance(exc, (OSError, TimeoutError))
+
+
+def last_problem(account_id: str) -> str | None:
+    """Why the last credentials_for(account_id) in this process returned None,
+    or None when it last succeeded (or has not run)."""
+    return _LAST_PROBLEM.get(account_id)
 
 # Fail closed. An unrecognised or absent status is NOT evidence of health.
 _UNKNOWN_PRESENTATION = ("unknown", "Status unknown", False, True)
@@ -608,7 +645,8 @@ def credentials_for(account_id: str):
     except Exception as e:
         # A decryption failure is not a revoked grant. See
         # `_classify_credential_error` and the "unreadable" entry above.
-        _mark_status(account_id, _classify_credential_error(e))
+        _LAST_PROBLEM[account_id] = _classify_credential_error(e)
+        _mark_status(account_id, _LAST_PROBLEM[account_id])
         cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
                        success=False, error=type(e).__name__,
                        detail=ExceptionText(str(e)[:200]))
@@ -619,6 +657,7 @@ def credentials_for(account_id: str):
         # "connected" survived an account that could not produce a credential
         # at all - the settings page said fine, every fetch came back empty,
         # and nothing wrote down that they disagreed.
+        _LAST_PROBLEM[account_id] = "disconnected"
         _mark_status(account_id, "disconnected")
         cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
                        success=False, error="NoStoredToken")
@@ -627,19 +666,39 @@ def credentials_for(account_id: str):
         try:
             from google.auth.transport.requests import Request as GoogleRequest
             creds.refresh(GoogleRequest())
-            _persist_token(account_id, creds)
-            _mark_status(account_id, "connected", touch_sync=True)
-            cs.audit_event(_AUDIT_CATEGORY, "refresh", account_id=account_id, success=True)
         except Exception as e:
-            _mark_status(account_id, "needs_reauth")
             cs.audit_event(_AUDIT_CATEGORY, "refresh", account_id=account_id,
                            success=False, error=type(e).__name__)
+            if _refresh_failure_is_transient(e):
+                # Google could not be REACHED (no network yet after a restart
+                # or a resume, a timeout, a 5xx). That says nothing about the
+                # grant, so the stored status stays as it was and the caller
+                # hears "could not check yet", not "needs reconnecting".
+                _LAST_PROBLEM[account_id] = "unreachable"
+                _log.warning("google account %s: token refresh could not reach Google "
+                             "(%s); status left unchanged, will retry on next use",
+                             account_id, type(e).__name__)
+                return None
+            _LAST_PROBLEM[account_id] = "needs_reauth"
+            _mark_status(account_id, "needs_reauth")
             return None
+        try:
+            _persist_token(account_id, creds)
+        except Exception as e:
+            # The refresh WORKED; only saving the new token failed (on Windows a
+            # concurrent reader can hold the file during the atomic replace).
+            # The credential in hand is valid, so use it; the next refresh
+            # writes it again.
+            _log.warning("google account %s: refreshed token could not be saved (%s); "
+                         "using it in memory", account_id, type(e).__name__)
+        _mark_status(account_id, "connected", touch_sync=True)
+        cs.audit_event(_AUDIT_CATEGORY, "refresh", account_id=account_id, success=True)
     if not creds or not creds.valid:
         # Expired with no refresh token to spend: the grant really is gone and
         # reconnecting really is the remedy. This branch used to return None
         # silently, leaving the index saying "connected" for an account that
         # could not answer a single call.
+        _LAST_PROBLEM[account_id] = "needs_reauth"
         _mark_status(account_id, "needs_reauth")
         cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
                        success=False, error="NoUsableCredential")
@@ -658,6 +717,7 @@ def credentials_for(account_id: str):
             _mark_status(account_id, "connected", touch_sync=True)
     except Exception:
         pass
+    _LAST_PROBLEM.pop(account_id, None)
     cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id, success=True)
     return creds
 
@@ -964,6 +1024,13 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None,
     for rec in _accounts_with("gmail"):
         aid = rec["id"]
         creds = credentials_for(aid)
+        if not creds and last_problem(aid) == "unreachable":
+            # Not a broken grant: Google could not be reached to refresh it
+            # (typically the first minute after a restart). Say so.
+            errors.append({"account_id": aid, "label": rec.get("label"), "kind": "unavailable",
+                           "error": "could not reach Google to check this account yet; "
+                                    "it will be tried again"})
+            continue
         if not creds:
             errors.append({"account_id": aid, "label": rec.get("label"),
                            "error": "needs_reauth"})

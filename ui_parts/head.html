@@ -46,6 +46,12 @@ window.addEventListener('error',function(e){
 <!-- The one door for sandboxed frames (docs/development/frame-broker.md).
      Loaded before the app so iframes can register on mount. -->
 <script src="/static/js/friday_frame_broker.js"></script>
+<!-- Stale tabs: offers a reload (never forces one) when the server's build_id
+     differs from window.__FRIDAY_BUILD_ID__, the build this page came from. -->
+<script src="/static/js/friday_build_watch.js" defer></script>
+<!-- The top-bar plugin slot's registry (documented in the file). Not deferred:
+     add-ons may register before the desktop mounts. -->
+<script src="/static/js/friday_topbar_slot.js"></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){

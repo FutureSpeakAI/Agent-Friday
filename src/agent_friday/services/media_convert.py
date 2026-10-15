@@ -61,7 +61,7 @@ def backends() -> Dict[str, Dict[str, Any]]:
         from agent_friday.services import media_transcripts as mt
         ok = mt.available()
         out["asr"] = {"available": ok, "name": "faster-whisper base.en, on this PC" if ok else None,
-                      "reason": "" if ok else "The local speech recogniser (faster-whisper) is not installed on this computer."}
+                      "reason": "" if ok else (mt.unavailable_reason() or "The local speech recogniser (faster-whisper) is not installed on this computer.")}
     except Exception as e:
         out["asr"] = {"available": False, "name": None, "reason": "The local speech recogniser could not be loaded (%s)." % str(e)[:100]}
     try:

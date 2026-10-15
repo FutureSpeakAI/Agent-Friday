@@ -556,7 +556,7 @@ def test_every_episode_opens_and_signs_off_the_same_way(monkeypatch):
     _fake_speaker(monkeypatch)
     real = render.listen_back
     monkeypatch.setattr(render, "listen_back", lambda wav, s, transcribe=None: real(wav, s, transcribe=lambda p: s))
-    done = pe.produce(_text_ep(show="The Front Page")["id"])
+    done = pe.produce(_text_ep(show="The Front Page", hosts="duo")["id"])
     first, second, last = done["lines"][0], done["lines"][1], done["lines"][-1]
     assert first["signature"] and first["speaker"] == "a"
     # The show is credited to the product in plain words; she is herself.
