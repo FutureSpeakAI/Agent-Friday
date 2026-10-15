@@ -60,6 +60,6 @@ def test_the_panel_is_in_both_ui_files():
     root = Path(__file__).resolve().parents[2]
     for f in ("index.html", "ui_parts/app.html"):
         text = (root / f).read_text(encoding="utf-8")
-        assert "function MemoryCardPanel()" in text, f
-        assert "MemoryCardPanel" in text.split("function MemoryCardPanel()")[0], f + ": panel not mounted"
+        assert "function MemoryCardPanel(" in text, f
+        assert "MemoryCardPanel" in text.split("function MemoryCardPanel(")[0], f + ": panel not mounted"
         assert "/api/core-memory" in text

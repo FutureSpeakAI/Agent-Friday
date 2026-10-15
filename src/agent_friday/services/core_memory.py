@@ -304,16 +304,23 @@ def _write_jsonl(p: Path, rows: List[Dict[str, Any]]) -> None:
 
 
 def _purge_text(text: str) -> None:
-    """Drop every journal and queue row that carries `text` (an owner delete)."""
+    """Drop every journal and queue row that carries `text` (an owner delete),
+    and every queued change aimed at that line (its `old` names part of it):
+    the line is gone, so a suggestion about it would only keep a copy."""
     low = (text or "").lower()
     if not low:
         return
+
+    def _about_it(r) -> bool:
+        old = _clean(r.get("old") or "").lower()
+        return bool(old) and old in low
     for p in (_journal_path(), _pending_path()):
         rows = _read_jsonl(p)
         keep = [r for r in rows
                 if low not in str(r.get("before") or "").lower()
                 and low not in str(r.get("after") or "").lower()
-                and low not in str(r.get("text") or "").lower()]
+                and low not in str(r.get("text") or "").lower()
+                and not _about_it(r)]
         if len(keep) != len(rows):
             try:
                 _write_jsonl(p, keep)
