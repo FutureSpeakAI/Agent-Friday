@@ -852,8 +852,8 @@ def _withhold_pasted_keys(fn):
             if kinds:
                 data["message"] = clean
                 request.environ.setdefault(_PASTED_KEYS_ENV, []).extend(kinds)
-                _LOG.warning("chat: withheld %d pasted key(s) (%s) before the turn",
-                             len(kinds), ", ".join(k["id"] for k in kinds))
+                # The count only: nothing derived from the withheld text reaches the log.
+                _LOG.warning("chat: withheld %d pasted key(s) before the turn", len(kinds))
         rv = fn(*args, **kwargs)
         kinds = request.environ.get(_PASTED_KEYS_ENV)
         if not kinds:
