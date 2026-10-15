@@ -73,9 +73,10 @@
   // What the Messages workspace can be opened to (index.html's
   // fridayDeclareNav; queued, since this script loads first).
   (window.__fridayNavDecls = window.__fridayNavDecls || []).push(['messages', {
-    keys: ['thread_id', 'account', 'subject', 'from', 'lane', 'folder', 'reply', 'q', 'max'],
+    keys: ['thread_id', 'account', 'subject', 'from', 'lane', 'folder', 'reply', 'q', 'max', 'view'],
     sections: Object.keys(LANES).map(id => ({ id, label: LANES[id][0], key: 'lane' }))
       .concat(FOLDERS.filter(f => f[0]).map(f => ({ id: f[0], label: f[2], key: 'folder' })))
+      .concat([{ id: 'cleanup', label: 'Clean up', key: 'view', aliases: ['inbox clean up', 'clean up my inbox', 'unsubscribe'] }])
   }]);
   const CATEGORIES = [['primary', 'Primary'], ['social', 'Social'], ['promotions', 'Promotions'], ['updates', 'Updates'], ['forums', 'Forums']];
   const folderName = f => { if (!f) return 'Priority'; if (f.indexOf('label:') === 0) return f.slice(6); if (f.indexOf('category:') === 0) return 'Inbox · ' + f.slice(9); const x = FOLDERS.find(r => r[0] === f); return x ? x[2] : f; };
@@ -755,7 +756,9 @@
     }, []);
     // wide: shown unless hidden (remembered); otherwise a drawer, opened on request
     const showSide = layout === 'wide' ? sideOpen !== false : sideOpen === true;
-    const pickFolder = f => { setFolder(f); setOpen(null); if (layout !== 'wide') setSideOpen(null); };
+    // Messages > Clean up (static/friday_inbox_cleanup.js) takes the list's place while it is open.
+    const [cleanup, setCleanup] = useState(false);
+    const pickFolder = f => { setCleanup(false); setFolder(f); setOpen(null); if (layout !== 'wide') setSideOpen(null); };
 
     const seq = useRef(0);
     const lastGood = useRef(null);                 // the last list that was read, for its own search and folder
@@ -813,6 +816,7 @@
         if (!t || t.workspace !== 'messages') return;
         if (t.lane) setLane(t.lane);
         if (t.folder != null) setFolder(t.folder);
+        setCleanup(t.view === 'cleanup');
         const q = t.q == null ? '' : String(t.q).trim();
         if (q) {
           selectFor.current = q;
@@ -1494,8 +1498,10 @@
           FOLDERS.map(([id, ico, lbl, tip]) => h('button', { key: id || 'priority', className: folder === id || (id === 'inbox' && folder.indexOf('category:') === 0) ? 'on' : '', title: tip || lbl, onClick: () => pickFolder(id) },
             h('span', null, ico), lbl, id === '' && stats && stats.actionable ? h('span', { className: 'fm-count', style: { marginLeft: 'auto' } }, stats.actionable) : null)),
           sideLabels.length > 0 && h('div', { className: 'h' }, 'Labels'),
-          sideLabels.map(n => h('button', { key: n, className: folder === 'label:' + n ? 'on' : '', onClick: () => pickFolder('label:' + n) }, h('span', null, '🏷'), n))),
-        h('div', { className: 'fm-listwrap' },
+          sideLabels.map(n => h('button', { key: n, className: folder === 'label:' + n ? 'on' : '', onClick: () => pickFolder('label:' + n) }, h('span', null, '🏷'), n)),
+          W.FridayInboxCleanup && h('div', { className: 'h' }, 'Tools'),
+          W.FridayInboxCleanup && h('button', { className: cleanup ? 'on' : '', 'data-testid': 'fm-cleanup-open', 'aria-pressed': cleanup, title: 'Mailing lists you never open, to unsubscribe from', onClick: () => { setOpen(null); setCleanup(v => !v); if (layout !== 'wide') setSideOpen(null); } }, h('span', null, '🧹'), 'Clean up')),
+        cleanup && W.FridayInboxCleanup ? h('div', { className: 'fm-listwrap', 'data-testid': 'fm-cleanup' }, h(W.FridayInboxCleanup)) : h('div', { className: 'fm-listwrap' },
           h('div', { className: 'fm-listhead' },
             h('input', { ref: headRef, type: 'checkbox', checked: allChecked, onChange: () => { if (allChecked) clearTicks(); else setSelCards(shown); }, 'aria-label': 'Select all shown', title: 'Select all shown (* a)' }),
             h('span', { style: { fontWeight: 700, color: '#dbe6f5' } }, folderName(folder)),
@@ -1509,7 +1515,7 @@
             failed ? h('div', { style: { padding: 20, color: '#ff9a9a', fontSize: 12 } }, 'No list: the read failed (see above).')
               : shown.length ? shown.map(Row)
                 : data && !loading ? h('div', { style: { padding: 20, color: '#7f93ad', fontSize: 12 } }, query ? 'Gmail found nothing for that search.' : folder ? 'Nothing in ' + folderName(folder) + '.' : 'Nothing here.') : null)),
-        (open || layout !== 'narrow') && h('div', { className: 'fm-thread' + (open ? '' : ' fm-reading-empty') },
+        !cleanup && (open || layout !== 'narrow') && h('div', { className: 'fm-thread' + (open ? '' : ' fm-reading-empty') },
           open ? h(React.Fragment, null, h('div', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between' } },
             h('div', null,
               h('div', { style: { fontSize: 15, fontWeight: 700, color: '#fff' } }, open.card.subject),
