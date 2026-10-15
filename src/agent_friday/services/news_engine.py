@@ -51,6 +51,7 @@ from agent_friday.services.model_router import (
 )  # noqa: E501
 from agent_friday.user_errors import ExceptionText
 from agent_friday.services.visible_jobs import visible_job
+from agent_friday.services import job_prompt
 
 # Not visible via the star-import cascade (it is bound in voice_engine, an
 # UPPER layer) — import the leaf module directly so the editorial/digest/front
@@ -1918,6 +1919,48 @@ def _answering_model(before):
     return now.get("model")
 
 
+#: Routine News jobs on the slim job prompt (services/job_prompt.py).
+_FRONT_PAGE_JOB = job_prompt.Job(
+    name="Front Page editor",
+    instructions="You edit the owner's news Front Page: choose the lead story "
+                 "and write short editorial notes about the candidate stories "
+                 "you are given.")
+_WEEKLY_DIGEST_JOB = job_prompt.Job(
+    name="Weekly digest",
+    instructions="You write the owner's weekly news digest from the stories "
+                 "that ran on this week's Front Pages.")
+
+
+def _news_interests_block() -> str:
+    """The owner's News interest settings, labelled, for a job's material.
+
+    The slim job prompt carries no vault, user model or wiki context, so this
+    is what "relevant to the user" is judged against: the topic priorities
+    (`news_priorities`, Settings > News) and the News sections they switched
+    off (briefing prefs `categories_enabled`). Preferences only: never the
+    vault, the user model, contacts, mail, or the Local beat's place.
+    "" when there is nothing to say."""
+    lines = []
+    try:
+        pri = [str(p).strip() for p in ((core._load_settings() or {}).get("news_priorities") or [])
+               if str(p).strip()]
+        if pri:
+            lines.append("Topic priorities, most important first: " + ", ".join(pri[:12]) + ".")
+    except Exception as e:
+        _log.debug("news interests: priorities unreadable: %s", e)
+    try:
+        off = [c for c, on in (_load_briefing_prefs().get("categories_enabled") or {}).items()
+               if on is False]
+        if off:
+            lines.append("Sections they switched off: " + ", ".join(off) + ".")
+    except Exception as e:
+        _log.debug("news interests: sections unreadable: %s", e)
+    if not lines:
+        return ""
+    return ("OWNER'S NEWS INTERESTS (their own News settings; judge relevance "
+            "by these):\n" + "\n".join("- " + ln for ln in lines))
+
+
 def _editorialize_front_page(pool, slot="morning", prev_stories=None,
                              calendar_events=None):
     """Ask Claude to pick the lead + write editorial context. Fails soft to a
@@ -2030,13 +2073,14 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
                '"update": "<what is new today>"}]' if prev_block else "")
             + "\n}")
 
+        interests = _news_interests_block()
         prompt = (
             tone + "\n\n"
-            "You are Friday, the user's personal news editor. Use what you know "
-            "about the user (from your vault/wiki context) to judge relevance; "
-            "if you know little about them, treat them as a tech- and "
-            "news-literate reader. Below are today's candidate stories, "
-            "pre-scored.\n\n"
+            "You are Friday, the user's personal news editor. Judge relevance "
+            "by the OWNER'S NEWS INTERESTS below and anything else you know "
+            "about the user; if you know little about them, treat them as a "
+            "tech- and news-literate reader. Below are today's candidate "
+            "stories, pre-scored.\n\n"
             "Choose the single LEAD story (the one the user should read first) "
             "and write a 2-3 sentence editorial note explaining why it leads — "
             "in your voice, specific to them. Write one punchy sentence of "
@@ -2051,13 +2095,18 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             "frameworks, list them with brief analysis of the positioning "
             "implications for Friday. Empty list if none.\n"
             + prev_block + cal_block + "\n\n"
+            + (interests + "\n\n" if interests else "") +
             "Reply with a JSON object in this shape:\n" + shape +
             "\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
         )
-        system = _get_friday_system_prompt(
-            keywords=prompt, workspace='briefing',
-            provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
-            vault_control=_gated_vault_control(), tools_block=False)
+        # A routine job: the slim job prompt, not the ~16.7k-token chat prompt
+        # that pushed this request to 25,410 tokens and past an 8k local window.
+        system = job_prompt.build(
+            _FRONT_PAGE_JOB, prompt,
+            full_system=lambda: _get_friday_system_prompt(
+                keywords=prompt, workspace='briefing',
+                provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
+                vault_control=_gated_vault_control(), tools_block=False)).system
         _attr_before = _attribution_mark()
         # OUTPUT BUDGET, and why it is not 1800 any more.
         #
@@ -2729,11 +2778,13 @@ def _generate_weekly_digest():
     }
     synth = fallback
     try:
+        interests = _news_interests_block()
         prompt = (
             "You are Friday, the user's personal news editor, writing the WEEKLY "
-            "DIGEST. Use what you know about the user from your vault/wiki "
-            "context; if you know little about them, treat them as a tech- and "
-            "news-literate reader.\n\n"
+            "DIGEST. Judge what matters to the user by the OWNER'S NEWS "
+            "INTERESTS below and anything else you know about them; if you know "
+            "little about them, treat them as a tech- and news-literate "
+            "reader.\n\n"
             "Below are the stories that ran across this week's Front Page "
             "editions. Synthesize the week's top 5 stories, identify the "
             "through-line trends, and give an editorial take on what this means "
@@ -2745,12 +2796,15 @@ def _generate_weekly_digest():
             'for the user\'s work and interests>"\n}\n\n'
             "Give exactly 5 top_stories when there is enough material. Pick each "
             "by its id from the list; never write a web address.\n\n"
+            + (interests + "\n\n" if interests else "") +
             "THIS WEEK'S STORIES:\n" + story_block
         )
-        system = _get_friday_system_prompt(
-            keywords=prompt, workspace='briefing',
-            provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
-            vault_control=_gated_vault_control(), tools_block=False)
+        system = job_prompt.build(
+            _WEEKLY_DIGEST_JOB, prompt,
+            full_system=lambda: _get_friday_system_prompt(
+                keywords=prompt, workspace='briefing',
+                provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
+                vault_control=_gated_vault_control(), tools_block=False)).system
         # Route through the user's configured provider (same as chat), not a
         # hard-coded Anthropic call — so the digest synthesizes real content on
         # Ollama/OpenAI setups instead of silently falling back to the canned

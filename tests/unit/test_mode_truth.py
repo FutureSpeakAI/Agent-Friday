@@ -344,6 +344,14 @@ def test_the_heartbeat_under_cloud_only_runs_on_its_cloud_model(monkeypatch, clo
     heartbeat is a PausedNoLocalModel skip, though the owner chose Cloud only."""
     from agent_friday.services import agent
     from agent_friday.services import scheduler as s
+    # The full-agent path (heartbeat.precheck off). The pre-check path's seat
+    # under Cloud only is pinned in test_heartbeat_precheck.py.
+    try:
+        from agent_friday.services import heartbeat as hb
+        monkeypatch.setattr(hb, "_settings", lambda: {"precheck": False,
+                                                      "calendar_lookahead_minutes": 120})
+    except ImportError:
+        pass
     monkeypatch.setattr(s, "_resolve_local_seat", lambda: None)
     seen = {}
 
