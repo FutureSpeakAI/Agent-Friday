@@ -100,7 +100,9 @@ def test_the_reminder_notice_is_a_registered_emitter_and_the_scheduler_runs_it()
     assert em is not None and em.place == reg.UPDATES and em.source == "calendar" and not em.safety_critical
     sched = (ROOT / "src/agent_friday/services/scheduler.py").read_text(encoding="utf-8")
     assert re.search(r'register_builtin_task\("calendar_reminders", _cal_remind,', sched)
-    assert '"every_minutes": 5' in sched[sched.index('"calendar_reminders"'):][:400]
+    assert '"every_minutes": 2' in sched[sched.index('"calendar_reminders"'):][:400]
+    from agent_friday.services import calendar_reminders as cr
+    assert cr.TICK_MINUTES == 2
 
 
 @pytest.mark.parametrize("page", ["index.html", "ui_parts/app.html"])
@@ -117,3 +119,21 @@ def test_the_day_view_says_each_events_reminder_and_a_reminder_can_open_the_prep
 def test_reminder_words_follow_googles_minutes():
     js = (ROOT / "static/calendar_views.js").read_text(encoding="utf-8")
     assert "function reminderText(ev)" in js and "(r.method || 'popup') === 'popup'" in js
+
+
+def test_an_at_the_start_reminder_is_raised_by_a_tick_just_after_the_start_and_not_later():
+    from agent_friday.services import calendar_reminders as cr
+    at0 = [{"method": "popup", "minutes": 0}]
+    just_started = _ev("s1", "Standup", NOW - timedelta(minutes=1), at0)
+    long_started = _ev("s2", "Old standup", NOW - timedelta(minutes=10), at0)
+    not_yet = _ev("s3", "Later standup", NOW + timedelta(minutes=1), at0)
+    assert [e["id"] for e, _ in cr.due([just_started, long_started, not_yet], NOW)] == ["s1"]
+
+
+def test_a_five_minute_reminder_cannot_fall_between_two_ticks():
+    from agent_friday.services import calendar_reminders as cr
+    start = NOW + timedelta(minutes=5)
+    ev = _ev("t1", "Call", start, [{"method": "popup", "minutes": 5}])
+    hits = [m for m in range(0, 7) if cr.due([ev], start - timedelta(minutes=5) + timedelta(minutes=m))]
+    # every tick from the reminder's moment until the start sees it due; ticks are 2 minutes apart
+    assert hits == [0, 1, 2, 3, 4]
