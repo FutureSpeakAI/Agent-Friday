@@ -17272,6 +17272,10 @@ function SetupChat({ onDone }) {
   }, []);
   const nMsgs = st ? (st.transcript || []).length + notes.length : 0;
   const stage = st && st.stage;
+  // A new step's card starts at its top: the last card may have been
+  // scrolled down to its button, and the next one would open scrolled away.
+  const sideRef = React.useRef(null);
+  React.useEffect(() => { if (sideRef.current) sideRef.current.scrollTop = 0; }, [stage]);
   // Newest message into view; focus to wherever the next answer goes.
   React.useEffect(() => {
     if (!st) return;
@@ -17499,7 +17503,7 @@ function SetupChat({ onDone }) {
           )}
           {p.stage === 'questions' && <div className="sc-sub" style={{ marginTop: 6 }}>{'Question ' + (p.index + 1) + ' of ' + p.total + '. Type "skip" to skip.'}</div>}
         </section>
-        {cardEl && <aside className="sc-side" aria-label="Details for this step">{cardEl}</aside>}
+        {cardEl && <aside className="sc-side" ref={sideRef} aria-label="Details for this step">{cardEl}</aside>}
       </div>
     </div>
   );

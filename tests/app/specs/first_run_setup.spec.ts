@@ -102,6 +102,8 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
   await say(page, 'Springfield, IL');
   await waitStage(page, 'about_tz');
   await expect(page.locator('.sc-side')).toContainText('Goes by Sam');
+  // The card "beside this" must be on screen, not scrolled away above the newest message.
+  await expect(page.locator('.sc-side').getByText('Goes by Sam')).toBeInViewport();
   await shot(page, info, '07-about-you-card-and-time-zone');
   await chip(page, 'Yes');
 
@@ -114,6 +116,7 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
   await expect(cards).toHaveCount(3);
   expect(await page.locator('.sc-side .sc-option.on').count(), 'nothing is pre-selected').toBe(0);
   await expect(page.locator('.sc-side .sc-rec')).toHaveCount(1);
+  await expect(cards.first()).toBeInViewport();
   await shot(page, info, '09-where-she-may-think');
   await chip(page, /^Cloud for public things/);
 
@@ -145,6 +148,7 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
 
   await waitStage(page, 'routines');
   const boxes = page.locator('.sc-side input[type="checkbox"]');
+  await expect(boxes.first()).toBeInViewport();
   for (let i = 0; i < await boxes.count(); i++) {
     expect(await boxes.nth(i).isChecked(), 'no routine is ticked until the person ticks it').toBe(false);
   }
