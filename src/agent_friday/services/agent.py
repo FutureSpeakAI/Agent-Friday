@@ -10858,10 +10858,16 @@ def _tool_codebase_agent(inp):
     # a folder holding a mail archive or statement the owner has not allowed
     # is not handed over, and the owner is asked about each such file.
     from agent_friday.services import file_grants as _fg_raw
+    _raw_files, _complete = [], True
     try:
-        _raw_files = _fg_raw.raw_records_in(_cb.repo_path(rec["id"])) if _fg_raw._cloud_possible() else []
+        if _fg_raw._cloud_possible():
+            _raw_files, _complete = _fg_raw.raw_records_in(_cb.repo_path(rec["id"]))
     except Exception:
-        _raw_files = []
+        _complete = False
+    if not _complete and not _raw_files:
+        return {"status": "refused", "blocker": "needs_user_input",
+                "say": ("This codebase's folder is too large for me to check for mail archives and "
+                        "statements before Claude's agent reads it. Work on a smaller folder.")}
     if _raw_files:
         for _p in _raw_files[:5]:
             _fg_raw.ask_for_raw_source(_p)

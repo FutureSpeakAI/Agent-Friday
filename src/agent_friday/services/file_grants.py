@@ -67,6 +67,7 @@ import hashlib
 import hmac
 import itertools
 import json
+import re
 import threading
 import time
 import uuid
@@ -1100,21 +1101,60 @@ def file_sha256(path, cap: int | None = None) -> str | None:
         return None
 
 
+_CONTENT_READERS = re.compile(
+    r"\b(?:grep|egrep|fgrep|rg|ag|ack|findstr|select-string|sls|get-content|gc|cat|type|git\s+grep)\b", re.I)
+_ALWAYS_RECURSIVE = re.compile(r"\b(?:rg|ag|ack|git\s+grep)\b", re.I)
+_RECURSIVE_FLAG = re.compile(r"(?:^|\s)(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive|-recurse|/s)(?=\s|$)", re.I)
+
+
+def _recursive_dirs(text: str, cwd=None) -> list:
+    """Folders a command reads the contents of recursively (grep -r, rg,
+    findstr /s, Select-String -Recurse ...)."""
+    t = str(text or "")
+    if not _CONTENT_READERS.search(t):
+        return []
+    if not (_ALWAYS_RECURSIVE.search(t) or _RECURSIVE_FLAG.search(t)):
+        return []
+    from agent_friday.services import raw_records
+    out = []
+    quoted = [a or b for a, b in raw_records._QUOTED.findall(t)]
+    for tok in quoted + raw_records._QUOTED.sub(" ", t).split():
+        tok = tok.strip(raw_records._TOKEN_EDGES).strip()
+        if not tok or "://" in tok or tok.replace("/", "\\").startswith("\\\\") or len(tok) > 400:
+            continue
+        try:
+            p = Path(tok).expanduser()
+            if cwd and not p.is_absolute():
+                p = Path(cwd) / p
+            if p.is_dir():
+                out.append(p)
+        except (OSError, ValueError):
+            continue
+    if cwd and not out and _ALWAYS_RECURSIVE.search(t):
+        out.append(Path(cwd))            # rg / git grep with no folder search where they run
+    return out
+
+
 def raw_refusal_for_command(text: str, cwd=None) -> str | None:
     """A shell command or program that names a raw record (a mail archive or
     a statement) the owner has not allowed reads it around read_file, so it
-    is not run, and the owner is asked about each such file on screen. None
-    when nothing such is named, when every such file has the owner's yes, or
-    when every model stays on this PC. `cwd` is the folder it runs in."""
+    is not run, and the owner is asked about each such file on screen. So is
+    a recursive search of a folder that holds one. None when nothing such is
+    named, when every such file has the owner's yes, or when every model
+    stays on this PC. `cwd` is the folder it runs in."""
+    if not _cloud_possible():
+        return None
     try:
         from agent_friday.services import raw_records
         named = raw_records.named_in(str(text or ""), cwd=cwd)
+        folders = _recursive_dirs(text, cwd)
     except Exception:
         return None
-    if not named or not _cloud_possible():
-        return None
-    held, asked = [], 0
+    held, asked, too_many = [], 0, []
     for label, kind, p in named:
+        if kind == "too_many":
+            too_many.append(str(label))
+            continue
         try:
             if p is not None and Path(p).is_file():
                 p = Path(p).resolve()
@@ -1128,6 +1168,18 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
         except Exception:
             pass
         held.append(Path(str(label)).name if p is not None else str(label))
+    for folder in folders:
+        found, complete = raw_records_in(folder)
+        if not complete:
+            too_many.append(str(folder))
+        for f in found:
+            if asked < 5:
+                ask_for_raw_source(f)
+                asked += 1
+            held.append(f.name)
+    if too_many and not held:
+        return ("Not run: %s covers too many files for me to check for mail archives and statements. "
+                "Narrow it to the files or folder you need." % too_many[0])
     if not held:
         return None
     return ("Not run: it reads %s, a mail archive or statement the owner hasn't let a cloud model "
@@ -1135,10 +1187,13 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
             "nothing from it leaves this PC until they say yes." % ", ".join(held[:3]))
 
 
-def raw_records_in(folder, limit: int = 20000) -> list:
-    """Raw records (by name) under `folder` that the owner has not allowed,
-    for a tool that hands a whole folder to another program. Skips .git,
-    node_modules and virtual environments; looks at `limit` entries at most."""
+def raw_records_in(folder, limit: int = 20000) -> tuple:
+    """(raw records under `folder` the owner has not allowed, whether the
+    whole folder was looked at). For a tool that hands a folder to another
+    program or searches it. Skips .git, node_modules and virtual
+    environments; a mailbox with no extension is recognised by its first
+    bytes. Past `limit` entries the answer is incomplete, and a caller
+    treats an incomplete answer as a refusal."""
     import os
     out, seen = [], 0
     skip = {".git", "node_modules", ".venv", "venv", "__pycache__", ".friday"}
@@ -1148,7 +1203,7 @@ def raw_records_in(folder, limit: int = 20000) -> list:
             for f in files:
                 seen += 1
                 if seen > limit:
-                    return out
+                    return out, False
                 p = Path(root) / f
                 if not _raw_kind_by_name(p):
                     continue
@@ -1158,15 +1213,16 @@ def raw_records_in(folder, limit: int = 20000) -> list:
                     continue
                 out.append(p)
     except Exception:
-        pass
-    return out
+        return out, False
+    return out, True
 
 
 def _raw_kind_by_name(p) -> str | None:
-    """kind_of without opening the file (a walk never sniffs every file)."""
+    """kind_of for a folder walk: by name, and a file with no extension (a
+    Thunderbird "Inbox") by its first bytes; a .txt is not opened."""
     try:
         from agent_friday.services import raw_records
-        if Path(p).suffix.lower() in ("", ".txt"):
+        if Path(p).suffix.lower() == ".txt":
             return None
         return raw_records.kind_of(p)
     except Exception:
