@@ -123,7 +123,7 @@ const flush = () => new Promise(r => setImmediate(r));
   clock += 40; fire('pointermove', { target: backdrop, clientX: 420, clientY: 280 });
   clock += 40; fire('pointerup', { target: backdrop, clientX: 520, clientY: 320 });
   out.toward = H._undo.keys();
-  // the day's stars: finished today only, fixed places, a ring for a failure
+  // the day's stars: finished-and-succeeded today only, fixed places; a failure draws nothing
   const now = Date.now() / 1000, d0 = new Date(); d0.setHours(0, 0, 0, 0);
   const tasks = [{ task_id: 's1', status: 'completed', ended: now - 60 }, { task_id: 's2', status: 'failed', ended: now - 30 },
     { task_id: 's3', status: 'running', ended: now - 20 /* resumed: still carries its interrupted run's end */ }, { task_id: 's4', status: 'completed', ended: d0.getTime() / 1000 - 3600 },
@@ -212,7 +212,7 @@ def test_the_pointer_acts_only_over_the_bare_scene(o):
 
 def test_the_days_stars_come_from_the_servers_finished_tasks(o):
     st = o["stars"]
-    assert st["ids"] == ["s1", "s2"] and st["failed"] == [False, True]
+    assert st["ids"] == ["s1"] and st["failed"] == [False]
     assert st["stable"] is True and st["upper"] is True
 
 
