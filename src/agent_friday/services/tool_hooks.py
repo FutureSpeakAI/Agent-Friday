@@ -260,6 +260,11 @@ def run_post_hooks(ctx: HookContext, result: str) -> str:
             if denial:
                 return denial
             _log_hook_error("post", hook.name, e)
+            if hook.critical:
+                # Fail closed, as a critical pre hook does: a crash in a
+                # check on the result must not pass the result on unchecked.
+                return ("[result withheld] A safety check on this result (%s) failed, so the "
+                        "result was not passed on." % hook.name)
             continue
     return result
 

@@ -22,6 +22,8 @@ const VIEW = {
     { key: 'disk', title: 'Your disk', state: 'unknown', words: "I couldn't tell.", open_page: 'device_encryption' },
     { key: 'records', title: 'My records', state: 'changed', words: 'One record was changed after it was written: Setup record (line 1 was changed after it was written).',
       checks: [{ name: 'Setup record', ok: false, why: 'line 1 was changed after it was written' }] },
+    { key: 'held', title: 'Held from the cloud', state: 'held', words: '1 mail archive or statement I opened is held.',
+      held_files: ['D:\\Exports\\All mail.mbox'], can_reset: true },
   ],
 };
 
@@ -32,7 +34,7 @@ test('the Locks section shows every line, one Windows button, and the honest lim
   const slots = [VIEW, ''];
   const ctx = vm.createContext({
     React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
-    useEffect: () => {}, apiFetch: () => Promise.resolve({ json: async () => ({}) }),
+    useEffect: () => {}, useCallback: fn => fn, apiFetch: () => Promise.resolve({ json: async () => ({}) }),
     StSection: ({ title, desc, children }) => createElement('section', { title, desc }, children),
   });
   vm.runInContext(slice(source, 'SettingsLocks'), ctx);
@@ -45,7 +47,13 @@ test('the Locks section shows every line, one Windows button, and the honest lim
   assert.equal(tree.props.title, 'Locks');
   assert.ok(text.includes('The honest limit.') && text.includes('under your own Windows account could read'));
   const buttons = all(tree, n => n.type === 'button');
-  assert.equal(buttons.length, 1, 'only the disk line opens a Windows page');
+  const label = b => (b.children || []).filter(c => typeof c === 'string').join('');
+  assert.equal(buttons.filter(b => label(b) === "Open Windows' settings").length, 1, 'only the disk line opens a Windows page');
+  const ask = buttons.filter(b => label(b) === 'Ask me about this file');
+  assert.equal(ask.length, 1);
+  assert.equal(ask[0].props['aria-label'], 'Ask me about D:\\Exports\\All mail.mbox', 'each held file is named to a screen reader');
+  assert.equal(buttons.filter(b => label(b) === 'Start the list fresh\u2026').length, 1);
+  assert.equal(all(tree, n => n.props && n.props.role === 'status').length, 1, 'the status line is always there');
   assert.ok(text.includes("Setup record: changed (line 1 was changed after it was written)"));
   for (const l of VIEW.lines) assert.ok(text.includes(l.title), l.title);
 });

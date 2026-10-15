@@ -964,7 +964,7 @@ def on_file_read(path: Path, text: str) -> GrantCheck:
         # payload under every posture, and the owner is asked, on a card that
         # names the file and who would read it.
         from agent_friday.services import judgment_gate as _jg
-        _jg.hold_raw_record(_raw_key(path), text, kind=raw)
+        _jg.hold_raw_record(_raw_key(path), text, kind=raw, display=str(path))
         ask_for_raw_source(path, raw)
         result = GrantCheck(state="held_raw_record", grant_id=result.grant_id)
     elif result.state == "active":
@@ -973,6 +973,22 @@ def on_file_read(path: Path, text: str) -> GrantCheck:
             _jg.release_raw_record(_raw_key(path))
         _register_grant_spans(text, result.grant_id, result.never_send_override)
     return result
+
+
+def raw_output_notice(text: str) -> str | None:
+    """In place of a program's output that reads like a mail archive or a
+    statement, when a cloud model could read it; else None."""
+    try:
+        from agent_friday.services import raw_records
+        kind = raw_records.looks_like(text)
+        if not kind or not _cloud_possible():
+            return None
+        what = raw_records.KIND_WORDS.get(kind, "a raw record")
+    except Exception:
+        return None
+    return ("[output withheld] What this printed reads like %s. Mail archives and statements reach "
+            "a cloud model only with the owner's yes for that one file: open the file with "
+            "read_file, which asks them on screen." % what)
 
 
 def raw_held_notice(path, kind: str | None = None) -> str:
@@ -1018,6 +1034,16 @@ def _provider_words() -> str:
     return name or "the cloud model you set up"
 
 
+def raw_card_note(path, kind: str | None = None) -> str | None:
+    """Friday's own words for a raw record on a file-access card: what it is
+    and who would read it. None for any other file."""
+    kind = kind or _raw_kind(path)
+    if not kind:
+        return None
+    from agent_friday.services import raw_records
+    return "%s; %s would read it" % (raw_records.KIND_WORDS.get(kind, "a raw record"), _provider_words())
+
+
 def ask_for_raw_source(path, kind: str | None = None, *, force: bool = False) -> dict | None:
     """Raise one file-access card for a raw record, at most once a day per
     version of the file. The card lists the file as Friday resolved it, with
@@ -1042,17 +1068,33 @@ def ask_for_raw_source(path, kind: str | None = None, *, force: bool = False) ->
     _RAW_ASKED[key] = now
     from agent_friday.services import file_grant_requests, raw_records
     what = raw_records.KIND_WORDS.get(kind, "a raw record")
+    note = raw_card_note(p, kind)
     reason = ("%s is %s. Even when I may use the cloud for everything, a whole %s goes to a "
               "cloud model only with your yes for this one file. Approving lets %s read it when "
               "I open it; your never-send list still applies. Until then it stays on this PC." % (
                   p.name, what, "mail archive" if kind == "mail" else "statement", _provider_words()))
-    note = "%s; %s would read it" % (what, _provider_words())
     try:
         # merge=False: this card is never folded into another request's card,
         # so its own words (what the file is, who would read it) stay on it.
         return file_grant_requests.request_access([{"path": str(p), "type": "file"}],
                                                   reason=reason, requested_by="friday:raw-record",
                                                   merge=False, notes={str(p): note})
+    except Exception:
+        return None
+
+
+def file_sha256(path, cap: int | None = None) -> str | None:
+    """The file's SHA-256, read in chunks; None when it is larger than `cap`
+    (default MAX_GRANT_BYTES: a file that large cannot be allowed anyway)."""
+    try:
+        p = Path(path)
+        if p.stat().st_size > (MAX_GRANT_BYTES if cap is None else cap):
+            return None
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
     except Exception:
         return None
 
@@ -1076,9 +1118,9 @@ def raw_refusal_for_command(text: str) -> str | None:
             p = Path(token).expanduser()
             if p.is_file():
                 p = p.resolve()
-                sha = hashlib.sha256(p.read_bytes()).hexdigest()
-                c = check_grant(p, sha256_hex=sha)
-                if c.state == "active" and c.grant_kind == "file":
+                sha = file_sha256(p)
+                c = check_grant(p, sha256_hex=sha) if sha else None
+                if c is not None and c.state == "active" and c.grant_kind == "file":
                     continue
                 ask_for_raw_source(p, kind)
         except Exception:

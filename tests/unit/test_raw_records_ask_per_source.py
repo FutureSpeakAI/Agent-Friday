@@ -319,13 +319,13 @@ def test_a_hold_that_cannot_even_be_loaded_fails_closed(cards, tmp_path, monkeyp
 
 def test_what_every_inbox_and_statement_share_is_not_held(cards, tmp_path):
     msg = ("From: a@shop.example\nContent-Type: text/plain; charset=utf-8\n\n%s\n"
-           "Let me know if you have any questions.\nThanks for reaching out to us today, friend.\n"
+           "Let me know if you have any questions.\nThanks for reaching out.\n"
            "To unsubscribe from these emails click the link below this line.\n")
     body = msg % "Your order 4471 for the blue kettle has shipped to the cottage." + \
         msg % "The refund for the lamp was declined because the box was opened."
     p = _archive(tmp_path, body=body)
     fg.on_file_read(p, body)
-    mine = "Let me know if you have any questions.\nThanks for reaching out to us today, friend."
+    mine = "Let me know if you have any questions.\nThanks for reaching out."
     assert not jg.never_send_hits(mine), "the person's own everyday words"
     assert not jg.never_send_hits("Content-Type: text/plain; charset=utf-8\nTo unsubscribe from these emails click the link below this line.")
     assert jg.never_send_hits("Your order 4471 for the blue kettle has shipped to the cottage.")
@@ -402,3 +402,104 @@ def test_the_owner_can_start_the_held_list_fresh_on_screen_only(cards, tmp_path,
     st = jg.raw_hold_status()
     assert not st["fail_closed"] and st["files"] == 0
     assert [x for x in locks.view()["lines"] if x["key"] == "held"][0]["state"] == "none"
+
+
+# ── round 4 of the review (v5) ───────────────────────────────────────────────
+
+def test_a_quoted_reply_keeps_its_message_held(cards, tmp_path):
+    secret = "Your test results came back and we need to talk about the next steps."
+    body = ("From: clinic@example.test\nSubject: results\n\n%s\n\n"
+            "From: sam@example.test\nSubject: Re: results\n\nOK, calling now.\n> %s\n") % (secret, secret)
+    p = _archive(tmp_path, body=body)
+    fg.on_file_read(p, body)
+    assert jg.never_send_hits(secret)
+
+
+def test_a_long_sentence_is_held_however_it_starts(cards, tmp_path):
+    line = "Thank you for your payment of $2,450.00 to the fertility clinic for March."
+    p = _archive(tmp_path, body=ARCHIVE + "\n" + line)
+    fg.on_file_read(p, ARCHIVE + "\n" + line)
+    assert jg.never_send_hits(line)
+
+
+def test_one_specific_short_line_is_enough(cards, tmp_path):
+    line = "Amount owed to Dr Kim: $8,400"
+    p = _archive(tmp_path, body=ARCHIVE + "\n" + line)
+    fg.on_file_read(p, ARCHIVE + "\n" + line)
+    assert jg.never_send_hits("fyi " + "\n" + line)
+
+
+def test_matching_does_not_depend_on_the_watchlist(cards, tmp_path, monkeypatch):
+    line = "Sam Rivera still owes the landlord for the broken window in flat 4."
+    p = _archive(tmp_path, body=ARCHIVE + "\n" + line)
+    fg.on_file_read(p, ARCHIVE + "\n" + line)
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "_scrub_pii", lambda t: (str(t).replace("Rivera", "[PII:name:0badf00d]"), {}))
+    assert jg.never_send_hits(line), "a name added to the watchlist later does not let the line go"
+
+
+def test_a_critical_post_hook_that_breaks_withholds_the_result():
+    from agent_friday.services import tool_hooks as h
+    def boom(ctx, result):
+        raise RuntimeError("broken")
+    h.register_post_hook(boom, name="t_crit_post", priority=97, tools={"t_tool"}, critical=True)
+    try:
+        out = h.run_post_hooks(h.HookContext(tool_name="t_tool", input={}), "the secret result")
+        assert "secret" not in out and "withheld" in out
+    finally:
+        h.unregister_hook("t_crit_post")
+
+
+def test_ordinary_code_and_downloads_are_not_mistaken_for_records():
+    from agent_friday.services import raw_records as rr
+    for code in ("print(e.msg)", "x = self.msg + record.msg", "curl -O https://bank.example/statement.pdf",
+                 "pip install mail.parser", "git log --oneline"):
+        assert rr.named_in(code) == [], code
+    assert rr.named_in("cat ~/Mail/archive.mbox")
+    assert rr.kind_of("Chase1234_Activity_20261001.CSV") == "finance"
+    assert rr.kind_of("Checking1.csv") == "finance" and rr.kind_of("activity.pdf") is None
+
+
+def test_program_output_that_reads_like_mail_or_a_statement_is_withheld(cards):
+    grep = "exports/All mail.mbox:4471:Your balance is due on the 14th, please pay now."
+    assert fg.raw_output_notice(grep)
+    mbox = "From sam@example.test Mon Oct 12 10:00:00 2026\nSubject: hi\n\nbody"
+    assert fg.raw_output_notice(mbox)
+    assert fg.raw_output_notice("OFXHEADER:100\n<STMTTRN><TRNAMT>-23.99")
+    hdrs = "From: a@x.test\nTo: b@x.test\nSubject: rent\n\nThe rent is late."
+    assert fg.raw_output_notice(hdrs)
+    assert fg.raw_output_notice("total 4\n-rw-r--r-- 1 sam sam 120 notes.txt\nhello world") is None
+    assert fg.raw_output_notice("Traceback: raise ValueError(e.msg) - bad value") is None
+
+
+def test_the_codebase_reader_holds_a_record_too(cards, tmp_path, monkeypatch):
+    from agent_friday.services import agent, codebases
+    p = _archive(tmp_path)
+    monkeypatch.setattr(agent, "_codebase_in_scope", lambda inp: {"id": "cb1"})
+    monkeypatch.setattr(codebases, "path_of", lambda cid, rel: p)
+    monkeypatch.setattr(codebases, "read", lambda cid, rel: ARCHIVE)
+    out = agent._tool_codebase_read({"path": "All mail.mbox"})
+    assert out["status"] == "held" and PARA not in out["content"]
+    assert jg.never_send_hits(PARA + "\nAccount summary for the person who owns this mailbox.")
+
+
+def test_any_card_that_lists_a_record_says_what_it_is(tmp_path, monkeypatch):
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "home"))
+    from agent_friday.services import file_grant_requests as fgr
+    made = []
+
+    class _Ap:
+        SCREEN_ONLY_KINDS = {}
+
+        def list_approvals(self, *a, **k):
+            return []
+
+        def create_approval(self, **kw):
+            made.append(kw)
+            return {"approval_id": "a1", "status": "pending"}
+    monkeypatch.setattr(fgr, "_approvals", lambda: _Ap())
+    monkeypatch.setattr(fgr, "ensure_hook", lambda: None)
+    p = _archive(tmp_path)
+    fgr.handle({"action": "ask", "items": [{"path": str(p), "type": "file"}],
+                "reason": "just some notes"})
+    assert "a mail archive" in made[0]["action_description"]

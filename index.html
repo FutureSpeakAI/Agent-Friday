@@ -57893,9 +57893,12 @@ function KeystoreWrapPanel() {
 function SettingsLocks() {
   const [d, setD] = useState(null);
   const [msg, setMsg] = useState('');
-  useEffect(() => {
+  const load = useCallback(() => {
     apiFetch('/api/locks').then(r => r.json()).then(setD).catch(() => setMsg('Could not read the locks.'));
   }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
   const openWin = page => apiFetch('/api/locks/open-windows', {
     method: 'POST',
     headers: {
@@ -57953,6 +57956,7 @@ function SettingsLocks() {
     style: {
       fontSize: 11
     },
+    "aria-label": 'Ask me about ' + f,
     onClick: () => askHeld(f)
   }, "Ask me about this file")))), l.can_reset && /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -57975,11 +57979,19 @@ function SettingsLocks() {
   }, "Open Windows' settings")))), d && /*#__PURE__*/React.createElement("p", {
     className: "lk-limit",
     role: "note"
-  }, /*#__PURE__*/React.createElement("strong", null, "The honest limit. "), d.honest_limit), msg && d && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "The honest limit. "), d.honest_limit), d && /*#__PURE__*/React.createElement("div", {
     role: "status",
     "aria-live": "polite",
     className: "sc-msgline"
-  }, msg));
+  }, msg), d && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    style: {
+      fontSize: 11,
+      marginTop: 6
+    },
+    onClick: load
+  }, "Check again"));
 }
 
 function SettingsTabPrivacy({
