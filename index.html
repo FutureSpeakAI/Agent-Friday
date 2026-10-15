@@ -38917,28 +38917,41 @@ function calFmtTime(iso) {
     minute: '2-digit'
   });
 }
+// The Calendar's places Friday can open by name: its views, every calendar ("only" narrows the view to it,
+// shown as a chip, never kept) and all of them. The calendars are added once their list has loaded.
+const CAL_NAV_SECTIONS = [{
+  id: 'meetings',
+  label: 'Meetings',
+  key: 'view'
+}, {
+  id: 'day',
+  label: 'Day',
+  key: 'view'
+}, {
+  id: 'week',
+  label: 'Week',
+  key: 'view'
+}, {
+  id: 'month',
+  label: 'Month',
+  key: 'view'
+}, {
+  id: 'freebusy',
+  label: 'Free/busy',
+  key: 'view'
+}, {
+  id: 'all',
+  label: 'All calendars',
+  key: 'only'
+}];
 fridayDeclareNav('calendar', {
-  keys: ['date', 'view', 'meeting_id', 'event', 'start', 'prep'],
-  sections: [{
-    id: 'meetings',
-    label: 'Meetings',
-    key: 'view'
-  }, {
-    id: 'day',
-    label: 'Day',
-    key: 'view'
-  }, {
-    id: 'week',
-    label: 'Week',
-    key: 'view'
-  }, {
-    id: 'month',
-    label: 'Month',
-    key: 'view'
-  }]
+  keys: ['date', 'view', 'meeting_id', 'event', 'start', 'prep', 'only'],
+  sections: CAL_NAV_SECTIONS
 });
-// The Calendar's views (static/calendar_views.js): Day is the timeline below; Week and Month come from that file.
-const CAL_VIEW_IDS = ['day', 'week', 'month'];
+// The Calendar's views (static/calendar_views.js): Day is the timeline below; Week, Month and Free/busy come from that file.
+const CAL_VIEW_IDS = ['day', 'week', 'month', 'freebusy'];
+// Adds the calendars to the sections once they load (keys stay as declared above).
+const CAL_WS_ID = 'calendar';
 function calStoredView() {
   try { const v = localStorage.getItem('friday_cal_view'); return CAL_VIEW_IDS.includes(v) ? v : 'day'; } catch (_) { return 'day'; }
 }
@@ -38971,10 +38984,22 @@ function CalendarWS() {
   const [view, setViewRaw] = useState(calStoredView);
   const [anchor, setAnchor] = useState(() => window.CalendarViews ? window.CalendarViews.iso(new Date()) : '');
   const [rangeTick, setRangeTick] = useState(0);
+  // Which calendars: the owner's ticks are kept on this PC (CalendarsPanel); Friday's "only these" is a chip.
+  const [calsTick, setCalsTick] = useState(0);
+  const [showCals, setShowCals] = useState(false);
+  const [onlySpec, setOnlySpec] = useState('');
+  const calsState = window.CalendarViews ? window.CalendarViews.useCalendars(calsTick) : { calendars: [], accounts: [] };
+  const calSlug = window.CalendarViews ? window.CalendarViews.slug : (x => String(x));
+  const onlyCals = onlySpec ? calsState.calendars.filter(c => c.key === onlySpec || 'cal-' + calSlug(c.name) === onlySpec || calSlug(c.name) === calSlug(onlySpec)) : [];
+  const onlyKeys = onlyCals.length ? onlyCals.map(c => c.key) : null;
+  useEffect(() => {
+    fridayDeclareNav(CAL_WS_ID, { sections: CAL_NAV_SECTIONS.concat(calsState.calendars.map(c => ({ id: 'cal-' + calSlug(c.name), label: c.name, key: 'only' }))) });
+  }, [calsState.calendars]);
   const setView = v => { if (!CAL_VIEW_IDS.includes(v)) return; setViewRaw(v); try { localStorage.setItem('friday_cal_view', v); } catch (_) {} };
   useTabState('calendar', () => ({ date: sel || '', event: shownEvent, view }));
   useNavTarget('calendar', t => {
     setShownEvent('');
+    if (t.only) { setOnlySpec(t.only === 'all' ? '' : String(t.only)); if (!t.view && !t.event) return; }
     if (t.view && CAL_VIEW_IDS.includes(t.view)) { setView(t.view); if (t.date) setAnchor(t.date); if (t.view !== 'day' && !t.event) return; }
     if (t.event) {
       // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
@@ -39116,7 +39141,7 @@ function CalendarWS() {
     setPrepBusy(false);
   };
   const active = sel ? dayData : today;
-  const events = active?.events || [];
+  const events = (active?.events || []).filter(e => !onlyKeys || !e.calendar_key || onlyKeys.includes(e.calendar_key));
   useEffect(() => {
     if (!prepWanted) return;
     const ev = events.find(x => String(x.id) === prepWanted);
@@ -39185,14 +39210,36 @@ function CalendarWS() {
     title: window.CalendarViews.title(view, anchor),
     onStep: dir => setAnchor(a => window.CalendarViews.step(view, a, dir)),
     onToday: () => setAnchor(window.CalendarViews.iso(new Date()))
-  }) : null) : null, view === 'week' && window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.WeekView, {
+  }) : null, /*#__PURE__*/React.createElement(window.CalendarViews.OnlyChip, {
+    names: onlyCals.map(c => c.name),
+    onClear: () => setOnlySpec('')
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: 'btn' + (showCals ? ' active' : ''),
+    'aria-expanded': showCals,
+    'data-cal-calendars': 'toggle',
+    onClick: () => setShowCals(v => !v)
+  }, "Calendars"), showCals ? /*#__PURE__*/React.createElement(window.CalendarViews.CalendarsPanel, {
+    calendars: calsState.calendars,
+    accounts: calsState.accounts,
+    onClose: () => setShowCals(false),
+    onChanged: () => { setCalsTick(n => n + 1); reloadAll(); }
+  }) : null) : null, view === 'freebusy' && window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.FreeBusyView, {
     anchor: anchor,
+    keys: onlyKeys,
+    reloadKey: rangeTick,
+    onPickDay: openDay,
+    onRetry: () => setRangeTick(n => n + 1)
+  }) : view === 'week' && window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.WeekView, {
+    anchor: anchor,
+    keys: onlyKeys,
     reloadKey: rangeTick,
     onPickDay: openDay,
     onRetry: () => setRangeTick(n => n + 1),
     onOpen: ev => openDay(window.CalendarViews.iso(new Date(ev.start_time)))
   }) : view === 'month' && window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.MonthView, {
     anchor: anchor,
+    keys: onlyKeys,
     reloadKey: rangeTick,
     onPickDay: openDay,
     onRetry: () => setRangeTick(n => n + 1),

@@ -28,6 +28,7 @@
     { id: 'day', label: 'Day' },
     { id: 'week', label: 'Week' },
     { id: 'month', label: 'Month' },
+    { id: 'freebusy', label: 'Free/busy' },
   ];
 
   // ── dates ────────────────────────────────────────────────────────────────
@@ -79,18 +80,19 @@
     if (tok) headers['X-Friday-Token'] = tok;
     return fetch(url, Object.assign({}, opts, { headers }));
   }
-  function useRange(start, end, reloadKey) {
+  function useRange(start, end, reloadKey, keys) {
     const { useState, useEffect } = R();
     const [st, setSt] = useState({ loading: true, events: [], errors: [], failed: '' });
     useEffect(() => {
       let live = true;
       // A new week or month starts empty and says it is reading; a reread of the same one keeps what is shown.
-      setSt(s => (s.key === start + end ? Object.assign({}, s, { loading: true }) : { loading: true, events: [], errors: [], failed: '', key: start + end }));
-      api('/api/calendar/range?start=' + start + '&end=' + end).then(r => r.json().then(d => ({ ok: r.ok, d })))
-        .then(({ ok, d }) => { if (live) setSt({ loading: false, events: ok ? (d.events || []) : [], errors: d.errors || [], failed: ok ? '' : (d.message || 'The calendar did not answer.'), key: start + end }); })
-        .catch(() => { if (live) setSt({ loading: false, events: [], errors: [], failed: 'The calendar did not answer.', key: start + end }); });
+      const k = start + end + '|' + (keys || '');
+      setSt(s => (s.key === k ? Object.assign({}, s, { loading: true }) : { loading: true, events: [], errors: [], failed: '', key: k }));
+      api('/api/calendar/range?start=' + start + '&end=' + end + (keys ? '&keys=' + encodeURIComponent(keys) : '')).then(r => r.json().then(d => ({ ok: r.ok, d })))
+        .then(({ ok, d }) => { if (live) setSt({ loading: false, events: ok ? (d.events || []) : [], errors: d.errors || [], failed: ok ? '' : (d.message || 'The calendar did not answer.'), key: k }); })
+        .catch(() => { if (live) setSt({ loading: false, events: [], errors: [], failed: 'The calendar did not answer.', key: k }); });
       return () => { live = false; };
-    }, [start, end, reloadKey]);
+    }, [start, end, reloadKey, keys]);
     return st;
   }
 
@@ -198,7 +200,7 @@
   function WeekView(props) {
     const { useMemo } = R();
     const r = rangeFor('week', props.anchor);
-    const data = useRange(r.start, r.end, props.reloadKey);
+    const data = useRange(r.start, r.end, props.reloadKey, (props.keys || []).join(','));
     const days = useMemo(() => { const s = parseDay(r.start); return [0, 1, 2, 3, 4, 5, 6].map(i => iso(addDays(s, i))); }, [r.start]);
     const today = iso(new Date());
     if (data.loading && !data.events.length) return h(State, { kind: 'loading', line1: 'Reading your week…' });
@@ -241,7 +243,7 @@
   const MONTH_SHOWN = 3;
   function MonthView(props) {
     const r = rangeFor('month', props.anchor);
-    const data = useRange(r.start, r.end, props.reloadKey);
+    const data = useRange(r.start, r.end, props.reloadKey, (props.keys || []).join(','));
     const month = parseDay(props.anchor).getMonth();
     const today = iso(new Date());
     if (data.loading && !data.events.length) return h(State, { kind: 'loading', line1: 'Reading your month…' });
@@ -465,9 +467,104 @@
           props.busy ? 'Adding…' : 'Add to ' + ((cals.find(c => c.key === cal) || {}).name || 'this PC'))));
   }
 
+  // ── which calendars: the owner's ticks (kept), and Friday's "only these" (a chip, never kept) ──────────
+  function useCalendars(reloadKey) {
+    const { useState, useEffect } = R();
+    const [st, setSt] = useState({ loading: true, calendars: [], accounts: [], failed: '' });
+    useEffect(() => {
+      let live = true;
+      api('/api/calendar/calendars').then(r => r.json().then(d => ({ ok: r.ok, d })))
+        .then(({ ok, d }) => { if (live) setSt({ loading: false, calendars: ok ? (d.calendars || []) : [], accounts: d.accounts || [], failed: ok ? '' : (d.message || 'The calendar list did not answer.') }); })
+        .catch(() => { if (live) setSt({ loading: false, calendars: [], accounts: [], failed: 'The calendar list did not answer.' }); });
+      return () => { live = false; };
+    }, [reloadKey]);
+    return st;
+  }
+  const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+
+  function CalendarsPanel(props) {
+    const { useState } = R();
+    const [busy, setBusy] = useState('');
+    const [err, setErr] = useState('');
+    const cals = props.calendars || [];
+    const toggle = async c => {
+      setBusy(c.key); setErr('');
+      try {
+        const r = await api('/api/calendar/calendars/visible', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ changes: { [c.key]: !c.on } }) });
+        if (!r.ok) throw new Error('refused');
+        if (props.onChanged) props.onChanged();
+      } catch (_) { setErr("Couldn't switch “" + c.name + '”. Nothing changed.'); }
+      setBusy('');
+    };
+    const accounts = props.accounts || [];
+    const groups = accounts.length ? accounts : [{ account_id: null, label: '' }];
+    return h('div', { className: 'calv-cals', role: 'dialog', 'aria-label': 'Calendars shown in Friday',
+      onKeyDown: e => { if (e.key === 'Escape' && props.onClose) { e.stopPropagation(); props.onClose(); } } },
+      h('div', { className: 'calv-cals-head' }, h('span', null, 'Calendars shown in Friday'),
+        h('button', { type: 'button', className: 'btn', 'aria-label': 'Close', onClick: props.onClose }, '×')),
+      h('div', { className: 'calv-modal-dim' }, 'Switching one here changes Friday only, never Google.'),
+      groups.map(a => h('div', { key: a.account_id || 'legacy', className: 'calv-cals-group' },
+        a.label ? h('div', { className: 'calv-cals-account' }, a.label) : null,
+        a.reason ? h('div', { className: 'calv-modal-dim' }, a.reason) : null,
+        cals.filter(c => accounts.length ? c.account_id === a.account_id : true).map(c => h('label', { key: c.key, className: 'calv-cals-row' },
+          h('input', { type: 'checkbox', checked: !!c.on, disabled: busy === c.key, onChange: () => toggle(c), 'aria-label': c.name }),
+          h('span', { className: 'calv-swatch', style: { '--ev': c.color }, 'aria-hidden': 'true' }),
+          h('span', { className: 'calv-cals-name' }, c.name),
+          !c.google_selected && !c.primary ? h('span', { className: 'calv-modal-dim' }, ' hidden in Google') : null)))),
+      err ? h('div', { className: 'calv-errors', role: 'alert' }, err) : null);
+  }
+
+  function OnlyChip(props) {
+    if (!props.names || !props.names.length) return null;
+    return h('span', { className: 'calv-chip-friday', role: 'status' },
+      'Only ' + props.names.join(', ') + ' · by ' + (window.fridayName ? window.fridayName() : 'Friday'),
+      h('button', { type: 'button', className: 'calv-chip-x', 'aria-label': 'Show every calendar again', onClick: props.onClear }, '×'));
+  }
+
+  // ── free and busy: the week as time taken and time open, calendars named, titles never ───────────────
+  const durText = m => (m >= 60 ? Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' m' : '') : m + ' m');
+  function FreeBusyView(props) {
+    const { useState, useEffect } = R();
+    const r = rangeFor('week', props.anchor);
+    const [st, setSt] = useState({ loading: true, data: null, failed: '' });
+    const keys = (props.keys || []).join(',');
+    useEffect(() => {
+      let live = true;
+      setSt(s => Object.assign({}, s, { loading: true }));
+      api('/api/calendar/freebusy?start=' + r.start + '&end=' + r.end + (keys ? '&keys=' + encodeURIComponent(keys) : ''))
+        .then(x => x.json().then(d => ({ ok: x.ok, d })))
+        .then(({ ok, d }) => { if (live) setSt({ loading: false, data: ok ? d : null, failed: ok ? '' : (d.message || 'The calendar did not answer.') }); })
+        .catch(() => { if (live) setSt({ loading: false, data: null, failed: 'The calendar did not answer.' }); });
+      return () => { live = false; };
+    }, [r.start, keys, props.reloadKey]);
+    if (st.loading && !st.data) return h(State, { kind: 'loading', line1: 'Working out your free time…' });
+    if (st.failed) return h(State, { kind: 'failed', line1: "Couldn't read your calendar.", line2: st.failed,
+      action: h('button', { className: 'btn', onClick: props.onRetry }, 'Try again') });
+    const d = st.data, today = iso(new Date()), gridH = (END_HOUR - START_HOUR) * HOUR_PX;
+    const w = d.working || {};
+    return h('div', { className: 'calv-week calv-fb', 'data-cal-range': r.start },
+      h(Errors, { errors: d.errors }),
+      h('div', { className: 'calv-fb-sum', role: 'status' }, durText(d.free_minutes) + ' free this week inside working hours (' + w.start + '–' + w.end + '). Only calendar names are shown here, never titles.'),
+      h('div', { className: 'calv-week-head' }, h('div', { className: 'calv-gutter' }),
+        d.days.map(x => { const dt = parseDay(x.date); return h('button', { key: x.date, type: 'button', className: 'calv-dayhead' + (x.date === today ? ' today' : ''), onClick: () => props.onPickDay(x.date) },
+          h('span', { className: 'calv-dow' }, dt.toLocaleDateString([], { weekday: 'short' })), h('span', { className: 'calv-dnum' }, dt.getDate()),
+          h('span', { className: 'calv-fb-free' }, x.working ? durText(x.free_minutes) + ' free' : 'not a work day')); })),
+      h('div', { className: 'calv-week-body' },
+        h('div', { className: 'calv-gutter', style: { height: gridH, position: 'relative' } }, h(HourLabels)),
+        d.days.map(x => h('div', { key: x.date, className: 'calv-col' + (x.date === today ? ' today' : ''), style: { height: gridH }, 'data-cal-day': x.date },
+          x.free.map((f, i) => { const top = yOf(f.start), bot = Math.max(top + 14, yOf(f.end) || (END_HOUR - START_HOUR) * HOUR_PX);
+            return h('div', { key: 'f' + i, className: 'calv-free', style: { top, height: bot - top }, title: 'Free ' + timeOf(f.start) + ' to ' + timeOf(f.end) }, 'Free · ' + durText(f.minutes)); }),
+          x.busy.map((b, i) => { const top = yOf(b.start); const endY = String(b.end).slice(0, 10) !== x.date ? (END_HOUR - START_HOUR) * HOUR_PX : yOf(b.end);
+            const bot = Math.max(top + 14, endY);
+            return h('div', { key: 'b' + i, className: 'calv-busy', style: { top, height: bot - top },
+              title: 'Busy ' + timeOf(b.start) + ' to ' + timeOf(b.end) + (b.calendars.length ? ' (' + b.calendars.join(', ') + ')' : '') },
+              'Busy' + (b.calendars.length ? ' · ' + b.calendars.join(', ') : '')); })))));
+  }
+
   // ── styles (tokens only; the event colour arrives as --ev) ─────────────────
   const CSS = `
-.calv-toolbar{display:flex;align-items:center;gap:var(--fr-gap,8px);flex-wrap:wrap;margin:0 0 10px}
+.calv-toolbar{position:relative;display:flex;align-items:center;gap:var(--fr-gap,8px);flex-wrap:wrap;margin:0 0 10px}
 .calv-switch{display:inline-flex;gap:4px}
 .calv-nav{display:inline-flex;align-items:center;gap:4px;margin-left:auto}
 .calv-title{font-family:var(--fr-font-body);font-weight:600;color:var(--fr-text);margin-left:8px;font-size:var(--fr-text-md,13px)}
@@ -521,6 +618,19 @@
 .calv-undo.failed{border-color:var(--fr-error)}
 .calv-undo span{flex:1}
 .cal-ev-remind{color:var(--fr-dim)}
+.calv-cals{position:absolute;right:0;top:44px;z-index:30;background:var(--fr-glass);backdrop-filter:blur(var(--fr-glass-blur,12px));border:1px solid var(--fr-glass-edge);border-radius:var(--fr-radius,10px);padding:12px;min-width:280px;max-height:60vh;overflow:auto;color:var(--fr-text)}
+.calv-cals-head{display:flex;justify-content:space-between;align-items:center;font-weight:600}
+.calv-cals-account{font-size:var(--fr-text-2xs,10px);letter-spacing:var(--fr-track-label,.08em);color:var(--fr-dim);margin:10px 0 4px}
+.calv-cals-row{display:flex;align-items:center;gap:8px;min-height:var(--fr-row-h-dense,28px);cursor:pointer}
+.calv-swatch{width:12px;height:12px;border-radius:3px;background:var(--ev,var(--fr-cyan));flex:none}
+.calv-cals-name{flex:1}
+.calv-chip-friday{display:inline-flex;align-items:center;gap:6px;font-size:var(--fr-text-sm,12px);padding:2px 4px 2px 10px;border-radius:999px;border:1px solid var(--fr-cyan);color:var(--fr-text)}
+.calv-chip-x{background:none;border:0;color:var(--fr-dim);cursor:pointer;min-width:24px;min-height:24px}
+.calv-fb-sum{font-size:var(--fr-text-sm,12px);color:var(--fr-dim);margin:0 0 8px}
+.calv-fb-free{font-size:10px;color:var(--fr-dim)}
+.calv-free,.calv-busy{position:absolute;left:2px;right:2px;box-sizing:border-box;border-radius:6px;font-size:10px;padding:2px 6px;overflow:hidden}
+.calv-free{border:1px dashed var(--fr-glass-edge);color:var(--fr-dim)}
+.calv-busy{background:color-mix(in srgb,var(--fr-neutral) 35%,transparent);border-left:3px solid var(--fr-neutral);color:var(--fr-text)}
 @container (max-width:719px){.calv-cell{min-height:64px}.calv-chip-time{display:none}}
 `;
   function injectStyle() {
@@ -532,5 +642,5 @@
   }
   if (document.head) injectStyle(); else document.addEventListener('DOMContentLoaded', injectStyle);
 
-  window.CalendarViews = { VIEWS, ViewSwitch, Nav, WeekView, MonthView, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
+  window.CalendarViews = { VIEWS, ViewSwitch, Nav, WeekView, MonthView, FreeBusyView, CalendarsPanel, OnlyChip, useCalendars, slug, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
 })();
