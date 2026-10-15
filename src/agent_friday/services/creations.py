@@ -308,11 +308,13 @@ DAILY_MODES = [
 
 def _daily_budget_remaining():
     """Remaining daily creative budget in USD (soft ceiling minus today's spend).
-    Returns a large number when no ceiling is configured. Conservative: counts
-    total spend today against the ceiling so a runaway day self-limits."""
+    Returns a large number when no ceiling is configured, which is the shipped
+    default: the ceiling is the owner's to set (services/spending_caps.py).
+    Conservative once set: counts total spend today against the ceiling so a
+    runaway day self-limits."""
     try:
         from agent_friday.core import _load_settings
-        ceiling = float((_load_settings() or {}).get("daily_creation_budget_usd", 0.5) or 0)
+        ceiling = float((_load_settings() or {}).get("daily_creation_budget_usd") or 0)
         if ceiling <= 0:
             return 999.0
         from agent_friday.services import cost_meter
@@ -340,6 +342,13 @@ def _candidate_modes(budget_remaining):
     elif budget_remaining < 0.30:
         # Enough for a cheap media piece, not a full production.
         modes = [m for m in modes if m[0] != "short-production"]
+    if len(modes) < len(DAILY_MODES):
+        import logging
+        logging.getLogger("friday.creations").info(
+            "daily creation: the owner's daily creation ceiling leaves $%.2f today, "
+            "so %s are left out of today's choice",
+            budget_remaining,
+            ", ".join(k for k, d in DAILY_MODES if (k, d) not in modes))
     return modes
 
 
