@@ -60,12 +60,20 @@ _TOKEN_EDGES = "()[]{},;`|<>&"
 _ATTR = re.compile(r"^[A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)+$")     # e.msg, self.msg, record.msg
 
 
-def named_in(text: str) -> list:
-    """[(token, kind)] for every path-like piece of a command or program that
-    names a raw record: a quoted name, a path with a folder in it, a pattern
-    ("*.mbox"), or the name of a file that exists. "e.msg" in code is an attribute, and a
-    URL is a download, not a read of something on this PC. A file is opened
-    to look only when the token is an existing file whose name says nothing."""
+#: How many files one pattern ("~/Downloads/*.csv") is expanded to, to judge it.
+GLOB_LIMIT = 500
+
+
+def named_in(text: str, cwd=None) -> list:
+    """[(label, kind, path or None)] for every path-like piece of a command or
+    program that names a raw record: a quoted name, a path with a folder in
+    it, the name of a file that exists, or a pattern ("*.mbox", or
+    "~/Downloads/*.csv" when one of the files it matches is a statement).
+    "e.msg" in code is an attribute, and a URL is a download, not a read of
+    something on this PC. A relative name is judged in `cwd` (the folder the
+    command runs in). A file is opened to look only when it exists and its
+    name says nothing."""
+    import glob as _glob
     t = str(text or "")
     quoted = [a or b for a, b in _QUOTED.findall(t)]
     tokens = quoted + [w.strip(_TOKEN_EDGES) for w in _QUOTED.sub(" ", t).split()]
@@ -80,11 +88,24 @@ def named_in(text: str) -> list:
             continue
         try:
             p = Path(tok).expanduser()
+            if cwd and not p.is_absolute():
+                p = Path(cwd) / p
             pathy = "/" in tok or "\\" in tok or tok.startswith("~")
             globby = "*" in tok or "?" in tok
+            if globby:
+                kind = kind_of(Path(tok).name.replace("*", "x").replace("?", "x")) \
+                    if "." in Path(tok).name else None
+                if kind:
+                    out.append((tok, kind, None))
+                    continue
+                for m in _glob.glob(str(p))[:GLOB_LIMIT]:
+                    k = kind_of(m)
+                    if k:
+                        out.append((m, k, Path(m)))
+                continue
             exists = p.is_file()
             if tok not in quoted:        # a string in quotes is a name, never an attribute
-                if not (pathy or globby or exists):
+                if not (pathy or exists):
                     continue             # a bare word or an attribute is not a path
                 if _ATTR.match(tok) and not exists:
                     continue
@@ -94,7 +115,7 @@ def named_in(text: str) -> list:
         except (OSError, ValueError):
             continue
         if kind:
-            out.append((tok, kind))
+            out.append((tok, kind, p if p.is_file() else None))
     return out
 
 
@@ -120,28 +141,46 @@ def _sniff(p: Path) -> str | None:
 
 
 # What a mail archive or a statement looks like when a program prints it.
+# Anchored at the start of a line, so a diff ("+<TRNAMT>"), a grep of source
+# code or a quoted string does not count.
 _MBOX_SEP = re.compile(r"^From \S+@\S+ |^From - \w{3} ", re.M)
-_HEADER = re.compile(r"^(?:From|To|Cc|Subject|Date|Message-ID|Received|Reply-To):[ \t]", re.M | re.I)
-_OFX = re.compile(r"OFXHEADER:|<STMTTRN>|<TRNAMT>|<BANKTRANLIST>", re.I)
-_QIF = re.compile(r"^!Type:(?:Bank|CCard|Cash|Invst)", re.M | re.I)
-# grep's "path:line" / "path-line": a line that starts with such a file's name.
-_RAW_PATH_PREFIX = re.compile(r"^[^\n:]*\.(?:mbox|mbx|eml|emlx|msg|pst|ost|ofx|qfx|qif|qbo)[:\-]\d", re.I | re.M)
+_HEADER_LINE = re.compile(r"(?:From|To|Cc|Subject|Date|Message-ID|Received|Reply-To):[ \t]", re.I)
+_OFX = re.compile(r"^(?:OFXHEADER:\d|<OFX>|<STMTTRN>|<BANKTRANLIST>)", re.M | re.I)
+_QIF = re.compile(r"^!Type:(?:Bank|CCard|Cash|Invst)\s*$", re.M | re.I)
+# grep's "path:line:" / "path-line-": a line that starts with such a file's name.
+_RAW_PATH_PREFIX = re.compile(
+    r"^[^\n:]*(?:\.(?:mbox|mbx|eml|emlx|pst|ost|ofx|qfx|qif|qbo)"
+    r"|(?:statement|stmt|transaction|activity|checking|savings|bank)[^\n:/\\]*\.(?:csv|pdf|xlsx?))[:\-]\d+[:\-]",
+    re.I | re.M)
+_MAIL_PREFIX = re.compile(r"^[^\n:]*\.(?:mbox|mbx|eml|emlx|pst|ost)[:\-]\d+[:\-]", re.I | re.M)
+
+
+def _header_block(t: str) -> bool:
+    """Three or more message headers on consecutive lines, then a blank line:
+    a message, not a log line that happens to say "Date:"."""
+    run, names = 0, set()
+    for line in t.splitlines():
+        if _HEADER_LINE.match(line):
+            run += 1
+            names.add(line.split(":", 1)[0].lower())
+            continue
+        if not line.strip() and run >= 3 and len(names) >= 3 and "from" in names:
+            return True
+        run, names = 0, set()
+    return False
 
 
 def looks_like(text: str) -> str | None:
     """"mail" / "finance" when program output reads like a mail archive or a
-    statement (grep through an mbox, a cat of a mailbox, an OFX download),
-    else None. Judged on shape only: separators, several message headers,
-    statement tags, or lines prefixed by such a file's name."""
+    statement (grep through an mbox or a statement export, a cat of a
+    mailbox, an OFX download), else None. Judged on shape only."""
     t = str(text or "")
     if not t:
         return None
     if _OFX.search(t) or _QIF.search(t):
         return "finance"
-    if _MBOX_SEP.search(t):
-        return "mail"
-    if len({m.group(0).split(":")[0].lower() for m in _HEADER.finditer(t)}) >= 3:
+    if _MBOX_SEP.search(t) or _header_block(t):
         return "mail"
     if _RAW_PATH_PREFIX.search(t):
-        return "mail" if re.search(r"^[^\n:]*\.(?:mbox|mbx|eml|emlx|msg|pst|ost)[:\-]\d", t, re.I | re.M) else "finance"
+        return "mail" if _MAIL_PREFIX.search(t) else "finance"
     return None

@@ -987,8 +987,9 @@ def raw_output_notice(text: str) -> str | None:
     except Exception:
         return None
     return ("[output withheld] What this printed reads like %s. Mail archives and statements reach "
-            "a cloud model only with the owner's yes for that one file: open the file with "
-            "read_file, which asks them on screen." % what)
+            "a cloud model only with the owner's yes for that one file. If it came from a file, open "
+            "that file with read_file, which asks them on screen; if it did not, tell them what you ran "
+            "and that its output was held back." % what)
 
 
 def raw_held_notice(path, kind: str | None = None) -> str:
@@ -1099,38 +1100,77 @@ def file_sha256(path, cap: int | None = None) -> str | None:
         return None
 
 
-def raw_refusal_for_command(text: str) -> str | None:
+def raw_refusal_for_command(text: str, cwd=None) -> str | None:
     """A shell command or program that names a raw record (a mail archive or
     a statement) the owner has not allowed reads it around read_file, so it
-    is not run: the model is told to open the file with read_file, which
-    asks the owner on screen. None when nothing such is named, when every
-    such file has the owner's yes, or when every model stays on this PC."""
+    is not run, and the owner is asked about each such file on screen. None
+    when nothing such is named, when every such file has the owner's yes, or
+    when every model stays on this PC. `cwd` is the folder it runs in."""
     try:
         from agent_friday.services import raw_records
-        named = raw_records.named_in(str(text or ""))
+        named = raw_records.named_in(str(text or ""), cwd=cwd)
     except Exception:
         return None
     if not named or not _cloud_possible():
         return None
-    held = []
-    for token, kind in named:
+    held, asked = [], 0
+    for label, kind, p in named:
         try:
-            p = Path(token).expanduser()
-            if p.is_file():
-                p = p.resolve()
+            if p is not None and Path(p).is_file():
+                p = Path(p).resolve()
                 sha = file_sha256(p)
                 c = check_grant(p, sha256_hex=sha) if sha else None
                 if c is not None and c.state == "active" and c.grant_kind == "file":
                     continue
-                ask_for_raw_source(p, kind)
+                if asked < 5:
+                    ask_for_raw_source(p, kind)
+                    asked += 1
         except Exception:
             pass
-        held.append(token)
+        held.append(Path(str(label)).name if p is not None else str(label))
     if not held:
         return None
     return ("Not run: it reads %s, a mail archive or statement the owner hasn't let a cloud model "
             "read. Open one file at a time with read_file instead; that asks them on screen, and "
             "nothing from it leaves this PC until they say yes." % ", ".join(held[:3]))
+
+
+def raw_records_in(folder, limit: int = 20000) -> list:
+    """Raw records (by name) under `folder` that the owner has not allowed,
+    for a tool that hands a whole folder to another program. Skips .git,
+    node_modules and virtual environments; looks at `limit` entries at most."""
+    import os
+    out, seen = [], 0
+    skip = {".git", "node_modules", ".venv", "venv", "__pycache__", ".friday"}
+    try:
+        for root, dirs, files in os.walk(str(folder)):
+            dirs[:] = [d for d in dirs if d not in skip]
+            for f in files:
+                seen += 1
+                if seen > limit:
+                    return out
+                p = Path(root) / f
+                if not _raw_kind_by_name(p):
+                    continue
+                sha = file_sha256(p)
+                c = check_grant(p, sha256_hex=sha) if sha else None
+                if c is not None and c.state == "active" and c.grant_kind == "file":
+                    continue
+                out.append(p)
+    except Exception:
+        pass
+    return out
+
+
+def _raw_kind_by_name(p) -> str | None:
+    """kind_of without opening the file (a walk never sniffs every file)."""
+    try:
+        from agent_friday.services import raw_records
+        if Path(p).suffix.lower() in ("", ".txt"):
+            return None
+        return raw_records.kind_of(p)
+    except Exception:
+        return None
 
 
 # ── Listing / audit ─────────────────────────────────────────────────────────────

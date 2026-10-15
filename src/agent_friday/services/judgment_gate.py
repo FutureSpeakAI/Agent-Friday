@@ -234,20 +234,41 @@ def _norm_unit(piece: str) -> str:
 
 
 def _pii_neutral(text: str) -> str:
-    """The text with every [PII:...] tag and every phone number, e-mail,
-    street address, SSN and card-like number as one fixed token, so a held
-    line matches whether the posture scrubbed it at read time, at send time,
-    or never. Only fixed patterns: nothing here depends on a setting (the
-    watchlist, the owner's addresses) that could change between the two."""
-    t = _PII_TAG.sub("~pii~", str(text or ""))
+    """The text with every [PII:...] tag and every e-mail, phone number, SSN
+    and card number as one fixed token, line by line, so a held line matches
+    whether the posture scrubbed it at read time, at send time, or never.
+    Fixed patterns only, validated as the scrub validates them (a card number
+    passes Luhn, an international number has 8-15 digits); nothing depends
+    on a setting (the watchlist, the owner's addresses) that could change in
+    between. Street addresses are left as they are: that pattern reaches
+    across words ("2 reports from Dr Smith") and would hide what is held."""
     try:
         from agent_friday import core
-        for rx in (core._EMAIL_RE, core._SSN_RE, core._INTL_PHONE_RE, core._PHONE_RE,
-                   core._STREET_RE, core._CC_RE):
-            t = rx.sub("~pii~", t)
     except Exception:
-        pass
-    return t
+        core = None
+
+    def _cc(m):
+        d = re.sub(r"\D", "", m.group(0))
+        return "~pii~" if (13 <= len(d) <= 19 and core._luhn_ok(d)) else m.group(0)
+
+    def _intl(m):
+        d = re.sub(r"\D", "", m.group(0))
+        return "~pii~" if 8 <= len(d) <= 15 else m.group(0)
+
+    out = []
+    for line in str(text or "").split("\n"):
+        line = _PII_TAG.sub("~pii~", line)
+        if core is not None:
+            try:
+                line = core._EMAIL_RE.sub("~pii~", line)
+                line = core._SSN_RE.sub("~pii~", line)
+                line = core._CC_RE.sub(_cc, line)
+                line = core._INTL_PHONE_RE.sub(_intl, line)
+                line = core._PHONE_RE.sub("~pii~", line)
+            except Exception:
+                pass
+        out.append(line)
+    return "\n".join(out)
 
 
 def _unescaped(text: str) -> str:
@@ -264,11 +285,26 @@ def _lines(text: str) -> list:
     return [re.sub(r"^[\s>]+", "", ln) for ln in re.split(r"\r?\n|\\n", str(text or ""))]
 
 
+_SEPARATOR = re.compile(
+    r"^(?:[-=_*~]{3,}.*|.*[-=_*~]{3,}|begin forwarded message:?|original message|forwarded message"
+    r"|on .{0,80} wrote:)$", re.I)
+_WORD = re.compile(r"[^\W\d_]{2,}")
+
+
+def _words(u: str) -> int:
+    """Words of two or more letters, not counting the PII token."""
+    return len([w for w in _WORD.findall(u.replace("~pii~", " ")) if w != "pii"])
+
+
 def _skip(u: str, finance: bool) -> bool:
-    if _BOILERPLATE.match(u) or _GENERIC_HEADER.match(u):
+    if _BOILERPLATE.match(u) or _GENERIC_HEADER.match(u) or _SEPARATOR.match(u):
         return True
-    if _FOOTER.match(u) or (len(u) < RAW_SPECIFIC and _COMMON.match(u)):
+    if _FOOTER.match(u) and not any(c.isdigit() for c in u):
+        return True                      # a footer that carries a figure is content
+    if len(u) < RAW_SPECIFIC and _COMMON.match(u):
         return True
+    if len(u) >= RAW_UNIT_MIN and _words(u) < 4 and not (finance and any(c.isdigit() for c in u)):
+        return True                      # a name and an address, a header with nothing in it
     if finance and len(u) < RAW_UNIT_MIN and (not any(c.isdigit() for c in u) or _FINANCE_SHAPE.match(u)):
         return True
     return False
