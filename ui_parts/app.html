@@ -9126,7 +9126,7 @@ function DefederationPanel(){
 function OrchestratorBudgetPanel(){
   const[budgets,setBudgets]=useState([]);
   const[editing,setEditing]=useState(null);
-  const[editForm,setEditForm]=useState({monthly_cap_mψ:1000000,per_task_cap_mψ:100000,warn_pct:80});
+  const[editForm,setEditForm]=useState({monthly_cap_mψ:0,per_task_cap_mψ:0,warn_pct:80});
   const[loading,setLoading]=useState(true);
   const[msg,setMsg]=useState('');
   const flash=t=>{setMsg(t);setTimeout(()=>setMsg(''),3000)};
@@ -9146,37 +9146,40 @@ function OrchestratorBudgetPanel(){
   const pct=(used,cap)=>cap>0?Math.min(100,Math.round(((used||0)/cap)*100)):0;
   const barColor=(p)=>p>=100?'#ef4444':p>=80?'#f59e0b':'#00d4ff';
   const fmtMψ=(n)=>{const v=n||0;return v>=1000000?(v/1000000).toFixed(1)+'M':(v>=1000?(v/1000).toFixed(0)+'K':String(v))+'mψ'};
+  // A cap of 0 is no cap (services/budget_enforcer.py): caps ship off and are asked about during setup.
+  const NO_CAP='No cap (ask me during setup)';
+  const capTxt=(n)=>n>0?fmtMψ(n):NO_CAP;
   if(loading)return<div style={{color:'#999',fontSize:12,padding:'8px 0'}}>Loading budgets…</div>;
   return(<div>
     {msg&&<div style={{marginBottom:8,padding:'5px 8px',borderRadius:5,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:11,color:'#00d4ff'}}>{msg}</div>}
     {budgets.length===0&&<div style={{fontSize:11,color:'#555',fontStyle:'italic',marginBottom:10}}>No budget policies configured yet.</div>}
     {budgets.map(b=>{
-      const p=pct(b.spent_mψ,b.monthly_cap_mψ||1000000);
+      const p=pct(b.spent_mψ,b.monthly_cap_mψ||0);
       const bc=barColor(p);
       return(<div key={b.workspace} style={{marginBottom:10,padding:'8px 10px',background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
           <div style={{fontSize:11,color:'#dde',fontFamily:'JetBrains Mono'}}>{b.workspace}</div>
           <div style={{display:'flex',gap:5,alignItems:'center'}}>
-            <span style={{fontSize:9,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>{fmtMψ(b.spent_mψ)} / {fmtMψ(b.monthly_cap_mψ||1000000)}</span>
-            <button className="settings-btn" style={{fontSize:9,padding:'1px 6px'}} onClick={()=>{setEditing(b.workspace);setEditForm({monthly_cap_mψ:b.monthly_cap_mψ||1000000,per_task_cap_mψ:b.per_task_cap_mψ||100000,warn_pct:b.warn_pct||80})}}>Edit</button>
+            <span style={{fontSize:9,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>{fmtMψ(b.spent_mψ)} / {capTxt(b.monthly_cap_mψ)}</span>
+            <button className="settings-btn" style={{fontSize:9,padding:'1px 6px'}} onClick={()=>{setEditing(b.workspace);setEditForm({monthly_cap_mψ:b.monthly_cap_mψ||0,per_task_cap_mψ:b.per_task_cap_mψ||0,warn_pct:b.warn_pct||80})}}>Edit</button>
           </div>
         </div>
         <div style={{height:5,background:'rgba(255,255,255,0.06)',borderRadius:3}}>
           <div style={{height:'100%',width:p+'%',background:bc,borderRadius:3,transition:'width 0.3s'}}/>
         </div>
-        <div style={{fontSize:9,color:'rgba(255,255,255,0.3)',marginTop:3,fontFamily:'JetBrains Mono'}}>{p}% · {fmtMψ((b.monthly_cap_mψ||1000000)-(b.spent_mψ||0))} remaining · task cap {fmtMψ(b.per_task_cap_mψ||100000)}</div>
+        <div style={{fontSize:9,color:'rgba(255,255,255,0.3)',marginTop:3,fontFamily:'JetBrains Mono'}}>{b.monthly_cap_mψ>0?(p+'% · '+fmtMψ(b.monthly_cap_mψ-(b.spent_mψ||0))+' remaining'):'Monthly: '+NO_CAP} · task cap {capTxt(b.per_task_cap_mψ)}</div>
       </div>);
     })}
     {editing&&(<div style={{marginTop:10,padding:'10px 12px',background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:6}}>
       <div style={{fontFamily:'Orbitron, sans-serif',fontSize:10,color:'#00d4ff',letterSpacing:'.05em',marginBottom:8}}>EDIT POLICY — {editing.toUpperCase()}</div>
       <div style={{display:'flex',gap:5,marginBottom:6}}>
         <div style={{flex:1}}>
-          <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Monthly cap (mψ)</div>
-          <input type="number" className="input" style={{width:'100%',fontSize:11}} value={editForm.monthly_cap_mψ} onChange={e=>setEditForm(f=>({...f,monthly_cap_mψ:parseInt(e.target.value)||1000000}))} min="10000" step="100000"/>
+          <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Monthly cap (mψ, 0 = no cap)</div>
+          <input type="number" className="input" style={{width:'100%',fontSize:11}} value={editForm.monthly_cap_mψ} onChange={e=>setEditForm(f=>({...f,monthly_cap_mψ:parseInt(e.target.value)||0}))} min="0" step="100000"/>
         </div>
         <div style={{flex:1}}>
-          <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Per-task cap (mψ)</div>
-          <input type="number" className="input" style={{width:'100%',fontSize:11}} value={editForm.per_task_cap_mψ} onChange={e=>setEditForm(f=>({...f,per_task_cap_mψ:parseInt(e.target.value)||100000}))} min="1000" step="10000"/>
+          <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Per-task cap (mψ, 0 = no cap)</div>
+          <input type="number" className="input" style={{width:'100%',fontSize:11}} value={editForm.per_task_cap_mψ} onChange={e=>setEditForm(f=>({...f,per_task_cap_mψ:parseInt(e.target.value)||0}))} min="0" step="10000"/>
         </div>
         <div style={{width:72}}>
           <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Warn %</div>
@@ -9188,7 +9191,7 @@ function OrchestratorBudgetPanel(){
         <button className="settings-btn" style={{opacity:0.6}} onClick={()=>setEditing(null)}>Cancel</button>
       </div>
     </div>)}
-    <button className="settings-btn" style={{marginTop:8}} onClick={()=>{setEditing('default');setEditForm({monthly_cap_mψ:1000000,per_task_cap_mψ:100000,warn_pct:80})}}>+ Add Policy</button>
+    <button className="settings-btn" style={{marginTop:8}} onClick={()=>{setEditing('default');setEditForm({monthly_cap_mψ:0,per_task_cap_mψ:0,warn_pct:80})}}>+ Add Policy</button>
   </div>);
 }
 

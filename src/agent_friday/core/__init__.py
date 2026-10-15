@@ -2878,7 +2878,22 @@ DEFAULT_SETTINGS = {
     # meaning "unbounded spend": expensive media are filtered out when the
     # remaining daily creative budget is low.
     "daily_creation_free_choice": True,         # False reverts to the legacy text rotation
-    "daily_creation_budget_usd": 0.50,          # soft ceiling on a day's creation spend
+    # Ceiling on a day's creation spend in USD. None (or 0) is no cap, the
+    # shipped default: spending caps are the owner's to set, asked about in the
+    # first-run setup conversation (services/spending_caps.py), never imposed.
+    "daily_creation_budget_usd": None,
+    # ── Spending caps the setup conversation asks about (services/spending_caps.py) ──
+    # asked: the setup conversation has been through the caps. answered: cap
+    # key -> when the owner answered (with a figure or "no cap"). The two
+    # workspace figures are the default per-workspace limits of the task
+    # orchestrator (services/budget_enforcer.py) in milliPositrons; None is no
+    # cap. A workspace with its own policy keeps it.
+    "spending_caps": {
+        "asked": False,
+        "answered": {},
+        "workspace_monthly_mpsi": None,
+        "workspace_task_mpsi": None,
+    },
     # ── Turn budget (advanced) ──
     # A local seat gets the same round budget as a cloud seat: a capable local
     # model can reason across hundreds of rounds, and a lower local cap is a
@@ -3640,6 +3655,47 @@ def _persist_smart_routing_migration():
         pass
 
 
+_CAPS_MIGRATION_TRIED = [False]
+
+
+def _migrate_spending_caps(settings: dict):
+    """services/spending_caps.migrate_settings: an install from before caps
+    shipped off has the old daily creation default (0.5) written out in
+    settings.json; it is cleared once, unless the owner answered for it.
+    Changes `settings` in place; returns the delta to persist, or None."""
+    try:
+        from agent_friday.services import spending_caps as _sc
+        return _sc.migrate_settings(settings)
+    except Exception as e:
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "spending caps migration skipped (%s: %s)", type(e).__name__, e)
+        except Exception:
+            pass
+        return None
+
+
+def _persist_spending_caps_migration(delta: dict):
+    """Write the one-time spending-caps migration (and its stamp) once per
+    process. A failed write is retried by the next process; every read in
+    between applies the same change in memory, so the old default is never
+    enforced meanwhile."""
+    if _CAPS_MIGRATION_TRIED[0]:
+        return
+    _CAPS_MIGRATION_TRIED[0] = True
+    try:
+        _save_settings(delta)
+    except Exception as e:
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "spending caps migration was not saved (%s: %s); it is applied "
+                "on every read until it is", type(e).__name__, e)
+        except Exception:
+            pass
+
+
 def _load_settings_raw():
     """Load agent settings exactly as persisted (no offline overlay).
 
@@ -3724,6 +3780,7 @@ def _load_settings_raw():
         merged = dict(DEFAULT_SETTINGS)
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _smart_found = _migrate_smart_routing_mode(merged)
+        _caps_delta = _migrate_spending_caps(merged)
         _sync_capability_routing(merged)
         _remember_good_settings(merged)
         with _SETTINGS_CACHE_LOCK:
@@ -3732,6 +3789,8 @@ def _load_settings_raw():
                 _SETTINGS_CACHE["ts"] = _time.time()
         if _smart_found:
             _persist_smart_routing_migration()
+        if _caps_delta:
+            _persist_spending_caps_migration(_caps_delta)
         return merged
     except Exception as e:
         # NEVER SILENT, AND NEVER FACTORY DEFAULTS WHEN BETTER IS KNOWN.
@@ -3779,8 +3838,61 @@ def _load_settings():
 #: `turn_budget` joins them for the same reason: Settings sends only the group
 #: it edited (rounds, or the clock, or tokens), and a wholesale replace would
 #: drop the other two back to the module defaults every time one is changed.
+#: `podcasts` joins them because a save of one show's format or length (or of
+#: one host's voice) replaced the whole block: the hosts, the other shows and
+#: the routines' switches went with it. The rest are fixed-shape blocks whose
+#: writers send one field ({"google_oauth": {"redirect_base_override": ...}},
+#: {"career_ops": {"path": ...}}) or may do so from Settings.
+#:
+#: The merge is recursive (_deep_merge_block): a nested dict merges key by key
+#: at every depth, a list replaces the old list whole, and an explicit null is
+#: stored as null (several defaults are null on purpose, so null never deletes).
+#: A user-keyed map, where leaving a key out of the saved map is how a caller
+#: removes it, is never in this list (workspace_layouts, dock_custom,
+#: providers, tool_hooks ...) and inside a listed block it is named in
+#: _WHOLE_VALUE_PATHS so it keeps being replaced whole.
 _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
-                       "turn_budget", "local_address", "scheduled_cloud", "tracking")
+                       "turn_budget", "local_address", "scheduled_cloud", "tracking",
+                       "podcasts", "scheduling", "idle_work", "google_oauth",
+                       "career_ops", "channels", "cost_budget", "task_journal",
+                       "reasoning_traces", "spending_caps")
+
+#: Paths inside a deep-merged block whose value is replaced whole, as before
+#: the merge became recursive. "*" matches any one key: each capability's seat
+#: ({"provider", "model", ...}) is one choice, never a mix of two.
+_WHOLE_VALUE_PATHS = frozenset({
+    "capability_routing.*",
+    "model_routing.task_overrides",
+    "model_routing.cloud_consent",
+    "turn_budget.rounds",
+    "turn_budget.wall_clock_s",
+    "turn_budget.tokens",
+})
+
+
+def _whole_value_path(path: str) -> bool:
+    if path in _WHOLE_VALUE_PATHS:
+        return True
+    head, _, _last = path.rpartition(".")
+    return bool(head) and (head + ".*") in _WHOLE_VALUE_PATHS
+
+
+def _deep_merge_block(base, delta, path: str):
+    """`delta` merged into a copy of `base`: dicts key by key at every depth,
+    anything else (lists, scalars, null) replaces the old value, and a path
+    in _WHOLE_VALUE_PATHS replaces its old value whole. Neither input is
+    changed."""
+    import copy
+    out = {k: (copy.deepcopy(v) if isinstance(v, (dict, list)) else v)
+           for k, v in (base or {}).items()}
+    for k, v in delta.items():
+        sub = "%s.%s" % (path, k)
+        if (isinstance(v, dict) and isinstance(out.get(k), dict)
+                and not _whole_value_path(sub)):
+            out[k] = _deep_merge_block(out[k], v, sub)
+        else:
+            out[k] = copy.deepcopy(v) if isinstance(v, (dict, list)) else v
+    return out
 
 
 def _routing_mode_caller() -> str:
@@ -3990,10 +4102,16 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             # {"vault_local_only": ...}} would otherwise replace the whole
             # block, silently resetting `mode` — so changing a privacy switch
             # could move every future turn to a different provider.
-            base = {ck: (dict(cv) if isinstance(cv, dict) else cv)
-                    for ck, cv in existing[k].items()}
-            base.update(v)
-            merged[k] = base
+            #
+            # The base is the block as STORED. A file with no such block yet
+            # stores the delta alone (the else branch), never the default
+            # block: what is on disk is what was saved, so a default that
+            # changes in a later version still reaches every key the owner
+            # never set. Readers fill the rest from their defaults
+            # (podcast_engine.settings, hologram_tools.current); the tracking
+            # tests (test_partial_tracking_settings_preserve_siblings_on_disk,
+            # test_concurrent_tracking_saves) hold this.
+            merged[k] = _deep_merge_block(existing[k], v, k)
         else:
             merged[k] = v
     # Reconcile capability_routing ⇄ flat *_model keys before persisting so the

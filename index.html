@@ -29521,8 +29521,8 @@ function OrchestratorBudgetPanel() {
   const [budgets, setBudgets] = useState([]);
   const [editing, setEditing] = useState(null);
   const [editForm, setEditForm] = useState({
-    monthly_cap_mψ: 1000000,
-    per_task_cap_mψ: 100000,
+    monthly_cap_mψ: 0,
+    per_task_cap_mψ: 0,
     warn_pct: 80
   });
   const [loading, setLoading] = useState(true);
@@ -29566,6 +29566,9 @@ function OrchestratorBudgetPanel() {
     const v = n || 0;
     return v >= 1000000 ? (v / 1000000).toFixed(1) + 'M' : (v >= 1000 ? (v / 1000).toFixed(0) + 'K' : String(v)) + 'mψ';
   };
+  // A cap of 0 is no cap (services/budget_enforcer.py): caps ship off and are asked about during setup.
+  const NO_CAP = 'No cap (ask me during setup)';
+  const capTxt = n => n > 0 ? fmtMψ(n) : NO_CAP;
   if (loading) return /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#999',
@@ -29591,7 +29594,7 @@ function OrchestratorBudgetPanel() {
       marginBottom: 10
     }
   }, "No budget policies configured yet."), budgets.map(b => {
-    const p = pct(b.spent_mψ, b.monthly_cap_mψ || 1000000);
+    const p = pct(b.spent_mψ, b.monthly_cap_mψ || 0);
     const bc = barColor(p);
     return /*#__PURE__*/React.createElement("div", {
       key: b.workspace,
@@ -29627,7 +29630,7 @@ function OrchestratorBudgetPanel() {
         color: 'rgba(255,255,255,0.45)',
         fontFamily: 'JetBrains Mono'
       }
-    }, fmtMψ(b.spent_mψ), " / ", fmtMψ(b.monthly_cap_mψ || 1000000)), /*#__PURE__*/React.createElement("button", {
+    }, fmtMψ(b.spent_mψ), " / ", capTxt(b.monthly_cap_mψ)), /*#__PURE__*/React.createElement("button", {
       className: "settings-btn",
       style: {
         fontSize: 9,
@@ -29636,8 +29639,8 @@ function OrchestratorBudgetPanel() {
       onClick: () => {
         setEditing(b.workspace);
         setEditForm({
-          monthly_cap_mψ: b.monthly_cap_mψ || 1000000,
-          per_task_cap_mψ: b.per_task_cap_mψ || 100000,
+          monthly_cap_mψ: b.monthly_cap_mψ || 0,
+          per_task_cap_mψ: b.per_task_cap_mψ || 0,
           warn_pct: b.warn_pct || 80
         });
       }
@@ -29662,7 +29665,7 @@ function OrchestratorBudgetPanel() {
         marginTop: 3,
         fontFamily: 'JetBrains Mono'
       }
-    }, p, "% \xB7 ", fmtMψ((b.monthly_cap_mψ || 1000000) - (b.spent_mψ || 0)), " remaining \xB7 task cap ", fmtMψ(b.per_task_cap_mψ || 100000)));
+    }, b.monthly_cap_mψ > 0 ? p + '% \xB7 ' + fmtMψ(b.monthly_cap_mψ - (b.spent_mψ || 0)) + ' remaining' : 'Monthly: ' + NO_CAP, " \xB7 task cap ", capTxt(b.per_task_cap_mψ)));
   }), editing && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
@@ -29696,7 +29699,7 @@ function OrchestratorBudgetPanel() {
       marginBottom: 3,
       fontFamily: 'JetBrains Mono'
     }
-  }, "Monthly cap (m\u03C8)"), /*#__PURE__*/React.createElement("input", {
+  }, "Monthly cap (m\u03C8, 0 = no cap)"), /*#__PURE__*/React.createElement("input", {
     type: "number",
     className: "input",
     style: {
@@ -29706,9 +29709,9 @@ function OrchestratorBudgetPanel() {
     value: editForm.monthly_cap_mψ,
     onChange: e => setEditForm(f => ({
       ...f,
-      monthly_cap_mψ: parseInt(e.target.value) || 1000000
+      monthly_cap_mψ: parseInt(e.target.value) || 0
     })),
-    min: "10000",
+    min: "0",
     step: "100000"
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -29721,7 +29724,7 @@ function OrchestratorBudgetPanel() {
       marginBottom: 3,
       fontFamily: 'JetBrains Mono'
     }
-  }, "Per-task cap (m\u03C8)"), /*#__PURE__*/React.createElement("input", {
+  }, "Per-task cap (m\u03C8, 0 = no cap)"), /*#__PURE__*/React.createElement("input", {
     type: "number",
     className: "input",
     style: {
@@ -29731,9 +29734,9 @@ function OrchestratorBudgetPanel() {
     value: editForm.per_task_cap_mψ,
     onChange: e => setEditForm(f => ({
       ...f,
-      per_task_cap_mψ: parseInt(e.target.value) || 100000
+      per_task_cap_mψ: parseInt(e.target.value) || 0
     })),
-    min: "1000",
+    min: "0",
     step: "10000"
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -29782,8 +29785,8 @@ function OrchestratorBudgetPanel() {
     onClick: () => {
       setEditing('default');
       setEditForm({
-        monthly_cap_mψ: 1000000,
-        per_task_cap_mψ: 100000,
+        monthly_cap_mψ: 0,
+        per_task_cap_mψ: 0,
         warn_pct: 80
       });
     }
