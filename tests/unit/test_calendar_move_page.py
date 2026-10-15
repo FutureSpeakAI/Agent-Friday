@@ -45,7 +45,7 @@ def test_a_drag_only_proposes_and_the_write_happens_in_the_confirmation():
     layer = JS[JS.index("function MoveLayer("):JS.index("function QuickAddPreview(")]
     assert "confirmed: true" in layer
     assert "moveGrantUntil" in layer and "30 minutes" in layer, "the batch permission is the owner's, named, and runs out"
-    assert re.search(r"if \(Date\.now\(\) < moveGrantUntil\) run\(p\); else", layer)
+    assert re.search(r"if \(Date\.now\(\) < moveGrantUntil\) runRef\.current\(p\); else", layer)
 
 
 def test_a_slipped_drag_proposes_nothing_and_ctrl_click_still_ticks():
