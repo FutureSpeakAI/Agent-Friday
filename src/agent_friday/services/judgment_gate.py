@@ -160,28 +160,81 @@ def register_deny_span(text: str) -> None:
 # kept as hashes of the record's lines and sentences (never the text), keyed
 # by file, so it survives a restart, costs little memory, catches an excerpt
 # as well as the whole, and is lifted for exactly the file the owner allowed:
-# a line two held files share stays held while either is held. Lines and
-# sentences shorter than RAW_UNIT_MIN are too common to hold ("Thanks,").
+# a line two held files share stays held while either is held.
+#
+# Mail lines and sentences shorter than RAW_UNIT_MIN are too common to hold
+# ("Thanks,"). A statement's lines are short by nature (a QIF "T-23.99", an
+# OFX "<TRNAMT>-23.99"), so a statement holds every line of RAW_LINE_MIN or
+# more, matched only as a whole line.
+#
+# The hold fails closed, and stays closed across a restart, when it cannot
+# keep what it was asked to hold: the store could not be read or written, or
+# the hold list is full. A marker file (no content) records that; while it
+# exists every cloud payload with a line long enough to be a held unit is
+# stopped, and the Locks page says why.
 RAW_UNIT_MIN = 24
-#: Past this many held units, every cloud payload with a line of RAW_UNIT_MIN
-#: or more is held (fail closed) until holds are released.
+RAW_LINE_MIN = 6
 RAW_HOLD_MAX = 500_000
 _RAW_LOCK = threading.RLock()
 _RAW_HOLDS: dict = {}          # unit hash (bytes) -> {file key}
-_RAW_LOADED = {"done": False, "overflow": False}
+_RAW_LOADED = {"done": False, "overflow": False, "unreadable": False}
 _RAW_SPLIT = re.compile(r"(?<=[.!?;:])\s+|\t+|\s{2,}|\s\|\s")
+_JSON_U = re.compile(r"\\u([0-9a-fA-F]{4})")
+# Friday's own words around a file's text (page notes, the Library's fence):
+# never held, or one held read would stop every later read of any file.
+_BOILERPLATE = re.compile(r"read_file|\[extraction truncated|^<?/?evidence-|^\.\.\.\[", re.I)
 
 
-def raw_units(text: str) -> list:
-    """The units a raw record is held by, and a payload is checked by."""
+#: Quote marks and brackets around a unit are not part of it: a line quoted,
+#: or closing a JSON string, is the same line.
+_UNIT_EDGES = " \"'\u201c\u201d\u2018\u2019{}[]()<>,;`"
+
+
+def _norm_unit(piece: str) -> str:
+    return " ".join(str(piece).split()).strip(_UNIT_EDGES).casefold()
+
+
+def _unescaped(text: str) -> str:
+    """A JSON-escaped payload as text, so a held line is found inside a tool
+    result that was serialised before it reached the gate."""
+    t = _JSON_U.sub(lambda m: chr(int(m.group(1), 16)), text)
+    return (t.replace('\\"', '"').replace("\\t", "\t").replace("\\/", "/")
+            .replace("\\r", "").replace("\\\\", "\\"))
+
+
+def _lines(text: str) -> list:
+    return [re.sub(r"^[\s>]+", "", ln) for ln in re.split(r"\r?\n|\\n", str(text or ""))]
+
+
+def raw_units(text: str, *, line_min: int = RAW_UNIT_MIN) -> list:
+    """The units a raw record is held by: each line of `line_min` or more
+    characters, and each sentence of RAW_UNIT_MIN or more."""
     out = []
-    for line in re.split(r"\r?\n|\\n", str(text or "")):
-        line = re.sub(r"^[\s>]+", "", line)
-        for piece in [line] + _RAW_SPLIT.split(line):
-            u = " ".join(piece.split()).casefold()
-            if len(u) >= RAW_UNIT_MIN:
+    for line in _lines(text):
+        whole = _norm_unit(line)
+        if len(whole) >= line_min and not _BOILERPLATE.search(whole):
+            out.append(whole)
+        for piece in _RAW_SPLIT.split(line):
+            u = _norm_unit(piece)
+            if len(u) >= RAW_UNIT_MIN and u != whole and not _BOILERPLATE.search(u):
                 out.append(u)
     return out
+
+
+def _boilerplate_units() -> set:
+    try:
+        from agent_friday.services.library.envelope import FILE_PREAMBLE
+        return set(raw_units(FILE_PREAMBLE))
+    except Exception:
+        return set()
+
+
+def _payload_units(text: str) -> list:
+    t = str(text or "")
+    units = raw_units(t, line_min=RAW_LINE_MIN)
+    if "\\" in t:
+        units += raw_units(_unescaped(t), line_min=RAW_LINE_MIN)
+    return units
 
 
 def _unit_hash(u: str) -> bytes:
@@ -194,10 +247,26 @@ def _raw_store_path():
     return friday_home() / "privacy" / "raw_record_holds.bin"
 
 
+def _raw_failed_path():
+    return _raw_store_path().with_name("raw_record_holds.failed")
+
+
+def _fail_closed(why: str) -> None:
+    _RAW_LOADED["overflow"] = True
+    try:
+        p = _raw_failed_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(why + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _raw_load() -> None:
     if _RAW_LOADED["done"]:
         return
     _RAW_LOADED["done"] = True
+    if _raw_failed_path().exists():
+        _RAW_LOADED["overflow"] = True
     p = _raw_store_path()
     if not p.exists():
         return
@@ -208,11 +277,18 @@ def _raw_load() -> None:
             for h in hashes:
                 _RAW_HOLDS.setdefault(bytes.fromhex(h), set()).add(key)
     except Exception:
-        # A store that cannot be read must not silently release what it held.
-        _RAW_LOADED["overflow"] = True
+        # A store that cannot be read must not silently release what it held,
+        # and must not be overwritten by a shorter one.
+        _RAW_LOADED["unreadable"] = True
+        _fail_closed("the store of held raw records could not be read")
+
+
+_WRITE_FAILED = "the store of held raw records could not be written"
 
 
 def _raw_save() -> None:
+    if _RAW_LOADED["unreadable"]:
+        return
     files: dict = {}
     for h, keys in _RAW_HOLDS.items():
         for k in keys:
@@ -222,20 +298,33 @@ def _raw_save() -> None:
         p = _raw_store_path()
         cs.write_secret(p, json.dumps({"files": files}).encode("utf-8"), harden=not p.exists())
     except Exception:
+        _fail_closed(_WRITE_FAILED)
+        return
+    # A write that failed earlier is repaired by this one: the whole hold, as
+    # this process holds it, is on disk again. A full list or an unreadable
+    # store is not repaired by a write.
+    try:
+        fp = _raw_failed_path()
+        if fp.exists() and fp.read_text(encoding="utf-8").strip() == _WRITE_FAILED:
+            fp.unlink()
+            _RAW_LOADED["overflow"] = False
+    except OSError:
         pass
 
 
-def hold_raw_record(file_key: str, text: str) -> int:
+def hold_raw_record(file_key: str, text: str, *, kind: str = "mail") -> int:
     """Hold every unit of `text` (read from the raw record `file_key`) from
     every cloud payload until release_raw_record(file_key). Returns how many
     units are held for it. Call ONLY from file_grants.py."""
-    units = raw_units(text)
+    skip = _boilerplate_units()
+    units = [u for u in raw_units(text, line_min=RAW_LINE_MIN if kind == "finance" else RAW_UNIT_MIN)
+             if u not in skip]
+    hashes = [_unit_hash(u) for u in units]
     with _RAW_LOCK:
         _raw_load()
-        for u in units:
-            h = _unit_hash(u)
+        for h in hashes:
             if h not in _RAW_HOLDS and len(_RAW_HOLDS) >= RAW_HOLD_MAX:
-                _RAW_LOADED["overflow"] = True
+                _fail_closed("the hold list is full")
                 break
             _RAW_HOLDS.setdefault(h, set()).add(str(file_key))
         _raw_save()
@@ -266,13 +355,33 @@ def raw_record_hits(text: str) -> list:
         _raw_load()
         if not _RAW_HOLDS and not _RAW_LOADED["overflow"]:
             return []
-        units = raw_units(text)
-        if _RAW_LOADED["overflow"] and units:
-            return ["a raw record is held and the hold list is full"]
-        for u in units:
-            if _unit_hash(u) in _RAW_HOLDS:
-                return ["part of a raw record (a mail archive or statement) you haven't allowed"]
+        failed = _RAW_LOADED["overflow"]
+    # The payload's units are worked out outside the lock: other calls wait
+    # only for the membership test.
+    units = _payload_units(text)
+    if failed and units:
+        return ["a raw record is held and its hold could not be kept in full"]
+    hashes = [_unit_hash(u) for u in units]
+    with _RAW_LOCK:
+        if any(h in _RAW_HOLDS for h in hashes):
+            return ["part of a raw record (a mail archive or statement) you haven't allowed"]
     return []
+
+
+def raw_hold_status() -> dict:
+    """For the Locks page: how many files are held, and whether the hold is
+    failing closed (and why)."""
+    with _RAW_LOCK:
+        _raw_load()
+        files = {k for keys in _RAW_HOLDS.values() for k in keys}
+        why = ""
+        if _RAW_LOADED["overflow"]:
+            try:
+                why = _raw_failed_path().read_text(encoding="utf-8").strip()
+            except OSError:
+                why = "the hold could not be kept in full"
+        return {"files": len(files), "units": len(_RAW_HOLDS),
+                "fail_closed": bool(_RAW_LOADED["overflow"]), "why": why}
 
 
 def never_send_tokens() -> list[str]:

@@ -955,7 +955,7 @@ def on_file_read(path: Path, text: str) -> GrantCheck:
         # payload under every posture, and the owner is asked, on a card that
         # names the file and who would read it.
         from agent_friday.services import judgment_gate as _jg
-        _jg.hold_raw_record(_raw_key(path), text)
+        _jg.hold_raw_record(_raw_key(path), text, kind=raw)
         ask_for_raw_source(path, raw)
         result = GrantCheck(state="held_raw_record", grant_id=result.grant_id)
     elif result.state == "active":
@@ -1009,12 +1009,14 @@ def ask_for_raw_source(path, kind: str | None = None) -> dict | None:
         return None
     try:
         p = Path(path).resolve()
-        if p.stat().st_size > MAX_GRANT_BYTES:
+        st = p.stat()
+        if st.st_size > MAX_GRANT_BYTES:
             return None                      # too large to allow at all: it simply stays here
-        sha = hashlib.sha256(p.read_bytes()).hexdigest()
     except Exception:
         return None
-    key = (str(p).lower(), sha)
+    # One card per version of the file a day, recognised without hashing it
+    # again (the card itself pins the content it shows).
+    key = (str(p).casefold(), st.st_size, st.st_mtime_ns)
     now = time.time()
     if now - _RAW_ASKED.get(key, 0) < _RAW_ASK_EVERY_S:
         return None

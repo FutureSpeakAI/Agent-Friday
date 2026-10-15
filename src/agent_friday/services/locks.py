@@ -162,6 +162,15 @@ def _records() -> dict:
         checks.append({"name": "Inbox clean-up receipts", "ok": v["ok"], "count": v["count"], "why": v["reason"]})
     except Exception as e:  # noqa: BLE001
         checks.append({"name": "Inbox clean-up receipts", "ok": None, "why": type(e).__name__})
+    try:
+        from agent_friday.services import judgment_gate
+        rh = judgment_gate.raw_hold_status()
+        checks.append({"name": "Raw records held from the cloud", "ok": not rh["fail_closed"],
+                       "count": rh["files"],
+                       "why": (rh["why"] + "; every cloud message that quotes a line is held until this is fixed")
+                       if rh["fail_closed"] else ""})
+    except Exception as e:  # noqa: BLE001
+        checks.append({"name": "Raw records held from the cloud", "ok": None, "why": type(e).__name__})
     bad = [c for c in checks if c["ok"] is False]
     if bad:
         words = "One record was changed after it was written: %s (%s)." % (bad[0]["name"], bad[0]["why"])
