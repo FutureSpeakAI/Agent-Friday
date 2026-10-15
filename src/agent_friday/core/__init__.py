@@ -2468,6 +2468,12 @@ DEFAULT_SETTINGS = {
     #   "auto"      — GPU tier when ready, else CPU; local preferred over cloud
     "voice_engine": "local",
     "local_voice_asr_model": "auto",       # faster-whisper size: auto (base on CPU, small on a GPU)|tiny|base|small|medium
+    # The ear on the graphics card runs on CTranslate2, which loads cuBLAS 12 by
+    # name from PATH. When nothing else provides it, borrow the copy the
+    # llama.cpp runtime under the runtime folder ships (prepended to PATH for
+    # this process and voice workers, logged; services/gpu_probe.py). False
+    # leaves PATH alone and the ear uses the CPU when cuBLAS is missing.
+    "local_voice_borrow_llama_cpp_cublas": True,
     # ── Push-to-transcribe ────────────────────────────────────────────────
     # Hold a key anywhere in Windows, speak, release, and the local transcript
     # is pasted into whatever window has focus. On by default, and system-wide
