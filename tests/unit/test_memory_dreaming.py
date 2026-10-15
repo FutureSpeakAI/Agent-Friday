@@ -12,6 +12,7 @@ if str(_SRC) not in sys.path:
 
 from agent_friday.services import memory_dreaming as md  # noqa: E402
 from agent_friday.services import user_model as um  # noqa: E402
+from agent_friday.services import core_memory as cm  # noqa: E402
 
 
 class FakeMemory:
@@ -32,6 +33,7 @@ def _iso(tmp_path, monkeypatch):
     # isolate user_model too so note_fact writes to a throwaway db
     monkeypatch.setattr(um, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(um, "DB_PATH", tmp_path / "user_model.db")
+    monkeypatch.setattr(cm, "_dir", lambda: tmp_path / "core_memory")
     yield
 
 
@@ -74,11 +76,22 @@ def test_dream_extracts_topics():
     assert "voice" in topics or "dark" in topics
 
 
-def test_dream_feeds_user_model():
+def test_dream_writes_no_unreviewed_fact_and_queues_it_for_the_owner(monkeypatch):
+    """A regex over yesterday's turns is not a review: nothing it finds lands in
+    the user model, the knowledge graph or the memory card. Each candidate
+    waits in the card's review queue for the owner's Keep. (Red on the old
+    code: dream() called user_model.note_fact and ingest_fact directly.)"""
+    ingested = []
+    from agent_friday.services.knowledge_graph import integration as kgi
+    monkeypatch.setattr(kgi, "ingest_fact", lambda *a, **k: ingested.append(a))
     day = "2026-06-30"
     md.dream(day=day, memory=FakeMemory(_rows(day)))
-    facts = [f["text"] for f in um.profile()["facts"]]
-    assert any("dark mode" in t for t in facts)
+    assert um.profile()["facts"] == []
+    assert ingested == []
+    assert cm.entries("user") == []
+    queued = [p["text"] for p in cm.pending()]
+    assert any("dark mode" in t for t in queued)
+    assert all(p["source"] == f"dream:{day}" for p in cm.pending())
 
 
 def test_dream_writes_markdown():
@@ -118,16 +131,14 @@ def test_dream_reruns_replace_same_day():
     assert md.state()["total_dreams"] == 1  # deduped by day
 
 
-def test_rerun_same_day_does_not_inflate_fact_confidence():
-    # Regression: re-running the SAME day must not reinforce fact confidence
-    # (source is day-scoped; note_fact only bumps on a new source).
+def test_rerun_same_day_queues_each_candidate_once():
+    # Regression: re-running the SAME day must not file the same candidate twice.
     day = "2026-06-30"
     md.dream(day=day, memory=FakeMemory(_rows(day)))
-    before = {f["text"]: f["confidence"] for f in um.profile()["facts"]}
+    before = sorted(p["text"] for p in cm.pending())
     md.dream(day=day, memory=FakeMemory(_rows(day)))
     md.dream(day=day, memory=FakeMemory(_rows(day)))
-    after = {f["text"]: f["confidence"] for f in um.profile()["facts"]}
-    assert after == before
+    assert sorted(p["text"] for p in cm.pending()) == before and before
 
 
 def test_pull_turns_flags_capped(monkeypatch):
