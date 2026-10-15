@@ -526,10 +526,14 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
                           "allow_clearing=True if erasing is intended."
                           % ", ".join(would_clear)),
                 "needs_confirmation": True, "fields": would_clear}
+    # A patch replaces the whole start/end object: keep the event's own time zone, or a move (and its
+    # Undo) would leave the event in the calendar's zone instead of the one it was made in.
     if start:
-        patch["start"] = {"dateTime": start}
+        patch["start"] = dict({"dateTime": start}, **({"timeZone": (before.get("start") or {})["timeZone"]}
+                                                       if (before.get("start") or {}).get("timeZone") else {}))
     if end:
-        patch["end"] = {"dateTime": end}
+        patch["end"] = dict({"dateTime": end}, **({"timeZone": (before.get("end") or {})["timeZone"]}
+                                                   if (before.get("end") or {}).get("timeZone") else {}))
     if not patch:
         return {"ok": True, "unchanged": True, "id": event_id}
     try:

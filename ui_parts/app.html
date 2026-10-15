@@ -12188,7 +12188,7 @@ function CalendarWS(){
             {e.prep_available&&<span className="cal-prep-badge">Prep available</span>}
             {e.related_emails&&e.related_emails.length>0&&<span style={{color:'#00d4ff'}}>✉ {e.related_emails.length} related</span>}
           </div>
-          {open&&<div onClick={ev=>ev.stopPropagation()} style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.08)'}}>
+          {open&&<div data-no-drag="on" onClick={ev=>ev.stopPropagation()} style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.08)'}}>
             {e.related_emails&&e.related_emails.length>0&&<div style={{fontSize:10,color:'#8fb8c8',marginBottom:6}}>Related threads: {e.related_emails.map(r=>r.subject).join(' · ')}</div>}
             {prepBusy&&!prepText?<div style={{fontSize:11,color:'#c4b5fd'}}>{fridayName()} is building your prep card…</div>:
              <><FridayDoc text={prepText} compact style={{fontSize:11}}/>

@@ -127,10 +127,12 @@ def test_a_drag_moves_nothing_until_confirmed_then_moves_on_its_own_calendar_and
     patches = [x for x in google["log"] if x[0] == "patch"]
     assert len(patches) == 1 and patches[0][1] == "fam"
     assert datetime.fromisoformat(google["store"][("fam", "e1")]["start"]["dateTime"]) == new_start
+    assert google["store"][("fam", "e1")]["start"].get("timeZone") == "America/Chicago", "a move keeps the event's zone"
     u = client.post("/api/actions/receipts/%s/undo" % d["receipt_id"])
     assert u.status_code == 200, u.get_json()
     assert datetime.fromisoformat(google["store"][("fam", "e1")]["start"]["dateTime"]) == START
     assert [x[1] for x in google["log"] if x[0] == "patch"] == ["fam", "fam"]
+    assert google["store"][("fam", "e1")]["start"].get("timeZone") == "America/Chicago", "and so does its Undo"
 
 
 @pytest.mark.parametrize("start,end", [
@@ -151,3 +153,23 @@ def test_a_write_names_its_calendar_and_a_bad_calendar_id_is_refused_not_redirec
     bad = cw.update_event("e1", title="Play", calendar_id="a/b", account_id="home")
     assert "error" in bad
     assert [x[1] for x in google["log"] if x[0] == "patch"] == ["fam"]
+
+
+def test_an_event_is_not_added_to_a_calendar_she_can_only_read(client, google):
+    body = {"title": "Lunch", "start_time": START.isoformat(), "calendar_key": "home|hol", "confirmed": True}
+    assert client.post("/api/calendar/events", json=body).status_code == 400
+    assert [x for x in google["log"] if x[0] == "insert"] == []
+
+
+def test_when_google_can_no_longer_be_written_an_event_meant_for_it_is_not_kept_on_this_pc(client, google, monkeypatch):
+    monkeypatch.setattr(cw, "write_ready", lambda: (False, "read-only"))
+    body = {"title": "Lunch", "start_time": START.isoformat(), "calendar_key": "home|fam", "confirmed": True}
+    r = client.post("/api/calendar/events", json=body)
+    assert r.status_code == 409 and "Nothing was added" in r.get_json()["message"]
+    assert google["local"] == [] and [x for x in google["log"] if x[0] == "insert"] == []
+
+
+def test_a_time_given_in_utc_is_read_as_the_same_moment_here(client, google):
+    import agent_friday.routes.calendar as rc
+    utc = START.astimezone().astimezone(__import__("datetime").timezone.utc)
+    assert rc._local_dt(utc.isoformat().replace("+00:00", "Z")) == START.replace(tzinfo=None)
