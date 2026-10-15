@@ -39226,6 +39226,8 @@ function CalendarWS() {
     onMoved: reloadAll
   }) : null, window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.RsvpLayer, {
     onReplied: reloadAll
+  }) : null, window.CalendarViews ? /*#__PURE__*/React.createElement(window.CalendarViews.DeleteLayer, {
+    onDeleted: reloadAll
   }) : null, window.CalendarViews ? /*#__PURE__*/React.createElement("div", {
     className: "calv-toolbar"
   }, /*#__PURE__*/React.createElement(window.CalendarViews.ViewSwitch, {
@@ -39393,6 +39395,8 @@ function CalendarWS() {
     }, "\u23F3 ", e.title.split(' ')[0], " in ", e.countdown), window.CalendarViews && window.CalendarViews.reminderText(e) && /*#__PURE__*/React.createElement("span", {
       className: "cal-ev-remind"
     }, window.CalendarViews.reminderText(e)), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.RsvpButtons, {
+      ev: e
+    }), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.DeleteButton, {
       ev: e
     }), e.prep_available && /*#__PURE__*/React.createElement("span", {
       className: "cal-prep-badge"
