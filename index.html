@@ -38965,6 +38965,12 @@ fridayDeclareNav('calendar', {
 const CAL_VIEW_IDS = ['day', 'week', 'month', 'freebusy'];
 // Adds the calendars to the sections once they load (keys stay as declared above).
 const CAL_WS_ID = 'calendar';
+// Stands in for CalendarViews.useCalendars when that file is missing, with the same hooks in the same order.
+function calNoCalendars(tick) {
+  useState(null);
+  useEffect(() => {}, [tick]);
+  return { calendars: [], accounts: [] };
+}
 function calStoredView() {
   try { const v = localStorage.getItem('friday_cal_view'); return CAL_VIEW_IDS.includes(v) ? v : 'day'; } catch (_) { return 'day'; }
 }
@@ -39001,7 +39007,7 @@ function CalendarWS() {
   const [calsTick, setCalsTick] = useState(0);
   const [showCals, setShowCals] = useState(false);
   const [onlySpec, setOnlySpec] = useState('');
-  const calsState = window.CalendarViews ? window.CalendarViews.useCalendars(calsTick) : { calendars: [], accounts: [] };
+  const calsState = (window.CalendarViews ? window.CalendarViews.useCalendars : calNoCalendars)(calsTick);
   const calSlug = window.CalendarViews ? window.CalendarViews.slug : (x => String(x));
   const onlyCals = onlySpec ? calsState.calendars.filter(c => c.key === onlySpec || 'cal-' + calSlug(c.name) === onlySpec || calSlug(c.name) === calSlug(onlySpec)) : [];
   const onlyKeys = onlyCals.length ? onlyCals.map(c => c.key) : null;
