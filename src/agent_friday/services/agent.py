@@ -12604,6 +12604,52 @@ def _clear_pending(session_id, fingerprint=None):
             _PENDING_CONFIRMATIONS.pop(session_id, None)
 
 
+def _deny_pending_cards(session_id):
+    """Deny the approval card of every pending question in this session.
+
+    A chat no and the card are answers to one request: the no decides the
+    card, so it cannot be approved later from the screen as if nobody had
+    answered. A card already decided elsewhere is left as it is."""
+    with _PENDING_LOCK:
+        aids = [e.get("approval_id") for e in (_PENDING_CONFIRMATIONS.get(session_id) or {}).values()
+                if e.get("approval_id")]
+    if not aids:
+        return
+    try:
+        from agent_friday.services import approvals as _appr
+    except Exception as e:
+        _log.warning("could not deny the confirmation cards: %s", e)
+        return
+    for aid in aids:
+        try:
+            _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat")
+        except Exception as e:
+            _log.warning("could not deny confirmation card %s: %s", aid, e)
+
+
+def _owner_surface(message, given, ctx):
+    """Is this turn the owner's own line, typed in the app's page on this PC?
+
+    Inside a request it is judged from the request itself
+    (reflex_chat.trusted_surface: a local request, the page's verified
+    session, the page's source, not voice, no untrusted origin, no
+    attachment), and a caller's value can only lower it. Background work,
+    a task and a phone or channel origin are never it. Outside any request
+    (an internal caller) it is `given`, None when nobody said."""
+    if ctx.get("origin") or ctx.get("is_background_task") or ctx.get("task_id"):
+        return False
+    try:
+        from flask import has_request_context, request as _rq
+        if has_request_context():
+            from agent_friday.services import reflex_chat as _rc
+            data = _rq.get_json(silent=True)
+            ok = _rc.trusted_surface(data if isinstance(data, dict) else {}, message)
+            return bool(ok) and given is not False
+    except Exception:
+        return False
+    return given
+
+
 def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     """Wire one interactive chat turn into the action-confirmation flow.
 
@@ -12624,6 +12670,10 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     # other than the owner (services: phone) acts only on a number that
     # appears here, never on one the model found in something it read.
     ctx["owner_text"] = str(message or "")[:4000]
+    # Whether this is the owner's own line typed in the app's page on this PC:
+    # only such a yes may decide an approval card, and only such a message
+    # saves household basics silently (services/core_memory_tools).
+    ctx["owner_surface"] = _owner_surface(message, ctx.get("owner_surface"), ctx)
     try:                         # the typed learning controls work with the chat router off, too: but only for a
         from agent_friday.core import _is_local_request   # page on this PC (a relay, a phone, a channel or a task is not)
         from flask import request as _flask_request
@@ -12669,6 +12719,9 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         return ctx
 
     if _is_negative(message):
+        # A no answers the card too: the question in chat and its card are one
+        # request, so declining one never leaves the other live on the screen.
+        _deny_pending_cards(session_id)
         _clear_pending(session_id)
         return ctx
 
@@ -12683,6 +12736,12 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
             return ctx
         newest = max(eligible, key=lambda kv: kv[1].get("seq") or 0)
         fp, entry = newest
+        if entry.get("approval_id") and ctx.get("owner_surface") is False:
+            # The question has a card, and this yes did not come from the
+            # owner's own page on this PC (a phone, a relay, voice, a script):
+            # it decides nothing. The card waits for the screen.
+            ctx["confirm_on_card"] = entry.get("approval_id")
+            return ctx
         with _PENDING_LOCK:
             live = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fp)
             if live is not None:
@@ -13413,6 +13472,13 @@ def _hook_confirmation_gate(ctx):
             _claimed = (_entry or {}).get("replay_claim")
             _granted = bool(_entry and _entry.get("granted")
                             and (not _claimed or _claimed == _replay.get("claim")))
+            _off_page = bool(_granted and _entry.get("approval_id")
+                             and (session_ctx or {}).get("owner_surface") is False)
+            if _off_page:
+                # Only the owner's own page on this PC decides a card from
+                # chat; any other surface leaves it for the screen.
+                _entry["granted"] = False
+                _granted = False
             if _granted:
                 _bucket.pop(_fp, None)
                 if not _bucket:
@@ -13427,6 +13493,13 @@ def _hook_confirmation_gate(ctx):
             if isinstance(getattr(ctx, "meta", None), dict):
                 ctx.meta["owner_decided"] = f"chat:{_fp}"
             return _hooks.ALLOW
+
+        if _off_page:
+            return _hooks.DENY(
+                f"[CONFIRMATION ON THE CARD] '{name}' was NOT executed. Its "
+                "approval card is waiting on the screen, and this reply did not "
+                "come from the owner's own page on this computer, so it cannot "
+                "decide it. Do not retry; tell the user to decide it on the card.")
 
         if _replay.get("fingerprint") == _fp or _claimed:
             return _hooks.DENY(

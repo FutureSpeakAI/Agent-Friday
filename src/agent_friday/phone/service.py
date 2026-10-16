@@ -598,9 +598,16 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
             if isinstance((rec.get("payload") or {}).get("public_query"), dict):
                 continue                    # a search card is sent only from its Send button, where its text shows
             code, salt = _new_code(), secrets.token_hex(8)
-            title = _gate_text((rec.get("title") or "an action")[:120])
-            body = ("Friday needs your approval: %s\nReply YES %s to approve or NO %s to "
-                    "deny. Details are in the app." % (title, code, code))
+            if rec.get("kind") in ap.PRIVATE_DETAIL_KINDS:
+                # The card's title repeats what the action carries (a path, an address, guests, a
+                # task's text): the text names only the tool, and the details stay in the app.
+                title = ap.notice_title(rec)[:120]
+                line = title
+            else:
+                title = _gate_text((rec.get("title") or "an action")[:120])
+                line = "Friday needs your approval: %s" % title
+            body = ("%s\nReply YES %s to approve or NO %s to "
+                    "deny. Details are in the app." % (line, code, code))
             try:
                 text_owner(body, reason="approval request")
                 from agent_friday.services import notice_registry as _nr
@@ -610,7 +617,8 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
                 break
             st["codes"][aid] = {"salt": salt, "hash": _hash_code(code, salt),
                                 "expires": rec.get("expires_at") or (now + 86400),
-                                "title": (rec.get("title") or "")[:120]}
+                                "title": (title if rec.get("kind") in ap.PRIVATE_DETAIL_KINDS
+                                          else (rec.get("title") or "")[:120])}
             sent += 1
         for aid in list(st["codes"]):                 # decided elsewhere, or expired
             if aid not in live_ids or now > st["codes"][aid]["expires"]:
