@@ -374,11 +374,24 @@ def _pin_routes(rec) -> list:
         from agent_friday.services import cloud_intent as _ci
         r = _ci.pinned_job_route(m)
         if r.route not in ("local", "cloud"):
-            raise HeldRun("held", "%s is held: %s. It runs again at its next scheduled time, "
-                          "and Run now works once the model is back." % (
-                              rec.get("name") or "This job", r.reason))
+            raise HeldRun("held", "%s is held: %s. %s" % (
+                rec.get("name") or "This job", r.reason, HELD_TEXT[_held_policy(rec)]))
         out.append((m, r))
     return out
+
+
+def _pins_ready(rec) -> bool:
+    """Can every model this job is pinned to answer now? Asked by the tick for a held run waiting to
+    retry; never moves the job to another model."""
+    pins = pinned_models(rec)
+    if not pins:
+        return False
+    try:
+        from agent_friday.services import cloud_intent as _ci
+        return all(_ci.pinned_job_route(m).route in ("local", "cloud") for m in pins)
+    except Exception as e:
+        _log.debug("pinned model check failed for %s: %s", (rec or {}).get("id"), e)
+        return False
 
 
 def schedule_view(rec) -> dict:
@@ -401,7 +414,12 @@ def schedule_view(rec) -> dict:
            "model_pinned": bool(pins)}
     if (rec or {}).get("source") != "builtin":
         policy = _missed_policy(rec)
-        out.update(missed=policy, missed_text=MISSED_TEXT[policy])
+        out.update(missed=policy, missed_text=MISSED_TEXT[policy],
+                   missed_own=(rec or {}).get("missed") in MISSED_POLICIES)
+        hp = _held_policy(rec)
+        out.update(on_held=hp, held_text=HELD_TEXT[hp],
+                   on_held_own=(rec or {}).get("on_held") in HELD_POLICIES,
+                   held_retry_pending=bool((rec or {}).get("held_retry")) and hp == "retry")
     return out
 
 
@@ -474,11 +492,14 @@ def _normalize_record(rec, *, source="user"):
         "updated": now,
     }
     if out["source"] != "builtin":
-        out["missed"] = rec.get("missed") if rec.get("missed") in MISSED_POLICIES else DEFAULT_MISSED
+        # A new job takes the owner's default (Settings > General > Scheduled jobs:
+        # schedules.missed_default / held_default) as its own choice, changeable on its card.
+        out["missed"] = rec["missed"] if rec.get("missed") in MISSED_POLICIES else _missed_policy({})
+        out["on_held"] = rec["on_held"] if rec.get("on_held") in HELD_POLICIES else _held_policy({})
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
               "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
-              "finish_notice", "slots_from", "missed_through"):
+              "finish_notice", "slots_from", "missed_through", "held_retry"):
         if k in rec:
             out[k] = rec[k]
     return out
@@ -515,12 +536,21 @@ def update_schedule(sid, patch) -> dict | None:
         if not cur:
             return None
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
-                   "retry", "timeout_seconds", "finish_notice", "missed"}
+                   "retry", "timeout_seconds", "finish_notice", "missed", "on_held"}
         before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
-                if k == "missed" and v not in MISSED_POLICIES:
-                    continue
+                if k in ("missed", "on_held"):
+                    # "default" (or null) puts the job back on the owner's default choice.
+                    if v in (None, "default"):
+                        cur.pop(k, None)
+                        if k == "on_held":
+                            cur.pop("held_retry", None)
+                        continue
+                    if v not in (MISSED_POLICIES if k == "missed" else HELD_POLICIES):
+                        continue
+                    if k == "on_held" and v == "wait":
+                        cur.pop("held_retry", None)
                 cur[k] = v
         changed_run_fields = before != _run_basis(cur)
         cur["updated"] = _time.time()
@@ -719,7 +749,8 @@ def _spec_weekdays(spec):
 # that passed while Friday was closed is still visible at the next start.
 #
 # A slot is MISSED when Friday first sees it more than MISSED_GRACE_S after
-# its time (closed, asleep, or busy). The owner's per-job choice (`missed`):
+# its time (closed, asleep, or busy). The owner's per-job choice (`missed`),
+# else their default (Settings: schedules.missed_default):
 #   run_once (default) - it runs ONCE at the next start, however many slots
 #                        passed, and its run says it ran late and why;
 #   skip               - the slot is recorded as missed in its history and the
@@ -746,9 +777,41 @@ def _calendar_rule(rec) -> bool:
             and kind in ("agent_prompt", "workflow"))
 
 
+#: A run held because the model the owner pinned the job to cannot answer
+#: (`_pin_routes`). The owner's per-job choice (`on_held`), else their default
+#: (Settings: schedules.held_default):
+#:   retry (default) - the tick checks the pinned model each minute and runs the
+#:                     held run ONCE as soon as it answers, visibly, recorded;
+#:   wait            - the run waits for the job's next scheduled time.
+#: Either way a pinned job never moves to another model.
+HELD_POLICIES = ("retry", "wait")
+DEFAULT_HELD = "retry"
+HELD_TEXT = {
+    "retry": "It runs once as soon as the model is back (and otherwise at its next scheduled time).",
+    "wait": "It runs again at its next scheduled time, and Run now works once the model is back.",
+}
+
+
 def _missed_policy(rec) -> str:
     p = (rec or {}).get("missed")
-    return p if p in MISSED_POLICIES else DEFAULT_MISSED
+    if p in MISSED_POLICIES:
+        return p
+    try:
+        from agent_friday.services import owner_choices as _oc
+        return _oc.missed_default()
+    except Exception:
+        return DEFAULT_MISSED
+
+
+def _held_policy(rec) -> str:
+    p = (rec or {}).get("on_held")
+    if p in HELD_POLICIES:
+        return p
+    try:
+        from agent_friday.services import owner_choices as _oc
+        return _oc.held_default()
+    except Exception:
+        return DEFAULT_HELD
 
 
 def _slot_basis(rec) -> float:
@@ -1137,6 +1200,13 @@ def _is_due_on_schedule(rec, now) -> bool:
     # normal trigger window or the daily mark.
     if rec.get("retry_pending"):
         return now.timestamp() >= (rec.get("not_before") or 0)
+
+    # A run held because its pinned model was unavailable runs ONCE as soon as
+    # that model answers again (the owner's `on_held` choice, default retry).
+    # Checked every tick; never moved to another model.
+    if rec.get("held_retry") and _held_policy(rec) == "retry" and _pins_ready(rec):
+        rec["_held_retry"] = dict(rec.get("held_retry") or {})
+        return True
 
     # A run that waited for the local seat is due again, the same day, as soon
     # as the seat is back. Polled at most once a minute (`not_before`).
@@ -2001,6 +2071,10 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             if rec.get("_missed_slot"):
                 summary = ("Ran late: its run on %s was missed while Friday was not running, and "
                            "this job runs a missed run once. " % _slot_words(rec["_missed_slot"])) + summary
+            if rec.get("_held_retry"):
+                summary = ("Ran when its pinned model was back: the run held on %s waited for it, and "
+                           "this job runs a held run once its model returns. "
+                           % _slot_words((rec["_held_retry"] or {}).get("since"))) + summary
             if catch_up:
                 summary = _late_note(catch_up, started) + (
                     " " + summary if summary else "")
@@ -2018,7 +2092,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                 err = summary
                 _patch_record(sid, last_status="failed", last_summary=summary,
                               retry_pending=False, retry_count=0, not_before=0,
-                              catch_up=None)
+                              catch_up=None, held_retry=None)
                 return
             if orb_id:
                 try:
@@ -2034,7 +2108,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             _mode = rec.get("notify", "on_complete")
             _patch_record(sid, last_status=status, last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0,
-                          catch_up=None)
+                          catch_up=None, held_retry=None)
             try:
                 from agent_friday.services.voice_engine import _notif_engine as _ne_ok
                 if _ne_ok:
@@ -2094,8 +2168,15 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             status, summary = e.status, str(e)
             outcome = e.status
             _log.info("schedule %s held (%s): %s", sid, status, summary)
+            # Held by its pinned model: with `retry` the tick runs it once when the model answers
+            # again (`_is_due_on_schedule`); the first hold's time is kept for the run's own words.
+            held_retry = None
+            if status == "held" and _held_policy(rec) == "retry" and pinned_models(rec):
+                held_retry = dict(rec.get("held_retry") or rec.get("_held_retry") or {}) or {
+                    "since": started, "reason": summary}
             _patch_record(sid, last_status=status, last_summary=summary,
-                          retry_pending=False, retry_count=0, not_before=0)
+                          retry_pending=False, retry_count=0, not_before=0,
+                          held_retry=held_retry)
             if rec.get("notify") == "status":
                 _notify_status(rec, "Held (%s): %s" % (status, summary))
             elif status == "held":
@@ -2130,7 +2211,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                 summary = err
                 _patch_record(sid, last_status="failed", last_summary=err,
                               retry_pending=False, retry_count=0, not_before=0,
-                              catch_up=None)
+                              catch_up=None, held_retry=None)
                 _notify_run(rec, "failed", err)
         finally:
             ended = _time.time()

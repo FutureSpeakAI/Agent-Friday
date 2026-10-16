@@ -155,6 +155,7 @@
   }
  ],
  "not_for_laya": [
+  {"action": "workflows.job_choices", "kind": "by_design", "reason": "What a job does with a missed or held run is the owner's choice on its card or in Settings; Friday does not change it."},
   {
    "action": "workflows.open_workflow",
    "kind": "gap",

@@ -757,11 +757,12 @@ CLAUDE_TOOLS = [
          "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."},
          "account_id": {"type": "string"}},
       "required": ["event_id"]}},
-    {"name": "delete_calendar_event", "description": "Delete one calendar event by id (find it first with find_calendar_events). The user is asked first, by name and time; nothing is deleted before their yes. Guests are not sent a cancellation. Say what was deleted.",
+    {"name": "delete_calendar_event", "description": "Delete one calendar event by id (find it first with find_calendar_events). The user is asked first, by name and time; nothing is deleted before their yes. Guests get a cancellation only with notify_guests. Say what was deleted and whether guests were told.",
      "input_schema": {"type": "object", "properties": {
          "event_id": {"type": "string"},
          "calendar_id": {"type": "string", "description": "Leave out for the main calendar."},
-         "account_id": {"type": "string"}},
+         "account_id": {"type": "string"},
+         "notify_guests": {"type": "boolean", "description": "Only if the user asked to tell the guests."}},
       "required": ["event_id"]}},
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
@@ -1777,8 +1778,21 @@ def _tool_delete_calendar_event(inp):
     if not eid:
         return "delete_calendar_event error: 'event_id' is required."
     res = cw.delete_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
-                          account_id=(inp.get("account_id") or "").strip() or None)
+                          account_id=(inp.get("account_id") or "").strip() or None,
+                          notify_guests=_notify_guests_arg(inp))
     return _calendar_write_summary(res, "delete that event")
+
+
+def _notify_guests_arg(inp):
+    """delete_calendar_event's `notify_guests`: the model's true/false when given, else the owner's default
+    (Settings: calendar_delete_notify_guests, off)."""
+    v = (inp or {}).get("notify_guests")
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str) and v.strip().lower() in ("true", "false"):
+        return v.strip().lower() == "true"
+    from agent_friday.services import calendar_write as cw
+    return cw.notify_guests_default()
 
 
 def _calendar_event_words(inp):
@@ -1794,7 +1808,10 @@ def _calendar_event_words(inp):
     b = got.get("before") if got.get("ok") else None
     if not b:
         return f"with id {_short_txt(eid, 40)} (it could not be read: {_short_txt(got.get('error') or 'unknown', 80)})"
-    guests = f", {b['guests']} guest(s), who are not told" if b.get("guests") else ""
+    # The card shows the "notify guests" box as it stands for this delete (ticked only when asked).
+    tell = _notify_guests_arg(inp)
+    guests = (f", {b['guests']} guest(s); [{'x' if tell else ' '}] notify guests: "
+              f"{'they are sent a cancellation' if tell else 'they are not told'}") if b.get("guests") else ""
     return f"“{_short_txt(b.get('title'))}” ({b.get('start') or 'no time'}{guests})"
 
 

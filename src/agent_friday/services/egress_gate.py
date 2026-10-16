@@ -49,6 +49,7 @@ only as a fallback for non-registry provider strings.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -799,6 +800,33 @@ def _gate_text(text: str, provider: str, field: str,
     rules the whole value would have been, a field that cannot be salvaged is
     still withheld, and non-JSON text keeps its previous behaviour exactly.
     """
+    # An email result under the cautious cloud consent: the money paragraphs the owner let go (a Send on
+    # their card, or a remembered thread or sender: services/cloud_release.py) pass as trusted here; the
+    # gate's every other rule still runs on them and on everything else.
+    mail = None
+    rel_tok = None
+    try:
+        from agent_friday.services import cloud_release as _cr
+        if _cr.looks_like_mail(text):
+            mail = _try_json(text)
+            rel = _cr.released(mail) if mail is not None else set()
+            if rel:
+                rel_tok = _RELEASED.set(frozenset(rel))
+    except Exception as e:
+        _dlog.debug("cloud release lookup skipped: %s", e)
+        mail = None
+    try:
+        return _gate_text_inner(text, provider, field, log_path, mail)
+    finally:
+        if rel_tok is not None:
+            _RELEASED.reset(rel_tok)
+
+
+#: Paragraphs the owner released to the cloud for the email result being gated (services/cloud_release).
+_RELEASED: contextvars.ContextVar = contextvars.ContextVar("egress_released", default=frozenset())
+
+
+def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> str:
     whole = _gate_text_span(text, provider, field, log_path)
     if whole == text:
         return whole                      # nothing withheld — no need to descend
@@ -818,6 +846,15 @@ def _gate_text(text: str, provider: str, field: str,
                 "sensitive; they stayed on this device: %s. Tell the owner which items (which message "
                 "or field) were withheld and why; they can be read on a local seat. Do not guess what "
                 "the withheld parts said." % (len(changed), shown))
+            if mail is not None:
+                # Money paragraphs: the owner is shown exactly that text and asked (no silent hold).
+                try:
+                    from agent_friday.services import cloud_release as _cr
+                    line = _cr.offer(parsed, gated, provider)
+                except Exception:
+                    line = ""
+                if line:
+                    gated["privacy_gate"] += " " + line
     try:
         return json.dumps(gated, default=str)
     except (TypeError, ValueError):
@@ -899,6 +936,10 @@ def _gate_text_span(text: str, provider: str, field: str,
             _log(provider, field, Tier.PUBLIC, "allow",
                  _origin_reason(f"provider-echo:{provider}"), log_path)
             return text
+    _released = _RELEASED.get()
+    if _released and _t_stripped in _released:
+        _log(provider, field, Tier.PUBLIC, "allow", "owner-released: you said Send on its card", log_path)
+        return text
     tier = _classify_cloud(text)
     if tier == Tier.PUBLIC:
         _log(provider, field, tier, "allow", "public-content", log_path)
@@ -922,6 +963,9 @@ def _gate_text_span(text: str, provider: str, field: str,
                 _p_origin = _PUBLIC_ORIGINS.get(_ps, "")
                 _p_echo = provider in _PROVIDER_ECHO.get(_ps, ())
                 _p_trusted = _ps in _TRUSTED_PARAS or _ps in _PUBLIC_PARAS or _p_echo
+            if not _p_trusted and _released and _ps in _released:
+                _p_trusted = True
+                _log(provider, field, Tier.PUBLIC, "allow", "owner-released: you said Send on its card", log_path)
             if _p_trusted:
                 gated.append(p)
                 trusted += 1
@@ -1799,6 +1843,22 @@ def seal_outbound(
 
     # ── §5.5 step 1: deterministic identifier scrub, unconditional ──
     _lk = pii_lookup if isinstance(pii_lookup, dict) else {}
+    # The scrub's own lookup, so a held email's sender can be named for "remember for this sender"
+    # (services/cloud_release.py); it never leaves this process.
+    try:
+        from agent_friday.services import cloud_release as _cr
+        _lk_tok = _cr.LOOKUP.set(_lk)
+    except Exception:
+        _cr, _lk_tok = None, None
+    try:
+        return _seal_steps(sealed, provider, log_path, _lk, _unrestricted)
+    finally:
+        if _lk_tok is not None:
+            _cr.LOOKUP.reset(_lk_tok)
+
+
+def _seal_steps(sealed, provider, log_path, _lk, _unrestricted):
+    """seal_outbound's scrub and gate steps (§5.5), on its copy of the payload."""
     try:
         for key in ("system", "messages", "prompt", "context"):
             if key in sealed and not _unrestricted:

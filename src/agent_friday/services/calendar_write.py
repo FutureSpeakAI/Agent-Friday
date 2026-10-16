@@ -504,29 +504,47 @@ def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None) 
     return {"ok": True, "id": ev.get("id") or eid, "account_id": aid, "before": _event_record(ev, cal)}
 
 
-def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None) -> dict:
-    """Delete one event. {ok, id, title, before:{...}} or {error}.
+def notify_guests_default() -> bool:
+    """Whether "notify guests" starts ticked when deleting an event (Settings:
+    calendar_delete_notify_guests, off unless the owner chose otherwise)."""
+    try:
+        from agent_friday.services import owner_choices as _oc
+        return _oc.calendar_delete_notify_guests()
+    except Exception:
+        return False
+
+
+def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None,
+                 notify_guests: bool | None = None) -> dict:
+    """Delete one event. {ok, id, title, guests_notified, before:{...}} or {error}.
 
     The event is read first: a delete that cannot say what it removed does not happen, and `before` keeps
     the title, time, place and guests for the record (Google keeps no undo the API can reach). Guests are
-    not sent a cancellation (Google's default for the API); the caller says so. Whether the delete may run
-    at all is decided before this is called: the delete_calendar_event tool is outward and asks first, and
-    the Calendar route is the owner's own click."""
+    told only when `notify_guests` is ticked (Google's sendUpdates=all: a cancellation email in the owner's
+    name); otherwise sendUpdates=none. None means the owner's default (`notify_guests_default`). Whether
+    the delete may run at all is decided before this is called: the delete_calendar_event tool is outward
+    and asks first, and the Calendar route is the owner's own click."""
     got = read_event(event_id, calendar_id=calendar_id, account_id=account_id)
     if not got.get("ok"):
         return got
+    tell = notify_guests_default() if notify_guests is None else bool(notify_guests)
     cal = got["before"]["calendar_id"]
     svc, err = _service(got["account_id"])
     if svc is None:
         return {"error": err}
     try:
-        svc.events().delete(calendarId=cal, eventId=got["id"]).execute()
+        svc.events().delete(calendarId=cal, eventId=got["id"],
+                            sendUpdates="all" if tell else "none").execute()
     except Exception as e:
         from agent_friday.user_errors import exception_text
         return {"error": exception_text(e, "could not delete the event: %s")}
     _drop_calendar_cache()
+    guests = int(got["before"].get("guests") or 0)
     return {"ok": True, "id": got["id"], "title": got["before"]["title"], "account_id": got["account_id"],
-            "calendar_id": cal, "guests_notified": False, "before": got["before"]}
+            "calendar_id": cal, "guests_notified": bool(tell and guests), "notify_guests": tell,
+            "guests_told": (("Its %d guest(s) were sent a cancellation." % guests) if tell and guests else
+                            ("Its %d guest(s) were not told." % guests) if guests else "It had no guests."),
+            "before": got["before"]}
 
 
 def update_event(event_id: str, *, title=None, start=None, end=None,

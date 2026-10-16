@@ -27,7 +27,7 @@ def home(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("routine,fmt", [("briefing", "solo"), ("front_page", "solo"),
-                                         ("editorial", "solo"), ("weekly", "duo")])
+                                         ("editorial", "solo"), ("weekly", "solo")])  # every show is one voice by default (owner decision); two hosts are the owner's choice
 def test_an_episode_from_a_routines_material_uses_that_routines_hosts(routine, fmt):
     out = json.loads(pt._tool_make_podcast({
         "sources": [{"kind": "news_run", "routine": routine, "run_id": "2031-03-12"}],

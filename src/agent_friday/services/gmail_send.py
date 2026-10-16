@@ -73,7 +73,10 @@ SUBJECT_TYPE = "email"
 # to the FIRST such dot keeps the check linear in the address length.
 _ADDR = re.compile(r"^[^@\s,;]+@[^@\s,;][^@\s,;.]*\.[^@\s,;]+$")
 
-#: After approval, how long a message waits for "Undo" before it goes.
+#: After approval, how long a message waits for "Undo" before it goes, when the
+#: owner approved it in person. A send nobody is watching (a scheduled job or a
+#: background task under a pre-approval) waits the owner's own window instead:
+#: `unattended_undo_seconds()` (Settings, 2 minutes by default, 10 s to 10 min).
 UNDO_SECONDS = 10
 #: A held message this late (Friday was off) is not sent; the owner is asked again.
 LATE_LIMIT_S = 15 * 60
@@ -427,7 +430,10 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
             ctx = _tool_context()
             _sg.record_use(grant, "send_email", tos + ccs + _addresses(bcc or []),
                            approval_id=appr.get("approval_id"), ctx=ctx)
-            row = hold(appr)
+            unattended = bool(ctx.get("schedule_id") or ctx.get("is_background_task"))
+            # Nobody is watching an unattended send: it waits the owner's own Undo window
+            # (Settings: unattended_send_undo_s, 2 minutes unless they chose otherwise).
+            row = hold(appr, undo_seconds=unattended_undo_seconds() if unattended else None)
             # EVERY covered send tells the owner at once, from chat, voice or
             # a background run alike: no card was raised, so this notice,
             # with its Undo, is how they see it while it can be taken back.
@@ -715,14 +721,36 @@ def _ts(iso):
     return datetime.fromisoformat(iso).timestamp()
 
 
-def hold(record: dict, now: float | None = None) -> dict:
-    """Queue an approved message: it goes after the undo window, or at its
-    scheduled time, whichever is later."""
+def unattended_undo_seconds() -> int:
+    """The Undo window for a send nobody is watching (a scheduled job or background task under a
+    pre-approval): the owner's setting, 10 s to 10 min (owner_choices.unattended_undo_seconds)."""
+    try:
+        from agent_friday.services import owner_choices as _oc
+        return _oc.unattended_undo_seconds()
+    except Exception:
+        return 120
+
+
+def _words_for_seconds(s: int) -> str:
+    s = int(s)
+    if s < 60:
+        return "%d seconds" % s
+    m, r = divmod(s, 60)
+    out = "%d minute%s" % (m, "" if m == 1 else "s")
+    return out + (" %d seconds" % r if r else "")
+
+
+def hold(record: dict, now: float | None = None, undo_seconds: int | None = None) -> dict:
+    """Queue an approved message: it goes after the undo window (UNDO_SECONDS,
+    or `undo_seconds` for an unattended send), or at its scheduled time,
+    whichever is later."""
     now = _time.time() if now is None else now
     payload = record.get("payload") or {}
     extras = payload.get("extras") or {}
-    due = max(now + UNDO_SECONDS, _ts(extras.get("send_at")))
+    window = UNDO_SECONDS if undo_seconds is None else int(undo_seconds)
+    due = max(now + window, _ts(extras.get("send_at")))
     row = {"approval_id": record.get("approval_id"), "due": due, "held_at": now,
+           "undo_seconds": window,
            "scheduled": bool(extras.get("send_at")),
            "to": payload.get("to"), "subject": payload.get("subject"),
            "from": payload.get("from_email"),
@@ -788,17 +816,22 @@ def _notify_pre_approved_hold(appr: dict, row: dict, grant_id: str, ctx=None) ->
     from datetime import datetime
     payload = appr.get("payload") or {}
     aid = appr.get("approval_id")
-    when = datetime.fromtimestamp(row.get("due") or _time.time()).strftime("%a %H:%M")
+    due = row.get("due") or _time.time()
+    when = datetime.fromtimestamp(due).strftime("%a %H:%M:%S")
+    left = max(0, int(round(due - _time.time())))
     _notify("Email going out under your pre-approval",
-            "%s is sending your message to %s (\"%s\") at %s. No card was "
-            "needed: you pre-approved these recipients (%s). Undo it from the Approvals "
-            "card before then, or revoke the pre-approval in Settings."
+            "%s is sending your message to %s (\"%s\") at %s: you have %s to undo it. No card was "
+            "needed: you pre-approved these recipients (%s). Press Undo here or on the Approvals "
+            "card before then, or revoke the pre-approval in Settings. (The undo window for "
+            "unattended sends is yours to set: Settings > Privacy & Data > Pre-approved sends.)"
             % (_pre_approved_who(ctx),
-               ", ".join(payload.get("to") or []), payload.get("subject") or "", when, grant_id),
+               ", ".join(payload.get("to") or []), payload.get("subject") or "", when,
+               _words_for_seconds(left), grant_id),
             priority="medium", kind="info", key="preapproved:%s" % aid,
             target={"workspace": "system", "tab": "approvals"},
             actions=[{"label": "Undo", "workspace": "system", "tab": "approvals",
-                      "method": "POST", "url": "/api/mail/held/%s/cancel" % aid}])
+                      "method": "POST", "url": "/api/mail/held/%s/cancel" % aid}],
+            meta={"undo_until": due, "undo_seconds": row.get("undo_seconds")})
 
 
 def cancel_for_grant(grant_id: str) -> list:
@@ -990,12 +1023,13 @@ def _on_decision(record: dict) -> None:
 
 
 def _notify(title: str, body: str, *, priority: str = "medium",
-            kind: str = "info", actions=None, target=None, key: str = "") -> None:
+            kind: str = "info", actions=None, target=None, key: str = "", meta=None) -> None:
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=title, body=body, priority=priority, kind=kind,
                 source="gmail_send", emitter="E43", actions=actions, target=target,
-                dedupe_key="gmail_send:%s" % key if key else "gmail_send:%s:%s" % (kind, priority))
+                dedupe_key="gmail_send:%s" % key if key else "gmail_send:%s:%s" % (kind, priority),
+                **({"meta": meta} if meta else {}))
     except Exception as e:
         _log.warning("could not notify (%s): %s", title, e)
 

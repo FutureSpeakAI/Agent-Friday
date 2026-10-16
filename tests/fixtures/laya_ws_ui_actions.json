@@ -30,7 +30,8 @@
     "group": "settings",
     "label": "briefing prefs / local city / section order",
     "audit_status": "M"
-   }
+   },
+   {"id": "news.trust_scoring", "group": "settings", "label": "how trust scores move: learning rate, Boost and Ban amounts", "audit_status": "new"}
   ],
   "messages": [
    {"id": "messages.read_inbox", "group": "read", "label": "read inbox / unread", "audit_status": "L"},
@@ -248,6 +249,7 @@
     "audit_status": "M"
    },
    {"id": "workflows.schedule", "group": "settings", "label": "schedule / notifications", "audit_status": "M"},
+   {"id": "workflows.job_choices", "group": "settings", "label": "a job's own choice for a run missed while closed and a run held by its pinned model", "audit_status": "new"},
    {
     "id": "workflows.open_workflow",
     "group": "navigate",
@@ -274,7 +276,8 @@
    {"id": "system.needs_you", "group": "read", "label": "Needs you and Updates: what waits for a decision, and today's digest", "audit_status": "new"},
    {"id": "system.quiet", "group": "settings", "label": "Quiet until morning (Needs you panel)", "audit_status": "new"},
    {"id": "system.batch_decide", "group": "organize", "label": "approve or decline a batch of approvals", "audit_status": "new"},
-   {"id": "system.preapproved_sends", "group": "settings", "label": "see and revoke pre-approved sends on the Approvals card, and undo a message waiting to go under one", "audit_status": "new"}
+   {"id": "system.preapproved_sends", "group": "settings", "label": "see and revoke pre-approved sends on the Approvals card, and undo a message waiting to go under one", "audit_status": "new"},
+   {"id": "system.cloud_release_card", "group": "organize", "label": "money paragraphs in an email: Send to the cloud model or Keep on this PC, remember for the thread or sender", "audit_status": "new"}
   ],
   "settings": [
    {"id": "settings.open_section", "group": "navigate", "label": "open section", "audit_status": "M"},
@@ -300,7 +303,8 @@
    {"id": "settings.laya_refit", "group": "settings", "label": "what Laya learned: Learn now (a visible Local AI queue job)", "audit_status": "new"},
    {"id": "settings.laya_loosen", "group": "settings", "label": "what Laya learned: let her act on a lower score (a card; owner only)", "audit_status": "new"},
    {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"},
-   {"id": "settings.preapproved_sends", "group": "settings", "label": "pre-approve sends to named recipients, approve exactly the needs a skill declares (refused if it changed), approve a changed job or skill again, let voice use pre-approvals, revoke", "audit_status": "new"}
+   {"id": "settings.preapproved_sends", "group": "settings", "label": "pre-approve sends to named recipients, approve exactly the needs a skill declares (refused if it changed), approve a changed job or skill again, let voice use pre-approvals, revoke", "audit_status": "new"},
+   {"id": "settings.owner_choices", "group": "settings", "label": "the owner's standing choices: money paragraphs in email (and Forget), missed and held runs, unattended undo window, trust scoring, co-host name, dock by asking, notify guests", "audit_status": "new"}
   ]
  }
 }

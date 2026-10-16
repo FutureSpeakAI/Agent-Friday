@@ -296,6 +296,9 @@ _ALL = [
     # job, closed by its next run that goes.
     _e("SJ1", "services/scheduler.py:_notify_run:held", "scheduled_held", NEEDS_YOU,
        "sched-held:{schedule_id}", source="scheduler", pk="scheduled_task"),
+    # A dock change made the moment the owner asked (no card), with its Undo.
+    _e("OC1", "services/setting_proposals.py:_offer_undo", "setting_changed", UPDATES,
+       "dock-change:{change_id}", source="settings", pk="info"),
     # ── cloud work orders (services/work_orders): local text only ────────────
     _e("WO1", "services/work_orders.py:enforce_switch", "work_order_switched_off", NEEDS_YOU,
        "work_orders:switch_off", source="work_orders", pk="warning"),

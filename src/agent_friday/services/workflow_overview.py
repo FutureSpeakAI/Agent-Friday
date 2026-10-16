@@ -503,7 +503,11 @@ def _job_view(rec, slug=None):
         return {"model": v["model"], "model_pinned": v["model_pinned"]}
     return {"schedule_status": rec.get("status"), "status_reason": rec.get("status_reason") or "",
             "model": rec.get("model") or "", "model_pinned": bool(rec.get("model_pinned")),
-            "missed_text": rec.get("missed_text") or ""}
+            "missed_text": rec.get("missed_text") or "",
+            # The job's own choices, changeable on its card (PATCH /api/schedules/<id>).
+            "missed": rec.get("missed") or "", "on_held": rec.get("on_held") or "",
+            "held_text": rec.get("held_text") or "",
+            "held_retry_pending": bool(rec.get("held_retry_pending"))}
 
 
 def _pending_approvals():

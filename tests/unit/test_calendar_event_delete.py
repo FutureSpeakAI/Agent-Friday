@@ -132,7 +132,7 @@ def test_the_tool_is_outward_with_the_ring_of_its_sibling_and_is_registered_like
     assert agent.TOOL_RINGS["delete_calendar_event"] == agent.TOOL_RINGS["update_calendar_event"] == 2
     assert "delete_calendar_event" in agent.CLAUDE_TOOL_HANDLERS
     schema = next(t for t in agent.CLAUDE_TOOLS if t["name"] == "delete_calendar_event")
-    assert set(schema["input_schema"]["properties"]) == {"event_id", "calendar_id", "account_id"}
+    assert set(schema["input_schema"]["properties"]) == {"event_id", "calendar_id", "account_id", "notify_guests"}
     groups = json.loads((ROOT / "src/agent_friday/resources/tool_groups.json").read_text(encoding="utf-8"))
     assert groups["tools"]["delete_calendar_event"] == groups["tools"]["update_calendar_event"] == ["calendar"]
     from agent_friday.routes import goals

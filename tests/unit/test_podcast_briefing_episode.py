@@ -186,7 +186,8 @@ def test_front_page_and_editorial_are_solo_weekly_two_hosts_and_any_other_one_vo
     assert pe.format_for("briefing") == "solo" and pe.format_for("front_page") == "solo"
     assert pe.format_for("editorial") == "solo"
     # Any other episode is one voice unless the owner asks for two (field install report, Part 1 #9).
-    assert pe.format_for("weekly") == "duo" and pe.format_for("") == "solo"
+    # The weekly too, since the owner chose one voice by default for every show (two hosts are asked for).
+    assert pe.format_for("weekly") == "solo" and pe.format_for("") == "solo"
 
 
 def test_a_solo_writer_is_told_so_and_a_speaker_b_line_is_friday_s(home, monkeypatch, speaker):

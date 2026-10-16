@@ -128,7 +128,7 @@
    "id": "calendar.delete_event",
    "action": "calendar.delete_event",
    "group": "organize",
-   "ui": {"control": "delete event / meeting"},
+   "ui": {"control": "delete event / meeting (Delete... on an opened event asks, with notify guests unticked by default)"},
    "tool": "delete_calendar_event",
    "also_tools": ["find_calendar_events"],
    "gate": {"class": "outward", "ring": 2, "card": "required"},
