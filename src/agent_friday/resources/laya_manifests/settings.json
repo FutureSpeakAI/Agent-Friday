@@ -118,6 +118,15 @@
    "entry": "agent_friday.services.channels.manager:handle_incoming"
   },
   {
+   "id": "settings.memory_review",
+   "trigger": "idle",
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "memory_review",
+   "activity_label": "Memory review",
+   "entry": "agent_friday.services.memory_review:review"
+  },
+  {
    "id": "settings.laya_personal_refit",
    "trigger": "idle",
    "also": ["schedule", "button"],
