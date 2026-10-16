@@ -5,7 +5,7 @@
  "group": "system",
  "held": null,
  "spoken_words": {"router_extra": []},
- "nav": {"key": "tab", "keys": ["tab", "section", "row"], "sections": null},
+ "nav": {"key": "tab", "keys": ["tab", "section", "row", "connect"], "sections": null},
  "objects": [],
  "verbs": [
   {

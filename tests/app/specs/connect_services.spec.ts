@@ -43,7 +43,13 @@ test('the screen lists every category, preselects nothing and is honest on a fre
   expect(await panel.locator('.sc-pill.connected').count()).toBe(0);
   await expect(panel.locator('.sc-rec').first()).toHaveText('Recommended');
   await shot(page, info, '01-connect-your-services-overview');
-  await panel.screenshot({ path: info.outputPath('01b-connect-your-services-full.png') });
+  // One frame per category: the scrolling pane clips an element screenshot.
+  const heads = panel.locator('.sc-cat-title');
+  for (let i = 0; i < await heads.count(); i++) {
+    await heads.nth(i).evaluate(e => e.scrollIntoView({ block: 'start' }));
+    await page.waitForTimeout(150);
+    await shot(page, info, '01-category-' + (i + 1));
+  }
 });
 
 test('a card shows access, steps, cost, a verified link and a live test', async ({ page }, info) => {
