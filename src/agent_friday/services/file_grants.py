@@ -1124,6 +1124,9 @@ _ALWAYS_RECURSIVE = re.compile(r"\b(?:rg|ag|ack|git\s+grep)\b", re.I)
 # Code that walks a folder itself (run_sandboxed). Deep: every folder under
 # it; shallow: the folder's own files only.
 _DEEP_WALKERS = re.compile(r"\b(?:rglob|os\.walk|walk|mailbox)\b|\*\*")
+# .NET folder enumeration (GetFiles, EnumerateFiles, SearchOption.AllDirectories):
+# taken as deep, since the search option may sit anywhere in the call.
+_DEEP_APIS = re.compile(r"alldirectories|\b(?:enumerate|get)(?:files|directories|filesystementries)\b", re.I)
 _SHALLOW_WALKERS = re.compile(r"\b(?:glob|listdir|iterdir|scandir)\b")
 # Shell commands that list or copy a folder's files, which a pipe then reads
 # (Get-ChildItem dir | Import-Csv): shallow, deep with a recursion flag.
@@ -1134,20 +1137,27 @@ _HOMEISH = re.compile(r"Path\.home\(|expanduser\(|environ|getenv\(|USERPROFILE|A
 
 
 def _recursive_flag(text: str) -> bool:
-    """-r / -R / -rn / --recursive / -Recurse (or a prefix of it) / -Depth, or
-    the /s (/si, /sn ...), /e and /mir of findstr, dir, robocopy and xcopy,
-    judged token by token (no pattern over the whole command)."""
+    """-r / -R / -rn / --recursive / -Recurse (or a prefix of it) / -Depth,
+    with or without a value after a colon (-Recurse:$true, -Depth:9), a
+    splatted Recurse (@{Recurse=$true}), or the /s (/si, /sn ...), /e and
+    /mir of findstr, dir, robocopy and xcopy, alone or run together
+    (/s/b), judged token by token (no pattern over the whole command)."""
     slash = bool(_SLASH_RECURSE.search(text))
+    if "@{" in text and "recurse" in text.lower():
+        return True
     for tok in text.split():
         low = tok.lower()
-        if low in ("--recursive", "-recursive", "-depth") or (len(low) >= 4 and "-recurse".startswith(low)):
+        name = low.split(":", 1)[0] if low.startswith("-") else low
+        if name in ("--recursive", "-recursive", "-depth") or (len(name) >= 4 and "-recurse".startswith(name)):
             return True
         if 2 <= len(tok) <= 5 and tok[0] == "-" and tok[1:].isalpha() and "r" in low[1:]:
             if low not in ("-raw",):
                 return True
-        if slash and 2 <= len(tok) <= 6 and tok[0] == "/" and tok[1:].isalpha() and (
-                "s" in low[1:] or low in ("/e", "/mir")):
-            return True
+        if slash and 2 <= len(tok) <= 24 and tok[0] == "/":
+            parts = [x for x in low.split("/") if x]
+            if parts and all(x.isalpha() and len(x) <= 5 for x in parts) and any(
+                    "s" in x or x in ("e", "mir") for x in parts):
+                return True
     return False
 
 
@@ -1176,7 +1186,7 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
     and run_sandboxed run in an empty scratch folder) a relative name names
     nothing and is not judged."""
     t = str(text or "")
-    deep_walk = bool(_DEEP_WALKERS.search(t))
+    deep_walk = bool(_DEEP_WALKERS.search(t) or _DEEP_APIS.search(t))
     shallow_walk = bool(_SHALLOW_WALKERS.search(t))
     shell_walk = bool(_SHELL_WALKERS.search(t))
     recursive = _recursive_flag(t)

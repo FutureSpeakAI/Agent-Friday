@@ -933,3 +933,16 @@ def test_a_folder_inside_a_quoted_program_is_walked(cards, tmp_path):
     out = fg.raw_refusal_for_command(cmd)
     assert out and stmt.name in out
 
+
+def test_a_deep_walk_is_not_downgraded_by_how_the_flag_is_spelled(cards, tmp_path):
+    m = tmp_path / "m"
+    (m / "deep").mkdir(parents=True)
+    (m / "deep" / "Chase_Activity.csv").write_text("x", encoding="utf-8")
+    for cmd in ("dir %s /s/b" % m,
+                "Get-ChildItem %s -Recurse:$true | Import-Csv" % m,
+                "Get-ChildItem %s -Depth:9 | Import-Csv" % m,
+                "$p = @{Path='%s'; Recurse=$true}; Get-ChildItem @p | Import-Csv" % m,
+                "[IO.Directory]::GetFiles('%s','*','AllDirectories') | %% { gc $_ }" % m,
+                "[IO.Directory]::EnumerateFiles('%s') | %% { gc $_ }" % m):
+        assert fg.raw_refusal_for_command(cmd), cmd
+    assert fg.raw_refusal_for_command("dir %s /b" % m) is None, "a bare listing reads the folder's own files only"
