@@ -59,6 +59,22 @@
    "point_verb": "open"
   },
   {
+   "id": "calendar.switch_view",
+   "action": "calendar.switch_view",
+   "group": "navigate",
+   "ui": {"control": "Day / Week / Month switch"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["show me my calendar by month", "switch to the week view", "open the day view of my calendar"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["laya_router_eval.json#show me my calendar by month", "laya_router_eval.json#can you switch to the week view", "laya_router_eval.json#open the day view of my calendar"]
+  },
+  {
    "id": "calendar.select_events",
    "action": "calendar.select_events",
    "group": "select",

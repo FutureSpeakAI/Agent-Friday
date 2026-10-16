@@ -2,6 +2,9 @@
   "_note": "Held-out eval for services/laya_router. Written as spoken requests, independently of the router's seed sentences (which must never be copied from here). Each case: the decision, the tool, and argument checks. args_contains: every listed word appears (case-insensitive) in that argument; args_equal: exact value. No real person, account or file.",
   "cases": [
     {"text": "What's on my calendar this afternoon?", "decision": "tool", "tool": "query_calendar"},
+    {"text": "show me my calendar by month", "decision": "tool", "tool": "navigate_to", "args_equal": {"workspace": "calendar", "section": "month"}},
+    {"text": "can you switch to the week view", "decision": "tool", "tool": "navigate_to", "args_equal": {"workspace": "calendar", "section": "week"}},
+    {"text": "open the day view of my calendar", "decision": "tool", "tool": "navigate_to", "args_equal": {"workspace": "calendar", "section": "day"}},
     {"text": "do I have anything tomorrow morning", "decision": "tool", "tool": "query_calendar"},
     {"text": "when's my next meeting", "decision": "tool", "tool": "query_calendar"},
     {"text": "am I free at three today?", "decision": "tool", "tool": "query_calendar"},
