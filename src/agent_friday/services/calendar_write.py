@@ -34,6 +34,17 @@ from agent_friday.services.calendar_engine import (
 FULL_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 
 
+def _cal(calendar_id) -> str:
+    """The calendar a write lands on: a Google calendar id, "primary" when none is
+    named, "" for something that cannot be one (refused, never redirected)."""
+    if calendar_id is None or str(calendar_id).strip() == "":
+        return "primary"
+    cid = str(calendar_id).strip()
+    if len(cid) > 400 or any(c in cid for c in "\r\n/\\"):
+        return ""
+    return cid
+
+
 def write_ready() -> tuple:
     """(ready, reason). Does the STORED token hold the write scope?
 
@@ -392,10 +403,13 @@ def _gate_calendar_field(text: str, field: str) -> tuple[str, str]:
 
 def create_event(*, title: str, start: str, end: str = "", location: str = "",
                  description: str = "", attendees=None,
-                 account_id=None) -> dict:
+                 account_id=None, calendar_id: str = "primary") -> dict:
     """Create an event. `start`/`end` are ISO 8601 datetimes.
 
-    `account_id` names the calendar; see `resolve_write_account`."""
+    `account_id` names the account; see `resolve_write_account`. `calendar_id`
+    names one of that account's calendars (its primary one by default)."""
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
     ready, why = write_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
@@ -429,18 +443,21 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
     if attendees:
         body["attendees"] = [{"email": a} for a in attendees if a]
     try:
-        ev = svc.events().insert(calendarId="primary", body=body).execute()
+        ev = svc.events().insert(calendarId=_cal(calendar_id), body=body).execute()
     except Exception as e:
         return {"error": "could not create the event: %s" % e}
     _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
-            "account_id": aid, "html_link": ev.get("htmlLink"),
+            "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
             "start": start, "end": end}
 
 
-def get_event(event_id: str, *, account_id=None) -> dict:
+def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary") -> dict:
     """One event as the planner needs it: its title, when it starts and ends, its time zone, whether it is an
-    all-day entry and how many guests it has. Reads only."""
+    all-day entry, how many guests it has, and whether this calendar's copy may change its time
+    (`organizer_self`: the calendar it is read from organises it; `guests_can_modify`). Reads only."""
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
     ready, why = write_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
@@ -451,14 +468,16 @@ def get_event(event_id: str, *, account_id=None) -> dict:
     if svc is None:
         return {"error": err}
     try:
-        ev = svc.events().get(calendarId="primary", eventId=event_id).execute()
+        ev = svc.events().get(calendarId=_cal(calendar_id), eventId=event_id).execute()
     except Exception as e:
         return {"error": "could not read event %s: %s" % (event_id, e)}
     st, en = ev.get("start") or {}, ev.get("end") or {}
     return {"ok": True, "id": ev.get("id") or event_id, "title": ev.get("summary") or "(no title)",
             "start": st.get("dateTime") or "", "end": en.get("dateTime") or "",
             "tz": st.get("timeZone") or "", "all_day": not st.get("dateTime"),
-            "guests": len(ev.get("attendees") or []), "account_id": aid}
+            "guests": len(ev.get("attendees") or []), "account_id": aid, "calendar_id": _cal(calendar_id),
+            "organizer_self": bool((ev.get("organizer") or {}).get("self")) or not ev.get("organizer"),
+            "guests_can_modify": bool(ev.get("guestsCanModify"))}
 
 
 def _event_record(ev: dict, calendar_id: str) -> dict:
@@ -549,7 +568,8 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
 
 def update_event(event_id: str, *, title=None, start=None, end=None,
                  location=None, description=None,
-                 allow_clearing: bool = False, account_id=None) -> dict:
+                 allow_clearing: bool = False, account_id=None,
+                 calendar_id: str = "primary") -> dict:
     """Update one event. CLEARING a field requires `allow_clearing=True`.
 
     The asymmetry is the design: setting a value is recoverable from the
@@ -559,6 +579,8 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
     `account_id` names the calendar the event lives on; see
     `resolve_write_account`.
     """
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
     ready, why = write_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
@@ -569,7 +591,7 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
     if svc is None:
         return {"error": err}
     try:
-        before = svc.events().get(calendarId="primary",
+        before = svc.events().get(calendarId=_cal(calendar_id),
                                   eventId=event_id).execute()
     except Exception as e:
         return {"error": "could not read event %s: %s" % (event_id, e)}
@@ -593,20 +615,24 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
                           "allow_clearing=True if erasing is intended."
                           % ", ".join(would_clear)),
                 "needs_confirmation": True, "fields": would_clear}
+    # A patch replaces the whole start/end object: keep the event's own time zone, or a move (and its
+    # Undo) would leave the event in the calendar's zone instead of the one it was made in.
     if start:
-        patch["start"] = {"dateTime": start}
+        patch["start"] = dict({"dateTime": start}, **({"timeZone": (before.get("start") or {})["timeZone"]}
+                                                       if (before.get("start") or {}).get("timeZone") else {}))
     if end:
-        patch["end"] = {"dateTime": end}
+        patch["end"] = dict({"dateTime": end}, **({"timeZone": (before.get("end") or {})["timeZone"]}
+                                                   if (before.get("end") or {}).get("timeZone") else {}))
     if not patch:
         return {"ok": True, "unchanged": True, "id": event_id}
     try:
-        ev = svc.events().patch(calendarId="primary", eventId=event_id,
+        ev = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
                                 body=patch).execute()
     except Exception as e:
         return {"error": "could not update the event: %s" % e}
     _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
-            "account_id": aid, "set": patch,
+            "account_id": aid, "calendar_id": _cal(calendar_id), "set": patch,
             "before": {"summary": before.get("summary"),
                        "location": before.get("location") or "",
                        "description": (before.get("description") or "")[:300]}}
