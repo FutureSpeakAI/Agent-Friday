@@ -15758,6 +15758,13 @@ function ChatSurface(props) {
     else if (id === 'shorter') sendChat(src + '\n\n(Keep the answer short.)', { skipForecast: true, alreadyShown: true });
     else sendChat(src, { skipForecast: true, alreadyShown: true });
   };
+  /* A failed send is retried from its own bubble with its own turn id: the
+     server recognises the id and keeps one copy of the message. */
+  const resendFailed = msg => {
+    if (!msg || !msg.text) return;
+    setChatMsgs(p => p.map(x => x === msg ? { ...x, send_failed: null } : x));
+    sendChat(msg.text, { skipForecast: true, alreadyShown: true, turnId: msg.turn_id });
+  };
   const newChatRequest = React.useRef(null);
   const newChatOwner = React.useRef({alive:true, id:convId, revision:0});
   const [newChatState, setNewChatState] = React.useState({pending:false, error:'', revision:0});
@@ -16155,7 +16162,25 @@ function ChatSurface(props) {
     },
     title: c.recommended ? 'Recommended' : undefined,
     onClick: () => chooseLocalFallback(m, c.id)
-  }, c.label, c.recommended ? ' (recommended)' : '')))), /*#__PURE__*/React.createElement("div", {
+  }, c.label, c.recommended ? ' (recommended)' : ''))), m.role === 'user' && m.send_failed && /*#__PURE__*/React.createElement("div", {
+    "data-send-failed": m.send_failed,
+    style: {
+      marginTop: 6,
+      fontSize: 10,
+      color: '#f59e0b',
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      flexWrap: 'wrap'
+    }
+  }, m.send_failed === 'not_received' ? 'Not received' : fridayName() + " didn't finish replying", /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    onClick: () => resendFailed(m)
+  }, m.send_failed === 'not_received' ? 'Resend' : 'Retry'))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#888',
@@ -17110,7 +17135,7 @@ function ConversationWindow({
       // frames.
       conversation_id: cid,
       workspace: 'chat',
-      turn_id: 'turn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
+      turn_id: opts.turnId || ('turn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8))
     };
     if (opts.routeMode) body.route_mode = opts.routeMode;
     if (opts.privacyOverride) body.privacy_layer3_override = true;
@@ -17158,7 +17183,7 @@ function ConversationWindow({
       });
       fridayRunActions(d.actions);
     } catch (e) {
-      mine(() => setMsgs(p => [...p, { role: 'friday', text: '[Connection error]', time: stamp() }]));
+      mine(() => setMsgs(p => fridayMarkFailedSend(p, m, (e && e.turnFailure) || 'unfinished', body.turn_id)));
     }
     mine(() => setLoading(false));
   };
@@ -41091,8 +41116,42 @@ function fridayInvalidateModelCatalog() {
 
    `onTrace` hears the turn's reasoning-trace id, which the stream sends in
    its own frame before the first delta, so the reply's Reasoning section
-   can spool while the reply is still being written. */
+   can spool while the reply is still being written.
+
+   A failure carries `turnFailure`: 'not_received' when the server never
+   accepted the message (no `started` frame, network error, 5xx), 'unfinished'
+   when it accepted it and no reply came back. A send that was not received is
+   retried once, with the same turn_id, after a short wait and a health probe;
+   the server stores a message under that id, so a retry never stores it
+   twice. */
+function fridayTurnFailure(kind, message) {
+  const err = new Error(message || (kind === 'not_received'
+    ? 'The message did not reach the server.'
+    : fridayName() + ' did not finish replying.'));
+  err.turnFailure = kind;
+  return err;
+}
+async function fridayServerUp() {
+  try {
+    const r = await apiFetch('/api/health');
+    return !!(r && r.ok);
+  } catch (_) {
+    return false;
+  }
+}
 async function fridayChatTurn(body, onDelta, onTrace) {
+  try {
+    return await fridayChatTurnOnce(body, onDelta, onTrace);
+  } catch (e) {
+    if (!e || e.turnFailure !== 'not_received') throw e;
+    for (let i = 0; i < 2; i++) {
+      await new Promise(res => setTimeout(res, 2500));
+      if (await fridayServerUp()) return await fridayChatTurnOnce(body, onDelta, onTrace);
+    }
+    throw e;
+  }
+}
+async function fridayChatTurnOnce(body, onDelta, onTrace) {
   const SEP = String.fromCharCode(10) + String.fromCharCode(10);
   let got = false;          // any BYTES arrived (a delta, or a keepalive)
   let started = false;      // the server said the turn is underway
@@ -41158,16 +41217,29 @@ async function fridayChatTurn(body, onDelta, onTrace) {
         const recovered = await fridayResumeTurn(turnId);
         if (recovered) return recovered;
       } catch (_) { /* fall through to the honest error */ }
-      throw new Error((fridayName() + ' is still working on this — the connection dropped, ')
-                      + 'not the turn. It will appear when it finishes.');
+      throw fridayTurnFailure('unfinished', (fridayName() + ' did not finish replying — the ')
+                              + 'connection dropped after the message was received.');
     }
-    if (got) throw e;          // half a turn already happened — do not repeat it
-    const r = await apiFetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    return await r.json();
+    // half a turn may already have happened — the owner decides whether to run it again
+    if (got) throw fridayTurnFailure('unfinished', e && e.message);
+    // The stream never accepted the turn: the blocking endpoint once (an older
+    // server has no stream). If that cannot be reached either, it was not received.
+    let r;
+    try {
+      r = await apiFetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    } catch (e2) {
+      throw fridayTurnFailure('not_received', e2 && e2.message);
+    }
+    if (!r.ok && r.status >= 500) throw fridayTurnFailure('not_received', 'HTTP ' + r.status);
+    try {
+      return await r.json();
+    } catch (e3) {
+      throw fridayTurnFailure('not_received', e3 && e3.message);
+    }
   }
 }
 
@@ -41210,6 +41282,16 @@ async function fridayResumeTurn(turnId, totalMs) {
     }
   } catch (_) { /* fall through */ }
   return null;
+}
+
+/* Mark the owner's own bubble for a send that failed, instead of adding a
+   reply that is not one. The bubble keeps its turn id, so Resend / Retry
+   reuses it and the server does not store the message twice. */
+function fridayMarkFailedSend(msgs, text, kind, turnId) {
+  const i = msgs.map(x => x.role === 'user' && x.text === text).lastIndexOf(true);
+  if (i < 0) return [...msgs, { role: 'user', text: text, send_failed: kind, turn_id: turnId,
+                                time: new Date().toLocaleTimeString() }];
+  return msgs.map((x, j) => j === i ? { ...x, send_failed: kind, turn_id: turnId } : x);
 }
 
 function useModelCatalog() {
@@ -70815,8 +70897,8 @@ function App() {
     /* Minted here, sent with the turn, and the handle the liveness poll above
        uses. Without it the client can only guess, which is how a stopwatch
        ended up making this decision. */
-    inFlightTurn.current = 'turn-' + Date.now().toString(36) + '-'
-      + Math.random().toString(36).slice(2, 8);
+    inFlightTurn.current = opts.turnId || ('turn-' + Date.now().toString(36) + '-'
+      + Math.random().toString(36).slice(2, 8));
     setTurnStatus(null);
     setTurnBusy(true);
     try {
@@ -70943,11 +71025,8 @@ function App() {
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);
     } catch (e) {
-      setTurnMsgs(p => [...p, {
-        role: 'friday',
-        text: '[Connection error]',
-        time: new Date().toLocaleTimeString()
-      }]);
+      const sentTurn = inFlightTurn.current;
+      setTurnMsgs(p => fridayMarkFailedSend(p, m, (e && e.turnFailure) || 'unfinished', sentTurn));
       if (opts.expectedConversationId) throw e;
     } finally {
       setTurnBusy(false);
