@@ -126,6 +126,9 @@ OUTWARD_TOOLS = frozenset({
     # author's to make with a review.
     "local_model_status",
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
+    # Deleting an event removes it from a calendar other people may see, and Google keeps no undo the
+    # API reaches: it asks every time, by the event's title and time (agent._taint_title).
+    "delete_calendar_event",
     # Scheduling (services/scheduling.py). book_slot sends invitations to
     # other people. hold_slots writes only to the owner's own calendar and
     # invites nobody, but a hold shows as busy to everyone who can see that

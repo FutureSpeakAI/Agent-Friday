@@ -461,6 +461,74 @@ def get_event(event_id: str, *, account_id=None) -> dict:
             "guests": len(ev.get("attendees") or []), "account_id": aid}
 
 
+def _event_record(ev: dict, calendar_id: str) -> dict:
+    """What an event was, kept with its delete so the record says what went: title, when, where, guests."""
+    st, en = ev.get("start") or {}, ev.get("end") or {}
+    return {"title": ev.get("summary") or "(no title)",
+            "start": st.get("dateTime") or st.get("date") or "",
+            "end": en.get("dateTime") or en.get("date") or "",
+            "all_day": not st.get("dateTime"),
+            "location": ev.get("location") or "",
+            "description": (ev.get("description") or "")[:300],
+            "guests": len(ev.get("attendees") or []),
+            "recurring_event_id": ev.get("recurringEventId") or "",
+            "calendar_id": calendar_id,
+            "html_link": ev.get("htmlLink") or ""}
+
+
+def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None) -> dict:
+    """{ok, id, account_id, before:{...}} for one event, or {error}. Reads only: the delete card names the event
+    from this, so the owner approves "the dentist on Tuesday at 10", never an opaque id."""
+    eid = str(event_id or "").strip()
+    if not eid:
+        return {"error": "an event id is required"}
+    cal = str(calendar_id or "").strip() or "primary"
+    ready, why = write_ready()
+    if not ready:
+        return {"error": why, "needs_reconnect": True}
+    aid, acct_err = resolve_write_account(account_id)
+    if acct_err:
+        return {"error": acct_err, "needs_account": True}
+    svc, err = _service(aid)
+    if svc is None:
+        return {"error": err}
+    try:
+        ev = svc.events().get(calendarId=cal, eventId=eid).execute()
+    except Exception as e:
+        from agent_friday.user_errors import exception_text
+        status = getattr(getattr(e, "resp", None), "status", None)
+        return {"error": exception_text(e, "could not read event %s: %%s" % eid.replace("%", "%%")),
+                "not_found": str(status) in ("404", "410")}
+    if (ev or {}).get("status") == "cancelled":
+        return {"error": "that event is already deleted", "gone": True}
+    return {"ok": True, "id": ev.get("id") or eid, "account_id": aid, "before": _event_record(ev, cal)}
+
+
+def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None) -> dict:
+    """Delete one event. {ok, id, title, before:{...}} or {error}.
+
+    The event is read first: a delete that cannot say what it removed does not happen, and `before` keeps
+    the title, time, place and guests for the record (Google keeps no undo the API can reach). Guests are
+    not sent a cancellation (Google's default for the API); the caller says so. Whether the delete may run
+    at all is decided before this is called: the delete_calendar_event tool is outward and asks first, and
+    the Calendar route is the owner's own click."""
+    got = read_event(event_id, calendar_id=calendar_id, account_id=account_id)
+    if not got.get("ok"):
+        return got
+    cal = got["before"]["calendar_id"]
+    svc, err = _service(got["account_id"])
+    if svc is None:
+        return {"error": err}
+    try:
+        svc.events().delete(calendarId=cal, eventId=got["id"]).execute()
+    except Exception as e:
+        from agent_friday.user_errors import exception_text
+        return {"error": exception_text(e, "could not delete the event: %s")}
+    _drop_calendar_cache()
+    return {"ok": True, "id": got["id"], "title": got["before"]["title"], "account_id": got["account_id"],
+            "calendar_id": cal, "guests_notified": False, "before": got["before"]}
+
+
 def update_event(event_id: str, *, title=None, start=None, end=None,
                  location=None, description=None,
                  allow_clearing: bool = False, account_id=None) -> dict:

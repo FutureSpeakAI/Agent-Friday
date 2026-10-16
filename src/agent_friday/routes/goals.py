@@ -407,6 +407,7 @@ def list_outward_tools():
 _GRANT_LABELS = {
     "create_calendar_event": "Create calendar events and send invites",
     "update_calendar_event": "Change calendar events",
+    "delete_calendar_event": "Delete calendar events",
     "annotate_calendar_events": "Add notes to calendar events",
     "content_create_post": "Schedule a new social post",
     "content_schedule_post": "Schedule an existing social post",

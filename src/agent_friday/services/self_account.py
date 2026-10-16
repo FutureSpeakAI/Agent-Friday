@@ -143,9 +143,9 @@ def capabilities() -> list:
         caps.append({
             "name": "calendar (edit events)",
             "available": bool(ok),
-            "how": ("add/update events and annotate a whole recurring series "
+            "how": ("add/update/delete events and annotate a whole recurring series "
                     "— annotate_calendar_events, create_calendar_event, "
-                    "update_calendar_event") if ok else None,
+                    "update_calendar_event, delete_calendar_event (asks first)") if ok else None,
             "note": None if ok else
                     ("NOT available — %s. Say this plainly if asked to change a "
                      "calendar entry; never substitute a map, directions, or "
