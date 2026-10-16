@@ -327,6 +327,8 @@ def append(cid: str, message: dict, *, settings: dict | None = None, before_writ
         message.setdefault("ts", time.time())
         with open(_dir(cid) / "messages.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps(message, ensure_ascii=False) + "\n")
+        # Searchable from now on (services/conversation_fts cleans keys first).
+        _fts("add", cid, message)
 
         conv["last_active_at"] = time.time()
         if message.get("role") == "user":
@@ -399,7 +401,54 @@ def rewrite(cid: str, fn) -> int:
                 lines.append(json.dumps(out, ensure_ascii=False))
         if changed:
             _atomic_write(p, "\n".join(lines) + "\n")
+            _fts("resync", cid)
         return changed
+
+
+def delete_lines(cid: str, match, on_match=None) -> int:
+    """Remove every stored message `match(message)` accepts, atomically.
+    `on_match` sees each removed message first. Returns how many went. The
+    caller (services/conversation_fts.delete_message) removes them from every
+    index too."""
+    try:
+        p = _dir(cid) / "messages.jsonl"
+    except ValueError:
+        return 0
+    with _LOCK:
+        if not p.exists():
+            return 0
+        keep, gone = [], 0
+        with open(p, "r", encoding="utf-8") as fh:
+            for line in fh:
+                raw = line.rstrip("\n")
+                if not raw.strip():
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    keep.append(raw)
+                    continue
+                if match(msg):
+                    gone += 1
+                    if on_match is not None:
+                        on_match(msg)
+                    continue
+                keep.append(raw)
+        if gone:
+            _atomic_write(p, "".join(k + "\n" for k in keep))
+        return gone
+
+
+def _fts(op: str, cid: str, message: dict | None = None) -> None:
+    """Keep the conversation search index in step; never fails the store."""
+    try:
+        from agent_friday.services import conversation_fts
+        if op == "add":
+            conversation_fts.add(cid, message or {})
+        else:
+            conversation_fts.resync(cid)
+    except Exception:
+        pass
 
 
 def clear(cid: str, include_pinned: bool = False) -> int:
@@ -421,6 +470,7 @@ def clear(cid: str, include_pinned: bool = False) -> int:
         conv.setdefault("totals", {})["turns"] = sum(
             1 for m in keep if m.get("role") == "user")
         save(conv)
+        _fts("resync", cid)
         return max(0, removed)
 
 
@@ -435,6 +485,7 @@ def prune(cid: str, keep: int = _PRUNE_KEEP) -> int:
         kept = pinned + tail
         body = "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in kept)
         _atomic_write(_dir(cid) / "messages.jsonl", body)
+        _fts("resync", cid)
         return len(msgs) - len(kept)
 
 

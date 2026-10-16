@@ -11881,6 +11881,14 @@ try:
 except Exception as _cmte:  # never let optional deps break the agent import
     print(f"  [CORE-MEMORY] registration skipped: {_cmte}")
 
+# Full-text search over every conversation, in text chat (voice has its own
+# handler of the same name). See services/conversation_search_tool.py.
+try:
+    from agent_friday.services import conversation_search_tool as _conv_search_tool
+    _conv_search_tool.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _cste:  # never let optional deps break the agent import
+    print(f"  [CONVERSATION-SEARCH] registration skipped: {_cste}")
+
 # Can voice run locally, measure it, and the cloud voice choice (local_voice_readiness):
 # status, measure, ask "just this call, or always?" and take the answers (just this call,
 # always, switch back, keep cloud) on the owner's own words; the spoken side of

@@ -280,6 +280,23 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
     return {"ok": True, "added": added, "queued": queued}
 
 
+def forget_text(text: str) -> int:
+    """A message the owner deleted leaves the review buffers too: no later
+    review reads it. Returns how many buffered exchanges were dropped."""
+    want = " ".join(str(text or "").split())
+    if not want:
+        return 0
+    dropped = 0
+    with _LOCK:
+        for key, buf in _BUFFERS.items():
+            keep = [ex for ex in buf if want not in (" ".join(ex.get("user", "").split()),
+                                                      " ".join(ex.get("friday", "").split()))]
+            dropped += len(buf) - len(keep)
+            if len(keep) != len(buf):
+                _BUFFERS[key] = deque(keep, maxlen=WINDOW)
+    return dropped
+
+
 def _reset_for_tests() -> None:
     with _LOCK:
         _BUFFERS.clear()

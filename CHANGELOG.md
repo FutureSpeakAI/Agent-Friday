@@ -34,6 +34,17 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   Keep. It never uses a cloud model, shows in the Local AI queue like any
   other job, and can be turned off on the Memory card panel.
 
+- **Search every conversation, and delete a message everywhere.** Friday
+  keeps a full-text index of everything you have typed or said to her, on
+  this PC, and can search it in chat and in voice ("what did we decide about
+  the trip?"); it finds words, word forms and parts of names, and shows real
+  excerpts with dates. Keys and passwords you pasted are withheld before
+  anything is indexed, and nothing said off the record is there. Settings >
+  Privacy & Data > Search your conversations lets you search it yourself and
+  delete a message from its conversation and from every index at once. A
+  cloud model is only shown matches from conversations it already took part
+  in.
+
 ### Changed
 
 - **Friday does not save the same thing twice, or re-learn what she just
