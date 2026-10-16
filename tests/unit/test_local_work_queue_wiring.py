@@ -438,7 +438,7 @@ def test_queue_status_is_a_read_only_voice_and_text_tool():
         said = ag._tool_queue_status({})
     finally:
         ag._CURRENT_PROVIDER.reset(tok)
-    assert said in ("Nothing is waiting for the local AI.",) or "queued" in said or "Running" in said
+    assert said in ("Nothing is waiting for the local AI.",) or "queued" in said or "running" in said.lower()
 
 
 def test_both_local_transports_pass_the_choke_point():
