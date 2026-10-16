@@ -87,9 +87,86 @@ def tokens(text: str) -> tuple:
         out.extend(w.strip(_TOKEN_EDGES) for w in _QUOTED.sub(" ", t).split())
 
     t = str(text or "")
-    walk(t, 0)
-    out.extend(m.rstrip(".") for m in _PATHISH.findall(t))
+    texts = [t] + decoded_texts(t)
+    for one in texts:
+        walk(one, 0)
+        out.extend(m.rstrip(".") for m in _PATHISH.findall(one))
     return out, quoted
+
+
+def decoded_texts(text: str) -> list:
+    """The commands hidden in base64 inside `text` (-EncodedCommand,
+    FromBase64String), decoded as credential_paths decodes them."""
+    try:
+        from agent_friday.services import credential_paths
+        return list(credential_paths._decoded_command_texts(str(text or "")))
+    except Exception:
+        return []
+
+
+_POWERSHELL = re.compile(r"\b(?:powershell|pwsh)(?:\.exe)?\b", re.I)
+
+
+def undecodable_encoded(text: str) -> str | None:
+    """The argument of a PowerShell -EncodedCommand (-e, -ec, -enc ...) that
+    does not decode to text, else None: what it runs cannot be checked."""
+    import base64
+    t = str(text or "")
+    if not _POWERSHELL.search(t):
+        return None
+    words = t.split()
+    for i, w in enumerate(words[:-1]):
+        if w[:1] not in ("-", "/"):
+            continue
+        name = w[1:].lower()
+        if not (name == "ec" or (name[:1] == "e" and "encodedcommand".startswith(name))):
+            continue
+        arg = words[i + 1].strip("\"'")
+        try:
+            blob = base64.b64decode(arg + "=" * (-len(arg) % 4), validate=True)
+            text_ = blob.decode("utf-16-le")
+            if text_ and (text_.isprintable() or "\n" in text_):
+                continue
+        except Exception:
+            pass
+        return arg[:40]
+    return None
+
+
+# A Windows short (8.3) name: "CHASE_~1.CSV", "INBOX~1.MBO", "DOWNLO~1".
+_SHORT_NAME = re.compile(r"(?:^|[\\/])[^\\/~\s]{1,8}~\d{1,6}(?:\.[^\\/.\s]{0,3})?(?=$|[\\/])")
+# \\?\C:\x and \\.\C:\x: the local path itself.
+_UNC_DEVICE = re.compile(r"^\\\\[?.]\\([A-Za-z]:(?:\\.*)?)$", re.S)
+# \\localhost\C$\x, \\127.0.0.1\C$\x (also behind \\?\UNC\): this PC's own drive.
+_UNC_LOOPBACK = re.compile(r"^\\\\(?:[?.]\\UNC\\)?(?:localhost|127\.0\.0\.1|\[?::1\]?)\\([A-Za-z])\$(\\.*)?$",
+                           re.I | re.S)
+
+
+def local_of_unc(tok: str) -> str | None:
+    """The local path a \\\\?\\, \\\\.\\ or loopback admin-share path names, else
+    None (a network or device path, which is never touched to look)."""
+    t = str(tok).replace("/", "\\")
+    m = _UNC_DEVICE.match(t)
+    if m:
+        return m.group(1)
+    m = _UNC_LOOPBACK.match(t)
+    if m:
+        return "%s:%s" % (m.group(1), m.group(2) or "\\")
+    return None
+
+
+def long_form(p: Path, tok: str) -> tuple:
+    """(path, label) with a short (8.3) name spelled out, judged by the real
+    name; (None, tok) for a short name that cannot be resolved."""
+    if not _SHORT_NAME.search(str(p)):
+        return p, tok
+    try:
+        if p.exists():
+            r = p.resolve()
+            return r, str(r)
+    except OSError:
+        pass
+    return None, tok
 
 
 #: How many files one pattern ("~/Downloads/*.csv") is expanded to, to judge it.
@@ -116,6 +193,9 @@ def named_in(text: str, cwd=None) -> list:
     import glob as _glob
     pieces, quoted = tokens(text)
     out, seen = [], set()
+    blob = undecodable_encoded(text)
+    if blob:
+        out.append(("-EncodedCommand " + blob, "undecodable", None))
     for tok in pieces:
         tok = tok.strip()
         if not tok or tok in seen or len(tok) > 400:
@@ -123,13 +203,26 @@ def named_in(text: str, cwd=None) -> list:
         seen.add(tok)
         if "://" in tok or "(" in tok or "\x00" in tok:
             continue
+        src = tok
         if tok.replace("/", "\\").startswith("\\\\"):
-            continue                     # a network or device path is never touched to look
+            src = local_of_unc(tok)
+            if not src:
+                continue                 # a network or device path is never touched to look
         try:
-            p = Path(expand(tok))
+            p = Path(expand(src))
             if cwd and not p.is_absolute():
                 p = Path(cwd) / p
             pathy = "/" in tok or "\\" in tok or tok.startswith(("~", "$", "%"))
+            if pathy and "*" not in tok and "?" not in tok:
+                p, label = long_form(p, tok)
+                if p is None:
+                    out.append((tok, "short_name", None))     # a short name that hides the real one
+                    continue
+                if label != tok:
+                    kind = kind_of(p)
+                    if kind:
+                        out.append((label, kind, p if p.is_file() else None))
+                    continue
             globby = "*" in tok or "?" in tok
             if globby and sum(1 for part in p.parts[:-1] if "*" in part or "?" in part) > 1:
                 out.append((tok, "too_many", None))          # a pattern over many folders: not walked

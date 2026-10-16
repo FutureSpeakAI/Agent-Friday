@@ -946,3 +946,75 @@ def test_a_deep_walk_is_not_downgraded_by_how_the_flag_is_spelled(cards, tmp_pat
                 "[IO.Directory]::EnumerateFiles('%s') | %% { gc $_ }" % m):
         assert fg.raw_refusal_for_command(cmd), cmd
     assert fg.raw_refusal_for_command("dir %s /b" % m) is None, "a bare listing reads the folder's own files only"
+
+
+# ── critic re-read (encoded commands, short names, forfiles, UNC spellings) ──
+
+def _encoded(cmd: str) -> str:
+    import base64
+    return base64.b64encode(cmd.encode("utf-16-le")).decode()
+
+
+def test_an_encoded_powershell_command_is_judged_by_what_it_runs(cards, tmp_path):
+    from agent_friday.services import raw_records as rr
+    stmt, _inbox = _records(tmp_path)
+    cmd = "powershell -NoProfile -EncodedCommand %s" % _encoded("Get-Content '%s'" % stmt)
+    assert [k for _l, k, _p in rr.named_in(cmd)] == ["finance"]
+    out = fg.raw_refusal_for_command(cmd)
+    assert out and stmt.name in out
+    assert fg.raw_refusal_for_command("pwsh -enc %s" % _encoded("Get-Date")) is None
+
+
+def test_an_encoded_command_that_does_not_decode_is_not_run(cards):
+    for cmd in ("powershell -EncodedCommand %%%%notbase64%%%%", "pwsh -ec QUJD!!", "powershell -e ////"):
+        out = fg.raw_refusal_for_command(cmd)
+        assert out and "encoded command" in out, cmd
+    assert fg.raw_refusal_for_command("grep -e foo notes.md") is None, "only PowerShell's -e is a command"
+
+
+def _short_name(p):
+    import ctypes
+    buf = ctypes.create_unicode_buffer(1024)
+    n = ctypes.windll.kernel32.GetShortPathNameW(str(p), buf, 1024)
+    short = buf.value if n else ""
+    from pathlib import Path
+    if not short or Path(short).name.lower() == Path(p).name.lower():
+        pytest.skip("8.3 short names are turned off on this volume")
+    return short
+
+
+def test_a_short_8_3_name_is_judged_by_the_real_name(cards, tmp_path):
+    import sys
+    if sys.platform != "win32":
+        pytest.skip("8.3 short names exist only on Windows")
+    from pathlib import Path as _P
+    stmt, inbox = _records(tmp_path)
+    long_stmt = stmt.with_name("Chase_statement_2026_october.csv")
+    stmt.rename(long_stmt)
+    long_box = inbox.with_name("Inbox archive 2026.mbox")
+    inbox.rename(long_box)
+    for real in (long_stmt, long_box):
+        short = _short_name(real)
+        assert "~" in _P(short).name
+        out = fg.raw_refusal_for_command("type %s" % short)
+        assert out and real.name in out, short
+    assert fg.raw_refusal_for_command("type %s" % (tmp_path / "Downloads" / "GONE_~1.CSV")), \
+        "a short name that resolves to nothing is refused"
+    assert fg.raw_refusal_for_command("git diff HEAD~1 -- notes.md") is None
+
+
+def test_device_and_loopback_spellings_are_judged_as_this_pcs_folders(cards, tmp_path):
+    stmt, _inbox = _records(tmp_path)
+    drive, rest = str(stmt.parent)[0], str(stmt.parent)[2:]
+    # No drive colon ("C$" in place of "C:"), so only the mapping can judge them.
+    for host in ("localhost", "127.0.0.1"):
+        spelled = "\\\\%s\\%s$%s\\%s" % (host, drive, rest, stmt.name)
+        out = fg.raw_refusal_for_command("type %s" % spelled)
+        assert out and stmt.name in out, spelled
+    out = fg.raw_refusal_for_command(r"Get-ChildItem \\fileserver\share\finance -Recurse | Import-Csv")
+    assert out and "another computer" in out
+    assert fg.raw_refusal_for_command(r"net use \\fileserver\share") is None, "naming a share is not walking it"
+    from agent_friday.services import raw_records as rr
+    assert rr.local_of_unc(r"\\?\C:\x\a.csv") == r"C:\x\a.csv"
+    assert rr.local_of_unc(r"\\localhost\C$\x") == r"C:\x"
+    assert rr.local_of_unc(r"\\fileserver\share\x") is None
