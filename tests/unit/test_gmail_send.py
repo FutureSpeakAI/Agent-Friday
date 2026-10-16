@@ -403,9 +403,10 @@ def test_no_agent_tool_can_deliver_a_message():
 
 
 def test_draft_email_tool_queues_and_says_it_did_not_send():
+    """With send=true; without it, draft_email saves a Gmail draft (test_gmail_draft_save.py)."""
     from agent_friday.services import agent
     out = json.loads(agent.CLAUDE_TOOL_HANDLERS["draft_email"]({
-        "to": "someone@example.com", "subject": "Hi", "body": "Text."}))
+        "to": "someone@example.com", "subject": "Hi", "body": "Text.", "send": True}))
     assert out["sent"] is False and out["queued"] is True
     assert SENT == []
     assert approvals.get_approval(out["approval_id"])["status"] == "pending"

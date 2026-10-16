@@ -16,7 +16,9 @@ Per call it:
      has decided it: a chat yes in an interactive conversation (the existing
      confirmation flow), an approval card, or -- for scheduled and background
      work -- a pre-approved grant that names the tool, is scoped to that job
-     and expires;
+     and expires; and, for a send, the owner's standing pre-approval of its
+     recipients (governance/send_grants.py: named recipients, optionally
+     one job or one skill, logged, revocable);
   4. writes a signed receipt of the decision to ~/.friday/decision-bom.jsonl.
 
 It fails closed. If the cLaws check fails, the classifier errors, the
@@ -118,7 +120,9 @@ def repin_claws() -> str:
 #: Friday's own tools that act outside the conversation: other people, money,
 #: accounts, publishing, code execution, or no undo.
 OUTWARD_TOOLS = frozenset({
-    "draft_email",                  # its own card is the gate (SELF_GATED)
+    # draft_email is judged by argument (BY_ARGUMENT, classify): saving a
+    # draft is an own-mailbox write; send=true is outward and its own card
+    # is the gate (SELF_GATED).
     # Decided, not yet reviewed for internal: each waits for a card, as an
     # unclassified tool does. notifications can also mute and clear the
     # owner's cards, so a turn steered by something it read could silence an
@@ -126,6 +130,9 @@ OUTWARD_TOOLS = frozenset({
     # author's to make with a review.
     "local_model_status",
     "create_calendar_event", "update_calendar_event", "annotate_calendar_events",
+    # Deleting an event removes it from a calendar other people may see, and Google keeps no undo the
+    # API reaches: it asks every time, by the event's title and time (agent._taint_title).
+    "delete_calendar_event",
     # Scheduling (services/scheduling.py). book_slot sends invitations to
     # other people. hold_slots writes only to the owner's own calendar and
     # invites nobody, but a hold shows as busy to everyone who can see that
@@ -172,7 +179,8 @@ OUTWARD_TOOLS = frozenset({
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
-#: action itself (draft_email only queues; gmail_send sends on approval).
+#: action itself (draft_email with send=true only queues; gmail_send sends on
+#: approval).
 SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         "career_update_tracker", "publish_artifact", "workspace_swap",
                         "site_action", "domain_action",
@@ -250,6 +258,9 @@ INTERNAL_TOOLS = frozenset({
     "local_voice_readiness",
     # a setting change holds itself for the owner's Yes on its own card (services/setting_proposals)
     "set_setting",
+    # This chat's seat, or one task on the local model: raises the owner's card
+    # and changes nothing; the card's hook acts on the Yes (services/seat_handoff).
+    "switch_seat",
     # The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show the
     # preview beside it, enter or leave build mode. The owner's own screen and
     # Friday's own records; nothing reaches anyone else.
@@ -308,6 +319,9 @@ INTERNAL_TOOLS = frozenset({
     # and self-gated: one card per task, services/codebase_tasks.)
     "codebase_engine",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
+    # The core memory card (services/core_memory): local, undoable, shown to
+    # the owner line by line. A tainted call is a card (taint memory_write).
+    "update_core_memory",
     "personality_check_sycophancy", "generate_image", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
     "create_workflow", "run_workflow", "workflow_status", "creative_project",
@@ -370,6 +384,8 @@ INTERNAL_TOOLS = frozenset({
     # hold marker for that series and no attendees, and nobody is notified,
     # so it undoes Friday's own earlier work and reaches no one.
     "find_free_slots", "release_holds",
+    # check_plan_travel is arithmetic on the stops it is given: no network, no write.
+    "check_plan_travel",
     "list_pdf_fields",              # reads a form's fields
     # Relationship memory: reads of the local timeline, and a local reminder
     # that is never sent to the person it is about.
@@ -420,7 +436,15 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # undoable step; changing a folder the user pointed at
                          # is judged as any write outside Friday's output is;
                          # with no codebase in scope, outward.
-                         "codebase_edit", "codebase_undo", "codebase_read", "codebase_understand"})
+                         "codebase_edit", "codebase_undo", "codebase_read", "codebase_understand",
+                         # By what the scheduled job will do when it fires: creating
+                         # or resuming a schedule for a job that sends, posts, buys or
+                         # deletes is outward; the rest is a timetable (services/schedule_tools).
+                         "schedule_job",
+                         # By whether it sends: saving a draft into the owner's
+                         # own Gmail is an own-mailbox write (no card, receipted);
+                         # send=true is outward and raises its own card.
+                         "draft_email"})
 
 #: Tools whose outward case is decided on a card even in an interactive chat,
 #: never by a yes/no question. generate_video and generate_music are outward
@@ -689,6 +713,17 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
     owner named in this conversation is theirs to send.
     """
     a = args or {}
+    if tool_name in ("workflow_action", "create_workflow", "schedule_job"):
+        # Changing a job the owner pre-approved sends for is the owner's
+        # decision, not the model's: a card (governance/send_grants). Any
+        # other workflow or schedule change is judged below as before.
+        try:
+            from agent_friday.governance import send_grants as _sg
+            touched = _sg.edit_touches_granted_job(tool_name, a)
+        except Exception as e:
+            touched = "the pre-approved job check could not run (%s)" % e
+        if touched:
+            return OUTWARD, touched
     if tool_name == "open_path":
         # An allow-list, not a deny-list: documents, pictures, recordings and
         # folders open; anything that could run code waits for a decision.
@@ -796,6 +831,16 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
             return _ia.classify_undo(a, (ctx or {}).get("conversation_id"))
         except Exception as e:
             return OUTWARD, f"the change could not be classified ({e})"
+    if tool_name == "schedule_job":
+        try:
+            from agent_friday.services import schedule_tools as _st
+            return _st.classify(a)
+        except Exception as e:
+            return OUTWARD, f"the schedule could not be classified ({e})"
+    if tool_name == "draft_email":
+        if _own_mailbox_draft(tool_name, a):
+            return INTERNAL, OWN_MAILBOX_WHY
+        return OUTWARD, "it asks to send an email to other people"
     if tool_name == "content_create_post":
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"
@@ -824,6 +869,24 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
             return OUTWARD, "a connector tool that is not a read"
         return _connector_read(tool_name, a)
     return OUTWARD, "an unknown tool is treated as outward"
+
+
+#: Why a draft save is internal, in the receipt.
+OWN_MAILBOX_WHY = ("an own-mailbox write: it saves a draft in the owner's own Gmail "
+                   "and sends nothing to anyone")
+
+
+def _own_mailbox_draft(tool_name: str, args) -> bool:
+    """draft_email that saves (no send=true): a write to the owner's own
+    mailbox. A draft reaches nobody, so it needs no card, whatever the
+    recipients' provenance; sending it is a separate, carded request."""
+    if tool_name != "draft_email":
+        return False
+    try:
+        from agent_friday.services.gmail_send import wants_send
+        return not wants_send(args or {})
+    except Exception:
+        return False
 
 
 def _outward_reads_policy() -> str:
@@ -1113,8 +1176,18 @@ def _interactive(ctx: dict) -> bool:
 
 
 def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] = None,
-              *, tainted: bool = False) -> Verdict:
+              *, tainted: bool = False, clean: bool = False,
+              grant_tainted: Optional[bool] = None) -> Verdict:
     """Decide whether this action may run now. Never raises.
+
+    `tainted`: a detail came from outside content badly enough to need a card.
+    `clean`: the provenance check found nothing at all from outside content in
+    the call, and nothing was read from outside recently in the turn or task.
+    Only a clean call may use a pre-approved send (governance/send_grants);
+    it defaults to False, so a caller that does not know never unlocks one.
+    `grant_tainted`: `tainted`, for the pre-approved send only; the checkpoint
+    clears it when every flag came from a skill procedure the owner
+    pre-approved, unchanged. None means `tainted`.
 
     allow    run it
     confirm  outward, in an interactive chat, nothing from outside content:
@@ -1133,13 +1206,14 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         # A check that could not run holds the action; not even a grant
         # overrides that, because nobody knows what the action is.
         v = (Verdict("deny", klass, f"held: {failed}") if failed
-             else _decide(tool_name, klass, why, ctx, tainted))
+             else _decide(tool_name, klass, why, ctx, tainted, args, clean,
+                          tainted if grant_tainted is None else grant_tainted))
     except Exception as e:
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
         _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
-                  "reason": v.reason, "tainted": tainted,
+                  "reason": v.reason, "tainted": tainted, "clean": clean,
                   "args_hash": hashlib.sha256(json.dumps(args or {}, sort_keys=True,
                                                          default=str).encode()).hexdigest(),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
@@ -1196,10 +1270,26 @@ def _turn_id():
         return None
 
 
-def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
+def _send_grant(tool_name, args, ctx) -> Optional[dict]:
+    """The owner's standing pre-approval covering this send (every recipient,
+    this job or skill), or None (governance/send_grants.py). Never raises."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return _sg.covering_tool(tool_name, args or {}, ctx)
+    except Exception as e:
+        _log.warning("send-grant check failed, so the send asks: %s", e)
+        return None
+
+
+def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
+            grant_tainted=None) -> Verdict:
     if klass == "forbidden":
         return Verdict("deny", klass, f"not allowed: {why}")
     if klass == INTERNAL:
+        if tainted and _own_mailbox_draft(tool_name, args):
+            # A recipient read in an email is the normal case for a reply. The
+            # draft reaches nobody; the send that could is asked separately.
+            return Verdict("allow", klass, why + " (some details came from content read)")
         return Verdict("card" if tainted else "allow", klass, why)
     if klass == OBSERVE:
         # A read at a connected service: runs unasked, receipted as observe.
@@ -1209,10 +1299,40 @@ def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
     ok, integrity = verify_claws()
     if not ok:
         return Verdict("deny", klass, f"held: cLaws integrity check failed -- {integrity}")
+    # A send the owner pre-approved (named recipients; a job's or skill's
+    # sends to them). Its id becomes the owner's decision behind the call
+    # (DECIDED), which the sending handler re-verifies for the exact message
+    # before it skips the card. Only for a CLEAN call: nothing in it came from
+    # outside content and nothing from outside content was read recently in
+    # this turn or task. "Not tainted" is not enough: a body or subject
+    # written from an email only ever reaches "note", never "ask".
+    # Then two more conditions on the send itself (send_grants.use_refusal):
+    # a spoken request uses no pre-approval unless the owner turned that on,
+    # and the subject and body must screen as TIER_1 (nothing personal or
+    # sensitive) by the sensitivity classifier the egress gate uses.
+    withheld = {}
+    sg = _send_grant(tool_name, args, ctx)
+    if sg is not None:
+        try:
+            from agent_friday.governance import send_grants as _sg
+            if not (clean and not (tainted if grant_tainted is None else grant_tainted)):
+                # Named by kind, in plain words: "This chat read an outside email, so ..."
+                refusal = _sg.outside_content_why(ctx)
+            else:
+                refusal = _sg.use_refusal(tool_name, args or {}, ctx)
+            if not refusal:
+                return Verdict("allow", klass, f"pre-approved send {sg['grant_id']}", grant=sg)
+            _sg.note_withheld(sg, tool_name, ctx, why=refusal)
+            withheld = {"grant_withheld": sg["grant_id"], "withheld_why": refusal}
+        except Exception as e:
+            _log.warning("could not record a withheld pre-approval: %s", e)
+            withheld = {"grant_withheld": sg.get("grant_id"),
+                        "withheld_why": "the pre-approval check could not finish (%s)" % e}
     if tool_name in SELF_GATED and not tainted:
-        return Verdict("allow", klass, "its own approval card is the gate")
+        return Verdict("allow", klass, "its own approval card is the gate", detail=withheld)
     if tool_name in SELF_GATED:
-        return Verdict("allow", klass, "its own approval card is the gate (with provenance)")
+        return Verdict("allow", klass, "its own approval card is the gate (with provenance)",
+                       detail=withheld)
     if not tainted and not _interactive(ctx):
         g = _use_grant(tool_name, ctx)
         if g is not None:

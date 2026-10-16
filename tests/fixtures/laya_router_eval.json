@@ -77,6 +77,12 @@
     {"text": "cancel my three o'clock", "decision": "defer"},
     {"text": "archive all the newsletters in my inbox", "decision": "defer"},
     {"text": "move the tax spreadsheet into the finance folder", "decision": "defer"},
-    {"text": "turn off the notifications", "decision": "defer"}
+    {"text": "turn off the notifications", "decision": "defer"},
+    {"text": "research this email thread", "decision": "tool", "tool": "search_email", "args_equal": {"thread": "this"}},
+    {"text": "summarise the thread with Robin Vale about the venue", "decision": "tool", "tool": "search_email", "args_equal": {"thread": "top"}, "args_contains": {"query": ["Robin", "venue"]}},
+    {"text": "what did everyone say in that thread", "decision": "tool", "tool": "search_email", "args_equal": {"thread": "this"}},
+    {"text": "draft a reply to Dana and save it", "decision": "defer"},
+    {"text": "save a draft email to the team about the venue change", "decision": "defer"},
+    {"text": "plan a weekend for my family and add it to my calendar", "decision": "defer"}
   ]
 }

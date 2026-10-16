@@ -72,6 +72,11 @@ def desk(client, tmp_path, monkeypatch):
     with core.PROCESSES_LOCK:
         saved_procs = dict(core.PROCESSES)
         core.PROCESSES.clear()
+    # What the page is about to be shown must be this test's alone: leftover
+    # approvals or notices crowd the top bar until the Activity chip is folded
+    # out of sight (sky gate 2026-10-15). Fail here, naming them, not in 45 s.
+    from tests.api.conftest import assert_top_bar_clean
+    assert_top_bar_clean(client)
 
     seen: dict = {}
 
@@ -187,8 +192,8 @@ def test_the_briefing_task_is_on_the_desktop_with_its_model_and_an_openable_trac
 
             # 3. Its row in Activity says who is working and what it is doing.
             pg.locator("[data-testid=local-ai-queue-chip]").click()
-            # The chip opens on "Needs you" when anything waits on the owner
-            # (approvals other tests left behind count); Activity is one click.
+            # The chip opens on "Needs you" when anything waits on the owner;
+            # Activity is one click either way.
             pg.locator("[data-testid=lane-tab-activity]").click()
             row = pg.locator("[data-testid=lane-task][data-task-id='%s']" % tid)
             row.wait_for()

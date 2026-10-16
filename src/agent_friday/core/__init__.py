@@ -2305,6 +2305,31 @@ DEFAULT_SETTINGS = {
     "away_drain": {                       # P5 — drains queued heavy work on a
         "enabled": False,                 # timer. Default OFF: it takes the GPU.
     },
+    # ~/.friday/overrides (services/user_overrides.py): the person's own
+    # model serve overrides and page stylesheets, which updates never touch.
+    # The folder's path is shown by GET /api/overrides/status. Stylesheets
+    # are opt-in (they can restyle approval cards). Scripts are not supported
+    # at all and have no key: a script in the page holds the session token.
+    "overrides": {
+        "enabled": True,
+        "models": True,
+        "static_css": False,
+    },
+    # How local models are sized and placed (services/local_sizing.py): never
+    # a window below Friday's own prompt (tools + system prompt, plus this
+    # margin); a small helper goes to the CPU when it and the big model do not
+    # fit one card; an unmeasured model is planned from an estimate and
+    # marked "estimated" rather than refused. Per-model numbers still win
+    # from ~/.friday/overrides/models.json.
+    "local_sizing": {
+        "enabled": True,
+        "prompt_margin_pct": 25,
+        "min_room_tokens": 4096,
+        "small_helper_max_params_b": 2.0,
+        "helpers_to_cpu_when_tight": True,
+        "plan_unmeasured_from_estimate": True,
+        "cpu_seats_hide_gpu": True,
+    },
     # Empty on purpose: services/knowledge_graph/__init__.py:kg_settings() owns
     # the real defaults (KG_DEFAULT_SETTINGS) and layers the user's saved block
     # on top. This entry exists only so that block SURVIVES the whitelist two
@@ -2371,6 +2396,10 @@ DEFAULT_SETTINGS = {
     # Hours a story stays eligible for each routine's edition (news_seen).
     "news_edition_window_hours": {"front_page": 36, "briefing": 36},
     "news_local_sources": [],
+    # news_trusted_outlets: outlet domains that start at high trust (like the
+    # built-in high-trust list) WITHOUT being fetched or tagged as Local news
+    # (source_trust_graph.trusted_outlets). Empty by default.
+    "news_trusted_outlets": [],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
     "tts_voice": "Aoede",                  # any of the 30 Gemini-TTS voices
@@ -2432,6 +2461,12 @@ DEFAULT_SETTINGS = {
     # back; only a quit releases it (services/residency_arbiter.
     # release_for_quit).
     "keep_brain_warm_between_sessions": False,
+    # The first-run download card counts a seat as done when a working local
+    # model already serves it (the chosen model under another id such as
+    # bonsai2-27b for bonsai2:27b, or the model the seat is set to), not only
+    # when the literal chosen id finished downloading. Off restores the
+    # literal check (services/first_run_models.seat_served_by).
+    "first_run_seat_satisfied_by_serving": True,
     # ── Voice engine selection ──
     # LOCAL is the default; cloud (Gemini Live) is the opt-in. The mic button
     # resolves this via GET /api/voice/session-info → /ws/voice-local (local) or
@@ -2443,6 +2478,12 @@ DEFAULT_SETTINGS = {
     #   "auto"      — GPU tier when ready, else CPU; local preferred over cloud
     "voice_engine": "local",
     "local_voice_asr_model": "auto",       # faster-whisper size: auto (base on CPU, small on a GPU)|tiny|base|small|medium
+    # The ear on the graphics card runs on CTranslate2, which loads cuBLAS 12 by
+    # name from PATH. When nothing else provides it, borrow the copy the
+    # llama.cpp runtime under the runtime folder ships (prepended to PATH for
+    # this process and voice workers, logged; services/gpu_probe.py). False
+    # leaves PATH alone and the ear uses the CPU when cuBLAS is missing.
+    "local_voice_borrow_llama_cpp_cublas": True,
     # ── Push-to-transcribe ────────────────────────────────────────────────
     # Hold a key anywhere in Windows, speak, release, and the local transcript
     # is pasted into whatever window has focus. On by default, and system-wide
@@ -2475,7 +2516,11 @@ DEFAULT_SETTINGS = {
     # dict does not declare is a control that saves, reports success, and
     # reverts on the next read (docs/decisions/2026-09-04-five-dead-settings.md).
     "local_voice_tts_engine": "piper",   # the CPU tier's voice; Kokoro is chosen explicitly (services/local_voice.py)
-    "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
+    # Kokoro voice id, used when engine=kokoro. Blank is "not chosen": she
+    # speaks af_heart, or her cloud voice's local twin (services/agent_identity.
+    # local_kokoro_voice). The seed and every save write the whole defaults
+    # table, so a non-blank default here would read as the owner's choice.
+    "local_voice_kokoro_voice": "",
     "local_voice_kokoro_allow_cpu": True,     # Kokoro may run on the CPU when the card is busy (slower; the session says so) rather than Piper speaking
     # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
     # tier. Override the ASR id to a sibling (e.g. the English-only streaming
@@ -2818,6 +2863,15 @@ DEFAULT_SETTINGS = {
                                            # separate Ring-3 step (/api/control/permission).
     # ── Agent Identity & Model Selection ──
     "agent_name": "AGENT FRIDAY",  # brand: plain (her default name, not the product)
+    # Her identity beyond the name (services/agent_identity.py). pronouns:
+    # "auto" (from her voice: she/her, he/him, or they/them for a voice not
+    # known) or one of those three. local_voice_matches_cloud: with the
+    # default local voice and a cloud voice chosen, speak locally with the
+    # cloud voice's twin (Puck -> am_puck) when it is installed.
+    "identity": {"pronouns": "auto", "local_voice_matches_cloud": True,
+                 # Her own name on the wordmark and window titles. Off: the
+                 # wordmark is the product's (BRAND.md); on is the owner's choice.
+                 "name_in_lockup": False},
     # The workspaces the owner set to fill the screen with the chat tray docked
     # beside them (docs/design/active/unified-shell.md §5): id -> "fullscreen_chat".
     "workspace_layouts": {},
@@ -2847,7 +2901,22 @@ DEFAULT_SETTINGS = {
     # meaning "unbounded spend": expensive media are filtered out when the
     # remaining daily creative budget is low.
     "daily_creation_free_choice": True,         # False reverts to the legacy text rotation
-    "daily_creation_budget_usd": 0.50,          # soft ceiling on a day's creation spend
+    # Ceiling on a day's creation spend in USD. None (or 0) is no cap, the
+    # shipped default: spending caps are the owner's to set, asked about in the
+    # first-run setup conversation (services/spending_caps.py), never imposed.
+    "daily_creation_budget_usd": None,
+    # ── Spending caps the setup conversation asks about (services/spending_caps.py) ──
+    # asked: the setup conversation has been through the caps. answered: cap
+    # key -> when the owner answered (with a figure or "no cap"). The two
+    # workspace figures are the default per-workspace limits of the task
+    # orchestrator (services/budget_enforcer.py) in milliPositrons; None is no
+    # cap. A workspace with its own policy keeps it.
+    "spending_caps": {
+        "asked": False,
+        "answered": {},
+        "workspace_monthly_mpsi": None,
+        "workspace_task_mpsi": None,
+    },
     # ── Turn budget (advanced) ──
     # A local seat gets the same round budget as a cloud seat: a capable local
     # model can reason across hundreds of rounds, and a lower local cap is a
@@ -2879,18 +2948,27 @@ DEFAULT_SETTINGS = {
     "podcasts": {
         "enabled_for_routines": {"front_page": True, "briefing": True,
                                  "weekly": True, "editorial": True},
-        # Who is on each show: "solo" (Friday alone) or "duo" (two hosts).
+        # Who is on each show: "solo" (her alone) or "duo" (two hosts).
         # "any" is every episode not made by a routine. Recommended values;
-        # podcast_engine.RECOMMENDED_FORMAT is the same table.
+        # podcast_engine.RECOMMENDED_FORMAT is the same table. One episode can
+        # ask for the other ("hosts": solo|duo on make_podcast).
         "format": {"briefing": "solo", "front_page": "solo", "editorial": "solo",
-                   "weekly": "duo", "any": "duo"},
+                   "weekly": "solo", "any": "solo"},
         # How long each show runs, and "any" for an episode the owner asks for:
         # "short" (about 2 minutes), "standard" (about 5, recommended) or
         # "long" (about 10). podcast_engine.LENGTH_MINUTES is the same table.
         "length": {"front_page": "standard", "briefing": "standard",
                    "weekly": "standard", "editorial": "standard", "any": "standard"},
-        "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
-                  "b": {"name": "Emma", "voice": "bf_emma"}},
+        # Host "a" is her: blank name and voice follow her identity (her name,
+        # and her local voice: services/agent_identity.local_kokoro_voice).
+        # Host "b", the co-host: a blank name is podcast_engine.cohost_default_name()
+        # ("Agent Friday" once she has been renamed, otherwise a distinct
+        # name, COHOST_NEUTRAL_NAME); never the voice id's name.
+        "hosts": {"a": {"name": "", "voice": ""},
+                  "b": {"name": "", "voice": "bf_emma"}},
+        # Set once the owner has been asked the co-host's name (on choosing
+        # two hosts with an unnamed co-host), so it is asked once only.
+        "cohost_name_asked": False,
         "on_ready": "notify",
         "cloud_voice": False,
     },
@@ -2918,6 +2996,31 @@ DEFAULT_SETTINGS = {
         "heartbeat_every_minutes": 240,
         "heartbeat_from_hour": 8,
         "heartbeat_to_hour": 20,
+        # Under a cloud_only the owner CHOSE (model_routing.mode_chosen), News,
+        # podcast scripts and the heartbeat run on the models above: choosing
+        # that mode is the consent (cloud_intent.background_route).
+        # False keeps them local-only even then, as before.
+        "routine_follows_cloud_mode": True,
+    },
+    # ── Slim prompts for routine background jobs (services/job_prompt.py) ──
+    # The Front Page editor, the weekly digest, the afternoon briefing and the
+    # heartbeat's one call after its pre-check (`heartbeat.precheck`) send a
+    # small job prompt (their instructions, the material they are handed, the
+    # agent's name, today's date, only the tools they call) instead of the
+    # ~16.7k-token chat prompt. False brings the full prompt
+    # back for those jobs. Chat and voice are not affected either way.
+    "job_prompts": {
+        "slim": True,
+    },
+    # ── The heartbeat's pre-check (services/heartbeat.py) ──
+    # Each run first checks, in code, Gmail since the last good run, calendar
+    # events starting within `calendar_lookahead_minutes` and background tasks
+    # that finished. Nothing new: no model call at all. Something new: one
+    # slim call on the pinned model. False sends the heartbeat back through
+    # the full agent (tools, ~16.7k-token prompt) on every run, as before.
+    "heartbeat": {
+        "precheck": True,
+        "calendar_lookahead_minutes": 120,
     },
     # ── Family / Minor mode (§7) ──
     # When on, generation runs an age-appropriate filter ON TOP of the adult harm
@@ -3408,6 +3511,42 @@ DEFAULT_SETTINGS = {
     "career_ops": {
         "path": "",
     },
+    # ── The owner's standing choices (services/owner_choices.py) ──
+    # Each one is asked once in the first-run setup conversation
+    # (owner_choices.setup_questions) and changeable in Settings.
+    # Email paragraphs about money that the cautious cloud consent would hold
+    # back from a cloud model: "ask" raises a card showing exactly what would
+    # go (services/cloud_release.py); "withhold" keeps them on this PC, said.
+    "email_cloud_release": "ask",
+    # A scheduled job's run missed while Friday was closed (run_once | skip),
+    # and a run held because its pinned model was unavailable (retry: it runs
+    # once when the model is back | wait: it waits for its next time). Each
+    # job can choose its own; these are the defaults (services/scheduler.py).
+    "schedules": {
+        "missed_default": "run_once",
+        "held_default": "retry",
+    },
+    # The Undo window of an email sent unattended under a pre-approval, in
+    # seconds (10 to 600). Sends the owner approves in person keep 10 s.
+    "unattended_send_undo_s": 120,
+    # The account an email draft goes to when the owner names none and it is
+    # not a reply (an account id, address or label). Empty: with more than
+    # one account Friday asks which (services/gmail_send.choose_account).
+    "mail_default_account": "",
+    # How fast news-outlet trust moves off its starting score (the prior's
+    # weight, in pseudo-observations: higher learns slower), and the owner's
+    # Boost/Ban amounts (source_trust_graph.py). The starting score stays 0.5.
+    "trust_scoring": {
+        "prior_strength": 3.0,
+        "boost_lift": 0.15,
+        "boost_floor": 0.70,
+        "ban_ceiling": 0.15,
+    },
+    # Asking Friday to show or hide a workspace in the dock:
+    # "apply_with_undo" (done at once, with an Undo) | "ask_first" (a card).
+    "dock_by_asking": "apply_with_undo",
+    # Deleting a calendar event: whether "notify guests" starts ticked.
+    "calendar_delete_notify_guests": False,
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.
@@ -3584,6 +3723,47 @@ def _persist_smart_routing_migration():
         pass
 
 
+_CAPS_MIGRATION_TRIED = [False]
+
+
+def _migrate_spending_caps(settings: dict):
+    """services/spending_caps.migrate_settings: an install from before caps
+    shipped off has the old daily creation default (0.5) written out in
+    settings.json; it is cleared once, unless the owner answered for it.
+    Changes `settings` in place; returns the delta to persist, or None."""
+    try:
+        from agent_friday.services import spending_caps as _sc
+        return _sc.migrate_settings(settings)
+    except Exception as e:
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "spending caps migration skipped (%s: %s)", type(e).__name__, e)
+        except Exception:
+            pass
+        return None
+
+
+def _persist_spending_caps_migration(delta: dict):
+    """Write the one-time spending-caps migration (and its stamp) once per
+    process. A failed write is retried by the next process; every read in
+    between applies the same change in memory, so the old default is never
+    enforced meanwhile."""
+    if _CAPS_MIGRATION_TRIED[0]:
+        return
+    _CAPS_MIGRATION_TRIED[0] = True
+    try:
+        _save_settings(delta)
+    except Exception as e:
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "spending caps migration was not saved (%s: %s); it is applied "
+                "on every read until it is", type(e).__name__, e)
+        except Exception:
+            pass
+
+
 def _load_settings_raw():
     """Load agent settings exactly as persisted (no offline overlay).
 
@@ -3668,6 +3848,7 @@ def _load_settings_raw():
         merged = dict(DEFAULT_SETTINGS)
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _smart_found = _migrate_smart_routing_mode(merged)
+        _caps_delta = _migrate_spending_caps(merged)
         _sync_capability_routing(merged)
         _remember_good_settings(merged)
         with _SETTINGS_CACHE_LOCK:
@@ -3676,6 +3857,8 @@ def _load_settings_raw():
                 _SETTINGS_CACHE["ts"] = _time.time()
         if _smart_found:
             _persist_smart_routing_migration()
+        if _caps_delta:
+            _persist_spending_caps_migration(_caps_delta)
         return merged
     except Exception as e:
         # NEVER SILENT, AND NEVER FACTORY DEFAULTS WHEN BETTER IS KNOWN.
@@ -3723,8 +3906,61 @@ def _load_settings():
 #: `turn_budget` joins them for the same reason: Settings sends only the group
 #: it edited (rounds, or the clock, or tokens), and a wholesale replace would
 #: drop the other two back to the module defaults every time one is changed.
+#: `podcasts` joins them because a save of one show's format or length (or of
+#: one host's voice) replaced the whole block: the hosts, the other shows and
+#: the routines' switches went with it. The rest are fixed-shape blocks whose
+#: writers send one field ({"google_oauth": {"redirect_base_override": ...}},
+#: {"career_ops": {"path": ...}}) or may do so from Settings.
+#:
+#: The merge is recursive (_deep_merge_block): a nested dict merges key by key
+#: at every depth, a list replaces the old list whole, and an explicit null is
+#: stored as null (several defaults are null on purpose, so null never deletes).
+#: A user-keyed map, where leaving a key out of the saved map is how a caller
+#: removes it, is never in this list (workspace_layouts, dock_custom,
+#: providers, tool_hooks ...) and inside a listed block it is named in
+#: _WHOLE_VALUE_PATHS so it keeps being replaced whole.
 _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
-                       "turn_budget", "local_address", "scheduled_cloud", "tracking")
+                       "turn_budget", "local_address", "scheduled_cloud", "tracking",
+                       "podcasts", "scheduling", "idle_work", "google_oauth",
+                       "career_ops", "channels", "cost_budget", "task_journal",
+                       "reasoning_traces", "spending_caps", "schedules", "trust_scoring")
+
+#: Paths inside a deep-merged block whose value is replaced whole, as before
+#: the merge became recursive. "*" matches any one key: each capability's seat
+#: ({"provider", "model", ...}) is one choice, never a mix of two.
+_WHOLE_VALUE_PATHS = frozenset({
+    "capability_routing.*",
+    "model_routing.task_overrides",
+    "model_routing.cloud_consent",
+    "turn_budget.rounds",
+    "turn_budget.wall_clock_s",
+    "turn_budget.tokens",
+})
+
+
+def _whole_value_path(path: str) -> bool:
+    if path in _WHOLE_VALUE_PATHS:
+        return True
+    head, _, _last = path.rpartition(".")
+    return bool(head) and (head + ".*") in _WHOLE_VALUE_PATHS
+
+
+def _deep_merge_block(base, delta, path: str):
+    """`delta` merged into a copy of `base`: dicts key by key at every depth,
+    anything else (lists, scalars, null) replaces the old value, and a path
+    in _WHOLE_VALUE_PATHS replaces its old value whole. Neither input is
+    changed."""
+    import copy
+    out = {k: (copy.deepcopy(v) if isinstance(v, (dict, list)) else v)
+           for k, v in (base or {}).items()}
+    for k, v in delta.items():
+        sub = "%s.%s" % (path, k)
+        if (isinstance(v, dict) and isinstance(out.get(k), dict)
+                and not _whole_value_path(sub)):
+            out[k] = _deep_merge_block(out[k], v, sub)
+        else:
+            out[k] = copy.deepcopy(v) if isinstance(v, (dict, list)) else v
+    return out
 
 
 def _routing_mode_caller() -> str:
@@ -3876,6 +4112,28 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                 _mr_in = dict(_mr_in)
                 _mr_in.pop("mode", None)
                 data["model_routing"] = _mr_in
+    # THE RECORD THAT THE OWNER CHOSE THE MODE (model_routing.mode_chosen).
+    #
+    # cloud_only is also the factory default every fresh install seeds, so the
+    # stored mode alone is not evidence of a choice. Choosing cloud_only is the
+    # owner's consent for routine jobs to use the cloud
+    # (cloud_intent.background_route), and the consent needs this record to
+    # name the stored mode. It is written HERE, from the mode itself, only on an
+    # owner routing change; every other write has it stripped (a client cannot
+    # send it), and DEFAULT_SETTINGS never carries it.
+    _mr_in = (data or {}).get("model_routing")
+    if isinstance(_mr_in, dict):
+        _new_mode = str(_mr_in.get("mode") or "").strip().lower()
+        if owner_routing_change and _new_mode:
+            data = dict(data)
+            _mr_in = dict(_mr_in, mode_chosen=_new_mode,
+                          mode_chosen_at=datetime.now().isoformat(timespec="seconds"))
+            data["model_routing"] = _mr_in
+        elif "mode_chosen" in _mr_in or "mode_chosen_at" in _mr_in:
+            data = dict(data)
+            _mr_in = {k: v for k, v in _mr_in.items()
+                      if k not in ("mode_chosen", "mode_chosen_at")}
+            data["model_routing"] = _mr_in
     # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
     #
     # `laya_safe_writes` lets Laya raise approval cards for changes to the
@@ -3912,10 +4170,16 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             # {"vault_local_only": ...}} would otherwise replace the whole
             # block, silently resetting `mode` — so changing a privacy switch
             # could move every future turn to a different provider.
-            base = {ck: (dict(cv) if isinstance(cv, dict) else cv)
-                    for ck, cv in existing[k].items()}
-            base.update(v)
-            merged[k] = base
+            #
+            # The base is the block as STORED. A file with no such block yet
+            # stores the delta alone (the else branch), never the default
+            # block: what is on disk is what was saved, so a default that
+            # changes in a later version still reaches every key the owner
+            # never set. Readers fill the rest from their defaults
+            # (podcast_engine.settings, hologram_tools.current); the tracking
+            # tests (test_partial_tracking_settings_preserve_siblings_on_disk,
+            # test_concurrent_tracking_saves) hold this.
+            merged[k] = _deep_merge_block(existing[k], v, k)
         else:
             merged[k] = v
     # Reconcile capability_routing ⇄ flat *_model keys before persisting so the

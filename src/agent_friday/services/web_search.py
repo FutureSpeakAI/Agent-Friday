@@ -512,7 +512,32 @@ def _gate_search_query(query: str, provider: str) -> tuple[str, str]:
     proceed unchanged; when it is non-empty the query was withheld (in whole
     or in part) and the caller must refuse rather than send a redaction
     placeholder to a search engine as if it were a real query.
+
+    Owner decision (a), 2026-10-15: a query a CLOUD seat authored is public
+    query text. It is NOT topic-classified (a health or civil-rights query is
+    not private because of its topic); it is checked only against the
+    never-send floor and the owner's personal identifiers, with or without
+    cloud consent. See privacy/public_query.py.
+
+    `provider` here is the search BACKEND, not the author, so it cannot decide
+    that. The author is read from public_query.cloud_author_of(query): the
+    agent loops and the voice dispatcher record the exact public strings a
+    cloud seat sent (before [PII:...] tags are put back as real values), and
+    only a query that is EXACTLY one of them is floor-only. Every other query
+    -- a rehydrated one, a local seat's, the research harness's, setup
+    research's -- keeps the egress gate's ordinary topic-classifying path
+    below, unchanged.
     """
+    try:
+        from agent_friday.privacy import public_query as _pq
+        _cloud_author = _pq.cloud_author_of(query)
+    except Exception:
+        _cloud_author = ""          # not provably cloud-authored: ordinary path
+    if _cloud_author:
+        try:
+            return _pq.gate_outbound(query, provider, "web_search.query")
+        except Exception as e:
+            return "", ExceptionText(f"the privacy gate failed ({e}) — search not sent")
     try:
         from agent_friday.services import egress_gate as _eg
     except Exception as e:
@@ -569,6 +594,20 @@ def _normalise_rows(rows) -> list:
     return out
 
 
+def backend_chain() -> list:
+    """The backends search() tries, in order, by name: wigolo when it is
+    running, Firecrawl when configured, Brave with a key, and the DuckDuckGo
+    scrape last. One list, so what an approval card names as the search
+    engine (privacy/public_query.engine_for) is what search() runs."""
+    chain = ["wigolo"] if _wigolo_ready() else []
+    if _firecrawl_ready():
+        chain.append("firecrawl")
+    if brave_key():
+        chain.append("brave")
+    chain.append("duckduckgo-scrape")
+    return chain
+
+
 def search(query: str, count: int = 10) -> dict:
     """Search the web. Returns {status, results[], backend, detail, query}.
 
@@ -591,12 +630,9 @@ def search(query: str, count: int = 10) -> dict:
     # fail for a reason the user has to go and fix with a credit card. The
     # keyed services stay behind it and are still tried when it is absent —
     # this is an addition to the ladder, not a replacement for it.
-    runners = [("wigolo", _wigolo_search)] if _wigolo_ready() else []
-    if _firecrawl_ready():
-        runners.append(("firecrawl", _firecrawl_search))
-    if brave_key():
-        runners.append(("brave", _brave))
-    runners.append(("duckduckgo-scrape", _duckduckgo))
+    fns = {"wigolo": _wigolo_search, "firecrawl": _firecrawl_search,
+           "brave": _brave, "duckduckgo-scrape": _duckduckgo}
+    runners = [(name, fns[name]) for name in backend_chain()]
 
     gated_q, refusal = _gate_search_query(
         q, runners[0][0] if runners else "web-search")

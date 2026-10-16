@@ -51,6 +51,7 @@ from agent_friday.services.model_router import (
 )  # noqa: E501
 from agent_friday.user_errors import ExceptionText
 from agent_friday.services.visible_jobs import visible_job
+from agent_friday.services import job_prompt
 
 # Not visible via the star-import cascade (it is bound in voice_engine, an
 # UPPER layer) — import the leaf module directly so the editorial/digest/front
@@ -403,7 +404,7 @@ def _trust_rating(domain, banned=None, boosted=None):
                 get_source_trust_graph(friday_dir=FRIDAY_DIR).score_for(domain))
         except Exception:
             pass
-    if domain in _TRUSTED_DOMAINS or domain in _local_sources():
+    if domain in _TRUSTED_DOMAINS or domain in _local_sources() or domain in _trusted_outlets():
         return "green"
     if domain in _LOW_TRUST_DOMAINS:
         return "red"
@@ -429,15 +430,55 @@ def _source_trust_meta(domain, banned=None, boosted=None):
     numeric badge with a 6-dimension breakdown tooltip."""
     domain = _extract_domain(domain)
     color = _trust_rating(domain, banned, boosted)
-    score, dims = None, None
+    score, dims, owner = None, None, None
     if _HAS_TRUST_GRAPHS:
         try:
             g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
             score = round(g.score_for(domain), 3)
-            dims = {k: round(v, 3) for k, v in g.dimensions_for(domain).items()}
+            rec = g.get(domain) or {}
+            owner = (rec.get("owner_preference") or {}).get("state")
+            # A dimension this install does not measure stays None ("not
+            # measured"); it is never shown as a number.
+            dims = {k: (round(float(v), 3) if v is not None else None)
+                    for k, v in g.dimensions_for(domain).items()}
         except Exception:
             pass
-    return {"trust": color, "trust_score": score, "trust_dims": dims}
+    return {"trust": color, "trust_score": score, "trust_dims": dims, "trust_owner": owner}
+
+
+def _live_trust_overlay(records, banned=None, boosted=None):
+    """Archive records with their trust fields read from the LIVE graph.
+
+    An archived article carries the trust snapshot taken when it was first
+    archived, and the archiver archives a tick's articles BEFORE that tick's
+    analysis runs: an outlet's first articles were frozen at its starting
+    prior (0.50 for an unknown outlet) and stayed there, however its score
+    moved afterwards. The Feed is archive-backed, so it showed those frozen
+    numbers. Overlay the current score, dimensions and owner preference on
+    the page being served; the stored snapshot is left as it was. One lookup
+    per outlet; on any failure the record keeps its snapshot.
+    """
+    if not _HAS_TRUST_GRAPHS or not records:
+        return records
+    banned = set(banned if banned is not None else _load_banned_sources())
+    boosted = set(boosted if boosted is not None else _load_boosted_sources())
+    cache, out = {}, []
+    for a in records:
+        domain = (a.get("source") or _extract_domain(a.get("url", ""))) if isinstance(a, dict) else ""
+        if not domain:
+            out.append(a)
+            continue
+        if domain not in cache:
+            try:
+                cache[domain] = _source_trust_meta(domain, banned, boosted)
+            except Exception:
+                cache[domain] = None
+        meta = cache[domain]
+        if meta and meta.get("trust_score") is not None:
+            a = dict(a)
+            a.update(meta)
+        out.append(a)
+    return out
 
 
 # In-process cache for parsed feeds so the /api/news/feed endpoint and the
@@ -1250,18 +1291,25 @@ WEEKLY_DIGESTS_DIR = FRONT_PAGES_DIR / "weekly"
 # archive including banned sources, and that is disclosed in the output.
 WEEKLY_EDITORIAL_HOUR = 19
 EDITORIALS_DIR = FRIDAY_DIR / "editorials"
-# Every News path writes and speaks on this computer and costs nothing: the
-# routines (Front Page, Briefing, Weekly Digest, Editorial), the News buttons,
-# the article deep dive and the read-aloud, whoever started them. There is no
-# cloud fallback, no cloud voice and no opt-out; a News run that cannot reach
-# the local seat waits for it and says so. Every run is inside the guard the
-# cloud transports refuse in, which also lifts any scheduled cloud pin for its
-# duration. Fetching the articles still reaches the web: that is reading the
+# In a local routing mode every News path writes and speaks on this computer
+# and costs nothing: the routines (Front Page, Briefing, Weekly Digest,
+# Editorial), the News buttons, the article deep dive and the read-aloud,
+# whoever started them. There is no cloud fallback and no cloud voice; a News
+# run that cannot reach the local seat waits for it and says so. Every run is
+# inside the guard the cloud transports refuse in, which also lifts any
+# scheduled cloud pin for its duration.
+#
+# Under a cloud_only mode the OWNER CHOSE, that choice is the consent: the
+# guard is a "routine" scope, released and pinned
+# to the routine cloud model (cloud_intent.background_route, the one reader).
+# The read-aloud passes kind="private" and stays on this computer's voice in
+# every mode. Fetching the articles still reaches the web: that is reading the
 # news, not writing it.
-def local_news_run(label):
-    """Context manager: this News run's model and voice calls are local-only."""
+def local_news_run(label, kind="routine"):
+    """Context manager: this News run's model and voice calls are local-only
+    in a local routing mode (and always, for kind="private")."""
     from agent_friday.services import local_only_guard
-    return local_only_guard.local_only(label)
+    return local_only_guard.local_only(label, kind=kind, job="news")
 
 
 def _local_news(label):
@@ -1293,6 +1341,13 @@ EDITORIAL_SYSTEM_PROMPT = (
     "(d) occasionally be uncomfortable to read — that's the test of whether "
     "it's real. Write in first person. Have real opinions. Be the editor, not "
     "the mirror. ~800-1200 words.")
+
+
+def editorial_directive() -> str:
+    """The editorial directive as she reads it: in her own name when the owner
+    gave her one (services/agent_identity.named)."""
+    from agent_friday.services import agent_identity
+    return agent_identity.named(EDITORIAL_SYSTEM_PROMPT)
 
 # Per-edition tone framing. Prefixed onto the editorial prompt so the morning
 # edition leads with action and the evening edition reflects on the day.
@@ -1454,6 +1509,16 @@ def _local_sources() -> tuple:
     try:
         from agent_friday.source_trust_graph import local_beat_sources
         return local_beat_sources()
+    except Exception:
+        return ()
+
+
+def _trusted_outlets() -> tuple:
+    """The outlets the owner trusts without making them Local
+    (`news_trusted_outlets`), or () when none are set."""
+    try:
+        from agent_friday.source_trust_graph import trusted_outlets
+        return trusted_outlets()
     except Exception:
         return ()
 
@@ -1776,7 +1841,10 @@ def _news_archiver_tick():
         try:
             g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
             clusters = _cluster_articles(pool, min_sources=2)
-            summary = g.analyze_fetch(pool, clusters)
+            # The owner's Boost/Ban lists ride along so the score applies them
+            # even where the fail-soft mirror into the graph was missed.
+            summary = g.analyze_fetch(pool, clusters, owner={
+                "banned": _load_banned_sources(), "boosted": _load_boosted_sources()})
             # One batch per cycle: each call loads and rewrites the whole file.
             g.record_articles_seen(
                 [it.get("source") or _extract_domain(it.get("url", "")) for it in pool])
@@ -1911,6 +1979,48 @@ def _answering_model(before):
     return now.get("model")
 
 
+#: Routine News jobs on the slim job prompt (services/job_prompt.py).
+_FRONT_PAGE_JOB = job_prompt.Job(
+    name="Front Page editor",
+    instructions="You edit the owner's news Front Page: choose the lead story "
+                 "and write short editorial notes about the candidate stories "
+                 "you are given.")
+_WEEKLY_DIGEST_JOB = job_prompt.Job(
+    name="Weekly digest",
+    instructions="You write the owner's weekly news digest from the stories "
+                 "that ran on this week's Front Pages.")
+
+
+def _news_interests_block() -> str:
+    """The owner's News interest settings, labelled, for a job's material.
+
+    The slim job prompt carries no vault, user model or wiki context, so this
+    is what "relevant to the user" is judged against: the topic priorities
+    (`news_priorities`, Settings > News) and the News sections they switched
+    off (briefing prefs `categories_enabled`). Preferences only: never the
+    vault, the user model, contacts, mail, or the Local beat's place.
+    "" when there is nothing to say."""
+    lines = []
+    try:
+        pri = [str(p).strip() for p in ((core._load_settings() or {}).get("news_priorities") or [])
+               if str(p).strip()]
+        if pri:
+            lines.append("Topic priorities, most important first: " + ", ".join(pri[:12]) + ".")
+    except Exception as e:
+        _log.debug("news interests: priorities unreadable: %s", e)
+    try:
+        off = [c for c, on in (_load_briefing_prefs().get("categories_enabled") or {}).items()
+               if on is False]
+        if off:
+            lines.append("Sections they switched off: " + ", ".join(off) + ".")
+    except Exception as e:
+        _log.debug("news interests: sections unreadable: %s", e)
+    if not lines:
+        return ""
+    return ("OWNER'S NEWS INTERESTS (their own News settings; judge relevance "
+            "by these):\n" + "\n".join("- " + ln for ln in lines))
+
+
 def _editorialize_front_page(pool, slot="morning", prev_stories=None,
                              calendar_events=None):
     """Ask Claude to pick the lead + write editorial context. Fails soft to a
@@ -2023,13 +2133,14 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
                '"update": "<what is new today>"}]' if prev_block else "")
             + "\n}")
 
+        interests = _news_interests_block()
         prompt = (
             tone + "\n\n"
-            "You are Friday, the user's personal news editor. Use what you know "
-            "about the user (from your vault/wiki context) to judge relevance; "
-            "if you know little about them, treat them as a tech- and "
-            "news-literate reader. Below are today's candidate stories, "
-            "pre-scored.\n\n"
+            "You are Friday, the user's personal news editor. Judge relevance "
+            "by the OWNER'S NEWS INTERESTS below and anything else you know "
+            "about the user; if you know little about them, treat them as a "
+            "tech- and news-literate reader. Below are today's candidate "
+            "stories, pre-scored.\n\n"
             "Choose the single LEAD story (the one the user should read first) "
             "and write a 2-3 sentence editorial note explaining why it leads — "
             "in your voice, specific to them. Write one punchy sentence of "
@@ -2044,13 +2155,20 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             "frameworks, list them with brief analysis of the positioning "
             "implications for Friday. Empty list if none.\n"
             + prev_block + cal_block + "\n\n"
+            + (interests + "\n\n" if interests else "") +
             "Reply with a JSON object in this shape:\n" + shape +
             "\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
         )
-        system = _get_friday_system_prompt(
-            keywords=prompt, workspace='briefing',
-            provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
-            vault_control=_gated_vault_control(), tools_block=False)
+        from agent_friday.services.agent_identity import named as _named
+        prompt = _named(prompt)
+        # A routine job: the slim job prompt, not the ~16.7k-token chat prompt
+        # that pushed this request to 25,410 tokens and past an 8k local window.
+        system = job_prompt.build(
+            _FRONT_PAGE_JOB, prompt,
+            full_system=lambda: _get_friday_system_prompt(
+                keywords=prompt, workspace='briefing',
+                provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
+                vault_control=_gated_vault_control(), tools_block=False)).system
         _attr_before = _attribution_mark()
         # OUTPUT BUDGET, and why it is not 1800 any more.
         #
@@ -2543,7 +2661,8 @@ def _notify_front_page(edition, slot, manual=False):
             actions = [{"label": "View Front Page", "workspace": "news",
                         "tab": "frontpage"}]
         else:
-            title = f"📰 Friday's Front Page — {label} edition"
+            from agent_friday.services.agent_identity import assistant_name
+            title = f"📰 {assistant_name()}'s Front Page — {label} edition"
             body = (f"{edition.get('headline','Your Front Page')} · Lead: "
                     f"{lead.get('title','(no stories)')}")
             actions = [{"label": "View Front Page", "workspace": "news",
@@ -2575,8 +2694,9 @@ def _notify_weekly_digest(digest, manual=False):
         dk = f"weekly-digest:{digest.get('id')}"
         if manual:
             dk += f":manual:{datetime.now().strftime('%H%M%S')}"
+        from agent_friday.services.agent_identity import assistant_name
         _notif_engine.push(
-            title="📅 Friday's Weekly Digest is ready",
+            title=f"📅 {assistant_name()}'s Weekly Digest is ready",
             body=(f"{digest.get('edition_count', 0)} editions synthesized · "
                   + (digest.get("trends") or ["Your week in review"])[0]),
             priority="medium",
@@ -2600,8 +2720,9 @@ def _notify_weekly_editorial(ed, manual=False):
         dk = f"weekly-editorial:{ed.get('id')}"
         if manual:
             dk += f":manual:{datetime.now().strftime('%H%M%S')}"
+        from agent_friday.services.agent_identity import assistant_name
         _notif_engine.push(
-            title="🗞 Friday's editorial is in",
+            title=f"🗞 {assistant_name()}'s editorial is in",
             body="I have opinions this week.",
             priority="medium",
             source="front-page",
@@ -2722,11 +2843,13 @@ def _generate_weekly_digest():
     }
     synth = fallback
     try:
+        interests = _news_interests_block()
         prompt = (
             "You are Friday, the user's personal news editor, writing the WEEKLY "
-            "DIGEST. Use what you know about the user from your vault/wiki "
-            "context; if you know little about them, treat them as a tech- and "
-            "news-literate reader.\n\n"
+            "DIGEST. Judge what matters to the user by the OWNER'S NEWS "
+            "INTERESTS below and anything else you know about them; if you know "
+            "little about them, treat them as a tech- and news-literate "
+            "reader.\n\n"
             "Below are the stories that ran across this week's Front Page "
             "editions. Synthesize the week's top 5 stories, identify the "
             "through-line trends, and give an editorial take on what this means "
@@ -2738,12 +2861,17 @@ def _generate_weekly_digest():
             'for the user\'s work and interests>"\n}\n\n'
             "Give exactly 5 top_stories when there is enough material. Pick each "
             "by its id from the list; never write a web address.\n\n"
+            + (interests + "\n\n" if interests else "") +
             "THIS WEEK'S STORIES:\n" + story_block
         )
-        system = _get_friday_system_prompt(
-            keywords=prompt, workspace='briefing',
-            provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
-            vault_control=_gated_vault_control(), tools_block=False)
+        from agent_friday.services.agent_identity import named as _named
+        prompt = _named(prompt)
+        system = job_prompt.build(
+            _WEEKLY_DIGEST_JOB, prompt,
+            full_system=lambda: _get_friday_system_prompt(
+                keywords=prompt, workspace='briefing',
+                provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
+                vault_control=_gated_vault_control(), tools_block=False)).system
         # Route through the user's configured provider (same as chat), not a
         # hard-coded Anthropic call — so the digest synthesizes real content on
         # Ollama/OpenAI setups instead of silently falling back to the canned
@@ -2829,13 +2957,17 @@ def _editorial_independence_score(text):
 def _editorial_markdown(week_id, when, body, banned, score, regenerated):
     """Assemble the stored/served markdown: disclaimer header, body, byline, and
     the full-source / independence disclosures."""
-    parts = [f"# Friday's Weekly Editorial — {week_id}", ""]
+    from agent_friday.services.agent_identity import assistant_name
+    who = assistant_name()
+    parts = [f"# {who}'s Weekly Editorial — {week_id}", ""]
     parts.append("> " + EDITORIAL_DISCLAIMER)
     parts.append("")
     parts.append((body or "_(No editorial was generated this week.)_").strip())
     parts.append("")
     parts.append("---")
-    parts.append(f"*— Agent Friday, {when}*")
+    # Signed in her own name; the default name signs as the product always has.
+    from agent_friday.services.agent_identity import is_custom_name
+    parts.append(f"*— {who if is_custom_name() else 'Agent Friday'}, {when}*")
     if banned:
         parts.append("")
         parts.append("*Sources I drew from this week despite their place on your "
@@ -2885,7 +3017,7 @@ def _generate_weekly_editorial():
     article_block = "\n".join(lines) or "(the archive is thin this week)"
 
     def _compose(retry):
-        directive = EDITORIAL_SYSTEM_PROMPT
+        directive = editorial_directive()
         if retry:
             # The retry runs only when the first attempt came back empty, so
             # it says exactly that and never critiques a draft that does not
@@ -2963,9 +3095,11 @@ def _editorial_summary(path, include_md=True):
     md = path.read_text(encoding="utf-8")
     week = path.stem
     when = ""
-    m = re.search(r"— Agent Friday, (.+?)\*", md)
-    if m:
-        when = m.group(1).strip()
+    # The byline: "— Agent Friday, <when>" or "— <her name>, <when>", the last
+    # such line (the body above it may quote someone the same way).
+    bylines = re.findall(r"^\*— [^,*\n]+, (.+?)\*\s*$", md, re.M)
+    if bylines:
+        when = bylines[-1].strip()
     preview = ""
     for line in md.splitlines():
         s = line.strip()
@@ -3040,11 +3174,13 @@ def _front_page_narration_script(edition, max_words=780):
     """
     if not edition:
         return ""
+    from agent_friday.services.agent_identity import assistant_name
+    who = assistant_name()
     parts = []
-    headline = (edition.get("headline") or "Friday's Front Page").strip()
+    headline = (edition.get("headline") or f"{who}'s Front Page").strip()
     slot = edition.get("slot")
     label = "evening edition" if slot == "evening" else "morning edition"
-    parts.append(f"Here's your Friday Front Page, the {label}")
+    parts.append(f"Here's your {who} Front Page, the {label}")
     parts.append(headline)
 
     lead = edition.get("lead") or {}
@@ -3054,7 +3190,7 @@ def _front_page_narration_script(edition, max_words=780):
         if lead.get("snippet"):
             parts.append(lead["snippet"].strip())
         if lead.get("editorial_note"):
-            parts.append(f"Friday's take: {lead['editorial_note'].strip()}")
+            parts.append(f"{who}'s take: {lead['editorial_note'].strip()}")
 
     for sec in (edition.get("sections") or []):
         title = (sec.get("title") or "").strip()
@@ -3140,8 +3276,10 @@ def _build_anchor_briefing(edition):
         })
         return frag
 
+    from agent_friday.services.agent_identity import assistant_name
+    who = assistant_name()
     lines = []
-    headline = (edition.get("headline") or "Friday's Front Page").strip()
+    headline = (edition.get("headline") or f"{who}'s Front Page").strip()
     slot = edition.get("slot")
     label = "evening edition" if slot == "evening" else "morning edition"
     when = (edition.get("generated_central") or edition.get("date") or "").strip()
@@ -3194,7 +3332,7 @@ def _build_anchor_briefing(edition):
         if lead.get("snippet"):
             lines.append(f"  Summary: {lead['snippet'].strip()}")
         if lead.get("editorial_note"):
-            lines.append(f"  Friday's take: {lead['editorial_note'].strip()}")
+            lines.append(f"  {who}'s take: {lead['editorial_note'].strip()}")
         if _frag:
             lines.append(f"  Link (pass to open_url): {_frag}")
 

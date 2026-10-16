@@ -299,7 +299,7 @@ def _worker_cmd(engine: str, args: dict, preimport: bool = False) -> list:
     return cmd
 
 
-def _worker_env() -> dict:
+def _worker_env(engine: str = "") -> dict:
     """The environment every voice worker process starts with, cold or warm.
     A worker loads files that are already on disk (fetched by the installer);
     it has no reason to reach the hub, so it cannot."""
@@ -308,12 +308,23 @@ def _worker_env() -> dict:
     env["HF_HUB_OFFLINE"] = "1"
     env["TRANSFORMERS_OFFLINE"] = "1"
     env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    # The whisper-cuda worker runs CTranslate2 on the card, which loads cuBLAS
+    # 12 by name from PATH; the llama.cpp runtime's copy is borrowed when
+    # nothing else provides it (services/gpu_probe, logged there). Only that
+    # worker's own environment changes: Friday's PATH and every other
+    # worker's are left as they are.
+    if engine == "whisper-cuda":
+        try:
+            from agent_friday.services import gpu_probe
+            gpu_probe.ensure_cublas_on_path(env)
+        except Exception as e:  # noqa: BLE001 - a worker still starts; CPU is the floor
+            log.info("voice worker: cuBLAS PATH check failed: %s", str(e)[:120])
     return env
 
 
 def _popen_worker(engine: str, args: dict, preimport: bool = False):
     """The one place a worker process is started (cold spawn and warm worker)."""
-    env = _worker_env()
+    env = _worker_env(engine)
     return subprocess.Popen(_worker_cmd(engine, args, preimport), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
                             creationflags=_POPEN_FLAGS)

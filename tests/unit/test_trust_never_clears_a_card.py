@@ -51,7 +51,7 @@ def _cases():
     tools = {
         "internal": ("search_wiki", {"query": "pat"}),
         "observe_like": ("search_email", {"query": "from:pat@example.test"}),
-        "outward": ("draft_email", {"to": "pat@example.test", "subject": "hi", "body": "x"}),
+        "outward": ("draft_email", {"to": "pat@example.test", "subject": "hi", "body": "x", "send": True}),
         "outward_2": ("create_calendar_event", {"title": "Call Pat", "start": "2026-10-03T10:00"}),
         "by_argument": ("run_command", {"command": "git status"}),
         "unknown": ("some_new_tool", {"target": "trusted.test"}),
@@ -91,11 +91,11 @@ def test_no_grant_is_created_or_consumed_by_trust(home):
 
 
 def test_tainted_content_from_a_trusted_source_still_cards(home):
-    """Trust never removes the gate. draft_email raises its own approval card
-    inside the handler (authorize answers allow and names that card as the
-    gate, with the content's provenance); whatever the gate is, trusting the
-    source changes nothing about it."""
-    args = {"to": "pat@example.test", "body": "from trusted.test"}
+    """Trust never removes the gate. draft_email with send=true raises its own
+    approval card inside the handler (authorize answers allow and names that
+    card as the gate, with the content's provenance); whatever the gate is,
+    trusting the source changes nothing about it."""
+    args = {"to": "pat@example.test", "body": "from trusted.test", "send": True}
     before = ag.authorize("draft_email", dict(args), {"session_id": "s1"}, tainted=True)
     _seed_trust(home)
     v = ag.authorize("draft_email", dict(args), {"session_id": "s1"}, tainted=True)

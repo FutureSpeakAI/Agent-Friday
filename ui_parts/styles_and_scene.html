@@ -696,7 +696,16 @@
             };
             const KIND_IDS = Object.keys(KINDS);
             const DONE_VISIBLE_MS = 300000;
-            const isFinished = p => !!(p && p.ended) || /^(completed|error|failed|cancelled|timeout|interrupted)$/.test((p && p.status) || '');
+            // One spelling of a task's status for everything that reads it. The
+            // server's tasks say "complete" (agent.py, item_actions, scheduler);
+            // the orb code was written against "completed", so a finished task
+            // never earned its success star. Every reader goes through this.
+            const DONE_WORDS = { complete: 1, completed: 1, done: 1, finished: 1, success: 1, succeeded: 1 };
+            const statusOf = p => {
+                const s = String((p && typeof p === 'object' ? p.status : p) || '').trim().toLowerCase();
+                return DONE_WORDS[s] ? 'completed' : s;
+            };
+            const isFinished = p => !!(p && p.ended) || /^(completed|error|failed|cancelled|timeout|interrupted)$/.test(statusOf(p));
             const clamp01 = v => Math.max(0, Math.min(1, v));
             const num = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
             function fnv(s) {
@@ -951,7 +960,7 @@
                 }
             }
 
-            return { HUES, KINDS, KIND_IDS, DONE_VISIBLE_MS, isFinished, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
+            return { HUES, KINDS, KIND_IDS, DONE_VISIBLE_MS, statusOf, isFinished, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
                      progressOf, orbitRadius, receipt, starAt, keepOut, inKeepOut, liftFor, sparkGate, tint,
                      approvalTask, orbForFrame, formParams };
         })();
@@ -1073,8 +1082,10 @@
         // <orb-sky>
         // The day's finished helpers as faint stars (avatar-visual-genome.md
         // §16.3), from the server's own task list: one fixed place per task in
-        // the band above the scene's centre, a dot for work done and a small
-        // hollow ring for work that failed (a shape, not colour alone).
+        // the band above the scene's centre, a small sparkle for work done. Work
+        // that failed, timed out or was cancelled draws nothing here: the owner
+        // chose to keep failures in Activity, where they can be read and fixed,
+        // not as red rings over the scene. (Process orbs keep their own ring.)
         // Tapping one (FridayOrbHands reads the pointer) opens that helper's
         // receipt in its own view. A new star fades in; nothing blinks.
         const FridayOrbSky = (function () {
@@ -1104,23 +1115,22 @@
                 for (const t of tasks || []) {
                     const id = t && (t.task_id || t.id);
                     if (!id || t.process || stars.has(id)) continue;
-                    const st = String(t.status || '');
-                    if (!/^(completed|done|failed|error|timeout|cancelled)$/.test(st)) continue;
+                    // Only finished-and-succeeded work earns a star; every other
+                    // ending (failed, error, timeout, cancelled) stays in Activity.
+                    if (FridayOrbLife.statusOf(t) !== 'completed') continue;
                     if (!(Number(t.ended) >= t0)) continue;
-                    const failed = /^(failed|error|timeout)$/.test(st);
                     const el = document.createElement('div');
-                    el.className = 'friday-star' + (failed ? ' failed' : '');
+                    el.className = 'friday-star';
                     // A small four-point sparkle, not a round dot, so it reads apart
-                    // from the scene's own star field; a failure is a hollow ring.
+                    // from the scene's own star field.
                     el.style.cssText = 'position:absolute;left:0;top:0;width:9px;height:9px;opacity:0;transition:opacity 1.2s ease;'
-                        + (failed ? 'box-sizing:border-box;border:1px solid #ef4444;border-radius:50%;'
-                        : 'background:linear-gradient(#bfefff,#bfefff) center/1px 100% no-repeat,'
-                        + 'linear-gradient(#bfefff,#bfefff) center/100% 1px no-repeat,radial-gradient(circle,#ffffff 0 1.5px,transparent 2px);');
-                    const s = { id, el, failed, task: t };
+                        + 'background:linear-gradient(#bfefff,#bfefff) center/1px 100% no-repeat,'
+                        + 'linear-gradient(#bfefff,#bfefff) center/100% 1px no-repeat,radial-gradient(circle,#ffffff 0 1.5px,transparent 2px);';
+                    const s = { id, el, failed: false, task: t };
                     stars.set(id, s);
                     ensure().appendChild(el);
                     place(s);
-                    requestAnimationFrame(() => { el.style.opacity = failed ? '0.75' : '0.7'; });
+                    requestAnimationFrame(() => { el.style.opacity = '0.7'; });
                 }
             }
             async function poll() {
@@ -1314,7 +1324,7 @@
 
             // ---- one line on where a helper is, from what the server says ----
             function statusLine(o, now) {
-                const s = String(o.status || 'running');
+                const s = FridayOrbLife.statusOf(o) || 'running';
                 const who = Name(o), what = String(now || o.label || '').replace(/\s+/g, ' ').trim().slice(0, 120);
                 if (o.approval_id) return who + ' needs your OK.';
                 if (/^(failed|error|timeout)$/.test(s)) return who + ' failed' + (what ? ': ' + what : '.');
@@ -1601,7 +1611,7 @@
             function finish(o, s) {
                 // Every finished outcome keeps its orbit and stops the form's spin.
                 s.finished = true;
-                if (o.status === 'completed') receipt(o, s);
+                if (FridayOrbLife.statusOf(o) === 'completed') receipt(o, s);
             }
             async function receipt(o, s) {
                 const id = s.row.task_id;
@@ -2269,7 +2279,7 @@
                     } else o.finishedAt = null;
                 }
                 if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
-                if (upd.status === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
+                if (FridayOrbLife.statusOf(upd) === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
                 else if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
             }
             removeOrb(id) {

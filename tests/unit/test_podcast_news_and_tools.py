@@ -115,10 +115,18 @@ def test_queuing_never_breaks_the_routine(_home, monkeypatch):
     ne._notify_weekly_digest({"id": "2026-W40"})          # does not raise
 
 
-# ── the four routines write on the local model ──────────────────────────────
+# ── the four routines write on the local model (in a local routing mode) ────
 
 class _Stop(Exception):
     pass
+
+
+@pytest.fixture
+def local_mode(monkeypatch):
+    """The owner chose a local routing mode. Under a cloud mode the routines
+    run on the cloud by the owner's consent (tests/unit/test_mode_truth.py)."""
+    from agent_friday.services import cloud_intent
+    monkeypatch.setattr(cloud_intent, "_stored_mode", lambda: "local_preferred")
 
 
 def _guard_state_inside(monkeypatch, name):
@@ -136,7 +144,7 @@ def _guard_state_inside(monkeypatch, name):
     ("_generate_weekly_digest", "_gather_weekly_editions"),
     ("_generate_weekly_editorial", "_gather_editorial_pool"),
 ])
-def test_a_routine_started_from_news_runs_local_only(monkeypatch, fn, inner):
+def test_a_routine_started_from_news_runs_local_only(monkeypatch, fn, inner, local_mode):
     seen = _guard_state_inside(monkeypatch, inner)
     with pytest.raises(_Stop):
         getattr(ne, fn)()
@@ -144,7 +152,7 @@ def test_a_routine_started_from_news_runs_local_only(monkeypatch, fn, inner):
     assert not local_only_guard.is_active()
 
 
-def test_no_setting_turns_news_local_only_off(monkeypatch):
+def test_no_setting_turns_news_local_only_off(monkeypatch, local_mode):
     """News is local-only with no opt-out: the owner's rule is $0 on every
     News path."""
     import agent_friday.core as core
@@ -155,7 +163,7 @@ def test_no_setting_turns_news_local_only_off(monkeypatch):
     assert seen == [True]
 
 
-def test_a_scheduled_cloud_pin_does_not_reach_a_news_routine(monkeypatch):
+def test_a_scheduled_cloud_pin_does_not_reach_a_news_routine(monkeypatch, local_mode):
     seen = _guard_state_inside(monkeypatch, "_gather_weekly_editions")
     with local_only_guard.cloud_pinned("claude-haiku-4-5-20251001", "Weekly"):
         with pytest.raises(_Stop):
@@ -163,7 +171,7 @@ def test_a_scheduled_cloud_pin_does_not_reach_a_news_routine(monkeypatch):
     assert seen == [True]
 
 
-def test_both_briefing_producers_write_locally(monkeypatch):
+def test_both_briefing_producers_write_locally(monkeypatch, local_mode):
     from agent_friday.services import model_router, scheduler
     seen = []
 
@@ -255,7 +263,7 @@ def test_what_s_the_source_for_that_answers_from_the_line_playing_now(_home):
                 "start": 2.3, "end": 3.0}])
     podcast_tools.set_now_playing(ep["id"], 2.5, playing=False)
     out = json.loads(podcast_tools._tool_podcast_source({}))
-    assert out["line"] == "Remarkable." and out["speaker"] == "Emma"
+    assert out["line"] == "Remarkable." and out["speaker"] == pe.COHOST_NEUTRAL_NAME   # the co-host by name, never the voice's
     # An uncited reaction leans on the line it reacts to.
     assert out["sources"] == [{"id": "S1", "title": "Council passes budget",
                                "url": "https://news.example/a"}]

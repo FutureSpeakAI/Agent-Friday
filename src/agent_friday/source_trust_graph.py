@@ -8,19 +8,32 @@ their reporting holds up against the rest of the field.
 
 Six dimensions, each in [0, 1]
 ------------------------------
-factual_accuracy       How often their claims hold up when cross-referenced
-                       against other sources. Updated every news fetch.
-correction_behavior    When they get something wrong, do they issue
-                       corrections/retractions?
-source_attribution     Do they cite primary sources, or launder opinion as
-                       reporting?
-prediction_accuracy    Forward-looking claims scored retroactively
-                       (infrastructure ready; scoring is a placeholder).
-opinion_separation     Do they clearly label opinion vs. reporting?
-narrative_independence Do they break from their expected editorial line when
-                       the facts demand it?
+The keys are kept for the stored file and the federation protocol; what each
+one actually MEASURES on this install is in ``DIMENSION_INFO`` (label + basis),
+and that, not the key, is what the UI and the tools show.
 
-Composite ``trust_score`` is the weighted mean of the six dimensions.
+factual_accuracy       Shown as "Primary-source corroboration": the outlet
+                       covered a story with one or two others and the coverage
+                       cites a primary document. Peer attestations (federation)
+                       can add claim checks. Nothing here checks that a claim
+                       is TRUE, so it is not called accuracy.
+correction_behavior    Corrections the outlet ran of its own earlier articles.
+source_attribution     Shown as "Attribution (writing style)": attribution words
+                       or links in the headline/snippet; a long snippet naming
+                       no source counts against.
+prediction_accuracy    NOT MEASURED locally. Only a peer attestation can supply
+                       it; until one does it has no score and stays out of the
+                       composite.
+opinion_separation     Shown as "Opinion labelling (writing style)": opinion
+                       filed under an opinion/analysis section counts for;
+                       "should"/"must"-style words in a news headline against.
+narrative_independence NOT MEASURED locally; like predictions, only a peer
+                       attestation can supply it.
+
+Composite ``evidence_score`` is the weighted mean of the MEASURED dimensions
+(weights renormalised); a dimension that is not measured contributes nothing,
+never a placeholder 0.5. ``trust_score`` is that, adjusted by the owner's
+explicit Boost/Ban (``owner_preference``), shown as its own line.
 
 Storage
 -------
@@ -59,10 +72,113 @@ _WEIGHTS = {
     "factual_accuracy": 0.35,
     "correction_behavior": 0.15,
     "source_attribution": 0.15,
-    "prediction_accuracy": 0.05,   # placeholder dimension — low weight
+    "prediction_accuracy": 0.05,   # counts only once a peer attestation measures it
     "opinion_separation": 0.15,
     "narrative_independence": 0.15,
 }
+
+#: What each dimension is, said plainly. ``local`` is whether this install
+#: measures it itself; a dimension that is not measured locally is "not
+#: measured" (no score, out of the composite) until evidence for it arrives.
+DIMENSION_INFO = {
+    "factual_accuracy": {
+        "label": "Primary-source corroboration",
+        "based_on": ("Stories this outlet covered alongside one or two others where the "
+                     "coverage cites a primary document (a filing, ruling, official "
+                     "statement or study); claim checks from peer agents if federation "
+                     "is on. It does not check whether a claim is true."),
+        "local": True},
+    "correction_behavior": {
+        "label": "Corrections issued",
+        "based_on": ("Headlines that correct or retract an article this outlet ran "
+                     "earlier; at most two a week count."),
+        "local": True},
+    "source_attribution": {
+        "label": "Attribution (writing style)",
+        "based_on": ("Writing-style signal: attribution words ('said', 'according to') "
+                     "or links in the headline and snippet count for; a snippet over "
+                     "140 characters that names no source counts against."),
+        "local": True},
+    "prediction_accuracy": {
+        "label": "Predictions",
+        "based_on": ("Not measured: no forward-looking claim is scored on this install. "
+                     "Only a verified peer attestation can supply it."),
+        "local": False},
+    "opinion_separation": {
+        "label": "Opinion labelling (writing style)",
+        "based_on": ("Writing-style signal: pieces filed under an opinion or analysis "
+                     "section count for; opinion words ('should', 'must') in a headline "
+                     "outside one count against."),
+        "local": True},
+    "narrative_independence": {
+        "label": "Independence",
+        "based_on": ("Not measured: nothing on this install scores it. Only a verified "
+                     "peer attestation can supply it."),
+        "local": False},
+}
+NOT_MEASURED = "not measured"
+
+#: The owner's explicit Boost/Ban on an outlet. It is an input to the score in
+#: its own right, shown as its own line, and never folded into a dimension:
+#: a Ban caps the score, a Boost lifts it (and at least to the green band).
+#: These are the defaults; the owner sets their own in Settings (trust_scoring:
+#: ban_ceiling, boost_lift, boost_floor), read by `scoring_params()`.
+OWNER_BAN_CEILING = 0.15
+OWNER_BOOST_LIFT = 0.15
+OWNER_BOOST_FLOOR = 0.70
+
+#: How long a read of the owner's scoring settings is reused (seconds): a
+#: rescore recomputes every source, and the settings file is read once for it.
+_PARAMS_TTL_S = 5.0
+_PARAMS_CACHE = {"at": 0.0, "value": None}
+
+
+def scoring_params(fresh=False):
+    """The owner's trust-scoring numbers (Settings: trust_scoring), each held to
+    its range: prior_strength (how many pseudo-observations anchor a dimension to
+    its starting value: higher learns slower), boost_lift, boost_floor and
+    ban_ceiling. Defaults are this module's own numbers."""
+    import time as _t
+    now = _t.monotonic()
+    hit = _PARAMS_CACHE.get("value")
+    if not fresh and hit is not None and now - _PARAMS_CACHE["at"] < _PARAMS_TTL_S:
+        return dict(hit)
+    try:
+        from agent_friday.services import owner_choices as _oc
+        value = _oc.trust_scoring()
+    except Exception:
+        value = {"prior_strength": _PRIOR_STRENGTH, "boost_lift": OWNER_BOOST_LIFT,
+                 "boost_floor": OWNER_BOOST_FLOOR, "ban_ceiling": OWNER_BAN_CEILING}
+    _PARAMS_CACHE.update(at=now, value=dict(value))
+    return dict(value)
+
+
+def _params_stamp(p) -> str:
+    return ",".join("%s=%g" % (k, float(p[k])) for k in sorted(p))
+
+
+def owner_adjusted(evidence_score, user_actions, params=None):
+    """(trust_score, preference) after the owner's Boost/Ban.
+
+    preference is None, or {"state": "banned"|"boosted", "effect": text,
+    "set_by": "owner"}. Ban wins over Boost when both are somehow set. The
+    amounts are the owner's (`scoring_params`), the defaults until they change them.
+    """
+    p = params or scoring_params()
+    ban, lift, floor = float(p["ban_ceiling"]), float(p["boost_lift"]), float(p["boost_floor"])
+    ua = user_actions if isinstance(user_actions, dict) else {}
+    ev = float(evidence_score)
+    if ua.get("banned"):
+        return (round(min(ev, ban), 4),
+                {"state": "banned", "set_by": "owner",
+                 "effect": "You banned this outlet: its score is held at or below %.2f "
+                           "whatever the evidence says. Unban to remove." % ban})
+    if ua.get("boosted"):
+        return (round(max(floor, min(1.0, ev + lift)), 4),
+                {"state": "boosted", "set_by": "owner",
+                 "effect": "You boosted this outlet: +%.2f on the evidence score, and at "
+                           "least %.2f. Unboost to remove." % (lift, floor)})
+    return round(ev, 4), None
 
 # Decay: an observation N weeks old carries weight 0.95**N.
 _WEEKLY_DECAY = 0.95
@@ -204,20 +320,54 @@ def local_beat_sources():
     return normalize_local_sources(raw)
 
 
+def trusted_outlets():
+    """The outlets the owner trusts without tagging them Local (the
+    `news_trusted_outlets` setting), as bare domains. They seed at the same
+    high trust as `_SEED_HIGH` and are NOT fetched or labelled as Local news.
+    Nothing ships here; an unreadable settings file means none."""
+    try:
+        from agent_friday.core import _load_settings
+        raw = (_load_settings() or {}).get("news_trusted_outlets")
+    except Exception:
+        return ()
+    return normalize_local_sources(raw)
+
+
+def _owner_seed_lists():
+    """(local beat outlets, trusted outlets) from ONE settings read."""
+    try:
+        from agent_friday.core import _load_settings
+        st = _load_settings() or {}
+    except Exception:
+        return (), ()
+    return (normalize_local_sources(st.get("news_local_sources")),
+            normalize_local_sources(st.get("news_trusted_outlets")))
+
+
+def seed_basis(domain):
+    """Why a source starts where it does: (base value, plain reason)."""
+    local, trusted = _owner_seed_lists()
+    if domain in _SEED_HIGH:
+        return 0.75, "built-in high-trust outlet list"
+    if domain in trusted:
+        return 0.75, "your trusted outlets (News > Customize)"
+    if domain in local:
+        return 0.75, "your Local beat outlets (News > Customize)"
+    if domain in _SEED_LOW:
+        return 0.30, "built-in low-trust outlet list"
+    return 0.50, "unknown outlet: neutral start"
+
+
 def _seed_for(domain):
     """Seed dimension scores for a source we've never observed.
 
     Seeds are chosen so the composite lands green (≥0.7) for the static
-    high-trust set and the owner's Local beat outlets, red (<0.4) for the known low-trust set, and neutral yellow
+    high-trust set, the owner's trusted outlets and the owner's Local beat
+    outlets, red (<0.4) for the known low-trust set, and neutral yellow
     for everything unknown — matching the old static badge behaviour until real
     observations move the needle.
     """
-    if domain in _SEED_HIGH or domain in local_beat_sources():
-        base = 0.75
-    elif domain in _SEED_LOW:
-        base = 0.30
-    else:
-        base = 0.50
+    base, _why = seed_basis(domain)
     seed = {d: base for d in DIMENSIONS}
     # prediction_accuracy is a placeholder dimension (no retroactive scoring
     # yet), so it stays neutral regardless of general reputation.
@@ -225,19 +375,158 @@ def _seed_for(domain):
     return seed
 
 
+def _initial_scores(domain):
+    """The scores a source has before any evidence: the seed prior for every
+    dimension this install measures, None ("not measured") for the rest."""
+    seed = _seed_for(domain)
+    return {d: (seed[d] if DIMENSION_INFO[d]["local"] else None) for d in DIMENSIONS}
+
+
+def _evidence_counts(rec):
+    counts = {d: 0 for d in DIMENSIONS}
+    for o in (rec or {}).get("observations") or []:
+        d = o.get("dimension") if isinstance(o, dict) else None
+        if d in counts and isinstance(o.get("signal"), (int, float)):
+            counts[d] += 1
+    return counts
+
+
 #: path -> ((mtime_ns, size), parsed data); see SourceTrustGraph._load_readonly.
 _READ_CACHE: dict = {}
 
 
 import hashlib as _hashlib
+import logging as _logging
+import unicodedata as _unicodedata
+from urllib.parse import urlsplit as _urlsplit, parse_qsl as _parse_qsl, urlencode as _urlencode
+
+_log = _logging.getLogger("friday.source_trust")
+
+#: Query parameters that say how a reader arrived, never which article it is.
+#: The same story reached through two newsletters is one article.
+_TRACKING_PARAM_RX = re.compile(
+    r"^(utm_[a-z0-9_]*|fbclid|gclid|dclid|gbraid|wbraid|msclkid|mc_cid|mc_eid|igshid|"
+    r"yclid|_ga|_gl|ref|ref_src|ref_url|referrer|cmpid|ocid|smid|smtyp|sr_share|taid|"
+    r"at_medium|at_campaign|at_custom\d*|mbid|spm|share|s_cid|icid|ito|guccounter)$", re.I)
+
+#: Each per-article heuristic is one CHECK. Its two outcomes (attribution
+#: present / absent, opinion labelled / unlabelled) are the same check, so an
+#: article whose snippet changes between passes cannot be scored twice.
+CHECK_OF = {
+    "correction_issued": "correction",
+    "attribution_present": "attribution",
+    "attribution_absent": "attribution",
+    "opinion_labeled": "opinion",
+    "opinion_unlabeled": "opinion",
+    "primary_corroborated": "primary",
+}
+_TYPES_OF_CHECK: dict = {}
+for _t, _c in CHECK_OF.items():
+    _TYPES_OF_CHECK.setdefault(_c, []).append(_t)
 
 
-def _article_key(art) -> str:
-    """A stable id for an article: its URL, else its title."""
+def normalize_article_url(url) -> str:
+    """The article a URL names, without how the reader got there.
+
+    Lower-cased host without ``www.``, no scheme, no fragment, no tracking
+    parameters (utm_*, fbclid, ...), remaining parameters sorted, no trailing
+    slash. Two links to the same story reduce to the same string; anything
+    that is not an http(s) URL reduces to "".
+    """
+    s = (url or "").strip()
+    if not s:
+        return ""
+    if "://" not in s:
+        # mailto:, tel:, javascript: ... are not articles; host:port is.
+        if re.match(r"^[a-z][a-z0-9+.\-]*:(?!\d)", s, re.I):
+            return ""
+        s = "https://" + s
+    try:
+        parts = _urlsplit(s)
+    except ValueError:
+        return ""
+    if parts.scheme.lower() not in ("http", "https"):
+        return ""
+    host = (parts.hostname or "").lower().strip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        return ""
+    port = ""
+    try:
+        if parts.port and parts.port not in (80, 443):
+            port = ":%d" % parts.port
+    except ValueError:
+        port = ""
+    path = re.sub(r"/{2,}", "/", parts.path or "")
+    if len(path) > 1:
+        path = path.rstrip("/")
+    if path == "/":
+        path = ""
+    query = sorted((k, v) for k, v in _parse_qsl(parts.query, keep_blank_values=True)
+                   if not _TRACKING_PARAM_RX.match(k))
+    q = ("?" + _urlencode(query)) if query else ""
+    return f"{host}{port}{path}{q}"
+
+
+def normalize_headline(title) -> str:
+    """A headline reduced to its words: case, accents, punctuation and spacing
+    differences between two passes of the same feed do not make a new article."""
+    t = _unicodedata.normalize("NFKC", str(title or "")).lower()
+    t = re.sub(r"[^\w\s]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _sha(basis: str) -> str:
+    return _hashlib.sha1(basis.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _article_key(art, domain=None) -> str:
+    """A stable id for an article: its normalised URL, else (outlet,
+    normalised headline). "" when there is neither."""
+    url = normalize_article_url(art.get("url") or "")
+    if url:
+        return "u" + _sha(url)
+    head = normalize_headline(art.get("title") or "")
+    if not head:
+        return ""
+    outlet = _extract_domain(domain or art.get("source") or "")
+    return "t" + _sha(f"{outlet}|{head}")
+
+
+def _legacy_article_key(art) -> str:
+    """The key the graph used before URLs were normalised (raw URL, else the
+    lower-cased title). Still honoured, so an article counted under the old
+    key is not counted again after an upgrade."""
     basis = (art.get("url") or "").strip() or (art.get("title") or "").strip().lower()
     if not basis:
         return ""
-    return _hashlib.sha1(basis.encode("utf-8", "replace")).hexdigest()[:16]
+    return _sha(basis)
+
+
+def _dedupe_key(obs):
+    """(check, article) for an observation a local check produced, else None.
+
+    Observations written before they carried an ``article_key`` are matched by
+    their check and their normalised detail (the headline the check ran on).
+    """
+    check = CHECK_OF.get(obs.get("type"))
+    if not check or (obs.get("signed_by") or "local") != "local":
+        return None
+    ak = obs.get("article_key")
+    if ak:
+        return (check, "k:" + str(ak))
+    detail = normalize_headline(obs.get("detail") or "")
+    if not detail:
+        return None
+    return (check, "d:" + detail)
+
+
+#: Paths whose duplicate-evidence cleanup has already been logged this run.
+_DEDUPE_LOGGED: set = set()
+_EVIDENCE_DEDUPE_VERSION = 1
+#: Bumped when the scoring rules change; stored scores are recomputed once.
+_SCORING_VERSION = 2
 
 
 _WORD_RX = re.compile(r"[a-z0-9]{3,}")
@@ -281,6 +570,20 @@ def _corrections_this_week(rec) -> int:
     return n
 
 
+def _log_owner_preference(rec, action, prev_score, before):
+    """One event in the sources log for an owner Boost/Ban change."""
+    try:
+        from agent_friday.trust import log as _tlog
+        _tlog.append(_tlog.sources_path(), entity_id=rec.get("domain") or "",
+                     entity_kind="source", kind="owner_rule", origin="owner",
+                     dimension=None, signal=None,
+                     provenance={"action": action},
+                     detail=("trust %s -> %s" % (prev_score, rec.get("trust_score")))[:160],
+                     effect=_tlog.effect_between(before, dict(rec.get("scores") or {})))
+    except Exception:
+        pass
+
+
 def _log_source_event(rec, obs_type, dimension, signal, detail, before, *, origin,
                       provenance=None):
     """One event in the sources log for an observation that just landed."""
@@ -313,9 +616,85 @@ class SourceTrustGraph:
                 return {"sources": {}, "meta": {"version": "1.0"}}
             data.setdefault("sources", {})
             data.setdefault("meta", {"version": "1.0"})
+            self._dedupe_evidence_once(data)
+            self._rescore_once(data)
             return data
         except Exception:
             return {"sources": {}, "meta": {"version": "1.0"}}
+
+    def _rescore_once(self, data):
+        """Recompute every stored source once when the scoring rules change
+        (here: not-measured dimensions leave the composite), so no stored
+        score keeps a placeholder in it. Stamped in meta; persisted by the
+        next write."""
+        meta = data.setdefault("meta", {})
+        # The owner's scoring numbers (Settings: trust_scoring) are part of the
+        # rules: a change to them re-scores every outlet on the next pass, once.
+        stamp = _params_stamp(scoring_params())
+        params_changed = bool(meta.get("scoring_params")) and meta.get("scoring_params") != stamp
+        if meta.get("scoring_version") == _SCORING_VERSION and meta.get("scoring_params") == stamp:
+            return
+        n = 0
+        for rec in (data.get("sources") or {}).values():
+            if isinstance(rec, dict):
+                last = rec.get("last_updated")
+                self._recompute(rec)
+                n += 1
+                if last:
+                    rec["last_updated"] = last  # a rescore is not new evidence
+        meta["scoring_version"] = _SCORING_VERSION
+        meta["scoring_params"] = stamp
+        if params_changed:
+            meta["rescored"] = {"date": _today_str(), "sources": n, "params": stamp,
+                                "why": "your trust-scoring settings changed"}
+            _log.info("source trust: re-scored %d outlet(s) with your new scoring settings (%s)", n, stamp)
+
+    def _dedupe_evidence_once(self, data):
+        """One-time cleanup of evidence the same article produced more than once.
+
+        Graphs written before every (article, check) pair counted once hold the
+        same headline observed on every feed pass; with the observation cap,
+        those repeats pushed older evidence out. Keep the EARLIEST observation
+        of each (check, article) pair and drop the rest, recompute the touched
+        sources, and stamp meta so it runs once. Readers see the cleaned view
+        at once; the next write persists it. Only the local per-article checks
+        are touched: owner, peer and federation observations are never removed.
+        """
+        meta = data.setdefault("meta", {})
+        if not isinstance(meta, dict):
+            meta = data["meta"] = {}
+        done = meta.get("evidence_dedupe")
+        if isinstance(done, dict) and done.get("version", 0) >= _EVIDENCE_DEDUPE_VERSION:
+            return 0
+        removed, touched = 0, 0
+        for rec in (data.get("sources") or {}).values():
+            if not isinstance(rec, dict):
+                continue
+            obs = rec.get("observations")
+            if not isinstance(obs, list) or len(obs) < 2:
+                continue
+            seen, kept = set(), []
+            for o in obs:
+                k = _dedupe_key(o) if isinstance(o, dict) else None
+                if k is not None:
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                kept.append(o)
+            if len(kept) != len(obs):
+                removed += len(obs) - len(kept)
+                touched += 1
+                rec["observations"] = kept
+                self._recompute(rec)
+        meta["evidence_dedupe"] = {"version": _EVIDENCE_DEDUPE_VERSION,
+                                   "date": _today_str(), "removed": removed,
+                                   "sources": touched}
+        if removed and str(self.path) not in _DEDUPE_LOGGED:
+            _DEDUPE_LOGGED.add(str(self.path))
+            _log.info("source trust: removed %d repeated observation(s) of the same "
+                      "article and check across %d source(s); kept the earliest of each",
+                      removed, touched)
+        return removed
 
     def _load_readonly(self):
         """The parsed file, reused until it changes on disk. READERS ONLY.
@@ -361,7 +740,7 @@ class SourceTrustGraph:
             rec = {
                 "domain": domain,
                 "name": name or domain,
-                "scores": _seed_for(domain),
+                "scores": _initial_scores(domain),
                 "observations": [],
                 "trust_score": 0.0,
                 "article_count": 0,
@@ -378,19 +757,38 @@ class SourceTrustGraph:
 
     @staticmethod
     def _composite(scores):
-        total = sum(_WEIGHTS[d] * float(scores.get(d, 0.5)) for d in DIMENSIONS)
-        return round(total, 4)
+        """Weighted mean of the dimensions that HAVE a score, weights
+        renormalised over them. A dimension that is not measured (None) is
+        left out; it never contributes a placeholder number."""
+        num = den = 0.0
+        for d in DIMENSIONS:
+            v = (scores or {}).get(d, 0.5)
+            if v is None:
+                continue
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                continue
+            num += _WEIGHTS[d] * v
+            den += _WEIGHTS[d]
+        return round(num / den, 4) if den else 0.5
 
     def _recompute(self, rec):
         """Recompute each dimension as a seed-anchored, time-decayed weighted
-        mean of its observations, then the composite trust score."""
+        mean of its observations, then the composite trust score.
+
+        A dimension this install does not measure (DIMENSION_INFO local=False)
+        stays None until at least one observation for it exists."""
         seed = _seed_for(rec.get("domain", ""))
         obs = rec.get("observations") or []
         today = date.today()
         scores = {}
+        params = scoring_params()
+        prior = float(params["prior_strength"])
         for dim in DIMENSIONS:
-            num = _PRIOR_STRENGTH * seed[dim]
-            den = _PRIOR_STRENGTH
+            num = prior * seed[dim]
+            den = prior
+            n = 0
             for o in obs:
                 if o.get("dimension") != dim:
                     continue
@@ -401,9 +799,15 @@ class SourceTrustGraph:
                 w = _WEEKLY_DECAY ** weeks
                 num += w * float(sig)
                 den += w
+                n += 1
+            if not n and not DIMENSION_INFO[dim]["local"]:
+                scores[dim] = None
+                continue
             scores[dim] = round(num / den, 4) if den else seed[dim]
         rec["scores"] = scores
-        rec["trust_score"] = self._composite(scores)
+        rec["evidence_score"] = self._composite(scores)
+        rec["trust_score"], rec["owner_preference"] = owner_adjusted(
+            rec["evidence_score"], rec.get("user_actions"), params)
         rec["last_updated"] = _today_str()
         return rec
 
@@ -485,18 +889,28 @@ class SourceTrustGraph:
             ua = rec.setdefault("user_actions",
                                 {"banned": False, "boosted": False,
                                  "clicks": 0, "read_laters": 0})
+            # Ban and Boost are mutually exclusive, as the news routes keep
+            # the two lists: banning un-boosts and boosting un-bans.
             if action == "ban":
                 ua["banned"] = True
+                ua["boosted"] = False
             elif action == "unban":
                 ua["banned"] = False
             elif action == "boost":
                 ua["boosted"] = True
+                ua["banned"] = False
             elif action == "unboost":
                 ua["boosted"] = False
             elif action == "click":
                 ua["clicks"] = int(ua.get("clicks", 0)) + 1
             elif action in ("read_later", "read"):
                 ua["read_laters"] = int(ua.get("read_laters", 0)) + 1
+            if action in ("ban", "unban", "boost", "unboost"):
+                # The owner's preference is an input to the score: apply it now.
+                before = dict(rec.get("scores") or {})
+                prev = rec.get("trust_score")
+                self._recompute(rec)
+                _log_owner_preference(rec, action, prev, before)
             self._save(data)
 
     # ── reads ──────────────────────────────────────────────────────
@@ -515,14 +929,74 @@ class SourceTrustGraph:
         rec = self.get(domain)
         if rec:
             return float(rec.get("trust_score", 0.5))
-        return self._composite(_seed_for(_extract_domain(domain)))
+        return self._composite(_initial_scores(_extract_domain(domain)))
 
     def dimensions_for(self, domain):
-        """The six dimension scores for a domain (seed values if unobserved)."""
+        """The six dimension scores for a domain (seed values if unobserved).
+        A dimension that is not measured is None, never a placeholder."""
         rec = self.get(domain)
         if rec:
-            return dict(rec.get("scores", {}))
-        return _seed_for(_extract_domain(domain))
+            scores = dict(rec.get("scores", {}))
+            counts = _evidence_counts(rec)
+            for d in DIMENSIONS:
+                if not DIMENSION_INFO[d]["local"] and not counts[d]:
+                    scores[d] = None
+            return scores
+        return _initial_scores(_extract_domain(domain))
+
+    def explain(self, domain):
+        """Every dimension of one outlet with what it is based on and how much
+        evidence it rests on, plus the composite and how it was formed. The
+        one place the tools and the UI get a breakdown from, so they say the
+        same thing. Works for an outlet never observed (seed prior only)."""
+        dom = _extract_domain(domain)
+        if not dom:
+            return None
+        rec = self.get(dom)
+        known = rec is not None
+        rec = rec or {"domain": dom, "name": dom, "observations": [],
+                      "scores": _initial_scores(dom), "article_count": 0}
+        scores = self.dimensions_for(dom)
+        counts = _evidence_counts(rec)
+        dims = {}
+        for d in DIMENSIONS:
+            info = DIMENSION_INFO[d]
+            v = scores.get(d)
+            measured = v is not None
+            dims[d] = {
+                "label": info["label"],
+                "score": (round(float(v), 3) if measured else None),
+                "status": ("measured" if counts[d] else
+                           ("prior only (no evidence yet)" if measured else NOT_MEASURED)),
+                "based_on": info["based_on"],
+                "evidence_count": counts[d],
+                "in_composite": measured,
+            }
+        evidence_score = self._composite(scores)
+        out = {
+            "kind": "source",
+            "domain": dom,
+            "name": rec.get("name") or dom,
+            "known": known,
+            "trust_score": None,
+            "evidence_score": round(evidence_score, 3),
+            "composite_based_on": ("Weighted mean of the measured dimensions "
+                                   "(weights renormalised); not-measured dimensions "
+                                   "are left out. The owner's Boost/Ban, if any, is "
+                                   "applied after, as owner_preference."),
+            "owner_preference": None,
+            "prior": {"value": seed_basis(dom)[0], "based_on": seed_basis(dom)[1],
+                      "strength_observations": scoring_params()["prior_strength"]},
+            "dimensions": dims,
+            "evidence_count": sum(counts.values()),
+            "article_count": int(rec.get("article_count") or 0),
+            "first_seen": rec.get("first_seen"),
+            "last_updated": rec.get("last_updated"),
+        }
+        final, pref = owner_adjusted(evidence_score, rec.get("user_actions"))
+        out["trust_score"] = round(final, 3)
+        out["owner_preference"] = pref
+        return out
 
     def leaderboard(self, limit=200):
         rows = sorted(self.all_sources(),
@@ -533,6 +1007,8 @@ class SourceTrustGraph:
                 "domain": r.get("domain"),
                 "name": r.get("name") or r.get("domain"),
                 "trust_score": r.get("trust_score", 0.0),
+                "evidence_score": r.get("evidence_score", r.get("trust_score", 0.0)),
+                "owner_preference": (r.get("owner_preference") or {}).get("state"),
                 "scores": r.get("scores", {}),
                 "article_count": r.get("article_count", 0),
                 "observation_count": len(r.get("observations") or []),
@@ -543,7 +1019,7 @@ class SourceTrustGraph:
 
     # ── cross-source comparison engine ─────────────────────────────
 
-    def analyze_fetch(self, pool, clusters):
+    def analyze_fetch(self, pool, clusters, owner=None):
         """Run cross-source comparison over one fetch cycle and log
         observations. ``pool`` is the flat scored article list;
         ``clusters`` is the output of the title-Jaccard clusterer.
@@ -567,6 +1043,8 @@ class SourceTrustGraph:
                    "independence": 0, "articles": 0}
         with self._lock:
             data = self._load()
+            if owner is not None:
+                self._sync_owner(data, owner)
 
             # ── 1. Per-article signals over the whole pool ──
             for art in pool or []:
@@ -579,7 +1057,8 @@ class SourceTrustGraph:
                 snippet = art.get("snippet") or ""
                 url = art.get("url") or ""
                 text = f"{title} {snippet}"
-                akey = _article_key(art)
+                akey = _article_key(art, domain)
+                lkey = _legacy_article_key(art)
 
                 # Correction behaviour: a correction/retraction is positive
                 # evidence that the source owns its mistakes -- when it
@@ -590,7 +1069,7 @@ class SourceTrustGraph:
                     if (_corrects_a_prior_article(rec, title)
                             and _corrections_this_week(rec) < _CORRECTIONS_PER_WEEK
                             and self._append(rec, "correction_issued", "correction_behavior",
-                                             0.95, detail=title[:160], article_key=akey)):
+                                             0.95, detail=title[:160], article_key=akey, legacy_key=lkey)):
                         summary["corrections"] += 1
                 elif title:
                     self._remember_title(rec, title)
@@ -599,22 +1078,22 @@ class SourceTrustGraph:
                 # a substantive snippet that cites nothing.
                 if _ATTRIBUTION_RX.search(text) or "http" in snippet:
                     if self._append(rec, "attribution_present", "source_attribution",
-                                    0.9, detail=title[:160], article_key=akey):
+                                    0.9, detail=title[:160], article_key=akey, legacy_key=lkey):
                         summary["attribution"] += 1
                 elif len(snippet) > 140:
                     self._append(rec, "attribution_absent", "source_attribution",
-                                 0.3, detail=title[:160], article_key=akey)
+                                 0.3, detail=title[:160], article_key=akey, legacy_key=lkey)
 
                 # Opinion separation: clearly-labelled opinion (section path) is
                 # good practice. Opinion language with no label is a soft miss.
                 cat = (art.get("category") or "").lower()
                 if _OPINION_PATH_RX.search(url) or cat in ("opinion", "analysis"):
                     if self._append(rec, "opinion_labeled", "opinion_separation",
-                                    0.9, detail=title[:160], article_key=akey):
+                                    0.9, detail=title[:160], article_key=akey, legacy_key=lkey):
                         summary["opinion"] += 1
                 elif _OPINION_WORD_RX.search(title) and not _OPINION_PATH_RX.search(url):
                     self._append(rec, "opinion_unlabeled", "opinion_separation",
-                                 0.4, detail=title[:160], article_key=akey)
+                                 0.4, detail=title[:160], article_key=akey, legacy_key=lkey)
 
             # ── 2. Cluster-level cross-source comparison ──
             for cl in clusters or []:
@@ -635,7 +1114,8 @@ class SourceTrustGraph:
                         if self._append(
                                 rec, "primary_corroborated", "factual_accuracy", 0.9,
                                 detail=f"Primary-sourced story: {cl.get('headline','')[:120]}",
-                                counter_sources=[], article_key=_article_key(a)):
+                                counter_sources=[], article_key=_article_key(a, domain),
+                                legacy_key=_legacy_article_key(a)):
                             summary["primary_boosts"] += 1
 
                 # A source that disagrees with a large consensus is NOT marked
@@ -650,17 +1130,42 @@ class SourceTrustGraph:
             self._save(data)
         return summary
 
+    def _sync_owner(self, data, owner):
+        """Make user_actions agree with the owner's banned/boosted lists (the
+        news preference files are the source of truth; the mirror into the
+        graph is fail-soft and older installs never had it). In memory; the
+        caller recomputes and saves."""
+        banned = {_extract_domain(d) for d in (owner.get("banned") or ()) if d}
+        boosted = {_extract_domain(d) for d in (owner.get("boosted") or ()) if d}
+        for dom in banned | boosted:
+            self._get_or_create(data, dom)
+        for dom, rec in (data.get("sources") or {}).items():
+            ua = rec.setdefault("user_actions", {"banned": False, "boosted": False,
+                                                 "clicks": 0, "read_laters": 0})
+            ua["banned"] = dom in banned
+            ua["boosted"] = dom in boosted
+
     def _append(self, rec, obs_type, dimension, signal, detail="",
-                counter_sources=None, signed_by="local", article_key=None):
+                counter_sources=None, signed_by="local", article_key=None,
+                legacy_key=None):
         """Internal: append an observation to an in-memory record (caller saves).
 
         Returns True when the observation was added. With an ``article_key``
-        the pair (article, obs_type) counts once, ever; a repeat returns False.
+        the pair (article, check) counts once, ever; a repeat returns False.
+        The check is the heuristic, not its outcome (CHECK_OF): an article
+        scored "attribution absent" on one pass is not scored "attribution
+        present" on the next because its snippet grew. A key the graph used
+        before URLs were normalised (``legacy_key``) is honoured as well.
         """
+        check = CHECK_OF.get(obs_type, obs_type)
         if article_key:
-            ek = f"{article_key}:{obs_type}"
             keys = rec.setdefault("evidence_keys", [])
-            if ek in keys:
+            ek = f"{article_key}:{check}"
+            have = set(keys)
+            if ek in have:
+                return False
+            if legacy_key and any(f"{legacy_key}:{t}" in have
+                                  for t in _TYPES_OF_CHECK.get(check, [obs_type])):
                 return False
             keys.append(ek)
             if len(keys) > _MAX_EVIDENCE_KEYS:
@@ -674,6 +1179,8 @@ class SourceTrustGraph:
             "detail": (detail or "")[:300],
             "counter_sources": list(counter_sources or []),
             "signed_by": signed_by,
+            "article_key": article_key or "",
+            "check": check,
         })
         if len(rec["observations"]) > _MAX_OBSERVATIONS:
             rec["observations"] = rec["observations"][-_MAX_OBSERVATIONS:]

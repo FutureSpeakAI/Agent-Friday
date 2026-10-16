@@ -16,13 +16,17 @@ import uuid
 import pytest
 
 
-# ── Memory dreaming writes durable facts into the user model ──────────────────
+# ── Memory dreaming files candidates for the owner's review ───────────────────
 
-class TestDreamingFeedsUserModel:
-    def test_high_confidence_fact_reaches_user_model(self):
+class TestDreamingFeedsTheReviewQueue:
+    def test_high_confidence_fact_waits_for_review(self, tmp_path, monkeypatch):
+        """Dreaming no longer writes unreviewed facts into the user model; the
+        candidate reaches the memory card's review queue instead."""
+        from agent_friday.services import core_memory as cm
         from agent_friday.services import memory_dreaming as md
         from agent_friday.services import user_model as um
         um.forget()
+        monkeypatch.setattr(cm, "_dir", lambda: tmp_path / "core_memory")
 
         class FakeMemory:
             def recent(self, n=100):
@@ -31,9 +35,8 @@ class TestDreamingFeedsUserModel:
                          "role": "user", "topic_keywords": []}]
 
         md.dream(day="2026-06-30", memory=FakeMemory())
-        facts = [f["text"] for f in um._recent_facts(50)]
-        # The mined preference fact (confidence >= 0.6) was handed to note_fact.
-        assert any("bullet-point" in t for t in facts)
+        assert not any("bullet-point" in f["text"] for f in um._recent_facts(50))
+        assert any("bullet-point" in p["text"] for p in cm.pending())
 
 
 # ── Orchestrator honors the budget enforcer's veto ────────────────────────────

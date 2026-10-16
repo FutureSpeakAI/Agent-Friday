@@ -143,6 +143,51 @@ def cc_kill():
 # from model text, so a prompt-injected file cannot script its own consent
 # screen. Voice can only say a chip appeared; approving one happens here.
 
+try:   # its card's decision hook is registered at import: a card answered after a restart still acts
+    from agent_friday.services import cloud_release as _cloud_release_hooks  # noqa: F401
+except Exception:  # pragma: no cover
+    pass
+
+
+@control_bp.route('/api/privacy/cloud-release', methods=['GET'])
+@login_required
+def list_cloud_releases():
+    """Settings > Privacy & Data > Money paragraphs in email: the owner's choice and the threads and
+    senders whose money paragraphs they let go to the cloud (services/cloud_release.py)."""
+    from agent_friday.services import cloud_release as _cr, owner_choices as _oc
+    return jsonify({"status": "ok", "choice": _oc.email_cloud_release(),
+                    "guarded": _cr.guarded_consent(), "remembered": _cr.remembered()})
+
+
+@control_bp.route('/api/privacy/cloud-release/<row_id>', methods=['DELETE'])
+@login_required
+def forget_cloud_release(row_id):
+    """Forget one remembered Send: that thread's or sender's money paragraphs are asked about again."""
+    from agent_friday.services import cloud_release as _cr
+    if not _cr.forget(row_id):
+        return jsonify({"status": "error", "message": "That remembered choice was not found."}), 404
+    _log_context("cloud_release_forgotten", {"id": row_id})
+    return jsonify({"status": "ok", "remembered": _cr.remembered()})
+
+
+@control_bp.route('/api/privacy/cloud-release/<approval_id>/decide', methods=['POST'])
+@login_required
+def decide_cloud_release(approval_id):
+    """The money-paragraph card's answer: {decision: approve (Send) | deny (Keep on this PC),
+    remember: {thread: bool, sender: bool}}."""
+    from agent_friday.services import cloud_release as _cr
+    data = request.get_json(silent=True) or {}
+    out = _cr.decide(approval_id, str(data.get("decision") or "").strip().lower(),
+                     data.get("remember"), decided_by="owner:ui")
+    if not out.get("ok"):
+        return jsonify({"status": "error", "ok": False, "message": out.get("error")}), (
+            404 if out.get("error") == "not found" else 400)
+    _log_context("cloud_release_decided", {"approval_id": approval_id, "decision": data.get("decision"),
+                                           "remember": data.get("remember") or {}})
+    return jsonify({"status": "ok", "ok": True, "approval": out["approval"], "won": out["won"],
+                    "already_decided": not out["won"]})
+
+
 @control_bp.route('/api/privacy/file-grants', methods=['GET'])
 @login_required
 def list_file_grants():

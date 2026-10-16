@@ -1052,7 +1052,19 @@ def _model_soup(settings: dict, routing: dict, costs: dict, seats: dict,
         "deep_seat_keep_warm_s": int(mr.get("deep_seat_keep_warm_s") or 300),
     }
 
+    # ONE TRUTH for "what answers you": the model that actually answered the
+    # last message (services/answer_truth), reconciled with the prediction
+    # above. The prediction alone read "Cloud only" while a chat bound to a
+    # local model was being answered on this machine.
+    try:
+        from agent_friday.services import answer_truth as _at
+        answer = _at.reconcile(now, _at.read(), mode)
+    except Exception as e:
+        answer = {"answering": dict(now, basis="predicted"), "next": None,
+                  "disagrees": False, "note": "", "error": error_text(e, "Could not read the last answer")}
+
     return {
+        "answer": answer,
         "now": now,
         "local": seat_local,
         "deep": deep,

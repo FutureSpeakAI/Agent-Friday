@@ -352,6 +352,12 @@ DEFAULT_NUM_CTX = {
 # subject to the overhead arithmetic at all.
 NO_PROMPT_ROLES = frozenset({"embedder"})
 
+#: Roles whose seat carries Friday's chat prompt (tool schemas + system
+#: prompt), so local_sizing's prompt floor applies to them. An embedder, a
+#: speech or image seat never sees that prompt and keeps its own window.
+_PROMPT_ROLES = frozenset(r for r in ROLES if r not in NO_PROMPT_ROLES
+                          and r not in ("stt", "tts", "image", "video"))
+
 # R10. Seats a lease may NOT take. The maintainer's ruling: "keep e2b awake so
 # Friday is always alive." A lease used to stand down the whole pinned set,
 # which meant asking for depth made Friday mute for the duration — the machine
@@ -451,9 +457,23 @@ def ram_budget(profile: dict) -> dict:
 
 # ── Candidate selection ──────────────────────────────────────────────────────
 
+def _measured(e: dict) -> list:
+    """The entry's measured rows that state a WHOLE-model cost.
+
+    A llama-server row is the card's peak at whatever -ngl the run used; one
+    taken at a partial offload is not what the whole model needs, and planning
+    from it as if it were over-commits the card. Such a row (and an older one
+    that does not say its -ngl) counts as no measurement, so the model is
+    planned from its estimate (services/local_sizing.whole_model_row). Ollama
+    rows always state the whole size and are kept.
+    """
+    from agent_friday.services.local_sizing import whole_model_row
+    return [m for m in (e.get("measured") or []) if whole_model_row(m)]
+
+
 def _vram_for(e: dict, num_ctx: int) -> int | None:
     """Measured VRAM at num_ctx from the entry's own rows; pessimistic."""
-    rows = [m for m in (e.get("measured") or []) if m.get("vram_mib")]
+    rows = [m for m in _measured(e) if m.get("vram_mib")]
     if not rows:
         return None
     exact = [m for m in rows if m.get("num_ctx") == num_ctx]
@@ -467,7 +487,7 @@ def _vram_for(e: dict, num_ctx: int) -> int | None:
 
 def _total_mib(e: dict, num_ctx: int) -> int | None:
     """Full resident footprint (VRAM + host), which is what MoE offload costs."""
-    rows = [m for m in (e.get("measured") or []) if m.get("total_mib")]
+    rows = [m for m in _measured(e) if m.get("total_mib")]
     if not rows:
         return None
     exact = [m for m in rows if m.get("num_ctx") == num_ctx]
@@ -501,7 +521,7 @@ def _rows(e: dict) -> list:
     it needs.
     """
     out = []
-    for m in (e.get("measured") or []):
+    for m in _measured(e):
         mib = m.get("total_mib") or m.get("vram_mib")
         if mib and m.get("num_ctx"):
             out.append((m["num_ctx"], mib))
@@ -627,7 +647,7 @@ def context_for(role: str, e: dict, budget_mib: int | None,
     # A model with no measurements at all is not capped -- there is nothing to
     # be conservative about yet, and refusing every unmeasured model would make
     # a fresh install unusable.
-    measured_ctx = [m.get("num_ctx") for m in (e.get("measured") or [])
+    measured_ctx = [m.get("num_ctx") for m in _measured(e)
                     if m.get("num_ctx") and m.get("vram_mib")]
     if measured_ctx:
         ceiling = max(measured_ctx)
@@ -713,7 +733,7 @@ DEFAULT_IMAGE_MODEL = "z-image-turbo-fp8"
 def plan(profile: dict, entries: list, overrides: dict | None = None,
          overhead_tokens: int | None = None,
          image_model: str | None = None,
-         cloud_roles=()) -> dict:
+         cloud_roles=(), sizing: dict | None = None) -> dict:
     """(HardwareProfile, Catalog, overrides, overhead) -> PlacementPlan. Pure.
 
     `image_model` is a PARAMETER for the same reason `overhead_tokens` is. The
@@ -729,7 +749,19 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     file and vault reads — and this function's whole value is that it is pure
     and its output is reproducible from its inputs. The Arbiter passes the live
     figure; the default is the last measured one.
+
+    `sizing` is services/local_sizing's inputs (its settings, Friday's prompt
+    size, published KV layouts), a parameter for the same reason; the default
+    is local_sizing's own defaults. It is consulted only where this function
+    would otherwise have nothing to place: a model with no measurement (planned
+    from an estimate, marked so), a model that does not fit the card whole
+    (fewer GPU layers at the prompt floor, never a smaller window), and a small
+    helper with no room beside the big model (the CPU).
     """
+    from agent_friday.services import local_sizing as _lz
+    sz = sizing or _lz.default_inputs()
+    sz_cfg = dict(_lz.DEFAULTS, **(sz.get("cfg") or {}))
+    sizing_on = bool(sz_cfg.get("enabled", True))
     overrides = dict(overrides or {})
     if overhead_tokens is None:
         from agent_friday.services.context_budget import (
@@ -764,9 +796,42 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     remaining = [e for e in gen if heavy is None or
                  e["model_id"] != heavy["model_id"]]
 
+    # ONE BIG MODEL AND SMALL HELPERS (local_sizing rule 2). When everything
+    # besides the quality model is a small helper (<= 2B by default) AND
+    # memory is tight -- the big model and the helpers do not all fit the
+    # largest card whole at the prompt floor -- making a helper the
+    # interactive brain and leaving the 27B a leased heavy seat is backwards:
+    # the big model is the brain and holds the card, and the helpers sit
+    # beside it or on the CPU. The heavy role shares its seat. On a card with
+    # room for both, today's plan (fast brain, quality heavy seat) stands.
+    def _whole_need(e):
+        """MiB to hold `e` whole at the prompt floor: a full-offload
+        measurement where there is one, else local_sizing's estimate."""
+        c = _lz.context_floor(sz.get("prompt_tokens"), sz_cfg,
+                              e.get("context_window"))["num_ctx"]
+        if _rows(e):
+            return vram_estimate_at(e, c)[0]
+        return _lz.estimate(e, c, kv_table=sz.get("kv_kib_per_token"))["total_mib"]
+
+    def _tight(big, helpers):
+        if not budgets:
+            return False
+        needs = [_whole_need(big)] + [_whole_need(h) for h in helpers]
+        if any(n is None for n in needs):
+            return False
+        return sum(needs) > max(b["available_mib"] for b in budgets)
+
+    brain_is_heavy = bool(
+        sizing_on and heavy is not None and remaining
+        and not _lz.is_small_helper(heavy, sz_cfg)
+        and all(_lz.is_small_helper(e, sz_cfg) for e in remaining)
+        and _tight(heavy, remaining))
+
     # ── interactive_brain: best remaining model that fits some GPU alone.
-    brain = None
-    if budgets:
+    brain = heavy if brain_is_heavy else None
+    if brain_is_heavy:
+        pass
+    elif budgets:
         cap = max(b["available_mib"] for b in budgets)
         for e in remaining:
             # Qualification is asked at the FLOOR, not at the target: a model
@@ -778,6 +843,14 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
                     cb["vram_mib"] <= cap:
                 brain = e
                 break
+            if cb["vram_mib"] is None and not _rows(e) and sizing_on and \
+                    sz_cfg.get("plan_unmeasured_from_estimate", True):
+                # Unmeasured (local_sizing rule 3): qualify on the estimate,
+                # and `_sized` places it below, marked "estimated".
+                n = _whole_need(e)
+                if n is not None and n <= cap:
+                    brain = e
+                    break
     elif remaining:
         # CPU-only: the brain is the cheapest viable seat; nothing "fits" a GPU.
         brain = min(remaining, key=lambda e: (_ms(e), e["model_id"]))
@@ -818,12 +891,64 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
             return p
         return None
 
+    def _sized(entry, role, status, *, helper, allow_partial,
+               budget=None, idx=None):
+        """local_sizing's placement for a seat `_place` could not fit or cost.
+
+        `(seat, sizing)`: `seat` is None when the result is not acceptable for
+        this role (a partial offload where `allow_partial` is False, or no
+        estimate at all), and then `sizing["reason"]` carries the numbers for
+        the refusal. The window is always the prompt floor (or the model's own
+        window if that is smaller), never less.
+        """
+        floor = _lz.context_floor(sz.get("prompt_tokens"), sz_cfg,
+                                  entry.get("context_window"))
+        ctx = floor["num_ctx"]
+        measured = None
+        if _rows(entry):
+            measured, _b = vram_estimate_at(entry, ctx)
+        elif not sz_cfg.get("plan_unmeasured_from_estimate", True):
+            return None, {"reason": "planning unmeasured models from an "
+                                    "estimate is switched off "
+                                    "(local_sizing.plan_unmeasured_from_estimate)"}
+        if idx is None and budgets:
+            idx = max(free, key=lambda i: (free[i], -i))
+        if budget is None and idx is not None:
+            budget = free.get(idx, 0)
+        r = _lz.size_seat(entry, budget if budgets else None, ctx,
+                          measured_mib=measured, helper=helper, cfg=sz_cfg,
+                          kv_table=sz.get("kv_kib_per_token"))
+        whole = r["device"] == "gpu" and r["n_gpu_layers"] == _lz.ALL_LAYERS
+        cpu_ok = r["device"] == "cpu" and (allow_partial or (
+            helper and _lz.is_small_helper(entry, sz_cfg)
+            and sz_cfg.get("helpers_to_cpu_when_tight", True)))
+        if r["device"] is None or not (whole or cpu_ok or allow_partial):
+            return None, r
+        dev = ("gpu:%d" % idx) if r["device"] == "gpu" else "cpu"
+        if r["device"] == "gpu":
+            free[idx] = free.get(idx, 0) - int(r["vram_mib"] or 0)
+        p = _placement(entry, role, dev, ctx, status, int(r["vram_mib"] or 0))
+        p["n_gpu_layers"] = r["n_gpu_layers"]
+        p["context"] = {"basis": r["basis"], "want": floor["need_tokens"],
+                        "floor": ctx,
+                        "room_tokens": ctx - floor["prompt_tokens"],
+                        "capped_by": ("the model's own window"
+                                      if floor["limited_by_model"] else None)}
+        p["sizing"] = {"basis": r["basis"], "reason": r["reason"],
+                       "need_mib": r.get("need_mib"),
+                       "prompt_tokens": floor["prompt_tokens"],
+                       "prompt_floor_ctx": ctx,
+                       "kv_basis": r["estimate"]["kv_basis"]}
+        if r["basis"] == "estimated":
+            p["sizing"]["measure_later"] = _lz.measure_later(entry["model_id"])
+        return p, r
+
     multi_gpu = len(budgets) >= 2
 
     # heavy first when there are two GPUs: it is the largest object to fit and
     # placing it last would strand it.
     heavy_seat = None
-    if heavy is not None and multi_gpu:
+    if heavy is not None and multi_gpu and not brain_is_heavy:
         heavy_seat = _place(heavy, "heavy_hitter", "pinned",
                             prefer=order[0]["index"])
 
@@ -835,6 +960,12 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
             pref = others[0] if others else None
         seats["interactive_brain"] = _place(brain, "interactive_brain",
                                             "pinned", prefer=pref)
+        if seats["interactive_brain"] is None and budgets and sizing_on:
+            # Unmeasured, or too big to hold whole: the big model still gets
+            # the card, at the prompt floor, with the layers that fit.
+            seats["interactive_brain"], _r = _sized(
+                brain, "interactive_brain", "pinned", helper=False,
+                allow_partial=True, idx=pref)
         if seats["interactive_brain"] is None and not budgets:
             seats["interactive_brain"] = _placement(
                 brain, "interactive_brain", "cpu",
@@ -851,7 +982,26 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
 
     if sidekick is not None:
         seats["sidekick"] = _place(sidekick, "sidekick", "pinned")
-        if seats["sidekick"] is None:
+        _side_sizing = None
+        if seats["sidekick"] is None and sizing_on and (
+                not _rows(sidekick) or _lz.is_small_helper(sidekick, sz_cfg)):
+            # local_sizing rules 2 and 3: an unmeasured model is planned from
+            # an estimate, and a small helper with no room beside the big
+            # model goes to the CPU. Neither is a reason to leave it unseated.
+            seats["sidekick"], _side_sizing = _sized(
+                sidekick, "sidekick", "pinned", helper=True,
+                allow_partial=False)
+        if seats["sidekick"] is None and _side_sizing and \
+                _side_sizing.get("need_mib") is not None:
+            refusals.append(_refusal(
+                "sidekick", sidekick["model_id"], "R3",
+                "no GPU has room beside the pinned brain: needs about %d MiB "
+                "at %d tokens, largest remaining budget is %d MiB (%s)"
+                % (_side_sizing["need_mib"], _side_sizing.get("num_ctx") or 0,
+                   max(free.values()) if free else 0,
+                   "estimated from its size; it has not been measured here yet"
+                   if _side_sizing.get("basis") == "estimated" else "measured")))
+        elif seats["sidekick"] is None:
             # UNMEASURED IS NOT THE SAME AS TOO BIG, AND MUST NOT READ LIKE IT.
             #
             # `_vram_for` returns None for a model with no measurement on this
@@ -932,10 +1082,48 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
         seats["embedder"] = seat
 
     # ── heavy_hitter placement and the RAM check.
-    if heavy is not None:
+    if brain_is_heavy and seats.get("interactive_brain"):
+        # The same weights in the same process: counted once (R11).
+        shared = dict(seats["interactive_brain"], role="heavy_hitter",
+                      vram_mib=0, shares_model_with="interactive_brain")
+        seats["heavy_hitter"] = shared
+    elif heavy is not None:
         seats["heavy_hitter"], hr = _heavy(
             heavy, heavy_seat, budgets, free, ram, profile, overhead_tokens,
             _lease_budget(budgets, seats))
+        if hr and seats["heavy_hitter"] is None and sizing_on and budgets \
+                and not _rows(heavy) \
+                and sz_cfg.get("plan_unmeasured_from_estimate", True):
+            # Unmeasured (local_sizing rule 3): a LEASED seat planned from
+            # the estimate against the lease budget, instead of refused. It
+            # displaces the pinned seats while it runs, so nothing is charged
+            # against `free`.
+            _lease = _lease_budget(budgets, seats)
+            _idx = order[0]["index"]
+            _cap = _lease if _lease is not None else order[0]["available_mib"]
+            _fl = _lz.context_floor(sz.get("prompt_tokens"), sz_cfg,
+                                    heavy.get("context_window"))
+            _r = _lz.size_seat(heavy, _cap, _fl["num_ctx"], helper=False,
+                               cfg=sz_cfg, kv_table=sz.get("kv_kib_per_token"))
+            if _r["device"] is not None:
+                hs = _placement(heavy, "heavy_hitter",
+                                ("gpu:%d" % _idx) if _r["device"] == "gpu"
+                                else "cpu", _fl["num_ctx"], "leased",
+                                int(_r["vram_mib"] or 0))
+                hs["displaces"] = "pinned seats on gpu:%d" % _idx
+                hs["n_gpu_layers"] = _r["n_gpu_layers"]
+                hs["context"] = {"basis": _r["basis"], "want": _fl["need_tokens"],
+                                 "floor": _fl["num_ctx"],
+                                 "room_tokens": _fl["num_ctx"] - _fl["prompt_tokens"],
+                                 "capped_by": ("the model's own window"
+                                               if _fl["limited_by_model"] else None)}
+                hs["sizing"] = {"basis": _r["basis"], "reason": _r["reason"],
+                                "need_mib": _r.get("need_mib"),
+                                "prompt_tokens": _fl["prompt_tokens"],
+                                "prompt_floor_ctx": _fl["num_ctx"],
+                                "kv_basis": _r["estimate"]["kv_basis"],
+                                "measure_later": _lz.measure_later(heavy["model_id"])}
+                seats["heavy_hitter"], hr = hs, None
         if hr:
             refusals.append(hr)
     elif gen == []:
@@ -979,7 +1167,8 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     seats["tts"] = _cpu_seat("tts", "kokoro")
 
     _apply_overrides(seats, refusals, overrides, entries, free, budgets,
-                     overhead_tokens)
+                     overhead_tokens, sized=_sized if sizing_on else None,
+                     small=(lambda e: _lz.is_small_helper(e, sz_cfg)))
 
     # The working roles are ASSIGNED, not inferred.
     #
@@ -1416,15 +1605,26 @@ def _cpu_seat(role, model_id):
 
 
 def _apply_overrides(seats, refusals, overrides, entries, free, budgets,
-                     overhead_tokens):
+                     overhead_tokens, sized=None, small=None):
     """A user override binds a model to a role, or is refused with its reason.
 
     Never a silent ignore: that is what made `preferred_model` and
     `capability_routing.embedding.model` dead settings people could change
     while nothing happened.
+
+    `sized` (plan's local_sizing placement) seats what this function would
+    otherwise place blind or refuse: an unmeasured model (placed with no
+    VRAM check before), and a small helper with no GPU room (the CPU).
     """
     by_id = {e["model_id"]: e for e in entries}
+    _big_roles = ("interactive_brain", "heavy_hitter")
     for role, model_id in sorted(overrides.items()):
+        cur0 = seats.get(role)
+        if cur0 and cur0.get("model_id") == model_id and cur0.get("sizing"):
+            # Already seated in this role by the sizing pass: the override
+            # confirms it, and re-placing would count the weights twice.
+            cur0["from_override"] = True
+            continue
         if role not in ROLES:
             refusals.append(_refusal(role, model_id, "R7",
                                      "unknown role %r" % role))
@@ -1501,6 +1701,28 @@ def _apply_overrides(seats, refusals, overrides, entries, free, budgets,
         # walks straight through it, and over-committing this
         # card is what drops a second monitor. An unseated role has no
         # VRAM of its own to reclaim, so its headroom is simply `cap`.
+        if sized is not None and budgets and role in _PROMPT_ROLES and \
+                entry.get("can_generate") and not entry.get("is_embedding") and (
+                need is None or (need > headroom and small and small(entry))):
+            # Unmeasured: plan from the estimate instead of placing blind.
+            # A small helper that does not fit: the CPU, not a refusal.
+            big = role in _big_roles
+            # The seat being replaced gives its card space back first.
+            _back = None
+            if cur and str(cur.get("device", "")).startswith("gpu:") and \
+                    cur.get("vram_mib"):
+                _back = (int(str(cur["device"]).split(":")[1]),
+                         int(cur["vram_mib"]))
+                free[_back[0]] = free.get(_back[0], 0) + _back[1]
+            alt, _r = sized(entry, role, cur["status"] if cur else "pinned",
+                            helper=not big, allow_partial=big,
+                            idx=_back[0] if _back else None)
+            if alt is not None:
+                alt["from_override"] = True
+                seats[role] = alt
+                continue
+            if _back:
+                free[_back[0]] -= _back[1]
         if budgets and need is not None and need > headroom:
             # `cur` is None when the base plan left this role unseated, so
             # the message may not assume a model to fall back to.

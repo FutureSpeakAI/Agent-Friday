@@ -367,6 +367,126 @@ def revoke_governance_grant(grant_id):
     return jsonify({"revoked": action_gate.revoke_grant(grant_id)})
 
 
+# ── Pre-approved sends: the owner's standing yes for named recipients ───────
+# governance/send_grants.py. Made, listed and revoked only here, by the owner;
+# no tool can. A skill's declared `permissions` are shown so the owner can
+# approve what it needs in one press; the declaration itself grants nothing.
+# Every one of these routes also demands the page's own X-Friday-Token, even
+# from loopback (as routes/owner_security.py and routes/library.py do): a page
+# in another origin, or any local process without the page, cannot read,
+# make or revoke a pre-approval through the owner's browser session.
+
+
+def _page_token_required(f):
+    from functools import wraps
+
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        import agent_friday.core as _core
+        if not _core._api_token_valid(request.headers.get("X-Friday-Token")):
+            return jsonify({"error": "Pre-approved sends answer only Friday's own page "
+                                     "(the request did not carry its token). Nothing was read or changed."}), 403
+        return f(*args, **kwargs)
+    return wrapped
+
+
+@goals_bp.route("/api/governance/send-grants", methods=["GET"])
+@login_required
+@_page_token_required
+def list_send_grants():
+    from agent_friday.governance import send_grants
+    from agent_friday import skill_registry
+    live = send_grants.list_grants()
+    skills = []
+    try:
+        for sk in skill_registry.load_skills():
+            needs = skill_registry.send_permissions(sk)
+            refused = skill_registry.refused_send_permissions(sk)
+            if needs or refused:
+                mine = [g for g in live if g.get("scope") == "skill" and g.get("skill") == sk.name
+                        and g.get("in_force")]
+                skills.append({"name": sk.name, "description": sk.description, "needs": needs,
+                               # Declared but never pre-approvable, with the reason.
+                               "refused": refused,
+                               # Approved for the skill as it is now.
+                               "granted": [g["grant_id"] for g in mine if not g.get("changed")],
+                               # Approved, but the skill was edited since: it no
+                               # longer covers anything until approved again.
+                               "changed": [g["grant_id"] for g in mine if g.get("changed")]})
+    except Exception:
+        skills = []
+    return jsonify(public_result({"grants": live, "log": send_grants.log(30), "skills": skills,
+                                  "actions": send_grants.SEND_ACTIONS, "options": send_grants.options()},
+                                 "Couldn't list the pre-approved sends"))
+
+
+@goals_bp.route("/api/governance/send-grants", methods=["POST"])
+@login_required
+@_page_token_required
+def create_send_grant():
+    from agent_friday.governance import send_grants
+    body = request.get_json(silent=True) or {}
+    try:
+        if body.get("scope") == "skill":
+            # Approving a skill's needs approves exactly the list the owner
+            # saw: the page sends it, and it must equal what the skill
+            # declares now. A skill rewritten since the page loaded is refused
+            # with its new list, never approved unseen.
+            g = send_grants.create_for_skill(str(body.get("skill") or ""),
+                                             body.get("recipients"), created_by="owner")
+        else:
+            g = send_grants.create(
+                scope=str(body.get("scope") or "recipients"), recipients=body.get("recipients"),
+                actions=body.get("actions") or ("send_email",),
+                schedule_id=str(body.get("schedule_id") or ""),
+                created_by="owner", note=str(body.get("note") or "made in Settings"))
+    except send_grants.SkillChanged as e:
+        return jsonify({"error": e.user_message, "needs": e.needs}), 409
+    except (TypeError, ValueError) as e:
+        return api_error(e, "Couldn't create the pre-approval", 400, shape="bare")
+    return jsonify({"grant": g}), 201
+
+
+@goals_bp.route("/api/governance/send-grants/<grant_id>/reapprove", methods=["POST"])
+@login_required
+@_page_token_required
+def reapprove_send_grant(grant_id):
+    """One press: a job or skill grant whose job or skill changed after it was
+    made is approved again for the job or skill as it is now. For a skill the
+    page sends the list it shows, as for a first approval."""
+    from agent_friday.governance import send_grants
+    body = request.get_json(silent=True) or {}
+    try:
+        g = send_grants.reapprove(grant_id, body.get("recipients"), by="owner")
+    except send_grants.SkillChanged as e:
+        return jsonify({"error": e.user_message, "needs": e.needs}), 409
+    except (TypeError, ValueError) as e:
+        return api_error(e, "Couldn't re-approve", 400, shape="bare")
+    return jsonify({"grant": g}), 201
+
+
+@goals_bp.route("/api/governance/send-grants/options", methods=["POST"])
+@login_required
+@_page_token_required
+def set_send_grant_options():
+    """The owner's switch: may a request made by voice use a pre-approval?
+    Kept signed beside the grants, not in settings.json, so no tool that
+    writes settings can turn it on."""
+    from agent_friday.governance import send_grants
+    body = request.get_json(silent=True) or {}
+    if "voice_may_use" not in body:
+        return jsonify({"error": "say voice_may_use: true or false"}), 400
+    return jsonify({"options": send_grants.set_voice_may_use(bool(body["voice_may_use"]), by="owner")})
+
+
+@goals_bp.route("/api/governance/send-grants/<grant_id>", methods=["DELETE"])
+@login_required
+@_page_token_required
+def revoke_send_grant(grant_id):
+    from agent_friday.governance import send_grants
+    return jsonify({"revoked": send_grants.revoke(grant_id, by="owner")})
+
+
 @goals_bp.route("/api/governance/outward-tools", methods=["GET"])
 @login_required
 def list_outward_tools():
@@ -407,6 +527,7 @@ def list_outward_tools():
 _GRANT_LABELS = {
     "create_calendar_event": "Create calendar events and send invites",
     "update_calendar_event": "Change calendar events",
+    "delete_calendar_event": "Delete calendar events",
     "annotate_calendar_events": "Add notes to calendar events",
     "content_create_post": "Schedule a new social post",
     "content_schedule_post": "Schedule an existing social post",

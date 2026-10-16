@@ -183,7 +183,8 @@ def test_an_episode_is_produced_with_timed_lines_captions_and_a_check(monkeypatc
     monkeypatch.setattr(provenance, "write", lambda path, **kw: signed.append((Path(path), kw)) or
                         {"artifact": {"content_hash": "h"}, "signature": "sig"})
 
-    ep = _text_ep(length="short")
+    # Two hosts asked for this episode: "any" is one voice by default now.
+    ep = _text_ep(length="short", hosts="duo")
     assert ep["status"] == "queued" and ep["privacy"] == "private"
     done = pe.produce(ep["id"])
     assert done["status"] == "ready", done.get("error")
@@ -194,7 +195,7 @@ def test_an_episode_is_produced_with_timed_lines_captions_and_a_check(monkeypatc
     assert [c["title"] for c in done["chapters"]] == ["Open", "Middle", "Close"]
     assert done["chapters"][1]["start"] > done["chapters"][0]["start"]
     vtt = (d / "captions.vtt").read_text(encoding="utf-8")
-    assert vtt.startswith("WEBVTT") and "<v Friday>" in vtt and "<v Emma>" in vtt
+    assert vtt.startswith("WEBVTT") and "<v Friday>" in vtt and "<v %s>" % pe.COHOST_NEUTRAL_NAME in vtt
     assert done["check"]["ok"] is True and done["check"]["wer"] == 0.0
     # Both hosts, each in their own installed voice.
     assert {v for v, _t in spoken} == {"af_heart", "bf_emma"}
@@ -556,12 +557,13 @@ def test_every_episode_opens_and_signs_off_the_same_way(monkeypatch):
     _fake_speaker(monkeypatch)
     real = render.listen_back
     monkeypatch.setattr(render, "listen_back", lambda wav, s, transcribe=None: real(wav, s, transcribe=lambda p: s))
-    done = pe.produce(_text_ep(show="The Front Page")["id"])
+    done = pe.produce(_text_ep(show="The Front Page", hosts="duo")["id"])
     first, second, last = done["lines"][0], done["lines"][1], done["lines"][-1]
     assert first["signature"] and first["speaker"] == "a"
     # The show is credited to the product in plain words; she is herself.
     assert first["text"] == "This is The Front Page from Agent Friday. I'm Friday."
-    assert second["signature"] and second["text"] == "And I'm Emma."
+    # Her default name: the unnamed co-host is the distinct default, not "Agent Friday" beside "Friday".
+    assert second["signature"] and second["text"] == "And I'm %s." % pe.COHOST_NEUTRAL_NAME
     assert last["signature"] and last["text"].startswith("That's The Front Page from Agent Friday.")
     assert last["text"].endswith("I'm Friday.")
     # The writer is told not to greet or sign off itself.

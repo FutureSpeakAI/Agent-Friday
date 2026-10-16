@@ -806,7 +806,10 @@ async def _live_card_tool(fname, fargs, send, session, runner=None):
         card = str((fargs or {}).get("card_id") or "")
         if _item_actions.is_laya_card(card):
             return _item_actions.LAYA_CARD_NOT_ON_LIVE      # never the line, a subject or a sender, to the cloud voice
-        if watch.verified(card) and (not _item_actions.is_laya_card(card)
+        from agent_friday.services import cloud_release as _cr
+        if _cr.is_card(card):
+            pass                                            # its own read-back first (cloud_release.answer_in_words)
+        elif watch.verified(card) and (not _item_actions.is_laya_card(card)
                                      or _item_actions.card_in_conversation(card, cid)):
             if session is not None:
                 session["voiced_cards"] = [card]       # the one rule, applied in agent
@@ -2634,7 +2637,14 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None,
             seat = _seats.resolve("brain")
         except Exception:
             seat = None
-    _is_local_brain = bool(seat)
+    # A cloud-tagged model served through the local daemon ("glm-4.6:cloud")
+    # runs off this PC: its prompt is gated as cloud, like /api/chat's.
+    try:
+        from agent_friday.services.local_only_guard import is_cloud_model_tag as _icmt
+        _cloud_tagged = bool(seat) and _icmt(str(seat))
+    except Exception:
+        _cloud_tagged = False
+    _is_local_brain = bool(seat) and not _cloud_tagged
     _prov = "local" if _is_local_brain else "cloud"
     _vault_control = None if _is_local_brain else (
         _get_vault_control() if _vault_local_only() else None)
@@ -2657,11 +2667,14 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None,
            if _is_local_brain else "\n")
         + VOICE_TOOL_CHOREOGRAPHY
     )
+    # Her own name, as the chat says it (services/agent_identity.named).
+    from agent_friday.services.agent_identity import named as _named
+    voice_prefix = _named(voice_prefix, settings)
     try:
         full_ctx = _get_friday_system_prompt(
             provider=_prov, vault_control=_vault_control,
             vault_fallback=_vault_cloud_fallback(),
-            freeze_key=conversation_id)
+            freeze_key=conversation_id, model=str(seat or ''))
     except Exception as e:
         full_ctx = f"(context load failed: {e})"
     # The same length rule and persona as the cloud voice: the text-chat
@@ -2774,6 +2787,16 @@ def _front_persona_style(style):
     return (cut[:end + 1] if end > 200 else cut.rstrip()).strip()
 
 
+def _front_privacy_block():
+    """The privacy policy in force (services/privacy_policy_summary), read from
+    the live settings when the prompt is built. Never raises."""
+    try:
+        from agent_friday.services.privacy_policy_summary import summary
+        return summary() + "\n"
+    except Exception:
+        return ""
+
+
 def _front_prompt_budget(contract, model_label):
     """Tokens the front's standing prompt may cost, or None when the contract
     carries no declarations to measure (see voice_front.system_budget_tokens)."""
@@ -2811,16 +2834,19 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
     from agent_friday.services.voice_delivery import front_instruction
     names = list((contract or {}).get("names") or [])
     label = model_label or "a small local model"
+    privacy_block = _front_privacy_block()
     style = ""
     try:
         style = _front_persona_style(_get_voice_style_prompt() or "")
     except Exception:
         style = ""
 
+    from agent_friday.services.agent_identity import named as _named
+
     def compose(digest_text):
         body = (
-            "You are Agent Friday, a sovereign personal AI assistant, in a LIVE "
-            "VOICE conversation. You are her fast voice, running on this computer "
+            _named("You are Agent Friday, a sovereign personal AI assistant, in a LIVE ", settings)
+            + "VOICE conversation. You are her fast voice, running on this computer "
             f"({label}): what they say and what you think stays here; tools that "
             "search the web or the news reach out only for what they look up.\n"
             "Speak like a person: natural, warm, contractions.\n"
@@ -2831,7 +2857,8 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
             "Never state that an action succeeded unless the tool result in this "
             "turn says so. A withheld, failed, or missing result is reported as "
             "exactly that.\n"
-            + VOICE_FRONT_HANDOFF_RULE
+            + privacy_block
+            + _named(VOICE_FRONT_HANDOFF_RULE, settings)
             + VOICE_FRONT_NEWS_RULE + "\n"
             + VOICE_FRONT_TOOL_RULE
             + ("\nTHE TOOLS YOU HOLD IN THIS CONVERSATION: " + ", ".join(names) + ".\n"
@@ -2926,9 +2953,10 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
         style = _front_persona_style(_get_voice_style_prompt() or "")
     except Exception:
         style = ""
+    from agent_friday.services.agent_identity import named as _named
     body = (
-        "You are Agent Friday, a sovereign personal AI assistant, in a LIVE "
-        "VOICE conversation. You are her fast voice, running on this computer "
+        _named("You are Agent Friday, a sovereign personal AI assistant, in a LIVE ", settings)
+        + "VOICE conversation. You are her fast voice, running on this computer "
         f"({label}).\n"
         "Speak like a person: natural, warm, contractions.\n"
         + VOICE_LENGTH_RULE +
@@ -2938,6 +2966,7 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
         "Never state that an action succeeded unless the tool result in this "
         "turn says so. A withheld, failed, or missing result is reported as "
         "exactly that.\n"
+        + _front_privacy_block()
         + VOICE_SPEAKER_RULE
         + "== WHAT YOU KNOW (a digest; your deeper mind holds your full memory) ==\n"
         + voice_context_digest.build(settings, budget_tokens=SPEAKER_DIGEST_TOKENS, front=True)
@@ -3067,10 +3096,44 @@ _NEUTRAL_QUESTION = "I asked which one you meant; the choices were on your scree
 def _persist_local_turn(tool_session, user_text, agent_text, conversation_id):
     """Save a completed local voice turn. A turn that read a card aloud or asked a question built from the
     owner's screen keeps only a neutral line in the conversation (set by ``_run_routed_front_turn``): the
-    words were spoken, but a later typed turn on a cloud model reads this history."""
+    words were spoken, but a later typed turn on a cloud model reads this history.
+
+    The reply is checked against the turn's own tool receipts first (``_guard_voice_reply``): a spoken
+    "it's on your calendar" with no calendar write that succeeded is saved saying it was NOT done."""
     neutral = tool_session.pop("history_text", None)
-    saved = _persist_voice_turn(user_text, neutral or agent_text, conversation_id=conversation_id, provider="local")
+    checked, _fixed, receipts = _guard_voice_reply(tool_session, agent_text)
+    extra = {"receipts": receipts} if receipts else {}
+    saved = _persist_voice_turn(user_text, neutral or checked, conversation_id=conversation_id,
+                                provider="local", **extra)
     return neutral or saved       # the session logs the neutral line for the end-of-call summary too
+
+
+def _guard_voice_reply(session, agent_text):
+    """(text, findings, receipts) for a finished voice turn: the write-claim law
+    (services/voice_engine.guard_voice_reply) on the words, against this
+    call's receipts for the turn. Never raises."""
+    try:
+        from agent_friday.services.voice_engine import guard_voice_reply
+        return guard_voice_reply(session, agent_text)
+    except Exception:
+        return agent_text, [], []
+
+
+def _voice_claim_correction(findings) -> str:
+    """What the live model is handed after a turn whose words claimed a write
+    that did not happen: the correction, to be said aloud in a sentence."""
+    fixes = []
+    for f in findings or []:
+        r = str(f.get("rewrite") or "").strip()
+        if r and r not in fixes:
+            fixes.append(r)
+    if not fixes:
+        return ""
+    return ("your last reply said something was done that did not happen this "
+            "turn. Correct it aloud now in one short sentence, plainly: "
+            + " ".join(fixes))
+
+
 _CARD_LINE_FALLBACK = ("I have a change waiting for your OK; the details are on your screen. "
                        "Shall I go ahead?")
 
@@ -3130,6 +3193,16 @@ def _pending_voice_card(spoken_ids, conversation_id):
         return cards[0]["approval_id"] if len(cards) == 1 else None
     except Exception:
         return None
+
+
+def _end_voice_grant_turn(conversation_id, taint_key):
+    """A spoken turn is over: a skill read in it stops counting as in use for
+    its send pre-approval (governance/send_grants), as a typed turn's does."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        _sg.end_turn({"conversation_id": conversation_id, "taint_key": taint_key})
+    except Exception:
+        pass
 
 
 def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_turn,
@@ -3765,11 +3838,17 @@ def voice_transcribe():
         asr = eng._get_asr()
         text = asr.transcribe(pcm)
     except Exception as e:
+        # The client gets a constant sentence only (never exception text): a
+        # missing model is looked up in the feature_models registry by its
+        # feature id; anything else is the generic line. The named reason
+        # goes to friday.log (here, and feature_models.require's own line).
+        msg = "Couldn't transcribe the audio. The reason is in friday.log."
         try:
-            from agent_friday.services.voice_manifest import plain_language_refusal
-            msg, _action = plain_language_refusal(e, "ear")
+            from agent_friday.services import feature_models as _fm
+            if isinstance(e, _fm.FeatureModelMissing):
+                msg = _fm.public_missing_message(getattr(e, "feature", ""))
         except Exception:
-            msg = error_text(e, "Couldn't transcribe the audio")
+            pass
         _log.warning("push-to-transcribe failed: %s: %s", type(e).__name__, e)
         return jsonify(public_result({"status": "error", "error": msg,
                         "engine": "local"}, "Couldn't transcribe the audio")), 503
@@ -3829,12 +3908,26 @@ def voice_setup_status():
             else:
                 models_status = "needs_download"
                 models_detail = lv.get("detail", "Models download on first voice session.")
-            steps.append({
+            models_step = {
                 "id": "models",
-                "label": "ASR / TTS model files (~300 MB, one-time download)",
+                "label": "ASR / TTS model files (one-time download)",
                 "status": models_status,
                 "detail": models_detail,
-            })
+            }
+            # The speech recognisers dictation (local voice, Alt+T) and media
+            # transcripts need, named with sizes and licences, for the
+            # wizard's confirm box (POST tier1-models with consent).
+            try:
+                from agent_friday.services import feature_models as _fm
+                _offer = _fm.first_run_offer()
+                if lv.get("available") and (_offer["items"] or models_status == "needs_download"):
+                    models_step["download"] = _offer
+                    if _offer["items"]:
+                        models_step["detail"] = "Not installed yet: " + ", ".join(
+                            "%s (%s MB)" % (i["short"], i["size_mb"]) for i in _offer["items"]) + "."
+            except Exception as _e:
+                _log.warning("voice_setup_status: feature models offer failed: %s", _e)
+            steps.append(models_step)
             # Tier-2 (GPU/NeMo) — informational: never gates Tier-1 readiness,
             # but a user who owns a capable GPU should SEE the upgrade path
             # (and a user who picked local-gpu should see why they're on CPU).
@@ -3905,7 +3998,8 @@ def voice_setup_test():
     The wizard plays this back to confirm the TTS pipeline is working end-to-end.
     """
     data = request.get_json(silent=True) or {}
-    text = data.get("text", "Hello, I'm Friday. Voice setup is complete.").strip()
+    from agent_friday.services.agent_identity import assistant_name
+    text = data.get("text", "Hello, I'm %s. Voice setup is complete." % assistant_name()).strip()
     try:
         from agent_friday.services.voice_engine import _synthesize_tts_wav
         wav_buf = _synthesize_tts_wav(text, allow_local=True)  # io.BytesIO, pos 0
@@ -3941,7 +4035,10 @@ def voice_setup_install():
     from agent_friday.services import voice_installer
     # A voice artifact is a download of the owner's disk space and bandwidth:
     # it starts only from an explicit click that was shown its size.
-    needs_consent = bool((voice_installer.TARGETS.get(target) or {}).get("artifact"))
+    _t = voice_installer.TARGETS.get(target) or {}
+    # "consent": the first-run wizard's model step (tier1-models), which the
+    # wizard shows with each model's size before posting consent.
+    needs_consent = bool(_t.get("artifact") or _t.get("feature") or _t.get("consent"))
     if needs_consent and data.get("consent") is not True:
         return jsonify({"state": "error",
                         "error": "Downloading needs your confirmation first. "
@@ -3961,6 +4058,19 @@ def voice_artifacts_list():
     from agent_friday.services import voice_installer
     return jsonify({"artifacts": voice_installer.artifact_rows(),
                     "job": voice_installer.status()})
+
+
+@voice_bp.route('/api/voice/feature-models', methods=['GET'])
+@login_required
+def voice_feature_models():
+    """Which features can run, and for each one that cannot, the missing
+    models (name, size, licence), the reason it gives when used, and the one
+    install target that fetches them: POST /api/voice/setup/install
+    {target: "feature:<id>", consent: true}. Reads the disk only."""
+    from agent_friday.services import feature_models, voice_installer
+    out = feature_models.status()
+    out["job"] = voice_installer.status()
+    return jsonify(out)
 
 
 @voice_bp.route('/api/voice/setup/install/status', methods=['GET'])
@@ -4562,6 +4672,14 @@ if sock is not None:
                 return reply
 
             def _generate(user_text, on_delta, cancel):
+                try:
+                    return _generate_once(user_text, on_delta, cancel)
+                finally:
+                    # The spoken turn is over: a skill read in it stops
+                    # counting as in use for its send pre-approval.
+                    _end_voice_grant_turn(_tool_session.get("conversation_id"), "voice-local")
+
+            def _generate_once(user_text, on_delta, cancel):
                 # A local failure is an OFFER, spoken, never a cloud call. A bare
                 # yes answers it only under the voice card rules: this call's
                 # offer, voiced in the previous turn, exactly one pending
@@ -4944,6 +5062,9 @@ if sock is not None:
             + VOICE_ANCHOR_RULES + "\n"
             + VOICE_TOOL_CHOREOGRAPHY
         )
+        # Her own name, as the chat says it (services/agent_identity.named).
+        from agent_friday.services.agent_identity import named as _named
+        voice_prefix = _named(voice_prefix)
         # security-boundary.md §19 row 1: this whole literal is Friday-authored
         # boilerplate with no user data, and it says the words "financial",
         # "health", "legal" — exactly the keywords the TIER-2/3 classifier
@@ -5631,13 +5752,28 @@ if sock is not None:
                 agent_text = ''.join(out_buf).strip()
                 in_buf.clear()
                 out_buf.clear()
+                # The write-claim law, on what was just said: a completed write
+                # needs a successful write receipt from this turn. The words are
+                # already spoken, so the transcript keeps the corrected text and
+                # the model is told to say the correction aloud.
+                _said_text = agent_text
+                agent_text, _claim_fixes, _turn_receipts = _guard_voice_reply(
+                    _voice_session, agent_text)
+                if _claim_fixes and not _crew[0]:
+                    _note = _voice_claim_correction(_claim_fixes)
+                    if _note:
+                        _inject_q.append((_note, "notice"))
+                    _safe_send({"type": "claim_check",
+                                "findings": [{"kind": f.get("kind"), "quote": f.get("quote"),
+                                              "rewrite": f.get("rewrite")}
+                                             for f in _claim_fixes]})
                 _live_laya.for_call(_voice_session).on_turn_end(user_text)
                 _voice_session["owner_text"] = ""        # a relay in the next turn cannot carry this one's words
                 _voice_session["owner_text_at"] = 0.0
                 if not user_text and not agent_text:
                     return
-                if agent_text and not _crew[0]:
-                    _voice_session["spoken"].append(agent_text)
+                if _said_text and not _crew[0]:
+                    _voice_session["spoken"].append(_said_text)
                     del _voice_session["spoken"][:-60]
                 try:
                     _voice_session["conv_state"] = _vcs.update(
@@ -5657,9 +5793,11 @@ if sock is not None:
                     except Exception:
                         pass
                 try:
+                    _receipts_kw = ({"receipts": _turn_receipts}
+                                    if _turn_receipts and not _crew[0] else {})
                     _persist_voice_turn(user_text, "" if _crew[0] else agent_text,
                                         conversation_id=conversation_id or _open_cid[0],
-                                        provider="google-gemini")
+                                        provider="google-gemini", **_receipts_kw)
                 except Exception as e:
                     print(f'[live] persist_voice_turn error: {e}')
                 _safe_send({
@@ -6274,6 +6412,8 @@ if sock is not None:
                                                     _safe_send(_bud["frame"])
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
+                                                _end_voice_grant_turn((_voice_session or {}).get("conversation_id"),
+                                                                      "voice-live")
                                                 # The conversation so far, when it
                                                 # changed: joins his next turn and
                                                 # asks for no reply of its own.
