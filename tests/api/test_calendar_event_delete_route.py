@@ -10,6 +10,10 @@ import pytest
 
 from agent_friday.governance import action_gate as ag
 from agent_friday.services import calendar_write as cw
+from agent_friday.services import screen_click
+
+#: The real owner's-click check; the fixture stands in for the page's click.
+REAL_SCREEN_SESSION = screen_click.screen_session
 
 INTERNAL = "SECRET-INTERNAL-/path/detail"  # pragma: allowlist secret
 
@@ -57,7 +61,24 @@ def google(monkeypatch):
     monkeypatch.setattr(cw, "_service", lambda account_id=None: (Svc(), None))
     monkeypatch.setattr(cw, "_drop_calendar_cache", lambda: None)
     monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
+    # These tests post as the page does; the owner's-click check itself is
+    # tested below with the real check.
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
     return ev
+
+
+def test_a_program_without_the_owners_click_deletes_nothing(client, google, monkeypatch):
+    """A loopback POST with no page headers or token (a command a model ran) is refused,
+    and neither a Google event nor an event kept on this PC is touched."""
+    from agent_friday.routes import calendar as rc
+    monkeypatch.setattr(screen_click, "screen_session", REAL_SCREEN_SESSION)
+    saved = []
+    monkeypatch.setattr(rc, "_load_local_events", lambda: [{"id": "local-abc", "title": "Kept here"}])
+    monkeypatch.setattr(rc, "_save_local_events", lambda evs: saved.append(evs))
+    r = client.post("/api/calendar/events/ev7/delete", json={})
+    assert r.status_code == 403 and google.deleted == []
+    r = client.post("/api/calendar/events/local-abc/delete", json={})
+    assert r.status_code == 403 and saved == []
 
 
 def test_the_route_deletes_the_event_and_answers_with_what_it_was(client, google):
