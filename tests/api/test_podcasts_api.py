@@ -116,8 +116,8 @@ def test_the_show_formats_are_read_and_set_over_the_api(client, monkeypatch):
                         .setdefault("format", {}).update(d["podcasts"]["format"]))
     r = client.get("/api/podcasts/formats").get_json()
     assert r["formats"]["briefing"] == {"format": "solo", "recommended": "solo"}
-    r = client.put("/api/podcasts/formats", json={"routine": "weekly", "format": "solo"}).get_json()
-    assert r["formats"]["weekly"] == {"format": "solo", "recommended": "duo"}
+    r = client.put("/api/podcasts/formats", json={"routine": "weekly", "format": "duo"}).get_json()
+    assert r["formats"]["weekly"] == {"format": "duo", "recommended": "solo"}
     assert client.put("/api/podcasts/formats", json={"routine": "weekly", "format": "x"}).status_code == 409
 
 

@@ -34,7 +34,7 @@
    "also_tools": [],
    "gate": {"class": "internal", "ring": 0, "card": "none"},
    "laya_tier": "model_only",
-   "phrasings": ["how much do I trust this source"],
+   "phrasings": ["how much do I trust this source", "show me the full trust scores for this outlet", "what is that outlet's trust score based on"],
    "deictic": [],
    "undo": null,
    "voice": {"live": false, "shared": false},

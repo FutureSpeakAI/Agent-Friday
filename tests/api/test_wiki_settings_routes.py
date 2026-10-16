@@ -339,7 +339,7 @@ class TestWikiPending:
         approve_resp = client.post(f"/api/wiki/pending/{pid}/approve")
         assert approve_resp.status_code == 200
         data = approve_resp.get_json()
-        assert data["status"] == "ok"
+        assert data["status"] == "applied"
         assert data["approved"] == pid
 
         # Verify the wiki file was actually written
@@ -364,7 +364,7 @@ class TestWikiPending:
         reject_resp = client.post(f"/api/wiki/pending/{pid}/reject")
         assert reject_resp.status_code == 200
         data = reject_resp.get_json()
-        assert data["status"] == "ok"
+        assert data["status"] == "rejected"
         assert data["rejected"] == pid
 
         # Rejected item no longer in pending

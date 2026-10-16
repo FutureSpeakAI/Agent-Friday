@@ -36,6 +36,7 @@ import io
 import logging
 import math
 import os
+import re
 import threading
 import time
 import wave
@@ -419,6 +420,17 @@ class VADEndpointer:
 #  ASR backend — faster-whisper (CTranslate2, CPU INT8)
 # ═══════════════════════════════════════════════════════════════════════════
 
+_CUDA_LIB_ERROR = re.compile(
+    r"(?i)cublas|cudnn|cudart|\bcuda\b|cannot be loaded|CUBLAS_STATUS|CUDNN_STATUS")
+
+
+def _is_cuda_library_error(exc: BaseException) -> bool:
+    """CTranslate2's "Library cublas64_12.dll is not found or cannot be
+    loaded", a CUDA/cuDNN status error, and the like: the card's libraries,
+    not the audio."""
+    return bool(_CUDA_LIB_ERROR.search("%s: %s" % (type(exc).__name__, exc)))
+
+
 class WhisperASR:
     """faster-whisper ASR. Loads lazily; transcribes 16 kHz mono PCM16 bytes."""
 
@@ -477,6 +489,9 @@ class WhisperASR:
         same card: whisper-base in float16 wants well under a gigabyte, so ask
         for a comfortable margin and stand down rather than push the model
         that answers the question off the GPU.
+
+        Returns ``(device, compute_type, why_cpu)``: ("cuda", "int8_float16",
+        "") or ("cpu", "int8", the reason).
         """
         # The arbiter owns this card. If it is mid-transition, or holds a heavy
         # lease (an image model, a displacing brain load), the ear is the one
@@ -497,22 +512,42 @@ class WhisperASR:
                         % lease.get("kind"))
         except Exception:
             pass                              # no arbiter here: fall through
+        # Asked of CTranslate2 (what faster-whisper runs on) and the driver,
+        # never torch: the bundled torch is a CPU-only build, which reported
+        # "no CUDA" on an RTX laptop and kept Alt+T at 5-9 s on the CPU
+        # (services/gpu_probe). Bonsai2 is usually resident on this same card,
+        # so the ear asks for a comfortable margin of free memory and stands
+        # down rather than push the brain off the GPU. int8_float16 is
+        # CTranslate2's fast CUDA type for these models (~1.1 s warm on an
+        # RTX 4060 Laptop) and needs a fraction of float16's memory.
         try:
-            import torch
-            if not torch.cuda.is_available():
-                return "cpu", "int8", "no CUDA device"
-            free, _total = torch.cuda.mem_get_info()
-            # Bonsai2 is usually resident on this same card. whisper-base in
-            # float16 wants well under a gigabyte; ask for a comfortable margin
-            # so the ear never pushes the brain off the GPU to hear better.
-            need = 1.5 * (1024 ** 3)
-            if free < need:
-                return "cpu", "int8", (
-                    "only %.1f GiB free on the GPU; the brain has it"
-                    % (free / (1024 ** 3)))
-            return "cuda", "float16", ""
-        except Exception as exc:              # torch missing, driver trouble
+            from agent_friday.services import gpu_probe
+            return gpu_probe.pick_ct2_device()
+        except Exception as exc:              # driver trouble
             return "cpu", "int8", ExceptionText(str(exc)[:80])
+
+    def _installed_size(self, size, download_root):
+        """``size``, or under "auto" the other automatic size when only that
+        one is on this computer (base answers on a GPU until small is
+        installed, and small on a CPU is slower but better than nothing).
+        A size the user chose is never swapped."""
+        req = str(self.requested_size or "").strip().lower()
+        if req not in ("", "auto"):
+            return size
+        try:
+            from agent_friday.services import feature_models as _fm
+            if _fm.whisper_model_dir(size, download_root) is not None:
+                return size
+            for other in (WHISPER_MODEL_ON_CPU, WHISPER_MODEL_ON_GPU):
+                if other != size and _fm.whisper_model_dir(other, download_root) is not None:
+                    log.info("local voice: whisper %s is not installed; using the "
+                             "installed %s", size, other)
+                    return other
+            # Neither is here: the refusal names the one dictation needs.
+            return WHISPER_MODEL_ON_CPU
+        except Exception:
+            pass
+        return size
 
     def load(self, progress=None):
         if self._model is not None:
@@ -532,31 +567,49 @@ class WhisperASR:
                 device, compute, why_cpu = "cpu", "int8", "the CPU ear"
             else:
                 device, compute, why_cpu = self._pick_device()
+            if device == "cuda":
+                # CTranslate2 loads cuBLAS 12 by name from PATH at its first
+                # CUDA matrix multiply; borrow the llama.cpp runtime's copy when
+                # nothing else provides it (services/gpu_probe; logged there).
+                # If it cannot be made findable, the ear loads on the CPU now
+                # rather than failing at every transcription.
+                try:
+                    from agent_friday.services import gpu_probe
+                    ok, why = gpu_probe.prepare_cublas_for_cuda()
+                except Exception as exc:
+                    ok, why = False, "the cuBLAS check failed: %s" % str(exc)[:120]
+                if not ok:
+                    log.info("local voice: not loading whisper on CUDA: %s", why)
+                    device, compute, why_cpu = "cpu", "int8", why
             size = resolve_whisper_model(self.requested_size, device)
+            size = self._installed_size(size, download_root)
             if progress:
                 progress(f"Loading speech model ({size})…")
             def _open(sz, dev, comp):
-                # From the local cache alone first, so a load never asks the
-                # hub whether a newer revision exists; a checkpoint that is not
-                # there yet (the first run) is fetched by the call that follows.
-                try:
-                    return WhisperModel(sz, device=dev, compute_type=comp,
-                                        download_root=str(download_root),
-                                        local_files_only=True)
-                except Exception:
-                    return WhisperModel(sz, device=dev, compute_type=comp,
-                                        download_root=str(download_root))
+                # From this computer only: the folder feature_models found,
+                # opened by path with the hub never asked. A model that is not
+                # here is a named refusal (FeatureModelMissing, logged), not a
+                # download: the checkpoint is installed by the consented,
+                # pinned step in Settings > Voice > Local voice models.
+                from agent_friday.services import feature_models as _fm
+                src = _fm.require_whisper(sz, "dictation", who="local voice ear",
+                                          first_root=download_root)
+                return WhisperModel(str(src), device=dev, compute_type=comp,
+                                    download_root=str(download_root),
+                                    local_files_only=True)
             try:
                 self._model = _open(size, device, compute)
             except Exception as exc:
                 # A CUDA build that will not initialise must not take local
                 # voice down with it — fall back to the floor and say so.
-                if device == "cpu":
+                from agent_friday.services.feature_models import FeatureModelMissing
+                if device == "cpu" or isinstance(exc, FeatureModelMissing):
                     raise
                 log.warning("local voice: whisper on CUDA failed (%s); "
                              "falling back to CPU int8", str(exc)[:160])
                 device, compute, why_cpu = "cpu", "int8", ExceptionText(str(exc)[:80])
-                size = resolve_whisper_model(self.requested_size, device)
+                size = self._installed_size(
+                    resolve_whisper_model(self.requested_size, device), download_root)
                 self._model = _open(size, device, compute)
             self.model_size = size
             self._device = device
@@ -565,15 +618,40 @@ class WhisperASR:
             log.info("local voice: whisper %s on %s/%s%s", self.model_size,
                       device, compute, (" (" + why_cpu + ")") if why_cpu else "")
 
+    def _run(self, audio) -> str:
+        segments, _info = self._model.transcribe(
+            audio, language=None, beam_size=1, vad_filter=False)
+        return "".join(seg.text for seg in segments).strip()
+
     def transcribe(self, pcm16_16k: bytes) -> str:
         if not pcm16_16k:
             return ""
         self.load()
         import numpy as np
         audio = np.frombuffer(pcm16_16k, dtype=np.int16).astype("float32") / 32768.0
-        segments, _info = self._model.transcribe(
-            audio, language=None, beam_size=1, vad_filter=False)
-        return "".join(seg.text for seg in segments).strip()
+        try:
+            return self._run(audio)
+        except Exception as exc:
+            # CTranslate2 loads cuBLAS/cuDNN lazily, at the first transcription,
+            # so a CUDA load can succeed and every Alt+T then fail. Once: say
+            # why, reload on the CPU (int8) and answer this request from there.
+            if getattr(self, "_device", "cpu") != "cuda" or not _is_cuda_library_error(exc):
+                raise
+            log.warning("local voice: whisper on CUDA failed at transcription (%s); "
+                        "reloading on CPU int8 and retrying", str(exc)[:160])
+            self._fall_back_to_cpu(ExceptionText(str(exc)[:80]))
+            return self._run(audio)
+
+    def _fall_back_to_cpu(self, why) -> None:
+        """Drop the CUDA model and load this ear on the CPU for the rest of
+        the process (``force_cpu``), keeping the reason for status."""
+        with self._lock:
+            if self.force_cpu and self._model is not None:
+                return                        # another request already did it
+            self._model = None
+            self.force_cpu = True
+        self.load()
+        self._why_cpu = "CUDA failed at transcription: %s" % why
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1009,6 +1087,12 @@ class LocalVoiceEngine:
             from agent_friday.services.kokoro_voice import (
                 DEFAULT_KOKORO_VOICE, KokoroTTS)
             voice = settings.get("local_voice_kokoro_voice") or DEFAULT_KOKORO_VOICE
+            try:
+                # Her voice: the owner's, or the cloud voice's installed twin.
+                from agent_friday.services.agent_identity import local_kokoro_voice
+                voice = local_kokoro_voice(settings) or voice
+            except Exception:
+                log.debug("identity voice match unavailable", exc_info=True)
             log.info("tier1 tts engine=kokoro voice=%s", voice)
             return KokoroTTS(voice, allow_cpu=bool(
                 settings.get("local_voice_kokoro_allow_cpu")))
@@ -1039,7 +1123,16 @@ class LocalVoiceEngine:
         whisper_root = WHISPER_DIR
         try:
             whisper_root = self._get_asr_download_root()
-            whisper_ok = whisper_root.exists() and any(whisper_root.iterdir())
+            # A complete model the loader will open (feature_models, by path),
+            # not "something is in the folder": a stray or partial download
+            # used to read as ready while the ear refused at load.
+            from agent_friday.services import feature_models as _fm
+            _req = str(self._settings().get("local_voice_asr_model")
+                       or DEFAULT_WHISPER_MODEL).strip()
+            _sizes = ((WHISPER_MODEL_ON_CPU, WHISPER_MODEL_ON_GPU)
+                      if _req.lower() in ("", "auto") else (_req,))
+            whisper_ok = any(_fm.whisper_model_dir(sz, whisper_root) is not None
+                             for sz in _sizes)
         except Exception:
             whisper_ok = False
         vp = None
@@ -1133,6 +1226,14 @@ class LocalVoiceEngine:
                 # generic message would send someone to check their network for
                 # a problem that is entirely about which device is available.
                 from agent_friday.services.kokoro_voice import KokoroUnavailable
+                from agent_friday.services.feature_models import FeatureModelMissing
+                if isinstance(e, FeatureModelMissing):
+                    # Already in friday.log with the feature and the model;
+                    # the session shows the same words, with where to install.
+                    self.last_error = e.message
+                    self.last_error_code = e.code
+                    self._ready = False
+                    return False
                 if isinstance(e, KokoroUnavailable):
                     self.last_error = f"{e.message} {e.offer}"
                     self.last_error_code = e.code

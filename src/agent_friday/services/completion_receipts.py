@@ -93,6 +93,14 @@ _PROMISE_RE = re.compile(
     r"|fetch|scan|dig|run|see|take a look)"
     r"|give me (?:one |a )?(?:second|moment|sec|minute)"
     r"|I'm (?:going to|about to|now) (?:search|look|check|find|pull|open|grab|run)"
+    # "I'm loading the background task tool now" -- the field case: said in
+    # a turn whose tool call was written as text and never ran.
+    r"|(?:I'm|I am) (?:now )?(?:loading|spawning|launching|starting|kicking off|setting up)"
+    r" (?:the|a|an|your|that|this|those)\b[^.!?\n]{0,40}?"
+    r"\b(?:tools?|tasks?|jobs?|background|agents?|workflows?|schedules?|searche?s?|downloads?)\b"
+    r"|(?:I'll|I will|let me) (?:now |just )?(?:load|spawn|launch|kick off)"
+    r" (?:the|a|an|your|that|this|those)\b[^.!?\n]{0,40}?"
+    r"\b(?:tools?|tasks?|jobs?|background|agents?|workflows?|schedules?|downloads?)\b"
     r"|(?:one|just a) (?:second|moment|sec) while I"
     r"|hang on while I|bear with me while I"
     r")\b", re.IGNORECASE)
@@ -260,13 +268,33 @@ COMPLETION_CLAIM_REGISTRY = [
         "tools": ("send", "email", "reply", "forward", "message"),
     },
     {
+        # "I've scheduled ...", and the passive form a model uses for a
+        # recurring job ("a weekly email is scheduled", "it's set up to go out
+        # every Monday"). Satisfied ONLY by a receipt that a timetable or a
+        # calendar entry was written this turn (`_scheduled_receipt`): a read
+        # such as listing schedules or finding events is not one.
         "id": "scheduled",
         "pattern": re.compile(
             _FIRST_PERSON + r"(?:scheduled|booked|rescheduled)\b"
             r"|" + _FIRST_PERSON + r"added[^.!?\n]{0,120}?"
-            r"\b(?:calendar|event|meeting|appointment)\b",
+            r"\b(?:calendar|event|meeting|appointment)\b"
+            # Passive, only about a RECURRING job or a fresh change ("now"):
+            # "your weekly email is scheduled", "it's now scheduled". A fact
+            # read off the calendar ("your meeting is scheduled for 3pm") is
+            # not a claim of having done anything.
+            r"|\b(?:weekly|daily|monthly|recurring|every\s+\w+|each\s+\w+)\b[^.!?\n]{0,60}?"
+            r"\b(?:is|are|'s|has been|have been)\s+(?:now\s+|all\s+)?(?:scheduled|set up)\b"
+            r"|\b(?:is|are|'s|has been|have been)\s+(?:all\s+)?now\s+(?:scheduled|booked|set up)\b"
+            r"|\b(?:is|are|'s|has been|have been)\s+(?:all\s+)?(?:scheduled|set up)\s+"
+            r"(?:for\s+)?(?:every|each|weekly|daily|monthly)\b"
+            r"|\b(?:scheduled|set up|set) to (?:go out|run|send|be sent|repeat)\b"
+            r"|\bwill (?:go out|run|be sent|send)\s+(?:automatically\s+)?(?:every|each|weekly|daily|monthly)\b",
             re.IGNORECASE),
-        "tools": ("calendar", "event", "schedule", "book"),
+        "tools": ("schedule_job", "workflow_action", "calendar", "book_slot", "content_schedule_post"),
+        "satisfied_by": "_scheduled_receipt",
+        # "Nothing is scheduled", "it isn't set to run": an honest no is not a claim.
+        "negated_by": re.compile(r"\b(?:not|nothing|no|never|cannot|unless|without)\b|n't\b",
+                                 re.IGNORECASE),
     },
     {
         "id": "deleted",
@@ -322,9 +350,62 @@ def _claim_clause(scanned: str, m) -> str:
     return scanned[left:right]
 
 
-def _claim_satisfied(entry_tools, tool_trace) -> bool:
+def _parsed(result):
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, str):
+        try:
+            import json
+            data = json.loads(result)
+            return data if isinstance(data, dict) else None
+        except ValueError:
+            return None
+    return None
+
+
+def _has_schedule_id(data) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if data.get("schedule_id"):
+        return True
+    return any(_has_schedule_id(v) for v in data.values() if isinstance(v, dict))
+
+
+#: Calendar tools that WRITE an entry (a booking, an event, a scheduled post).
+_CALENDAR_WRITES = ("create_calendar_event", "update_calendar_event", "book_slot",
+                    "organize_calendar", "content_schedule_post")
+
+
+def _scheduled_receipt(receipt) -> bool:
+    """Did this successful receipt put something on a timetable or a calendar?
+
+    * `schedule_job` create or resume, whose result names the schedule id and
+      its next run (the tool reads the schedule back before answering);
+    * `workflow_action` create or update with timing, whose result names the
+      schedule id it saved;
+    * a calendar tool that writes an entry.
+    Listing schedules or reading the calendar is not a receipt for "scheduled".
+    """
+    name = str(receipt.get("name") or "")
+    inp = receipt.get("input") if isinstance(receipt.get("input"), dict) else {}
+    action = str(inp.get("action") or "").lower()
+    if name == "schedule_job":
+        data = _parsed(receipt.get("result")) or {}
+        return (action in ("create", "resume") and bool(data.get("schedule_id"))
+                and data.get("next_run") is not None
+                and bool(data.get("created") or data.get("resumed")))
+    if name == "workflow_action":
+        return action in ("create", "update") and _has_schedule_id(_parsed(receipt.get("result")))
+    return name in _CALENDAR_WRITES
+
+
+def _claim_satisfied(entry_tools, tool_trace, predicate=None) -> bool:
     for receipt in (tool_trace or []):
         if not receipt_ok(receipt):
+            continue
+        if predicate is not None:
+            if predicate(receipt):
+                return True
             continue
         name = str(receipt.get("name", "")).lower()
         if any(t in name for t in entry_tools):
@@ -342,9 +423,19 @@ def find_unreceipted_completion_claims(reply: str, tool_trace,
     scanned = _strip_code(reply)
     violations = []
     for entry in (registry or COMPLETION_CLAIM_REGISTRY):
+        predicate = entry.get("satisfied_by")
+        if isinstance(predicate, str):
+            predicate = globals()[predicate]
         for m in entry["pattern"].finditer(scanned):
-            if _INLINE_DELIVERY_RE.search(_claim_clause(scanned, m)):
+            clause = _claim_clause(scanned, m)
+            if _INLINE_DELIVERY_RE.search(clause):
                 continue
-            if not _claim_satisfied(entry["tools"], tool_trace):
+            if entry.get("negated_by") is not None:
+                # Only the words in front of the claim, in its own clause.
+                before = scanned[max(0, m.start() - 60):m.start()]
+                before = _CLAUSE_BREAK.split(before)[-1]
+                if entry["negated_by"].search(before + m.group(0)):
+                    continue
+            if not _claim_satisfied(entry["tools"], tool_trace, predicate):
                 violations.append(m.group(0).strip())
     return violations

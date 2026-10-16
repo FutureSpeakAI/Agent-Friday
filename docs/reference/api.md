@@ -111,8 +111,16 @@ Returns the full wiki directory tree.
 ### `POST /api/wiki/update`
 Change a page, or with `"auto": true` queue the change for approval (it then
 appears under pending, below). When `old_value` is found in the page it is
-replaced in place; otherwise `new_value` is appended under `## {section}`.
-A page that does not exist yet is created.
+replaced in place; otherwise `new_value` is appended at the end of the
+page's existing `{section}` heading (matched with or without `#`, at any
+level, ignoring case and spacing), or under a new `## {section}` when the
+page has none. A page that does not exist yet is created.
+
+Applied directly (no `auto`), an append or `replace_file` on a page that
+exists needs `before_sha256`: the SHA-256 of the page text (LF line endings)
+the caller showed. Without it, or when the page has changed since, the answer
+is 409 `stale` with the page's current `before_sha256`, and nothing is
+written. The owner's editor saves through `PUT /api/wiki/edit` instead.
 
 **Request:**
 ```json
@@ -1058,6 +1066,10 @@ Favicon.
 - `POST /api/workflows/chains/<name>/stop` — ends the run after the step it is on and starts no other. 200 `{ "stopped": true }`; 409 `{ "status": "not_running" }`; 404 for an unknown chain. Needs no approval: it only ends work.
 - `GET /api/steps/active` — `{ "list": { "id", "title", "steps": [ { "n", "text", "state" } ] } | null }`: the step list of the run in progress. States: waiting, doing, done, held, skipped, stopped, failed. Held in memory only.
 - `POST /api/steps/<id>/stop` — the same stop, by list id. `{ "ok", "text" }`.
+
+### A saved workflow's email choice
+
+- `PATCH /api/workflows/chains/<name>` with `{ "email_send": true | false }` — whether the emails the workflow writes when run on request are sent (each asks first unless pre-approved) or saved as drafts in Gmail. 200 `{ "slug", "email_send" }`; 400 for any other body; 404 for an unknown workflow. Kept on the workflow record outside the content a job pre-approval fingerprints, so it never voids one. For a scheduled workflow, `PATCH /api/schedules/<id>` with `email_send` sets the job and its workflow together.
 
 ### Settings changes Friday proposed
 

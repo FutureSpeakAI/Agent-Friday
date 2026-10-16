@@ -424,8 +424,9 @@ function Get-ModelOptions {
 
     # The fast responder is the local VOICE FRONT (voice_front.FRONT_MODELS):
     # Ternary Bonsai 1.7B, which also fills Quick reflexes, with the Qwen3
-    # builds as alternatives. Each choice also downloads the speech ear and its
-    # runtime, and the size shown includes them. A front is listed only if it
+    # builds as alternatives. Each choice also downloads the speech ear, its
+    # runtime and the whisper models Alt+T and media transcripts need
+    # (voice_front_options.json companions), and the size shown includes them. A front is listed only if it
     # fits (memory and the disk floor).
     #   solo         (Qwen3 4B)  the deep thinker is parked while a call runs
     #   co_resident  (the 1.7Bs) beside the deep thinker when the card has room
@@ -451,7 +452,7 @@ function Get-ModelOptions {
                 seat = 'fast_responder'; id = [string]$front.id; packing = [string]$front.packing; label = [string]$front.label
                 bytes = [int64]$bytes; size_text = (Get-FileSizeLine $bytes); recommended = $false
                 older_generation = $false; companions = $false
-                note = ("{0} Includes the speech ear ({1} MB)." -f $front.note, $earMb)
+                note = ("{0} Includes the speech ear and speech recognition for push-to-transcribe and transcripts ({1} MB)." -f $front.note, $earMb)
                 serve = $null; role = [string]$front.role
             }
         }

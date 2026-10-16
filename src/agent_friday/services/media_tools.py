@@ -332,10 +332,19 @@ _WHISPER = None
 
 
 def _whisper():
+    """faster-whisper base.en on the CPU, loaded by path from this computer.
+
+    It used to be ``WhisperModel("base.en")`` with no ``local_files_only``,
+    which fetched the model from the hub on first use: a download nobody
+    agreed to. A missing model is now a named, logged refusal
+    (feature_models.FeatureModelMissing) that this tool's caller reports."""
     global _WHISPER
     if _WHISPER is None:
+        from agent_friday.services import feature_models as fm
+        path = fm.require_whisper("base.en", "transcription", who="inspect_audio / phone")
         from faster_whisper import WhisperModel
-        _WHISPER = WhisperModel("base.en", device="cpu", compute_type="int8")
+        _WHISPER = WhisperModel(str(path), device="cpu", compute_type="int8",
+                                local_files_only=True)
     return _WHISPER
 
 

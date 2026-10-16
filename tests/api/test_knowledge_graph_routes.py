@@ -7,15 +7,6 @@ import pytest
 from kg_index_settle import _no_tier_b_index_outlives_its_test  # noqa: F401  (autouse)
 
 
-@pytest.fixture(autouse=True)
-def _own_graph_dir(tmp_path, monkeypatch):
-    """Each test builds into its own graph folder. The store never saves over a
-    sealed file it could not read, so a sealed artifact another test left in
-    the shared home (under that test's key) would hold this graph empty."""
-    from agent_friday.services.knowledge_graph import store
-    monkeypatch.setattr(store, "KG_DIR", tmp_path / "knowledge-graph")
-
-
 @pytest.fixture
 def seeded_wiki():
     """Seed a small wiki at the import-time WIKI_DIR and mark the graph dirty.

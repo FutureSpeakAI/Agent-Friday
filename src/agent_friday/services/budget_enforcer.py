@@ -30,9 +30,16 @@ from agent_friday.core import FRIDAY_DIR
 DB_PATH = FRIDAY_DIR / "budgets.db"
 _LOCK = threading.RLock()
 
-_DEFAULT_MONTHLY_CAP = 1_000_000   # 1000ψ per workspace per month
-_DEFAULT_PER_TASK    = 100_000     # 100ψ per task
-_DEFAULT_WARN_PCT    = 80          # warn at 80%
+# No cap unless the owner sets one. A cap of 0 is no cap everywhere it is read
+# here. A workspace without its own policy takes the owner's default from
+# settings.spending_caps (workspace_monthly_mpsi, workspace_task_mpsi), which
+# the first-run setup conversation asks about (services/spending_caps.py) and
+# which ship as None. The figures this module used to impose (1000ψ a month,
+# 100ψ a task) are now only the suggestions offered there.
+_DEFAULT_MONTHLY_CAP = 0
+_DEFAULT_PER_TASK    = 0
+_DEFAULT_WARN_PCT    = 80          # warn at 80% of a cap the owner set
+NO_CAP_LABEL = "No cap (ask me during setup)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Schema
@@ -41,8 +48,8 @@ _DEFAULT_WARN_PCT    = 80          # warn at 80%
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS budget_policies (
     workspace       TEXT PRIMARY KEY,
-    monthly_cap_mψ  INTEGER DEFAULT 1000000,
-    per_task_cap_mψ INTEGER DEFAULT 100000,
+    monthly_cap_mψ  INTEGER DEFAULT 0,
+    per_task_cap_mψ INTEGER DEFAULT 0,
     warn_pct        INTEGER DEFAULT 80,
     updated_at      TEXT
 );
@@ -57,6 +64,11 @@ CREATE TABLE IF NOT EXISTS budget_reservations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_res_workspace ON budget_reservations(workspace, month_key, released);
+
+CREATE TABLE IF NOT EXISTS budget_meta (
+    key             TEXT PRIMARY KEY,
+    value           TEXT
+);
 """
 
 
@@ -73,8 +85,71 @@ def _conn() -> sqlite3.Connection:
         with _SCHEMA_LOCK:
             if not _SCHEMA_DONE:
                 c.executescript(_SCHEMA)
+                migrate_old_default_policies(c)
                 _SCHEMA_DONE = True
     return c
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  One-time migration: policy rows at the caps this module used to impose
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Before caps shipped off, the Settings budget panel saved a workspace's policy
+# with the form pre-filled from the old defaults (and POST /api/budget/policy
+# filled a missing figure with them), so budgets.db can hold rows at exactly
+# 1,000,000 mψ a month and 100,000 mψ a task that nobody chose. Rows record no
+# owner and get_policy never inserted defaults, so a defaulted row cannot be
+# told from a chosen one by its history; the rule is therefore the
+# conservative one: only a row whose BOTH caps equal the old defaults is
+# migrated. Its caps become 0 (no cap), warn_pct is kept, and updated_at is
+# set to MIGRATED_MARK + time, which _get_policy_row reads as "not the
+# owner's figure": the owner's default from settings.spending_caps applies
+# until the owner saves a policy for that workspace. The run is recorded in
+# budget_meta and never repeats.
+
+_OLD_DEFAULT_MONTHLY_CAP = 1_000_000
+_OLD_DEFAULT_PER_TASK = 100_000
+MIGRATION_KEY = "defaults_off_migrated"
+MIGRATED_MARK = "migrated-defaults-off:"
+
+
+def migrate_old_default_policies(c: sqlite3.Connection) -> int:
+    """Clear policy rows at exactly the old default caps, once. Returns how
+    many rows changed (0 also when the migration has already run). Never
+    raises: a failure is logged and retried by the next process."""
+    import logging
+    log = logging.getLogger("friday.budget")
+    try:
+        if c.execute("SELECT 1 FROM budget_meta WHERE key=?", (MIGRATION_KEY,)).fetchone():
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
+        rows = c.execute(
+            "SELECT workspace FROM budget_policies "
+            "WHERE monthly_cap_mψ=? AND per_task_cap_mψ=?",
+            (_OLD_DEFAULT_MONTHLY_CAP, _OLD_DEFAULT_PER_TASK)).fetchall()
+        names = [r[0] for r in rows]
+        for ws in names:
+            c.execute("UPDATE budget_policies SET monthly_cap_mψ=0, per_task_cap_mψ=0, "
+                      "updated_at=? WHERE workspace=?", (MIGRATED_MARK + now, ws))
+            log.info("budget_enforcer: workspace %r had the old shipped caps (%d mψ a "
+                     "month, %d mψ a task), never distinguishable from a choice; they "
+                     "are now off (no cap) and the owner's default applies. One-time "
+                     "migration.", ws, _OLD_DEFAULT_MONTHLY_CAP, _OLD_DEFAULT_PER_TASK)
+        c.execute("INSERT INTO budget_meta(key, value) VALUES(?, ?)",
+                  (MIGRATION_KEY, "%s rows=%d" % (now, len(names))))
+        c.commit()
+        if not names:
+            log.info("budget_enforcer: one-time defaults-off migration found no policy "
+                     "at the old shipped caps")
+        return len(names)
+    except Exception as e:                                   # noqa: BLE001
+        try:
+            c.rollback()
+        except Exception:
+            pass
+        log.warning("budget_enforcer: defaults-off migration skipped (%s: %s); "
+                    "it runs again next start", type(e).__name__, e)
+        return 0
 
 
 def _ensure_schema():
@@ -98,16 +173,38 @@ def _month_key() -> str:
 #  Policy management
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _owner_default(key: str, fallback: int) -> int:
+    """The owner's default cap from settings.spending_caps[key]; None, 0 or
+    anything unreadable is `fallback` (no cap)."""
+    try:
+        from agent_friday.core import _load_settings
+        v = ((_load_settings() or {}).get("spending_caps") or {}).get(key)
+        v = int(v or 0)
+        return v if v > 0 else fallback
+    except Exception:
+        return fallback
+
+
 def _get_policy_row(workspace: str, conn: sqlite3.Connection) -> dict:
     row = conn.execute(
         "SELECT * FROM budget_policies WHERE workspace=?", (workspace,)
     ).fetchone()
     if row:
-        return dict(row)
+        out = dict(row)
+        if str(out.get("updated_at") or "").startswith(MIGRATED_MARK):
+            # Cleared by the one-time migration, not set by the owner: the
+            # owner's default applies until they save a policy here.
+            if not int(out.get("monthly_cap_mψ") or 0):
+                out["monthly_cap_mψ"] = _owner_default("workspace_monthly_mpsi",
+                                                       _DEFAULT_MONTHLY_CAP)
+            if not int(out.get("per_task_cap_mψ") or 0):
+                out["per_task_cap_mψ"] = _owner_default("workspace_task_mpsi",
+                                                        _DEFAULT_PER_TASK)
+        return out
     return {
         "workspace": workspace,
-        "monthly_cap_mψ": _DEFAULT_MONTHLY_CAP,
-        "per_task_cap_mψ": _DEFAULT_PER_TASK,
+        "monthly_cap_mψ": _owner_default("workspace_monthly_mpsi", _DEFAULT_MONTHLY_CAP),
+        "per_task_cap_mψ": _owner_default("workspace_task_mpsi", _DEFAULT_PER_TASK),
         "warn_pct": _DEFAULT_WARN_PCT,
     }
 
@@ -160,10 +257,14 @@ def monthly_spend(workspace: str) -> int:
         return int(row["total"]) if row else 0
 
 
-def check_remaining(workspace: str) -> int:
+def check_remaining(workspace: str) -> Optional[int]:
+    """mψ left this month, or None when the workspace has no monthly cap."""
     policy = get_policy(workspace)
+    cap = int(policy.get("monthly_cap_mψ") or 0)
+    if cap <= 0:
+        return None
     spent = monthly_spend(workspace)
-    return max(0, policy["monthly_cap_mψ"] - spent)
+    return max(0, cap - spent)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -181,7 +282,9 @@ def reserve_budget(workspace: str, amount_mψ: int) -> bool:
     # The per-task cap is the most one task may reserve at once.
     task_cap = int(policy.get("per_task_cap_mψ") or 0)
     if task_cap > 0 and amount_mψ > task_cap:
+        _log_refusal(workspace, "per-task cap", amount_mψ, task_cap)
         return False
+    monthly_cap = int(policy.get("monthly_cap_mψ") or 0)   # 0: no monthly cap
     mk = _month_key()
     now = datetime.now(timezone.utc).isoformat()
 
@@ -193,7 +296,8 @@ def reserve_budget(workspace: str, amount_mψ: int) -> bool:
         ).fetchone()
         current_spend = int(row["total"]) if row else 0
 
-        if current_spend + amount_mψ > policy["monthly_cap_mψ"]:
+        if monthly_cap > 0 and current_spend + amount_mψ > monthly_cap:
+            _log_refusal(workspace, "monthly cap", current_spend + amount_mψ, monthly_cap)
             return False
 
         c.execute(
@@ -205,7 +309,7 @@ def reserve_budget(workspace: str, amount_mψ: int) -> bool:
     # Warn at threshold
     try:
         new_total = current_spend + amount_mψ
-        cap = policy["monthly_cap_mψ"]
+        cap = monthly_cap
         warn_pct = policy.get("warn_pct", 80)
         if cap > 0 and (new_total / cap) * 100 >= warn_pct:
             _maybe_warn(workspace, new_total, cap)
@@ -213,6 +317,16 @@ def reserve_budget(workspace: str, amount_mψ: int) -> bool:
         pass
 
     return True
+
+
+def _log_refusal(workspace: str, which: str, wanted: int, cap: int) -> None:
+    try:
+        import logging
+        logging.getLogger("friday.budget").warning(
+            "budget_enforcer refused a reservation for workspace %r: %d mψ would pass "
+            "the owner's %s of %d mψ", workspace, wanted, which, cap)
+    except Exception:
+        pass
 
 
 def release_budget(workspace: str, amount_mψ: int) -> None:
@@ -270,15 +384,21 @@ def enforce_hard_stop(worker_id: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def budget_status(workspace: str) -> dict:
+    """A workspace's spend and caps. A cap of 0 is no cap: its remaining is
+    None and the status carries NO_CAP_LABEL for the Settings panel."""
     policy = get_policy(workspace)
     spent = monthly_spend(workspace)
-    cap = policy["monthly_cap_mψ"]
+    cap = int(policy.get("monthly_cap_mψ") or 0)
+    task_cap = int(policy.get("per_task_cap_mψ") or 0)
     return {
         "workspace": workspace,
         "monthly_cap_mψ": cap,
         "spent_mψ": spent,
-        "remaining_mψ": max(0, cap - spent),
-        "per_task_cap_mψ": policy["per_task_cap_mψ"],
+        "remaining_mψ": max(0, cap - spent) if cap > 0 else None,
+        "per_task_cap_mψ": task_cap,
         "warn_pct": policy.get("warn_pct", 80),
-        "pct_used": round((spent / cap) * 100, 1) if cap else 0,
+        "pct_used": round((spent / cap) * 100, 1) if cap > 0 else 0,
+        "capped": cap > 0,
+        "task_capped": task_cap > 0,
+        "no_cap_label": NO_CAP_LABEL,
     }

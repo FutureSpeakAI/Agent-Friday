@@ -57,7 +57,7 @@ def _check(lines, ds):
 # 1 ── the format, for every routine ─────────────────────────────────────────
 
 @pytest.mark.parametrize("routine,fmt", [("front_page", "solo"), ("briefing", "solo"),
-                                         ("editorial", "solo"), ("weekly", "duo")])
+                                         ("editorial", "solo"), ("weekly", "solo")])  # every show is one voice by default (owner decision); two hosts are the owner's choice
 def test_every_news_routine_has_its_format(routine, fmt):
     ep = pe.create([{"kind": "text", "text": "x", "title": "t"}], origin="routine",
                    attached={"routine": routine, "run_id": "2031-03-12"})

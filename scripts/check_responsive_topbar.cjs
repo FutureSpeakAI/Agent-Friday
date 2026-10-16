@@ -34,4 +34,11 @@ assert.equal(packTopbar(1900, fixture, 40, 8).overflow.length, 0, 'No unnecessar
 const longModel = fixture.map(item => item.id === 'model' ? {...item, width:500} : item);
 verify(packTopbar(748, longModel, 40, 8), 748, longModel);
 assert.throws(() => verify({visible:fixture.filter(item => item.width).map(item => item.id), overflow:[]}, 300, fixture), /Header uses/, 'Negative control: the original unbounded row must fail');
-console.log('Responsive topbar: measured packing, reachability, and negative-control checks passed.');
+// While something waits for the owner, Activity is kept in the bar and other chips collapse first.
+const waiting = fixture.map(item => item.id === 'activity' ? {...item, keep:true} : item);
+for (const width of [580, 680, 748, 1049]) {
+  const plan = packTopbar(width, waiting, 40, 8);
+  assert.ok(plan.visible.includes('activity'), `Activity collapsed at ${width}px while something waits`);
+}
+assert.ok(packTopbar(680, fixture, 40, 8).overflow.includes('activity'), 'Negative control: with nothing waiting Activity may collapse');
+console.log('Responsive topbar: measured packing, reachability, kept Activity, and negative-control checks passed.');

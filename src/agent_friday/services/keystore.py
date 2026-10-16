@@ -158,48 +158,6 @@ def _passphrase() -> str:
         return ""
 
 
-def _passphrase_candidates() -> list[str]:
-    """The resolved passphrase first, then every other one this machine
-    holds (its homes and the kept values). The resolver ranks passphrases by
-    the sealed FILES they open, which says nothing about which one wraps this
-    keystore; the check block is what decides here."""
-    out = []
-    first = _passphrase()
-    if first:
-        out.append(first)
-    try:
-        from agent_friday.services import vault_passphrase as _vp
-        for v in _vp.known_values():
-            if v and v not in out:
-                out.append(v)
-    except Exception:
-        pass
-    return out
-
-
-def _try_unwrap(doc: dict, pw: str):
-    """The root key when ``pw`` opens the check block, else None."""
-    try:
-        key = _derive(pw, bytes.fromhex(doc["salt_hex"]))
-        if _vc.decrypt(_unb64(doc["check"]), key) != _CHECK_PLAINTEXT:
-            return None
-        return _vc.decrypt(_unb64(doc["wrapped_key"]), key)
-    except Exception:
-        return None
-
-
-def unwrapping_passphrase() -> str:
-    """The known passphrase that opens a passphrase-wrapped keystore's check
-    block, or "" (also for an unwrapped or absent keystore). Never logged."""
-    doc = _read_file()
-    if not doc or doc.get("wrap") != "passphrase":
-        return ""
-    for pw in _passphrase_candidates():
-        if _try_unwrap(doc, pw) is not None:
-            return pw
-    return ""
-
-
 def _derive(passphrase: str, salt: bytes) -> bytes:
     if not _HAS_VC:
         raise RuntimeError("cryptography is unavailable, so the keystore "
@@ -263,25 +221,27 @@ def root_key(use_cache: bool = True) -> bytes:
             return key
         if wrap != "passphrase":
             raise RuntimeError("unknown keystore wrap %r" % wrap)
-        cands = _passphrase_candidates()
-        if not cands:
+        pw = _passphrase()
+        if not pw:
             raise KeystoreLocked(
                 "Friday's keystore is passphrase-protected and no passphrase "
                 "is available to this process. Credentials cannot be read or "
                 "written until it is unlocked.")
-        # Every passphrase this machine holds is tried against the check
-        # block, the resolved one first: the homes may disagree, and the one
-        # that opens the sealed files need not be the one wrapping this key.
-        root = None
-        for pw in cands:
-            root = _try_unwrap(doc, pw)
-            if root is not None:
-                break
-        if root is None:
-            # A WRONG PASSPHRASE SAYS SO, rather than surfacing as an
-            # unexplained crypto error deep inside a token read.
+        try:
+            key = _derive(pw, bytes.fromhex(doc["salt_hex"]))
+            if _vc.decrypt(_unb64(doc["check"]), key) != _CHECK_PLAINTEXT:
+                raise ValueError("check block did not match")
+            root = _vc.decrypt(_unb64(doc["wrapped_key"]), key)
+        except KeystoreLocked:
+            raise
+        except Exception as e:
+            # A WRONG PASSPHRASE SAYS SO. The whole failure this module exists
+            # to end was a key mismatch surfacing as an unexplained crypto
+            # error deep inside a token read, which then got filed as the
+            # user's Google account being revoked.
             raise KeystoreLocked(
-                "no passphrase available to this process unlocks Friday's keystore")
+                "the passphrase available to this process does not unlock "
+                "Friday's keystore (%s)" % type(e).__name__) from e
         if len(root) != 32:
             raise RuntimeError("the unwrapped root key is malformed")
         _CACHED_KEY = root

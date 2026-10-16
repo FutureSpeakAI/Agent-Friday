@@ -254,6 +254,8 @@ class TestRecompute:
         g._recompute(rec)
         for dim in DIMENSIONS:
             v = rec["scores"][dim]
+            if v is None:  # not measured on this install: no number at all
+                continue
             assert 0.0 <= v <= 1.0, f"Dimension {dim} out of range: {v}"
         assert 0.0 <= rec["trust_score"] <= 1.0
 

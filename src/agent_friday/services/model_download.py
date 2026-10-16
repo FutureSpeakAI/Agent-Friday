@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import re
 import shutil
 import tarfile
 import threading
@@ -39,6 +41,8 @@ import requests
 
 from agent_friday.core import runtime_dir
 from agent_friday.services import model_shortlist as sl
+
+_log = logging.getLogger("friday.model_download")
 
 CHUNK = 1 << 20
 CONNECT_TIMEOUT_S = 20
@@ -523,17 +527,56 @@ def run_job(job_id: str) -> dict:
     return get_job(job_id)
 
 
+_BUILD_RE = re.compile(r"\bb(\d{4,6})\b")
+
+
+def release_build(tag: str) -> int | None:
+    """The llama.cpp build number in a release tag (``prism-b10743-adfffbe``)."""
+    m = _BUILD_RE.search(str(tag or ""))
+    return int(m.group(1)) if m else None
+
+
+def runtime_release_url(spec: dict) -> str:
+    """The release to install: the shortlist's PINNED tag when it has one, so an
+    install never lands on whatever happens to be newest (the launch release
+    shipped without its server binaries); ``releases/latest`` only without a pin."""
+    tag = str(spec.get("pinned_tag") or "").strip()
+    api = str(spec.get("release_by_tag_api") or "")
+    if tag and "{tag}" in api:
+        return api.replace("{tag}", tag)
+    return spec["releases_api"]
+
+
+def check_release_build(release: dict, spec: dict) -> int | None:
+    """Refuse a runtime release that is known broken or older than the minimum,
+    before anything is downloaded, with a reason a person can act on."""
+    tag = str((release or {}).get("tag_name") or "")
+    build = release_build(tag)
+    bad = {str(k): v for k, v in (spec.get("known_bad_builds") or {}).items()}
+    if build is not None and str(build) in bad:
+        raise DownloadError("runtime release %s is known broken (%s); not installing it"
+                            % (tag, bad[str(build)]))
+    minimum = int(spec.get("minimum_build") or 0)
+    if build is not None and minimum and build < minimum:
+        raise DownloadError("runtime release %s is older than build %d, the oldest that "
+                            "ships a working server; not installing it" % (tag, minimum))
+    return build
+
+
 def _install_runtime(ctrl: dict) -> Path:
     spec = sl.runtime_spec()
     from agent_friday.services import hardware_profile as hwp
     backend = sl.backend_for(hwp.get())
-    release = _release_json(spec["releases_api"])
+    release = _release_json(runtime_release_url(spec))
+    build = check_release_build(release, spec)
     assets = sl.pick_release_assets(release, backend)
     if not assets:
-        raise DownloadError("no runtime build for this OS and %s backend" % backend)
+        raise DownloadError("no runtime server archive for this OS and %s backend in the "
+                            "release (see friday.log for the assets considered)" % backend)
     into = runtime_dir_for()
     for a in assets:
         dest = destination("runtime", a["name"])
+        _log.info("runtime: fetching %s (%s) into %s", a["name"], a.get("role") or "asset", into)
         out = fetch_file(a["url"], dest, expected_bytes=a.get("size"),
                          expected_sha256=a.get("sha256"), ctrl=ctrl)
         if out["status"] != "done":
@@ -541,8 +584,53 @@ def _install_runtime(ctrl: dict) -> Path:
         _unpack(dest, into)
     binary = runtime_binary()
     if binary is None:
-        raise DownloadError("the runtime unpacked but no server binary was found")
+        wanted = (spec.get("server_binary") or {}).get(sl.os_family(), "llama-server")
+        names = ", ".join(a["name"] for a in assets)
+        _log.warning("runtime: unpacked %s into %s but %s is not there", names, into, wanted)
+        raise DownloadError("the runtime unpacked (%s) but the server binary %s was not found in %s"
+                            % (names, wanted, into))
+    _log.info("runtime: server binary %s is installed", binary)
+    # Which release is on disk, so a later start can tell a known-broken or
+    # too-old runtime from a good one without guessing from file dates.
+    try:
+        (into / "friday_runtime.json").write_text(json.dumps({
+            "tag": str(release.get("tag_name") or ""), "build": build,
+            "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S")}), encoding="utf-8")
+    except OSError as e:
+        _log.warning("runtime: could not record the installed release: %s", e)
     return binary
+
+
+def repair_runtime() -> Path:
+    """Reinstall the runtime from the pinned release (a broken one on disk is
+    replaced). Raises DownloadError with the reason when it cannot."""
+    _log.info("runtime: reinstalling: %s", installed_runtime_problem() or "requested")
+    return _install_runtime({"pause": threading.Event(), "cancel": threading.Event()})
+
+
+def installed_runtime_problem(name: str = "prism-fork") -> str | None:
+    """Why the installed runtime cannot serve, or None when it can.
+
+    The case this exists for: a runtime from the launch release unpacked
+    without llama-server. The weights were fine and the seat could never
+    start, and the first-run card said only "did not finish downloading"."""
+    spec = sl.runtime_spec(name)
+    into = runtime_dir_for(name)
+    if not into.exists():
+        return None   # nothing installed yet: the normal download path handles it
+    if runtime_binary(name) is None:
+        return ("the local model runtime in %s has no server program (%s); it will be "
+                "reinstalled from release %s" % (into, (spec.get("server_binary") or {}).get(
+                    sl.os_family(), "llama-server"), spec.get("pinned_tag") or "latest"))
+    try:
+        rec = json.loads((into / "friday_runtime.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None   # installed before this record existed and it has its server: fine
+    build = rec.get("build")
+    bad = {str(k): v for k, v in (spec.get("known_bad_builds") or {}).items()}
+    if build is not None and str(build) in bad:
+        return "the installed runtime %s is known broken (%s)" % (rec.get("tag"), bad[str(build)])
+    return None
 
 
 def _register(job: dict) -> dict:

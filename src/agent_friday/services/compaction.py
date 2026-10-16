@@ -730,7 +730,11 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
                     from agent_friday.services import taint as _taint
                     if ledger is not None:
                         from agent_friday.services import task_ledger as _tl
-                        _taint.note_carried(_key, "ledger", _tl.carried_text(ledger))
+                        from agent_friday.governance import outside_content as _oc
+                        # Outside content, for a pre-approved send, exactly
+                        # when the task has read some (its lasting flag).
+                        _taint.note_carried(_key, "ledger", _tl.carried_text(ledger),
+                                            outside=bool(_oc.task_marked(task_id)) if task_id else None)
                     else:
                         _taint.note_carried(_key, "summary", summary)
                 except Exception as e:

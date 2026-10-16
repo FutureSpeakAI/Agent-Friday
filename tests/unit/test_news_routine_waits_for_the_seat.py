@@ -29,6 +29,10 @@ def _clean_store(friday_dir, monkeypatch):
             p.unlink()
     s._RUNNING.clear()
     monkeypatch.setattr(s, "_cloud_model_for", lambda rec: None)
+    # Waiting for the seat is the LOCAL routing modes' behaviour; under a cloud
+    # mode the routine runs on the cloud (tests/unit/test_mode_truth.py).
+    from agent_friday.services import cloud_intent
+    monkeypatch.setattr(cloud_intent, "_stored_mode", lambda: "local_preferred")
     yield
     for _ in range(200):           # let a dispatched run finish writing
         if not s._RUNNING:
@@ -86,11 +90,6 @@ def test_a_parked_seat_makes_the_run_wait_with_the_reason(monkeypatch):
 
 
 def test_the_catch_up_runs_as_soon_as_the_seat_is_back(monkeypatch):
-    # A catch-up belongs to the day it was marked, so "five minutes later" must
-    # stay on that day: the scheduler's clock is held at midday, wherever the
-    # suite happens to run near midnight.
-    noon = s._now_central().replace(hour=12, minute=0, second=0, microsecond=0)
-    monkeypatch.setattr(s, "_now_central", lambda: noon)
     seat = _Seat(monkeypatch, serving=False, parked=True)
     calls = []
     _register(monkeypatch, "t_fp2", lambda: calls.append(1) or {"ok": True})

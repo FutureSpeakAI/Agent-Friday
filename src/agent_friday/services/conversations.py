@@ -217,6 +217,18 @@ def patch(cid: str, **fields) -> dict | None:
         return save(conv)
 
 
+def mark_outside_content(cid: str, why: str) -> dict | None:
+    """This conversation has read outside content (governance/outside_content).
+    Set once, never cleared, and not touched by `patch`: a pre-approved send
+    is never used in it again. Does not create a conversation."""
+    with _LOCK:
+        conv = load(cid)
+        if conv is None or conv.get("outside_content"):
+            return conv
+        conv["outside_content"] = {"at": time.time(), "why": str(why or "")[:200]}
+        return save(conv)
+
+
 def effective_seat(cid: str) -> dict | None:
     """The seat a turn in this conversation should actually run on.
 

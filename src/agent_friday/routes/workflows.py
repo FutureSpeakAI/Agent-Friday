@@ -824,6 +824,26 @@ def workflow_chain_get(name):
     return jsonify({"status": "ok", "chain": chain})
 
 
+@workflows_bp.route('/api/workflows/chains/<name>', methods=['PATCH'])
+@login_required
+def workflow_chain_patch(name):
+    """The owner's choices on a saved workflow's card. Body: {email_send: bool}: the emails it writes
+    when it runs on request are sent (each asks first unless pre-approved) or saved as drafts
+    (services/email_jobs). Nothing else is changed here; edits go through save."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {"email_send"} or not isinstance(data["email_send"], bool):
+        return jsonify({"status": "error",
+                        "message": "Send {\"email_send\": true} (send) or false (save as drafts)."}), 400
+    from agent_friday.services import email_jobs as _ej
+    try:
+        chain = _ej.set_workflow_email_send(name, data["email_send"])
+    except ValueError as ve:
+        return api_error(ve, "Couldn't save the workflow's email choice", 400)
+    if not chain:
+        return jsonify({"status": "not_found", "message": "There is no saved workflow by that name."}), 404
+    return jsonify({"status": "ok", "slug": chain.get("slug"), "email_send": chain.get("email_send")})
+
+
 @workflows_bp.route('/api/workflows/chains/<name>', methods=['DELETE'])
 @login_required
 def workflow_chain_delete(name):

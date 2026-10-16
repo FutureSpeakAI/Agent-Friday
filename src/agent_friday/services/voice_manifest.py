@@ -106,8 +106,19 @@ def _policy(value, default="if_free") -> str:
     return v if v in GPU_POLICIES else default
 
 
+def _kokoro_voice(s: dict) -> str:
+    """Her local Kokoro voice: the owner's, or the cloud voice's installed twin
+    when they kept the default (services/agent_identity.local_kokoro_voice)."""
+    try:
+        from agent_friday.services.agent_identity import local_kokoro_voice
+        return str(local_kokoro_voice(s) or "af_heart")
+    except Exception:
+        return str(s.get("local_voice_kokoro_voice") or "af_heart")
+
+
 def read_selection(settings: dict | None = None) -> dict:
-    """The three selections, from settings. Pure (no I/O beyond settings)."""
+    """The three selections, from settings. Pure (no I/O beyond settings and,
+    for a cloud-matched local voice, a look in the local voice cache)."""
     s = settings if settings is not None else _settings()
     mode = str(s.get("voice_engine") or "local").strip().lower()
     if mode == "auto":            # auto is a synonym for local
@@ -126,7 +137,7 @@ def read_selection(settings: dict | None = None) -> dict:
                 "device_policy": _policy(s.get("voice_ear_gpu"))},
         "mind": mind,
         "mouth": {"engine": str(s.get("local_voice_tts_engine") or "piper").strip().lower(),
-                  "voice": (str(s.get("local_voice_kokoro_voice") or "af_heart")
+                  "voice": (_kokoro_voice(s)
                             if str(s.get("local_voice_tts_engine") or "piper").lower() == "kokoro"
                             else str(s.get("local_voice_tts_voice") or "en_US-amy-medium")),
                   "device_policy": _policy(s.get("voice_mouth_gpu"))},
@@ -169,6 +180,13 @@ def plain_language_refusal(exc, stage_noun="voice"):
     text = str(exc)
     low = text.lower()
     retry = {"label": "Prove again", "kind": "retry"}
+
+    # A model the feature needs is not installed: its own message already
+    # names the feature, the model and where to install it (and is in
+    # friday.log). A plain str, so the HTTP boundary shows it rather than an
+    # error id.
+    if name == "FeatureModelMissing":
+        return (str(getattr(exc, "message", "") or text), retry)
 
     # The startup import race. transformers is present and healthy; the import
     # simply lost a race with another subsystem reaching for torch at boot.

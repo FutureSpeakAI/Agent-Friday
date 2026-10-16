@@ -46,9 +46,14 @@ def _local_only():
 def summary():
     n, a = lane.needs_you(), lane.activity()
     u = lane.updates(today_only=True)
+    try:
+        from agent_friday.services import gmail_send as _gs
+        held = len(_gs.held())          # sends waiting out their undo window (the top bar keeps Activity in sight)
+    except Exception:
+        held = 0
     return jsonify({"needs_you": n["count"], "approvals": n["approvals"], "summary": n["summary"],
                     "running": a["running"], "queued": a["queued"], "activity": a["count"],
-                    "updates": u["count"], "quiet": ip.quiet_state()})
+                    "updates": u["count"], "held_sends": held, "quiet": ip.quiet_state()})
 
 
 @lanes_bp.route("/api/lanes/needs-you", methods=["GET"])

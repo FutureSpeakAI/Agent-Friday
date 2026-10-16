@@ -493,11 +493,21 @@ def resolve(role: str, configured: str | None = None) -> str | None:
     # behind a stopped Ollama daemon while Bonsai2 serves on :8090 -- which
     # reads, in the log, as `[seats] brain: using 'gemma4:e2b-...'` with no
     # substitution warning at all, because nothing was asked for.
+    #
+    # The same model under another spelling counts: an owner who registered
+    # `bonsai2-27b` by hand holds the `bonsai2:27b` the settings name
+    # (services/model_ids.canonical). The installed spelling is returned,
+    # because that is the name the store and the daemon answer to.
+    from agent_friday.services.model_ids import find_equivalent, same
     for candidate in (configured, _configured(role), _role_default(role)):
-        if candidate and candidate in names:
-            if candidate != wanted:
-                _announce(role, wanted, candidate)
-            return candidate
+        hit = find_equivalent(candidate, names) if candidate else None
+        if hit:
+            if hit != candidate and ("same", role, candidate, hit) not in _ANNOUNCED:
+                _ANNOUNCED.add(("same", role, candidate, hit))
+                _log.info("[seats] %s: %r is installed as %r (the same model)", role, candidate, hit)
+            if hit != wanted and not same(hit, wanted):
+                _announce(role, wanted, hit)
+            return hit
 
     useful = [t for t in rows if t[1] >= _MIN_USEFUL_GB] or rows
     # A vision-language model answers text fine, but it is not what anyone

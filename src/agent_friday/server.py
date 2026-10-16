@@ -1319,13 +1319,6 @@ if __name__ == '__main__':
         _la.boot(_port)
     except Exception as _la_err:
         print(f"  Local address: skipped ({_la_err})")
-    # Say out loud, once, any store Friday cannot open or cannot vouch for
-    # (services/integrity_report): log, /api/health and one Needs-you card.
-    try:
-        from agent_friday.services import integrity_report as _ir
-        _ir.check_after_boot()
-    except Exception as _ir_err:
-        print(f"  Data integrity: check unavailable ({_ir_err})")
     # Deliberately after the boot-guard thread and before app.run(): the warm
     # waits on its own, so this only registers the intention.
     try:

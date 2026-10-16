@@ -24,12 +24,23 @@ message to a real person they know. So the gate is not a setting. It is structur
     send is refused. Approving a draft is not approving whatever the drafter
     later felt like sending.
   * A used approval is burned. One decision, one message.
+  * The one exception to "a card per message" is the owner's own standing
+    pre-approval (governance/send_grants.py, made in Settings): named
+    recipients, optionally one scheduled job or skill. The action checkpoint
+    finds it, this module re-checks it for the exact recipients, and the
+    approval record is created already approved BY THAT GRANT (never
+    `auto_approved`). Everything else here still applies, and every use is
+    logged. Recipients the grant does not name still get a card.
 
 SENDING NEEDS gmail.send, ALWAYS. The owner may also grant gmail.modify
 ("Reconnect with sending"), which Google would let send mail too; this module
 never sends on the strength of modify. Modify is used for one thing here:
-saving a draft into Gmail when the owner presses "Save draft" — writing to
-their own mailbox, not to anyone else, and never on Friday's own initiative.
+saving a draft into the owner's own Gmail Drafts — when they press "Save
+draft", or when they ask Friday to draft a message (the draft_email tool,
+whose default is to save, not send). A draft reaches nobody: it is a write to
+their own mailbox, receipted, with no card. Sending it is a separate,
+explicit request (draft_email with send=true), which goes through
+request_send and its card like any other send.
 
 AFTER APPROVAL, A SHORT HOLD. An approved message waits UNDO_SECONDS (or
 until the time it was scheduled for) in a held queue on disk, and the owner
@@ -49,6 +60,7 @@ import hashlib
 import json
 import logging
 import re
+from email import policy as _email_policy
 from email.message import EmailMessage
 from agent_friday.user_errors import UserFacingError, log_failure
 
@@ -66,7 +78,10 @@ SUBJECT_TYPE = "email"
 # to the FIRST such dot keeps the check linear in the address length.
 _ADDR = re.compile(r"^[^@\s,;]+@[^@\s,;][^@\s,;.]*\.[^@\s,;]+$")
 
-#: After approval, how long a message waits for "Undo" before it goes.
+#: After approval, how long a message waits for "Undo" before it goes, when the
+#: owner approved it in person. A send nobody is watching (a scheduled job or a
+#: background task under a pre-approval) waits the owner's own window instead:
+#: `unattended_undo_seconds()` (Settings, 2 minutes by default, 10 s to 10 min).
 UNDO_SECONDS = 10
 #: A held message this late (Friday was off) is not sent; the owner is asked again.
 LATE_LIMIT_S = 15 * 60
@@ -260,6 +275,59 @@ def _live_card(fingerprint: str) -> dict | None:
     return None
 
 
+def _tool_context() -> dict:
+    """The running tool call's session context (task, schedule), if any."""
+    try:
+        from agent_friday.services import agent as _agent
+        return dict(_agent._CURRENT_TOOL_CONTEXT.get() or {})
+    except Exception:
+        return {}
+
+
+def _pre_approval(recipients):
+    """The owner's standing pre-approval behind THIS call, re-checked for
+    these exact recipients, or None. Only the action checkpoint can name it:
+    it is the owner's decision (`action_gate.owner_decision`) the checkpoint
+    set from a send grant, never anything a caller passes in."""
+    try:
+        from agent_friday.governance import action_gate as _gate
+        from agent_friday.governance import send_grants as _sg
+        decided = str(_gate.owner_decision() or "")
+        if not decided.startswith("sgr_"):
+            return None
+        return _sg.verify(decided, "send_email", recipients)
+    except Exception as e:
+        _log.warning("pre-approval check failed, so the send asks: %s", e)
+        return None
+
+
+#: The line on a send card for a message a cloud model wrote that has private details in it.
+CLOUD_SENSITIVE_NOTE = ("Written on a cloud model, and it has private details in it: this is exactly "
+                        "what would be sent. Send, or Don't send.")
+
+
+def ccs_for_note(cc, bcc) -> list:
+    return _addresses(cc or []) + _addresses(bcc or [])
+
+
+def _pre_approval_names(recipients) -> bool:
+    """Did the checkpoint find a pre-approval for these recipients (used or not)?"""
+    try:
+        return _pre_approval(recipients) is not None
+    except Exception:
+        return False
+
+
+def _withheld_reason() -> str:
+    """Why the checkpoint did not use a pre-approval that names these
+    recipients (the call drew on outside content), or ""."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return str(_sg.WITHHELD.get() or "")
+    except Exception:
+        return ""
+
+
 def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  account_id: str | None = None,
                  requested_by: str = "friday", html: str | None = None,
@@ -341,8 +409,22 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
         notes += _ss.fill_note(body)
     except Exception:
         pass
+    withheld = _withheld_reason()
+    # Written on a cloud model with private details (privacy/vault_access: cloud_send_card_<tier>):
+    # the owner sees exactly what would go and decides on this card, whatever was pre-approved.
+    sensitive = bool(_tool_context().get("sensitive_cloud_send"))
+    if sensitive:
+        notes.append(CLOUD_SENSITIVE_NOTE)
+        if not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
+            withheld = ("this message has private details and was written on a cloud model, "
+                        "so you see it first")
+    if withheld:
+        # A reason that names its own subject ("This chat read an outside email, so your
+        # pre-approval doesn't cover this send") stands as it is.
+        notes.append(withheld + "." if withheld.startswith("This ")
+                     else "You pre-approved these recipients, but %s." % withheld)
     note_text = ("\n" + "\n".join(notes)) if notes else ""
-    appr = _ap.create_approval(
+    card = dict(
         kind=APPROVAL_KIND,
         subject_type=SUBJECT_TYPE,
         subject_id="%s:%s" % (fp, uuid.uuid4().hex[:8]),
@@ -355,10 +437,6 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                subject or "(no subject)", note_text, str(body or ""))),
         description="This leaves your machine and arrives as a message from "
                     "you. It cannot be unsent.",
-        # ALWAYS gate, whatever the policy table has been set to. The default
-        # classifies external_message as gated; force_gate means a local
-        # override cannot turn mail into an auto-approve.
-        force_gate=True,
         payload={# The decision hook fires for EVERY external_message card,
                  # including ones other subsystems create. This marker is how
                  # it knows a card is one of ours; without it, approving an
@@ -372,10 +450,43 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  **({"extras": extras} if extras else {})},
         requested_by=requested_by,
     )
-    _log.info("send requested to %d recipient(s); approval %s (%s)",
-              len(tos), appr.get("approval_id"), appr.get("status"))
+    # PRE-APPROVED: the owner's standing yes for these recipients (Settings),
+    # which the action checkpoint used for this very call. Re-verified here
+    # for the exact message, so a grant revoked a moment ago is not used. The
+    # record is created approved by that grant: no card, but the same undo
+    # window, burn-once send, outbox and a logged use.
+    grant = None if sensitive else _pre_approval(tos + ccs + _addresses(bcc or []))
+    if grant is not None:
+        appr = _ap.record_pre_approved(grant_id=grant["grant_id"], **card)
+        if appr.get("status") == "approved" and not appr.get("consumed"):
+            from agent_friday.governance import send_grants as _sg
+            ctx = _tool_context()
+            _sg.record_use(grant, "send_email", tos + ccs + _addresses(bcc or []),
+                           approval_id=appr.get("approval_id"), ctx=ctx)
+            unattended = bool(ctx.get("schedule_id") or ctx.get("is_background_task"))
+            # Nobody is watching an unattended send: it waits the owner's own Undo window
+            # (Settings: unattended_send_undo_s, 2 minutes unless they chose otherwise).
+            row = hold(appr, undo_seconds=unattended_undo_seconds() if unattended else None)
+            # EVERY covered send tells the owner at once, from chat, voice or
+            # a background run alike: no card was raised, so this notice,
+            # with its Undo, is how they see it while it can be taken back.
+            _notify_pre_approved_hold(appr, row, grant["grant_id"], ctx)
+        # The grant id and recipients are in the grant log (send_grants); this
+        # line says only that a pre-approval was used.
+        _log.info("send to %d recipient(s) went ahead under a pre-approval", len(tos))
+        return {"status": appr.get("status"), "approval": appr,
+                "approval_id": appr.get("approval_id"), "pre_approved": grant["grant_id"]}
+    appr = _ap.create_approval(
+        # ALWAYS gate, whatever the policy table has been set to. The default
+        # classifies external_message as gated; force_gate means a local
+        # override cannot turn mail into an auto-approve.
+        force_gate=True, **card)
+    _log.info("send requested to %d recipient(s); approval %s (%s)%s",
+              len(tos), appr.get("approval_id"), appr.get("status"),
+              "; pre-approval not used: " + withheld if withheld else "")
     return {"status": appr.get("status"), "approval": appr,
-            "approval_id": appr.get("approval_id")}
+            "approval_id": appr.get("approval_id"),
+            **({"pre_approval_withheld": withheld} if withheld else {})}
 
 
 def send(approval_id: str) -> dict:
@@ -405,6 +516,24 @@ def send(approval_id: str) -> dict:
                           % appr.get("kind"))
 
     payload = appr.get("payload") or {}
+    # A message approved by the owner's standing pre-approval, not by a card:
+    # the pre-approval must still hold NOW, for every recipient. It may have
+    # been revoked during the undo window or before a scheduled time days
+    # away; then this message does not go, and its approval is burned.
+    if appr.get("pre_approved"):
+        from agent_friday.governance import send_grants as _sg
+        rcpts = [a for k in ("to", "cc", "bcc") for a in (payload.get(k) or [])]
+        if _sg.verify(appr["pre_approved"], "send_email", rcpts) is None:
+            _burn(approval_id, "gmail_send_grant_revoked", {"reason": _sg.REVOKED_WHY})
+            try:
+                _sg._log("refused", grant_id=appr["pre_approved"], by="friday",
+                         approval_id=approval_id, reason=_sg.REVOKED_WHY)
+            except Exception:
+                pass
+            _log.info("refused %s: its pre-approval %s no longer holds",
+                      approval_id, appr["pre_approved"])
+            raise SendRefused(_sg.REVOKED_WHY[:1].upper() + _sg.REVOKED_WHY[1:] + ".")
+
     expected = payload.get("fingerprint")
     extras = payload.get("extras") or {}
     actual = message_fingerprint(payload.get("to"), payload.get("subject"),
@@ -541,12 +670,59 @@ def _mime_raw(payload: dict, extras: dict) -> str:
         maintype, _, subtype = (a.get("mime") or "application/octet-stream").partition("/")
         msg.add_attachment(data, maintype=maintype or "application",
                            subtype=subtype or "octet-stream", filename=a.get("filename"))
-    return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    # CRLF line endings (RFC 5322, which Gmail's `raw` field asks for); a
+    # non-ASCII subject is RFC 2047 encoded and the body declares UTF-8.
+    return base64.urlsafe_b64encode(msg.as_bytes(policy=_email_policy.SMTP)).decode("ascii")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  DRAFTS — saved into the owner's own Gmail when they press "Save draft"
+#  DRAFTS — saved into the owner's own Gmail Drafts; nothing is sent
 # ═══════════════════════════════════════════════════════════════════════════
+
+class DraftScopeMissing(SendRefused):
+    """The account has not granted gmail.modify, so Gmail will not take a
+    draft from Friday. Nothing was saved. `account` is the account's public
+    record (id, email, label)."""
+
+    def __init__(self, account: dict, *, google_said: bool = False):
+        who = account.get("email") or account.get("label") or account.get("id") or "That account"
+        super().__init__(
+            "%s has not given Friday permission to save drafts in its Gmail%s, so nothing "
+            "was saved and nothing was sent. To allow it: Settings > Connections > Google, "
+            "press \"Reconnect with sending\" on %s." % (
+                who, " (Google refused the draft for that reason)" if google_said else "", who))
+        self.account = account
+
+
+class DraftNeedsAccount(SendRefused):
+    """More than one account and nothing says which: the owner is asked."""
+
+    def __init__(self, message: str, accounts: list):
+        super().__init__(message)
+        self.accounts = accounts
+
+
+#: Opens one draft in Gmail on the web. `compose=` takes the draft's MESSAGE id
+#: (the hex id Gmail returns in draft.message.id), not the draft id ("r-..."),
+#: and /u/<address>/ picks the signed-in account by its address, so the link
+#: opens the right mailbox when several are signed in.
+DRAFT_LINK = "https://mail.google.com/mail/u/%s/#drafts?compose=%s"
+DRAFTS_FOLDER_LINK = "https://mail.google.com/mail/u/%s/#drafts"
+
+
+def draft_link(account_email: str, message_id: str | None) -> str:
+    from urllib.parse import quote
+    who = quote(str(account_email or "0"), safe="@")
+    if message_id and re.fullmatch(r"[0-9A-Za-z_-]+", str(message_id)):
+        return DRAFT_LINK % (who, message_id)
+    return DRAFTS_FOLDER_LINK % who
+
+
+def _google_refused_scope(e) -> bool:
+    msg = str(getattr(e, "message", "") or e).lower()
+    return getattr(e, "kind", "") == "auth" and ("insufficient" in msg or "scope" in msg
+                                                 or "permission" in msg)
+
 
 def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", cc=None,
                bcc=None, html: str | None = None, thread_id: str | None = None,
@@ -554,15 +730,17 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
                attachments=None) -> dict:
     """Write a draft into the account's Gmail Drafts. Sends nothing, asks
     nothing: the draft sits in the owner's own mailbox, and sending it from Friday
-    still goes through request_send and an approval card."""
+    still goes through request_send and an approval card.
+
+    The account's recorded scopes are checked first (they are what Google
+    returned at connect time); if Google itself refuses for lack of a scope,
+    that is reported the same way. Either way: DraftScopeMissing, nothing saved."""
     from agent_friday.services import google_accounts as G
     rec = G.get_account(account_id) if account_id else None
     if not rec:
         raise SendRefused("which account should the draft go to?")
     if G.GMAIL_MODIFY not in (rec.get("scopes") or []):
-        raise SendRefused("%s has not allowed Friday to change its mailbox, so drafts can't be "
-                          "saved to Gmail. Use Reconnect with sending in Settings."
-                          % (rec.get("email") or account_id))
+        raise DraftScopeMissing(rec)
     tos = [a for a in _addresses(to or [])] if to else []
     extras = _extras(html, thread_id, in_reply_to, references, attachments)
     raw = _mime_raw({"to": tos, "cc": _addresses(cc or []), "bcc": _addresses(bcc or []),
@@ -572,16 +750,188 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
         msg["threadId"] = extras["thread_id"]
     creds = G.credentials_for(account_id)
     if not creds:
-        raise SendRefused("that account's credentials could not be read")
+        raise SendRefused("that account's credentials could not be read, so nothing was saved")
     from googleapiclient.discovery import build
     from agent_friday.services import gmail_api
     svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
     try:
         d = gmail_api.execute(svc.users().drafts().create(userId="me", body={"message": msg}))
     except gmail_api.GmailError as e:
-        raise SendRefused("Gmail did not save the draft (error %s)." % log_failure(e, "Gmail draft failed"),
-                          detail="Gmail did not save the draft: %s" % e)
-    return {"ok": True, "draft_id": d.get("id"), "account_id": account_id}
+        if _google_refused_scope(e):
+            raise DraftScopeMissing(rec, google_said=True) from e
+        raise SendRefused("Gmail did not save the draft (error %s). Nothing was saved."
+                          % log_failure(e, "Gmail draft failed"),
+                          detail="Gmail did not save the draft: %s. Nothing was saved." % e)
+    m = (d or {}).get("message") or {}
+    return {"ok": True, "draft_id": d.get("id"), "account_id": account_id,
+            "message_id": m.get("id"), "thread_id": m.get("threadId") or thread_id,
+            "account_email": rec.get("email"), "account_label": rec.get("label"),
+            "link": draft_link(rec.get("email"), m.get("id"))}
+
+
+# ── Drafts the model asks for (the draft_email tool) ───────────────────────────
+
+def wants_send(args) -> bool:
+    """Did this draft_email call ask to SEND? Only an explicit yes counts:
+    anything else saves a draft into the owner's own Gmail and sends nothing."""
+    v = (args or {}).get("send") if isinstance(args, dict) else None
+    if isinstance(v, bool):
+        return v
+    return str(v or "").strip().lower() in ("true", "yes", "1")
+
+
+def _norm(x) -> str:
+    return str(x or "").strip().lower()
+
+
+def _account_public(r: dict) -> dict:
+    from agent_friday.services import google_accounts as G
+    return {"id": r.get("id"), "email": r.get("email"), "label": r.get("label"),
+            "can_save_drafts": G.GMAIL_MODIFY in (r.get("scopes") or [])}
+
+
+def mail_accounts() -> list:
+    """Connected accounts with Gmail switched on, as public records."""
+    from agent_friday.services import google_accounts as G
+    try:
+        recs = G.list_accounts()
+    except Exception:
+        recs = []
+    return [r for r in recs if (r.get("services") or {}).get("gmail", True)]
+
+
+def match_account(want, accounts: list) -> dict | None:
+    """An account by its id, address or label (case-insensitive), or None."""
+    w = _norm(want)
+    if not w:
+        return None
+    for key in ("id", "email", "label"):
+        hit = [a for a in accounts if _norm(a.get(key)) == w]
+        if len(hit) == 1:
+            return hit[0]
+    return None
+
+
+def default_account_id() -> str:
+    """The owner's default account for mail, if they set one (settings
+    `mail_default_account`: an id, address or label); "" when unset."""
+    try:
+        from agent_friday.services import owner_choices as _oc
+        return _oc.mail_default_account()
+    except Exception:
+        return ""
+
+
+def _who(a: dict) -> str:
+    em, lab = a.get("email") or a.get("id"), a.get("label")
+    return "%s (%s)" % (em, lab) if lab and _norm(lab) != _norm(em) else str(em)
+
+
+def choose_account(want=None, thread_account: str | None = None) -> tuple:
+    """(account record, how it was chosen) for a draft. Order: the account
+    named > the account the replied-to conversation is in > the owner's
+    default > the only account. Several accounts and none of those: raises
+    DraftNeedsAccount listing them; never a guess."""
+    accounts = mail_accounts()
+    if not accounts:
+        raise SendRefused("no Google account with Gmail is connected, so no draft could be saved. "
+                          "Connect one in Settings > Connections > Google. Nothing was saved.")
+    if _norm(want):
+        hit = match_account(want, accounts)
+        if hit is None:
+            raise DraftNeedsAccount(
+                "No connected account matches %r. Connected: %s. Ask which one; nothing was saved."
+                % (str(want), "; ".join(_who(a) for a in accounts)), [_account_public(a) for a in accounts])
+        return hit, "the account you named"
+    if thread_account:
+        hit = match_account(thread_account, accounts)
+        if hit is not None:
+            return hit, "the account the conversation is in"
+    dflt = default_account_id()
+    if dflt:
+        hit = match_account(dflt, accounts)
+        if hit is not None:
+            return hit, "your default account"
+    if len(accounts) == 1:
+        return accounts[0], "your only connected account"
+    raise DraftNeedsAccount(
+        "Which account should the draft go to: %s? Nothing was saved yet."
+        % " or ".join(_who(a) for a in accounts), [_account_public(a) for a in accounts])
+
+
+def _bare(header_value) -> list:
+    """Addresses only, from a header value like 'Pat <pat@x.org>, b@y.org'."""
+    from email.utils import getaddresses
+    out = []
+    for _name, addr in getaddresses([str(header_value or "")]):
+        addr = addr.strip()
+        if addr and _ADDR.match(addr) and _norm(addr) not in {_norm(a) for a in out}:
+            out.append(addr)
+    return out
+
+
+def reply_context(thread, account_hint: str | None = None, reply_all: bool = False,
+                  own_addresses=()) -> dict:
+    """What a reply to a conversation needs, from its LAST message: the
+    thread id, the account it is in, In-Reply-To and References, a "Re:"
+    subject, and the recipients (the sender, or Reply-To; with reply_all,
+    everyone else on To and Cc too; the owner's own addresses never). If the
+    last message is the owner's own, the reply goes to whom that one went to.
+    `thread`: a search_email ref ("mail:<account>:<thread>") or a thread id.
+    Quotes nothing."""
+    from agent_friday.services import gmail_read
+    from agent_friday.services.screen_stage import split_mail_ref
+    t = str(thread or "").strip()
+    try:
+        from agent_friday.services import mail_thread as _mt
+        if t.lower() in _mt.DEICTIC:
+            ref, how = _mt.resolve_deictic()
+            if not ref:
+                raise SendRefused(how + " Nothing was saved.")
+            t = ref
+    except SendRefused:
+        raise
+    except Exception:
+        pass
+    pair = split_mail_ref(t)
+    account, tid = pair if pair else (account_hint, t)
+    if not tid:
+        raise SendRefused("that is not a conversation reference. Nothing was saved.")
+    res = gmail_read.get_thread(tid, account or None)
+    if res.get("status") != "ok" or not res.get("messages"):
+        raise SendRefused("the conversation to reply to could not be read (%s). Nothing was saved."
+                          % (res.get("error") or res.get("kind") or "empty"))
+    last = res["messages"][-1]
+    mine = {_norm(a) for a in own_addresses if a}
+    try:
+        from agent_friday.services import google_accounts as G
+        rec = G.get_account(res.get("account_id")) or {}
+        if rec.get("email"):
+            mine.add(_norm(rec["email"]))
+    except Exception:
+        pass
+    sender = _bare(last.get("sender"))
+    if sender and _norm(sender[0]) in mine:
+        to = [a for a in _bare(last.get("to")) if _norm(a) not in mine]
+        cc = [a for a in _bare(last.get("cc")) if _norm(a) not in mine] if reply_all else []
+    else:
+        to = _bare(last.get("reply_to")) or sender
+        cc = []
+        if reply_all:
+            seen = {_norm(a) for a in to} | mine
+            for a in _bare(last.get("to")) + _bare(last.get("cc")):
+                if _norm(a) not in seen:
+                    seen.add(_norm(a))
+                    cc.append(a)
+    subj = str(last.get("subject") or "").strip()
+    if subj == "(no subject)":
+        subj = ""
+    if not re.match(r"(?i)^re\s*:", subj):
+        subj = ("Re: " + subj).strip()
+    mid = str(last.get("message_id_header") or "").strip()
+    return {"account_id": res.get("account_id"), "thread_id": tid, "to": to, "cc": cc,
+            "subject": subj, "in_reply_to": mid or None,
+            "references": str(last.get("references") or "").strip() or None}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -625,17 +975,42 @@ def _ts(iso):
     return datetime.fromisoformat(iso).timestamp()
 
 
-def hold(record: dict, now: float | None = None) -> dict:
-    """Queue an approved message: it goes after the undo window, or at its
-    scheduled time, whichever is later."""
+def unattended_undo_seconds() -> int:
+    """The Undo window for a send nobody is watching (a scheduled job or background task under a
+    pre-approval): the owner's setting, 10 s to 10 min (owner_choices.unattended_undo_seconds)."""
+    try:
+        from agent_friday.services import owner_choices as _oc
+        return _oc.unattended_undo_seconds()
+    except Exception:
+        return 120
+
+
+def _words_for_seconds(s: int) -> str:
+    s = int(s)
+    if s < 60:
+        return "%d seconds" % s
+    m, r = divmod(s, 60)
+    out = "%d minute%s" % (m, "" if m == 1 else "s")
+    return out + (" %d seconds" % r if r else "")
+
+
+def hold(record: dict, now: float | None = None, undo_seconds: int | None = None) -> dict:
+    """Queue an approved message: it goes after the undo window (UNDO_SECONDS,
+    or `undo_seconds` for an unattended send), or at its scheduled time,
+    whichever is later."""
     now = _time.time() if now is None else now
     payload = record.get("payload") or {}
     extras = payload.get("extras") or {}
-    due = max(now + UNDO_SECONDS, _ts(extras.get("send_at")))
+    window = UNDO_SECONDS if undo_seconds is None else int(undo_seconds)
+    due = max(now + window, _ts(extras.get("send_at")))
     row = {"approval_id": record.get("approval_id"), "due": due, "held_at": now,
+           "undo_seconds": window,
            "scheduled": bool(extras.get("send_at")),
            "to": payload.get("to"), "subject": payload.get("subject"),
-           "from": payload.get("from_email")}
+           "from": payload.get("from_email"),
+           # Which standing pre-approval let it go without a card, if any:
+           # revoking that grant takes this message back (cancel_for_grant).
+           "pre_approved": record.get("pre_approved") or None}
     with _HELD_LOCK:
         rows = [r for r in _load_held() if r.get("approval_id") != row["approval_id"]]
         rows.append(row)
@@ -676,10 +1051,80 @@ def cancel(approval_id: str) -> dict:
     return {"ok": True, "approval_id": approval_id, "sent": False}
 
 
+def _pre_approved_who(ctx) -> str:
+    sc = ctx or {}
+    if sc.get("schedule_id"):
+        return "A scheduled job"
+    if sc.get("is_background_task") or sc.get("task_id"):
+        return "A background task"
+    if sc.get("is_voice") or str(sc.get("surface") or "").startswith("voice"):
+        return "Friday, from your voice conversation,"
+    return "Friday, from your chat,"
+
+
+def _notify_pre_approved_hold(appr: dict, row: dict, grant_id: str, ctx=None) -> None:
+    """A message was queued under the owner's pre-approval (from any surface):
+    no card was raised, so tell them now, while it can still be taken back.
+    The Undo opens the Approvals card, where the waiting message has its Undo
+    (POST /api/mail/held/<id>/cancel)."""
+    from datetime import datetime
+    payload = appr.get("payload") or {}
+    aid = appr.get("approval_id")
+    due = row.get("due") or _time.time()
+    when = datetime.fromtimestamp(due).strftime("%a %H:%M:%S")
+    left = max(0, int(round(due - _time.time())))
+    _notify("Email going out under your pre-approval",
+            "%s is sending your message to %s (\"%s\") at %s: you have %s to undo it. No card was "
+            "needed: you pre-approved these recipients (%s). Press Undo here or on the Approvals "
+            "card before then, or revoke the pre-approval in Settings. (The undo window for "
+            "unattended sends is yours to set: Settings > Privacy & Data > Pre-approved sends.)"
+            % (_pre_approved_who(ctx),
+               ", ".join(payload.get("to") or []), payload.get("subject") or "", when,
+               _words_for_seconds(left), grant_id),
+            priority="medium", kind="info", key="preapproved:%s" % aid,
+            target={"workspace": "system", "tab": "approvals"},
+            actions=[{"label": "Undo", "workspace": "system", "tab": "approvals",
+                      "method": "POST", "url": "/api/mail/held/%s/cancel" % aid}],
+            meta={"undo_until": due, "undo_seconds": row.get("undo_seconds")})
+
+
+def cancel_for_grant(grant_id: str) -> list:
+    """The owner revoked a pre-approval: take back every message still waiting
+    under it. Each one's approval is burned and recorded in the outbox as not
+    sent, and the owner is told. Returns the approval ids taken back."""
+    from agent_friday.services import approvals as _ap
+    from agent_friday.governance import send_grants as _sg
+    gid = str(grant_id or "")
+    if not gid:
+        return []
+    with _HELD_LOCK:
+        rows = _load_held()
+        mine = [r for r in rows
+                if (r.get("pre_approved") or
+                    (_ap.get_approval(r.get("approval_id") or "") or {}).get("pre_approved")) == gid]
+        if not mine:
+            return []
+        ids = {r.get("approval_id") for r in mine}
+        _save_held([r for r in rows if r.get("approval_id") not in ids])
+    for r in mine:
+        _burn(r["approval_id"], "gmail_send_grant_revoked", {"reason": _sg.REVOKED_WHY})
+        _notify("Email NOT sent",
+                "Your message to %s (\"%s\") was taken back: %s."
+                % (", ".join(r.get("to") or []), r.get("subject") or "", _sg.REVOKED_WHY),
+                priority="high", kind="warning")
+    return [r["approval_id"] for r in mine]
+
+
 def _deliver(approval_id: str, to) -> None:
     try:
         result = send(approval_id)
-        _notify("Email sent", "Your message to %s is on its way." % ", ".join(to or []),
+        from agent_friday.services import approvals as _ap
+        grant = ((_ap.get_approval(approval_id) or {}).get("pre_approved") or "")
+        _notify("Email sent" + (" under your pre-approval" if grant else ""),
+                "Your message to %s is on its way.%s" % (
+                    ", ".join(to or []),
+                    (" No card was needed: you pre-approved these recipients (%s). "
+                     "Revoke it in Settings or on the Approvals card." % grant) if grant else ""),
                 priority="low", kind="info")
         _log.info("held message sent %s", result.get("message_id"))
     except SendRefused as e:
@@ -832,12 +1277,13 @@ def _on_decision(record: dict) -> None:
 
 
 def _notify(title: str, body: str, *, priority: str = "medium",
-            kind: str = "info") -> None:
+            kind: str = "info", actions=None, target=None, key: str = "", meta=None) -> None:
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=title, body=body, priority=priority, kind=kind,
-                source="gmail_send", emitter="E43",
-                dedupe_key="gmail_send:%s:%s" % (kind, priority))
+                source="gmail_send", emitter="E43", actions=actions, target=target,
+                dedupe_key="gmail_send:%s" % key if key else "gmail_send:%s:%s" % (kind, priority),
+                **({"meta": meta} if meta else {}))
     except Exception as e:
         _log.warning("could not notify (%s): %s", title, e)
 

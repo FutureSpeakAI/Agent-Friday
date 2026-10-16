@@ -153,6 +153,10 @@ def list_wiki_pages(wiki_dir: Optional[Path] = None) -> list[Path]:
         rel_parts = p.relative_to(root).parts
         if any(part in SKIP_DIRS for part in rel_parts):
             continue
+        # A dot segment (.trash, notes/.draft.md) is not a page: the wiki
+        # routes refuse such paths, so the index does not list them either.
+        if any(part.startswith(".") for part in rel_parts):
+            continue
         if p.stem.startswith("_"):        # _index.md and friends: generated
             continue
         if len(rel_parts) == 1 and p.stem.upper() == "README":
@@ -779,7 +783,6 @@ def rebuild_tier_a(store: Optional[KnowledgeGraphStore] = None,
         all_entities, all_rels, all_comms,
         seed=int(kg_settings().get("layout_seed", 1337)))
 
-    refused_before = getattr(store, "refusals", 0)
     store.save("entities", all_entities)
     store.save("relationships", all_rels)
     store.save("communities", all_comms)
@@ -798,8 +801,7 @@ def rebuild_tier_a(store: Optional[KnowledgeGraphStore] = None,
                         produced=[f"page:{_page_key(rel)}"])
     if SOUL_FILE.exists():
         manifest.record(SOUL_FILE, kind="soul", produced=[f"page:{SOUL_ID}"])
-    if getattr(store, "refusals", 0) == refused_before:   # a refused save keeps its pages due
-        manifest.save()
+    manifest.save()
 
     return {
         "tier": "A",

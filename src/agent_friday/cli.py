@@ -274,6 +274,17 @@ def _launch_script_env(name: str) -> str:
     return ""
 
 
+def _claim_setup_lock() -> None:
+    """Hold agent_friday.setup_lock for the life of this console. Never stops
+    setup: a lock another console holds is only noted."""
+    try:
+        from agent_friday import setup_lock
+        if not setup_lock.claim():
+            console.print("  [yellow]Setup also seems to be open in another window.[/yellow]")
+    except Exception:
+        pass
+
+
 def cmd_start():
     """Launch the server and open the browser."""
     # Seed the bundled skills (career pipeline, etc.) into ~/.friday/skills the
@@ -284,6 +295,9 @@ def cmd_start():
     ensure_seed_skills_installed()
 
     if not _is_existing_user():
+        # Held until this console exits, so a second click on the Desktop
+        # icon (friday_tray --open) does not open a second setup.
+        _claim_setup_lock()
         console.print()
         console.print(Panel(
             "[cyan]Agent Friday isn't set up yet.[/cyan]\n\n"
@@ -368,6 +382,7 @@ def cmd_start():
 
 def cmd_setup(quick: bool = False):
     """Run the interactive setup wizard."""
+    _claim_setup_lock()
     wizard_script = HERE / "setup_wizard.py"
     if not wizard_script.exists():
         console.print("  [red]setup_wizard.py not found.[/red]")
@@ -501,7 +516,7 @@ TOOL_RINGS = {
         ("read_file",          "Read any local file (up to 500KB)"),
         ("read_wiki",          "Read a personal wiki file"),
         ("search_wiki",        "Full-text wiki search"),
-        ("query_trust_graph",  "Look up a person in trust graph"),
+        ("query_trust_graph",  "Look up a person, organisation or news source in the trust graph"),
         ("query_calendar",     "Check upcoming calendar events"),
         ("get_career_pipeline","Read job search status"),
         ("get_briefing",       "Fetch latest daily briefing"),
@@ -1236,15 +1251,8 @@ def cmd_vault_setup():
     # -- so losing either one is survivable. `keyring` is an optional
     # dependency, which is exactly why this no longer refuses without it.
     from agent_friday.services import vault_passphrase as _vp
-    # Never a rotation: this command can run beside a live Friday. A different
-    # passphrase that would re-seal the vault is refused with the offline
-    # route (scripts/vault_key_doctor.py --rotate, Friday stopped).
     written = _vp.store(passphrase)
     console.print()
-    if not written and _vp.LAST_STORE_REFUSAL:
-        console.print("  [red]Not changed:[/red] " + _vp.LAST_STORE_REFUSAL + ".")
-        console.print()
-        return
     if written:
         console.print("  [green]✓[/green]  Vault passphrase saved to: "
                       + ", ".join(written) + ".")

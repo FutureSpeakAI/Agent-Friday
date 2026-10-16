@@ -652,6 +652,25 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
         "installed model in the seat picker." % (chosen, actual, chosen))
 
 
+def _record_answering(model, seat, gen, workspace, conversation_id, route_info,
+                      conv_seat=None):
+    """The model that answered this reply, for the Models card's one truth
+    (services/answer_truth). No message text leaves this function."""
+    try:
+        from agent_friday.services import answer_truth as _at
+        _why = ''
+        if isinstance(conv_seat, dict) and str(conv_seat.get('model') or '').strip():
+            # A model chosen for this chat outranks the routing mode: say so.
+            _why = 'the model chosen for this chat (%s)' % str(conv_seat['model']).strip()
+        elif isinstance(route_info, dict):
+            _why = str(route_info.get('reason') or route_info.get('why') or '')
+        _at.record(model, seat=seat,
+                   provider=((gen or {}).get('provider') if isinstance(gen, dict) else None),
+                   workspace=workspace, conversation_id=conversation_id, why=_why)
+    except Exception as _ae:
+        print(f"  [chat] answering-model record skipped: {_ae}")
+
+
 def _explicit_local_pick(conv_seat, routed_model):
     """The local model the owner bound this conversation to, when this turn
     routed to it; otherwise None. A failure of that seat is reported, never
@@ -1108,6 +1127,38 @@ def _ag_tools_for_turn(workspace, conversation_id):
     the hub's when the chat is in the hub (services/agent.tools_for_workspace)."""
     from agent_friday.services.agent import tools_for_workspace as _tfw
     return _tfw(workspace, conversation_id=conversation_id)
+
+
+#: The heading _build_memory_context_block puts over recalled conversations
+#: (the live-state block it may also return is Friday's own state, not recall).
+_RECALL_MARKER = "== RELEVANT PAST CONVERSATIONS"
+_RECALL_WHY = "this turn's prompt carried recalled past conversations"
+
+
+def _note_recall_turn(session_id, conversation_id):
+    try:
+        from agent_friday.governance import outside_content as _oc
+        key = f"conversation:{conversation_id}" if conversation_id else session_id
+        _oc.note_turn({"taint_key": key, "session_id": session_id,
+                       "conversation_id": conversation_id}, _RECALL_WHY)
+    except Exception:
+        pass
+
+
+def _end_grant_turn(sess_ctx, session_id, conversation_id):
+    """The turn is over, however it ended (an instant reply returns before
+    the turn's context exists): a skill read in it stops counting as in use
+    for its send pre-approval, and what counted as outside content for this
+    turn only is forgotten (governance/send_grants, outside_content)."""
+    try:
+        from agent_friday.governance import send_grants as _sg_end
+        _sg_end.end_turn(sess_ctx or {})
+        if session_id or conversation_id:
+            _sg_end.end_turn({"session_id": session_id, "conversation_id": conversation_id,
+                              "taint_key": (f"conversation:{conversation_id}"
+                                            if conversation_id else session_id)})
+    except Exception:
+        pass
 
 
 @chat_bp.route('/api/chat', methods=['POST'])
@@ -2141,6 +2192,11 @@ def chat():
         # the confirmation gate is live, and grants a pending action when this
         # message is the user's "yes" to a question Friday asked last turn.
         _sess_ctx = prepare_confirmation_ctx(session_id, message, _sess_ctx)
+        if _RECALL_MARKER in (_mem_part or ""):
+            # Recalled past conversations are text Friday did not write in
+            # this turn and cannot vouch for: no pre-approved send this turn
+            # (governance/outside_content).
+            _sess_ctx["outside_in_prompt"] = _RECALL_WHY
         _confirmed_response = _confirmed_action_response(message, _sess_ctx)
         if _confirmed_response is not None:
             return _confirmed_response
@@ -2828,6 +2884,8 @@ def chat():
             friday_msg['fallback_chain'] = _fallback_chain
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class})
+        _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
+                          _route_info, locals().get('_conv_seat'))
 
         # ── Context log: append both turns unless off-record. ──
         if not settings.get('off_record'):
@@ -3018,6 +3076,7 @@ def chat():
             core.turn_end()
         except Exception:
             pass
+        _end_grant_turn(_sess_ctx, locals().get("session_id"), locals().get("_conversation_id"))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3313,8 +3372,14 @@ def chat_send():
             # else above, so a local seat's memory recall isn't scrubbed as
             # if it were headed to the cloud either.
             try:
+                _recall = _build_memory_context_block(message, _session_id)
+                if _RECALL_MARKER in (_recall or ""):
+                    # As in /api/chat: no pre-approved send in a turn whose
+                    # prompt carried recalled conversations. The prompt is
+                    # built inside the loop, so the turn is noted by key.
+                    _note_recall_turn(_session_id, _conversation_id)
                 _mem_block = (_slicer.gate_block(
-                                  "memory", _build_memory_context_block(message, _session_id),
+                                  "memory", _recall,
                                   name="relevant_past_conversations",
                                   marker="== RELEVANT PAST CONVERSATIONS")
                               + _slicer.gate_block(
@@ -3522,6 +3587,7 @@ def chat_send():
             _seat_events, _seat_model, _seat_class = [], '', ''
         # Badge truth: prefer the ACTUAL generator over the configured seat.
         _fallback_chain = []
+        _gen = None
         try:
             if _attr2 is not None:
                 _gen = _attr2.last_generation()
@@ -3587,6 +3653,8 @@ def chat_send():
             friday_msg['seat_notice'] = _send_seat_notice
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class})
+        _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
+                          None, {'model': _conv_seat_model} if (_conv_seat_model or '').strip() else None)
 
         # Prune and save
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
@@ -3622,6 +3690,7 @@ def chat_send():
             core.turn_end()
         except Exception:
             pass
+        _end_grant_turn(_sess_ctx, locals().get("_session_id"), locals().get("_conversation_id"))
 
 
 @chat_bp.route('/api/chat/pin/<msg_id>', methods=['POST'])

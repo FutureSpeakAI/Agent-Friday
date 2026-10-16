@@ -635,6 +635,55 @@ def _tier0_actions(text: str) -> Optional[Route]:
     return None
 
 
+#: Reading one email conversation whole: "research this email thread", "summarise the thread with
+#: Alex about the venue", "what did everyone say in that thread". These are requests the request-form
+#: gate below reads as statements, and the local voice front answers a statement with no tool at all,
+#: so the owner was told about a thread nothing had read. A thread named by its words is found and read
+#: in ONE call (thread="top"); "this"/"that thread" is the one on the Messages screen or read last.
+_THREAD_ASK = re.compile(
+    r"\b(?:research|summari[sz]e|summary of|recap|review|read|go through|dig into|look into|look through|"
+    r"catch me up on|walk me through|analy[sz]e|break down|tell me about|"
+    r"what (?:did|does|do|have|has) (?:everyone|everybody|they|people|he|she|the others|each person|"
+    r"[a-z]+) (?:say|said|write|wrote|want|think|agree|decide))\b", re.I)
+_THREAD_NOUN = re.compile(
+    r"\b(?:(?:e-?mail|mail|message)\s+)?(?:thread|chain)\b|\be-?mail\s+(?:conversation|exchange)\b", re.I)
+_NOT_MAIL_THREAD = re.compile(r"\b(?:chat|twitter|reddit|forum|slack|discord|whatsapp|comment)\s+thread\b", re.I)
+_THREAD_DROP = re.compile(
+    r"\b(?:please|can you|could you|would you|will you|friday|hey|okay|ok|so|research|summari[sz]e|summary|recap|"
+    r"review|read|go through|dig into|look into|look through|catch me up on|walk me through|analy[sz]e|"
+    r"break down|tell me about|find|get|pull up|show me|what|did|does|do|have|has|everyone|everybody|they|"
+    r"people|the others|each person|say|said|write|wrote|want|think|agree|decide|me|us|i|we|the|a|an|this|"
+    r"that|my|whole|entire|full|all|in|of|on|about|regarding|re|with|from|between|and|to|for|it|is|was|"
+    r"there|e-?mails?|mail|messages?|threads?|chains?|conversation|exchange|one|up|through)\b", re.I)
+#: After the thread noun only connectors go: "the thread about the budget review" keeps "review".
+_THREAD_CONNECT = re.compile(
+    r"\b(?:please|me|us|the|a|an|this|that|my|our|in|of|on|about|regarding|re|with|from|between|and|to|for|"
+    r"it|is|was|there|one|now|for me)\b", re.I)
+_THREAD_WHEN = ((re.compile(r"\b(?:today|this morning)\b", re.I), "newer_than:1d"),
+                (re.compile(r"\byesterday\b", re.I), "newer_than:2d"),
+                (re.compile(r"\b(?:last|this|past) week\b", re.I), "newer_than:14d"),
+                (re.compile(r"\b(?:last|this|past) month\b", re.I), "newer_than:62d"))
+
+
+def _thread_route(text: str) -> Optional[Route]:
+    if not (_THREAD_NOUN.search(text) and _THREAD_ASK.search(text)) or _NOT_MAIL_THREAD.search(text):
+        return None
+    rest, when = text, ""
+    for rx, op in _THREAD_WHEN:
+        if rx.search(rest):
+            rest, when = rx.sub(" ", rest), op
+            break
+    rest = rest.replace("'s ", " ")
+    noun = _THREAD_NOUN.search(rest)
+    head, tail = (rest[:noun.start()], rest[noun.end():]) if noun else (rest, "")
+    words = " ".join((_THREAD_DROP.sub(" ", head) + " " + _THREAD_CONNECT.sub(" ", tail)).split())
+    words = words.strip(" ?.!,'\"")
+    query = " ".join(w for w in (words, when) if w)
+    args = {"query": query, "thread": "top" if words else "this"}
+    return Route("tool", tool="search_email", args=args, confidence=0.95, layer="rule",
+                 label="reading the email thread", reason="pattern: read one email thread whole")
+
+
 def _tier0_rest(text: str) -> Optional[Route]:
     if _NOT_A_REQUEST.search(text):
         return Route("no_tool", confidence=0.95, layer="rule",
@@ -643,6 +692,9 @@ def _tier0_rest(text: str) -> Optional[Route]:
         return Route("defer", confidence=0.95, layer="rule",
                      reason="an imperative that changes something",
                      handoff="compose_text" if _has_compose(text) else "")
+    r = _thread_route(text)
+    if r is not None:
+        return r
     if not _REQUEST_FORM.search(text):
         if _SMALL_TALK.match(text):
             return Route("no_tool", confidence=0.95, layer="rule", reason="small talk")

@@ -50,6 +50,15 @@ def mail_can_send():
     })
 
 
+@gmail_send_bp.route("/api/mail/draft-accounts", methods=["GET"])
+def mail_draft_accounts():
+    """The connected Gmail accounts a draft can be saved to, for Settings > Connections > Default
+    account for drafts, and the owner's default as saved ("" is Ask me)."""
+    from agent_friday.services import owner_choices as _oc
+    accounts = [_gs._account_public(a) for a in _gs.mail_accounts()]
+    return jsonify({"status": "ok", "accounts": accounts, "default": _oc.mail_default_account()})
+
+
 @gmail_send_bp.route("/api/mail/outbox", methods=["GET"])
 def mail_outbox():
     """Every send attempt, including the ones that failed.
