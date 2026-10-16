@@ -643,6 +643,10 @@
   "switch_model": [
    "settings"
   ],
+  "switch_seat": [
+   "settings",
+   "privacy"
+  ],
   "talk_crew": [
    "crew"
   ],

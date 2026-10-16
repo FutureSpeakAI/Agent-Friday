@@ -883,6 +883,13 @@ CLAUDE_TOOLS = [
                       "properties": {"model": {"type": "string",
                                                "description": "The model the user named, in their words."}},
                       "required": ["model"]}},
+    {"name": "switch_seat",
+     "description": "Raise ONE owner card: to=local|cloud moves THIS chat's "
+                    "model; task=full instructions runs one task on the local "
+                    "model instead. Use it when the owner asks, or after a "
+                    "cloud-seat privacy refusal. Nothing changes until approved.",
+     "input_schema": {"type": "object", "properties": {
+         "to": {"type": "string"}, "task": {"type": "string"}}}},
     {"name": "navigate", "description": "Open a named built-in workspace on the user's desktop. Use for requests to open, show or switch workspaces; operate the interface rather than give directions. Workspaces: " + _ws_registry.tool_list() + ".",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "navigate_to", "description": "Open a workspace tab, mail thread/search, Studio file, creation, news story, Knowledge page/node, Settings section, calendar day/meeting, contact, post or Media card (kind=card). Pass the user's words as query or a known exact id. new_tab opens a maximized Chrome tab; max fills the desktop. No approval. NAV_OK confirms display; NAV_PARTIAL opened something else; NAV_FAIL gives the reason and closest matches.",
@@ -4552,6 +4559,22 @@ def _tool_answer_card(inp):
         return res["text"]
     finally:
         _ia.QUIET.reset(tok)
+
+
+def _tool_switch_seat(inp):
+    """This chat's seat, or one task on the local model: raises the owner's
+    card and changes nothing (services/seat_handoff)."""
+    from agent_friday.services import seat_handoff as _sh
+    return _sh.tool(inp)
+
+
+try:
+    # The card's executor is registered with the registry, so a card approved
+    # after a restart still runs.
+    from agent_friday.services import seat_handoff as _seat_handoff_hooks
+    _seat_handoff_hooks.register()
+except Exception:
+    pass
 
 
 def _tool_switch_model(inp):
@@ -8870,6 +8893,7 @@ CLAUDE_TOOL_HANDLERS = {
     "undo_action": _tool_undo_action,
     "answer_card": _tool_answer_card,
     "switch_model": _tool_switch_model,
+    "switch_seat": _tool_switch_seat,
     "draft_email": _tool_draft_email,
     "text_by_phone": _tool_text_by_phone,
     "call_by_phone": _tool_call_by_phone,
@@ -9323,6 +9347,9 @@ TOOL_RINGS: dict[str, int] = {
     # conversation from a local seat to a cloud one: the ring the unknown-tool
     # default already gave it, now declared rather than inherited.
     "switch_model":         2,
+    # switch_seat only raises the owner's card; the card's decision hook makes
+    # the change (services/seat_handoff).
+    "switch_seat":          1,
     # Voice-only tools (voice_engine._VOICE_LIVE_TOOLS) that run through
     # _execute_tool under their own names. Each is declared at the ring the
     # unknown-tool default already gave it: check_email and the article deep
@@ -16110,9 +16137,12 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 if _vault_ctl is not None:
                     _zt_provider = (session_ctx or {}).get("provider", "cloud")
                     _zt_data = json.dumps(_job_send_args(tu.name, tu.input or {}, session_ctx), default=str)
+                    from agent_friday.services import seat_handoff as _sh
                     _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
                         _zt_provider, _pq_name, _zt_data, model=model or "",
                         access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                        # A local handoff's target, from the owner's bindings.
+                        handoff_model=_sh.local_target_for(tu.name, tu.input),
                         # The provenance ledger for this turn, so the gate can
                         # tell a restaurant's published address from the owner's
                         # own (privacy/public_provenance). Without a key there
@@ -16137,7 +16167,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tu.id,
-                            "content": _zt_text(tu.name, _zt_detail),
+                            # The gate's refusal text, then ONE card offering the
+                            # local model (services/seat_handoff).
+                            "content": _sh.denial_result(tu.name, tu.input, _zt_detail, session_ctx,
+                                                         head=_zt_text(tu.name, _zt_detail)),
                         })
                         continue
                     _zt_ctx = _cloud_send_ctx(session_ctx, _zt_detail)
@@ -16961,10 +16994,12 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             _zt_ctx = session_ctx
             if _vault_ctl is not None:
                 _zt_provider = (session_ctx or {}).get("provider", provider)
+                from agent_friday.services import seat_handoff as _sh
                 _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
                     _zt_provider, _pq_name, json.dumps(_job_send_args(tname, targs, session_ctx), default=str),
                     model=model or "",
                     access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                    handoff_model=_sh.local_target_for(tname, targs),
                     # See the other call site: the provenance ledger lets the
                     # gate exempt a business's published contact details.
                     taint_key=_taint_mod.ledger_key(session_ctx),
@@ -16983,7 +17018,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     _ledger_tool_call(tname, _zt_result, _tool_ms, orb_id, session_ctx)
                     from agent_friday.privacy.vault_access import refusal_text as _zt_text
                     convo.append({"role": "tool", "tool_call_id": tcid,
-                                  "content": _zt_text(tname, _zt_detail)})
+                                  "content": _sh.denial_result(tname, targs, _zt_detail,
+                                                               session_ctx,
+                                                               head=_zt_text(tname, _zt_detail))})
                     continue
                 _zt_ctx = _cloud_send_ctx(session_ctx, _zt_detail)
 
