@@ -311,6 +311,9 @@ _ALL = [
     # credential endpoint. One per service at a time.
     _e("PK1", "services/pasted_secrets.py:ask_for_key", "key_needed", NEEDS_YOU,
        "key-needed:{target}", route=BUS, source="credentials"),
+    # ── data integrity: a store Friday cannot open or cannot vouch for ───────
+    _e("DI1", "services/integrity_report.py:_card", "data_integrity", NEEDS_YOU,
+       "data-integrity:{store}", source="integrity", pk="warning"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),
