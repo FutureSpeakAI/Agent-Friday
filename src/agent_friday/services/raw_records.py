@@ -24,6 +24,8 @@ _STATEMENT_NAME = re.compile(r"statement|stmt|transactions?|account[ _-]?history
 # "activity.csv", "Checking1.csv"): spreadsheets only, a PDF called "activity" is anything.
 _EXPORT_NAME = re.compile(r"activity|checking|savings|credit[ _-]?card|ledger|register", re.I)
 EXPORT_SUFFIXES = frozenset({".csv", ".xlsx", ".xls"})
+#: Every extension a raw record can have, by name or by name and extension.
+RAW_SUFFIXES = MAIL_SUFFIXES | FINANCE_SUFFIXES | STATEMENT_SUFFIXES | EXPORT_SUFFIXES
 #: How much of a file without a telling extension is read to recognise it.
 SNIFF_BYTES = 512
 
@@ -110,6 +112,14 @@ def named_in(text: str, cwd=None) -> list:
                     if "." in Path(tok).name else None
                 if kind:
                     out.append((tok, kind, None))
+                    continue
+                if not p.is_absolute():
+                    # Relative to a folder this check cannot see (no `cwd`:
+                    # the command may change folder first). Never expanded
+                    # here, where it would match this process's own folder;
+                    # one that could match a statement is not run at all.
+                    if Path(tok).suffix.lower() in RAW_SUFFIXES:
+                        out.append((tok, "unjudged", None))
                     continue
                 import itertools
                 matches = list(itertools.islice(_glob.iglob(str(p)), GLOB_LIMIT + 1))
@@ -261,4 +271,78 @@ def looks_like(text: str) -> str | None:
         k = _prefixed_by_record(line)
         if k:
             return k
+    if _statement_rows(lines) or _statement_rows(bare) or _statement_records(lines):
+        return "finance"
     return None
+
+
+# A statement printed as rows: a header row that names money ("Date,
+# Description,Amount") and then several rows, each with a date and an amount.
+_MONEY_WORDS = re.compile(r"amount|debit|credit|balance|withdraw|deposit|payment|transaction|payee|"
+                          r"memo|charge|merchant|description|narrative|value", re.I)
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+_DATE = re.compile(r"^\s*(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?|\d{1,2}[.-]\d{1,2}[.-]\d{2,4}"
+                   r"|\d{1,2}[ -]" + _MONTH + r"(?:[ ,-]+\d{2,4})?|" + _MONTH + r" \d{1,2}(?:,? \d{2,4})?)"
+                   r"(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?\s*$", re.I)
+_AMOUNT = re.compile(r"^\s*[-+(]?\s*[$€£¥]?\s*[-+]?(?:\d{1,3}(?:[,\s']\d{3})+|\d+)[.,]\d{2}"
+                     r"\s*\)?\s*(?:CR|DR|-)?\s*$", re.I)
+#: How many dated rows with an amount make a statement.
+STATEMENT_ROWS = 3
+
+
+def _dated_amount(fields) -> bool:
+    """A record with a date in one field and an amount in another."""
+    dates = {i for i, f in enumerate(fields) if _DATE.match(f)}
+    return bool(dates) and any(_AMOUNT.match(f) for i, f in enumerate(fields) if i not in dates)
+
+
+def _fields(line: str, delim: str) -> list:
+    import csv
+    try:
+        return next(csv.reader([line], delimiter=delim), [])
+    except Exception:
+        return line.split(delim)
+
+
+def _statement_rows(lines: list) -> bool:
+    """A delimited header row that names money, then STATEMENT_ROWS rows in
+    a row each holding a date and an amount (a bank or card CSV export)."""
+    for i, line in enumerate(lines):
+        if len(line) > 2000 or not _MONEY_WORDS.search(line):
+            continue
+        for delim in (",", ";", "\t", "|"):
+            if line.count(delim) < 2:
+                continue
+            if any(_DATE.match(f) or _AMOUNT.match(f) for f in _fields(line, delim)):
+                continue                 # a data row, not a header
+            rows = 0
+            for nxt in lines[i + 1:]:
+                if not _dated_amount(_fields(nxt[:2000], delim)):
+                    break
+                rows += 1
+                if rows >= STATEMENT_ROWS:
+                    return True
+    return False
+
+
+_LIST_LINE = re.compile(r"^\s*([A-Za-z][\w ]{0,40}?)\s*:\s(.*)$")
+
+
+def _statement_records(lines: list) -> bool:
+    """The same records printed one field per line ("Date   : 10/01/2026",
+    "Amount : -23.99"), as PowerShell's Import-Csv shows them: blocks split by
+    a blank line, STATEMENT_ROWS of them each with a date and an amount under
+    field names that name money."""
+    found, keys, values = 0, [], []
+    for line in list(lines) + [""]:
+        m = _LIST_LINE.match(line[:2000])
+        if m:
+            keys.append(m.group(1))
+            values.append(m.group(2))
+            continue
+        if keys and any(_MONEY_WORDS.search(k) for k in keys) and _dated_amount(values):
+            found += 1
+            if found >= STATEMENT_ROWS:
+                return True
+        keys, values = [], []
+    return False

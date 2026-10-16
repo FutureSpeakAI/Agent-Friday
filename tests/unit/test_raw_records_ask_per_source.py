@@ -601,7 +601,8 @@ def test_a_recursive_search_through_a_mail_folder_is_caught(cards, tmp_path):
     (mail / "inbox.mbox").write_text(ARCHIVE, encoding="utf-8")
     assert fg.raw_refusal_for_command("grep -ri balance %s" % mail)
     assert fg.raw_refusal_for_command('rg balance "%s"' % mail)
-    assert fg.raw_refusal_for_command("grep balance %s" % mail) is None, "not recursive: reads no file"
+    assert fg.raw_refusal_for_command("grep balance %s" % mail), \
+        "not recursive, but a folder a command names is judged by its own files"
     assert fg.raw_output_notice("inbox.mbox:Your biopsy came back positive, call the surgery.")
     assert fg.raw_output_notice("C:\\Mail\\inbox.mbox:12:Your balance is due on the 14th.")
     assert fg.raw_output_notice("src/app.py:12:    return balance") is None
@@ -741,3 +742,94 @@ def test_listing_a_folder_checks_only_its_own_files(cards, tmp_path):
     (dl / "notes.md").write_text("x", encoding="utf-8")
     assert fg.raw_refusal_for_command("import os; print(os.listdir(r'%s'))" % dl) is None
     assert fg.raw_refusal_for_command("grep -Pattern x %s" % dl) is None, "-Pattern is not -r"
+
+
+# ── security review of the slice (folder walks and statement shapes) ────────
+
+def _downloads(tmp_path):
+    dl = tmp_path / "Downloads"
+    (dl / "2026").mkdir(parents=True)
+    (dl / "recipes.md").write_text("soup", encoding="utf-8")
+    return dl
+
+
+def test_a_folder_a_command_names_is_judged_by_its_own_files(cards, tmp_path):
+    dl = _downloads(tmp_path)
+    (dl / "Chase_Activity_2026.csv").write_text("x", encoding="utf-8")
+    out = fg.raw_refusal_for_command("Get-ChildItem %s | Import-Csv" % dl)
+    assert out and "Chase_Activity_2026.csv" in out
+    assert cards, "the owner is asked about the file"
+    out = fg.raw_refusal_for_command("cd %s; Get-Content (ls).Name" % dl)
+    assert out and "Chase_Activity_2026.csv" in out, "a cd into the folder is judged the same way"
+
+
+def test_powershell_and_copy_walkers_are_deep_with_a_recursion_flag(cards, tmp_path):
+    dl = _downloads(tmp_path)
+    (dl / "2026" / "Chase_Activity_2026.csv").write_text("x", encoding="utf-8")
+    dst = tmp_path / "copy"
+    dst.mkdir()
+    for cmd in ("Get-ChildItem %s -Recurse -Filter *.md | Import-Csv" % dl,
+                "gci -Path %s -Rec | %% { [IO.File]::ReadAllText($_.FullName) }" % dl,
+                "dir /s %s" % dl,
+                "robocopy %s %s /E" % (dl, dst),
+                "xcopy %s %s /s" % (dl, dst)):
+        assert fg.raw_refusal_for_command(cmd), cmd
+    assert fg.raw_refusal_for_command("Get-ChildItem %s | Import-Csv" % dl) is None, \
+        "without a recursion flag only the folder's own files count"
+    repo = tmp_path / "repo"
+    (repo / "a" / "b").mkdir(parents=True)
+    (repo / "a" / "b" / "old.mbox").write_text(ARCHIVE, encoding="utf-8")
+    assert fg.raw_refusal_for_command("Get-ChildItem -Recurse | Select-String rent", cwd=repo), \
+        "with no folder named, it walks the folder it runs in"
+
+
+def test_a_relative_pattern_is_never_expanded_in_fridays_own_folder(cards, tmp_path, monkeypatch):
+    from agent_friday.services import raw_records as rr
+    here = tmp_path / "server"
+    here.mkdir()
+    (here / "Inbox").write_bytes(b"From someone@example.test Mon Oct 12 10:00:00 2026\nSubject: x\n\nbody\n")
+    monkeypatch.chdir(here)
+    assert rr.named_in("total = price * count") == [], "code is not globbed against this process's folder"
+    assert fg.raw_refusal_for_command("print(price * count)") is None
+
+
+def test_a_relative_pattern_that_could_match_a_statement_is_not_run(cards, tmp_path, monkeypatch):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+    elsewhere = tmp_path / "Downloads"
+    elsewhere.mkdir()
+    for cmd in ("cd %s; Import-Csv *.csv" % elsewhere, "Get-ChildItem %s -Filter *.csv | Import-Csv" % elsewhere,
+                "Set-Location %s; Get-Content export?.pdf" % elsewhere):
+        out = fg.raw_refusal_for_command(cmd)
+        assert out and "full path" in out, cmd
+    assert fg.raw_refusal_for_command("cd %s && cat *.ofx" % elsewhere), "an extension that is always a record"
+    assert fg.raw_refusal_for_command("cd %s; ls *.md" % elsewhere) is None
+
+
+CSV_EXPORT = ("Date,Description,Amount,Balance\n"
+              "10/01/2026,GROCERY STORE 0412,-23.99,1204.11\n"
+              "10/02/2026,PAYROLL DEPOSIT,\"2,150.00\",3354.11\n"
+              "10/03/2026,ELECTRIC CO AUTOPAY,-88.40,3265.71\n")
+LIST_EXPORT = "\n".join("Date        : 10/0%d/2026\nDescription : STORE %d\nAmount      : -1%d.25\n" % (d, d, d)
+                        for d in (1, 2, 3))
+
+
+def test_a_printed_csv_statement_is_withheld(cards):
+    from agent_friday.services import raw_records as rr
+    assert rr.looks_like(CSV_EXPORT) == "finance"
+    assert fg.raw_output_notice(CSV_EXPORT)
+    assert rr.looks_like(CSV_EXPORT.replace(",", ";").replace("\"2;150.00\"", "2150.00")) == "finance"
+    assert rr.looks_like("Posted Date\tPayee\tAmount\n2026-10-01\tSTORE\t23.99\n2026-10-02\tCAFE\t4.50\n"
+                         "2026-10-03\tFUEL\t40.00\n") == "finance"
+    assert rr.looks_like(LIST_EXPORT) == "finance", "Import-Csv's own list format"
+
+
+def test_csv_that_is_not_a_statement_is_passed_on(cards):
+    from agent_friday.services import raw_records as rr
+    two_rows = "\n".join(CSV_EXPORT.splitlines()[:3])
+    prices = ("Date,Open,High,Low,Close\n2026-10-01,10.00,11.00,9.50,10.50\n2026-10-02,10.50,11.20,10.10,11.00\n"
+              "2026-10-03,11.00,11.40,10.80,11.10\n")
+    bench = "run,model,latency\n1,alpha,12.30\n2,beta,14.10\n3,gamma,11.90\n"
+    for out in (two_rows, prices, bench, "name,qty\nsoup,2\nbread,1\n"):
+        assert rr.looks_like(out) is None, out

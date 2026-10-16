@@ -1102,29 +1102,35 @@ def file_sha256(path, cap: int | None = None) -> str | None:
 
 
 _CONTENT_READERS = re.compile(
-    r"\b(?:grep|egrep|fgrep|rg|ag|ack|findstr|select-string|sls|get-content|gc|cat|type|git\s+grep)\b", re.I)
+    r"\b(?:grep|egrep|fgrep|rg|ag|ack|findstr|select-string|sls|get-content|gc|cat|type|git\s+grep"
+    r"|import-csv|ipcsv|robocopy|xcopy)\b|\[(?:system\.)?io\.file\]::\s*read", re.I)
 _ALWAYS_RECURSIVE = re.compile(r"\b(?:rg|ag|ack|git\s+grep)\b", re.I)
-# Code that walks a folder itself (run_sandboxed): Path.rglob, os.walk, a mailbox reader.
 # Code that walks a folder itself (run_sandboxed). Deep: every folder under
 # it; shallow: the folder's own files only.
 _DEEP_WALKERS = re.compile(r"\b(?:rglob|os\.walk|walk|mailbox)\b|\*\*")
 _SHALLOW_WALKERS = re.compile(r"\b(?:glob|listdir|iterdir|scandir)\b")
+# Shell commands that list or copy a folder's files, which a pipe then reads
+# (Get-ChildItem dir | Import-Csv): shallow, deep with a recursion flag.
+_SHELL_WALKERS = re.compile(r"\b(?:gci|get-childitem|dir|ls|robocopy|xcopy)\b", re.I)
+_SLASH_RECURSE = re.compile(r"\b(?:findstr|dir|robocopy|xcopy)\b", re.I)
 # A folder named from the home folder or the environment, not spelled out.
 _HOMEISH = re.compile(r"Path\.home\(|expanduser\(|environ|getenv\(|USERPROFILE|APPDATA|HOMEPATH")
 
 
 def _recursive_flag(text: str) -> bool:
-    """-r / -R / -rn / --recursive / -Recurse, or findstr's /s (/si, /sn ...),
+    """-r / -R / -rn / --recursive / -Recurse (or a prefix of it) / -Depth, or
+    the /s (/si, /sn ...), /e and /mir of findstr, dir, robocopy and xcopy,
     judged token by token (no pattern over the whole command)."""
-    findstr = "findstr" in text.lower()
+    slash = bool(_SLASH_RECURSE.search(text))
     for tok in text.split():
         low = tok.lower()
-        if low in ("--recursive", "-recurse", "-recursive"):
+        if low in ("--recursive", "-recursive", "-depth") or (len(low) >= 4 and "-recurse".startswith(low)):
             return True
         if 2 <= len(tok) <= 5 and tok[0] == "-" and tok[1:].isalpha() and "r" in low[1:]:
             if low not in ("-raw",):
                 return True
-        if findstr and 2 <= len(tok) <= 6 and tok[0] == "/" and tok[1:].isalpha() and "s" in low[1:]:
+        if slash and 2 <= len(tok) <= 6 and tok[0] == "/" and tok[1:].isalpha() and (
+                "s" in low[1:] or low in ("/e", "/mir")):
             return True
     return False
 
@@ -1143,19 +1149,23 @@ _TRAILING_PATTERN = re.compile(r"[\\/]\*(?:\.\*|\.[\w]{1,8})?$")
 
 def _recursive_dirs(text: str, cwd=None) -> tuple:
     """([(folder, deep)], unnamed): the folders a command reads the contents
-    of (grep -r, rg, findstr /s over "dir\\*", Select-String -Recurse, a
-    program that walks or lists a folder), deep when every folder under it
-    is read; `unnamed` when a program walks a folder it names only from the
-    home folder or the environment, which cannot be checked first. Without
-    `cwd` (run_command and run_sandboxed run in an empty scratch folder) a
-    relative name names nothing and is not judged."""
+    of (grep -r, rg, findstr /s over "dir\\*", Select-String -Recurse,
+    Get-ChildItem -Recurse, a program that walks or lists a folder), deep
+    when every folder under it is read. Any other folder a command names is
+    judged shallow, by its own files: what a command does with a folder it
+    names (a pipe into Import-Csv, a cd before a relative name) is not
+    something a pattern over the command can rule out. `unnamed` when a
+    program walks a folder it names only from the home folder or the
+    environment, which cannot be checked first. Without `cwd` (run_command
+    and run_sandboxed run in an empty scratch folder) a relative name names
+    nothing and is not judged."""
     t = str(text or "")
     deep_walk = bool(_DEEP_WALKERS.search(t))
     shallow_walk = bool(_SHALLOW_WALKERS.search(t))
-    reader_deep = bool(_CONTENT_READERS.search(t) and (_ALWAYS_RECURSIVE.search(t) or _recursive_flag(t)))
-    if not (deep_walk or shallow_walk or reader_deep):
-        return [], False
-    deep = deep_walk or reader_deep
+    shell_walk = bool(_SHELL_WALKERS.search(t))
+    recursive = _recursive_flag(t)
+    reader_deep = bool(_CONTENT_READERS.search(t) and (_ALWAYS_RECURSIVE.search(t) or recursive))
+    deep = deep_walk or reader_deep or (shell_walk and recursive)
     from agent_friday.services import raw_records
     out = []
     quoted = [a or b for a, b in raw_records._QUOTED.findall(t)]
@@ -1163,20 +1173,22 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
         tok = tok.strip(raw_records._TOKEN_EDGES).strip()
         if not tok or "://" in tok or tok.replace("/", "\\").startswith("\\\\") or len(tok) > 400:
             continue
-        if reader_deep:
-            tok = _TRAILING_PATTERN.sub("", tok) or tok      # findstr /s x "dir\\*" searches dir
         try:
             p = Path(raw_records.expand(tok))
             if not p.is_absolute():
                 if not cwd:
                     continue
                 p = Path(cwd) / p
+            if not p.is_dir():
+                # findstr /s x "dir\\*" searches dir; Get-Content "dir\\*.csv" reads dir's files
+                p = Path(_TRAILING_PATTERN.sub("", str(p)) or str(p))
             if p.is_dir():
                 out.append((p, deep))
         except (OSError, ValueError):
             continue
-    if cwd and not out and _ALWAYS_RECURSIVE.search(t):
-        out.append((Path(cwd), True))    # rg / git grep with no folder search where they run
+    if cwd and not out and (_ALWAYS_RECURSIVE.search(t) or shell_walk):
+        # rg / git grep / Get-ChildItem with no folder: they look where they run
+        out.append((Path(cwd), bool(_ALWAYS_RECURSIVE.search(t)) or deep))
     unnamed = bool((deep_walk or shallow_walk) and not out and _HOMEISH.search(t))
     return out, unnamed
 
@@ -1200,10 +1212,13 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
         return ("Not run: it looks through a folder it names only from the home folder or the "
                 "environment, so I can't check it for mail archives and statements first. Name the "
                 "folder as a full path and run it again.")
-    held, asked, too_many = [], 0, []
+    held, asked, too_many, unjudged = [], 0, [], []
     for label, kind, p in named:
         if kind == "too_many":
             too_many.append(str(label))
+            continue
+        if kind == "unjudged":
+            unjudged.append(str(label))
             continue
         try:
             if p is not None and Path(p).is_file():
@@ -1233,6 +1248,10 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
     if too_many and not held:
         return ("Not run: %s covers too many files for me to check for mail archives and statements. "
                 "Narrow it to the files or folder you need." % too_many[0])
+    if unjudged and not held:
+        return ("Not run: %s is a pattern relative to whichever folder the command is in, so I can't "
+                "check the files it matches for mail archives and statements. Give the folder as a "
+                "full path and run it again." % unjudged[0])
     if not held:
         return None
     return ("Not run: it reads %s, a mail archive or statement the owner hasn't let a cloud model "
