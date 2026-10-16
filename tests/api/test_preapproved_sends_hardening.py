@@ -99,8 +99,9 @@ def test_a_send_after_reading_outside_content_gets_its_card_even_to_a_granted_re
     assert not res.get("pre_approved"), "a send drawing on outside content used the pre-approval"
     pend = _pending_for(res["approval_id"])
     assert pend, "no card was raised"
-    assert "drew on outside content, so the pre-approval does not cover it" in pend[0]["action_description"]
-    assert res.get("pre_approval_withheld") and "outside content" in res["note"]
+    # Named by kind, in plain words (round 3): which outside content, and that the pre-approval does not cover it.
+    assert "read an outside email, so your pre-approval doesn't cover this send" in pend[0]["action_description"]
+    assert res.get("pre_approval_withheld") and "read an outside email" in res["note"]
     withheld = [l for l in _log_events(client) if l["event"] == "withheld"]
     assert withheld and withheld[0]["grant_id"] == g["grant_id"]
 

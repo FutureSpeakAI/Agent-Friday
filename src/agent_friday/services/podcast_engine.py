@@ -524,6 +524,76 @@ def cohost_question(mark: bool = True) -> str:
     return COHOST_QUESTION % cohost_default_name(s)
 
 
+#: The one-time offer to an install whose weekly show is two voices: "Weekly is two voices; want one
+#: voice?" One notice (Activity), and the choice on the Podcasts page: Switch, Keep, or close it.
+#: Saved in the podcasts block: "" never offered, "offered" (waiting), "switched", "kept" or
+#: "dismissed". Offered at most once, ever; nothing here changes the format except the owner's Switch.
+WEEKLY_OFFER_KEY = "weekly_one_voice_offer"
+WEEKLY_OFFER_NOTICE = "podcast-weekly-one-voice"
+
+
+def weekly_offer_state() -> str:
+    try:
+        from agent_friday.core import _load_settings
+        pod = (_load_settings() or {}).get("podcasts")
+        return str((pod if isinstance(pod, dict) else {}).get(WEEKLY_OFFER_KEY) or "")
+    except Exception:
+        return ""
+
+
+def maybe_offer_weekly_one_voice() -> bool:
+    """Raise the ONE offer when the saved weekly show is two voices and it was never offered. The
+    state is saved as "offered" before the notice goes, so it is never raised twice, and a dismissed
+    notice is never raised again. Never changes the format. Never raises."""
+    try:
+        from agent_friday.core import _load_settings
+        pod = (_load_settings() or {}).get("podcasts")
+        pod = pod if isinstance(pod, dict) else {}
+        if pod.get(WEEKLY_OFFER_KEY):
+            return False
+        if ((pod.get("format") or {}).get("weekly")) != "duo":
+            return False
+        _save_podcasts({WEEKLY_OFFER_KEY: "offered"})
+    except Exception as e:
+        log.debug("weekly one-voice offer skipped: %s", e)
+        return False
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.push(title="Weekly is two voices; want one voice?",
+                body=("Your weekly show, The Week, is read by two hosts; every other show is one voice now. "
+                      "The choice (Switch or Keep) is on the Podcasts page. Nothing changes unless you "
+                      "switch, and you are not asked again."),
+                priority="low", source="podcasts", kind="podcast_one_voice_offer", tier="fyi",
+                emitter="PO1", dedupe_key=WEEKLY_OFFER_NOTICE, resolve_key=WEEKLY_OFFER_NOTICE,
+                target={"workspace": "studio", "view": "podcasts"},
+                actions=[{"label": "See the choice", "workspace": "studio", "view": "podcasts"}])
+    except Exception as e:
+        log.warning("weekly one-voice offer not shown: %s", e)
+    return True
+
+
+def decide_weekly_one_voice(choice: str) -> dict:
+    """The owner's answer to the offer: "switch" makes the weekly one voice, "keep" leaves it,
+    "dismiss" closes it without an answer (the format stays). Any of them closes it for good."""
+    choice = str(choice or "").strip().lower()
+    if choice not in ("switch", "keep", "dismiss"):
+        return {"ok": False, "message": "Say switch or keep."}
+    if weekly_offer_state() != "offered":
+        return {"ok": False, "message": "There is no offer waiting."}
+    if choice == "switch":
+        _save_podcasts({"format": {"weekly": "solo"}, WEEKLY_OFFER_KEY: "switched"})
+    else:
+        _save_podcasts({WEEKLY_OFFER_KEY: "kept" if choice == "keep" else "dismissed"})
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.resolve(WEEKLY_OFFER_NOTICE)
+    except Exception:
+        pass
+    return {"ok": True, "choice": choice, "format": format_for("weekly"),
+            "message": ("The Week is one voice from the next episode." if choice == "switch"
+                        else "The Week stays two voices. You will not be asked again.")}
+
+
 def formats() -> dict:
     return {k: {"format": format_for("" if k == "any" else k), "recommended": v}
             for k, v in RECOMMENDED_FORMAT.items()}

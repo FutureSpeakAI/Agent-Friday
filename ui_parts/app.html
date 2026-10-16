@@ -4266,6 +4266,22 @@ const PODCAST_KINDS = [
   { id: 'url', label: 'Web page', ph: 'https://… (fetched from the web)' },
   { id: 'kg_node', label: 'Knowledge entry', ph: 'node id' }
 ];
+// The one-time offer to an install whose weekly show is two voices (services/podcast_engine:
+// maybe_offer_weekly_one_voice). Shown only while it waits; Switch, Keep or × closes it for good.
+function WeeklyOneVoiceOffer() {
+  const h = React.createElement;
+  const [st, setSt] = useState('');
+  const [msg, setMsg] = useState('');
+  useEffect(() => { fetch('/api/podcasts/weekly-one-voice').then(r => r.json()).then(d => setSt((d && d.state) || '')).catch(() => {}); }, []);
+  const answer = choice => fetch('/api/podcasts/weekly-one-voice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ choice }) })
+    .then(r => r.json()).then(d => { setSt(choice === 'switch' ? 'switched' : choice === 'keep' ? 'kept' : 'dismissed'); setMsg(choice === 'dismiss' ? '' : (d && d.message) || ''); }).catch(() => setMsg('Not saved: ' + fridayName() + ' could not be reached.'));
+  if (st !== 'offered') return msg ? h('div', { role: 'status', 'data-testid': 'weekly-one-voice-done', style: { fontSize: PODCAST_C.md, color: PODCAST_C.dim } }, msg) : null;
+  return h('div', { 'data-testid': 'weekly-one-voice-offer', role: 'group', 'aria-label': 'Weekly is two voices; want one voice?', style: { border: '1px solid ' + PODCAST_C.accent, background: PODCAST_C.accentSoft, borderRadius: 8, padding: '10px 12px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: PODCAST_C.md } },
+    h('span', { style: { flex: 1, minWidth: 220 } }, 'Weekly is two voices; want one voice? Every other show is one voice now. Nothing changes unless you switch, and you will not be asked again.'),
+    h('button', { className: 'btn', type: 'button', 'data-testid': 'weekly-one-voice-switch', onClick: () => answer('switch') }, 'Switch'),
+    h('button', { className: 'btn', type: 'button', 'data-testid': 'weekly-one-voice-keep', onClick: () => answer('keep') }, 'Keep'),
+    h('button', { className: 'btn', type: 'button', 'aria-label': 'Close without changing anything', onClick: () => answer('dismiss') }, '\u00D7'));
+}
 function PodcastsView() {
   const h = React.createElement;
   const [eps, setEps] = useState([]);
@@ -4330,6 +4346,7 @@ function PodcastsView() {
       h('h2', { style: { margin: 0, fontFamily: PODCAST_C.display, letterSpacing: PODCAST_C.track, fontSize: PODCAST_C.xl } }, '🎧 Podcasts'),
       h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.md, marginTop: 4, maxWidth: '80ch' } },
         'Episodes from any sources, with chapters, a transcript and a source for every claim. Written by your local model and spoken on this computer. Datasets get data mode: the numbers are computed first, and only computed numbers are said.')),
+    h(WeeklyOneVoiceOffer, null),
     formats ? h('section', { 'aria-label': 'Who is on each show', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' } },
       h('div', { style: { width: '100%', fontWeight: 600 } }, 'Who is on each show'),
       PODCAST_SHOWS.map(([key, label]) => formats[key] ? h('label', { key: key, style: { display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: PODCAST_C.md } },
@@ -19562,20 +19579,31 @@ function CloudReleaseCard({ a, busy }) {
     E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } }, btn('Send', 'approve', '#00ff80'), btn('Keep on this PC', 'deny', '#ff0080')));
 }
 // A scheduled job's own choices on its Workflows card: a missed run and a held run.
+// "Follow my default" puts the job back on Settings > General > Scheduled jobs (PATCH
+// with "default"); the option names what that default is now.
 function WfJobChoices({ w }) {
   const E = React.createElement;
-  const [missed, setMissed] = useState(w.missed || 'run_once');
-  const [held, setHeld] = useState(w.on_held || 'retry');
+  const WF_MISSED_WORDS = { run_once: 'run once at start', skip: 'skip' };
+  const WF_HELD_WORDS = { retry: 'run once when it is back', wait: 'wait for next time' };
+  const wfChoiceValue = (own, v, fallback) => own === false ? 'default' : (v || fallback);
+  const wfDefaultOption = (words, d) => 'follow my default' + (words[d] ? ' (now: ' + words[d] + ')' : '');
+  const [missed, setMissed] = useState(wfChoiceValue(w.missed_own, w.missed, 'run_once'));
+  const [held, setHeld] = useState(wfChoiceValue(w.on_held_own, w.on_held, 'retry'));
+  const [emailSend, setEmailSend] = useState(w.email_send === true);
   const [note, setNote] = useState('');
   const patch = body => apiFetch('/api/schedules/' + encodeURIComponent(w.schedule_id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    .then(r => r.json()).then(d => setNote(d && d.status === 'ok' ? 'Saved for this job.' : 'Not saved.')).catch(() => setNote('Not saved.'));
+    .then(r => r.json()).then(d => setNote(d && d.status === 'ok' ? (Object.values(body)[0] === 'default' ? 'This job now follows your default.' : 'Saved for this job.') : 'Not saved.')).catch(() => setNote('Not saved.'));
   if (!w.schedule_id) return null;
   return E('span', { 'data-testid': 'wf-job-choices', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
     E('label', null, 'Missed while closed: ', E('select', { className: 'input', 'data-testid': 'wf-missed-choice', 'aria-label': 'A run missed while closed', value: missed, onChange: e => { setMissed(e.target.value); patch({ missed: e.target.value }); } },
+      E('option', { value: 'default', 'data-testid': 'wf-missed-default' }, wfDefaultOption(WF_MISSED_WORDS, w.missed_default)),
       E('option', { value: 'run_once' }, 'run once at start'), E('option', { value: 'skip' }, 'skip'))),
     w.model_pinned ? E('label', null, 'Held by its model: ', E('select', { className: 'input', 'data-testid': 'wf-held-choice', 'aria-label': 'A run held by its pinned model', value: held, onChange: e => { setHeld(e.target.value); patch({ on_held: e.target.value }); } },
+      E('option', { value: 'default', 'data-testid': 'wf-held-default' }, wfDefaultOption(WF_HELD_WORDS, w.held_default)),
       E('option', { value: 'retry' }, 'run once when it is back'), E('option', { value: 'wait' }, 'wait for next time'))) : null,
     w.held_retry_pending ? E('span', { 'data-testid': 'wf-held-retry' }, 'Waiting for its model to come back, then it runs once.') : null,
+    E('label', null, 'Its emails: ', E('select', { className: 'input', 'data-testid': 'wf-email-choice', 'aria-label': 'What this job does with the emails it writes', value: emailSend ? 'send' : 'draft', onChange: e => { const v = e.target.value === 'send'; setEmailSend(v); patch({ email_send: v }); } },
+      E('option', { value: 'draft' }, 'save as drafts in Gmail'), E('option', { value: 'send' }, 'send (asks first unless pre-approved)'))),
     note ? E('span', { role: 'status' }, note) : null);
 }
 // Calendar: deleting an event asks first, with "notify guests" (unticked
@@ -21534,6 +21562,26 @@ function SettingsTabProviders({s,save}){
 // `part` splits the panel: Google accounts are something every user
 // connects (Connections); the MCP server list and the platform connector
 // inventory are diagnostics (Advanced).
+// Connections > Google accounts > Default account for drafts (settings.mail_default_account).
+// A draft goes to the account you named, else the replied-to conversation's, else this one;
+// "Ask me" (unset) means Friday asks which when there are several.
+function MailDefaultAccountRow({ s, save }) {
+  const E = React.createElement;
+  const [accts, setAccts] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/mail/draft-accounts').then(r => r.json()).then(d => setAccts((d && d.accounts) || [])).catch(() => setAccts([]));
+  }, []);
+  const list = accts || [];
+  const cur = String((s && s.mail_default_account) || '');
+  const match = list.find(a => [a.id, a.email, a.label].some(v => v && String(v).toLowerCase() === cur.toLowerCase()));
+  const value = match ? match.id : '';
+  const name = a => a.label && a.email && a.label.toLowerCase() !== a.email.toLowerCase() ? a.label + ' (' + a.email + ')' : (a.email || a.label || a.id);
+  return E(StRow, { label: 'Default account for drafts', settingKey: 'settings.mail_default_account',
+    desc: 'Where ' + fridayName() + ' saves an email draft when you do not name an account and it is not a reply (a reply goes to the conversation’s own account). "Ask me" means ' + fridayName() + ' asks which, when you have more than one.' + (cur && !match && accts ? ' The saved account is no longer connected, so ' + fridayName() + ' asks.' : '') },
+    E('select', { className: 'input', 'data-testid': 'mail-default-account', 'aria-label': 'Default account for drafts', value, onChange: e => save({ mail_default_account: e.target.value }) },
+      E('option', { value: '' }, 'Ask me'),
+      list.map(a => E('option', { key: a.id, value: a.id }, name(a)))));
+}
 function SettingsTabConnectors({
   s,
   save,
@@ -21556,7 +21604,10 @@ function SettingsTabConnectors({
   if (part === 'accounts') return /*#__PURE__*/React.createElement(StSection, {
     title: "Google accounts",
     desc: "Connect one or more Google accounts for mail, calendar and files. Their tokens are encrypted on this machine and never sent to a cloud model."
-  }, /*#__PURE__*/React.createElement(GoogleAccountsPanel, null));
+  }, /*#__PURE__*/React.createElement(GoogleAccountsPanel, null), /*#__PURE__*/React.createElement(MailDefaultAccountRow, {
+    s: s,
+    save: save
+  }));
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "MCP servers"
   }, /*#__PURE__*/React.createElement("div", {
@@ -24257,6 +24308,8 @@ function LocalAiQueueChip() {
     cache: 'no-store'
   }).then(r => r.ok ? r.json() : null).then(d => {
     if (d) setLane(d);
+    // Cards that need the owner and sends held in their undo window: the top bar keeps Activity in sight.
+    if (d && window.fridayWaiting) window.fridayWaiting.set({ needs: (d.needs_you || 0) + (d.held_sends || 0) });
   }).catch(() => {});
   const load = () => apiFetch('/api/local-queue', {
     cache: 'no-store'
@@ -24568,6 +24621,8 @@ const fridayApprovalFeed = (() => {
   };
 })();
 window.fridayApprovalFeed = fridayApprovalFeed;
+// Anything waiting for the owner keeps the top bar's Activity button in sight (static/friday_responsive_topbar.js).
+try { fridayApprovalFeed.subscribe(items => { if (window.fridayWaiting) window.fridayWaiting.set({ approvals: (items || []).length }); }); } catch (_) {}
 // Friday's look, in the scene menu (docs/design/active/avatar-visual-genome.md
 // §8): weekly evolution on or off, who makes the changes, evolve now, undo,
 // and the history with every look credited to whoever made it. The same
@@ -24770,6 +24825,11 @@ function LocalContextShareCard({a,busy,onDecide}){
 // One of Friday's organize batches (services/item_actions): mail, files or
 // wiki pages, listed one per line on the card.
 function fridayIsBatchCard(a){return!!(a&&a.payload&&a.payload.handler==='item_batch')}
+// The words on a card's two buttons: an email card says what the yes does (Send) and what the no
+// does (Don't send); every other card keeps Approve and Deny.
+function fridayApprovalWords(a) {
+  return a && a.payload && a.payload.handler === 'gmail_send' ? ['Send', "Don't send"] : ['Approve', 'Deny'];
+}
 function ApprovalCardBody({ a, busy, onDecide }) {
   // The share card has its own body: the exact payload, edit, and four choices.
   // A file-access card lists every path it would allow; see FileGrantRequestCard.
@@ -24786,7 +24846,7 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   const pq = a && a.payload && a.payload.public_query;
   return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id} {...fridayRow('card',a.approval_id,a.title,{kind:String(a.kind||'').slice(0,30),status:'pending'})}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
-    {a.action_description && <div data-testid={pq ? 'public-query-text' : undefined} style={pq ? { fontSize: 11, color: '#ddd', marginTop: 4, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } : { fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}
+    {a.action_description && <div data-testid={pq ? 'public-query-text' : 'approval-card-description'} style={pq ? { fontSize: 11, color: '#ddd', marginTop: 4, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } : { fontSize: 11, color: '#999', marginTop: 2, whiteSpace: a.payload && a.payload.handler === 'gmail_send' ? 'pre-wrap' : undefined }}>{a.action_description}</div>}
     {pq && <div data-testid="public-query-engine" style={{ fontSize: 11, color: '#b8c7dc', marginTop: 4 }}>Goes to: {pq.engine}</div>}
     {pq && a.description && <div style={{ fontSize: 10, color: '#7f93ad', marginTop: 4 }}>{a.description}</div>}
     {fridayIsBatchCard(a) && <ul data-testid="batch-lines" style={{ fontSize: 11, color: '#b8c7dc', margin: '6px 0 0', padding: '0 0 0 16px', maxHeight: 220, overflowY: 'auto' }}>{(a.payload.lines || []).map((line, i) => <li key={i}>{line}</li>)}</ul>}
@@ -24795,8 +24855,8 @@ function ApprovalCardBody({ a, busy, onDecide }) {
     <ApprovalProvenance p={a.provenance} />
     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 4 }}>{a.kind} · {a.policy_class}{a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''}</div>
     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#00ff80' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'approve')}>{pq ? 'Send' : 'Approve'}</button>
-      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#ff0080' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'deny')}>{pq ? "Don't send" : 'Deny'}</button>
+      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#00ff80' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'approve')}>{pq ? 'Send' : fridayApprovalWords(a)[0]}</button>
+      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#ff0080' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'deny')}>{pq ? "Don't send" : fridayApprovalWords(a)[1]}</button>
     </div>
   </div>);
 }

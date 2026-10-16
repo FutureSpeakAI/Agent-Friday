@@ -1005,7 +1005,7 @@ CLAUDE_TOOLS = [
     {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki): the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
      "input_schema": {"type": "object", "properties": {
          "receipt_id": {"type": "string", "description": "rcpt_... from an earlier result; empty for the newest."}}}},
-    {"name": "answer_card", "description": "Record the user's answer to an organize_email, organize_files, organize_wiki or undo_action card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer.",
+    {"name": "answer_card", "description": "Record the user's answer to an organize, undo_action or money-paragraph card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer; if it returns a read-back, say it and ask.",
      "input_schema": {"type": "object", "properties": {
          "card_id": {"type": "string", "description": "The approval_id the tool returned."},
          "decision": {"type": "string", "enum": ["approve", "decline"]}},
@@ -4493,6 +4493,18 @@ def _tool_answer_card(inp):
     from agent_friday.services import item_actions as _ia
     inp = inp or {}
     surface = _CURRENT_SURFACE.get() or "chat"
+    try:
+        from agent_friday.services import cloud_release as _cr
+        if _cr.is_card(str(inp.get("card_id") or "")):
+            # A money-paragraph card: a spoken (or typed) Send counts only after Friday has read back
+            # exactly what would go, and sends once (services/cloud_release.answer_in_words).
+            return _cr.answer_in_words(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
+                                       _CURRENT_OWNER_TEXT.get(), spoken=surface.startswith("voice"),
+                                       room_mode=_voice_room() if surface.startswith("voice") else False,
+                                       cloud_voice=_cloud_voice())["text"]
+    except Exception as e:
+        _log.warning("money-paragraph card answer failed: %s", e)
+        return "NOT RECORDED: the answer could not be recorded (%s). The card is still on the screen." % e
     if surface.startswith("voice"):
         # A spoken yes decides a card only if the card's own question was
         # voiced on this session (the call sets ``voiced_cards``) or the
@@ -4784,8 +4796,8 @@ def _draft_email_send(inp, gs):
                       or (_CURRENT_TOOL_CONTEXT.get() or {}).get("is_background_task"))
     withheld = result.get("pre_approval_withheld")
     if withheld:
-        tail = (" The user pre-approved these recipients, but %s: tell them that is "
-                "why it waits on a card." % withheld)
+        tail = (" The user pre-approved these recipients, but it waits on a card: tell them "
+                "why, in these words: %s." % withheld)
     elif unattended:
         tail = (" This is a scheduled or background run: it waits on that "
                 "card. To let this job send to these recipients without a "
@@ -12864,6 +12876,37 @@ def _learn_facts(session_ctx) -> dict:
 from agent_friday.services import live_laya as _live_laya
 
 
+def _job_send_args(name, args, session_ctx):
+    """draft_email from a scheduled job or workflow made to SEND its emails (services/email_jobs:
+    kept sending by the one-time mark, or switched to send on its Workflows card) is a send, as it
+    was before draft_email saved drafts by default. Applied before any gate (the agent loop's vault
+    check and _execute_tool's hooks), so each judges a send; the card, or the owner's pre-approval
+    for the job, still decides whether anything leaves. Any other call is returned as it came."""
+    if name != "draft_email" or not isinstance(args, dict):
+        return args
+    try:
+        from agent_friday.services import email_jobs as _ej
+        from agent_friday.services.gmail_send import wants_send as _ws
+        if not _ws(args) and _ej.sends_for(session_ctx):
+            return dict(args, send=True)
+    except Exception as e:
+        _log.warning("a job's email mode was not read, so this call saves a draft: %s", e)
+    return args
+
+
+def _cloud_send_ctx(session_ctx, detail):
+    """The session context for a call the vault gate let through to a card: an email send written
+    on a cloud seat with private details (privacy/vault_access: cloud_send_card_<tier>). The mark
+    tells gmail_send.request_send to raise the card even when a pre-approval names the recipients."""
+    try:
+        from agent_friday.privacy.vault_access import is_cloud_send_card
+        if is_cloud_send_card(detail):
+            return dict(session_ctx or {}, sensitive_cloud_send=True)
+    except Exception:
+        pass
+    return session_ctx
+
+
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
@@ -12926,6 +12969,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _call_verifier.receipt(name, _checked, "verifier_fixit", "invalid arguments", session_ctx)
         return _arg_error
     tool_input = _restore_placeholders(_checked or {}, pii_lookup)
+    # A scheduled job or workflow made to SEND its emails (kept sending by the one-time mark in
+    # services/email_jobs, or switched to send on its Workflows card) sends, as it did before
+    # draft_email saved drafts by default. Set here, before any gate, so every gate judges a send:
+    # the card, or the owner's pre-approval for this job, still decides whether anything leaves.
+    tool_input = _job_send_args(name, tool_input, session_ctx)
     # The pre-execution verifier (services/call_verifier): a call that cannot
     # work comes back as a fix-it message, a repeat of a read this turn comes
     # back as the earlier result, and anything that should make the owner
@@ -15869,9 +15917,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 # Gate every tool call through vault check_action before
                 # execution. If the provider can't see the data, deny.
                 _vault_ctl = _get_vault_control() if VaultAccessControl else None
+                _zt_ctx = session_ctx
                 if _vault_ctl is not None:
                     _zt_provider = (session_ctx or {}).get("provider", "cloud")
-                    _zt_data = json.dumps(tu.input or {}, default=str)
+                    _zt_data = json.dumps(_job_send_args(tu.name, tu.input or {}, session_ctx), default=str)
                     _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
                         _zt_provider, tu.name, _zt_data, model=model or "",
                         access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
@@ -15902,6 +15951,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                             "content": _zt_text(tu.name, _zt_detail),
                         })
                         continue
+                    _zt_ctx = _cloud_send_ctx(session_ctx, _zt_detail)
 
                 # A cloud seat's search that shares private text from this
                 # conversation waits on the owner's Send / Don't send card
@@ -15942,7 +15992,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     from agent_friday.privacy.public_query import for_tool_call as _pq_call
                     with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
                                   str(kwargs.get("model") or model or ""), tu.name, tu.input):
-                        result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                        result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
                 # Cleared on the SUCCESS path only, deliberately not in a
@@ -16715,10 +16765,11 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             # navigation / file ops / app launch / task spawn are available to
             # every model. _execute_tool then applies the cLaw governance rings.
             _vault_ctl = _get_vault_control() if VaultAccessControl else None
+            _zt_ctx = session_ctx
             if _vault_ctl is not None:
                 _zt_provider = (session_ctx or {}).get("provider", provider)
                 _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
-                    _zt_provider, tname, json.dumps(targs, default=str),
+                    _zt_provider, tname, json.dumps(_job_send_args(tname, targs, session_ctx), default=str),
                     model=model or "",
                     access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
                     # See the other call site: the provenance ledger lets the
@@ -16741,6 +16792,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     convo.append({"role": "tool", "tool_call_id": tcid,
                                   "content": _zt_text(tname, _zt_detail)})
                     continue
+                _zt_ctx = _cloud_send_ctx(session_ctx, _zt_detail)
 
             # See the other call site: a cloud seat's search that shares
             # private text waits on the owner's Send / Don't send card.
@@ -16818,7 +16870,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                         _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
                                  model or "", tname, targs):
                     result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
-                                           session_ctx=session_ctx)
+                                           session_ctx=_zt_ctx)
             finally:
                 _CURRENT_MODEL.reset(_mtok)
             _crew_denial = _host_action_denial(tname, session_ctx)

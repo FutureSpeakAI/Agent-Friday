@@ -188,7 +188,9 @@ def test_no_local_seat_and_not_allowed_is_a_paused_skip(monkeypatch, answered):
 def _run_and_wait(rec):
     before = len(s.run_history(rec["id"], limit=100))
     s.dispatch(rec, manual=True)
-    for _ in range(100):
+    # A run is a thread; a loaded Windows CI runner has taken over 5 s to
+    # finish one, so the bound is generous and only a run that never ends fails.
+    for _ in range(600):
         if len(s.run_history(rec["id"], limit=100)) > before:
             return s.run_history(rec["id"], limit=1)[0]
         time.sleep(0.05)

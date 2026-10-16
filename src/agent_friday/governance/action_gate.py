@@ -1308,7 +1308,8 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         try:
             from agent_friday.governance import send_grants as _sg
             if not (clean and not (tainted if grant_tainted is None else grant_tainted)):
-                refusal = _sg.OUTSIDE_CONTENT_WHY
+                # Named by kind, in plain words: "This chat read an outside email, so ..."
+                refusal = _sg.outside_content_why(ctx)
             else:
                 refusal = _sg.use_refusal(tool_name, args or {}, ctx)
             if not refusal:

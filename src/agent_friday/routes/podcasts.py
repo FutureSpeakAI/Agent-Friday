@@ -140,6 +140,20 @@ def podcasts_set_format():
                     **({"ask_cohost_name": ask, "cohost_suggestion": pe.cohost_default_name()} if ask else {})})
 
 
+@podcasts_bp.route('/api/podcasts/weekly-one-voice', methods=['GET'])
+def podcasts_weekly_offer():
+    """Whether the one-time "one voice for the weekly?" choice is waiting on the Podcasts page."""
+    return jsonify({"status": "ok", "state": pe.weekly_offer_state(), "weekly": pe.format_for("weekly")})
+
+
+@podcasts_bp.route('/api/podcasts/weekly-one-voice', methods=['POST'])
+def podcasts_weekly_one_voice():
+    """The owner's answer to the one-time offer on the Podcasts page: switch, keep or dismiss."""
+    data = request.get_json(silent=True) or {}
+    out = pe.decide_weekly_one_voice(str(data.get("choice") or ""))
+    return jsonify({"status": "ok" if out.get("ok") else "error", **out}), (200 if out.get("ok") else 409)
+
+
 @podcasts_bp.route('/api/podcasts/hosts', methods=['GET'])
 def podcasts_hosts():
     """The hosts' names: "a" is her, "b" the co-host."""

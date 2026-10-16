@@ -1,4 +1,4 @@
-"""The owner's standing choices: eight decisions Friday asks once and then follows.
+"""The owner's standing choices: the decisions Friday asks once and then follows.
 
 The rule behind every one: no blanket rule decides for the owner. Each choice has a default (what the
 owner chose when the question was put to them), is changeable in Settings, and is asked once in the
@@ -15,6 +15,7 @@ the default rather than as something the code never meant:
   podcasts.hosts.b.name          the co-host's name   (services/podcast_engine.py)
   dock_by_asking                 "apply_with_undo" | "ask_first" (services/setting_proposals.py)
   calendar_delete_notify_guests  bool                 (services/calendar_write.py)
+  mail_default_account           an account id, address or label; "" asks (services/gmail_send.py)
 """
 from __future__ import annotations
 
@@ -107,6 +108,13 @@ def calendar_delete_notify_guests(settings=None) -> bool:
     return _settings(settings).get("calendar_delete_notify_guests") is True
 
 
+def mail_default_account(settings=None) -> str:
+    """The account a draft goes to when none is named and it is not a reply: an id, address or label
+    (gmail_send.choose_account matches it); "" is Ask me."""
+    v = _settings(settings).get("mail_default_account")
+    return v.strip()[:320] if isinstance(v, str) else ""
+
+
 # ── validation for POST /api/settings ───────────────────────────────────────
 
 def validate(new_settings) -> dict | None:
@@ -145,6 +153,9 @@ def validate(new_settings) -> dict | None:
                 return err("trust_scoring.%s is a number from %s to %s (got %r)" % (k, lo, hi, v))
     if "dock_by_asking" in ns and ns["dock_by_asking"] not in DOCK_CHOICES:
         return err("dock_by_asking is apply_with_undo or ask_first (got %r)" % (ns["dock_by_asking"],))
+    if "mail_default_account" in ns and not isinstance(ns["mail_default_account"], str):
+        return err("mail_default_account is an account (id, address or label), or \"\" for Ask me (got %r)"
+                   % (ns["mail_default_account"],))
     if "calendar_delete_notify_guests" in ns and not isinstance(ns["calendar_delete_notify_guests"], bool):
         return err("calendar_delete_notify_guests is true or false (got %r)" % (ns["calendar_delete_notify_guests"],))
     return None
@@ -162,7 +173,7 @@ def _get(s: dict, dotted: str):
 
 
 def setup_questions(settings=None) -> list:
-    """The eight decisions, phrased for the first-run setup conversation: each {key, question, default,
+    """The decisions, phrased for the first-run setup conversation: each {key, question, default,
     options, why, where, current}. `key` is the settings key the answer is saved to (dotted for a nested
     one); `where` is the Settings row that changes it later. Nothing here asks anyone; it says what to
     ask. Every key is in core.DEFAULT_SETTINGS and has a Settings control (a test holds that)."""
@@ -225,6 +236,13 @@ def setup_questions(settings=None) -> list:
          "default": False, "options": [False, True],
          "why": "Telling guests sends an email in your name; you can tick it each time.",
          "where": "Settings > Privacy & Data > Deleting calendar events"},
+        {"key": "mail_default_account",
+         "question": ("When I save an email draft for you and you have not said which account, and it is not a "
+                      "reply, which Gmail account should it go to, or should I ask you each time?"),
+         "default": "", "options": "a connected Gmail account, or Ask me",
+         "why": ("A reply always goes to the account its conversation is in; this only decides a new draft "
+                 "when you have more than one account. Nothing is sent: a draft waits in your Gmail Drafts."),
+         "where": "Settings > Connections > Google accounts > Default account for drafts"},
     ]
     for q in qs:
         q["current"] = _get(s, q["key"])

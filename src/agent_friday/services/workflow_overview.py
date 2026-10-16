@@ -507,6 +507,13 @@ def _job_view(rec, slug=None):
             # The job's own choices, changeable on its card (PATCH /api/schedules/<id>).
             "missed": rec.get("missed") or "", "on_held": rec.get("on_held") or "",
             "held_text": rec.get("held_text") or "",
+            # Whether each is the job's own choice or follows the owner's default, and what that
+            # default is now (the card's "Follow my default" option names it).
+            "missed_own": bool(rec.get("missed_own")), "on_held_own": bool(rec.get("on_held_own")),
+            "missed_default": rec.get("missed_default") or "",
+            "held_default": rec.get("held_default") or "",
+            # Its emails: sent (each asks unless pre-approved) or saved as drafts (services/email_jobs).
+            "email_send": rec.get("email_send") is True,
             "held_retry_pending": bool(rec.get("held_retry_pending"))}
 
 

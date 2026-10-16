@@ -369,6 +369,126 @@ def _on_decision(record: dict) -> None:
         _log.info("cloud release: %d paragraph(s) kept on this PC (%s)", len(hashes), status)
 
 
+# ── the answer in words (answer_card): a read-back first, then a yes sends once ─────────────
+
+#: A read-back is good for this long: the yes must come after it, in the same conversation, soon.
+READBACK_TTL_S = 10 * 60
+_READBACKS: dict = {}          # approval_id -> (hash of the owner's words when it was read back, time)
+_KEEP_RE = re.compile(r"(?i)\bkeep\b.{0,20}\b(here|on (this|the|my) (pc|computer|machine)|local(ly)?|private)\b")
+_THREAD_RE = re.compile(r"(?i)\b(thread|conversation)\b")
+_SENDER_RE = re.compile(r"(?i)\b(sender|from (him|her|them)|this person|(everything|anything|always) from)\b")
+
+
+def is_card(approval_id: str) -> bool:
+    try:
+        from agent_friday.services import approvals as _ap
+        rec = _ap.get_approval(str(approval_id or "").strip())
+        return bool(rec and (rec.get("payload") or {}).get("handler") == HANDLER)
+    except Exception:
+        return False
+
+
+def _words_hash(text: str) -> str:
+    return _hash(re.sub(r"\s+", " ", str(text or "")).strip().lower())
+
+
+def readback_line(rec: dict) -> str:
+    """What Friday says before a spoken Send: exactly the paragraphs that would go, and the choices."""
+    p = rec.get("payload") or {}
+    scope = p.get("scope") or {}
+    texts = list(p.get("what") or [])
+    extra = []
+    if scope.get("thread"):
+        extra.append("remember this thread")
+    if scope.get("sender"):
+        extra.append("remember this sender")
+    return ("Here is exactly what would go to the cloud model%s: %s. Shall I send it, once? Say send, or keep it "
+            "here.%s" % (" (%d paragraphs)" % len(texts) if len(texts) > 1 else "",
+                         " ".join("“%s”" % t for t in texts),
+                         (" You can also say " + " or ".join(extra) + ".") if extra else ""))
+
+
+def answer_in_words(approval_id: str, claimed: str, owner_words: str, *, spoken: bool,
+                    room_mode: bool = False, cloud_voice: bool = False) -> dict:
+    """answer_card for a money-paragraph card, from typed or spoken words.
+
+    Keep on this PC: the owner's own no (or "keep it here") decides it at once. Send: only AFTER Friday
+    has read back exactly the paragraphs that would go (the first call returns that line to say, word
+    for word, and records it), and the owner's own words since then say yes. Then the paragraphs go
+    once; "remember this thread" or "this sender" in those same words remembers it, as the card's ticks
+    do. In a room of several people the money is not read aloud, and a cloud voice (`cloud_voice`) is
+    never handed the text: the card is answered on screen. Typed, the read-back points at the card on
+    the screen, which shows exactly the text (the chat model may be a cloud one)."""
+    from agent_friday.services import approvals as _ap
+    rec = _ap.get_approval(str(approval_id or "").strip())
+    if not rec or (rec.get("payload") or {}).get("handler") != HANDLER:
+        return {"ok": False, "text": "NOT RECORDED: there is no money-paragraph card with that id."}
+    if rec.get("status") != "pending":
+        return {"ok": False, "text": "NOT RECORDED: that card is already %s." % rec.get("status")}
+    words = str(owner_words or "")
+    if not words.strip():
+        return {"ok": False, "text": "NOT RECORDED: there are no words from the user to go by."}
+    want = {"approve": "approve", "yes": "approve", "send": "approve", "decline": "deny", "deny": "deny",
+            "no": "deny", "keep": "deny"}.get(str(claimed or "").strip().lower())
+    if want is None:
+        return {"ok": False, "text": "NOT RECORDED: the decision is approve (Send) or decline (Keep on this PC)."}
+    from agent_friday.services import local_context as _lc
+    from agent_friday.services import item_actions as _ia
+    if spoken:
+        verdict = _lc.spoken_decision(words, room_mode)
+    else:
+        verdict = _ia.typed_decision(words)
+    if verdict is None and _KEEP_RE.search(words):
+        verdict = "deny"
+    if want == "deny":
+        if verdict != "deny":
+            return {"ok": False, "text": "NOT RECORDED: the user's own words did not keep it here. Ask them."}
+        out = decide(rec["approval_id"], "deny", decided_by="owner:%s" % ("voice" if spoken else "chat"))
+        _READBACKS.pop(rec["approval_id"], None)
+        return {"ok": bool(out.get("ok")), "text": "Recorded: kept on this PC. Nothing was sent to the cloud model."}
+    if spoken and room_mode:
+        return {"ok": False, "text": ("NOT RECORDED: there are other people in the room, so the money details are "
+                                      "not read aloud. Tell the user the card is on their screen: Send or Keep on "
+                                      "this PC there.")}
+    if spoken and cloud_voice:
+        return {"ok": False, "text": ("NOT RECORDED: this voice runs on a cloud model, so reading the money text "
+                                      "aloud would send it there before the user said yes. Tell the user the card "
+                                      "is on their screen with exactly the words: Send or Keep on this PC there, "
+                                      "or switch to local voice to hear it read back.")}
+    rb = _READBACKS.get(rec["approval_id"])
+    fresh = rb is not None and time.time() - rb[1] <= READBACK_TTL_S
+    if not fresh or rb[0] == _words_hash(words):
+        # Not read back yet (or the user has not answered since): read it back, and ask.
+        _READBACKS[rec["approval_id"]] = (_words_hash(words), time.time())
+        if not spoken:
+            return {"ok": False, "readback": True, "text": (
+                "NOT SENT YET: the card on the user's screen shows exactly the words that would go. Ask them to "
+                "read it and say send (or keep it here), then call answer_card again with their answer.")}
+        return {"ok": False, "readback": True, "text": (
+            "NOT SENT YET: first read this back to the user word for word, then wait for their answer and call "
+            "answer_card again: " + readback_line(rec))}
+    if verdict == "revise":
+        return {"ok": False, "text": ("NOT RECORDED: their yes had a condition, so it is not a yes to exactly this "
+                                      "text. Nothing was sent. Tell them the card can only send these words as "
+                                      "they are, or keep them here.")}
+    if verdict != "approve":
+        return {"ok": False, "text": "NOT RECORDED: the user's own words did not say send. Ask them directly."}
+    scope = (rec.get("payload") or {}).get("scope") or {}
+    remember = {"thread": bool(scope.get("thread") and _THREAD_RE.search(words)),
+                "sender": bool(scope.get("sender") and _SENDER_RE.search(words))}
+    out = decide(rec["approval_id"], "approve", remember,
+                 decided_by="owner:%s" % ("voice" if spoken else "chat"))
+    _READBACKS.pop(rec["approval_id"], None)
+    if not out.get("ok") or not out.get("won"):
+        return {"ok": False, "text": "That card was already decided."}
+    kept = [k for k in ("thread", "sender") if remember[k]]
+    return {"ok": True, "remembered": kept, "text": (
+        "Recorded: sent once. Those exact paragraphs go to the cloud model for this conversation"
+        + ("; from now on money paragraphs from this %s go without asking (Settings > Privacy & Data > "
+           "Money paragraphs in email, Forget, takes it back)" % " and this ".join(kept) if kept else "")
+        + ".")}
+
+
 _REGISTERED = False
 
 
