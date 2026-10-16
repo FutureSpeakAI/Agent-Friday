@@ -301,6 +301,23 @@ def _pre_approval(recipients):
         return None
 
 
+#: The line on a send card for a message a cloud model wrote that has private details in it.
+CLOUD_SENSITIVE_NOTE = ("Written on a cloud model, and it has private details in it: this is exactly "
+                        "what would be sent. Send, or Don't send.")
+
+
+def ccs_for_note(cc, bcc) -> list:
+    return _addresses(cc or []) + _addresses(bcc or [])
+
+
+def _pre_approval_names(recipients) -> bool:
+    """Did the checkpoint find a pre-approval for these recipients (used or not)?"""
+    try:
+        return _pre_approval(recipients) is not None
+    except Exception:
+        return False
+
+
 def _withheld_reason() -> str:
     """Why the checkpoint did not use a pre-approval that names these
     recipients (the call drew on outside content), or ""."""
@@ -393,8 +410,19 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     except Exception:
         pass
     withheld = _withheld_reason()
+    # Written on a cloud model with private details (privacy/vault_access: cloud_send_card_<tier>):
+    # the owner sees exactly what would go and decides on this card, whatever was pre-approved.
+    sensitive = bool(_tool_context().get("sensitive_cloud_send"))
+    if sensitive:
+        notes.append(CLOUD_SENSITIVE_NOTE)
+        if not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
+            withheld = ("this message has private details and was written on a cloud model, "
+                        "so you see it first")
     if withheld:
-        notes.append("You pre-approved these recipients, but %s." % withheld)
+        # A reason that names its own subject ("This chat read an outside email, so your
+        # pre-approval doesn't cover this send") stands as it is.
+        notes.append(withheld + "." if withheld.startswith("This ")
+                     else "You pre-approved these recipients, but %s." % withheld)
     note_text = ("\n" + "\n".join(notes)) if notes else ""
     card = dict(
         kind=APPROVAL_KIND,
@@ -427,7 +455,7 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     # for the exact message, so a grant revoked a moment ago is not used. The
     # record is created approved by that grant: no card, but the same undo
     # window, burn-once send, outbox and a logged use.
-    grant = _pre_approval(tos + ccs + _addresses(bcc or []))
+    grant = None if sensitive else _pre_approval(tos + ccs + _addresses(bcc or []))
     if grant is not None:
         appr = _ap.record_pre_approved(grant_id=grant["grant_id"], **card)
         if appr.get("status") == "approved" and not appr.get("consumed"):
@@ -788,8 +816,8 @@ def default_account_id() -> str:
     """The owner's default account for mail, if they set one (settings
     `mail_default_account`: an id, address or label); "" when unset."""
     try:
-        from agent_friday.core import _load_settings
-        return str((_load_settings() or {}).get("mail_default_account") or "").strip()
+        from agent_friday.services import owner_choices as _oc
+        return _oc.mail_default_account()
     except Exception:
         return ""
 

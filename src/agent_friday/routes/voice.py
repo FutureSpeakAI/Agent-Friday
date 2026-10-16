@@ -806,7 +806,10 @@ async def _live_card_tool(fname, fargs, send, session, runner=None):
         card = str((fargs or {}).get("card_id") or "")
         if _item_actions.is_laya_card(card):
             return _item_actions.LAYA_CARD_NOT_ON_LIVE      # never the line, a subject or a sender, to the cloud voice
-        if watch.verified(card) and (not _item_actions.is_laya_card(card)
+        from agent_friday.services import cloud_release as _cr
+        if _cr.is_card(card):
+            pass                                            # its own read-back first (cloud_release.answer_in_words)
+        elif watch.verified(card) and (not _item_actions.is_laya_card(card)
                                      or _item_actions.card_in_conversation(card, cid)):
             if session is not None:
                 session["voiced_cards"] = [card]       # the one rule, applied in agent

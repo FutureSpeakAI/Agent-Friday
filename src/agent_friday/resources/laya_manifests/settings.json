@@ -149,6 +149,7 @@
  ],
  "not_for_laya": [
   {"action": "settings.owner_choices", "kind": "by_design", "reason": "These are the owner's standing decisions, asked once at first run; Friday follows them and never changes them on its own word."},
+  {"action": "settings.mail_default_account", "kind": "by_design", "reason": "The account a new draft goes to when none is named is the owner's choice (Connections > Google accounts); Friday asks when it is unset."},
   {"action": "settings.preapproved_sends", "kind": "by_design", "reason": "A pre-approval is the owner's own decision: no tool may make, widen, re-approve or revoke one, or let voice use them; a skill's needs are approved as seen."},
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
   {

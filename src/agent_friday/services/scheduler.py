@@ -414,12 +414,18 @@ def schedule_view(rec) -> dict:
            "model_pinned": bool(pins)}
     if (rec or {}).get("source") != "builtin":
         policy = _missed_policy(rec)
+        # The owner's default as it is now (Settings > General > Scheduled jobs), so a job card can
+        # offer "Follow my default" and say what that default currently is.
+        md, hd = _missed_policy({}), _held_policy({})
         out.update(missed=policy, missed_text=MISSED_TEXT[policy],
-                   missed_own=(rec or {}).get("missed") in MISSED_POLICIES)
+                   missed_own=(rec or {}).get("missed") in MISSED_POLICIES,
+                   missed_default=md, missed_default_text=MISSED_TEXT[md])
         hp = _held_policy(rec)
         out.update(on_held=hp, held_text=HELD_TEXT[hp],
                    on_held_own=(rec or {}).get("on_held") in HELD_POLICIES,
-                   held_retry_pending=bool((rec or {}).get("held_retry")) and hp == "retry")
+                   held_default=hd, held_default_text=HELD_TEXT[hd],
+                   held_retry_pending=bool((rec or {}).get("held_retry")) and hp == "retry",
+                   email_send=(rec or {}).get("email_send") is True)
     return out
 
 
@@ -496,6 +502,9 @@ def _normalize_record(rec, *, source="user"):
         # schedules.missed_default / held_default) as its own choice, changeable on its card.
         out["missed"] = rec["missed"] if rec.get("missed") in MISSED_POLICIES else _missed_policy({})
         out["on_held"] = rec["on_held"] if rec.get("on_held") in HELD_POLICIES else _held_policy({})
+        # A new job's emails are saved as drafts unless it is made to send (services/email_jobs).
+        if isinstance(rec.get("email_send"), bool):
+            out["email_send"] = rec["email_send"]
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
               "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
@@ -536,7 +545,7 @@ def update_schedule(sid, patch) -> dict | None:
         if not cur:
             return None
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
-                   "retry", "timeout_seconds", "finish_notice", "missed", "on_held"}
+                   "retry", "timeout_seconds", "finish_notice", "missed", "on_held", "email_send"}
         before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
@@ -551,6 +560,12 @@ def update_schedule(sid, patch) -> dict | None:
                         continue
                     if k == "on_held" and v == "wait":
                         cur.pop("held_retry", None)
+                if k == "email_send":
+                    # The owner's choice on the job's card: its emails are sent (each asks, unless
+                    # pre-approved) or saved as drafts. Kept outside `task`, so a pre-approval for
+                    # the job is not voided by it.
+                    if not isinstance(v, bool):
+                        continue
                 cur[k] = v
         changed_run_fields = before != _run_basis(cur)
         cur["updated"] = _time.time()
@@ -1751,6 +1766,10 @@ def _run_task_inner(rec):
     prompt = task.get("prompt") or ""
     if not prompt.strip():
         raise RuntimeError("agent_prompt schedule has no prompt")
+    if rec.get("email_send") is True:
+        # services/email_jobs: this job was made to send its emails; draft_email is a send here.
+        prompt += ("\n\n(This job sends the emails it writes: call draft_email with send=true. "
+                   "Each send waits on the owner's card unless they pre-approved the recipients.)")
     from agent_friday.services.agent import _spawn_task, _task_snapshot
     run_id = rec.get("_active_run_id")
     # A scheduled agent_prompt is represented by the spawned agent's OWN orb
@@ -2954,6 +2973,18 @@ def start_scheduler():
     _register_default_builtin_tasks()
     _seed_and_reconcile()
     _seed_default_agent_schedules()
+    try:
+        # Once: jobs made to send email before draft_email saved drafts keep sending.
+        from agent_friday.services import email_jobs as _ej
+        _ej.migrate()
+    except Exception as e:
+        _log.warning("email jobs were not checked for sending: %s", e)
+    try:
+        # Once ever: a weekly podcast that is two voices is offered one voice (Switch / Keep).
+        from agent_friday.services import podcast_engine as _pe
+        _pe.maybe_offer_weekly_one_voice()
+    except Exception as e:
+        _log.debug("weekly one-voice offer not checked: %s", e)
     if core._TESTING:
         return
     threading.Thread(target=_loop, daemon=True).start()

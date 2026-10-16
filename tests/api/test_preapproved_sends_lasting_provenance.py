@@ -135,7 +135,9 @@ def test_a_task_spawned_from_a_chat_that_read_an_injected_email_does_not_use_the
                 "conversation_id": CHAT["conversation_id"]}
     res = _send(TEAM, ctx=task_ctx, body="Heads up: there are new arrangements, details to follow.")
     assert _carded(res), "a task spawned from a chat that read an injected email sent under the pre-approval"
-    assert "outside content" in _pending_for(res["approval_id"])[0]["action_description"]
+    # Named by kind (round 3): the task was started from a chat that read an outside email.
+    assert ("This task was started from a chat that read an outside email, so your pre-approval doesn't "
+            "cover this send") in _pending_for(res["approval_id"])[0]["action_description"]
     # The flag is on the task's own record, so it outlives the process.
     assert agent.TASKS[tid].get("outside_content")
 

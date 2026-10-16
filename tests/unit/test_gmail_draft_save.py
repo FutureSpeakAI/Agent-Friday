@@ -414,11 +414,12 @@ def test_a_draft_that_mentions_an_appointment_is_not_refused_on_a_cloud_seat(tmp
                                       model="claude-sonnet-5")
     assert ok is True and detail.startswith("own_mailbox_draft_") and tier > 1, (ok, detail)
     assert json.loads(log.read_text(encoding="utf-8").splitlines()[-1])["detail"] == detail   # logged
-    # Sending the same words to someone else keeps the ordinary refusal, which now names the draft path.
+    # Sending the same words to someone else goes to the owner's card (round 3: an approval card showing
+    # exactly what would be sent replaces the outright refusal); the never-send floor still refuses.
     ok2, detail2, _ = v.check_action("anthropic", "draft_email", json.dumps(dict(args, send=True)),
                                      model="claude-sonnet-5")
-    assert ok2 is False and detail2.startswith("cloud_denied_tier_")
-    assert "Saving it as a draft" in refusal_text("draft_email", detail2)
+    assert ok2 is True and detail2.startswith("cloud_send_card_"), (ok2, detail2)
+    assert "Saving it as a draft" in refusal_text("draft_email", "cloud_denied_tier_SENSITIVE")
 
 
 # ── voice: the same tool, reached the way voice reaches mail drafting ──────────

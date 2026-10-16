@@ -449,7 +449,8 @@ def _owner_choices():
 def test_setup_questions_list_the_eight_decisions_each_a_setting_with_a_settings_control(settings):
     oc = _owner_choices()
     qs = oc.setup_questions()
-    assert len(qs) == 8
+    # The eight, and the default account for drafts (round 3).
+    assert len(qs) == 9 and qs[-1]["key"] == "mail_default_account"
     controls = json.loads((ROOT / "tests/unit/settings_controls.json").read_text(encoding="utf-8"))
     control_keys = {k for row in controls if row["status"] != "removed" for k in row["keys"]}
     for q in qs:
@@ -523,6 +524,6 @@ def test_the_cards_render_their_choices_under_node():
     assert any("Remember for this sender" in t for t in got["ticks"])
     assert got["calls"][0] == ["/api/privacy/cloud-release/appr_1/decide",
                                {"decision": "approve", "remember": {"thread": False, "sender": False}}]
-    assert got["selects"] == ["skip", "retry"]
+    assert got["selects"][:2] == ["skip", "retry"]
     assert got["calls"][1] == ["/api/schedules/sch_1", {"on_held": "wait"}]
     assert got["del"] == "Delete…"

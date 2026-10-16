@@ -379,6 +379,7 @@
   }
  ],
  "not_for_laya": [
+  {"action": "media.podcast_one_voice_offer", "kind": "by_design", "reason": "One voice or two for the weekly show is the owner's choice, offered once on the Podcasts page; Friday never changes it on its own word."},
   {"action": "media.change_status", "kind": "gap", "reason": "No tool changes a card's status.", "wave": "WS-2"},
   {
    "action": "media.trash_tidy",

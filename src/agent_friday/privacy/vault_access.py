@@ -96,6 +96,73 @@ def _own_mailbox_draft(action, data_str) -> bool:
         return False                  # unreadable -> the ordinary deny applies
 
 
+# ── An email SEND written on a cloud seat ───────────────────────────────────
+# draft_email with send=true whose text rates above PUBLIC used to be refused
+# outright on a cloud seat. The owner's rule is that they decide once informed:
+# the send now goes to the approval card, which shows exactly what would be
+# sent (from, recipients, subject, body), with Send and Don't send, and a
+# pre-approval does not cover it (gmail_send.request_send reads the
+# `sensitive_cloud_send` mark the agent loop puts on the call). Allowed here
+# and logged as "cloud_send_card_<tier>". The floor does not move: never-send
+# list items, credentials, and ID, card or account numbers are refused, with
+# the reason in plain words.
+CLOUD_SEND_CARD_PREFIX = "cloud_send_card_"
+_FLOOR_PREFIX = "cloud_send_floor:"
+#: The floor's kinds, in the words the owner reads.
+FLOOR_WORDS = {
+    "never_send": "it contains something on your never-send list",
+    "credential": "it contains what looks like a password, key or other credential",
+    "card": "it contains a payment card number",
+    "ssn": "it contains an ID number (a Social Security number)",
+    "routing": "it contains a bank routing or account number",
+    "api_key": "it contains an API key",
+    "vault_document": "it contains a vault document (legal, finances or family)",
+}
+
+
+def _email_send(action, data_str) -> bool:
+    """draft_email asking to SEND (send=true)."""
+    if str(action or "") not in OWN_MAILBOX_DRAFT_TOOLS:
+        return False
+    try:
+        args = json.loads(data_str) if isinstance(data_str, str) else (data_str or {})
+        from agent_friday.services.gmail_send import wants_send
+        return isinstance(args, dict) and wants_send(args)
+    except Exception:
+        return False
+
+
+def send_floor(text) -> str:
+    """The never-send floor for an outgoing message: the kind it hits
+    (a FLOOR_WORDS key), or "" when it is clear. Fails closed."""
+    text = str(text or "")
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        never = _jg.never_send_hits(text)
+        if never:
+            low = text.lower()
+            if any(m in low for m in ("vault/legal/", "vault/finances/", "vault/family/",
+                                      "vault\\legal\\", "vault\\finances\\", "vault\\family\\")):
+                return "vault_document"
+            return "never_send"
+        hard = _jg.hard_identifier_hits(text)
+        if hard:
+            return hard[0] if hard[0] in FLOOR_WORDS else "card"
+    except Exception:
+        return "never_send"
+    try:
+        from agent_friday.services import secret_shapes as _ss
+        if _ss.looks_like_secret(text):
+            return "credential"
+    except Exception:
+        pass
+    return ""
+
+
+def is_cloud_send_card(detail) -> bool:
+    return str(detail or "").startswith(CLOUD_SEND_CARD_PREFIX)
+
+
 # ── Keyword lists exposed for legacy callers ────────────────────────────────
 # The authoritative definitions live in services/sensitivity_classifier.py.
 # These are imported from there so both modules agree by construction.
@@ -387,6 +454,16 @@ class VaultAccessControl:
             elif _own_mailbox_draft(action, data_str):
                 # A draft in the owner's own mailbox; see the note above.
                 detail = f"own_mailbox_draft_{Tier.NAMES.get(tier, tier)}"
+            elif _email_send(action, data_str):
+                # A SEND written on a cloud seat with private details: the owner decides on a
+                # card that shows exactly what would go (see the note above send_floor). The
+                # never-send floor still refuses, with its plain reason.
+                floor = send_floor(data_str)
+                if floor:
+                    allowed = False
+                    detail = f"{_FLOOR_PREFIX}{floor}"
+                else:
+                    detail = f"{CLOUD_SEND_CARD_PREFIX}{Tier.NAMES.get(tier, tier)}"
             else:
                 allowed = False
                 detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"
@@ -523,6 +600,8 @@ def denial_component(detail):
     d = str(detail or "")
     if d.startswith(_PQ_PREFIX):
         return "privacy.public_query", d[len(_PQ_PREFIX):] or "unknown"
+    if d.startswith(_FLOOR_PREFIX):
+        return "privacy.never_send_floor", d[len(_FLOOR_PREFIX):] or "never_send"
     return COMPONENT, d or "unknown"
 
 
@@ -535,6 +614,12 @@ def refusal_text(action, detail):
     orb correlation read.
     """
     comp, reason = denial_component(detail)
+    if comp == "privacy.never_send_floor":
+        why = FLOOR_WORDS.get(reason, FLOOR_WORDS["never_send"])
+        return (f"[VAULT ACCESS DENIED] component={comp} reason={reason} tool={action}: "
+                f"this email was NOT sent and no card was raised, because {why}. That never "
+                f"leaves this PC by email, whoever approves it. Tell the user plainly that it was "
+                f"not sent and why, in those words; offer to send it without that part.")
     if comp == "privacy.public_query":
         try:
             from agent_friday.privacy.public_query import _REASON_TEXT

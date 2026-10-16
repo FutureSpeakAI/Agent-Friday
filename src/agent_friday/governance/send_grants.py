@@ -589,6 +589,78 @@ def log(limit: int = 50) -> list:
     return out
 
 
+#: The kinds of outside content, as the card names them: (words in the plain source, the kind).
+#: First match wins; a source that names none of them is "outside content".
+_SOURCE_KINDS = (
+    ("recalled", "a recalled memory"),
+    ("memory", "a recalled memory"),
+    ("friday's notes", "a wiki page"),
+    ("wiki", "a wiki page"),
+    ("contact notes", "contact notes"),
+    ("your contacts", "contact notes"),
+    ("task results", "a task's results"),
+    ("workflow results", "a workflow's results"),
+    ("workflow's previous result", "a workflow's earlier result"),
+    ("working notes", "a task's working notes"),
+    ("web search", "web search results"),
+    ("web page", "a web page"),
+    ("your email", "an outside email"),
+    ("email", "an outside email"),
+    ("library", "a document"),
+    ("shared document", "a document"),
+    ("document", "a document"),
+    ("a file", "a document"),
+    ("calendar", "a calendar event"),
+    ("chat message", "a chat message"),
+    ("connector", "a connector's data"),
+)
+_NOT_COVERED = "so your pre-approval doesn't cover this send"
+
+
+def source_kind(why: str) -> str:
+    """The kind of outside content a plain source description names (taint.describe_source,
+    an outside_content reason), as the card says it: "an outside email", "a web page", ..."""
+    low = str(why or "").lower()
+    for needle, kind in _SOURCE_KINDS:
+        if needle in low:
+            return kind
+    return "outside content"
+
+
+def outside_content_why(ctx=None) -> str:
+    """Why a pre-approval does not cover this send, in plain words naming the kind of outside
+    content behind it: "This chat read an outside email, so your pre-approval doesn't cover this
+    send" (a web page, a document, a recalled memory, a wiki page; or "This task was started from a
+    chat that read ..."). Falls back to OUTSIDE_CONTENT_WHY's sense when no source can be named."""
+    sc = ctx or {}
+    who = "This task" if sc.get("task_id") or sc.get("is_background_task") else "This chat"
+    why, spawned = "", False
+    try:
+        from agent_friday.governance import outside_content as _oc
+        turn = _oc.turn_outside(sc)
+        if turn:
+            why = turn
+        else:
+            try:
+                from agent_friday.services import taint as _t
+                labels = _t.recent_content(_t.ledger_key(sc), window=_t.TTL_SECONDS, for_grants=True)
+            except Exception:
+                labels = []
+            why = labels[0] if labels else _oc.is_marked(sc)
+        low = str(why or "").lower()
+        spawned = low.startswith("spawned from") or low.startswith("continues a task")
+    except Exception:
+        why = ""
+    if not why:
+        return "This message drew on outside content, " + _NOT_COVERED
+    kind = source_kind(why)
+    if spawned:
+        return "This task was started from a chat that read %s, %s" % (kind, _NOT_COVERED)
+    if kind == "a recalled memory":
+        return "This chat's prompt carried %s, %s" % (kind, _NOT_COVERED)
+    return "%s read %s, %s" % (who, kind, _NOT_COVERED)
+
+
 def note_withheld(grant: dict, tool_name: str, ctx=None, why: str = OUTSIDE_CONTENT_WHY) -> None:
     """A grant named these recipients, but the call was not clean, so it gets
     its card. Logged, so the owner can see why a pre-approved send asked."""

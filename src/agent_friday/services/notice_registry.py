@@ -296,6 +296,14 @@ _ALL = [
     # job, closed by its next run that goes.
     _e("SJ1", "services/scheduler.py:_notify_run:held", "scheduled_held", NEEDS_YOU,
        "sched-held:{schedule_id}", source="scheduler", pk="scheduled_task"),
+    # Once, on the first start after draft_email began saving drafts: the jobs and workflows that
+    # were made to send email and so keep sending (services/email_jobs).
+    _e("MJ1", "services/email_jobs.py:_notify", "email_jobs_kept_sending", ACTIVITY,
+       "email-send-migration", source="scheduler"),
+    # The one-time offer to an install whose weekly show is two voices: Switch or Keep, never
+    # raised again after either answer or a dismissal (services/podcast_engine).
+    _e("PO1", "services/podcast_engine.py:maybe_offer_weekly_one_voice", "podcast_one_voice_offer", ACTIVITY,
+       "podcast-weekly-one-voice", source="podcasts"),
     # A dock change made the moment the owner asked (no card), with its Undo.
     _e("OC1", "services/setting_proposals.py:_offer_undo", "setting_changed", UPDATES,
        "dock-change:{change_id}", source="settings", pk="info"),

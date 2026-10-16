@@ -5161,5 +5161,19 @@
   "reader_needle": "_settings(settings).get(\"calendar_delete_notify_guests\")",
   "status": "ok",
   "note": "Decision 8. The starting state of the notify-guests box (Calendar's Delete dialog, CalDeleteConfirm) and the delete_calendar_event default; ticked sends sendUpdates=all (calendar_write.delete_event)."
+ },
+ {
+  "section": "Connections",
+  "panel": "Accounts & Keys > Google accounts",
+  "label": "Default account for drafts",
+  "kind": "select (Ask me | each connected Gmail account)",
+  "keys": [
+   "mail_default_account"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/owner_choices.py",
+  "reader_needle": "_settings(settings).get(\"mail_default_account\")",
+  "status": "ok",
+  "note": "Lists GET /api/mail/draft-accounts (gmail_send.mail_accounts). gmail_send.default_account_id reads it through owner_choices.mail_default_account; choose_account keeps its order: the account named > the replied-to conversation's > this default > the only one > ask. Ask me saves an empty value."
  }
 ]
