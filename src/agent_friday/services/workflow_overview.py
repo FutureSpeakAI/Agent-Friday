@@ -500,7 +500,14 @@ def _job_view(rec, slug=None):
     if not rec:
         v = _sched.schedule_view({"source": "user", "enabled": True,
                                   "task": {"kind": "workflow", "ref": slug}})
-        return {"model": v["model"], "model_pinned": v["model_pinned"]}
+        try:
+            from agent_friday.services import email_jobs as _ej
+            sends = _ej.workflow_sends(slug)
+        except Exception:
+            sends = False
+        # Its emails when run on request: sent (each asks unless pre-approved) or saved as drafts,
+        # the workflow's own choice on its card (PATCH /api/workflows/chains/<slug>).
+        return {"model": v["model"], "model_pinned": v["model_pinned"], "email_send": sends}
     return {"schedule_status": rec.get("status"), "status_reason": rec.get("status_reason") or "",
             "model": rec.get("model") or "", "model_pinned": bool(rec.get("model_pinned")),
             "missed_text": rec.get("missed_text") or "",

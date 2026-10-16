@@ -7041,6 +7041,11 @@ def _save_workflow_chain_locked(defn):
         })
     slug = _chain_slug(defn.get('slug') or name)
     previous = load_workflow_chain(slug) or {}
+    # Whether its emails send or save as drafts is the owner's choice on the workflow's card
+    # (services/email_jobs.set_workflow_email_send), not part of what it does: an edit or a restored
+    # revision keeps the choice the record has now.
+    email_send = previous.get('email_send') if isinstance(previous.get('email_send'), bool) \
+        else defn.get('email_send')
     defn = dict(previous, **defn)
     if not isinstance(defn.get('inputs') or [], list) or any(
             not isinstance(x, str) for x in defn.get('inputs') or []):
@@ -7064,6 +7069,8 @@ def _save_workflow_chain_locked(defn):
         'revision': int(previous.get('revision') or (1 if previous else 0)) + 1,
         'updated': datetime.now().isoformat(),
     }
+    if isinstance(email_send, bool):
+        stored['email_send'] = email_send
     d = _workflows_dir()
     target = d / f"{stored['slug']}.json"
     temp = target.with_suffix('.tmp')

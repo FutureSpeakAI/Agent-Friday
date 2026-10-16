@@ -16,6 +16,11 @@ Settings > Privacy & Data: `email_cloud_release`, "ask" by default):
   keeps today's behaviour (announced withholding) and is not asked again for the same paragraphs;
 * "withhold" keeps every such paragraph on this PC without a card, as before.
 
+Only where the text would leave the PC: when the seat receiving the email result is Friday's own local
+model there is no card and no read-back, and the paragraphs reach it untouched (egress_gate passes an
+email result for a local destination whole). The card appears at the point a later call would carry the
+text to a cloud model: the same conversation escalating to a cloud seat seals its history then.
+
 The never-send list and hard identifiers (account and card numbers) are never offered: they stay home
 whatever anyone answers. The remembered choices are listed in Settings with Forget.
 
@@ -273,11 +278,24 @@ def _withheld_money(parsed, gated) -> list:
     return out
 
 
-def offer(parsed, gated, provider: str = "") -> str:
+def to_cloud(provider: str = "", model: str = "") -> bool:
+    """Would the text go to a cloud model? The card is about text leaving the PC, so it is keyed on the
+    actual destination, never on the consent setting alone. Unsure means cloud."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        return _eg.destination_is_cloud(provider, model)
+    except Exception:
+        return True
+
+
+def offer(parsed, gated, provider: str = "", model: str = "") -> str:
     """After the gate ran on an email result: raise (or find) the card for the money paragraphs it held
-    back, and return the line the model is told, or "" when there is nothing to ask. Never raises."""
+    back, and return the line the model is told, or "" when there is nothing to ask. Never raises.
+    No card when the destination is Friday's own local model: nothing leaves the PC there."""
     try:
         if _choice() != "ask" or not guarded_consent():
+            return ""
+        if not to_cloud(provider, model):
             return ""
         items = _withheld_money(parsed, gated)
         if not items:

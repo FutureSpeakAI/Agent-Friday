@@ -54,6 +54,15 @@ def update_schedule(sid):
     rec = _sched.update_schedule(sid, patch)
     if not rec:
         return jsonify({"status": "error", "message": "not found"}), 404
+    task = rec.get("task") or {}
+    if isinstance(patch.get("email_send"), bool) and task.get("kind") == "workflow" and task.get("ref"):
+        # A scheduled workflow's card has one "Its emails" switch: it decides the job's runs and the
+        # workflow's runs on request alike (services/email_jobs). Outside the schedule store's lock.
+        try:
+            from agent_friday.services import email_jobs as _ej
+            _ej.set_workflow_email_send(str(task["ref"]), patch["email_send"])
+        except Exception as e:
+            return api_error(e, "The job's choice was saved, but its workflow's runs on request were not changed")
     return jsonify({"status": "ok", "schedule": rec})
 
 

@@ -27,6 +27,8 @@ approval card unless the owner pre-approved the recipients.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import os
 import logging
 import re
 import threading
@@ -194,6 +196,55 @@ def _notify(st: dict) -> None:
         _log.warning("email jobs notice not shown: %s", e)
 
 
+def workflow_sends(slug: str) -> bool:
+    """Does this saved workflow SEND the emails it writes when it runs on request?
+
+    The owner's choice on its Workflows card is the workflow record's own `email_send` (kept outside
+    the fields a job pre-approval fingerprints: send_grants._WORKFLOW_CONTENT). A workflow with no
+    choice of its own follows the one-time mark (this module's state file): made to send before
+    draft_email saved drafts means it still sends; anything else saves drafts."""
+    slug = str(slug or "")
+    if not slug:
+        return False
+    try:
+        from agent_friday.services import agent as _agent
+        chain = _agent.load_workflow_chain(slug) or {}
+    except Exception:
+        chain = {}
+    if isinstance(chain.get(FLAG), bool):
+        return chain[FLAG]
+    return slug in (state().get("send_workflows") or [])
+
+
+def set_workflow_email_send(slug: str, send: bool) -> dict | None:
+    """The owner's switch on a saved workflow's card: its emails are sent (each asks first unless
+    pre-approved) or saved as drafts. Written on the workflow record, outside the fingerprinted
+    content and without a new revision (it changes nothing the workflow does but this choice), so a
+    job pre-approval for a schedule that runs it is not voided and an open editor is not told the
+    workflow changed. Returns the record, or None when there is no such workflow."""
+    if not isinstance(send, bool):
+        raise ValueError("email_send is true (send) or false (save as drafts)")
+    from agent_friday.services import agent as _agent
+    from agent_friday.services import workflow_operations as _ops
+    with _ops.LOCK:
+        chain = _agent.load_workflow_chain(slug)
+        if not chain:
+            return None
+        chain = dict(chain, **{FLAG: send})
+        base = os.path.realpath(str(_agent._workflows_dir()))
+        name = "%s.json" % _agent._chain_slug(chain.get("slug") or slug)
+        target_s = os.path.realpath(os.path.join(base, name))
+        # The file stays directly inside the workflows folder, whatever the slug.
+        if os.path.dirname(target_s) != base or not target_s.startswith(base + os.sep):
+            raise ValueError("that workflow name does not name a file in the workflows folder")
+        target = Path(target_s)
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps(chain, indent=2), encoding="utf-8", newline="\n")
+        tmp.replace(target)
+    _log.info("workflow %s: its emails are %s", chain.get("slug"), "sent" if send else "saved as drafts")
+    return chain
+
+
 def sends_for(ctx: dict | None) -> bool:
     """Is the running call part of a job or workflow marked to send its emails?"""
     ctx = ctx or {}
@@ -214,6 +265,6 @@ def sends_for(ctx: dict | None) -> bool:
                 slug = str((_agent.TASKS.get(tid) or {}).get("chain") or "")
         except Exception:
             slug = ""
-        if slug and slug in (state().get("send_workflows") or []):
+        if slug and workflow_sends(slug):
             return True
     return False
