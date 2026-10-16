@@ -22,12 +22,17 @@
       first-run first-run.json records the cloud choice and no download
       localhost Friday answers on http://127.0.0.1:<port>/ with no login
       health    /api/health answers and reports this release
+      zero-keys no provider key is configured, and the page, /api/health and
+                the connection checklist all answered without one
       consent   first run opens on the vault-first consent flow, and the
                 weekly update check is a question, not a default
       setup-chat the setup chat starts at its first stage
       first-load reloading the desktop does not end first-run setup
       connections the checklist lists the services and no secret
       setup-later "Set up later" completes setup with defaults (run last)
+      boot-errors the first boot logged no Traceback and no ERROR or CRITICAL
+                line (server.log, server.log.err and ~/.friday/friday.log),
+                apart from the allowed lines named where the check is made
       schedules scheduled jobs default to a local seat; the update check is off
       phone     the phone is off until someone configures it
       officecli the document engine is installed and matches its pinned SHA-256
@@ -75,6 +80,30 @@ $py = Join-Path $InstallRoot 'python\python.exe'
 $env:FRIDAY_PORT = "$Port"
 $env:PYTHONUTF8 = '1'
 
+# The release this installer must be, read from the tree it was built from and
+# never restated here: pyproject.toml owns the version, release.py the release
+# name and the build sequence (build-installer.ps1 reads the same two files).
+$RepoRoot  = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+$pyproject = Get-Content -LiteralPath (Join-Path $RepoRoot 'pyproject.toml') -Raw
+$releasePy = Get-Content -LiteralPath (Join-Path $RepoRoot 'src\agent_friday\release.py') -Raw
+$vm = [regex]::Match($pyproject, '(?m)^version\s*=\s*"([^"]+)"')
+$nm = [regex]::Match($releasePy, '(?m)^RELEASE_NAME\s*=\s*"([^"]+)"')
+$sm = [regex]::Match($releasePy, '(?m)^BUILD_SEQUENCE\s*=\s*([0-9_]+)')
+if (-not ($vm.Success -and $nm.Success -and $sm.Success)) {
+    throw 'cannot read the expected release from pyproject.toml and src\agent_friday\release.py'
+}
+$ExpectedVersion  = $vm.Groups[1].Value                   # PEP 440, as /api/health reports it
+$ExpectedName     = $nm.Groups[1].Value                   # the Apps list's DisplayName
+$ExpectedSequence = [int64]($sm.Groups[1].Value -replace '_', '')
+$tm = [regex]::Match($ExpectedVersion, '^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$')
+if (-not $tm.Success) { throw "pyproject version $ExpectedVersion is not a version this check understands" }
+$ExpectedTag = $tm.Groups[1].Value                        # tag spelling, the Apps list's DisplayVersion
+if ($tm.Groups[2].Success) {
+    $word = @{ a = 'alpha'; b = 'beta'; rc = 'rc' }[$tm.Groups[2].Value]
+    $ExpectedTag = '{0}-{1}.{2}' -f $tm.Groups[1].Value, $word, $tm.Groups[3].Value
+}
+Write-Host "expected release: $ExpectedName, version $ExpectedVersion, tag v$ExpectedTag, build sequence $ExpectedSequence"
+
 function Invoke-Setup([string] $tag) {
     $log = Join-Path $WorkDir "setup-$tag.log"
     $p = Start-Process -FilePath $Setup -PassThru -Wait `
@@ -121,7 +150,7 @@ Check 'shortcuts' ($lnk.Desktop -and $lnk.StartMenu) `
 
 $apps = $null
 try { $apps = Get-ItemProperty -Path $AppsKey -ErrorAction Stop } catch { }
-Check 'apps' ($null -ne $apps -and $apps.DisplayName -eq 'Agent Friday Beta 1.1' -and [string]$apps.DisplayVersion -match '^1\.1\.0-beta\.1$') `
+Check 'apps' ($null -ne $apps -and $apps.DisplayName -eq $ExpectedName -and [string]$apps.DisplayVersion -eq $ExpectedTag) `
       $(if ($apps) { "$($apps.DisplayName) $($apps.DisplayVersion)" } else { 'no Apps entry' })
 
 $firstRun = $null
@@ -150,7 +179,7 @@ try {
     }
 
     $health = Api '/api/health'
-    Check 'health' ([string]$health.version -eq '1.1.0b1') "version: $($health.version); release: $($health.release_name)"
+    Check 'health' ([string]$health.version -eq $ExpectedVersion) "version: $($health.version) (expected $ExpectedVersion); release: $($health.release_name)"
 
     # First run: the consent flow comes first, the vault second, and the
     # update check is asked rather than assumed.
@@ -182,6 +211,19 @@ try {
     $secretShaped = $raw -match '(sk-ant-|sk-or-|AIza[0-9A-Za-z_\-]{20}|ghp_[0-9A-Za-z]{20}|xox[baprs]-)'
     Check 'connections' (($missing.Count -eq 0) -and ($ids.Count -ge 30) -and (-not $secretShaped)) `
           ("$($ids.Count) services; missing: " + ($missing -join ', ') + "; key-shaped text present: $secretShaped")
+
+    # Zero keys: a fresh install has no provider key, stored or in the
+    # environment, and the page, /api/health and the checklist above all
+    # answered without one.
+    $keyed = @($list.items | Where-Object { ([string]$_.id).StartsWith('provider:') -and
+                                            (@('connected', 'needs_attention') -contains [string]$_.status) } |
+               ForEach-Object { "$($_.id)=$($_.status)" })
+    $providerRows = @($list.items | Where-Object { ([string]$_.id).StartsWith('provider:') })
+    $oneKey = [string]$list.one_key.in_use
+    Check 'zero-keys' (($providerRows.Count -gt 0) -and ($keyed.Count -eq 0) -and (-not $oneKey) -and
+                       ($null -ne $health) -and [string]$health.version) `
+          ("$($providerRows.Count) providers; with a key: " + $(if ($keyed.Count) { $keyed -join ', ' } else { 'none' }) +
+           "; key in use: " + $(if ($oneKey) { $oneKey } else { 'none' }) + "; served and /api/health answered: $([bool][string]$health.version)")
 
     # Scheduled jobs: seeded at boot into ~/.friday/schedules.json.
     $schedFile = Join-Path $FridayDir 'schedules.json'
@@ -311,6 +353,64 @@ finally {
     Start-Sleep -Seconds 3
 }
 
+# ── No errors in the first boot ────────────────────────────────────────────
+# The whole first boot of a fresh, zero-key install, read after the server has
+# stopped: its own output (server.log, server.log.err) and Friday's log, copied
+# beside the evidence before the reinstall appends to it. A line fails the
+# check when it holds a Python traceback or starts at ERROR or CRITICAL in any
+# of the three shapes Friday writes: friday.log's "<time> ERROR    <logger> ...",
+# the stderr mirror's "[FRIDAY] ERROR ...", and Python's default "ERROR:<logger>:".
+# Level names are matched case-sensitively so a message that merely starts
+# with the word "Error" is not a log level.
+$bootLogs = @($ServerLog, "$ServerLog.err")
+$fridayLog = Join-Path $FridayDir 'friday.log'
+if (Test-Path -LiteralPath $fridayLog) {
+    $fridayCopy = Join-Path $WorkDir 'friday-first-boot.log'
+    Copy-Item -LiteralPath $fridayLog -Destination $fridayCopy -Force
+    $bootLogs += $fridayCopy
+}
+$errorLevelLine = '^(?:\[FRIDAY\] |\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} +)?(?:ERROR|CRITICAL)\b'
+$tracebackLine  = 'Traceback \(most recent call last\)'
+
+# The allowed lines, each matched whole and only while its reason holds.
+#
+#   Layer 3 of the privacy classifier needs sentence-transformers, which is in
+#   the memory tier; this job installs with /SkipMemory=1, so the layer is
+#   absent by request. /api/health still answers, but it logs the layer's
+#   import error at ERROR under "Couldn't check Friday's health". Allowed only
+#   when the installed Python cannot find sentence_transformers, and only when
+#   that import error is the line's one and only finding.
+#
+# Not allowed: "voice ear proof failed: ModuleNotFoundError faster_whisper".
+# faster-whisper is in the recommended tier, which this installer carries and
+# verifies, and the line is a WARNING in any case.
+& $py -c "import importlib.util, sys; sys.exit(3 if importlib.util.find_spec('sentence_transformers') is None else 0)"
+$memoryTierAbsent = ($LASTEXITCODE -eq 3)
+$allowedBootLines = @()
+if ($memoryTierAbsent) {
+    $allowedBootLines += "Couldn't check Friday's health: privacy_classifier\.layer3\.error=ModuleNotFoundError: No module named 'sentence_transformers'\s*$"
+}
+
+$bootErrors = @()
+$bootAllowed = @()
+foreach ($f in $bootLogs) {
+    if (-not (Test-Path -LiteralPath $f)) { continue }
+    $n = 0
+    foreach ($line in (Get-Content -LiteralPath $f -Encoding UTF8)) {
+        $n++
+        $isTrace = $line -cmatch $tracebackLine
+        if (-not $isTrace -and ($line -cnotmatch $errorLevelLine)) { continue }
+        $where = '{0}:{1}: {2}' -f (Split-Path -Leaf $f), $n, $line.Trim()
+        $isAllowed = (-not $isTrace) -and (@($allowedBootLines | Where-Object { $line -cmatch $_ }).Count -gt 0)
+        if ($isAllowed) { $bootAllowed += $where } else { $bootErrors += $where }
+    }
+}
+foreach ($e in ($bootErrors | Select-Object -First 40)) { Write-Host "  first-boot error: $e" }
+foreach ($a in ($bootAllowed | Select-Object -First 5)) { Write-Host "  first-boot allowed: $a" }
+Check 'boot-errors' ((Test-Path -LiteralPath $ServerLog) -and ($bootErrors.Count -eq 0)) `
+      ("read: " + (($bootLogs | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Split-Path -Leaf $_ }) -join ', ') +
+       "; errors: $($bootErrors.Count); allowed: $($bootAllowed.Count); memory tier absent: $memoryTierAbsent")
+
 # ── Uninstall, keeping the person's data ───────────────────────────────────
 # A sentinel in the data home, hashed now: the setup program's uninstaller must
 # leave it byte for byte, and so must the reinstall.
@@ -358,7 +458,7 @@ if ($reExit -eq 0 -and (Test-Path $py)) {
 }
 $keptAgain = (Test-Path -LiteralPath $sentinel) -and ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $sentinelHash)
 Check 'reinstall' (($reExit -eq 0) -and $lnkRe.Desktop -and $lnkRe.StartMenu -and ($null -ne $manifestRe) -and
-                   ([int64]$manifestRe.build_sequence -gt 51403) -and ($null -ne $healthRe) -and ([string]$healthRe.version -eq '1.1.0b1') -and $keptAgain) `
+                   ([int64]$manifestRe.build_sequence -eq $ExpectedSequence) -and ($null -ne $healthRe) -and ([string]$healthRe.version -eq $ExpectedVersion) -and $keptAgain) `
       ("exit $reExit; shortcuts: $($lnkRe.Desktop)/$($lnkRe.StartMenu); build sequence: " +
        $(if ($manifestRe) { $manifestRe.build_sequence } else { 'no manifest' }) + "; health version: " +
        $(if ($healthRe) { $healthRe.version } else { 'no answer' }) + "; data kept: $keptAgain")
