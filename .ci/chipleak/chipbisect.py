@@ -130,6 +130,15 @@ def main() -> int:
             v.append(run([], "alone#%d" % i))
         log("ALONE: %s" % v)
         return 0 if v == ["PASS"] * 3 else 1
+    if mode == "unitleak":
+        node = "tests/unit/test_notices_do_not_leak_between_files.py"
+        p = subprocess.run([sys.executable, "-m", "pytest", node, "-n", "0", "-rA", "-p", "no:cacheprovider",
+                            "-p", "no:pytest_resource_guard"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        (OUT / "unitleak.txt").write_text(p.stdout + "\n--- stderr ---\n" + p.stderr, encoding="utf-8")
+        log("UNITLEAK %s: exit %s" % (node, p.returncode))
+        print(p.stdout[-6000:])
+        return p.returncode
     pre = [ln.strip().lstrip("﻿") for ln in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()
            if ln.strip()]
     if mode == "watch":

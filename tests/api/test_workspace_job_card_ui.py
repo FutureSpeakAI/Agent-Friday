@@ -72,6 +72,8 @@ def desk(client, tmp_path, monkeypatch):
     with core.PROCESSES_LOCK:
         saved_procs = dict(core.PROCESSES)
         core.PROCESSES.clear()
+    from tests.api.conftest import assert_top_bar_clean
+    assert_top_bar_clean(client)
 
     seen: dict = {}
 

@@ -1,4 +1,4 @@
-﻿name: chipleak
+name: chipleak
 
 # CI-only (draft PR, never merged): reproduce and bisect the order-dependent
 # failure of tests/api/test_workspace_job_card_ui.py. The PC has < 4 GB free.
@@ -27,8 +27,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, python: "3.13", mode: watch }
-          - { os: ubuntu-latest,  python: "3.12", mode: watch }
+          - { os: windows-latest, python: "3.13", mode: unitleak }
+          - { os: ubuntu-latest,  python: "3.12", mode: unitleak }
+          - { os: windows-latest, python: "3.13", mode: chain }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
