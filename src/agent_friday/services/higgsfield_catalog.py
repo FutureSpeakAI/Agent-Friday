@@ -423,13 +423,47 @@ def _enumerate_type(mtype: str) -> list:
     return items
 
 
+def connector_configured() -> bool:
+    """Is a Higgsfield MCP server configured and switched on?
+
+    Read from the running MCP manager when there is one, else from
+    mcp_servers.json. Never starts, seeds or authorizes anything: a person who
+    never connected Higgsfield has nothing to enumerate, and that is not a
+    failure.
+    """
+    import sys
+    agent = sys.modules.get("agent_friday.services.agent")
+    mgr = getattr(agent, "_MCP_MANAGER", None) if agent is not None else None
+    if mgr is not None:
+        sp = (getattr(mgr, "servers", None) or {}).get(MCP_SERVER)
+        return sp is not None and getattr(sp, "status", "") != "disabled"
+    try:
+        from agent_friday.core import FRIDAY_DIR
+        path = FRIDAY_DIR / "mcp_servers.json"
+        if not path.exists():
+            return False
+        cfg = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        return False
+    servers = cfg.get("servers", cfg) if isinstance(cfg, dict) else {}
+    spec = (servers or {}).get(MCP_SERVER)
+    return isinstance(spec, dict) and spec.get("enabled") is not False
+
+
 def refresh() -> dict:
     """Enumerate the live Higgsfield catalog into the discovery cache.
 
-    Returns {status: "refreshed"|"unavailable"|"error", provider, count,
-    by_type?, fetched_at?, error?}. Never raises. A failed or empty
-    enumeration leaves any existing cache untouched.
+    Returns {status: "refreshed"|"unavailable"|"error"|"not_connected",
+    provider, count, by_type?, fetched_at?, error?}. Never raises. A failed or
+    empty enumeration leaves any existing cache untouched.
+
+    With no Higgsfield connector configured the answer is "not_connected",
+    quietly: nothing is called, nothing is logged above debug, and the
+    discovery sweep does not retry it on its fast boot cadence.
     """
+    if not connector_configured():
+        _log.debug("higgsfield catalog: connector not configured, nothing to refresh")
+        return {"status": "not_connected", "provider": PROVIDER, "count": 0}
     raw, by_type, errors = [], {}, []
     for mtype in MODALITIES:
         try:

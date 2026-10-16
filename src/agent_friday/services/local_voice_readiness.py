@@ -671,6 +671,16 @@ def _is_cloud(engine: Any) -> bool:
     return str(engine or "").strip().lower() in CLOUD_ENGINES
 
 
+def _cloud_voice_connected() -> bool:
+    """Is there a key the cloud voice can use (Google Gemini)? Fails open: a
+    registry that cannot be read must not hide a question the owner needs."""
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        return bool(get_provider_registry().is_provider_available("google-gemini"))
+    except Exception:
+        return True
+
+
 def _mode_of(s: dict) -> str:
     """The routing mode in the owner's settings: local_only, local_preferred,
     cloud_preferred or cloud_only (a blank mode reads as the factory default)."""
@@ -832,6 +842,12 @@ def ask_cloud_switch(source: str = "settings", words: str = "") -> dict:
         return {"ok": True, "asked": False, "already": True,
                 "message": "Voice is already on the cloud."}
     src = source if source in ("settings", "voice", "failure") else "settings"
+    if src == "failure" and not _cloud_voice_connected():
+        # Offering cloud voice to someone who never connected it would be a
+        # question with no working answer: say nothing, raise no card.
+        return {"ok": True, "asked": False, "not_connected": True,
+                "message": ("Cloud voice isn't connected. You can add a Google "
+                            "Gemini key in Settings > Connections.")}
     why = _switch_reason()
     now = _now()
     with _ANSWER_LOCK:

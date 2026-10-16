@@ -79,9 +79,12 @@ def brave_key() -> str:
         return env
     try:
         from agent_friday.services import credential_store
-        k = credential_store.get_provider_key("brave")
-        if k and k.strip():
-            return k.strip()
+        # "brave-search" is the name the first-run key screen used to store
+        # it under; read it too, so a key saved there is not silently ignored.
+        for name in ("brave", "brave-search"):
+            k = credential_store.get_provider_key(name)
+            if k and k.strip():
+                return k.strip()
     except Exception:
         pass
     try:

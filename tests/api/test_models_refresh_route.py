@@ -22,6 +22,9 @@ import agent_friday.services.model_discovery as md
 def cache_dir(tmp_path, monkeypatch):
     """Isolated discovery-cache dir so seeded caches never leak across tests."""
     monkeypatch.setattr(md, "CACHE_DIR", tmp_path)
+    # These refreshes are about a connected Higgsfield; the never-connected
+    # case is tests/unit/test_higgsfield_catalog.py.
+    monkeypatch.setattr(hgc, "connector_configured", lambda: True)
     return tmp_path
 
 

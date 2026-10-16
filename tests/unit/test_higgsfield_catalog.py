@@ -20,6 +20,13 @@ from agent_friday.services import higgsfield_catalog as hc
 SRC = Path(__file__).resolve().parents[2] / "src" / "agent_friday"
 
 
+@pytest.fixture(autouse=True)
+def _connector_configured(monkeypatch):
+    """These tests are about a configured connector; the unconfigured case has
+    its own tests at the end of the file."""
+    monkeypatch.setattr(hc, "connector_configured", lambda: True)
+
+
 def _item(mid, name, otype, *, tags=(), params=(), medias=(),
           ratios=(), vendor="", desc=""):
     return {"id": mid, "name": name, "output_type": otype,
@@ -296,6 +303,38 @@ def test_missing_mcp_manager_is_a_status_not_a_crash(monkeypatch):
     res = hc.refresh()
     assert res["status"] == "unavailable"
     assert res["count"] == 0
+
+
+# ── Never connected: quiet, not a failure ────────────────────────────────────
+
+def test_an_unconfigured_connector_is_not_connected_and_silent(monkeypatch, caplog):
+    import logging
+    monkeypatch.setattr(hc, "connector_configured", lambda: False)
+    called = []
+    monkeypatch.setattr(hc, "_explore", lambda *a, **k: called.append(a) or {})
+    with caplog.at_level(logging.INFO, logger="friday.higgsfield_catalog"):
+        res = hc.refresh()
+    assert res["status"] == "not_connected" and res["count"] == 0
+    assert called == [], "nothing is asked of a connector nobody connected"
+    assert not [r for r in caplog.records if r.levelno >= logging.INFO], caplog.text
+
+
+def test_connector_configured_reads_the_config_without_a_manager(monkeypatch, tmp_path):
+    import json as _json
+    import sys
+    import agent_friday.core as core
+    monkeypatch.undo()                       # the real connector_configured
+    monkeypatch.setitem(sys.modules, "agent_friday.services.agent", None)
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    assert hc.connector_configured() is False          # no file at all
+    (tmp_path / "mcp_servers.json").write_text(_json.dumps(
+        {"servers": {"higgsfield": {"url": "https://mcp.higgsfield.ai/mcp",
+                                    "enabled": False}}}), encoding="utf-8")
+    assert hc.connector_configured() is False          # switched off
+    (tmp_path / "mcp_servers.json").write_text(_json.dumps(
+        {"servers": {"higgsfield": {"url": "https://mcp.higgsfield.ai/mcp"}}}),
+        encoding="utf-8")
+    assert hc.connector_configured() is True
 
 
 def test_explore_recovers_first_document_from_a_multi_block_reply(monkeypatch):

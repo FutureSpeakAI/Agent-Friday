@@ -50,6 +50,8 @@ def env(monkeypatch, tmp_path):
     clock = [T0]
     monkeypatch.setattr(lvr, "_now", lambda: clock[0])
     monkeypatch.setattr(lvr, "measured_numbers", lambda profile=None: NUMBERS)
+    # A cloud voice key is connected; the never-connected case is its own test.
+    monkeypatch.setattr(lvr, "_cloud_voice_connected", lambda: True)
     yield clock
     ls.reset_for_tests()
     lvr.reset_for_tests()
@@ -1135,3 +1137,16 @@ def test_the_cloud_calls_last_words_are_cleared_at_the_end_of_each_turn():
 def test_the_lv7_registry_site_names_both_offers():
     from agent_friday.services import notice_registry as reg
     assert "maybe_offer_switch_back" in reg.get("LV7").where
+
+
+def test_a_failure_offers_nothing_when_no_cloud_voice_is_connected(monkeypatch, env):
+    """A fresh install with no Gemini key: a local voice hiccup raises no card
+    asking to switch to a cloud voice that could not answer anyway."""
+    Store(monkeypatch)
+    pushes = Pushes(monkeypatch)
+    monkeypatch.setattr(lvr, "_cloud_voice_connected", lambda: False)
+    lvr.note_local_voice_failed()
+    res = lvr.ask_cloud_switch(source="failure")
+    assert res["asked"] is False and res.get("not_connected") is True
+    assert pushes.cards == [], pushes.cards
+    assert "Settings > Connections" in res["message"]

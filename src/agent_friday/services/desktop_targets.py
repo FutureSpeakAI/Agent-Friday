@@ -269,12 +269,29 @@ def settings_parts() -> dict:
     return parts
 
 
+def _connection_label(item_id: str) -> str:
+    """The card's own label, read from the guide's names (no checklist read:
+    resolving a phrase must not wait on every connector's status)."""
+    from agent_friday.services import connections_guide as _cg
+    names = [k for k, v in _cg.SPOKEN_NAMES.items() if v == item_id]
+    best = max(names, key=len) if names else item_id.split(":", 1)[-1]
+    return best if not best.islower() else best.title()
+
+
 def resolve_settings(query: str = "", section: str = "", id: str = "") -> dict:
     """A Settings tab, and optionally a named section within it."""
     spec = (_manifest().get("workspaces") or {}).get("settings") or {}
     phrase = id or section or query
     if not phrase:
         return _ok({"workspace": "settings"}, "Settings")
+    # A service to connect ("connect OpenRouter"): its card on Connections,
+    # secure field focused. The key is typed there, never in conversation.
+    from agent_friday.services import connections_guide as _cg
+    conn = _cg.spoken_connection(phrase)
+    if conn:
+        return _ok({"workspace": "settings", "tab": "connections", "connect": conn},
+                   "Settings › Connections › %s" % _connection_label(conn),
+                   verify=("connect", conn))
     ws_words = {"settings", "setting", "preferences"}
     from agent_friday.services import setting_proposals as _sp
     row = _sp.match_row(phrase)

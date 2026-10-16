@@ -73,10 +73,10 @@ KEYS = [
         "optional": True,
     },
     {
-        "provider": "brave-search",
+        "provider": "brave",
         "label": "Brave Search",
         "hint": "BSA...",
-        "url": "brave.com/search/api",
+        "url": "api-dashboard.search.brave.com/app/keys",
         "what": "Better web search results when Friday looks something up.",
         "without": "Friday falls back to a free search source. It works, but "
                    "results are rougher.",
@@ -173,7 +173,7 @@ def env_has(provider: str) -> bool:
     """Is a key for this provider already available to this process?"""
     var = {"anthropic": "ANTHROPIC_API_KEY", "google-gemini": "GEMINI_API_KEY",
            "elevenlabs": "ELEVENLABS_API_KEY", "openai": "OPENAI_API_KEY",
-           "brave-search": "BRAVE_SEARCH_API_KEY"}.get(provider)
+           "brave": "BRAVE_SEARCH_API_KEY"}.get(provider)
     if var and os.environ.get(var):
         return True
     try:
@@ -210,7 +210,7 @@ def capability_summary(keys: dict, assessment: dict | None = None) -> dict:
     has_claude = bool(keys.get("anthropic"))
     has_gemini = bool(keys.get("google-gemini"))
     has_eleven = bool(keys.get("elevenlabs"))
-    has_brave = bool(keys.get("brave-search"))
+    has_brave = bool(keys.get("brave"))
 
     works, missing, hardware = [], [], []
 

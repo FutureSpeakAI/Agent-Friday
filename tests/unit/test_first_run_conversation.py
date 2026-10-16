@@ -466,3 +466,32 @@ def test_a_recommendation_pressed_for_a_step_the_chat_has_left_is_a_conflict(hom
     with pytest.raises(sc.Conflict):
         sc.use_recommended("money")
     assert sc.load_state()["stage"] == "posture"
+
+
+# ── Connect your services: local AI is an answer ─────────────────────────────
+
+def test_local_ai_at_the_connect_step_is_an_answer_with_no_key_advice(home, steps, monkeypatch):
+    """The person chose the cloud earlier but presses "I'll just use local AI"
+    on the Connect screen: the step is answered, recorded as theirs, and no
+    "you have no key" line follows."""
+    _walk("connect")
+    monkeypatch.setattr(sc, "_needs_a_cloud_key", lambda st: True)
+    monkeypatch.setattr(sc, "_key_in_use", lambda: None)
+    sc.answer("connect", {"action": "local_only"}, "")
+    assert sc.load_state()["stage"] != "connect"
+    assert copy.NO_KEY_YET not in _texts()
+    heard = [e["text"] for e in profile.load_transcript() if e["role"] == "user"]
+    assert "I'll just use local AI" in heard
+    from agent_friday.services import setup_record
+    rec = setup_record.latest_by_step()["connect"]
+    assert rec["decision"] == "local AI only" and rec["how"] == "you"
+
+
+def test_done_at_the_connect_step_still_says_what_will_not_work_once(home, steps, monkeypatch):
+    """The control: leaving with no key and no local-AI answer still gets the
+    one honest line, once."""
+    _walk("connect")
+    monkeypatch.setattr(sc, "_needs_a_cloud_key", lambda st: True)
+    monkeypatch.setattr(sc, "_key_in_use", lambda: None)
+    sc.answer("connect", "done", "")
+    assert _texts().count(copy.NO_KEY_YET) == 1

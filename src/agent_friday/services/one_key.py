@@ -37,8 +37,8 @@ OPENROUTER = "openrouter"
 
 LABELS = {ANTHROPIC: "Anthropic", OPENROUTER: "OpenRouter"}
 
-KEY_URLS = {ANTHROPIC: "https://console.anthropic.com/settings/keys",
-            OPENROUTER: "https://openrouter.ai/keys"}
+KEY_URLS = {ANTHROPIC: "https://platform.claude.com/settings/keys",
+            OPENROUTER: "https://openrouter.ai/settings/keys"}
 
 #: The cheapest current Claude model on each door, for a one-token check.
 PROBE_MODEL = {ANTHROPIC: "claude-haiku-4-5-20251001",

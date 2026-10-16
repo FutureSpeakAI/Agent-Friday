@@ -8,7 +8,10 @@ from agent_friday.services import scheduler as s
 
 
 @pytest.fixture(autouse=True)
-def _clean_store(friday_dir):
+def _clean_store(friday_dir, monkeypatch):
+    # An established install: run notices are held only before first-run
+    # setup finishes (tests/unit/test_fresh_install_is_quiet.py covers that).
+    monkeypatch.setattr(s, "_setup_finished", lambda: True)
     # Each test starts from an empty registry + run history (temp home).
     if s.SCHEDULES_FILE.exists():
         s.SCHEDULES_FILE.unlink()
