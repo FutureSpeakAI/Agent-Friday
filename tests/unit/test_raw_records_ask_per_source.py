@@ -1027,3 +1027,41 @@ def test_device_and_loopback_spellings_are_judged_as_this_pcs_folders(cards, tmp
     assert rr.local_of_unc(r"\\?\C:\x\a.csv") == r"C:\x\a.csv"
     assert rr.local_of_unc(r"\\localhost\C$\x") == r"C:\x"
     assert rr.local_of_unc(r"\\fileserver\share\x") is None
+
+
+# ── critic round: ordinary commands still run ───────────────────────────────
+
+def test_git_refs_with_a_tilde_are_not_short_names(cards, tmp_path):
+    from agent_friday.services import raw_records as rr
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for cmd in ("git show origin/main~1", "git diff feat/locks~2 HEAD", "git log origin/release~10..HEAD"):
+        assert rr.named_in(cmd) == [], cmd
+        assert fg.raw_refusal_for_command(cmd) is None, cmd
+        assert fg.raw_refusal_for_command(cmd, cwd=repo) is None, cmd
+    assert fg.raw_refusal_for_command(r"type C:\x\GONE_~1.CSV"), "a drive path is a real path"
+    assert fg.raw_refusal_for_command("cat reports/STMT~1.CSV"), "a record's extension still refuses"
+
+
+def test_regex_escapes_are_not_network_folders(cards, tmp_path):
+    log = tmp_path / "log.txt"
+    log.write_text("x", encoding="utf-8")
+    for cmd in (r"Select-String '\\d{3}' %s" % log, r"grep -E '\\w+' %s" % log, r'findstr "\\\\" %s' % log,
+                r"grep -rE '\\d\\w' %s" % tmp_path):
+        assert fg.raw_refusal_for_command(cmd) is None, cmd
+    assert fg.raw_refusal_for_command(r"Get-ChildItem \\fileserver\share -Recurse | Import-Csv")
+
+
+def test_only_powershells_own_flags_are_read_as_an_encoded_command(cards):
+    assert fg.raw_refusal_for_command("Get-Process powershell | grep -e pattern") is None
+    assert fg.raw_refusal_for_command("echo pwsh; sed -e s/a/b/ notes.md") is None
+    out = fg.raw_refusal_for_command("Get-Date; powershell -NoProfile -enc !!notbase64!!")
+    assert out and "encoded command" in out
+
+
+def test_a_decode_that_breaks_refuses_the_command(cards, monkeypatch):
+    from agent_friday.services import credential_paths
+    monkeypatch.setattr(credential_paths, "_decoded_command_texts", _broken)
+    out = fg.raw_refusal_for_command("powershell -enc %s" % _encoded("Get-Date"))
+    assert out and out.startswith("Not run")
+

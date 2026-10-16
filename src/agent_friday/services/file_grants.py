@@ -1173,6 +1173,9 @@ def _too_broad(p: Path) -> bool:
         return True
 
 
+# \\host\share...: a host name and at least one more segment. A regex escape
+# ('\\d{3}', '\\w+', "\\\\") has neither, and \\?\ or \\.\ is a device path.
+_NETWORK_FOLDER = re.compile(r"^\\\\[\w-][\w.-]*\\[^\\]+")
 _TRAILING_PATTERN = re.compile(r"[\\/]\*(?:\.\*|\.[\w]{1,8})?$")
 
 
@@ -1215,7 +1218,7 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
         if unc.startswith("\\\\"):
             src = raw_records.local_of_unc(tok)
             if not src:
-                if looks and not unc.startswith(("\\\\.\\", "\\\\?\\")):
+                if looks and _NETWORK_FOLDER.match(unc):
                     remote.append(tok)           # another computer's folder
                 continue
         try:

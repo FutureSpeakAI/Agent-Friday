@@ -96,12 +96,10 @@ def tokens(text: str) -> tuple:
 
 def decoded_texts(text: str) -> list:
     """The commands hidden in base64 inside `text` (-EncodedCommand,
-    FromBase64String), decoded as credential_paths decodes them."""
-    try:
-        from agent_friday.services import credential_paths
-        return list(credential_paths._decoded_command_texts(str(text or "")))
-    except Exception:
-        return []
+    FromBase64String), decoded as credential_paths decodes them. A decode
+    that breaks raises: the caller refuses what it cannot read."""
+    from agent_friday.services import credential_paths
+    return list(credential_paths._decoded_command_texts(str(text or "")))
 
 
 _POWERSHELL = re.compile(r"\b(?:powershell|pwsh)(?:\.exe)?\b", re.I)
@@ -109,12 +107,22 @@ _POWERSHELL = re.compile(r"\b(?:powershell|pwsh)(?:\.exe)?\b", re.I)
 
 def undecodable_encoded(text: str) -> str | None:
     """The argument of a PowerShell -EncodedCommand (-e, -ec, -enc ...) that
-    does not decode to text, else None: what it runs cannot be checked."""
-    import base64
+    does not decode to text, else None: what it runs cannot be checked.
+    Only flags given to powershell or pwsh count: the words after it, up to
+    the next |, ; or & ("Get-Process powershell | grep -e x" is grep's -e)."""
     t = str(text or "")
-    if not _POWERSHELL.search(t):
-        return None
-    words = t.split()
+    for m in _POWERSHELL.finditer(t):
+        found = _undecodable_flag(_SEGMENT_END.split(t[m.end():], 1)[0].split())
+        if found:
+            return found
+    return None
+
+
+_SEGMENT_END = re.compile(r"[|;&\n]")
+
+
+def _undecodable_flag(words: list) -> str | None:
+    import base64
     for i, w in enumerate(words[:-1]):
         if w[:1] not in ("-", "/"):
             continue
@@ -157,16 +165,23 @@ def local_of_unc(tok: str) -> str | None:
 
 def long_form(p: Path, tok: str) -> tuple:
     """(path, label) with a short (8.3) name spelled out, judged by the real
-    name; (None, tok) for a short name that cannot be resolved."""
+    name; (None, tok) for a short name that cannot be resolved. A token
+    counts as a filesystem path only when it has a drive or a backslash or
+    its parent folder exists; anything else with "name~N" in it (a git ref,
+    origin/main~1) is left alone unless it ends in a raw-record extension."""
     if not _SHORT_NAME.search(str(p)):
         return p, tok
     try:
         if p.exists():
             r = p.resolve()
             return r, str(r)
+        on_disk = bool(re.match(r"^[A-Za-z]:", tok)) or "\\" in tok or (
+            p.is_absolute() and p.parent.exists())
     except OSError:
-        pass
-    return None, tok
+        on_disk = True
+    if on_disk or p.suffix.lower() in RAW_SUFFIXES:
+        return None, tok
+    return p, tok
 
 
 #: How many files one pattern ("~/Downloads/*.csv") is expanded to, to judge it.
