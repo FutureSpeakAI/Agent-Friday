@@ -173,7 +173,9 @@
    {"id": "media.turn_into", "group": "create", "label": "turn into...", "audit_status": "M"},
    {"id": "media.schedule_publish", "group": "create", "label": "schedule / publish", "audit_status": "M"},
    {"id": "media.save_view", "group": "create", "label": "save view / collection", "audit_status": "N"},
-   {"id": "media.export", "group": "create", "label": "export / show in folder", "audit_status": "N"}
+   {"id": "media.export", "group": "create", "label": "export / show in folder", "audit_status": "N"},
+   {"id": "media.podcast_play", "group": "read", "label": "podcasts: play / pause an episode (the Podcasts view's Play)", "audit_status": "new"},
+   {"id": "media.podcast_hosts", "group": "settings", "label": "podcasts: the hosts' names (main host, co-host)", "audit_status": "new"}
   ],
   "library": [
    {"id": "library.search", "group": "read", "label": "search / ask library", "audit_status": "M"},

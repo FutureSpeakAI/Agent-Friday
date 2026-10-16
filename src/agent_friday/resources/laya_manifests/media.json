@@ -162,6 +162,38 @@
    "eval": []
   },
   {
+   "id": "media.podcast_play",
+   "action": "media.podcast_play",
+   "group": "read",
+   "ui": {"control": "podcasts: play / pause an episode (the Podcasts view's Play)"},
+   "tool": "podcast_play",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["pause the podcast", "skip the chapter"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["tests/test_laya_workspace_contracts.py::test_router_phrasings_route_to_their_tool"]
+  },
+  {
+   "id": "media.podcast_hosts",
+   "action": "media.podcast_hosts",
+   "group": "settings",
+   "ui": {"control": "podcasts: the hosts' names (main host, co-host)"},
+   "tool": "set_setting",
+   "also_tools": ["podcast_format", "make_podcast"],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "model_only",
+   "phrasings": ["call the podcast co-host Agent Nova", "make a podcast with Agent Nova as the co-host"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": []
+  },
+  {
    "id": "media.schedule_publish",
    "action": "media.schedule_publish",
    "group": "create",

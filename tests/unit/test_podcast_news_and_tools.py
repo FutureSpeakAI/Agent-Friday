@@ -263,7 +263,7 @@ def test_what_s_the_source_for_that_answers_from_the_line_playing_now(_home):
                 "start": 2.3, "end": 3.0}])
     podcast_tools.set_now_playing(ep["id"], 2.5, playing=False)
     out = json.loads(podcast_tools._tool_podcast_source({}))
-    assert out["line"] == "Remarkable." and out["speaker"] == "Emma"
+    assert out["line"] == "Remarkable." and out["speaker"] == "Agent Friday"   # the co-host by name, never the voice's
     # An uncited reaction leans on the line it reacts to.
     assert out["sources"] == [{"id": "S1", "title": "Council passes budget",
                                "url": "https://news.example/a"}]

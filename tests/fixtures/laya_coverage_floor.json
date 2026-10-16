@@ -12,7 +12,7 @@
   "crew": {"laya": 0, "pct": 0.0},
   "code": {"laya": 0, "pct": 0.0},
   "futurespeak": {"laya": 0, "pct": 0.0},
-  "media": {"laya": 5, "pct": 38.5},
+  "media": {"laya": 6, "pct": 40.0},
   "library": {"laya": 2, "pct": 22.2},
   "meetings": {"laya": 3, "pct": 25.0},
   "knowledge": {"laya": 2, "pct": 25.0},
@@ -22,5 +22,5 @@
   "system": {"laya": 6, "pct": 60.0},
   "settings": {"laya": 2, "pct": 40.0}
  },
- "overall": {"laya": 40, "pct": 27.6}
+ "overall": {"laya": 41, "pct": 27.9}
 }

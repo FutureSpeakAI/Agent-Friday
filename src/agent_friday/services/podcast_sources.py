@@ -8,7 +8,7 @@ A reference is a small dict naming where the material lives:
     {"kind": "conversation", "id": "<conversation id>"}
     {"kind": "creation", "filename": "story-20260929T101500.md"}
     {"kind": "dataset", "path": "C:/…/sales.csv"}          (data mode)
-    {"kind": "text", "text": "…", "title": "Pasted notes"}
+    {"kind": "text", "text": "…", "title": "Pasted notes"}  (its links: own sources)
     {"kind": "url", "url": "https://…"}                     (fetched: outward)
     {"kind": "news_run", "routine": "front_page", "run_id": "2026-09-29-morning"}
 
@@ -24,6 +24,7 @@ episode private.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from agent_friday.user_errors import UserFacingValueError
@@ -164,11 +165,149 @@ def _creation(ref):
     return [_doc(p.stem, "creation", "\n\n".join(parts), origin="creation:" + p.name)]
 
 
-def _text(ref):
+#: Links taken from one text source at most; any more are named as not used.
+TEXT_LINKS_MAX = 20
+#: A web address in pasted text: a markdown link "[label](address)", or a bare
+#: address (with a scheme, or starting "www.").
+_MD_LINK = re.compile(r"\[([^\]\n]{1,300})\]\(\s*([^)\s]+)\s*\)")
+_BARE_LINK = re.compile(r"(?i)\b(?:(?:https?|ftp|file)://|www\.)[^\s<>\"'\[\]{}|\\^`]+")
+_TRAILING = ".,;:!?'\"”’»"
+_BULLET = re.compile(r"^\s*(?:[-*•·>]+|\d{1,3}[.)])\s*")
+_EDGE = " \t-–—:|,;.([)]"
+
+
+def _trim_link(url: str) -> str:
+    """A bare address without the punctuation that ends the sentence around
+    it; a closing bracket stays only when the address opened one."""
+    while url:
+        if url[-1] in _TRAILING:
+            url = url[:-1]
+        elif url[-1] == ")" and url.count("(") < url.count(")"):
+            url = url[:-1]
+        else:
+            break
+    return url
+
+
+def _private_host(host: str) -> bool:
+    import ipaddress
+    h = host.strip("[]").lower()
+    if h in ("localhost",) or h.endswith((".local", ".localhost", ".internal", ".lan", ".home")):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified
+
+
+def check_link(raw: str) -> tuple[str, str]:
+    """(address, "") for a link an episode can list, or ("", why it cannot)."""
+    from urllib.parse import urlsplit
+    url = (raw or "").strip()
+    if url.lower().startswith("www."):
+        url = "https://" + url
+    if len(url) > 2000:
+        return "", "the address is too long to be a link"
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+    except ValueError:
+        return "", "it is not a well-formed web address"
+    if parts.scheme.lower() not in ("http", "https"):
+        return "", "only web (http or https) addresses can be listed as a source"
+    if not host or ("." not in host and ":" not in host and host != "localhost"):
+        return "", "it is not a well-formed web address"
+    if parts.username or parts.password:
+        return "", "it carries a user name or password"
+    if _private_host(host):
+        return "", "it points at a private or local address a listener could not open"
+    return url, ""
+
+
+def link_key(url: str) -> str:
+    """The same page however it was written: scheme, host case, "www.", a
+    trailing slash and the #fragment do not make a second source."""
+    from urllib.parse import urlsplit
+    try:
+        p = urlsplit(url)
+    except ValueError:
+        return url
+    host = (p.hostname or "").lower().removeprefix("www.")
+    port = (":%d" % p.port) if p.port and p.port not in (80, 443) else ""
+    return "%s%s%s%s" % (host, port, p.path.rstrip("/") or "", ("?" + p.query) if p.query else "")
+
+
+def _line_title(line: str, found: list) -> str:
+    """The words around the links on a line: the source's title."""
+    for _label, raw, (s, e) in sorted(found, key=lambda f: -f[2][0]):
+        line = line[:s] + " " + line[e:]
+    line = _BULLET.sub("", " ".join(line.split()))
+    return line.strip(_EDGE).strip()
+
+
+def split_links(text: str) -> tuple[list[dict], str, list[dict]]:
+    """Pasted research as (links, notes, unusable).
+
+    Each web address in the text becomes its own link {url, title, text}, once
+    (`link_key`): the title is the markdown label, else the line around it,
+    else the site's name; the text is that line, what the writer may say about
+    it. The lines that carried no link stay as the notes. An address that
+    cannot be listed is {address, reason}. Links come from the text, never
+    from a model."""
+    from urllib.parse import urlsplit
+    links, unusable, seen, kept = [], [], set(), []
+    for line in (text or "").splitlines():
+        found = []
+        for m in _MD_LINK.finditer(line):
+            found.append((m.group(1).strip(), m.group(2), m.span()))
+        taken = [f[2] for f in found]
+        for m in _BARE_LINK.finditer(line):
+            if any(s <= m.start() < e for s, e in taken):
+                continue
+            raw = _trim_link(m.group(0))
+            found.append(("", raw, (m.start(), m.start() + len(raw))))
+        if not found:
+            kept.append(line)
+            continue
+        around = _line_title(line, found)
+        for label, raw, _span in sorted(found, key=lambda f: f[2][0]):
+            url, why = check_link(raw)
+            if not url:
+                if raw not in {u["address"] for u in unusable}:
+                    unusable.append({"address": raw[:300], "reason": why})
+                continue
+            key = link_key(url)
+            if key in seen:
+                continue
+            if len(links) >= TEXT_LINKS_MAX:
+                unusable.append({"address": url[:300], "reason": "only the first %d links in one "
+                                 "text are listed" % TEXT_LINKS_MAX})
+                continue
+            seen.add(key)
+            site = (urlsplit(url).hostname or url).lower().removeprefix("www.")
+            title = label or around or site
+            links.append({"url": url, "title": title[:200], "text": around or label or title})
+    notes = "\n".join(kept).strip()
+    return links, notes, unusable
+
+
+def _text_docs(ref) -> tuple[list[dict], list[dict]]:
     text = str(ref.get("text") or "").strip()
     if not text:
         raise SourceError("the text source is empty")
-    return [_doc(ref.get("title") or "Notes", "text", text, origin="pasted")]
+    links, notes, unusable = split_links(text)
+    docs = []
+    if notes:
+        docs.append(_doc(ref.get("title") or "Notes", "text", notes, origin="pasted"))
+    docs += [_doc(k["title"], "link", k["text"], origin="pasted", url=k["url"]) for k in links]
+    if not docs:
+        raise SourceError("the text source has nothing but links that cannot be used")
+    return docs, unusable
+
+
+def _text(ref):
+    return _text_docs(ref)[0]
 
 
 def _url(ref):
@@ -192,6 +331,17 @@ def _news_run(ref):
 _READERS = {"file": _file, "wiki": _wiki, "kg_node": _kg_node,
             "conversation": _conversation, "creation": _creation,
             "text": _text, "url": _url, "news_run": _news_run}
+
+
+def resolve_with_warnings(ref: dict) -> tuple[list[dict], list[str]]:
+    """(documents, warnings): `resolve`, and for pasted text each web address
+    in it that could not be listed, said as a line for the episode's sources."""
+    if (ref or {}).get("kind") == "text":
+        docs, unusable = _text_docs(ref)
+        return docs, ["a link in %s was not used: %s (%s)"
+                      % ((ref.get("title") or "your notes"), u["address"], u["reason"])
+                      for u in unusable]
+    return resolve(ref), []
 
 
 def resolve(ref: dict) -> list[dict]:

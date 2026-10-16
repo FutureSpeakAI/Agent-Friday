@@ -2961,8 +2961,10 @@ DEFAULT_SETTINGS = {
                    "weekly": "standard", "editorial": "standard", "any": "standard"},
         # Host "a" is her: blank name and voice follow her identity (her name,
         # and her local voice: services/agent_identity.local_kokoro_voice).
+        # Host "b", the co-host: a blank name is "Agent Friday"
+        # (podcast_engine.COHOST_DEFAULT_NAME); never the voice id's name.
         "hosts": {"a": {"name": "", "voice": ""},
-                  "b": {"name": "Emma", "voice": "bf_emma"}},
+                  "b": {"name": "", "voice": "bf_emma"}},
         "on_ready": "notify",
         "cloud_voice": False,
     },

@@ -175,6 +175,18 @@ FALLBACK_HOST_VOICE = "af_heart"
 #: default, and the stamp that says the saved block has been moved off it.
 _PRE_SOLO_ANY = "duo"
 FORMAT_MIGRATION_KEY = "format_migrated"
+#: The co-host's name when the owner has not named them (Settings, the
+#: podcasts' host names, or one episode's own `host_names`). A voice id never
+#: names a host: the voice is how a host sounds, not who they are.
+COHOST_DEFAULT_NAME = brand.PRODUCT
+#: A host's name is a name: this long at most, without the characters a
+#: transcript line ("Name: words") or a caption cue uses.
+HOST_NAME_MAX = 40
+_NOT_IN_A_NAME = re.compile(r"[\x00-\x1f\x7f:<>\[\]{}|\\\"]+")
+#: Stamped once the saved co-host has been checked for a name that was only
+#: ever its voice id's ("bf_emma" seeded as "Emma"); such a name is cleared,
+#: so the co-host takes the default. A name chosen afterwards is kept.
+HOSTS_MIGRATION_KEY = "host_names_migrated"
 #: Commit headroom the out-of-process voice (Kokoro on the CPU) needs, in MB:
 #: measured on the reference PC speaking eight podcast lines, its private memory
 #: peaked at 2.7 GB and the machine's commit rose by at most 3.0 GB; this is that
@@ -197,8 +209,10 @@ DEFAULTS = {
     "length": {"front_page": RECOMMENDED_LENGTH, "briefing": RECOMMENDED_LENGTH,
                "weekly": RECOMMENDED_LENGTH, "editorial": RECOMMENDED_LENGTH,
                "any": RECOMMENDED_LENGTH},
+    # Blank names follow the owner's settings: host "a" is her (her name),
+    # host "b" is COHOST_DEFAULT_NAME unless the owner named the co-host.
     "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
-              "b": {"name": "Emma", "voice": "bf_emma"}},
+              "b": {"name": "", "voice": "bf_emma"}},
     "on_ready": "notify",
     "cloud_voice": False,
 }
@@ -287,6 +301,35 @@ def _migrate_format(own: dict) -> tuple[dict, bool]:
     return out, True
 
 
+def voice_label(voice) -> str:
+    """The name a voice id spells ("bf_emma" -> "Emma"): never a host's name."""
+    m = re.match(r"^[a-z]{1,3}_([a-z]+)$", str(voice or "").strip().lower())
+    return m.group(1).capitalize() if m else ""
+
+
+def _migrate_hosts(own: dict) -> tuple[dict, bool]:
+    """(block, changed): a saved co-host whose name is only its voice id's
+    (the seeded "Emma" for bf_emma) loses that name and takes the default.
+    Stamped so it runs once; a name the owner gives later is theirs."""
+    if not own or own.get(HOSTS_MIGRATION_KEY):
+        return own, False
+    out = copy.deepcopy(own)
+    b = ((out.get("hosts") or {}).get("b"))
+    if isinstance(b, dict):
+        name = str(b.get("name") or "").strip()
+        if name and name.lower() == voice_label(b.get("voice")).lower():
+            b["name"] = ""
+    out[HOSTS_MIGRATION_KEY] = True
+    return out, True
+
+
+def clean_host_name(name) -> str:
+    """A host's name as it is kept: one line, plain characters, at most
+    HOST_NAME_MAX long. "" for none."""
+    text = _NOT_IN_A_NAME.sub(" ", str(name or ""))
+    return " ".join(text.split())[:HOST_NAME_MAX].strip()
+
+
 def _host_follows_identity(cfg: dict, own: dict) -> None:
     """Host "a" is her: her name and her voice unless the owner set the show's
     host themselves, and the pronouns her voice (or the owner) gives her.
@@ -306,6 +349,8 @@ def _host_follows_identity(cfg: dict, own: dict) -> None:
     a["pronouns"] = agent_identity.pronouns(voice=a["voice"])
     b = cfg["hosts"].get("b") or {}
     if b:
+        if not clean_host_name(((own.get("hosts") or {}).get("b") or {}).get("name")):
+            b["name"] = COHOST_DEFAULT_NAME
         b["pronouns"] = agent_identity.pronouns_for_voice(b.get("voice"))
 
 
@@ -315,7 +360,8 @@ def settings() -> dict:
         own = (_load_settings() or {}).get("podcasts") or {}
         own, changed = _migrate_length(own)
         own, f_changed = _migrate_format(own)
-        changed = changed or f_changed
+        own, h_changed = _migrate_hosts(own)
+        changed = changed or f_changed or h_changed
         if changed:
             try:
                 _save_settings({"podcasts": own})
@@ -332,7 +378,50 @@ def settings() -> dict:
         log.warning("podcast host could not follow her identity", exc_info=True)
         if not (((own.get("hosts") or {}).get("a") or {}).get("name")):
             cfg["hosts"]["a"]["name"] = her_name()
+        if not (((own.get("hosts") or {}).get("b") or {}).get("name")):
+            cfg["hosts"]["b"]["name"] = COHOST_DEFAULT_NAME
     return cfg
+
+
+def host_names() -> dict:
+    """Each host's name now, the name they have when the owner gives none,
+    and the owner's own ("" when not set)."""
+    try:
+        from agent_friday.core import _load_settings
+        own = ((_load_settings() or {}).get("podcasts") or {})
+        own, _ = _migrate_hosts(own)
+    except Exception:
+        own = {}
+    now = settings()["hosts"]
+    defaults = {"a": her_name(), "b": COHOST_DEFAULT_NAME}
+    return {k: {"name": now[k]["name"], "default": defaults[k],
+                "own": clean_host_name(((own.get("hosts") or {}).get(k) or {}).get("name"))}
+            for k in ("a", "b")}
+
+
+def check_host_names(a: str, b: str) -> None:
+    """Two hosts are two people: refuse the same name for both."""
+    if a and b and a.casefold() == b.casefold():
+        raise PodcastRefused("the two hosts need different names (both would be %s)" % a)
+
+
+def set_host_names(a=None, b=None) -> dict:
+    """Name the main host ("a", her) and the co-host ("b") for every episode.
+    None leaves a host as it is; "" puts it back to the default (her name,
+    COHOST_DEFAULT_NAME)."""
+    now = host_names()
+    want = {}
+    for key, value in (("a", a), ("b", b)):
+        if value is None:
+            continue
+        want[key] = clean_host_name(value)
+        if str(value).strip() and not want[key]:
+            raise PodcastRefused("a host's name needs letters, not only punctuation")
+    check_host_names(want.get("a", now["a"]["own"]) or now["a"]["default"],
+                     want.get("b", now["b"]["own"]) or now["b"]["default"])
+    if want:
+        _save_podcasts({"hosts": {k: {"name": v} for k, v in want.items()}})
+    return host_names()
 
 
 def home_city() -> str:
@@ -369,6 +458,7 @@ def _save_podcasts(change: dict) -> None:
     from agent_friday.core import _load_settings, _save_settings
     own, _ = _migrate_length(copy.deepcopy((_load_settings() or {}).get("podcasts") or {}))
     own, _ = _migrate_format(own)
+    own, _ = _migrate_hosts(own)
     _merge_into(own, change)
     _save_settings({"podcasts": own})
 
@@ -560,12 +650,14 @@ def _new_id() -> str:
 def create(refs: list[dict], *, title: str = "", length: str = "",
            mode: str = "auto", origin: str = "user", attached: dict | None = None,
            voice_engine: str = "local", instructions: str = "",
-           show: str = "", hosts: str = "") -> dict:
+           show: str = "", hosts: str = "", host_names=None) -> dict:
     """Queue an episode and wake the worker. Returns the queued episode.
 
     `hosts` is "solo" or "duo" for this episode alone; "" is the show's own
-    setting. Never writes, speaks or reads anything itself: a routine calling
-    this is back in milliseconds.
+    setting. `host_names` names the hosts for this episode alone: [main,
+    co-host] or {"a": ..., "b": ...}; a blank or missing one keeps the
+    owner's setting. Never writes, speaks or reads anything itself: a routine
+    calling this is back in milliseconds.
     """
     hosts_asked = str(hosts or "").strip().lower()
     if hosts_asked and hosts_asked not in FORMATS:
@@ -594,7 +686,13 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
     voice_engine = voice_engine if voice_engine in ("local", "cloud") else "local"
     if voice_engine == "cloud":
         _refuse_cloud_voice(private)
-    hosts = cfg["hosts"]
+    on_air = copy.deepcopy(cfg["hosts"])
+    if isinstance(host_names, (list, tuple)):
+        host_names = dict(zip(("a", "b"), host_names))
+    for key, value in (host_names or {}).items() if isinstance(host_names, dict) else ():
+        name = clean_host_name(value)
+        if key in on_air and name:
+            on_air[key]["name"] = name
     # The show is the routine's whose material this is (the Briefing made into
     # an episode on request is still the Briefing): its host setting decides,
     # whatever mode the model asked for. Past episodes never steer it.
@@ -602,6 +700,10 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         (str(r.get("routine")) for r in refs if r.get("kind") == "news_run" and r.get("routine")), "")
     # A length asked for is kept; otherwise the show's own setting decides.
     length = length if length in LENGTHS else length_for(routine)
+    fmt = hosts_asked or format_for(routine)
+    if fmt == "duo":
+        # Two people on air: the transcript and the captions tell them apart by name.
+        check_host_names(on_air["a"]["name"], on_air["b"]["name"])
     ep = {
         "id": _new_id(),
         "title": (title or "").strip()[:160],
@@ -617,8 +719,8 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         "refs": refs,
         "instructions": (instructions or "").strip()[:1000],
         "voice_engine": voice_engine,
-        "hosts": hosts,
-        "format": hosts_asked or format_for(routine),
+        "hosts": on_air,
+        "format": fmt,
         "home": home_city(),
         # Each story is told from its full article where the page can be read
         # (`deepen`), not only from the feed's summary.
@@ -1879,14 +1981,29 @@ def _gather(ep: dict) -> list[dict]:
         others = ep["refs"]
     extra = []
     errors = []
+    warnings = []
     for r in others:
         try:
-            extra += sources_mod.resolve(r)
+            got, warned = sources_mod.resolve_with_warnings(r)
+            extra += got
+            warnings += warned
         except sources_mod.SourceError as e:
             errors.append("%s — %s" % (sources_mod.describe(r), e))
     if errors and not (extra or docs):
         raise render.RenderError("sources_unreadable", "; ".join(errors[:4]))
-    ep["source_errors"] = errors
+    # A page named twice (a web source and a link in the notes, or two
+    # notes) is one source.
+    seen, unique = set(), []
+    for d in extra:
+        key = sources_mod.link_key(d["url"]) if d.get("url") else None
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        unique.append(d)
+    extra = unique
+    # Shown with the episode's sources, never dropped in silence.
+    ep["source_errors"] = errors + warnings
     numbered = sources_mod.number(extra)
     if docs:
         # Facts keep their F ids; documents follow as S ids.
@@ -2431,6 +2548,8 @@ def transcript_bytes(ep: dict) -> bytes:
                                                      (" (via %s)" % s["via"]) if s.get("via") else "",
                                                      s["title"], s["url"])
                                for s in heard] or ["  (no linked source)"])
+    # What could not be used, said where the sources are, never dropped in silence.
+    out += ["  Not used: %s" % e for e in ep.get("source_errors") or []]
     return ("\n".join(out) + "\n").encode("utf-8-sig")
 
 
