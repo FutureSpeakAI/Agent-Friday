@@ -153,13 +153,18 @@ def _cloud_evidence(ev: list[dict], principal: str, settings: dict) -> tuple[lis
             continue                  # a meeting's words never reach a cloud model from the Library
         if doc and fg.check_grant(Path(doc["path"])).state == "active":
             granted.append((e, doc))
+        elif doc and fg.raw_record_kind(Path(doc["path"])):
+            fg.ask_for_raw_source(Path(doc["path"]))          # a raw record asks for its own yes
     held = len(ev) - len(granted)
     fits, cap_note = _apply_cap([e for e, _d in granted], cloud_char_cap(settings))
     by_id = {id(e): d for e, d in granted}
     keep = []
     for e in fits:
         doc = by_id.get(id(e)) or next((d for ee, d in granted if ee["label"] == e["label"]), None)
-        fg.on_file_read(Path(doc["path"]), e["text"])        # only what is sent is registered as sendable
+        r = fg.on_file_read(Path(doc["path"]), e["text"])    # only what is sent is registered as sendable
+        if getattr(r, "state", "") == "held_raw_record":
+            held += 1
+            continue                  # a raw record whose file changed since the yes: asked again
         keep.append(e)
     notes = []
     if held:

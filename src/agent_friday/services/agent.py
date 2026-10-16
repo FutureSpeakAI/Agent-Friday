@@ -2761,6 +2761,10 @@ def _tool_run_command(inp):
     _cred_why = _cred.scan_command(cmd)
     if _cred_why:
         return _cred.refusal_command(_cred_why)
+    from agent_friday.services import file_grants as _fg_raw
+    _raw_why = _fg_raw.raw_refusal_for_command(cmd)
+    if _raw_why:
+        return _raw_why
     bad = blocked_command_token(cmd)
     if bad is not None:
         return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
@@ -2797,6 +2801,11 @@ def _tool_run_command(inp):
     # Whatever the command printed, key blocks and vendor tokens are
     # withheld: the path scan above is best-effort, this is the backstop.
     out = _cred.redact_secrets(out)
+    # Output that reads like a mail archive or a statement (a grep through a
+    # mailbox, a cat of an export) is not passed on: decision O7.
+    _raw_out = _fg_raw.raw_output_notice(out)
+    if _raw_out:
+        return _raw_out
     # The executor keeps the END of a command's output (where the error
     # is), names what was cut and saves the whole text; this is only a
     # sanity ceiling against a runaway printer.
@@ -2825,6 +2834,12 @@ def _tool_run_sandboxed(inp):
     _why = _cred.scan_code(str(inp.get("code") or ""))
     if _why:
         return _cred.refusal_command(_why)
+    # A mail archive or statement is opened with read_file, which asks the
+    # owner; a program that reads one around it is not run (decision O7).
+    from agent_friday.services import file_grants as _fg_raw
+    _raw_why = _fg_raw.raw_refusal_for_command(str(inp.get("code") or ""))
+    if _raw_why:
+        return _raw_why
     res = _sbx.run(str(inp.get("code") or ""),
                    timeout_s=inp.get("timeout_seconds") or _sbx.DEFAULT_TIMEOUT_S,
                    memory_mb=inp.get("memory_mb") or _sbx.DEFAULT_MEMORY_MB,
@@ -2835,6 +2850,9 @@ def _tool_run_sandboxed(inp):
     for _k in ("stdout", "stderr"):
         if isinstance(res.get(_k), str):
             res[_k] = _cred.redact_secrets(res[_k])
+            _raw_out = _fg_raw.raw_output_notice(res[_k])
+            if _raw_out:
+                res[_k] = _raw_out
     return json.dumps(res, default=str)
 
 
@@ -11016,6 +11034,20 @@ def _tool_codebase_read(inp):
     content = _cb.read(rec["id"], rel)
     if content is None:
         return {"status": "missing", "path": inp.get("path")}
+    # A mail archive or statement inside a codebase is opened the way
+    # read_file opens one: held, asked about, and not passed on (decision O7).
+    from agent_friday.services import file_grants as _fg_raw
+    try:
+        raw = _fg_raw.raw_record_kind(p, strict=True)
+    except _fg_raw.RawCheckError:
+        raw = "unchecked"              # a check that cannot run holds the file
+    if raw:
+        try:
+            check = _fg_raw.on_file_read(Path(p), str(content))
+        except Exception:
+            check = None
+        if (check is None or check.state == "held_raw_record") and _fg_raw._cloud_possible():
+            return {"status": "held", "path": inp.get("path"), "content": _fg_raw.raw_held_notice(p)}
     return {"status": "ok", "path": inp.get("path"), "content": _redacted_once(p, content)[:60000]}
 
 
@@ -11356,6 +11388,29 @@ def _tool_codebase_agent(inp):
     if (rec.get("seats") or {}).get("engine") != "claude_agent":
         return {"status": "refused", "blocker": "needs_user_input",
                 "say": "This codebase's engine is Friday. Say \"use Claude's agent for this codebase\" first; it runs as a process on this PC."}
+    # Claude's agent reads the whole folder itself, around every check here:
+    # a folder holding a mail archive or statement the owner has not allowed
+    # is not handed over, and the owner is asked about each such file.
+    from agent_friday.services import file_grants as _fg_raw
+    _raw_files, _complete = [], True
+    try:
+        if _fg_raw._cloud_possible():
+            _raw_files, _complete = _fg_raw.raw_records_in(_cb.repo_path(rec["id"]))
+    except Exception:
+        _complete = False
+    if not _complete and not _raw_files:
+        return {"status": "refused", "blocker": "needs_user_input",
+                "say": ("This codebase's folder is too large for me to check for mail archives and "
+                        "statements before Claude's agent reads it. Work on a smaller folder.")}
+    if _raw_files:
+        for _p in _raw_files[:5]:
+            _fg_raw.ask_for_raw_source(_p)
+        return {"status": "refused", "blocker": "needs_user_input",
+                "say": ("This codebase's folder holds %d mail archive or statement file%s (%s) that a cloud "
+                        "model may not read yet. A card for each is on screen; once they are allowed, or "
+                        "moved out of the folder, ask again." % (
+                            len(_raw_files), "" if len(_raw_files) == 1 else "s",
+                            ", ".join(p.name for p in _raw_files[:3])))}
     waiting = _codebase_task_gate(rec, "codebase_agent", {"task": str(inp.get("task") or "")})
     if waiting is not None:
         return waiting
@@ -14268,15 +14323,42 @@ def _hook_file_grant_registration(ctx, result):
     so a granted CV's summary section stays withheld after the grant is
     created (see _tool_read_file's note).
     """
+    from agent_friday.services import file_grants as _fg
+    path = (ctx.input or {}).get("path")
+    p = None
+    raw = None
     try:
-        from agent_friday.services import file_grants as _fg
-        path = (ctx.input or {}).get("path")
         if path:
             p = Path(path).expanduser().resolve()
-            if p.is_file():
-                _fg.on_file_read(p, result)
     except Exception:
-        pass
+        p = None
+    if p is None:
+        return result
+    # A raw-record check that cannot run raises RawCheckError out of this
+    # hook (here or inside on_file_read); the hook is critical, so the
+    # result is withheld rather than passed on unchecked (tool_hooks).
+    raw = _fg.raw_record_kind(p, strict=True)
+    try:
+        if not p.is_file():
+            return result
+        check = _fg.on_file_read(p, result)
+    except _fg.RawCheckError:
+        raise
+    except Exception:
+        if not raw:
+            return result
+        check = None
+    if raw and (check is None or check.state == "held_raw_record"):
+        # A raw record without the owner's yes: its contents do not enter the
+        # conversation at all (the hold also stops any quote of it), so a
+        # cloud turn is never blocked by what one read left in its history.
+        try:
+            if not _fg._cloud_possible():
+                return result
+            return _fg.raw_held_notice(p, raw)
+        except Exception:
+            return ("That file is a mail archive or statement; its contents stay on this PC "
+                    "until the owner allows it on screen.")
     return result
 
 
@@ -14324,9 +14406,11 @@ def _register_builtin_tool_hooks():
     _hooks.register_post_hook(_hook_verifier_record, name="call_verifier_record",
                               priority=99)
     _hooks.register_post_hook(_hook_pii_scrub, name="pii_scrub", priority=95)
+    # Critical: it holds raw records from the cloud (decision O7), so it can
+    # neither be switched off nor fail open.
     _hooks.register_post_hook(_hook_file_grant_registration,
                               name="file_grant_registration", priority=96,
-                              tools={"read_file"})
+                              tools={"read_file"}, critical=True)
 
 
 _register_builtin_tool_hooks()

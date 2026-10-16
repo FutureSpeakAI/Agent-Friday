@@ -495,7 +495,6 @@ _DIR_WHY = {"ssh": "your SSH keys folder", "aws": "your AWS credentials folder",
             "gnupg": "your GnuPG keyring folder", "azure": "your Azure credentials folder",
             "kube": "your Kubernetes credentials folder"}
 
-_ENCODED_RE = re.compile(r"(?i)\s-e(?:nc(?:odedcommand)?|c)?\s+([A-Za-z0-9+/]{16,}={0,2})")
 _B64_LITERAL_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
 _MAX_DEPTH = 3
 _MAX_GLOB_HITS = 200
@@ -505,14 +504,30 @@ def _expand(token: str) -> str:
     return _expand_path_text(token)
 
 
+#: Any spelling PowerShell accepts for -EncodedCommand: -e, -ec, -en, -enc ... in full.
+_ENCODED_ANY_RE = re.compile(r"(?i)\s[-/](e[a-z]{0,13})\s+[\"']?([A-Za-z0-9+/]{4,}={0,2})")
+#: How many other base64 runs (FromBase64String literals) are decoded.
+_MAX_LITERALS = 16
+
+
 def _decoded_command_texts(cmd: str):
-    """Texts hidden in base64 inside a command (-EncodedCommand, FromBase64String)."""
+    """Texts hidden in base64 inside a command. Every PowerShell
+    -EncodedCommand argument is decoded, with no cap, so decoys in front of
+    the real one hide nothing; other base64 runs (FromBase64String) are
+    decoded up to _MAX_LITERALS."""
     import base64
-    seen = 0
-    for m in list(_ENCODED_RE.finditer(cmd)) + list(_B64_LITERAL_RE.finditer(cmd)):
-        if seen >= 16:
-            return
-        raw = m.group(1) if m.re is _ENCODED_RE else m.group(0)
+    encoded = [m.group(2) for m in _ENCODED_ANY_RE.finditer(cmd)
+               if m.group(1).lower() == "ec" or "encodedcommand".startswith(m.group(1).lower())]
+    literals = [m.group(0) for m in _B64_LITERAL_RE.finditer(cmd)]
+    done, seen = set(), 0
+    for i, raw in enumerate(encoded + literals):
+        if raw in done:
+            continue
+        done.add(raw)
+        if i >= len(encoded):
+            if seen >= _MAX_LITERALS:
+                return
+            seen += 1
         pad = raw + "=" * (-len(raw) % 4)
         try:
             blob = base64.b64decode(pad, validate=True)
@@ -524,7 +539,6 @@ def _decoded_command_texts(cmd: str):
             except Exception:
                 continue
             if text and text.isprintable() or "\n" in text:
-                seen += 1
                 yield text
 
 

@@ -67,6 +67,7 @@ import hashlib
 import hmac
 import itertools
 import json
+import re
 import threading
 import time
 import uuid
@@ -806,7 +807,16 @@ def create_file_grant(path: str, never_send_override: bool = False,
         "ack_never_send_matches": list(ack_never_send_matches or []) if override else [],
         "findings_summary": findings.get("summary"),
     }
-    return _append_event(event)
+    out = _append_event(event)
+    if _raw_kind(p):
+        # The owner's yes for this one raw record lifts its hold now, not on
+        # the next read: what was held while the card waited may go.
+        try:
+            from agent_friday.services import judgment_gate as _jg
+            _jg.release_raw_record(_raw_key(p))
+        except Exception:
+            pass
+    return out
 
 
 def create_scope_grant(path_or_pattern: str, kind: str, expiry_days: float) -> dict:
@@ -863,10 +873,11 @@ def revoke(target_id: str) -> dict:
 
 @dataclass
 class GrantCheck:
-    state: str                    # 'active' | 'stale' | 'denied' | 'none'
+    state: str                    # 'active' | 'stale' | 'denied' | 'none' | 'held_raw_record'
     grant_id: str | None = None
     deny_id: str | None = None
     never_send_override: bool = False
+    grant_kind: str = ""          # 'file' | 'scope' for an active grant
 
 
 def check_grant(path: Path, sha256_hex: str | None = None) -> GrantCheck:
@@ -881,15 +892,46 @@ def check_grant(path: Path, sha256_hex: str | None = None) -> GrantCheck:
             if sha256_hex is not None and g.get("sha256") != sha256_hex:
                 return GrantCheck(state="stale", grant_id=g["id"])
             return GrantCheck(state="active", grant_id=g["id"],
-                               never_send_override=bool(g.get("never_send_override")))
+                               never_send_override=bool(g.get("never_send_override")),
+                               grant_kind="file")
+    # A raw record (a mail archive, a bank statement) needs a yes for that
+    # one file: a folder's permission does not cover it (owner decision O7).
+    # A check that breaks raises: it never lets a folder's permission through.
+    if _raw_kind(path, strict=True):
+        return GrantCheck(state="none")
     now = time.time()
     for g in state.grants.values():
         if g.get("event") == "grant_scope" and _covers(g, path):
             expires = g.get("expires_ts")
             if expires and now > expires:
                 continue
-            return GrantCheck(state="active", grant_id=g["id"], never_send_override=False)
+            return GrantCheck(state="active", grant_id=g["id"], never_send_override=False,
+                              grant_kind="scope")
     return GrantCheck(state="none")
+
+
+class RawCheckError(Exception):
+    """The raw-record check itself failed: the file may be a raw record."""
+
+
+def raw_record_kind(path, *, strict: bool = False) -> str | None:
+    """"mail" / "finance" for a raw personal record (services/raw_records), else None.
+    `strict` raises RawCheckError when the check cannot run, for a caller
+    that must hold the file back rather than guess."""
+    return _raw_kind(path, strict=strict)
+
+
+def _raw_kind(path, strict: bool = False) -> str | None:
+    """kind_of. A listing may take "not a record" when the check breaks;
+    a path that decides what reaches a cloud model (check_grant,
+    on_file_read) passes strict=True and gets RawCheckError instead."""
+    try:
+        from agent_friday.services import raw_records
+        return raw_records.kind_of(path)
+    except Exception as e:
+        if strict:
+            raise RawCheckError(str(e)) from e
+        return None
 
 
 # A granted paragraph is page-sized prose (extract_text joins pages on
@@ -927,11 +969,404 @@ def on_file_read(path: Path, text: str) -> GrantCheck:
     except Exception:
         sha = None
     result = check_grant(path, sha256_hex=sha)
+    raw = _raw_kind(path, strict=True)        # RawCheckError: the caller withholds the text
     if result.state == "denied":
         _register_deny_spans(text)
+    elif raw and not (result.state == "active" and result.grant_kind == "file"):
+        # A raw record with no yes for this file: held from every cloud
+        # payload under every posture, and the owner is asked, on a card that
+        # names the file and who would read it.
+        from agent_friday.services import judgment_gate as _jg
+        _jg.hold_raw_record(_raw_key(path), text, kind=raw, display=str(path))
+        ask_for_raw_source(path, raw)
+        result = GrantCheck(state="held_raw_record", grant_id=result.grant_id)
     elif result.state == "active":
+        if raw:
+            from agent_friday.services import judgment_gate as _jg
+            _jg.release_raw_record(_raw_key(path))
         _register_grant_spans(text, result.grant_id, result.never_send_override)
     return result
+
+
+def raw_output_notice(text: str) -> str | None:
+    """In place of a program's output that reads like a mail archive or a
+    statement, when a cloud model could read it; else None."""
+    try:
+        from agent_friday.services import raw_records
+        kind = raw_records.looks_like(text)
+        what = raw_records.KIND_WORDS.get(kind or "", "a raw record")
+    except Exception:
+        # A check that cannot run cannot clear the output.
+        if not _cloud_possible():
+            return None
+        return ("[output withheld] I couldn't check what this printed for mail archives and statements, "
+                "so it was held back. Tell the owner what you ran and that its output was held back.")
+    if not kind or not _cloud_possible():
+        return None
+    return ("[output withheld] What this printed reads like %s. Mail archives and statements reach "
+            "a cloud model only with the owner's yes for that one file. If it came from a file, open "
+            "that file with read_file, which asks them on screen; if it did not, tell them what you ran "
+            "and that its output was held back." % what)
+
+
+def raw_held_notice(path, kind: str | None = None) -> str:
+    """What read_file returns, in place of the contents, for a raw record
+    the owner has not allowed."""
+    from agent_friday.services import raw_records
+    what = raw_records.KIND_WORDS.get(kind or _raw_kind(path) or "", "a raw record")
+    return ("%s is %s. Its contents stay on this PC until the owner says a cloud model may read "
+            "this one file; a card asking them is on screen (or was, today). Tell them so in one "
+            "sentence, and read the file again once they approve." % (Path(path).name, what))
+
+
+def _raw_key(path) -> str:
+    """One key per file, however it was spelled."""
+    try:
+        return str(Path(path).resolve()).casefold()
+    except Exception:
+        return str(path).casefold()
+
+
+#: (normalised path, sha256) -> when the card for it was raised.
+_RAW_ASKED: dict = {}
+_RAW_ASK_EVERY_S = 24 * 3600
+
+
+def _cloud_possible() -> bool:
+    """False only when the owner chose to keep every model on this PC: then
+    nothing could leave and there is nothing to ask."""
+    try:
+        from agent_friday.core import _load_settings
+        mode = ((_load_settings() or {}).get("model_routing") or {}).get("mode")
+        return mode != "local_only"
+    except Exception:
+        return True
+
+
+def _provider_words() -> str:
+    try:
+        from agent_friday.services import one_key
+        name = {"anthropic": "Anthropic", "openrouter": "OpenRouter"}.get(one_key.key_in_use() or "")
+    except Exception:
+        name = None
+    return name or "the cloud model you set up"
+
+
+def raw_card_note(path, kind: str | None = None) -> str | None:
+    """Friday's own words for a raw record on a file-access card: what it is
+    and who would read it. None for any other file."""
+    kind = kind or _raw_kind(path)
+    if not kind:
+        return None
+    from agent_friday.services import raw_records
+    return "%s; %s would read it" % (raw_records.KIND_WORDS.get(kind, "a raw record"), _provider_words())
+
+
+def ask_for_raw_source(path, kind: str | None = None, *, force: bool = False) -> dict | None:
+    """Raise one file-access card for a raw record, at most once a day per
+    version of the file. The card lists the file as Friday resolved it, with
+    the classifier's own findings; the reason says what it is and where it
+    would go. Approving it is a click on screen (file_grant_requests)."""
+    kind = kind or _raw_kind(path)
+    if not kind or not _cloud_possible():
+        return None
+    try:
+        p = Path(path).resolve()
+        st = p.stat()
+        if st.st_size > MAX_GRANT_BYTES:
+            return None                      # too large to allow at all: it simply stays here
+    except Exception:
+        return None
+    # One card per version of the file a day, recognised without hashing it
+    # again (the card itself pins the content it shows).
+    key = (str(p).casefold(), st.st_size, st.st_mtime_ns)
+    now = time.time()
+    if not force and now - _RAW_ASKED.get(key, 0) < _RAW_ASK_EVERY_S:
+        return None
+    _RAW_ASKED[key] = now
+    from agent_friday.services import file_grant_requests, raw_records
+    what = raw_records.KIND_WORDS.get(kind, "a raw record")
+    note = raw_card_note(p, kind)
+    reason = ("%s is %s. Even when I may use the cloud for everything, a whole %s goes to a "
+              "cloud model only with your yes for this one file. Approving lets %s read it when "
+              "I open it; your never-send list still applies. Until then it stays on this PC." % (
+                  p.name, what, "mail archive" if kind == "mail" else "statement", _provider_words()))
+    try:
+        # merge=False: this card is never folded into another request's card,
+        # so its own words (what the file is, who would read it) stay on it.
+        return file_grant_requests.request_access([{"path": str(p), "type": "file"}],
+                                                  reason=reason, requested_by="friday:raw-record",
+                                                  merge=False, notes={str(p): note})
+    except Exception:
+        return None
+
+
+def file_sha256(path, cap: int | None = None) -> str | None:
+    """The file's SHA-256, read in chunks; None when it is larger than `cap`
+    (default MAX_GRANT_BYTES: a file that large cannot be allowed anyway)."""
+    try:
+        p = Path(path)
+        if p.stat().st_size > (MAX_GRANT_BYTES if cap is None else cap):
+            return None
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+_CONTENT_READERS = re.compile(
+    r"\b(?:grep|egrep|fgrep|rg|ag|ack|findstr|select-string|sls|get-content|gc|cat|type|git\s+grep"
+    r"|import-csv|ipcsv|robocopy|xcopy)\b|\[(?:system\.)?io\.file\]::\s*read", re.I)
+_ALWAYS_RECURSIVE = re.compile(r"\b(?:rg|ag|ack|git\s+grep)\b", re.I)
+# Code that walks a folder itself (run_sandboxed). Deep: every folder under
+# it; shallow: the folder's own files only.
+_DEEP_WALKERS = re.compile(r"\b(?:rglob|os\.walk|walk|mailbox)\b|\*\*")
+# .NET folder enumeration (GetFiles, EnumerateFiles, SearchOption.AllDirectories):
+# taken as deep, since the search option may sit anywhere in the call.
+_DEEP_APIS = re.compile(r"alldirectories|\b(?:enumerate|get)(?:files|directories|filesystementries)\b", re.I)
+_SHALLOW_WALKERS = re.compile(r"\b(?:glob|listdir|iterdir|scandir)\b")
+# Shell commands that list or copy a folder's files, which a pipe then reads
+# (Get-ChildItem dir | Import-Csv): shallow, deep with a recursion flag.
+_SHELL_WALKERS = re.compile(r"\b(?:gci|get-childitem|dir|ls|robocopy|xcopy|forfiles|where)\b", re.I)
+_SLASH_RECURSE = re.compile(r"\b(?:findstr|dir|robocopy|xcopy|forfiles|where)\b", re.I)
+_WHERE = re.compile(r"\bwhere\b", re.I)
+# A folder named from the home folder or the environment, not spelled out.
+_HOMEISH = re.compile(r"Path\.home\(|expanduser\(|environ|getenv\(|USERPROFILE|APPDATA|HOMEPATH")
+
+
+def _recursive_flag(text: str) -> bool:
+    """-r / -R / -rn / --recursive / -Recurse (or a prefix of it) / -Depth,
+    with or without a value after a colon (-Recurse:$true, -Depth:9), a
+    splatted Recurse (@{Recurse=$true}), or the /s (/si, /sn ...), /e and
+    /mir of findstr, dir, robocopy, xcopy and forfiles (and where's /r),
+    alone or run together (/s/b), judged token by token (no pattern over
+    the whole command)."""
+    slash = bool(_SLASH_RECURSE.search(text))
+    where = bool(_WHERE.search(text))
+    if "@{" in text and "recurse" in text.lower():
+        return True
+    for tok in text.split():
+        low = tok.lower()
+        name = low.split(":", 1)[0] if low.startswith("-") else low
+        if name in ("--recursive", "-recursive", "-depth") or (len(name) >= 4 and "-recurse".startswith(name)):
+            return True
+        if 2 <= len(tok) <= 5 and tok[0] == "-" and tok[1:].isalpha() and "r" in low[1:]:
+            if low not in ("-raw",):
+                return True
+        if slash and 2 <= len(tok) <= 24 and tok[0] == "/":
+            parts = [x for x in low.split("/") if x]
+            if parts and all(x.isalpha() and len(x) <= 5 for x in parts) and any(
+                    "s" in x or x in ("e", "mir") or (where and x == "r") for x in parts):
+                return True
+    return False
+
+
+#: Folders too broad to walk before a command: refused at once ("narrow it").
+def _too_broad(p: Path) -> bool:
+    try:
+        r = p.resolve()
+        return r == Path.home().resolve() or r.parent == r
+    except Exception:
+        return True
+
+
+# \\host\share...: a host name and at least one more segment. A regex escape
+# ('\\d{3}', '\\w+', "\\\\") has neither, and \\?\ or \\.\ is a device path.
+_NETWORK_FOLDER = re.compile(r"^\\\\[\w-][\w.-]*\\[^\\]+")
+_TRAILING_PATTERN = re.compile(r"[\\/]\*(?:\.\*|\.[\w]{1,8})?$")
+
+
+def _recursive_dirs(text: str, cwd=None) -> tuple:
+    """([(folder, deep)], unnamed, remote): the folders a command reads the contents
+    of (grep -r, rg, findstr /s over "dir\\*", Select-String -Recurse,
+    Get-ChildItem -Recurse, a program that walks or lists a folder), deep
+    when every folder under it is read. Any other folder a command names is
+    judged shallow, by its own files: what a command does with a folder it
+    names (a pipe into Import-Csv, a cd before a relative name) is not
+    something a pattern over the command can rule out. `unnamed` when a
+    program walks a folder it names only from the home folder or the
+    environment, which cannot be checked first. `remote`: the network
+    folders a walking or reading command names, which are never touched to
+    look; the device and loopback admin-share spellings of this PC's own
+    folders (raw_records.local_of_unc) are judged as those folders. A short
+    (8.3) folder name is walked as its long one. Without `cwd` (run_command
+    and run_sandboxed run in an empty scratch folder) a relative name names
+    nothing and is not judged."""
+    t = str(text or "")
+    deep_walk = bool(_DEEP_WALKERS.search(t) or _DEEP_APIS.search(t))
+    shallow_walk = bool(_SHALLOW_WALKERS.search(t))
+    shell_walk = bool(_SHELL_WALKERS.search(t))
+    recursive = _recursive_flag(t)
+    reader_deep = bool(_CONTENT_READERS.search(t) and (_ALWAYS_RECURSIVE.search(t) or recursive))
+    deep = deep_walk or reader_deep or (shell_walk and recursive)
+    from agent_friday.services import raw_records
+    looks = deep or shallow_walk or shell_walk or bool(_CONTENT_READERS.search(t))
+    out, seen, remote = [], set(), []
+    pieces, _quoted = raw_records.tokens(t)
+    for tok in pieces:
+        tok = tok.strip(raw_records._TOKEN_EDGES).strip()
+        if tok in seen:
+            continue
+        seen.add(tok)
+        if not tok or "://" in tok or len(tok) > 400:
+            continue
+        src = tok
+        unc = tok.replace("/", "\\")
+        if unc.startswith("\\\\"):
+            src = raw_records.local_of_unc(tok)
+            if not src:
+                if looks and _NETWORK_FOLDER.match(unc):
+                    remote.append(tok)           # another computer's folder
+                continue
+        try:
+            p = Path(raw_records.expand(src))
+            if not p.is_absolute():
+                if not cwd:
+                    continue
+                p = Path(cwd) / p
+            if not p.is_dir():
+                # findstr /s x "dir\\*" searches dir; Get-Content "dir\\*.csv" reads dir's files
+                p = Path(_TRAILING_PATTERN.sub("", str(p)) or str(p))
+            if p.is_dir() and not any(_same_path(str(q), p) for q, _d in out):
+                out.append((p.resolve(), deep))
+        except (OSError, ValueError):
+            continue
+    if cwd and not out and (_ALWAYS_RECURSIVE.search(t) or shell_walk):
+        # rg / git grep / Get-ChildItem with no folder: they look where they run
+        out.append((Path(cwd), bool(_ALWAYS_RECURSIVE.search(t)) or deep))
+    unnamed = bool((deep_walk or shallow_walk) and not out and _HOMEISH.search(t))
+    return out, unnamed, remote
+
+
+def raw_refusal_for_command(text: str, cwd=None) -> str | None:
+    """A shell command or program that names a raw record (a mail archive or
+    a statement) the owner has not allowed reads it around read_file, so it
+    is not run, and the owner is asked about each such file on screen. So is
+    a recursive search of a folder that holds one. None when nothing such is
+    named, when every such file has the owner's yes, or when every model
+    stays on this PC. `cwd` is the folder it runs in."""
+    if not _cloud_possible():
+        return None
+    try:
+        from agent_friday.services import raw_records
+        named = raw_records.named_in(str(text or ""), cwd=cwd)
+        folders, unnamed, remote = _recursive_dirs(text, cwd)
+    except Exception:
+        # A check that cannot run cannot clear the command.
+        return ("Not run: I couldn't check what it reads for mail archives and statements. "
+                "Open the files you need one at a time with read_file instead.")
+    if unnamed:
+        return ("Not run: it looks through a folder it names only from the home folder or the "
+                "environment, so I can't check it for mail archives and statements first. Name the "
+                "folder as a full path and run it again.")
+    if remote:
+        return ("Not run: it looks through %s, a folder on another computer, which I can't check for "
+                "mail archives and statements. Copy the files you need to this PC and open them one "
+                "at a time with read_file." % remote[0])
+    held, asked, too_many, unjudged = [], 0, [], []
+    for label, kind, p in named:
+        if kind == "undecodable":
+            return ("Not run: it hands PowerShell an encoded command that doesn't decode, so I can't "
+                    "check what it reads for mail archives and statements. Run it as plain text.")
+        if kind == "short_name":
+            return ("Not run: %s is a short (8.3) name that doesn't lead to a file here, so I can't "
+                    "check what it really is. Use the file's full name." % label)
+        if kind == "too_many":
+            too_many.append(str(label))
+            continue
+        if kind == "unjudged":
+            unjudged.append(str(label))
+            continue
+        try:
+            if p is not None and Path(p).is_file():
+                p = Path(p).resolve()
+                sha = file_sha256(p)
+                c = check_grant(p, sha256_hex=sha) if sha else None
+                if c is not None and c.state == "active" and c.grant_kind == "file":
+                    continue
+                if asked < 5:
+                    ask_for_raw_source(p, kind)
+                    asked += 1
+        except Exception:
+            pass
+        held.append(Path(str(label)).name if p is not None else str(label))
+    for folder, deep in folders:
+        if deep and _too_broad(folder):
+            too_many.append(str(folder))
+            continue
+        found, complete = raw_records_in(folder, recursive=deep)
+        if not complete:
+            too_many.append(str(folder))
+        for f in found:
+            if asked < 5:
+                ask_for_raw_source(f)
+                asked += 1
+            held.append(f.name)
+    if too_many and not held:
+        return ("Not run: %s covers too many files for me to check for mail archives and statements. "
+                "Narrow it to the files or folder you need." % too_many[0])
+    if unjudged and not held:
+        return ("Not run: %s is a pattern relative to whichever folder the command is in, so I can't "
+                "check the files it matches for mail archives and statements. Give the folder as a "
+                "full path and run it again." % unjudged[0])
+    if not held:
+        return None
+    return ("Not run: it reads %s, a mail archive or statement the owner hasn't let a cloud model "
+            "read. Open one file at a time with read_file instead; that asks them on screen, and "
+            "nothing from it leaves this PC until they say yes." % ", ".join(held[:3]))
+
+
+#: Build output, caches and installed packages: never a person's records.
+_WALK_SKIP = frozenset({".git", "node_modules", ".venv", "venv", "__pycache__", ".friday", "target", "dist",
+                        "build", ".next", ".nuxt", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+                        ".cache", "site-packages", ".gradle", ".idea", ".vs", "coverage", ".turbo"})
+#: How long a folder walk may take before its answer is incomplete.
+WALK_BUDGET_S = 3.0
+
+
+def raw_records_in(folder, limit: int = 20000, recursive: bool = True) -> tuple:
+    """(raw records under `folder` the owner has not allowed, whether the
+    whole folder was looked at). For a tool that hands a folder to another
+    program or searches it. Skips .git, node_modules and virtual
+    environments; a mailbox with no extension is recognised by its first
+    bytes. Past `limit` entries the answer is incomplete, and a caller
+    treats an incomplete answer as a refusal."""
+    import os
+    out, seen = [], 0
+    deadline = time.monotonic() + WALK_BUDGET_S
+    try:
+        for root, dirs, files in os.walk(str(folder)):
+            dirs[:] = [d for d in dirs if d not in _WALK_SKIP] if recursive else []
+            for f in files:
+                seen += 1
+                if seen > limit or time.monotonic() > deadline:
+                    return out, False
+                p = Path(root) / f
+                if not _raw_kind_by_name(p):
+                    continue
+                sha = file_sha256(p)
+                c = check_grant(p, sha256_hex=sha) if sha else None
+                if c is not None and c.state == "active" and c.grant_kind == "file":
+                    continue
+                out.append(p)
+    except Exception:
+        return out, False
+    return out, True
+
+
+def _raw_kind_by_name(p) -> str | None:
+    """kind_of for a folder walk: by name, and a file with no extension (a
+    Thunderbird "Inbox") by its first bytes; a .txt is not opened."""
+    try:
+        from agent_friday.services import raw_records
+        if Path(p).suffix.lower() == ".txt":
+            return None
+        return raw_records.kind_of(p)
+    except Exception:
+        return None
 
 
 # ── Listing / audit ─────────────────────────────────────────────────────────────

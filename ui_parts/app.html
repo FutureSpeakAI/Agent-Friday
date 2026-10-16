@@ -20006,6 +20006,39 @@ function CalDeleteConfirm({ e, onDone }) {
       E('button', { className: 'btn', style: { fontSize: 10 }, disabled: busy, onClick: () => setOpen(false) }, 'Cancel')),
     msg ? E('div', { role: 'alert', style: { color: '#ff5f7a', marginTop: 4 } }, msg) : null);
 }
+// ── Privacy & Data > Locks: how things are locked on this PC, in plain words ──
+// Read from /api/locks (services/locks.py): every line comes from the store that
+// decides it, and a line Friday cannot read says so. The honest limit is always shown.
+function SettingsLocks(){
+  const[d,setD]=useState(null);
+  const[msg,setMsg]=useState('');
+  const load=useCallback(()=>{apiFetch('/api/locks').then(r=>r.json()).then(setD).catch(()=>setMsg('Could not read the locks.'))},[]);
+  useEffect(()=>{load()},[load]);
+  const openWin=page=>apiFetch('/api/locks/open-windows',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page})})
+    .then(r=>r.json()).then(x=>{if(!x.ok)setMsg(x.message||'Windows did not open the page.')}).catch(()=>setMsg('Could not reach the server.'));
+  const post=(url,body)=>apiFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.json());
+  const askHeld=path=>post('/api/locks/raw-holds/ask',{path}).then(x=>setMsg(x.ok?'A card asking about that file is on screen.':(x.message||'No card could be raised.'))).catch(()=>setMsg('Could not reach the server.'));
+  const resetHeld=()=>post('/api/locks/raw-holds/reset').then(x=>setMsg(x.ok?'A card is on screen that says exactly what starting fresh lets go. Nothing changes until you approve it there.':'No card could be raised.')).catch(()=>setMsg('Could not reach the server.'));
+  return <StSection title="Locks" desc="How your things are locked on this PC, in plain words, and what that cannot stop.">
+    {!d&&<div className="sc-sub">{msg||'Reading…'}</div>}
+    {d&&<ul className="lk-lines">{(d.lines||[]).map(l=><li key={l.key} className={'lk-line lk-'+l.state}>
+      <div className="lk-title">{l.title}</div>
+      <div className="lk-words">{l.words}</div>
+      {l.today_words&&<div className="lk-words">{l.today_words}</div>}
+      {l.today&&l.today.length>0&&<ul className="lk-sub">{l.today.map(t=><li key={t.destination}>{t.destination+': '+t.sent+' sent'+(t.stopped?', '+t.stopped+' stopped':'')}</li>)}</ul>}
+      {l.checks&&<ul className="lk-sub">{l.checks.map(c=><li key={c.name}>{c.name+': '+(c.ok===true?'checks out ('+c.count+' line'+(c.count===1?'':'s')+')':c.ok===false?'changed ('+c.why+')':'could not check')}</li>)}</ul>}
+      {l.held_files&&l.held_files.length>0&&<ul className="lk-sub" aria-label="Held files">{l.held_files.map(f=><li key={f}>{f+' '}<button type="button" className="btn" style={{fontSize:11}} aria-label={'Ask me about '+f} onClick={()=>askHeld(f)}>Ask me about this file</button></li>)}</ul>}
+      {l.can_reset&&<button type="button" className="btn" style={{fontSize:11,marginTop:6}} onClick={resetHeld}>Start the list fresh…</button>}
+      {l.installer&&<div className="lk-words">{l.installer}</div>}
+      {l.open_page&&<button type="button" className="btn" style={{fontSize:11,marginTop:6}} onClick={()=>openWin(l.open_page)}>Open Windows' settings</button>}
+    </li>)}</ul>}
+    {d&&<p className="lk-limit" role="note"><strong>The honest limit. </strong>{d.honest_limit}</p>}
+    {d&&<div role="status" aria-live="polite" className="sc-msgline">{msg}</div>}
+    {d&&<button type="button" className="btn" style={{fontSize:11,marginTop:6}} onClick={load}>Check again</button>}
+  </StSection>;
+}
+
+
 function SettingsTabPrivacy({s,save}){
   const[vaultStatus,setVaultStatus]=useState(null);
   const[pass,setPass]=useState('');
@@ -20030,6 +20063,7 @@ function SettingsTabPrivacy({s,save}){
   };
   const armed=vaultStatus&&vaultStatus.encryption==='AES-256-GCM';
   return <div>
+    <SettingsLocks/>
     <StSection title="Vault">
       {vaultStatus&&<div style={{padding:'12px 14px',background:'rgba(0,0,0,0.3)',borderRadius:8,border:'1px solid rgba(0,212,255,0.08)',marginBottom:14}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>

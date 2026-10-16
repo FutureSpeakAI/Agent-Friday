@@ -130,6 +130,10 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # Wiping everything Laya learned (services/laya_personal_fit): irreversible, so a click on the
     # screen only; the spoken phrase opens the report card, never the deletion.
     "laya_wipe_request": frozenset({"owner:ui"}),
+    # Starting the raw-record hold list fresh (services/locks): it lets lines
+    # of mail archives and statements reach a cloud model again, so a click
+    # on the card on screen only (owner decision O7).
+    "raw_holds_reset": frozenset({"owner:ui"}),
 }
 
 

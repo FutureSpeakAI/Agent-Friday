@@ -377,18 +377,23 @@ def _never_send_covered_by_override(text: str) -> bool:
     """
     try:
         from agent_friday.services import judgment_gate as _jg
+        # A held raw record is never covered by an override: it is lifted
+        # only by a yes for that file. Judged on the whole payload, so lines
+        # spread over several paragraphs are still counted together.
+        if _jg.raw_record_hits(text):
+            return False
+        sep = "\n\n" if "\n\n" in text else ("\n" if "\n" in text else None)
+        paras = text.split(sep) if sep else [text]
+        with _TRUSTED_LOCK:
+            for p in paras:
+                ps = p.strip()
+                if not ps:
+                    continue
+                if _jg.never_send_hits(p) and ps not in _OVERRIDE_PARAS:
+                    return False
+        return True
     except Exception:
         return False
-    sep = "\n\n" if "\n\n" in text else ("\n" if "\n" in text else None)
-    paras = text.split(sep) if sep else [text]
-    with _TRUSTED_LOCK:
-        for p in paras:
-            ps = p.strip()
-            if not ps:
-                continue
-            if _jg.never_send_hits(p) and ps not in _OVERRIDE_PARAS:
-                return False
-    return True
 
 
 def _origin_reason(origin: str) -> str:
@@ -887,7 +892,9 @@ def _gate_text_span(text: str, provider: str, field: str,
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
     except Exception:
-        _never = []
+        # The floor that cannot be checked holds the payload: a floor that
+        # opens when its check breaks is not a floor.
+        _never = ["the never-send check could not run"]
     if _never and not _never_send_covered_by_override(text):
         _log(provider, field, Tier.SENSITIVE, "block",
              f"never-send material present ({len(_never)} token(s)) — payload blocked",
@@ -1257,7 +1264,9 @@ def _gate_tool_prose(text: str, provider: str, field: str,
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
     except Exception:
-        _never = []
+        # The floor that cannot be checked holds the payload: a floor that
+        # opens when its check breaks is not a floor.
+        _never = ["the never-send check could not run"]
     if not _never and is_unrestricted_cloud():
         # A14: the floor above ran and found nothing; the consent widens everything else.
         _log(provider, field, Tier.SENSITIVE, "allow",

@@ -148,6 +148,26 @@ def _receipt(event: str, **detail) -> dict:
         return body
 
 
+def verify_receipts() -> dict:
+    """{ok, count, reason}: walk the receipts' hash chain from the first line."""
+    try:
+        lines = [ln for ln in receipts_path().read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except OSError:
+        return {"ok": True, "count": 0, "reason": ""}
+    prev = "0" * 64
+    for i, ln in enumerate(lines, start=1):
+        try:
+            rec = json.loads(ln)
+        except ValueError:
+            return {"ok": False, "count": len(lines), "reason": "line %d is not readable" % i}
+        body = {k: v for k, v in rec.items() if k != "hash"}
+        want = hashlib.sha256((prev + json.dumps(body, sort_keys=True)).encode("utf-8")).hexdigest()
+        if rec.get("prev") != prev or rec.get("hash") != want:
+            return {"ok": False, "count": len(lines), "reason": "line %d was changed or moved" % i}
+        prev = rec["hash"]
+    return {"ok": True, "count": len(lines), "reason": ""}
+
+
 def receipts(limit: int = 200) -> list:
     try:
         lines = receipts_path().read_text(encoding="utf-8").splitlines()
