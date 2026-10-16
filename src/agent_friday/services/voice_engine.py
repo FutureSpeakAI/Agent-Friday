@@ -816,6 +816,7 @@ def _ask_friday_local(question: str, session: dict) -> str:
     except Exception as e:
         _log.error("ask_friday (local) failed: %s: %s", type(e).__name__, e)
         return f"Friday's deeper mind could not answer ({type(e).__name__}). Say so plainly."
+    _note_voice_receipts(session, _trace)
     return (text or "").strip()
 
 
@@ -889,6 +890,7 @@ def _tool_ask_friday(inp, session=None):
     except Exception as e:
         _log.error("ask_friday failed: %s: %s", type(e).__name__, e, exc_info=True)
         return f"Friday's local model could not answer ({type(e).__name__})."
+    _note_voice_receipts(session, _trace)
     return _gate_voice_tool_result((text or "").strip(), "ask_friday")
 
 
@@ -1998,6 +2000,60 @@ def _tool_revise_share_request(inp):
     return "NOT CHANGED: " + str(res.get("error")) + ". Tell them, and ask how to change it."
 
 
+#: The most tool calls one voice turn keeps receipts for.
+VOICE_TURN_RECEIPTS_MAX = 40
+
+
+def _note_voice_receipts(session, entries):
+    """Keep this call's tool results for the reply that is being spoken.
+
+    The voice reply is checked against them when the turn is flushed
+    (``guard_voice_reply``): a spoken "I've added it to your calendar" needs a
+    calendar write that succeeded in the same turn, exactly as a typed one
+    does. `entries` are tool_trace-shaped ({name, input, result})."""
+    if not isinstance(session, dict):
+        return
+    try:
+        from agent_friday.services.completion_receipts import receipt_input
+        book = session.setdefault("turn_receipts", [])
+        for e in entries or []:
+            if not isinstance(e, dict) or not e.get("name"):
+                continue
+            res = e.get("result")
+            book.append({"name": str(e["name"]),
+                         "input": receipt_input(e.get("input")),
+                         # Only the head of a result is kept: its status
+                         # prefix is what the check reads.
+                         "result": (res if isinstance(res, str) else str(res))[:400]})
+        del book[:-VOICE_TURN_RECEIPTS_MAX]
+    except Exception:
+        pass
+
+
+def guard_voice_reply(session, agent_text):
+    """The write-claim law for a finished voice turn.
+
+    Returns (text, findings, receipts): the reply with every unbacked
+    completed-write claim rewritten to say it was not done
+    (completion_receipts.enforce_write_claims), what was rewritten, and the
+    turn's compact receipts for the transcript. The turn's receipts are
+    consumed, so the next turn starts with none. Never raises."""
+    trace = []
+    if isinstance(session, dict):
+        trace = list(session.pop("turn_receipts", None) or [])
+    try:
+        from agent_friday.services.completion_receipts import (
+            compact_receipts, enforce_write_claims, strip_receipt_lines)
+        receipts = compact_receipts(trace)
+        if not agent_text:
+            return agent_text, [], receipts
+        text, findings = enforce_write_claims(strip_receipt_lines(agent_text), trace)
+        return text, findings, receipts
+    except Exception as e:  # noqa: BLE001
+        _log.warning("voice reply claim check skipped: %s", e)
+        return agent_text, [], []
+
+
 def _voice_tool_run(name, args, send_client, session=None, owner_utterance=False):
     """Execute one Live tool call, emit any client-side side effect, and return a
     SHORT text/JSON result for the model to speak from. `send_client(obj)` pushes
@@ -2025,28 +2081,35 @@ def _voice_tool_run(name, args, send_client, session=None, owner_utterance=False
     from agent_friday.services.agent import _execute_tool
 
     def _governed(tool, fn, a):
-        c = _ctx()
-        if owner_utterance:
-            # The rule layer's call on the owner's own words: not text a cloud
-            # seat authored, so the search gates keep their ordinary policy.
-            return _execute_tool(tool, a, handler=fn, session_ctx=c)
-        # Voice parity with the chat loops: a cloud voice seat's search query
-        # is its own text (owner decision (a), privacy/public_query). The
-        # mark records `a` as the seat sent it; only those exact strings are
-        # floor-only at the search gates.
-        from agent_friday.privacy.public_query import for_tool_call as _pq_call
-        if not _local_session(session):
-            # A cloud voice seat's search that shares private text from the
-            # conversation waits on the owner's Send card on screen, as in
-            # chat (privacy/public_query, "ASK WITH PREVIEW"); the model is
-            # told to say so. A local voice seat never asks.
-            from agent_friday.services.agent import _public_query_hold
-            held = _public_query_hold(c.get("provider", "cloud"), "", tool, a,
-                                      request=_voice_request(session), session_ctx=c)
-            if held:
-                return held
-        with _pq_call(c.get("provider", "cloud"), "", tool, a):
-            return _execute_tool(tool, a, handler=fn, session_ctx=c)
+        def _run():
+            c = _ctx()
+            if owner_utterance:
+                # The rule layer's call on the owner's own words: not text a cloud
+                # seat authored, so the search gates keep their ordinary policy.
+                return _execute_tool(tool, a, handler=fn, session_ctx=c)
+            # Voice parity with the chat loops: a cloud voice seat's search query
+            # is its own text (owner decision (a), privacy/public_query). The
+            # mark records `a` as the seat sent it; only those exact strings are
+            # floor-only at the search gates.
+            from agent_friday.privacy.public_query import for_tool_call as _pq_call
+            if not _local_session(session):
+                # A cloud voice seat's search that shares private text from the
+                # conversation waits on the owner's Send card on screen, as in
+                # chat (privacy/public_query, "ASK WITH PREVIEW"); the model is
+                # told to say so. A local voice seat never asks.
+                from agent_friday.services.agent import _public_query_hold
+                held = _public_query_hold(c.get("provider", "cloud"), "", tool, a,
+                                          request=_voice_request(session), session_ctx=c)
+                if held:
+                    return held
+            with _pq_call(c.get("provider", "cloud"), "", tool, a):
+                return _execute_tool(tool, a, handler=fn, session_ctx=c)
+
+        # Every result is recorded as this call's receipt, a public-query hold
+        # included: a hold is not a successful write, so it never backs a claim.
+        result = _run()
+        _note_voice_receipts(session, [{"name": tool, "input": a, "result": result}])
+        return result
 
     try:
         from agent_friday.services import live_session_plan as _lsp
@@ -2338,7 +2401,9 @@ def _voice_tool_run(name, args, send_client, session=None, owner_utterance=False
             _cid = session.get("conversation_id") if isinstance(session, dict) else None
             _tok = _ag._CURRENT_CONVERSATION.set(_cid)
             try:
-                return _execute_tool(name, args, session_ctx=_ctx())
+                result = _execute_tool(name, args, session_ctx=_ctx())
+                _note_voice_receipts(session, [{"name": name, "input": args, "result": result}])
+                return result
             finally:
                 _ag._CURRENT_CONVERSATION.reset(_tok)
     except Exception as e:
@@ -3163,7 +3228,8 @@ def _build_live_context() -> str:
     return "\n\n".join(parts)
 
 
-def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=None):
+def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=None,
+                        receipts=None):
     """Log a completed voice turn to the context log and chat history.
 
     Voice turns are saved as event types `voice_user` and `voice_agent` so
@@ -3182,10 +3248,12 @@ def _persist_voice_turn(user_text, agent_text, conversation_id=None, provider=No
     # the conversation store's shared write lock.
     settings = _load_settings()
     return _persist_owned_voice_turn(
-        user_text, agent_text, _conv, conversation_id, provider, settings)
+        user_text, agent_text, _conv, conversation_id, provider, settings,
+        receipts=receipts)
 
 
-def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, settings):
+def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, settings,
+                              receipts=None):
     """Revalidate and append before any ancillary transcript-bearing writes."""
     off_record = bool(settings.get('off_record'))
     # Which provider heard this exchange (the Gemini Live bridge passes
@@ -3227,6 +3295,8 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
         }
         if _unsaved:
             friday_msg['off_record'] = True
+        if receipts:
+            friday_msg['receipts'] = list(receipts)
     # This is the ownership linearization point: another store mutation cannot
     # remove the owner between this check and either canonical message row.
     with _conv._LOCK:
@@ -3247,10 +3317,13 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
                 continue
             _m['conversation_id'] = _cid
             try:
+                _meta = dict(_turn_meta, kind="turn", via="voice",
+                             library=bool(_m.get('library')))
+                if _m.get('receipts'):
+                    _meta['receipts'] = _m['receipts']
                 _conv.append(_cid, {"id": _m['id'], "role": _m['role'],
                                     "text": _m['text'], "pinned": False,
-                                    "meta": dict(_turn_meta, kind="turn", via="voice",
-                                                 library=bool(_m.get('library')))}, settings=settings)
+                                    "meta": _meta}, settings=settings)
             except Exception as _ce:
                 print(f'  [voice] could not persist turn to {_cid}: {_ce}')
                 return False

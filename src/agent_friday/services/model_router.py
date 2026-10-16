@@ -3160,9 +3160,19 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
     2. If still violating and `redispatch_no_tools(note)` is given, retry
        once with tools stripped so the model answers plainly. Its output is
        validated too.
-    3. Only then substitute the honest failure message (which invites a
+    3. If what is left is only completed-write claims with no receipt
+       behind them (no syntax leak), and the reply has real content besides
+       them, those sentences are REWRITTEN to say plainly the thing was not
+       done (completion_receipts.enforce_write_claims) and the rest of the
+       reply stands: a weekend plan with one false "added to your calendar"
+       keeps the plan.
+    4. Only then substitute the honest failure message (which invites a
        rephrase) and clear the tool_trace — never rendered, never spoken,
        never treated as real tool output.
+
+    Every attempt's tool_trace is kept in ``meta["turn_trace"]``: they all ran
+    in this turn, so they all back (or fail to back) its claims, and the
+    turn's receipts are recorded from them even when the reply is replaced.
 
     Every retry output is scrubbed of correction-referencing artifacts (B5,
     the "[user correction]" leak) before it can be returned or persisted.
@@ -3171,6 +3181,7 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
     """
     from agent_friday.services.tool_integrity import scrub_retry_artifacts
 
+    turn_trace = list(tool_trace or [])
     leaks, claims = _integrity_violations(reply, tool_trace, tool_names)
     blocked = bool(leaks or claims)
     tries = 0
@@ -3181,8 +3192,9 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
         except Exception as e:
             _integrity_logger.warning("corrective redispatch failed: %s", e)
             break
+        turn_trace += list(tool_trace or [])
         reply = scrub_retry_artifacts(reply)
-        leaks, claims = _integrity_violations(reply, tool_trace, tool_names)
+        leaks, claims = _integrity_violations(reply, turn_trace, tool_names)
 
     tools_stripped_retry = False
     if (leaks or claims) and blocked and redispatch_no_tools is not None:
@@ -3190,11 +3202,28 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
         try:
             reply, tool_trace = redispatch_no_tools(
                 _corrective_note(leaks, claims))
+            turn_trace += list(tool_trace or [])
             reply = scrub_retry_artifacts(reply)
-            leaks, claims = _integrity_violations(reply, tool_trace,
+            leaks, claims = _integrity_violations(reply, turn_trace,
                                                   tool_names)
         except Exception as e:
             _integrity_logger.warning("tools-stripped redispatch failed: %s", e)
+
+    rewritten = []
+    if claims and not leaks:
+        from agent_friday.services.completion_receipts import (
+            enforce_write_claims, rewrite_leaves_substance)
+        fixed, findings = enforce_write_claims(reply, turn_trace)
+        if findings:
+            l2, c2 = _integrity_violations(fixed, turn_trace, tool_names)
+            if not l2 and not c2 and rewrite_leaves_substance(fixed, findings):
+                _integrity_logger.warning(
+                    "unreceipted write claims rewritten in place: %s",
+                    [f["quote"] for f in findings])
+                reply, rewritten, leaks, claims = fixed, findings, l2, c2
+
+    from agent_friday.services.completion_receipts import strip_receipt_lines
+    reply = strip_receipt_lines(reply)
 
     if leaks or claims:
         _integrity_logger.warning(
@@ -3206,7 +3235,9 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
 
     return reply, tool_trace, {"blocked": blocked, "retries": tries,
                                "final_leaks": leaks, "final_claims": claims,
-                               "tools_stripped_retry": tools_stripped_retry}
+                               "tools_stripped_retry": tools_stripped_retry,
+                               "rewritten_claims": rewritten,
+                               "turn_trace": turn_trace}
 
 
 # A refusal is a choice, and it is stated as one. Each item below guards
