@@ -438,9 +438,12 @@ def _do_handoff(p: dict) -> tuple:
     if not model:
         return False, "The local model could not take it: %s. Nothing was run." % why
     from agent_friday.services import agent as _ag
+    # The card the owner approved says the result stays on this PC: the task
+    # carries that promise (agent._spawn_task local_only_result).
     tid = _ag._spawn_task(str(p.get("title") or "Local handoff")[:120], _handoff_prompt(p),
                           description="Handed to the local model from a chat", model=model, tools=None,
-                          conversation_id=p.get("conversation_id") or None, orb_icon="🖥", pin_to_seat=True)
+                          conversation_id=p.get("conversation_id") or None, orb_icon="🖥", pin_to_seat=True,
+                          local_only_result=True)
     if not tid:
         return False, "The local task could not be started. Nothing was run."
     moved = "" if model == p.get("model") else " (the local seat is now %s)" % model
