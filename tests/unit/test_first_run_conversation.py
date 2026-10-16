@@ -181,6 +181,17 @@ def test_the_offer_is_the_inbox_now_and_names_the_other_two_as_coming(home):
     assert "Nothing is unsubscribed until you tick it" in copy.OFFER_INBOX
 
 
+def test_the_inbox_offer_starts_once_connections_are_done_never_before(home, steps, monkeypatch):
+    calls = []
+    monkeypatch.setattr(sc, "OFFER_STARTER", lambda st: calls.append(st["stage"]) or
+                        {"state": "running", "text": "Started on your inbox."})
+    _walk("connect", offer=("inbox", ""))
+    assert calls == [], "not before her identity, the posture and the lock exist"
+    sc.answer("connect", "done", "")
+    assert calls == ["connect"] and sc.load_state()["offer_state"] == "running"
+    assert "Started on your inbox." in _texts()
+
+
 # ── her identity ─────────────────────────────────────────────────────────────
 
 def test_her_pronouns_are_asked_never_taken_from_the_voice(home, steps):

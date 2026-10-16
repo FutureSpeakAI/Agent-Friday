@@ -885,9 +885,9 @@ def _on_connect(st, transcript, value, text):
     _enter(st, transcript, "knowledge")
 
 
-#: Test seam and extension point: callable(st) -> {"state", "text"} that
-#: starts the chosen offer's job once its prerequisites exist (the inbox
-#: offer registers itself). None means no offer job is wired.
+#: Test seam: callable(st) -> {"state", "text"} that starts the chosen
+#: offer's job once its prerequisites exist. None means the inbox clean-up's
+#: own starter (services/inbox_cleanup.offer_starter).
 OFFER_STARTER = None
 
 
@@ -899,7 +899,8 @@ def _start_offer_if_ready(st, transcript) -> None:
         return
     starter = OFFER_STARTER
     if starter is None:
-        return
+        from agent_friday.services import inbox_cleanup
+        starter = inbox_cleanup.offer_starter
     try:
         out = dict(starter(st) or {})
     except Exception as e:

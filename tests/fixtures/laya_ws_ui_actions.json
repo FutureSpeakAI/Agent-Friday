@@ -61,6 +61,9 @@
     "audit_status": "M"
    },
    {"id": "messages.send_later", "group": "create", "label": "send later / attachments", "audit_status": "N"},
+   {"id": "messages.cleanup_open", "group": "navigate", "label": "open the inbox clean-up board", "audit_status": "new"},
+   {"id": "messages.cleanup_read", "group": "read", "label": "read a Gmail account or a Takeout file for the clean-up", "audit_status": "new"},
+   {"id": "messages.cleanup_unsubscribe", "group": "organize", "label": "unsubscribe from ticked senders", "audit_status": "new"},
    {
     "id": "messages.accounts",
     "group": "settings",
