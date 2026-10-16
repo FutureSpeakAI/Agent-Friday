@@ -19,6 +19,10 @@ jobs:
     name: ${{ matrix.mode }} (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 300
+    env:
+      # The suite's conftest points HOME at a scratch dir, so Playwright's
+      # default browser cache would be looked up there and the test skips.
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
     strategy:
       fail-fast: false
       matrix:
