@@ -93,6 +93,14 @@ _PROMISE_RE = re.compile(
     r"|fetch|scan|dig|run|see|take a look)"
     r"|give me (?:one |a )?(?:second|moment|sec|minute)"
     r"|I'm (?:going to|about to|now) (?:search|look|check|find|pull|open|grab|run)"
+    # "I'm loading the background task tool now" -- the field case: said in
+    # a turn whose tool call was written as text and never ran.
+    r"|(?:I'm|I am) (?:now )?(?:loading|spawning|launching|starting|kicking off|setting up)"
+    r" (?:the|a|an|your|that|this|those)\b[^.!?\n]{0,40}?"
+    r"\b(?:tools?|tasks?|jobs?|background|agents?|workflows?|schedules?|searche?s?|downloads?)\b"
+    r"|(?:I'll|I will|let me) (?:now |just )?(?:load|spawn|launch|kick off)"
+    r" (?:the|a|an|your|that|this|those)\b[^.!?\n]{0,40}?"
+    r"\b(?:tools?|tasks?|jobs?|background|agents?|workflows?|schedules?|downloads?)\b"
     r"|(?:one|just a) (?:second|moment|sec) while I"
     r"|hang on while I|bear with me while I"
     r")\b", re.IGNORECASE)
