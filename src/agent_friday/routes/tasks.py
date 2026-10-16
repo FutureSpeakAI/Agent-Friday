@@ -23,6 +23,7 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
+from agent_friday.services.pasted_secrets import withholds_request_body
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
@@ -542,6 +543,7 @@ def task_retention():
 
 @tasks_bp.route('/api/agent/steer', methods=['POST'])
 @login_required
+@withholds_request_body
 def api_agent_steer():
     """Push a follow-up prompt into a running task's dual-loop queue.
 
