@@ -40,7 +40,10 @@ def store_vault_passphrase(passphrase: str) -> bool:
         return False
     import agent_friday.core as core
     from agent_friday.services import vault_passphrase as _vp
-    _vp.store(vault_pass)
+    # A refusal (a different passphrase already opens this vault) must not arm
+    # the new one for this session either: that is how a vault gets split.
+    if not _vp.store(vault_pass) and getattr(_vp, "LAST_STORE_REFUSAL", ""):
+        return False
     os.environ["FRIDAY_VAULT_PASSPHRASE"] = vault_pass
     try:
         core.FRIDAY_VAULT_PASSPHRASE = vault_pass

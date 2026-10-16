@@ -1236,8 +1236,15 @@ def cmd_vault_setup():
     # -- so losing either one is survivable. `keyring` is an optional
     # dependency, which is exactly why this no longer refuses without it.
     from agent_friday.services import vault_passphrase as _vp
+    # Never a rotation: this command can run beside a live Friday. A different
+    # passphrase that would re-seal the vault is refused with the offline
+    # route (scripts/vault_key_doctor.py --rotate, Friday stopped).
     written = _vp.store(passphrase)
     console.print()
+    if not written and _vp.LAST_STORE_REFUSAL:
+        console.print("  [red]Not changed:[/red] " + _vp.LAST_STORE_REFUSAL + ".")
+        console.print()
+        return
     if written:
         console.print("  [green]✓[/green]  Vault passphrase saved to: "
                       + ", ".join(written) + ".")

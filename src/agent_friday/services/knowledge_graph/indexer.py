@@ -257,18 +257,23 @@ def purge_library_documents(doc_ids) -> dict:
     reports = store.load("community_reports")
     kept_reports = [r for r in reports if r.get("community") not in hit_comms]
     out["reports"] = len(reports) - len(kept_reports)
+    refused_before = store.refusals
     if any(out.values()) or dead:
         store.save("entities", ents)
         store.save("relationships", rels)
         store.save("community_reports", kept_reports)
+    # The manifest moves only when every save landed: a refused save
+    # (KnowledgeGraphStore.refusals) left the old records on disk, so the
+    # documents must stay tracked for the next run to remove them.
     try:
-        from agent_friday.services.library.store import OWNER, store_for
-        st = store_for(OWNER)
-        for d in keys:
-            row = st.get_document(int(d))
-            if row:
-                manifest.forget(row["path"])
-        manifest.save()
+        if store.refusals == refused_before:
+            from agent_friday.services.library.store import OWNER, store_for
+            st = store_for(OWNER)
+            for d in keys:
+                row = st.get_document(int(d))
+                if row:
+                    manifest.forget(row["path"])
+            manifest.save()
     except Exception:
         pass
     ids = sorted(dead | touched)
@@ -992,12 +997,14 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         all_entities, all_rels, all_comms,
         seed=int(settings.get("layout_seed", 1337)))
 
+    refused_before = store.refusals
     store.save("entities", all_entities)
     store.save("relationships", all_rels)
     store.save("communities", all_comms)
     store.save("community_reports", reports)
     store.save_layout(layout_meta)
-    manifest.save()
+    if store.refusals == refused_before:            # a refused save keeps its sources due again
+        manifest.save()
 
     # Tier B used to fail SILENTLY and completely: `indexing_mode` defaulted
     # to a local model no install actually delivered, every call raised, was

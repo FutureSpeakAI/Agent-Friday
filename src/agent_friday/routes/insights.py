@@ -413,7 +413,17 @@ def set_vault_passphrase():
     # The ONE writer: OS keychain AND a DPAPI-wrapped file, so a host without
     # the optional `keyring` dependency still gets a durable copy.
     from agent_friday.services import vault_passphrase as _vp
+    # NEVER A ROTATION FROM HERE. Changing the passphrase that opens the vault
+    # re-seals every private file, and this server keeps writing those files
+    # while it runs; a rotation under it can leave a file sealed under a
+    # passphrase no home holds. store() without rotate refuses a different
+    # passphrase with a plain message (vault_passphrase.ROTATE_OFFLINE_ONLY),
+    # and a refused value is never armed for this session either.
     keychain = bool(_vp.store(passphrase))
+    if not keychain and _vp.LAST_STORE_REFUSAL:
+        why = _vp.LAST_STORE_REFUSAL
+        return jsonify({"status": "error",
+                        "message": why[:1].upper() + why[1:] + "."}), 409
     os.environ["FRIDAY_VAULT_PASSPHRASE"] = passphrase
     try:
         core.FRIDAY_VAULT_PASSPHRASE = passphrase
