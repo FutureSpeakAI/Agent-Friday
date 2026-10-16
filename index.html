@@ -58340,7 +58340,7 @@ function SettingsTabPrivacy({
     desc: "On, people and places in your documents appear in the Galaxy with a link back to where they are mentioned. The graph's search index is not encrypted. Forgetting a document removes what the graph learned only from it and clears the descriptions it contributed to; turning this off takes back everything learned from your documents."
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "Memory card"
-  }, /*#__PURE__*/React.createElement(MemoryCardPanel, null)), /*#__PURE__*/React.createElement(StSection, {
+  }, /*#__PURE__*/React.createElement(MemoryCardPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
     title: "What needs your sign-off"
   }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {
     s: s,
@@ -59331,7 +59331,7 @@ function LayaLearningPanel({s, save}) {
 }
 // End Laya learning panel
 
-function MemoryCardPanel() {
+function MemoryCardPanel({s, save}) {
   // The core memory card (services/core_memory): the two short notes Friday reads at
   // the top of every conversation. Every line is shown and can be edited or deleted
   // here; suggestions from nightly dreaming and the background review wait for a Keep;
@@ -59395,6 +59395,10 @@ function MemoryCardPanel() {
   const chg = c => c.op === 'add' ? 'Added “' + (c.after || '') + '”'
     : c.op === 'remove' ? 'Removed “' + (c.before || '') + '”' : 'Changed “' + (c.before || '') + '” to “' + (c.after || '') + '”';
   return E('div', null,
+    E('div', {'data-st-key': 'settings.memory_review'},
+      E(StToggle, {label:'Review our conversations for the card', value: s.memory_review_enabled !== false,
+        onChange: () => save({memory_review_enabled: s.memory_review_enabled === false}),
+        desc:'On. Every ' + (s.memory_review_every_turns || 10) + ' turns, after ' + fridayName() + ' has answered, a model on this PC reads the latest exchanges and may add a line that rests on your own words. Anything it would change or remove, and anything it got from what she read, waits below for your Keep. It never uses a cloud model. Off, nothing is reviewed.'})),
     E('div', {style: dim}, 'Two short notes ' + fridayName() + ' reads at the start of every conversation: what she knows about you, and what she has learned about working with you. Each has a size limit, so she merges or drops lines to make room. She saves on her own when you tell her something; anything she picked up from a page, a mail or a file waits for your OK first. Your changes here apply straight away; hers from the next conversation. The files are on this PC only.'),
     msg && E('div', {role:'status', style:{fontSize:11, color:'#f59e0b', marginTop:6}}, msg),
     !rep && !msg && E('div', {style: dim}, 'Loading…'),

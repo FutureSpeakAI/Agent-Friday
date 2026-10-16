@@ -2567,11 +2567,12 @@ def _current_session_id():
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
+def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
+                     owner=True):
     """The end of a chat or voice turn: index it, then let the turn's one
     embedding of the message go (services/turn_vector)."""
     try:
-        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library)
+        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library, owner)
     finally:
         try:
             from agent_friday.services import turn_vector as _tv
@@ -2580,7 +2581,8 @@ def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id
             pass
 
 
-def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
+def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
+                          owner=True):
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
@@ -2597,10 +2599,24 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
             return
     except Exception:
         pass
-    try:
-        if library:
+    if library:
+        try:
             from agent_friday.services.library import cite as _library_cite
             reply = _library_cite.ELIDED
+        except Exception as _le:
+            # Never index (or review) a Library answer's words un-elided.
+            print(f"  [MEMORY] turn indexing skipped: {_le}")
+            return
+    # Every few turns a local model reviews the conversation for the memory
+    # card, after the reply (services/memory_review). Same end-of-turn door
+    # for chat and voice; off the record never reaches here.
+    try:
+        from agent_friday.services import memory_review as _mreview
+        # `owner`: the user side is the owner's own words (False for voice).
+        _mreview.note_turn(message, reply, session_id, owner=owner)
+    except Exception:
+        pass
+    try:
         mem = _get_conversation_memory()
         mem.index_exchange(
             message, reply, session_id=session_id,

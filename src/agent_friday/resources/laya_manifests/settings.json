@@ -198,6 +198,11 @@
    "reason": "Undoing a change Friday made to her memory is the owner's correction; Laya never runs it."
   },
   {
+   "action": "settings.memory_review",
+   "kind": "by_design",
+   "reason": "Whether a local model reviews the owner's conversations for the memory card is the owner's privacy choice; Laya never switches it."
+  },
+  {
    "action": "settings.laya_report",
    "kind": "by_design",
    "reason": "The report card shows the owner's own words and is served to the owner only; by voice, 'what have you learned?' is the laya_learning summary."
