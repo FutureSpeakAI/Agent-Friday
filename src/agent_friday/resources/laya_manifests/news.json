@@ -307,6 +307,7 @@
   }
  ],
  "not_for_laya": [
+  {"action": "news.trust_scoring", "kind": "by_design", "reason": "How trust is scored is the owner's own setting; Friday reads scores and never changes how they are made."},
   {
    "action": "news.read_later",
    "kind": "gap",

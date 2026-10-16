@@ -1942,6 +1942,11 @@ def api_settings():
         if interrupt_error is not None:
             return jsonify(interrupt_error), 400
 
+        from agent_friday.services import owner_choices as _oc
+        choice_error = _oc.validate(new_settings)
+        if choice_error is not None:
+            return jsonify(choice_error), 400
+
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting
         # the non-persistent offline routing overlay (mode=local_only).

@@ -5034,5 +5034,132 @@
   "reader_needle": "got = (settings().get(\"length\") or {}).get(key)",
   "status": "ok",
   "note": "One choice per show (the four News shows and the episodes you ask for). Validated on save (routes/core_routes._check_podcast_length); podcast_engine.length_for decides each new episode's length."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Money paragraphs in email",
+  "label": "When an email paragraph about money would go to a cloud model",
+  "kind": "select (ask | withhold)",
+  "keys": [
+   "email_cloud_release"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/owner_choices.py",
+  "reader_needle": "_settings(settings).get(\"email_cloud_release\")",
+  "status": "ok",
+  "note": "The owner's choice (owner_choices.py, decision 1). Read by services/cloud_release.offer: under the cautious cloud consent, ask raises a card showing exactly the held money paragraphs (Send / Keep on this PC, remember for thread or sender); withhold keeps them on this PC, announced to the model. Validated on save (owner_choices.validate)."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Money paragraphs in email",
+  "label": "Forget (per remembered thread or sender)",
+  "kind": "button per row",
+  "keys": [],
+  "route": "DELETE /api/privacy/cloud-release/<id>",
+  "reader_file": "src/agent_friday/routes/control.py",
+  "reader_needle": "def forget_cloud_release(",
+  "status": "ok",
+  "note": "Lists services/cloud_release.remembered() (GET /api/privacy/cloud-release); Forget removes one, so that thread's or sender's money paragraphs are asked about again."
+ },
+ {
+  "section": "General",
+  "panel": "Scheduled jobs",
+  "label": "A run missed while Friday was closed",
+  "kind": "select (run_once | skip)",
+  "keys": [
+   "schedules.missed_default"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/owner_choices.py",
+  "reader_needle": "_block(_settings(settings), \"schedules\").get(\"missed_default\")",
+  "status": "ok",
+  "note": "Decision 2. The default a new saved job takes (services/scheduler._normalize_record / _missed_policy); each job changes its own on its Workflows card (WfJobChoices, PATCH /api/schedules/<id> {missed})."
+ },
+ {
+  "section": "General",
+  "panel": "Scheduled jobs",
+  "label": "A run held because its pinned model was unavailable",
+  "kind": "select (retry | wait)",
+  "keys": [
+   "schedules.held_default"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/owner_choices.py",
+  "reader_needle": "_block(_settings(settings), \"schedules\").get(\"held_default\")",
+  "status": "ok",
+  "note": "Decision 3. retry: the scheduler tick checks the pinned model and runs the held run once when it answers (scheduler._is_due_on_schedule, held_retry); wait: its next scheduled time. Never re-routed. Per job: on_held on the Workflows card."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Pre-approved sends",
+  "label": "Undo window for emails sent with nobody watching",
+  "kind": "number input, seconds (10 to 600)",
+  "keys": [
+   "unattended_send_undo_s"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/owner_choices.py",
+  "reader_needle": "_settings(settings).get(\"unattended_send_undo_s\")",
+  "status": "ok",
+  "note": "Decision 4. services/gmail_send.request_send holds an unattended pre-approved send for this window (hold(undo_seconds=...)); the notice shows the time left and an Undo. Owner-present sends keep UNDO_SECONDS (10 s). Bounds checked in the page and on save (owner_choices.validate)."
+ },
+ {
+  "section": "Advanced",
+  "panel": "News source trust",
+  "label": "Learning rate, Boost adds, Boosted at least, Banned at most",
+  "kind": "number inputs",
+  "keys": [
+   "trust_scoring.prior_strength",
+   "trust_scoring.boost_lift",
+   "trust_scoring.boost_floor",
+   "trust_scoring.ban_ceiling"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/owner_choices.py",
+  "reader_needle": "_block(_settings(settings), \"trust_scoring\")",
+  "status": "ok",
+  "note": "Decision 5. source_trust_graph.scoring_params feeds _recompute (prior weight) and owner_adjusted (Boost/Ban); a change re-scores every outlet on the next pass (meta.rescored). The same component sits in News > Customize (NewsLocalBeatSettings). The 0.5 start is not a setting."
+ },
+ {
+  "section": "Voice",
+  "panel": "Podcasts",
+  "label": "Co-host's name",
+  "kind": "text input (saves on blur)",
+  "keys": [
+   "podcasts.hosts.b.name"
+  ],
+  "route": "PUT /api/podcasts/hosts",
+  "reader_file": "src/agent_friday/services/podcast_engine.py",
+  "reader_needle": "def set_host_names(",
+  "status": "ok",
+  "note": "Decision 6. Empty means podcast_engine.cohost_default_name(): Agent Friday only once she is renamed, otherwise COHOST_NEUTRAL_NAME. Choosing two hosts with an unnamed co-host asks once (podcast_engine.cohost_question)."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Dock",
+  "label": "When you ask Friday to show or hide a workspace",
+  "kind": "select (apply_with_undo | ask_first)",
+  "keys": [
+   "dock_by_asking"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/owner_choices.py",
+  "reader_needle": "_settings(settings).get(\"dock_by_asking\")",
+  "status": "ok",
+  "note": "Decision 7. services/setting_proposals._dock: apply_with_undo makes the change at once, records it (by: you, by asking), and pushes a notice with Undo (POST /api/settings/changes/<id>/undo); ask_first keeps the card."
+ },
+ {
+  "section": "Privacy & Data",
+  "panel": "Deleting calendar events",
+  "label": "Notify guests when an event is deleted (starts ticked)",
+  "kind": "toggle",
+  "keys": [
+   "calendar_delete_notify_guests"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/owner_choices.py",
+  "reader_needle": "_settings(settings).get(\"calendar_delete_notify_guests\")",
+  "status": "ok",
+  "note": "Decision 8. The starting state of the notify-guests box (Calendar's Delete dialog, CalDeleteConfirm) and the delete_calendar_event default; ticked sends sendUpdates=all (calendar_write.delete_event)."
  }
 ]

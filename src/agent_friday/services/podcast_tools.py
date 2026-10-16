@@ -208,7 +208,13 @@ def _tool_make_podcast(inp):
     except pe.PodcastRefused as e:
         return json.dumps({"status": "refused", "message": str(e)})
     mins = pe.LENGTH_MINUTES[ep["length"]]
+    # Two hosts and a co-host with no name of the owner's: ask them once what to call them.
+    names = _host_names_arg(inp.get("host_names"))
+    named_b = (names.get("b") if isinstance(names, dict)
+               else (names[1] if isinstance(names, list) and len(names) > 1 else ""))
+    ask = pe.cohost_question() if ep.get("format") == "duo" and not str(named_b or "").strip() else ""
     return json.dumps({
+        **({"ask_owner": "Ask the owner, once: " + ask} if ask else {}),
         "status": "queued", "episode_id": ep["id"], "privacy": ep["privacy"],
         "mode": ep["mode"], "sources": len(refs),
         "message": ("Queued a %s-minute %sepisode from %d source%s. It's written by the "
@@ -276,9 +282,12 @@ def _tool_podcast_format(inp):
         if held:
             return json.dumps({"status": "needs_yes" if held.startswith("SETTING_NEEDS_YES") else "ok", "message": held})
         try:
-            pe.set_format(routine if routine != "any" else "", fmt)
+            ask = pe.set_format(routine if routine != "any" else "", fmt)
         except pe.PodcastRefused as e:
             return json.dumps({"status": "error", "message": str(e)})
+        if ask:
+            return json.dumps({"status": "ok", "formats": pe.formats(), "ask_owner": ask,
+                               "message": "%s is now %s. Ask the owner, once: %s" % (routine or "any", fmt, ask)})
     return json.dumps({"status": "ok", "formats": pe.formats(),
                        "message": ("%s is now %s." % (routine or "any", fmt)) if fmt else ""})
 

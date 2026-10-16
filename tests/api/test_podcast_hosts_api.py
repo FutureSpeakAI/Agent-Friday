@@ -35,8 +35,10 @@ def _home(tmp_path, monkeypatch):
 
 def test_the_hosts_names_are_read_and_saved(client):
     got = client.get("/api/podcasts/hosts").get_json()["hosts"]
-    assert (got["a"]["name"], got["b"]["name"]) == ("Friday", "Agent Friday")
-    assert got["b"]["own"] == "" and got["b"]["default"] == "Agent Friday"
+    # She has her default name, so an unnamed co-host is the distinct default, never "Agent Friday"
+    # beside "Friday" (owner decision; podcast_engine.cohost_default_name).
+    assert (got["a"]["name"], got["b"]["name"]) == ("Friday", pe.COHOST_NEUTRAL_NAME)
+    assert got["b"]["own"] == "" and got["b"]["default"] == pe.COHOST_NEUTRAL_NAME
     r = client.put("/api/podcasts/hosts", json={"b": "Agent Orion"})
     assert r.status_code == 200, r.get_data(as_text=True)
     assert r.get_json()["hosts"]["b"]["name"] == "Agent Orion"

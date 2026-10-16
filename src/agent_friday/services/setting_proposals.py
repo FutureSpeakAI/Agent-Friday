@@ -425,19 +425,57 @@ def _dock(inp: dict, path: str, value: str) -> str:
     label = wr.label(ws)
     was = "shown" if ws in st["visible"] else "hidden"
     now = "shown" if show else "hidden"
-    held = hold("dock_visibility", {"path": "%s.%s" % (DOCK_PATH, ws), "value": "show" if show else "hide"},
-                old=was, new=now, label="whether %s is in the dock" % label, run_as="set_setting",
-                consequence=("%s gets its icon in the dock again." % label) if show else
-                ("%s leaves the dock; it still opens by name or from Settings." % label))
-    if held:
-        return held
+    row_label = "whether %s is in the dock" % label
+    # The owner's choice (Settings > Appearance: dock_by_asking): by default asking IS the decision, so
+    # the change is made at once, recorded, and offered back with an Undo; "ask_first" keeps the card.
+    from agent_friday.services import owner_choices as _oc
+    direct = _oc.dock_by_asking() == "apply_with_undo" and not _APPROVED.get()
+    if direct:
+        if was == now:
+            return "SETTING_UNCHANGED: %s already reads %s." % (row_label, now)
+    else:
+        held = hold("dock_visibility", {"path": "%s.%s" % (DOCK_PATH, ws), "value": "show" if show else "hide"},
+                    old=was, new=now, label=row_label, run_as="set_setting",
+                    consequence=("%s gets its icon in the dock again." % label) if show else
+                    ("%s leaves the dock; it still opens by name or from Settings." % label))
+        if held:
+            return held
     hidden = [i for i in st["hidden"] if i != ws] + ([] if show else [ws])
     # A COMPLETE arrangement, seeded from what the dock shows now (as the Dock panel writes it): once an
     # arrangement exists show_all_workspaces stops applying, so writing one id alone would reveal or hide others.
     from agent_friday.core import _save_settings
+    change = None
+    if direct:
+        change = record_change("dock_visibility", label=row_label, old=was, new=now,
+                               snapshot=_snapshot(KEYS_OF["dock_visibility"]), by=BY_ASKING)
     _save_settings({"dock_custom": {"order": list(st["ids"]), "hidden": [i for i in st["ids"] if i in hidden]}})
     _tell_pages("%s.%s" % (DOCK_PATH, ws))
-    return ("DOCK_SHOWN: %s is in the dock now." % label) if show else ("DOCK_HIDDEN: %s is out of the dock now." % label)
+    said = ("DOCK_SHOWN: %s is in the dock now." % label) if show else ("DOCK_HIDDEN: %s is out of the dock now." % label)
+    if change is not None:
+        _log.info("dock changed by asking: %s %s (change %s)", ws, now, change["id"])
+        _offer_undo(change, label, now)
+        said += (" Done straight away, as you asked; Undo puts it back (on the notice, beside the Dock row "
+                 "in Settings, or say \"undo that\").")
+    return said
+
+
+#: Who made a change applied the moment the owner asked (no card): their own words were the decision.
+BY_ASKING = "you, by asking"
+
+
+def _offer_undo(change: dict, label: str, now: str) -> None:
+    """A notice with an Undo for a change applied without a card (POST /api/settings/changes/<id>/undo)."""
+    try:
+        import agent_friday.notifications_engine as _ne
+        _ne.push(title="%s is %s in the dock" % (label, now),
+                 body="Changed as you asked. Undo puts it back for %d days." % UNDO_DAYS,
+                 priority="low", kind="info", source="settings", emitter="OC1",
+                 dedupe_key="dock-change:%s" % change["id"],
+                 target={"workspace": "settings", "tab": "appearance"},
+                 actions=[{"label": "Undo", "method": "POST",
+                           "url": "/api/settings/changes/%s/undo" % change["id"]}])
+    except Exception as e:
+        _log.debug("dock undo notice not shown: %s", e)
 
 
 def tool(inp) -> str:
@@ -455,6 +493,10 @@ def tool(inp) -> str:
         row = next((r for r in reversed(_read()) if not r.get("undone") and (not path or r.get("path") == path)), None)
         if row is None:
             return "SETTING_FAIL: There is no change to undo."
+        if row.get("path") == DOCK_PATH and row.get("by") == BY_ASKING:
+            # A dock change made because the owner asked is taken back the same way.
+            res = undo(change_id=row.get("id"))
+            return ("SETTING_UNDONE: " if res.get("ok") else "SETTING_FAIL: ") + str(res.get("text"))
         return ("SETTING_UNDO_ON_SCREEN: %s was changed to %s; the Undo beside that row in Settings puts it back "
                 "to %s. Nothing has changed: Friday does not change a setting on her own word."
                 % (row.get("label"), row.get("new"), row.get("old")))

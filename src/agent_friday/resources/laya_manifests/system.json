@@ -219,6 +219,7 @@
   }
  ],
  "not_for_laya": [
+  {"action": "system.cloud_release_card", "kind": "by_design", "reason": "Letting private text reach a cloud model is the owner's call on the card that shows that exact text; a spoken yes sends it once."},
   {"action": "system.preapproved_sends", "kind": "by_design", "reason": "A pre-approval, and taking back a message sent under one, is the owner's own decision: no tool may make, widen, revoke or undo it."},
   {
    "action": "system.delete_context",

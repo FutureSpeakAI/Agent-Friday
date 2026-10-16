@@ -4,7 +4,8 @@ research become sources of their own (field bug log, round 2, items 6 and 7).
 Hosts:
   * the co-host's name is never read off its voice id: "bf_emma" spoke as
     "Emma" because the defaults seeded that name. A blank co-host is the
-    product's name ("Agent Friday"); the main host is her (the owner's name
+    product's name ("Agent Friday") once she has been renamed, and a distinct
+    name (COHOST_NEUTRAL_NAME) while she is still Friday; the main host is her (the owner's name
     for her); both are the owner's to change in Settings (podcasts.hosts) and
     for one episode (make_podcast `host_names`), by chat and by voice;
   * an install whose saved co-host is the seeded voice-id name moves off it
@@ -69,7 +70,11 @@ def _text_ref(text="The council voted 7 to 2 on the budget."):
 def test_a_fresh_install_s_co_host_is_agent_friday_never_the_voice_id_s_name(install):
     hosts = pe.settings()["hosts"]
     assert hosts["b"]["voice"] == "bf_emma"
-    assert hosts["b"]["name"] == "Agent Friday", hosts["b"]
+    # Never renamed: "Agent Friday" beside "Friday" would be one name twice, so the distinct default.
+    assert hosts["b"]["name"] == pe.COHOST_NEUTRAL_NAME, hosts["b"]
+    install["s"]["agent_name"] = "AGENT NOVA"
+    assert pe.settings()["hosts"]["b"]["name"] == "Agent Friday"
+    install["s"].pop("agent_name")
     assert hosts["a"]["name"] == "Friday"
 
 
@@ -129,7 +134,7 @@ def test_one_episode_can_name_its_hosts_without_changing_the_settings(install):
     ep2 = pe.create(_text_ref(), hosts="duo", host_names={"b": "Agent Orion"})
     assert (ep2["hosts"]["a"]["name"], ep2["hosts"]["b"]["name"]) == ("Friday", "Agent Orion")
     hosts = pe.settings()["hosts"]
-    assert (hosts["a"]["name"], hosts["b"]["name"]) == ("Friday", "Agent Friday")
+    assert (hosts["a"]["name"], hosts["b"]["name"]) == ("Friday", pe.COHOST_NEUTRAL_NAME)
 
 
 def test_the_co_host_introduces_themself_by_name_not_by_voice(install):
@@ -137,7 +142,7 @@ def test_the_co_host_introduces_themself_by_name_not_by_voice(install):
     lines, _ = pe.signature_lines(dict(ep, show="The Front Page"))
     said = " ".join(ln["text"] for ln in lines)
     assert "Emma" not in said
-    assert "I'm Agent Friday" in said, said
+    assert "I'm %s" % pe.COHOST_NEUTRAL_NAME in said, said
 
 
 def test_make_podcast_takes_host_names_in_chat_and_voice(install):
@@ -180,7 +185,7 @@ def test_a_spoken_or_typed_setting_names_the_co_host_after_the_owners_yes(instal
     monkeypatch.setattr(sp, "hold", lambda tool, inp, **kw: asked.append(kw) or None)
     out = json.loads(pt.HANDLERS["podcast_format"](routed[1]))
     assert out["status"] == "ok", out
-    assert asked and asked[0]["old"] == "Agent Friday" and asked[0]["new"] == "Agent Orion"
+    assert asked and asked[0]["old"] == pe.COHOST_NEUTRAL_NAME and asked[0]["new"] == "Agent Orion"
     assert pe.settings()["hosts"]["b"]["name"] == "Agent Orion"
 
 

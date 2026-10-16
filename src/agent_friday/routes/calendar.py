@@ -160,7 +160,8 @@ def api_calendar_event(event_id):
 @calendar_bp.route('/api/calendar/events/<event_id>/delete', methods=['POST'])
 def api_calendar_event_delete(event_id):
     """Delete one event: the owner's own click in Calendar (the page asks before it posts).
-    Body: {calendar_id, account_id}, both optional. Returns {status, ok, id, title, before} or an error that
+    Body: {calendar_id, account_id, notify_guests}, all optional. Returns {status, ok, id, title, before,
+    guests_notified, guests_told} or an error that
     says why nothing was deleted. A Quick Add event kept on this PC (id local-...) is removed from the local
     list; every other id is a Google event (calendar_write.delete_event)."""
     from agent_friday.governance import action_gate as _gate
@@ -187,8 +188,12 @@ def api_calendar_event_delete(event_id):
         return jsonify({"status": "error", "ok": False, "id": eid,
                         "message": "Nothing was deleted: the action gate held this delete. "
                                    "Approve it from the card, or try again."}), 403
+    # The page's "notify guests" box: ticked sends Google's cancellation (sendUpdates=all); left out, the
+    # owner's default (Settings: calendar_delete_notify_guests, off).
+    ng = data.get("notify_guests")
     res = cw.delete_event(eid, calendar_id=str(data.get("calendar_id") or "").strip() or "primary",
-                          account_id=str(data.get("account_id") or "").strip() or None)
+                          account_id=str(data.get("account_id") or "").strip() or None,
+                          notify_guests=ng if isinstance(ng, bool) else None)
     if not res.get("ok"):
         # Friday's own sentences pass through; anything carrying a Google or library error is logged and
         # shown as an error id (exception text never reaches the browser).
@@ -211,7 +216,8 @@ def api_calendar_event_delete(event_id):
                         "needs_account": bool(res.get("needs_account"))}), code
     return jsonify({"status": "ok", "ok": True, "id": res.get("id"), "title": res.get("title"),
                     "before": res.get("before"), "account_id": res.get("account_id"),
-                    "calendar_id": res.get("calendar_id"), "guests_notified": bool(res.get("guests_notified"))})
+                    "calendar_id": res.get("calendar_id"), "guests_notified": bool(res.get("guests_notified")),
+                    "guests_told": res.get("guests_told") or ""})
 
 
 @calendar_bp.route('/api/calendar/prep/<event_id>', methods=['POST'])

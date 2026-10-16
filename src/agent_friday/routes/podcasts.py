@@ -86,7 +86,12 @@ def podcasts_create():
                        origin="user")
     except Exception as e:
         return api_error(e, "Couldn't start the episode", status=400)
-    return jsonify(public_result({"status": "ok", "episode": pe.summary(ep)},
+    hn = data.get("host_names")
+    named_b = hn.get("b") if isinstance(hn, dict) else (hn[1] if isinstance(hn, list) and len(hn) > 1 else "")
+    ask = pe.cohost_question() if ep.get("format") == "duo" and not str(named_b or "").strip() else ""
+    return jsonify(public_result({"status": "ok", "episode": pe.summary(ep),
+                                  **({"ask_cohost_name": ask, "cohost_suggestion": pe.cohost_default_name()}
+                                     if ask else {})},
                                  "Couldn't start the episode")), 202
 
 
@@ -126,10 +131,13 @@ def podcasts_set_format():
     data = request.get_json(silent=True) or {}
     try:
         routine = str(data.get("routine") or "")
-        pe.set_format("" if routine == "any" else routine, str(data.get("format") or ""))
+        ask = pe.set_format("" if routine == "any" else routine, str(data.get("format") or ""))
     except pe.PodcastRefused as e:
         return api_error(e, "Couldn't change the show's format", status=400)
-    return jsonify({"status": "ok", "formats": pe.formats()})
+    # Two hosts chosen and the co-host unnamed: the page asks the owner once (the suggestion is
+    # podcast_engine.cohost_default_name()).
+    return jsonify({"status": "ok", "formats": pe.formats(),
+                    **({"ask_cohost_name": ask, "cohost_suggestion": pe.cohost_default_name()} if ask else {})})
 
 
 @podcasts_bp.route('/api/podcasts/hosts', methods=['GET'])

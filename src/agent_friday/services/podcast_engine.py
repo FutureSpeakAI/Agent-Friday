@@ -167,8 +167,10 @@ def _spoken_credit(ep: dict) -> str:
 #: (`create(hosts=...)`) or for all of them. The owner can change each; these
 #: are shown as the recommended choice.
 FORMATS = ("solo", "duo")
+#: The owner's decision: every show is one voice unless they choose two hosts
+#: (the weekly was two hosts before; a saved choice is kept).
 RECOMMENDED_FORMAT = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
-                      "weekly": "duo", "any": "solo"}
+                      "weekly": "solo", "any": "solo"}
 #: Host "a"'s voice when she has no local voice of her own to lend it.
 FALLBACK_HOST_VOICE = "af_heart"
 #: The "any" format installs were seeded with before one voice became the
@@ -176,9 +178,30 @@ FALLBACK_HOST_VOICE = "af_heart"
 _PRE_SOLO_ANY = "duo"
 FORMAT_MIGRATION_KEY = "format_migrated"
 #: The co-host's name when the owner has not named them (Settings, the
-#: podcasts' host names, or one episode's own `host_names`). A voice id never
+#: podcasts' host names, or one episode's own `host_names`), once she has been
+#: renamed: then "Agent Friday" is free to be the co-host. A voice id never
 #: names a host: the voice is how a host sounds, not who they are.
 COHOST_DEFAULT_NAME = brand.PRODUCT
+#: The co-host's name when she still has her default name (Friday): "Agent
+#: Friday" beside "Friday" would be two hosts with one name, so a distinct one.
+COHOST_NEUTRAL_NAME = "Nova"
+
+
+def agent_renamed(settings=None) -> bool:
+    """Has the owner given her a name of their own (anything but her default)?"""
+    try:
+        if settings is None:
+            from agent_friday.core import _load_settings
+            settings = _load_settings() or {}
+        return brand.her_name((settings or {}).get("agent_name")) != brand.her_name("")
+    except Exception:
+        return False
+
+
+def cohost_default_name(settings=None) -> str:
+    """The co-host's name when the owner has not named them: "Agent Friday" only if she has been
+    renamed; otherwise COHOST_NEUTRAL_NAME, so the two hosts never share her name."""
+    return COHOST_DEFAULT_NAME if agent_renamed(settings) else COHOST_NEUTRAL_NAME
 #: A host's name is a name: this long at most, without the characters a
 #: transcript line ("Name: words") or a caption cue uses.
 HOST_NAME_MAX = 40
@@ -210,7 +233,7 @@ DEFAULTS = {
                "weekly": RECOMMENDED_LENGTH, "editorial": RECOMMENDED_LENGTH,
                "any": RECOMMENDED_LENGTH},
     # Blank names follow the owner's settings: host "a" is her (her name),
-    # host "b" is COHOST_DEFAULT_NAME unless the owner named the co-host.
+    # host "b" is cohost_default_name() unless the owner named the co-host.
     "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
               "b": {"name": "", "voice": "bf_emma"}},
     "on_ready": "notify",
@@ -294,7 +317,9 @@ def _migrate_format(own: dict) -> tuple[dict, bool]:
     if not own or own.get(FORMAT_MIGRATION_KEY):
         return own, False
     out = copy.deepcopy(own)
-    seeded = dict(RECOMMENDED_FORMAT, any=_PRE_SOLO_ANY)
+    # The table installs were seeded with then (the weekly was two hosts).
+    seeded = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
+              "weekly": "duo", "any": _PRE_SOLO_ANY}
     if out.get("format") == seeded:
         out["format"]["any"] = RECOMMENDED_FORMAT["any"]
     out[FORMAT_MIGRATION_KEY] = True
@@ -350,7 +375,7 @@ def _host_follows_identity(cfg: dict, own: dict) -> None:
     b = cfg["hosts"].get("b") or {}
     if b:
         if not clean_host_name(((own.get("hosts") or {}).get("b") or {}).get("name")):
-            b["name"] = COHOST_DEFAULT_NAME
+            b["name"] = cohost_default_name()
         b["pronouns"] = agent_identity.pronouns_for_voice(b.get("voice"))
 
 
@@ -379,7 +404,7 @@ def settings() -> dict:
         if not (((own.get("hosts") or {}).get("a") or {}).get("name")):
             cfg["hosts"]["a"]["name"] = her_name()
         if not (((own.get("hosts") or {}).get("b") or {}).get("name")):
-            cfg["hosts"]["b"]["name"] = COHOST_DEFAULT_NAME
+            cfg["hosts"]["b"]["name"] = cohost_default_name()
     return cfg
 
 
@@ -393,7 +418,7 @@ def host_names() -> dict:
     except Exception:
         own = {}
     now = settings()["hosts"]
-    defaults = {"a": her_name(), "b": COHOST_DEFAULT_NAME}
+    defaults = {"a": her_name(), "b": cohost_default_name()}
     return {k: {"name": now[k]["name"], "default": defaults[k],
                 "own": clean_host_name(((own.get("hosts") or {}).get(k) or {}).get("name"))}
             for k in ("a", "b")}
@@ -408,7 +433,7 @@ def check_host_names(a: str, b: str) -> None:
 def set_host_names(a=None, b=None) -> dict:
     """Name the main host ("a", her) and the co-host ("b") for every episode.
     None leaves a host as it is; "" puts it back to the default (her name,
-    COHOST_DEFAULT_NAME)."""
+    cohost_default_name())."""
     now = host_names()
     want = {}
     for key, value in (("a", a), ("b", b)):
@@ -463,10 +488,40 @@ def _save_podcasts(change: dict) -> None:
     _save_settings({"podcasts": own})
 
 
-def set_format(routine: str, fmt: str) -> None:
+def set_format(routine: str, fmt: str) -> str:
+    """Set one show's format. Returns the once-only co-host question when two hosts are chosen and the
+    co-host has no name of the owner's (`cohost_question`), else ""."""
     key = routine or "any"
     check_format(routine, fmt)
     _save_podcasts({"format": {key: fmt}})
+    return cohost_question() if fmt == "duo" else ""
+
+
+#: Asked once, the first time the owner chooses two hosts while the co-host has no name of theirs.
+COHOST_QUESTION = ("Your co-host has no name yet. What should they be called? Until you say, they are "
+                   "%s. (Settings > Voice > Podcasts > Co-host's name changes it any time.)")
+
+
+def cohost_question(mark: bool = True) -> str:
+    """The question to put to the owner when two hosts are chosen and the co-host has no name of their
+    own, once ever (podcasts.cohost_name_asked); "" when it is not needed or was asked before. The
+    suggestion is cohost_default_name(): "Agent Friday" only if she has been renamed."""
+    try:
+        from agent_friday.core import _load_settings
+        s = _load_settings() or {}
+    except Exception:
+        return ""
+    pod = s.get("podcasts") if isinstance(s.get("podcasts"), dict) else {}
+    if pod.get("cohost_name_asked"):
+        return ""
+    if clean_host_name(((pod.get("hosts") or {}).get("b") or {}).get("name")):
+        return ""
+    if mark:
+        try:
+            _save_podcasts({"cohost_name_asked": True})
+        except Exception:
+            log.warning("could not record that the co-host's name was asked", exc_info=True)
+    return COHOST_QUESTION % cohost_default_name(s)
 
 
 def formats() -> dict:

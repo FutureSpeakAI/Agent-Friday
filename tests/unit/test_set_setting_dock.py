@@ -36,8 +36,12 @@ def world(tmp_path, monkeypatch, friday_dir):
     monkeypatch.setattr(sp, "_tell_pages", lambda path: (told.append(path), real_tell(path)))
     # A dock the owner arranged by hand, with Trust taken out of it.
     ids = [w["id"] for w in wr.workspaces()]
-    _save_settings({"dock_custom": {"order": ids, "hidden": ["trust"]}, "show_all_workspaces": True})
+    # These tests hold the card path: the owner chose "ask first" for dock changes by asking (the default is
+    # done at once with an Undo: tests/unit/test_owner_choices.py).
+    _save_settings({"dock_custom": {"order": ids, "hidden": ["trust"]}, "show_all_workspaces": True,
+                    "dock_by_asking": "ask_first"})
     yield told
+    _save_settings({"dock_by_asking": "apply_with_undo"})
     desktop_bus.reset()
 
 

@@ -121,29 +121,63 @@ NOT_MEASURED = "not measured"
 #: The owner's explicit Boost/Ban on an outlet. It is an input to the score in
 #: its own right, shown as its own line, and never folded into a dimension:
 #: a Ban caps the score, a Boost lifts it (and at least to the green band).
+#: These are the defaults; the owner sets their own in Settings (trust_scoring:
+#: ban_ceiling, boost_lift, boost_floor), read by `scoring_params()`.
 OWNER_BAN_CEILING = 0.15
 OWNER_BOOST_LIFT = 0.15
 OWNER_BOOST_FLOOR = 0.70
 
+#: How long a read of the owner's scoring settings is reused (seconds): a
+#: rescore recomputes every source, and the settings file is read once for it.
+_PARAMS_TTL_S = 5.0
+_PARAMS_CACHE = {"at": 0.0, "value": None}
 
-def owner_adjusted(evidence_score, user_actions):
+
+def scoring_params(fresh=False):
+    """The owner's trust-scoring numbers (Settings: trust_scoring), each held to
+    its range: prior_strength (how many pseudo-observations anchor a dimension to
+    its starting value: higher learns slower), boost_lift, boost_floor and
+    ban_ceiling. Defaults are this module's own numbers."""
+    import time as _t
+    now = _t.monotonic()
+    hit = _PARAMS_CACHE.get("value")
+    if not fresh and hit is not None and now - _PARAMS_CACHE["at"] < _PARAMS_TTL_S:
+        return dict(hit)
+    try:
+        from agent_friday.services import owner_choices as _oc
+        value = _oc.trust_scoring()
+    except Exception:
+        value = {"prior_strength": _PRIOR_STRENGTH, "boost_lift": OWNER_BOOST_LIFT,
+                 "boost_floor": OWNER_BOOST_FLOOR, "ban_ceiling": OWNER_BAN_CEILING}
+    _PARAMS_CACHE.update(at=now, value=dict(value))
+    return dict(value)
+
+
+def _params_stamp(p) -> str:
+    return ",".join("%s=%g" % (k, float(p[k])) for k in sorted(p))
+
+
+def owner_adjusted(evidence_score, user_actions, params=None):
     """(trust_score, preference) after the owner's Boost/Ban.
 
     preference is None, or {"state": "banned"|"boosted", "effect": text,
-    "set_by": "owner"}. Ban wins over Boost when both are somehow set.
+    "set_by": "owner"}. Ban wins over Boost when both are somehow set. The
+    amounts are the owner's (`scoring_params`), the defaults until they change them.
     """
+    p = params or scoring_params()
+    ban, lift, floor = float(p["ban_ceiling"]), float(p["boost_lift"]), float(p["boost_floor"])
     ua = user_actions if isinstance(user_actions, dict) else {}
     ev = float(evidence_score)
     if ua.get("banned"):
-        return (round(min(ev, OWNER_BAN_CEILING), 4),
+        return (round(min(ev, ban), 4),
                 {"state": "banned", "set_by": "owner",
                  "effect": "You banned this outlet: its score is held at or below %.2f "
-                           "whatever the evidence says. Unban to remove." % OWNER_BAN_CEILING})
+                           "whatever the evidence says. Unban to remove." % ban})
     if ua.get("boosted"):
-        return (round(max(OWNER_BOOST_FLOOR, min(1.0, ev + OWNER_BOOST_LIFT)), 4),
+        return (round(max(floor, min(1.0, ev + lift)), 4),
                 {"state": "boosted", "set_by": "owner",
                  "effect": "You boosted this outlet: +%.2f on the evidence score, and at "
-                           "least %.2f. Unboost to remove." % (OWNER_BOOST_LIFT, OWNER_BOOST_FLOOR)})
+                           "least %.2f. Unboost to remove." % (lift, floor)})
     return round(ev, 4), None
 
 # Decay: an observation N weeks old carries weight 0.95**N.
@@ -594,15 +628,26 @@ class SourceTrustGraph:
         score keeps a placeholder in it. Stamped in meta; persisted by the
         next write."""
         meta = data.setdefault("meta", {})
-        if meta.get("scoring_version") == _SCORING_VERSION:
+        # The owner's scoring numbers (Settings: trust_scoring) are part of the
+        # rules: a change to them re-scores every outlet on the next pass, once.
+        stamp = _params_stamp(scoring_params())
+        params_changed = bool(meta.get("scoring_params")) and meta.get("scoring_params") != stamp
+        if meta.get("scoring_version") == _SCORING_VERSION and meta.get("scoring_params") == stamp:
             return
+        n = 0
         for rec in (data.get("sources") or {}).values():
             if isinstance(rec, dict):
                 last = rec.get("last_updated")
                 self._recompute(rec)
+                n += 1
                 if last:
                     rec["last_updated"] = last  # a rescore is not new evidence
         meta["scoring_version"] = _SCORING_VERSION
+        meta["scoring_params"] = stamp
+        if params_changed:
+            meta["rescored"] = {"date": _today_str(), "sources": n, "params": stamp,
+                                "why": "your trust-scoring settings changed"}
+            _log.info("source trust: re-scored %d outlet(s) with your new scoring settings (%s)", n, stamp)
 
     def _dedupe_evidence_once(self, data):
         """One-time cleanup of evidence the same article produced more than once.
@@ -738,9 +783,11 @@ class SourceTrustGraph:
         obs = rec.get("observations") or []
         today = date.today()
         scores = {}
+        params = scoring_params()
+        prior = float(params["prior_strength"])
         for dim in DIMENSIONS:
-            num = _PRIOR_STRENGTH * seed[dim]
-            den = _PRIOR_STRENGTH
+            num = prior * seed[dim]
+            den = prior
             n = 0
             for o in obs:
                 if o.get("dimension") != dim:
@@ -760,7 +807,7 @@ class SourceTrustGraph:
         rec["scores"] = scores
         rec["evidence_score"] = self._composite(scores)
         rec["trust_score"], rec["owner_preference"] = owner_adjusted(
-            rec["evidence_score"], rec.get("user_actions"))
+            rec["evidence_score"], rec.get("user_actions"), params)
         rec["last_updated"] = _today_str()
         return rec
 
@@ -939,7 +986,7 @@ class SourceTrustGraph:
                                    "applied after, as owner_preference."),
             "owner_preference": None,
             "prior": {"value": seed_basis(dom)[0], "based_on": seed_basis(dom)[1],
-                      "strength_observations": _PRIOR_STRENGTH},
+                      "strength_observations": scoring_params()["prior_strength"]},
             "dimensions": dims,
             "evidence_count": sum(counts.values()),
             "article_count": int(rec.get("article_count") or 0),

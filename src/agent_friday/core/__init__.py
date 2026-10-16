@@ -2953,7 +2953,7 @@ DEFAULT_SETTINGS = {
         # podcast_engine.RECOMMENDED_FORMAT is the same table. One episode can
         # ask for the other ("hosts": solo|duo on make_podcast).
         "format": {"briefing": "solo", "front_page": "solo", "editorial": "solo",
-                   "weekly": "duo", "any": "solo"},
+                   "weekly": "solo", "any": "solo"},
         # How long each show runs, and "any" for an episode the owner asks for:
         # "short" (about 2 minutes), "standard" (about 5, recommended) or
         # "long" (about 10). podcast_engine.LENGTH_MINUTES is the same table.
@@ -2961,10 +2961,14 @@ DEFAULT_SETTINGS = {
                    "weekly": "standard", "editorial": "standard", "any": "standard"},
         # Host "a" is her: blank name and voice follow her identity (her name,
         # and her local voice: services/agent_identity.local_kokoro_voice).
-        # Host "b", the co-host: a blank name is "Agent Friday"
-        # (podcast_engine.COHOST_DEFAULT_NAME); never the voice id's name.
+        # Host "b", the co-host: a blank name is podcast_engine.cohost_default_name()
+        # ("Agent Friday" once she has been renamed, otherwise a distinct
+        # name, COHOST_NEUTRAL_NAME); never the voice id's name.
         "hosts": {"a": {"name": "", "voice": ""},
                   "b": {"name": "", "voice": "bf_emma"}},
+        # Set once the owner has been asked the co-host's name (on choosing
+        # two hosts with an unnamed co-host), so it is asked once only.
+        "cohost_name_asked": False,
         "on_ready": "notify",
         "cloud_voice": False,
     },
@@ -3507,6 +3511,38 @@ DEFAULT_SETTINGS = {
     "career_ops": {
         "path": "",
     },
+    # ── The owner's standing choices (services/owner_choices.py) ──
+    # Each one is asked once in the first-run setup conversation
+    # (owner_choices.setup_questions) and changeable in Settings.
+    # Email paragraphs about money that the cautious cloud consent would hold
+    # back from a cloud model: "ask" raises a card showing exactly what would
+    # go (services/cloud_release.py); "withhold" keeps them on this PC, said.
+    "email_cloud_release": "ask",
+    # A scheduled job's run missed while Friday was closed (run_once | skip),
+    # and a run held because its pinned model was unavailable (retry: it runs
+    # once when the model is back | wait: it waits for its next time). Each
+    # job can choose its own; these are the defaults (services/scheduler.py).
+    "schedules": {
+        "missed_default": "run_once",
+        "held_default": "retry",
+    },
+    # The Undo window of an email sent unattended under a pre-approval, in
+    # seconds (10 to 600). Sends the owner approves in person keep 10 s.
+    "unattended_send_undo_s": 120,
+    # How fast news-outlet trust moves off its starting score (the prior's
+    # weight, in pseudo-observations: higher learns slower), and the owner's
+    # Boost/Ban amounts (source_trust_graph.py). The starting score stays 0.5.
+    "trust_scoring": {
+        "prior_strength": 3.0,
+        "boost_lift": 0.15,
+        "boost_floor": 0.70,
+        "ban_ceiling": 0.15,
+    },
+    # Asking Friday to show or hide a workspace in the dock:
+    # "apply_with_undo" (done at once, with an Undo) | "ask_first" (a card).
+    "dock_by_asking": "apply_with_undo",
+    # Deleting a calendar event: whether "notify guests" starts ticked.
+    "calendar_delete_notify_guests": False,
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.
@@ -3883,7 +3919,7 @@ _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
                        "turn_budget", "local_address", "scheduled_cloud", "tracking",
                        "podcasts", "scheduling", "idle_work", "google_oauth",
                        "career_ops", "channels", "cost_budget", "task_journal",
-                       "reasoning_traces", "spending_caps")
+                       "reasoning_traces", "spending_caps", "schedules", "trust_scoring")
 
 #: Paths inside a deep-merged block whose value is replaced whole, as before
 #: the merge became recursive. "*" matches any one key: each capability's seat

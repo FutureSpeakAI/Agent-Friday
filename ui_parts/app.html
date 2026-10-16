@@ -9789,6 +9789,7 @@ function WfScheduleFacts({ w }) {
     w.model ? E('span', { 'data-testid': 'wf-model', title: w.model_pinned ? 'Pinned: every run uses this model, and is held if it is unavailable' : 'Not pinned: it follows your routing' },
       (w.model_pinned ? 'Model: ' : 'Model (not pinned): ') + w.model) : null,
     s && w.missed_text ? E('span', { 'data-testid': 'wf-missed' }, w.missed_text) : null,
+    s && w.schedule_id ? E(WfJobChoices, { w: w }) : null,
     s && (w.schedule_status === 'held' || w.schedule_status === 'failed') && w.status_reason ?
       E('div', { className: 'wfx-shield', 'data-testid': 'wf-schedule-reason', style: { flexBasis: '100%' } }, w.status_reason) : null);
 }
@@ -11097,9 +11098,11 @@ function NewsLocalBeatSettings() {
   const [sources, setSources] = useState('');
   const [trusted, setTrusted] = useState('');
   const [note, setNote] = useState('');
+  const [full, setFull] = useState({});
   useEffect(() => {
     apiFetch('/api/settings').then(r => r.json()).then(d => {
       const s = (d && d.settings) || {};
+      setFull(s);
       setSources((Array.isArray(s.news_local_sources) ? s.news_local_sources : []).join('\n'));
       setTrusted((Array.isArray(s.news_trusted_outlets) ? s.news_trusted_outlets : []).join('\n'));
       setArea(String(s.news_local_area || ''));
@@ -11133,6 +11136,9 @@ function NewsLocalBeatSettings() {
     h('div', { className: 'card-title', style: { marginTop: 14 } }, 'Trusted outlets'),
     h('div', { style: { fontSize: 10, color: '#777', marginBottom: 4 } }, 'Start these at high trust, like the built-in trusted list. They are not added to Local news.'),
     h('textarea', { className: 'input', 'aria-label': 'Trusted outlets', rows: 3, style: { width: '100%', fontSize: 11, resize: 'vertical' }, value: trusted, placeholder: 'Trusted outlets, one domain per line or comma-separated', onChange: e => setTrusted(e.target.value), onBlur: commitTrusted }),
+    // How trust scores move (the same numbers as Settings > Advanced > News source trust).
+    h('div', { className: 'card-title', style: { marginTop: 14 } }, 'How trust scores move'),
+    h(TrustScoringSettings, { s: full, save: patch => save(patch).then(() => setFull(f => Object.assign({}, f, patch))) }),
     note && h('div', { role: 'status', style: { fontSize: 10, color: '#777', marginTop: 4 } }, note));
 }
 function NewsWS(){
@@ -12341,6 +12347,7 @@ function CalendarWS(){
              <><FridayDoc text={prepText} compact style={{fontSize:11}}/>
                <div style={{display:'flex',gap:6,marginTop:6}}>
                  <button className="btn" style={{fontSize:10}} onClick={()=>genPrep(e)} disabled={prepBusy}>↻ Regenerate</button>
+                 <CalDeleteConfirm e={e} onDone={()=>{setPrepFor(null);loadToday();}}/>
                  <SendTo content={()=>prepText} dataType="meeting_prep" eventId={e.id} options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Send to Calendar',dest:'calendar_notes',ico:'📅'}]}/>
                </div></>}
           </div>}
@@ -19000,6 +19007,7 @@ function SettingsTabVoice({s,save}){
     </StSection>
     <StSection title="Podcasts" desc={"The episodes " + fridayName() + " writes and speaks on this computer: the News shows and the ones you ask for."}>
       <PodcastLengthRow s={s} save={save}/>
+      <CohostNameRow/>
     </StSection>
     {gem&&<StSection title="Gemini Live options" desc="These apply only to the Gemini Live session.">
       <StToggle label="Expressive speech" value={!!s.voice_affective} onChange={()=>save({voice_affective:!s.voice_affective})} desc="Lets the voice carry emotion. Only some Gemini voice models support it."/>
@@ -19390,6 +19398,219 @@ function PrivacyCloudConsent() {
   });
 }
 
+// ── The owner's standing choices (services/owner_choices.py) ────────────────
+// Eight decisions asked once at first run and changeable here. Each control
+// writes the key its reader reads; the server checks the value (bounds,
+// choices) and refuses one outside them, said on the row.
+const OC_SECONDS_WORDS = s => s < 60 ? s + ' seconds' : Math.floor(s / 60) + (s >= 120 ? ' minutes' : ' minute') + (s % 60 ? ' ' + (s % 60) + ' seconds' : '');
+// Privacy & Data > Money paragraphs in email: ask (a card shows exactly the
+// text) or keep them on this PC, and the threads and senders remembered.
+function MoneyParagraphsSettings({ s, save }) {
+  const E = React.createElement;
+  const [d, setD] = useState({ remembered: [], guarded: false });
+  const [msg, setMsg] = useState('');
+  const load = () => apiFetch('/api/privacy/cloud-release').then(r => r.json()).then(x => setD({ remembered: x.remembered || [], guarded: !!x.guarded })).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const forget = id => apiFetch('/api/privacy/cloud-release/' + encodeURIComponent(id), { method: 'DELETE' })
+    .then(r => r.json()).then(x => { setMsg(x && x.status === 'ok' ? 'Forgotten. Money paragraphs from there are asked about again.' : (x && x.message) || 'Not forgotten.'); load(); })
+    .catch(() => setMsg('Not forgotten: ' + fridayName() + ' could not be reached.'));
+  const choice = s.email_cloud_release === 'withhold' ? 'withhold' : 'ask';
+  return E('div', { 'data-testid': 'money-paragraphs' },
+    E(StRow, { label: 'When an email paragraph about money would go to a cloud model', settingKey: 'settings.privacy.email_cloud_release',
+      desc: 'Only under the cautious cloud setting. "Ask me" shows you exactly the words that would go, with Send or Keep on this PC, and lets you remember the answer for a thread or a sender. Account and card numbers never go, whatever you answer.' + (d.guarded ? '' : ' (The cautious cloud setting is not on now, so this does not apply yet.)') },
+      E('select', { className: 'input', 'aria-label': 'Money paragraphs in email', value: choice, onChange: e => save({ email_cloud_release: e.target.value }) },
+        E('option', { value: 'ask' }, 'Ask me each time, showing the text (recommended)'),
+        E('option', { value: 'withhold' }, 'Always keep them on this PC'))),
+    E('div', { style: { fontSize: 11.5, color: 'var(--st-dim)', marginBottom: 6 } }, d.remembered.length ? 'Remembered: these go to the cloud model without asking.' : 'Nothing remembered yet.'),
+    d.remembered.map(r => E('div', { key: r.id, 'data-testid': 'cloud-release-row', style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, marginBottom: 4 } },
+      E('span', { style: { flex: 1 } }, (r.scope === 'thread' ? 'Thread: ' : 'Sender: ') + (r.label || r.value)),
+      E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => forget(r.id) }, 'Forget'))),
+    msg && E('div', { role: 'status', style: { fontSize: 11, color: 'var(--st-dim)', marginTop: 4 } }, msg));
+}
+// General > Scheduled jobs: what a job does with a run missed while Friday was
+// closed, and with a run held because its pinned model was unavailable. A new
+// job starts with these; each job's card in Workflows can choose its own.
+function ScheduledJobDefaults({ s, save }) {
+  const E = React.createElement;
+  const cur = s.schedules || {};
+  const pick = (k, v) => save({ schedules: Object.assign({}, cur, { [k]: v }) });
+  return E('div', { 'data-testid': 'scheduled-job-defaults' },
+    E(StRow, { label: 'A run missed while ' + fridayName() + ' was closed', settingKey: 'settings.schedules.missed_default',
+      desc: 'For new jobs; each job can choose its own on its card in Workflows.' },
+      E('select', { className: 'input', 'aria-label': 'A run missed while closed', value: cur.missed_default === 'skip' ? 'skip' : 'run_once', onChange: e => pick('missed_default', e.target.value) },
+        E('option', { value: 'run_once' }, 'Run it once at the next start (recommended)'),
+        E('option', { value: 'skip' }, 'Skip it until its next time'))),
+    E(StRow, { label: 'A run held because its pinned model was unavailable', settingKey: 'settings.schedules.held_default',
+      desc: 'A pinned job never moves to another model. Retry runs it once, visibly, as soon as that model is back.' },
+      E('select', { className: 'input', 'aria-label': 'A run held by its pinned model', value: cur.held_default === 'wait' ? 'wait' : 'retry', onChange: e => pick('held_default', e.target.value) },
+        E('option', { value: 'retry' }, 'Run it once when the model is back (recommended)'),
+        E('option', { value: 'wait' }, 'Wait for its next scheduled time'))));
+}
+// Privacy & Data > Pre-approved sends: the Undo window of an email a job sends
+// with nobody watching. 10 seconds to 10 minutes; your own sends keep 10 s.
+function UnattendedUndoRow({ s, save }) {
+  const E = React.createElement;
+  const saved = Number(s.unattended_send_undo_s) || 120;
+  const [v, setV] = useState(String(saved));
+  const [err, setErr] = useState('');
+  useEffect(() => { setV(String(saved)); }, [saved]);
+  const commit = () => {
+    const n = Math.round(Number(v));
+    if (!isFinite(n) || n < 10 || n > 600) { setErr('Between 10 and 600 seconds (10 minutes). Not saved.'); return; }
+    setErr('');
+    if (n !== saved) save({ unattended_send_undo_s: n });
+  };
+  return E(StRow, { label: 'Undo window for emails sent with nobody watching', settingKey: 'settings.privacy.unattended_send_undo_s',
+    desc: 'A scheduled job or background task sending under a pre-approval waits this long, and its notice shows the time left and an Undo. Emails you approve yourself keep 10 seconds.' },
+    E('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+      E('input', { className: 'input', type: 'number', min: 10, max: 600, step: 10, 'aria-label': 'Undo window in seconds', style: { width: 90 }, value: v, onChange: e => setV(e.target.value), onBlur: commit }),
+      E('span', { style: { fontSize: 11.5, color: 'var(--st-dim)' } }, 'seconds (' + OC_SECONDS_WORDS(saved) + ' now)')),
+    err && E('div', { role: 'alert', style: { fontSize: 11, color: 'var(--st-danger)', marginTop: 4 } }, err));
+}
+// Advanced > News source trust (and News > Customize): how fast evidence moves
+// an outlet off its 0.5 start, and the size of your Boost and Ban.
+const OC_TRUST_FIELDS = [
+  ['prior_strength', 'Learning rate: evidence needed to move a score', 0.5, 20, 0.5, 'The starting value counts as this many observations. Higher learns slower; 3 is the default.'],
+  ['boost_lift', 'Boost adds', 0, 0.5, 0.01, 'Added to the evidence score of an outlet you boost (default 0.15).'],
+  ['boost_floor', 'A boosted outlet is at least', 0.5, 0.95, 0.01, 'Default 0.70, the green band.'],
+  ['ban_ceiling', 'A banned outlet is at most', 0, 0.5, 0.01, 'Default 0.15.']];
+function TrustScoringSettings({ s, save, onSaved }) {
+  const E = React.createElement;
+  const cur = Object.assign({ prior_strength: 3, boost_lift: 0.15, boost_floor: 0.7, ban_ceiling: 0.15 }, (s && s.trust_scoring) || {});
+  const [draft, setDraft] = useState(cur);
+  const [note, setNote] = useState('');
+  useEffect(() => { setDraft(cur); }, [JSON.stringify((s && s.trust_scoring) || {})]);
+  const commit = (k, lo, hi) => {
+    const n = Number(draft[k]);
+    if (!isFinite(n) || n < lo || n > hi) { setNote(k + ' must be from ' + lo + ' to ' + hi + '. Not saved.'); return; }
+    if (n === Number(cur[k])) return;
+    Promise.resolve(save({ trust_scoring: Object.assign({}, cur, { [k]: n }) })).then(() => {
+      setNote('Saved. Every outlet is re-scored with these numbers on the next news pass. Starting scores stay 0.5.');
+      if (onSaved) onSaved();
+    });
+  };
+  return E('div', { 'data-testid': 'trust-scoring' },
+    OC_TRUST_FIELDS.map(([k, label, lo, hi, step, desc]) => E(StRow, { key: k, label, desc, settingKey: 'settings.trust_scoring.' + k },
+      E('input', { className: 'input', type: 'number', min: lo, max: hi, step, 'aria-label': label, style: { width: 90 }, value: draft[k], onChange: e => setDraft(Object.assign({}, draft, { [k]: e.target.value })), onBlur: () => commit(k, lo, hi) }))),
+    note && E('div', { role: 'status', style: { fontSize: 11, color: 'var(--st-dim)' } }, note));
+}
+// Voice > Podcasts > Co-host's name. Episodes are one voice unless you choose
+// two hosts; the name shown greyed is what an unnamed co-host is called.
+function CohostNameRow() {
+  const E = React.createElement;
+  const [h, setH] = useState(null);
+  const [v, setV] = useState('');
+  const [note, setNote] = useState('');
+  const load = () => apiFetch('/api/podcasts/hosts').then(r => r.json()).then(d => { if (d && d.hosts) { setH(d.hosts); setV(d.hosts.b.own || ''); } }).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const commit = () => {
+    if (!h || v.trim() === (h.b.own || '')) return;
+    apiFetch('/api/podcasts/hosts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ b: v.trim() }) })
+      .then(r => r.json()).then(d => { if (d && d.hosts) { setH(d.hosts); setNote('Saved: the co-host is ' + d.hosts.b.name + ' from the next episode.'); } else setNote((d && d.message) || 'Not saved.'); })
+      .catch(() => setNote('Not saved: ' + fridayName() + ' could not be reached.'));
+  };
+  return E(StRow, { label: "Co-host's name", settingKey: 'settings.podcasts.hosts.b',
+    desc: 'Used when a show has two hosts (one voice is the default). Leave it empty for ' + (h ? h.b.default : 'the default') + '.' },
+    E('input', { className: 'input', 'aria-label': "Co-host's name", maxLength: 40, value: v, placeholder: h ? h.b.default : '', onChange: e => setV(e.target.value), onBlur: commit }),
+    note && E('div', { role: 'status', style: { fontSize: 11, color: 'var(--st-dim)', marginTop: 4 } }, note));
+}
+// Appearance > The dock: asking to show or hide a workspace.
+function DockByAskingRow({ s, save }) {
+  const E = React.createElement;
+  return E(StRow, { label: 'When you ask ' + fridayName() + ' to show or hide a workspace', settingKey: 'settings.display.dock_by_asking',
+    desc: 'Done straight away, with an Undo on the notice and beside the Dock row; or a card to approve first.' },
+    E('select', { className: 'input', 'aria-label': 'Showing or hiding a workspace by asking', value: s.dock_by_asking === 'ask_first' ? 'ask_first' : 'apply_with_undo', onChange: e => save({ dock_by_asking: e.target.value }) },
+      E('option', { value: 'apply_with_undo' }, 'Do it straight away, with an Undo (recommended)'),
+      E('option', { value: 'ask_first' }, 'Ask me first with a card')));
+}
+// Privacy & Data > Deleting calendar events: whether "notify guests" starts ticked.
+function CalendarDeleteGuestsRow({ s, save }) {
+  return React.createElement(StToggle, {
+    label: 'Notify guests when an event is deleted (starts ticked)',
+    value: s.calendar_delete_notify_guests === true,
+    onChange: () => save({ calendar_delete_notify_guests: !(s.calendar_delete_notify_guests === true) }),
+    desc: 'Off: the box starts unticked and guests are not told. Ticked, Google emails each guest a cancellation in your name. You can change it on each delete.'
+  });
+}
+// The money-paragraph card (services/cloud_release.py): exactly the words that
+// would go to the cloud model, Send or Keep on this PC, and what to remember.
+function CloudReleaseCard({ a, busy }) {
+  const E = React.createElement;
+  const p = a.payload || {};
+  const scope = p.scope || {};
+  const [thread, setThread] = useState(false);
+  const [sender, setSender] = useState(false);
+  const [sending, setSending] = useState(false);
+  const decide = decision => {
+    if (sending) return;
+    setSending(true);
+    apiFetch('/api/privacy/cloud-release/' + encodeURIComponent(a.approval_id) + '/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision, remember: { thread: thread && !!scope.thread, sender: sender && !!scope.sender } }) })
+      .then(r => r.json()).then(d => {
+        if (d && d.ok) fridayApprovalFeed.drop(a.approval_id);
+        if (d && d.already_decided) fridayToast('Already decided elsewhere.');
+        setSending(false);
+      }).catch(() => { setSending(false); fridayToast('Could not reach ' + fridayName() + '. The card is still waiting.'); });
+  };
+  const btn = (label, decision, color) => E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px', color }, disabled: !!busy || sending, onClick: () => decide(decision) }, label);
+  return E('div', { className: 'card', style: { marginBottom: 6, padding: 8 }, 'data-testid': 'cloud-release-card', 'data-approval-id': a.approval_id },
+    E('div', { style: { fontSize: 12, color: '#ddd' } }, a.title),
+    E('div', { style: { fontSize: 11, color: '#999', marginTop: 2 } }, p.why || ''),
+    (p.what || []).map((t, i) => E('blockquote', { key: i, 'data-testid': 'cloud-release-text', style: { fontSize: 11.5, color: '#e8eef6', margin: '6px 0', padding: '4px 8px', borderLeft: '2px solid rgba(245,158,11,0.7)', whiteSpace: 'pre-wrap' } }, t)),
+    scope.thread ? E('label', { style: { display: 'block', fontSize: 11, color: '#bbb' } }, E('input', { type: 'checkbox', checked: thread, onChange: e => setThread(e.target.checked) }), ' Remember for this thread') : null,
+    scope.sender ? E('label', { style: { display: 'block', fontSize: 11, color: '#bbb' } }, E('input', { type: 'checkbox', checked: sender, onChange: e => setSender(e.target.checked) }), ' Remember for this sender (' + scope.sender + ')') : null,
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } }, btn('Send', 'approve', '#00ff80'), btn('Keep on this PC', 'deny', '#ff0080')));
+}
+// A scheduled job's own choices on its Workflows card: a missed run and a held run.
+function WfJobChoices({ w }) {
+  const E = React.createElement;
+  const [missed, setMissed] = useState(w.missed || 'run_once');
+  const [held, setHeld] = useState(w.on_held || 'retry');
+  const [note, setNote] = useState('');
+  const patch = body => apiFetch('/api/schedules/' + encodeURIComponent(w.schedule_id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(r => r.json()).then(d => setNote(d && d.status === 'ok' ? 'Saved for this job.' : 'Not saved.')).catch(() => setNote('Not saved.'));
+  if (!w.schedule_id) return null;
+  return E('span', { 'data-testid': 'wf-job-choices', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+    E('label', null, 'Missed while closed: ', E('select', { className: 'input', 'data-testid': 'wf-missed-choice', 'aria-label': 'A run missed while closed', value: missed, onChange: e => { setMissed(e.target.value); patch({ missed: e.target.value }); } },
+      E('option', { value: 'run_once' }, 'run once at start'), E('option', { value: 'skip' }, 'skip'))),
+    w.model_pinned ? E('label', null, 'Held by its model: ', E('select', { className: 'input', 'data-testid': 'wf-held-choice', 'aria-label': 'A run held by its pinned model', value: held, onChange: e => { setHeld(e.target.value); patch({ on_held: e.target.value }); } },
+      E('option', { value: 'retry' }, 'run once when it is back'), E('option', { value: 'wait' }, 'wait for next time'))) : null,
+    w.held_retry_pending ? E('span', { 'data-testid': 'wf-held-retry' }, 'Waiting for its model to come back, then it runs once.') : null,
+    note ? E('span', { role: 'status' }, note) : null);
+}
+// Calendar: deleting an event asks first, with "notify guests" (unticked
+// unless Settings says otherwise). POST /api/calendar/events/<id>/delete.
+function CalDeleteConfirm({ e, onDone }) {
+  const E = React.createElement;
+  const [open, setOpen] = useState(false);
+  const [tell, setTell] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const guests = (e.attendees || []).length;
+  const ask = () => {
+    setMsg('');
+    apiFetch('/api/settings').then(r => r.json()).then(d => setTell(!!(d && d.settings && d.settings.calendar_delete_notify_guests === true))).catch(() => setTell(false));
+    setOpen(true);
+  };
+  const go = () => {
+    setBusy(true);
+    apiFetch('/api/calendar/events/' + encodeURIComponent(e.id) + '/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ calendar_id: e.calendar_id || '', account_id: e.account_id || '', notify_guests: !!tell }) })
+      .then(r => r.json()).then(d => {
+        setBusy(false);
+        if (d && d.ok) { setOpen(false); fridayToast('Deleted “' + (d.title || e.title) + '”. ' + (d.guests_told || '')); if (onDone) onDone(); } else setMsg((d && d.message) || 'Nothing was deleted.');
+      }).catch(() => { setBusy(false); setMsg('Nothing was deleted: ' + fridayName() + ' could not be reached.'); });
+  };
+  if (!open) return E('button', { className: 'btn', style: { fontSize: 10 }, 'data-testid': 'cal-delete', onClick: ask }, 'Delete…');
+  return E('div', { 'data-testid': 'cal-delete-confirm', role: 'dialog', 'aria-label': 'Delete this event', style: { fontSize: 11, marginTop: 6, padding: 6, border: '1px solid rgba(255,95,122,0.4)', borderRadius: 6 } },
+    E('div', null, 'Delete “' + e.title + '”? Google keeps no undo for this.'),
+    guests ? E('label', { style: { display: 'block', marginTop: 4 } }, E('input', { type: 'checkbox', 'data-testid': 'cal-delete-notify', checked: tell, onChange: ev => setTell(ev.target.checked) }),
+      ' Notify guests (' + guests + '): Google emails them a cancellation') : E('div', { style: { color: '#888', marginTop: 4 } }, 'It has no guests.'),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+      E('button', { className: 'btn', style: { fontSize: 10, color: '#ff5f7a' }, disabled: busy, onClick: go }, busy ? 'Deleting…' : 'Delete'),
+      E('button', { className: 'btn', style: { fontSize: 10 }, disabled: busy, onClick: () => setOpen(false) }, 'Cancel')),
+    msg ? E('div', { role: 'alert', style: { color: '#ff5f7a', marginTop: 4 } }, msg) : null);
+}
 function SettingsTabPrivacy({s,save}){
   const[vaultStatus,setVaultStatus]=useState(null);
   const[pass,setPass]=useState('');
@@ -19492,7 +19713,14 @@ function SettingsTabPrivacy({s,save}){
       <GovernanceGrantsPanel/>
     </StSection>
     <StSection title="Pre-approved sends">
+      <UnattendedUndoRow s={s} save={save}/>
       <SendGrantsPanel/>
+    </StSection>
+    <StSection title="Money paragraphs in email">
+      <MoneyParagraphsSettings s={s} save={save}/>
+    </StSection>
+    <StSection title="Deleting calendar events">
+      <CalendarDeleteGuestsRow s={s} save={save}/>
     </StSection>
     <StSection title={(fridayName() + "’s rules on this PC")}>
       <ClawsRepinPanel/>
@@ -23374,7 +23602,12 @@ function SettingsWS() {
   }), /*#__PURE__*/React.createElement(SettingsYourProfile, null), /*#__PURE__*/React.createElement(SettingsInterruptions, {
     s: s,
     save: save
-  }), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabModels, {
+  }), /*#__PURE__*/React.createElement(StSection, {
+    title: "Scheduled jobs"
+  }, /*#__PURE__*/React.createElement(ScheduledJobDefaults, {
+    s: s,
+    save: save
+  })), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabModels, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(StSection, {
@@ -23407,10 +23640,16 @@ function SettingsWS() {
   }), /*#__PURE__*/React.createElement(CallModePanel, {
     s: s,
     save: save
-  })), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'advanced' && /*#__PURE__*/React.createElement(SettingsTabAdvanced, {
+  })), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'advanced' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabAdvanced, {
     s: s,
     save: save
-  }), settingsShowHeldFeatures() && tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), settingsShowHeldFeatures() && tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null))));
+  }), /*#__PURE__*/React.createElement(StSection, {
+    title: "News source trust",
+    desc: "Every outlet starts at 0.5. These set how fast evidence moves it, and how strong your Boost and Ban are."
+  }, /*#__PURE__*/React.createElement(TrustScoringSettings, {
+    s: s,
+    save: save
+  }))), settingsShowHeldFeatures() && tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), settingsShowHeldFeatures() && tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null))));
 }
 // Appearance: the dock, how far it stands out, and the 3D effects.
 function SettingsTabAppearance({
@@ -23425,7 +23664,10 @@ function SettingsTabAppearance({
     /*#__PURE__*/React.createElement(StSection, {
     title: "Dock",
     desc: "Which workspaces the dock shows, and in what order."
-  }, /*#__PURE__*/React.createElement(DockSettingsPanel, null), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(DockSettingsPanel, null), /*#__PURE__*/React.createElement(DockByAskingRow, {
+    s: s,
+    save: save
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 18
     }
@@ -24532,6 +24774,8 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   // The share card has its own body: the exact payload, edit, and four choices.
   // A file-access card lists every path it would allow; see FileGrantRequestCard.
   if (a && a.kind === 'file_grant_request') return <FileGrantRequestCard a={a} busy={busy} onDecide={onDecide}/>;
+  // An email paragraph about money held back from a cloud model: exactly the text, Send or Keep (services/cloud_release.py).
+  if (a && a.payload && a.payload.handler === 'cloud_release') return <CloudReleaseCard a={a} busy={busy}/>;
   if (a && a.kind === 'local_context_share') return <LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>;
   // A publish card shows what would go public, the scan, the licences and a
   // sandboxed preview (static/friday_publish.js).
