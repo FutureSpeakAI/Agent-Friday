@@ -1117,6 +1117,10 @@ if ($Unattended) {
     # console UI and it needs a real terminal, so it cannot go through
     # Invoke-Native's redirected pipes.
     $wizardExit = 0
+    # The installer starts Friday itself at the end (the tray, in its own
+    # window). The wizard must not also start a server inside this console,
+    # where every optional service it has not been told about would print.
+    $env:FRIDAY_SETUP_FROM_INSTALLER = '1'
     try {
         $p = Start-Process -FilePath (Get-PythonExe $InstallRoot) `
                            -ArgumentList @('-m','agent_friday.cli','setup') `

@@ -18,7 +18,9 @@ key is configured / the local daemon is up — so it is offline- and test-safe. 
 deep check does a light HTTP probe for openai-compatible endpoints. Results are
 cached briefly so the wizard/Settings can poll without hammering anything.
 
-Status values: "ok" | "missing" (no key) | "down" (unreachable) | "error" | "unknown".
+Status values: "ok" | "missing" (no key) | "down" (unreachable) | "error" | "unknown"
+| "not_connected" (a keyless provider nobody set up, e.g. no local model
+installed; like "missing", it never counts against the inference verdict).
 
 Measurement plane (spec §8 — model-agnostic provider layer, P2):
   * record(provider, ok, latency_ms, status) — called from every adapter
@@ -45,6 +47,9 @@ from agent_friday.user_errors import ExceptionText
 
 _CACHE: dict = {}
 _TTL = 20.0  # seconds
+
+#: A provider the person never set up. Not a failure and not a verdict.
+NOT_CONNECTED = "not_connected"
 
 # ── Measurement plane ────────────────────────────────────────────────────────
 _RING_SIZE = 256
@@ -209,6 +214,24 @@ def _has_key(prov) -> bool:
     return _key_state(prov) == "ok"
 
 
+def _ollama_installed(prov) -> bool:
+    """Is there an Ollama on this computer to be "not running"?
+
+    A non-default address (another machine, a container) is something the
+    person set up, so it counts as installed. Otherwise: the program on PATH
+    or in its default Windows install folder.
+    """
+    import shutil
+    from pathlib import Path
+    base = str((prov or {}).get("base_url") or "").strip().rstrip("/")
+    if base and base not in ("http://localhost:11434", "http://127.0.0.1:11434"):
+        return True
+    if shutil.which("ollama"):
+        return True
+    local = os.environ.get("LOCALAPPDATA") or ""
+    return bool(local) and (Path(local) / "Programs" / "Ollama" / "ollama.exe").exists()
+
+
 def _check(name, deep=False) -> dict:
     prov = _provider(name)
     if not prov:
@@ -219,9 +242,15 @@ def _check(name, deep=False) -> dict:
         try:
             from agent_friday.routing.ollama_manager import get_manager
             ok = get_manager(prov.get("base_url") or "http://localhost:11434").is_available()
+            if not ok and not _ollama_installed(prov):
+                return {"provider": name, "status": NOT_CONNECTED,
+                        "detail": "Ollama is not installed on this computer"}
             return {"provider": name, "status": "ok" if ok else "down",
                     "detail": "daemon reachable" if ok else "Ollama not running"}
         except Exception as e:
+            if not _ollama_installed(prov):
+                return {"provider": name, "status": NOT_CONNECTED,
+                        "detail": "Ollama is not installed on this computer"}
             return {"provider": name, "status": "down", "detail": ExceptionText(str(e)[:120])}
 
     if ptype == "local-voice":
@@ -726,7 +755,9 @@ def inference_probe(name, prov=None, use_cache=True, explicit=False) -> dict | N
     try:
         if ptype == "ollama":
             if not model:
-                return _result("down", "no local model installed", False)
+                # Nothing installed (or no daemon) is "not connected": the
+                # person never set up this provider, so it is not broken.
+                return _result(NOT_CONNECTED, "no local model installed", False)
             from agent_friday.routing.ollama_manager import get_manager
             mgr = get_manager(prov.get("base_url") or "http://localhost:11434")
             # This is the call site decision D1 requires: `health_check` did a
@@ -958,10 +989,17 @@ def inference_health(providers=None, owner_requested=False) -> dict:
             results.append({"provider": pname, "status": "down",
                             "detail": r["error"], "proved": False})
 
+    # A keyless provider nobody set up (no local model installed) is listed as
+    # not connected and is not part of the verdict: absence is not illness.
+    absent = [r for r in results if r.get("status") == NOT_CONNECTED]
+    results = [r for r in results if r.get("status") != NOT_CONNECTED]
     if not results:
-        return {"status": "unknown", "providers": [],
-                "detail": "no configured inference provider to probe"}
-    oks = [r for r in results if r.get("status") == "ok"]
+        out = {"status": "unknown", "providers": [],
+               "detail": "no configured inference provider to probe"}
+        if absent:
+            out["not_connected"] = [r.get("provider") for r in absent]
+        return out
+    oks =[r for r in results if r.get("status") == "ok"]
     # "unknown" is a third thing and must not collapse into "down". A probe that
     # did not answer inside its ceiling tells us nothing about the provider, and
     # reporting "Friday cannot currently think" on the strength of a slow
@@ -979,6 +1017,8 @@ def inference_health(providers=None, owner_requested=False) -> dict:
     out = {"status": status, "providers": results}
     if unknowns:
         out["unread"] = [r.get("provider") for r in unknowns]
+    if absent:
+        out["not_connected"] = [r.get("provider") for r in absent]
     return out
 
 

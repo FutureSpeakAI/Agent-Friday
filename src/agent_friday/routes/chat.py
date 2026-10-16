@@ -102,6 +102,24 @@ from agent_friday.routes._errors import (api_error, error_text, exception_text,
                                          log_failure, public_result)
 _LOG = _logging.getLogger("friday.chat")
 
+#: Said in place of an image description when no Google Gemini key is
+#: connected: what is missing and where to add it, not a provider exception.
+_NO_VISION_KEY = ("[I can't look at images yet: no Google Gemini key is "
+                  "connected. You can add one in Settings > Connections.]")
+
+
+def _gemini_connected() -> bool:
+    """Is a Google Gemini key available for cloud vision? Fails open, so a
+    registry that cannot be read leaves the existing path (and its own
+    error handling) in charge."""
+    if core.GEMINI_API_KEY:
+        return True
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        return bool(get_provider_registry().is_provider_available("google-gemini"))
+    except Exception:
+        return True
+
 # security-boundary.md §19 row 11: the vision prompt sent alongside a
 # screenshot/camera frame to Gemini. Both call sites used to duplicate this
 # literal inline; a single shared constant means they cannot drift apart.
@@ -1376,6 +1394,9 @@ def chat():
                     screenshot_b64 = None      # nothing may send it later
 
             # 2 ── cloud, only when the mode permits it, and never silently.
+            if screenshot_b64 and vision_description is None and not _gemini_connected():
+                vision_description = _NO_VISION_KEY
+                screenshot_b64 = None      # nothing to send it to
             if screenshot_b64 and vision_description is None:
                 try:
                     _cloud_intent.require("google-gemini", "vision (chat image)", "gemini-2.5-flash")
@@ -3239,6 +3260,8 @@ def chat_send():
                     "machine, and you have chosen Local only, so I did not "
                     "send it.]")
                 _record_send('block', 'local_only: image withheld from the cloud (/api/chat/send)')
+            elif not _gemini_connected():
+                vision_description = _NO_VISION_KEY
             else:
                 try:
                     _cloud_intent.require("google-gemini", "vision (chat image)", "gemini-2.5-flash")

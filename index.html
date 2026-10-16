@@ -59723,8 +59723,9 @@ function ProviderStatusDot({
     color = '#555';
     title = 'disabled';
   } else if (!prov.available) {
-    color = '#f59e0b';
-    title = 'needs attention (no key)';
+    // Never set up is not a fault: grey, "not connected", no warning colour.
+    color = '#555';
+    title = 'not connected';
   } else if (avail === 'ok' || avail === 'unknown') {
     color = '#00ff80';
     title = avail === 'ok' ? 'healthy' : 'ready';

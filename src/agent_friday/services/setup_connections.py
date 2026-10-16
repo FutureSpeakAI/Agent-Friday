@@ -418,8 +418,8 @@ def _secret_connect(name: str, signup: str = "") -> dict:
 def _search_items() -> list:
     out = []
     for name, label, env_key, signup, perm in (
-            ("brave", "Brave Search", "BRAVE_API_KEY",
-             "https://api.search.brave.com/app/keys",
+            ("brave", "Brave Search", "BRAVE_SEARCH_API_KEY",
+             "https://api-dashboard.search.brave.com/app/keys",
              "Your search queries are sent to Brave with your key."),
             ("firecrawl", "Firecrawl", "FIRECRAWL_API_KEY",
              "https://www.firecrawl.dev/app/api-keys",

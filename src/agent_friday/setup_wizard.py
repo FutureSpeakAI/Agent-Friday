@@ -1882,12 +1882,23 @@ def main():
 
     # Launch?
     console.print()
-    if Confirm.ask("  Launch Agent Friday now?", default=True):
+    if launched_by_installer():
+        # The installer asks "Start Friday now?" next and starts the tray in
+        # its own window. Starting the server here would run it inside the
+        # installer's console, printing its start-up chatter there.
+        console.print("  [cyan]Setup saved. The installer will offer to start "
+                      "Friday next.[/cyan]\n")
+    elif Confirm.ask("  Launch Agent Friday now?", default=True):
         _launch()
     else:
         console.print(
             "\n  [cyan]Run [bold]friday[/bold] or [bold]start.bat[/bold] to launch.[/cyan]\n"
         )
+
+
+def launched_by_installer() -> bool:
+    """Was this wizard started by the Windows installer (install.ps1)?"""
+    return os.environ.get("FRIDAY_SETUP_FROM_INSTALLER", "").strip() == "1"
 
 
 def _launch():

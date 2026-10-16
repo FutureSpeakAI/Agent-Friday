@@ -20628,7 +20628,7 @@ function ProviderStatusDot({prov}){
   const avail=h.availability;
   let color='#555',title='no traffic yet';
   if(!prov.enabled){color='#555';title='disabled';}
-  else if(!prov.available){color='#f59e0b';title='needs attention (no key)';}
+  else if(!prov.available){color='#555';title='not connected';} // never set up is not a fault
   else if(avail==='ok'||avail==='unknown'){color='#00ff80';title=avail==='ok'?'healthy':'ready';}
   else if(avail==='degraded'){color='#f59e0b';title='degraded — elevated error rate';}
   else if(avail==='down'){color='#ef4444';title='down — circuit breaker open';}
