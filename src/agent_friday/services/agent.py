@@ -13437,13 +13437,20 @@ def _public_query_card(share, session_ctx):
     """Raise (or read back) the Send / Don't send card for one shared query.
     One card per exact outgoing call in this conversation; a call the owner
     already sent once asks again (each send is its own yes)."""
-    from agent_friday.privacy import public_query as _pq
-    name, inp = share.tool, dict(share.args)
+    name = str(getattr(share, "tool", "") or "search")
     _blocked = (f"[NOT RUN] '{name}' was NOT executed and nothing was sent: "
                 f"policy blocked its approval card. Tell the user.")
-    subject = (f"public_query:{_taint_mod.ledger_key(session_ctx)}:"
-               f"{_taint_mod.fingerprint(name, inp)}")
     try:
+        from agent_friday.privacy import public_query as _pq
+        inp = dict(share.args)
+        # A card shows all of what Send would send, faithfully, or it is not
+        # raised: nothing longer than the card holds, no invisible characters.
+        _problem = _pq.card_problem(share)
+        if _problem:
+            return (f"[NOT RUN] '{name}' was NOT executed and nothing was sent: "
+                    f"{_problem}. Tell the user.")
+        subject = (f"public_query:{_taint_mod.ledger_key(session_ctx)}:"
+                   f"{_taint_mod.fingerprint(name, inp)}")
         from agent_friday.services import approvals as _appr
         # The newest card for this exact call: the first one, or a later ask
         # raised after an earlier card was sent or expired (subject + suffix).
@@ -15919,6 +15926,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _sent_tools = list(_sent_tools) + list(_late)
                         _tools_grew = True
 
+                # The tool the call will actually run (_execute_tool resolves a near-miss
+                # name the same way): the vault check and the search card judge that tool.
+                _pq_name = (tu.name if tu.name in CLAUDE_TOOL_HANDLERS
+                            else (_resolve_tool_name(tu.name)[0] or tu.name))
                 # ── Zero-trust continuous vault authorization ──────────
                 # Gate every tool call through vault check_action before
                 # execution. If the provider can't see the data, deny.
@@ -15928,7 +15939,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     _zt_provider = (session_ctx or {}).get("provider", "cloud")
                     _zt_data = json.dumps(_job_send_args(tu.name, tu.input or {}, session_ctx), default=str)
                     _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
-                        _zt_provider, tu.name, _zt_data, model=model or "",
+                        _zt_provider, _pq_name, _zt_data, model=model or "",
                         access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
                         # The provenance ledger for this turn, so the gate can
                         # tell a restaurant's published address from the owner's
@@ -15965,7 +15976,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 # request this seat is answering, as it was sent.
                 _pq_held = _public_query_hold(
                     _LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
-                    str(kwargs.get("model") or model or ""), tu.name, tu.input,
+                    str(kwargs.get("model") or model or ""), _pq_name, tu.input,
                     pii_lookup=pii_lookup, request=kwargs, session_ctx=session_ctx)
                 if _pq_held:
                     tool_trace.append({"name": tu.name, "input": tu.input, "result": _pq_held})
@@ -15997,7 +16008,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     # those exact strings are floor-only at the search gates.
                     from agent_friday.privacy.public_query import for_tool_call as _pq_call
                     with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
-                                  str(kwargs.get("model") or model or ""), tu.name, tu.input):
+                                  str(kwargs.get("model") or model or ""), _pq_name, tu.input):
                         result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
@@ -16764,6 +16775,10 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                               "content": _arg_error})
                 continue
 
+            # The tool the call will actually run (_execute_tool resolves a near-miss
+            # name the same way): the vault check and the search card judge that tool.
+            _pq_name = (tname if tname in CLAUDE_TOOL_HANDLERS
+                        else (_resolve_tool_name(tname)[0] or tname))
             # ── Zero-trust continuous vault authorization. ──
             # ONLY vault-tier (TIER_2/TIER_3) data is gated here; the provider
             # determines whether sensitive content may flow (local = allowed,
@@ -16775,7 +16790,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             if _vault_ctl is not None:
                 _zt_provider = (session_ctx or {}).get("provider", provider)
                 _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
-                    _zt_provider, tname, json.dumps(_job_send_args(tname, targs, session_ctx), default=str),
+                    _zt_provider, _pq_name, json.dumps(_job_send_args(tname, targs, session_ctx), default=str),
                     model=model or "",
                     access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
                     # See the other call site: the provenance ledger lets the
@@ -16804,7 +16819,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             # private text waits on the owner's Send / Don't send card.
             _pq_held = _public_query_hold(
                 _LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
-                model or "", tname, targs,
+                model or "", _pq_name, targs,
                 pii_lookup=pii_lookup, request=convo, session_ctx=session_ctx)
             if _pq_held:
                 tool_trace.append({"name": tname, "input": targs, "result": _pq_held})
@@ -16874,7 +16889,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 with (_td.budget(_td.LOCAL_TOOL_BUDGET_S) if _compact_seat == "local"
                       else _ctxlib.nullcontext()), \
                         _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
-                                 model or "", tname, targs):
+                                 model or "", _pq_name, targs):
                     result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                            session_ctx=_zt_ctx)
             finally:

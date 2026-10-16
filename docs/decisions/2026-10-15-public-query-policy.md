@@ -112,10 +112,32 @@ or as that seat's own echo -- e.g. an email line or a health note; or (2) a
 `[PII:...]` tag the seat used that would be filled in with the real value (a
 name, a number). Words are compared folded and lower-cased.
 
-It applies to `search_web` and `deep_research` (`public_query.CARD_TOOLS`).
-`search_news` does not ask: its query is matched against the news feed already
-on this computer and is not sent anywhere. Voice seats do not ask (a live call
-has no card to wait on); local seats never ask.
+A paraphrase does not trigger a card: the check is verbatim runs and
+filled-in tags, so a seat that restates private context in its own words is
+not caught. That is a known limit of a deterministic check.
+
+It applies to `search_web` and `deep_research` (`public_query.CARD_TOOLS`),
+judged by the tool that will actually run (a near-miss name such as
+`search.web` is resolved first, in both agent loops). `search_news` does not
+ask: its query is matched against the news feed already on this computer and
+is not sent anywhere. A cloud voice seat asks too: the card waits on screen
+and the seat is told so. Local seats never ask.
+
+The card shows all of what Send sends, faithfully, or it is not raised: every
+public query string, and for `deep_research` its `context` ("Background:");
+nothing longer than 1000 characters (what the approvals store keeps); no
+invisible format characters (Unicode Cf, bidi controls). Such a query is
+`[NOT RUN]` with the reason. An approved card runs only while its stored text
+is still exactly what its input would show (`public_query.approved_texts`).
+For `deep_research`, Send starts the job with the text shown; the searches the
+job derives from it each go through the standard privacy gate, and the card
+says so.
+
+Only the Send button on screen approves a search card
+(`approvals.PUBLIC_QUERY_CARD_APPROVERS` = `owner:ui`): not voice, not a text
+message (it is never offered by text, and a YES code is refused), not a chat
+claim, not a batch. Declining is open to every channel. The report posted
+after Send names the card, not the query, and is PII-scrubbed.
 
 Mechanism: the existing approval path, nothing new. Both agent loops call
 `agent._public_query_hold` after `check_action` passes and before the tool

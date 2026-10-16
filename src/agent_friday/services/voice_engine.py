@@ -1648,6 +1648,33 @@ def _voice_ctx(session=None) -> dict:
     return ctx
 
 
+def _voice_request(session=None) -> list:
+    """The conversation a voice seat is answering, as an OpenAI-shape message
+    list, for the search card's shared-text check (privacy/public_query): the
+    call's conversation transcript (Friday's own turns as "assistant") and
+    the owner's latest spoken words. Empty when none is known."""
+    out: list = []
+    if not isinstance(session, dict):
+        return out
+    try:
+        cid = session.get("conversation_id")
+        if cid:
+            from agent_friday.services import conversations as _convs
+            for m in _convs.messages(cid, limit=200) or []:
+                if not isinstance(m, dict):
+                    continue
+                role = str(m.get("role") or "")
+                text = m.get("text") if isinstance(m.get("text"), str) else m.get("content")
+                if isinstance(text, str) and text.strip():
+                    out.append({"role": "assistant" if role in ("friday", "assistant") else "user",
+                                "content": text})
+    except Exception as e:
+        _log.debug("voice transcript unavailable for the search card check: %s", e)
+    if isinstance(session.get("owner_text"), str) and session["owner_text"].strip():
+        out.append({"role": "user", "content": session["owner_text"]})
+    return out
+
+
 def _voice_local_only() -> bool:
     """The user's own restriction: nothing reaches a cloud model."""
     try:
@@ -2000,6 +2027,16 @@ def _voice_tool_run(name, args, send_client, session=None, owner_utterance=False
         # mark records `a` as the seat sent it; only those exact strings are
         # floor-only at the search gates.
         from agent_friday.privacy.public_query import for_tool_call as _pq_call
+        if not _local_session(session):
+            # A cloud voice seat's search that shares private text from the
+            # conversation waits on the owner's Send card on screen, as in
+            # chat (privacy/public_query, "ASK WITH PREVIEW"); the model is
+            # told to say so. A local voice seat never asks.
+            from agent_friday.services.agent import _public_query_hold
+            held = _public_query_hold(c.get("provider", "cloud"), "", tool, a,
+                                      request=_voice_request(session), session_ctx=c)
+            if held:
+                return held
         with _pq_call(c.get("provider", "cloud"), "", tool, a):
             return _execute_tool(tool, a, handler=fn, session_ctx=c)
 
