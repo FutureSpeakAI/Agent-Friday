@@ -384,6 +384,8 @@ INTERNAL_TOOLS = frozenset({
     # hold marker for that series and no attendees, and nobody is notified,
     # so it undoes Friday's own earlier work and reaches no one.
     "find_free_slots", "release_holds",
+    # check_plan_travel is arithmetic on the stops it is given: no network, no write.
+    "check_plan_travel",
     "list_pdf_fields",              # reads a form's fields
     # Relationship memory: reads of the local timeline, and a local reminder
     # that is never sent to the person it is about.
