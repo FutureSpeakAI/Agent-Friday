@@ -156,6 +156,7 @@
  ],
  "not_for_laya": [
   {"action": "workflows.job_choices", "kind": "by_design", "reason": "A job's missed and held runs (or Follow my default) and whether its emails send or save as drafts are the owner's choice; Friday does not change them."},
+  {"action": "workflows.email_choice", "kind": "by_design", "reason": "Whether a saved workflow's emails send or save as drafts when it runs on request is the owner's choice on its card; Friday does not change it."},
   {
    "action": "workflows.open_workflow",
    "kind": "gap",

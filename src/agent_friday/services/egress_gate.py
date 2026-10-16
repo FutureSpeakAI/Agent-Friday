@@ -813,6 +813,12 @@ def _gate_text(text: str, provider: str, field: str,
     try:
         from agent_friday.services import cloud_release as _cr
         if _cr.looks_like_mail(text):
+            if not destination_is_cloud(provider):
+                # The text stays on this PC (Friday's own local model): an email result goes to it
+                # as it is, with no money card and no read-back. The card is raised only where a
+                # later call would carry these paragraphs to a cloud model.
+                _dlog.debug("email result for a local destination (%s): passed whole", provider)
+                return text
             mail = _try_json(text)
             rel = _cr.released(mail) if mail is not None else set()
             if rel:
@@ -829,6 +835,21 @@ def _gate_text(text: str, provider: str, field: str,
 
 #: Paragraphs the owner released to the cloud for the email result being gated (services/cloud_release).
 _RELEASED: contextvars.ContextVar = contextvars.ContextVar("egress_released", default=frozenset())
+#: Set while seal_outbound or gate_text gates a payload they have judged cloud-bound from the provider
+#: AND the model (a cloud-tagged Ollama model is cloud under the "ollama" name), so the steps below
+#: them, which see only the provider name, do not mistake it for a local destination.
+_DEST_CLOUD: contextvars.ContextVar = contextvars.ContextVar("egress_dest_cloud", default=False)
+
+
+def destination_is_cloud(provider: str, model: str = "") -> bool:
+    """Does text gated for this destination leave the PC? True inside a cloud seal (see _DEST_CLOUD),
+    else the registry's judgement of the provider and model (_is_cloud: unknown means cloud)."""
+    if _DEST_CLOUD.get():
+        return True
+    try:
+        return _is_cloud(provider, model)
+    except Exception:
+        return True
 
 
 def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> str:
@@ -1634,7 +1655,11 @@ def gate_text(text: str, provider: str, field: str = "prompt",
     """
     if not _is_cloud(provider, model):
         return text
-    return _gate_text(text, provider, field, log_path)
+    tok = _DEST_CLOUD.set(True)
+    try:
+        return _gate_text(text, provider, field, log_path)
+    finally:
+        _DEST_CLOUD.reset(tok)
 
 
 def gate_worker_payload(
@@ -1891,9 +1916,11 @@ def seal_outbound(
         _lk_tok = _cr.LOOKUP.set(_lk)
     except Exception:
         _cr, _lk_tok = None, None
+    _dest_tok = _DEST_CLOUD.set(True)       # judged cloud above, with the model
     try:
         return _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=model)
     finally:
+        _DEST_CLOUD.reset(_dest_tok)
         if _lk_tok is not None:
             _cr.LOOKUP.reset(_lk_tok)
 
