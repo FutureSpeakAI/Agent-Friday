@@ -47,14 +47,19 @@ def wired(monkeypatch, patch_app, tmp_path):
     taint.reset()
 
 
-def _send(client, monkeypatch, message):
+def _send(client, monkeypatch, message, page=True):
+    """One /api/chat post. `page`: the app's own page on this PC (its source and its
+    verified session), the only surface whose household statement saves silently."""
     seen = []
 
     def dispatch(messages, **kwargs):
         seen.append(copy.deepcopy(messages))
         return "ok", []
     monkeypatch.setattr(chat, "_call_ollama", dispatch)
-    r = client.post("/api/chat", json={"message": message})
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: page)
+    body = {"message": message, **({"source": "app_page"} if page else {})}
+    r = client.post("/api/chat", json=body)
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     assert seen, "the local seat was not dispatched to"
     return seen[-1][-1]["content"]
@@ -72,3 +77,13 @@ def test_a_turn_without_a_household_statement_carries_no_note(client, monkeypatc
     last = _send(client, monkeypatch, "find weekend events near Riverside Park")
     assert cm.entries("user") == []
     assert "MEMORY CARD:" not in last
+
+
+def test_a_post_that_is_not_the_owners_page_queues_the_statement(client, monkeypatch, wired):
+    """/api/chat stamps no origin or surface of its own: the request decides. Without the page's
+    source and verified session the statement waits on the card instead of saving."""
+    last = _send(client, monkeypatch, "I am 52, my husband is 50, our son is 9. Note that please.",
+                 page=False)
+    assert cm.entries("user") == []
+    assert [q["op"] for q in cm.pending()] == ["add"]
+    assert "MEMORY CARD:" in last and "waiting for their OK" in last

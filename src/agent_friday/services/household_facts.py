@@ -22,7 +22,9 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-#: The household relations this reader recognises, in the owner's wording.
+#: The relations this reader recognises, in the owner's wording. Only the household is kept
+#: (HOUSEHOLD_RELATIONS, and a parent the same sentence says lives with the owner); the others are
+#: read so that "my brother is 45" is understood and set aside, never taken for something else.
 RELATIONS = (
     "wife", "husband", "partner", "spouse", "fiancee", "fiance",
     "son", "daughter", "child", "kid", "baby", "stepson", "stepdaughter", "stepchild",
@@ -30,6 +32,14 @@ RELATIONS = (
     "brother", "sister", "grandmother", "grandfather", "grandma", "grandpa",
     "grandson", "granddaughter", "mother-in-law", "father-in-law",
 )
+#: Who lives in the owner's household: a spouse or partner, and children.
+HOUSEHOLD_RELATIONS = frozenset({
+    "wife", "husband", "partner", "spouse", "fiancee", "fiance",
+    "son", "daughter", "child", "kid", "baby", "stepson", "stepdaughter", "stepchild",
+})
+#: A parent is kept only when the same sentence says they live with the owner.
+PARENT_RELATIONS = frozenset({"mother", "father", "mom", "mum", "dad", "stepmother", "stepfather"})
+_LIVES_WITH = re.compile(r"\b(?:lives?|living)\s+with\s+(?:us|me)\b", re.I)
 _ORDINALS = ("oldest", "eldest", "youngest", "older", "younger", "middle", "little", "baby")
 
 #: Words in a search that ask about the household (services/agent search_wiki).
@@ -63,8 +73,11 @@ _MEMBER_OLD = re.compile(
 #: "I am 52", "I'm 52 years old"
 _SELF = re.compile(r"\bi(?:\s+am|'m|’m)\s+(?P<age>\d{1,3})" + _YEARS + _AFTER, re.I)
 
-#: A clause that only supposes, asks or quotes says nothing about the household.
-_HYPOTHETICAL = re.compile(r"\b(?:if|whether|suppose|supposing|imagine|pretend|what\s+if|unless)\b", re.I)
+#: A clause that only supposes, asks, quotes, reports someone else's words, or dictates text for
+#: something else (a story, a draft, a message to send) says nothing about the owner's household.
+_HYPOTHETICAL = re.compile(
+    r"\b(?:if|whether|suppose|supposing|imagine|pretend|pretending|what\s+if|unless|where|"
+    r"story|stories|say|says|said|tell|tells|told|write|writes|wrote|draft|drafts)\b", re.I)
 _QUOTED = re.compile(r"[\"“”][^\"“”]*[\"“”]")
 
 
@@ -90,16 +103,22 @@ def _age(raw: str, low: int, high: int) -> Optional[int]:
 
 
 def extract(text: Any) -> Optional[Dict[str, Any]]:
-    """{"self_age": int|None, "members": [{"relation", "ordinal", "name", "age"}]} for
-    the household the owner states in `text`, or None when it states none.
+    """{"self_age": int|None, "members": [{"relation", "ordinal", "name", "age"}],
+    "sentences": [str]} for the household the owner states in `text`, or None when
+    it states none. `sentences` are the statements the facts were read from, so
+    the caller can tell whether they were pasted from something Friday read.
 
     At least one household member must be stated: "I am 52" on its own is not
     a household statement. The owner's own age rides along only as an adult's
-    (18 to 120); a member's age is 0 to 120."""
+    (18 to 120); a member's age is 0 to 120. Only the household is kept: a
+    spouse or partner, children, and a parent the sentence says lives with the
+    owner."""
     members: List[Dict[str, Any]] = []
+    sentences: List[str] = []
     self_age: Optional[int] = None
     seen = set()
     for s in _sentences(text):
+        used = False
         hits = []
         for rx in (_MEMBER_IS, _MEMBER_OLD):
             for m in rx.finditer(s):
@@ -109,6 +128,8 @@ def extract(text: Any) -> Optional[Dict[str, Any]]:
             if age is None:
                 continue
             rel = m.group("rel").lower()
+            if rel not in HOUSEHOLD_RELATIONS and not (rel in PARENT_RELATIONS and _LIVES_WITH.search(s)):
+                continue
             ordinal = (m.group("ord") or "").lower()
             name = m.group("name") or ""
             key = (rel, ordinal, name.lower(), age)
@@ -116,13 +137,17 @@ def extract(text: Any) -> Optional[Dict[str, Any]]:
                 continue
             seen.add(key)
             members.append({"relation": rel, "ordinal": ordinal, "name": name, "age": age})
+            used = True
         if self_age is None:
             sm = _SELF.search(s)
             if sm:
                 self_age = _age(sm.group("age"), 18, 120)
+                used = used or self_age is not None
+        if used:
+            sentences.append(s.strip())
     if not members:
         return None
-    return {"self_age": self_age, "members": members}
+    return {"self_age": self_age, "members": members, "sentences": sentences}
 
 
 def _member_words(m: Dict[str, Any]) -> str:
