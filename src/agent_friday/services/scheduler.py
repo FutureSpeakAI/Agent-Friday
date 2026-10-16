@@ -1508,7 +1508,9 @@ def _record_missed(rec):
 def _notify_run(rec, status, summary):
     """Push a terminal-state notification. The dispatcher decides whether to
     call this (on_complete always; on_change only on a delta; silent never on
-    success). Failures always notify regardless of mode."""
+    success). Once first-run setup is finished, failures notify regardless of
+    mode; before it is finished no notice is raised, failures included (the
+    run is still recorded in the routine's history)."""
     # The notification engine lives in services.voice_engine; import lazily so
     # the scheduler stays a leaf module.
     if not _setup_finished():
