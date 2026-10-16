@@ -41,6 +41,9 @@ def _env(tmp_path, monkeypatch):
 @pytest.fixture
 def watched(monkeypatch):
     attempts = []
+    # The Ollama manager's own background probes are not the Library's (tests/unit/_ollama_quiet.py).
+    from tests.unit._ollama_quiet import quiet_ollama_probes
+    quiet_ollama_probes(monkeypatch)
 
     def trip(*a, **k):
         attempts.append(a[:2])

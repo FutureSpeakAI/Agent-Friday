@@ -627,6 +627,9 @@ def test_calendar_no_longer_claims_the_word_meetings():
 
 def test_the_workspace_flows_send_nothing_anywhere(rig, proposals, lib, monkeypatch):
     attempts = []
+    # The Ollama manager's own background probes are not the meeting's (tests/unit/_ollama_quiet.py).
+    from tests.unit._ollama_quiet import quiet_ollama_probes
+    quiet_ollama_probes(monkeypatch)
 
     def trip(*a, **k):
         attempts.append(a[:2])
