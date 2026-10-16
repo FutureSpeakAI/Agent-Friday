@@ -16,11 +16,12 @@ MODES
                        DPAPI-wrapped, at security/stray-passphrase-<stamp>.dpapi
                        and read back (vault_passphrase.keep_displaced).
   --recover-kg         Re-seal knowledge-graph sealed files that open only with
-                       a non-current key under the current key, and restore a
-                       kept copy (*.sensitive.kept-*.json) only where its live
-                       file is absent; beside a live file the current key opens,
-                       a kept copy is retired unmerged (records missing from the
-                       live file may have been removed on purpose) and counted.
+                       a non-current key under the current key. Restore only a
+                       copy the no-key save path marked
+                       (*.sensitive.dropped-*.json, newest first) and only where
+                       its live file is absent; every other kept copy is retired
+                       unmerged and counted (records missing from the live file
+                       may have been removed on purpose).
                        Retired copies and replaced files go to
                        security/kg-pre-recover-<stamp>/ under unique names, read
                        back. Runs before --repair-keychain.
@@ -281,6 +282,13 @@ def rotate(new: str) -> dict:
     return {"ok": True, "wrote": written}
 
 
+def _copy_age(p: Path) -> tuple:
+    """Sort key for ``<name>.sensitive.<mark>-<stamp>[-n].json``: stamp, then n."""
+    tail = p.name.split(".sensitive.", 1)[1].split("-", 1)[1][:-len(".json")]
+    base, _, num = tail.partition("-")
+    return (base, int(num) if num.isdigit() else 0)
+
+
 def _backup(src: Path, bdir: Path) -> Path:
     """Copy ``src`` into ``bdir`` under a name no other backup uses, and read
     it back. Raises OSError when the copy is not identical."""
@@ -301,14 +309,16 @@ def recover_kg() -> dict:
 
     1. A live ``<name>.sensitive.json`` the current key does not open, but
        another known key does, is re-sealed in place under the current key.
-    2. A kept copy (``*.sensitive.kept-*.json``) is restored only where its
-       live file is ABSENT (a save made with no key dropped it). Where a live
-       file the current key opens exists, the kept copy is NOT merged: the
-       live file is the truth, and records missing from it may have been
-       removed on purpose (a deleted document, a forget, a correction), so
-       merging would bring them back. That kept copy is retired unmerged and
-       its record count reported. A live file the current key cannot open is
-       never touched, and its kept copy stays.
+    2. Only a copy marked ``*.sensitive.dropped-*.json`` is ever restored:
+       KnowledgeGraphStore.save makes one only when it removes the sealed
+       file because there is no key to seal its records. It is restored
+       only where the live file is still ABSENT, and with several, the
+       newest. Every other copy (``*.sensitive.kept-*.json``, and a dropped
+       copy beside a live file) is retired unmerged and its record count
+       reported: it precedes a save that wrote fewer records on purpose (a
+       deleted document, a forget, a correction, a rebuild), so restoring or
+       merging it would bring removed records back. A live file the current
+       key cannot open is never touched, and its copies stay.
        Retired means moved into the backup folder
        (security/kg-pre-recover-<stamp>/, which the boot scan skips), so it
        is not applied again and not counted as unreadable.
@@ -357,7 +367,12 @@ def recover_kg() -> dict:
             vp._durable_write(p, fresh)
             done.append({"file": p.name, "records": len(recs), "was_sealed_with": via})
 
-        for k in sorted(kgdir.glob("*.sensitive.kept-*.json")):
+        # Marked "dropped" copies first, newest first: only they may be
+        # restored, and only where the live file is absent. Every plain
+        # "kept" copy is retired unmerged, live file or not.
+        copies = sorted(kgdir.glob("*.sensitive.dropped-*.json"), key=_copy_age, reverse=True)
+        copies += sorted(kgdir.glob("*.sensitive.kept-*.json"))
+        for k in copies:
             raw = k.read_bytes()
             if not vc.is_encrypted(raw):
                 continue
@@ -365,20 +380,21 @@ def recover_kg() -> dict:
             if recs is None:
                 left.append(k.name)
                 continue
-            target = k.with_name(k.name.split(".sensitive.kept-")[0] + ".sensitive.json")
-            if target.exists():
-                if opens_with_current(target.read_bytes()) is None:
-                    left.append(k.name)          # its live file is not readable yet
-                    continue
+            dropped = ".sensitive.dropped-" in k.name
+            target = k.with_name(k.name.split(".sensitive.")[0] + ".sensitive.json")
+            if target.exists() and opens_with_current(target.read_bytes()) is None:
+                left.append(k.name)              # its live file is not readable yet
+                continue
+            if target.exists() or not dropped:
                 _backup(k, bdir)
-                k.unlink()                       # retired unmerged: the live file wins
+                k.unlink()                       # retired unmerged: never restored
                 retired.append({"file": target.name, "kept_copy": k.name,
                                 "records_not_merged": len(recs), "was_sealed_with": via})
                 continue
             vp._durable_write(target, seal(recs))
             _backup(k, bdir)
             k.unlink()                           # retired: its copy is in bdir
-            done.append({"file": target.name, "from_kept": k.name, "records": len(recs),
+            done.append({"file": target.name, "from_dropped": k.name, "records": len(recs),
                          "was_sealed_with": via})
     except (OSError, ValueError) as e:
         return {"ok": False, "detail": "%s; stopped (backups in %s)" % (e, bdir),

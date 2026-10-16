@@ -170,7 +170,10 @@ class KnowledgeGraphStore:
     def __init__(self, base_dir: Optional[Path] = None):
         self.base = Path(base_dir) if base_dir else KG_DIR
         self.dropped_sensitive = 0  # records withheld because no vault key
-        self.refused: list = []     # saves/clears refused to protect a sealed file
+        # Saves/clears refused to protect a sealed file: a count callers
+        # compare before and after a run, and the last few reasons.
+        self.refusals = 0
+        self.refused = __import__("collections").deque(maxlen=20)
 
     # ── paths ────────────────────────────────────────────────
     def _plain_path(self, name: str) -> Path:
@@ -201,8 +204,17 @@ class KnowledgeGraphStore:
         # A sealed file only an older key opens is kept aside first, and if
         # that copy cannot be made the save is refused too.
         spath = self._sensitive_path(name)
-        verdict = _stale_load(spath) or self._guard_sealed(spath)
+        # Only the no-key path DROPS records: sensitive records exist but
+        # there is no key to seal them, so the sealed file is removed and
+        # nothing replaces it. That copy is marked "dropped" and is the only
+        # kind --recover-kg may restore. Every other kept copy precedes a
+        # save that deliberately wrote fewer records (a purge, a forget, a
+        # rebuild), and restoring it would bring removed records back.
+        dropping = bool(sensitive) and _vault_key() is None
+        verdict = _stale_load(spath) or self._guard_sealed(
+            spath, mark="dropped" if dropping else "kept")
         if verdict != "ok":
+            self.refusals += 1
             self.refused.append({"artifact": name, "reason": verdict})
             import logging
             logging.getLogger("friday.knowledge_graph").error(
@@ -268,7 +280,7 @@ class KnowledgeGraphStore:
                 _note_load(sp, "cannot_decrypt")
         return out
 
-    def _guard_sealed(self, spath: Path) -> str:
+    def _guard_sealed(self, spath: Path, mark: str = "kept") -> str:
         """May ``spath`` be replaced or removed? ``"ok"`` or the reason not.
 
         * absent, plaintext, or opened by the current key: ``"ok"``;
@@ -305,14 +317,17 @@ class KnowledgeGraphStore:
             _note_state(spath, "cannot_decrypt", None, None, len(raw))
             return "cannot_decrypt"
         try:
-            self._keep_if_unopenable(spath, raw)
+            self._keep_if_unopenable(spath, raw, mark=mark)
         except OSError:
             return "keep_failed"
         return "ok"
 
-    def _keep_if_unopenable(self, spath: Path, raw: Optional[bytes] = None) -> Optional[Path]:
+    def _keep_if_unopenable(self, spath: Path, raw: Optional[bytes] = None,
+                            mark: str = "kept") -> Optional[Path]:
         """Copy a sealed file the CURRENT key does not open aside as
-        ``<name>.sensitive.kept-<stamp>.json`` before it is replaced or removed.
+        ``<name>.sensitive.<mark>-<stamp>.json`` before it is replaced or
+        removed. ``mark`` is "dropped" only when the save drops records for
+        want of a key (see save()), else "kept".
 
         Raises OSError when the copy cannot be made or read back intact: the
         caller then aborts, because replacing a file whose only copy could not
@@ -334,12 +349,13 @@ class KnowledgeGraphStore:
             except Exception:
                 pass
         stamp = time.strftime("%Y%m%dT%H%M%S")
+        mark = "dropped" if mark == "dropped" else "kept"
         dest = spath.with_name(spath.name.replace(_SENSITIVE_SUFFIX, "")
-                               + ".sensitive.kept-%s.json" % stamp)
+                               + ".sensitive.%s-%s.json" % (mark, stamp))
         n = 1
         while dest.exists():
             dest = spath.with_name(spath.name.replace(_SENSITIVE_SUFFIX, "")
-                                   + ".sensitive.kept-%s-%d.json" % (stamp, n))
+                                   + ".sensitive.%s-%s-%d.json" % (mark, stamp, n))
             n += 1
         from agent_friday.services import vault_passphrase as _vp
         _vp._durable_write(dest, raw)
@@ -379,12 +395,14 @@ class KnowledgeGraphStore:
         import logging
         _log = logging.getLogger("friday.knowledge_graph")
         if any(v == "keep_failed" for v in verdicts.values()):
+            self.refusals += 1
             self.refused.append({"artifact": "*", "reason": "keep_failed"})
             _log.error("knowledge graph: clear refused; a sealed file could not be "
                        "checked or kept aside, so nothing was deleted")
             return
         for name in ARTIFACT_NAMES:
             if verdicts[name] != "ok":
+                self.refusals += 1
                 self.refused.append({"artifact": name, "reason": verdicts[name]})
                 _log.error("knowledge graph: %s left in place on clear (%s)",
                            name, verdicts[name])
@@ -530,6 +548,7 @@ def _check_in_background(paths: list) -> None:
     thread, and record what was found (SENSITIVE_STATE)."""
     try:
         import agent_friday.privacy.vault_crypto as _vc
+        gen = _key_generation()
         for sp in paths:
             try:
                 raw = sp.read_bytes()
@@ -538,6 +557,8 @@ def _check_in_background(paths: list) -> None:
             if not _vc.is_encrypted(raw):
                 continue
             recs, via = _open_sealed(raw)
+            if _key_generation() != gen:
+                return                    # the key changed: this answer is stale
             if recs is None:
                 _note_state(sp, "cannot_decrypt", None, None, len(raw))
             else:
@@ -584,8 +605,11 @@ def _integrity_probe() -> list:
                                                                     known["via"]))})
     if stale and not _CHECKING.is_set():
         _CHECKING.set()
-        __import__("threading").Thread(target=_check_in_background, args=(stale,),
-                                       name="kg-seal-check", daemon=True).start()
+        try:
+            __import__("threading").Thread(target=_check_in_background, args=(stale,),
+                                           name="kg-seal-check", daemon=True).start()
+        except Exception:
+            _CHECKING.clear()             # never leave the gate shut on a failed start
     return out
 
 
