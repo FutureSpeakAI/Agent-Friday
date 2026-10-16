@@ -4,6 +4,8 @@ name: chipleak
 # failure of tests/api/test_workspace_job_card_ui.py. The PC has < 4 GB free.
 
 on:
+  push:
+    branches: ['ci/chipleak-field', 'ci/chipleak-field-red']
   pull_request:
   workflow_dispatch:
 
