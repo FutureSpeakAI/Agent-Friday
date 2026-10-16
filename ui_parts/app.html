@@ -24340,17 +24340,22 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   // sandboxed preview (static/friday_publish.js).
   if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return <window.FridayWorkspaceSwapCard a={a} busy={busy} onDecide={onDecide}/>;
   if (a && a.kind === 'publish_web' && window.FridayPublishCard) return <window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>;
+  // A search that shares text from the conversation (privacy/public_query):
+  // the exact text that would go out, where it goes, and Send / Don't send.
+  const pq = a && a.payload && a.payload.public_query;
   return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id} {...fridayRow('card',a.approval_id,a.title,{kind:String(a.kind||'').slice(0,30),status:'pending'})}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
-    {a.action_description && <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}
+    {a.action_description && <div data-testid={pq ? 'public-query-text' : undefined} style={pq ? { fontSize: 11, color: '#ddd', marginTop: 4, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } : { fontSize: 11, color: '#999', marginTop: 2 }}>{a.action_description}</div>}
+    {pq && <div data-testid="public-query-engine" style={{ fontSize: 11, color: '#b8c7dc', marginTop: 4 }}>Goes to: {pq.engine}</div>}
+    {pq && a.description && <div style={{ fontSize: 10, color: '#7f93ad', marginTop: 4 }}>{a.description}</div>}
     {fridayIsBatchCard(a) && <ul data-testid="batch-lines" style={{ fontSize: 11, color: '#b8c7dc', margin: '6px 0 0', padding: '0 0 0 16px', maxHeight: 220, overflowY: 'auto' }}>{(a.payload.lines || []).map((line, i) => <li key={i}>{line}</li>)}</ul>}
     {fridayIsBatchCard(a) && <div style={{ fontSize: 10, color: '#7f93ad', marginTop: 4 }}>Approve changes exactly what is listed. Afterwards, “undo that” or System › Changes {fridayName()} made puts it back.</div>}
     <ApprovalPagePreview a={a} />
     <ApprovalProvenance p={a.provenance} />
     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 4 }}>{a.kind} · {a.policy_class}{a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''}</div>
     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#00ff80' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'approve')}>Approve</button>
-      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#ff0080' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'deny')}>Deny</button>
+      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#00ff80' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'approve')}>{pq ? 'Send' : 'Approve'}</button>
+      <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#ff0080' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'deny')}>{pq ? "Don't send" : 'Deny'}</button>
     </div>
   </div>);
 }
