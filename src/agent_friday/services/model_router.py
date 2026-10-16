@@ -4147,6 +4147,18 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     if _tools_text:
         add(_tools_text, _T1)
 
+    # The privacy policy in force, read from the live settings on every turn
+    # (services/privacy_policy_summary): a model that knows the rules can tell
+    # a refusal that follows them from one that is a bug. Public text: it
+    # names no person and lists nothing from the never-send list. It changes
+    # only when the settings do, so it belongs to the stable head.
+    try:
+        from agent_friday.services.privacy_policy_summary import summary as _privacy_summary
+        add("\n" + _privacy_summary(), _T1)
+        sources_consulted.append('privacy_policy')
+    except Exception as _pe:
+        print(f"  [context] privacy policy summary unavailable: {_pe}")
+
     # The head ends here: the persona and the generated tool text are the
     # same for every turn of every day. Today's context changes daily (a
     # briefing lands, a countdown ticks over) and names the owner's people,
