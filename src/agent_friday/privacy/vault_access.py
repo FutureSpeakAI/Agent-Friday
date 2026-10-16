@@ -163,6 +163,100 @@ def is_cloud_send_card(detail) -> bool:
     return str(detail or "").startswith(CLOUD_SEND_CARD_PREFIX)
 
 
+# ── Tools that send nothing off this PC ─────────────────────────────────────
+# The same boundary as LOCAL_SINK_TOOLS, for tools whose whole effect stays on
+# this machine: local_model_status reads the local seat's state (no input at
+# all), and spawn_task with a LOCAL tier hands a prompt the cloud seat itself
+# wrote to an on-device model. A cloud-seat rule has nothing to protect there:
+# the input goes TO local, never away from it. spawn_task without a tier, or
+# with the cloud tier, keeps the ordinary input-tier gate.
+NO_EGRESS_TOOLS = frozenset({"local_model_status"})
+LOCAL_TASK_TIERS = frozenset({"small_local", "large_local"})
+
+
+def _no_egress(action, data_str) -> bool:
+    name = str(action or "")
+    if name in NO_EGRESS_TOOLS:
+        return True
+    if name != "spawn_task":
+        return False
+    try:
+        args = json.loads(data_str) if isinstance(data_str, str) else (data_str or {})
+        tier = str((args or {}).get("tier") or "").strip().lower()
+    except Exception:
+        return False                  # unreadable -> the ordinary gate applies
+    return tier in LOCAL_TASK_TIERS
+
+
+# ── The owner's cloud consent ───────────────────────────────────────────────
+# A topic-tier refusal guards the owner who has NOT agreed to share private
+# context with the cloud. An owner who has answered "cloud_unrestricted" has
+# already decided, so a cloud seat's tool call is not refused because its
+# input mentions a place, a person or a health detail. The answer is read only
+# from the consent record (privacy/cloud_consent, written by the owner's own
+# consent route), never from the routing mode, which a settings write can set.
+# What the owner never agreed to send stays refused: the never-send list,
+# credentials and keys, and ID, card and account numbers (_consent_floor).
+# Any failure to read the consent is "no consent": the ordinary gate applies.
+
+def _cloud_consented() -> bool:
+    try:
+        from agent_friday.privacy import cloud_consent as _cc
+        return bool(_cc.is_unrestricted_cloud())
+    except Exception:
+        return False
+
+
+def _floor_text(data) -> str:
+    """The text the floor reads: every key and string value of a JSON input,
+    decoded and joined by newlines, so an escape (\\n, \\uXXXX, a doubled
+    backslash) never hides a match; the raw text when it is not JSON."""
+    raw = data if isinstance(data, str) else json.dumps(data or {}, default=str)
+    try:
+        obj = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return str(raw or "")
+    parts: list = []
+
+    def walk(v):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                parts.append(str(k))
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+        elif v is not None:
+            parts.append(str(v))
+    walk(obj)
+    return "\n".join(parts)
+
+
+def _consent_floor(data) -> str:
+    """The kind of never-send material in a tool input, or "" when it is
+    clear. Fails closed: an unreadable check is a hit."""
+    try:
+        text = _floor_text(data)
+    except Exception:
+        return "floor_unavailable"
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        if _jg.never_send_hits(text):
+            return "never_send"
+        hard = _jg.hard_identifier_hits(text)
+        if hard:
+            return str(hard[0])
+    except Exception:
+        return "floor_unavailable"
+    try:
+        from agent_friday.services import secret_shapes as _ss
+        if _ss.looks_like_secret(text):
+            return "credential"
+    except Exception:
+        return "floor_unavailable"
+    return ""
+
+
 # ── Keyword lists exposed for legacy callers ────────────────────────────────
 # The authoritative definitions live in services/sensitivity_classifier.py.
 # These are imported from there so both modules agree by construction.
@@ -464,6 +558,18 @@ class VaultAccessControl:
                     detail = f"{_FLOOR_PREFIX}{floor}"
                 else:
                     detail = f"{CLOUD_SEND_CARD_PREFIX}{Tier.NAMES.get(tier, tier)}"
+            elif _no_egress(action, data_str):
+                # Nothing leaves this PC; see the NO_EGRESS_TOOLS note.
+                detail = f"no_egress_{Tier.NAMES.get(tier, tier)}"
+            elif _cloud_consented():
+                # The owner agreed to share private context with the cloud;
+                # only the never-send floor still refuses.
+                floor = _consent_floor(data_str)
+                if floor:
+                    allowed = False
+                    detail = f"cloud_consent_floor:{floor}"
+                else:
+                    detail = f"cloud_consent_{Tier.NAMES.get(tier, tier)}"
             else:
                 allowed = False
                 detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"

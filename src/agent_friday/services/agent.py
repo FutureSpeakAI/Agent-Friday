@@ -7794,6 +7794,11 @@ def _tool_spawn_task(inp):
     _tier = ((inp or {}).get('tier') or '').strip().lower()
     _model = None
     _tier_note = ''
+    # A LOCAL tier stays local: the task is pinned to that seat, so a failing
+    # leg is reported rather than retried on a cloud model. The vault gate
+    # lets a local-tier task through because nothing leaves this PC
+    # (privacy/vault_access NO_EGRESS), and the pin is what keeps that true.
+    _pin = False
     if _tier:
         from agent_friday.services import tiers as _tiers
         res = _tiers.resolve(_tier)
@@ -7814,9 +7819,10 @@ def _tool_spawn_task(inp):
         elif res.reason:
             _tier_note = " (%s)" % res.reason
         _model = res.model
+        _pin = bool(res.is_local and _model)
 
     tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
-                      model=_model,
+                      model=_model, pin_to_seat=_pin,
                       # WHERE THIS TASK REPORTS. `_spawn_task` has taken this
                       # since it was written and this caller never passed it, so
                       # a task spawned from a chat belonged to nobody: its
