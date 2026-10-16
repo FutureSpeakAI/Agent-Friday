@@ -1154,7 +1154,7 @@ _COMPACT_TOOL_DESCRIPTIONS = {
     "podcast_list": "List newest episodes: title/status/length/chapters/privacy.",
     "screenshot": "Capture screen PNG.",
     "screen_select": "Show on the open list: op select/add/remove/clear ticks rows; point outlines up to 12; filter sets key/value (empty clears); fill writes field/text. Shows only; act via organize_email selection=screen.",
-    "set_setting": "Change one Settings row by path; op=undo says where the row's own Undo is (30 days).",
+    "set_setting": "Change one Settings row by path; op=undo says where the row's own Undo is (30 days). Dock: settings.display.dock.<ws> show/hide, op=list.",
     "organize_calendar": "Shift calendar events by whole days and minutes, keeping their length.",
     "task_control": "Stop or steer Friday's background work.",
     "media_cards": "List Media cards (status, where each went) without moving the screen.",

@@ -28,17 +28,17 @@
    "id": "settings.toggle_setting",
    "action": "settings.toggle_setting",
    "group": "settings",
-   "ui": {"control": "toggle / set a setting (meeting retention is owner-only)"},
+   "ui": {"control": "toggle / set a setting (meeting retention is owner-only); show / hide a workspace in the dock (settings.display.dock.<ws>)"},
    "tool": "set_setting",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
    "laya_tier": "model_only",
-   "phrasings": ["turn off the morning briefing"],
+   "phrasings": ["turn off the morning briefing", "show the Trust workspace in the dock", "hide Finance from the dock", "which workspaces are hidden from the dock"],
    "deictic": [],
    "undo": null,
    "voice": {"live": false, "shared": true},
    "quiet_result": null,
-   "eval": []
+   "eval": ["tests/unit/test_set_setting_dock.py::test_showing_a_hidden_workspace_waits_for_the_yes_then_the_dock_shows_it"]
   },
   {
    "id": "settings.model_provider",

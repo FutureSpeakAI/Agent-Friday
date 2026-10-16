@@ -58,6 +58,7 @@ TOOL_OF = {
     "settings.podcasts.format": "podcast_format",
     "settings.podcasts.length": "podcast_length",
     "settings.laya.live_reflex": "live_laya",
+    "settings.display.dock": "dock_visibility",
 }
 KEYS_OF = {
     "switch_model": ("capability_routing", "orchestrator_model"),
@@ -69,6 +70,7 @@ KEYS_OF = {
     "podcast_format": ("podcasts",),
     "podcast_length": ("podcasts",),
     "live_laya": ("voice_live_reflex",),
+    "dock_visibility": ("dock_custom",),
 }
 LABELS = {
     "switch_model": "the chat model",
@@ -80,6 +82,7 @@ LABELS = {
     "podcast_format": "who hosts a show",
     "podcast_length": "how long a show runs",
     "live_laya": "Laya acting on her own during cloud calls",
+    "dock_visibility": "which workspaces the dock shows",
 }
 
 
@@ -186,11 +189,14 @@ def undo(change_id: str = "", path: str = "") -> dict:
 
 # ── The hold ────────────────────────────────────────────────────────────────
 
-def hold(tool: str, inp: dict, *, old: str, new: str, consequence: str = "", label: str = "") -> str | None:
+def hold(tool: str, inp: dict, *, old: str, new: str, consequence: str = "", label: str = "",
+         run_as: str = "") -> str | None:
     """Ask before a tool writes a setting. None means go ahead and write; a string is what to say instead.
 
     `old` and `new` are the words the owner will read ("Gemma 4 12B", "off"). The card lists exactly that
-    change. The tool is re-run on the Yes with the approval in effect; the change is recorded as it is made."""
+    change. The tool is re-run on the Yes with the approval in effect; the change is recorded as it is made.
+    `run_as` names the model tool the Yes re-runs when the row has no tool of its own (the dock rows are
+    written by set_setting itself); `tool` still names the row for its label, keys and record."""
     label = label or LABELS.get(tool, tool)
     keys = KEYS_OF.get(tool, ())
     if _APPROVED.get():
@@ -200,7 +206,7 @@ def hold(tool: str, inp: dict, *, old: str, new: str, consequence: str = "", lab
         return "SETTING_UNCHANGED: %s already reads %s." % (label, new)
     from agent_friday.governance import action_gate
     from agent_friday.services import agent as _ag
-    detail = {"handler": HANDLER, "tool": tool, "input": dict(inp or {}), "path": _path_of(tool), "label": label,
+    detail = {"handler": HANDLER, "tool": run_as or tool, "input": dict(inp or {}), "path": _path_of(tool), "label": label,
               "old": str(old)[:200], "new": str(new)[:200],
               "conversation_id": _ag._CURRENT_CONVERSATION.get() or ""}
     said = "%s: %s → %s." % (label[:1].upper() + label[1:], old, new)
@@ -291,7 +297,7 @@ register_hooks()
 PATHS = ("settings.models.chat_model", "settings.display.workspace_layout.<workspace>", "settings.display.start_screen",
          "settings.accessibility.big_mode", "settings.hologram.window.<dial>", "settings.calls.stand_back",
          "settings.podcasts.format.<show>", "settings.podcasts.length.<show>",
-         "settings.laya.live_reflex")
+         "settings.laya.live_reflex", "settings.display.dock.<workspace> (show / hide; op=list lists them)")
 _LAYOUT_VALUES = ("normal", "fullscreen_chat")
 
 
@@ -341,13 +347,104 @@ def _route(path: str, value: str):
     return "SETTING_FAIL: no setting is called %r. The ones I can change: %s." % (path, "; ".join(PATHS))
 
 
+#: Workspace ids folded into another one (index.html WS_ALIASES): a dock saved before the fold may still
+#: name the old id, and dockArrangement() reads it this way. A test holds the two tables together.
+DOCK_FOLDED = {"wiki": "knowledge", "draft": "media", "content": "media", "studio": "media"}
+DOCK_PATH = "settings.display.dock"
+_SHOW_WORDS = ("show", "on", "visible", "unhide", "true", "yes")
+_HIDE_WORDS = ("hide", "off", "hidden", "false", "no")
+
+
+def dock_state(settings: dict | None = None) -> dict:
+    """The dock as the page's dockArrangement() draws it, read on the server: {ids, visible, hidden,
+    configured}. `ids` is every workspace that can be in the dock (held ones never are), in dock order."""
+    from agent_friday.services import workspace_registry as wr
+    if settings is None:
+        from agent_friday.core import _load_settings
+        settings = _load_settings() or {}
+    cust = settings.get("dock_custom") if isinstance(settings.get("dock_custom"), dict) else {}
+    saved_order = [str(x) for x in (cust.get("order") or []) if x]
+    saved_hidden = [str(x) for x in (cust.get("hidden") or []) if x]
+    hidden = {DOCK_FOLDED.get(x, x) for x in saved_hidden}
+    for old, new in DOCK_FOLDED.items():
+        named = old in saved_order or old in saved_hidden
+        if named and not (old in saved_hidden and new in saved_hidden):
+            hidden.discard(new)
+    configured = bool(saved_order or saved_hidden)
+    real = [w for w in wr.workspaces()]
+    by_id = {w["id"]: w for w in real}
+    ids: list = []
+    for x in [DOCK_FOLDED.get(x, x) for x in saved_order] + [w["id"] for w in real]:
+        if x in by_id and x not in ids:
+            ids.append(x)
+    show_all = settings.get("show_all_workspaces") is not False
+    if configured:
+        visible = [i for i in ids if i not in hidden]
+    else:
+        visible = [i for i in ids if show_all or by_id[i].get("core")]
+    return {"ids": ids, "visible": visible, "hidden": [i for i in ids if i not in visible], "configured": configured}
+
+
+def _dock_list() -> str:
+    from agent_friday.services import workspace_registry as wr
+    st = dock_state()
+    name = lambda i: "%s (%s)" % (wr.label(i), i)
+    return ("DOCK: shown: %s. Hidden: %s." % (", ".join(name(i) for i in st["visible"]) or "none",
+                                             ", ".join(name(i) for i in st["hidden"]) or "none"))
+
+
+def _dock(inp: dict, path: str, value: str) -> str:
+    """show, hide or list the dock's workspaces. A change is a diff the owner says Yes to, like every row."""
+    from agent_friday.services import workspace_registry as wr
+    words = value.lower().split()
+    op = str(inp.get("op") or "").strip().lower()
+    ws_word = path[len(DOCK_PATH) + 1:] if path.startswith(DOCK_PATH + ".") else ""
+    if words and words[0] in _SHOW_WORDS + _HIDE_WORDS + ("list",) and not ws_word:
+        ws_word = " ".join(words[1:])          # "show trust" given as the value
+        words = words[:1]
+    if op == "list" or (words[:1] == ["list"]) or (not ws_word and not words):
+        return _dock_list()
+    if not ws_word:
+        return "SETTING_FAIL: say which workspace, e.g. settings.display.dock.trust with show or hide."
+    ws = wr.resolve(ws_word.replace("_", " ")) or (ws_word if ws_word in wr.ids() else None)
+    if ws is None:
+        return ("SETTING_FAIL: no workspace is called %r. The dock's workspaces are: %s."
+                % (ws_word, wr.tool_list()))
+    want = words[0] if words else ""
+    if want not in _SHOW_WORDS + _HIDE_WORDS:
+        return "SETTING_FAIL: the dock row takes show or hide (or op=list)."
+    show = want in _SHOW_WORDS
+    st = dock_state()
+    label = wr.label(ws)
+    was = "shown" if ws in st["visible"] else "hidden"
+    now = "shown" if show else "hidden"
+    held = hold("dock_visibility", {"path": "%s.%s" % (DOCK_PATH, ws), "value": "show" if show else "hide"},
+                old=was, new=now, label="whether %s is in the dock" % label, run_as="set_setting",
+                consequence=("%s gets its icon in the dock again." % label) if show else
+                ("%s leaves the dock; it still opens by name or from Settings." % label))
+    if held:
+        return held
+    hidden = [i for i in st["hidden"] if i != ws] + ([] if show else [ws])
+    # A COMPLETE arrangement, seeded from what the dock shows now (as the Dock panel writes it): once an
+    # arrangement exists show_all_workspaces stops applying, so writing one id alone would reveal or hide others.
+    from agent_friday.core import _save_settings
+    _save_settings({"dock_custom": {"order": list(st["ids"]), "hidden": [i for i in st["ids"] if i in hidden]}})
+    _tell_pages("%s.%s" % (DOCK_PATH, ws))
+    return ("DOCK_SHOWN: %s is in the dock now." % label) if show else ("DOCK_HIDDEN: %s is out of the dock now." % label)
+
+
 def tool(inp) -> str:
     """Tool handler: set exactly one Settings row by its path, as a diff the owner says Yes to. The row's own
     tool holds the change and raises the card. op=undo writes nothing: putting a setting back is a change to
     settings too, so Friday points to the row's own Undo, which is the owner's click."""
     inp = inp or {}
+    _p = str(inp.get("path") or "").strip().lower().replace(" ", "_")
+    if (_p == DOCK_PATH or _p.startswith(DOCK_PATH + ".")) and str(inp.get("op") or "").strip().lower() != "undo":
+        return _dock(inp, _p, str(inp.get("value") if inp.get("value") is not None else "").strip())
     if str(inp.get("op") or "").strip().lower() == "undo":
         path = str(inp.get("path") or "").strip().lower().replace(" ", "_")
+        if path.startswith(DOCK_PATH + "."):
+            path = DOCK_PATH          # every dock change is one row's record
         row = next((r for r in reversed(_read()) if not r.get("undone") and (not path or r.get("path") == path)), None)
         if row is None:
             return "SETTING_FAIL: There is no change to undo."
