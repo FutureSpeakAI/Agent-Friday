@@ -119,6 +119,10 @@ def _in_gemini_window(ts: float, windows) -> bool:
 def sent_to(msg: dict, windows=None) -> set:
     """The cloud providers this stored message was sent to (explicit or inferred)."""
     meta = (msg or {}).get("meta") or {}
+    if meta.get("local_only"):
+        # A result kept on this PC (services/seat_handoff) is never counted
+        # as received by a cloud provider, so no recall hands it to one.
+        return set()
     if "sent_to" in meta:
         return {normalize_provider(p) for p in (meta.get("sent_to") or [])}
     if meta.get("via") == "voice":

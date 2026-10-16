@@ -122,6 +122,7 @@ def test_a_handoff_raises_a_card_and_approving_it_starts_one_pinned_local_task(w
     assert len(world.spawned) == 1
     args, kw = world.spawned[0]
     assert kw["model"] == LOCAL and kw["pin_to_seat"] is True
+    assert kw.get("local_only_result") is True, "the card's promise did not travel with the task"
     assert kw["conversation_id"] == world.cid
     assert PRIVATE_TASK in args[1]
     assert cv.effective_seat(world.cid)["model"] == CLOUD, "a handoff leaves the chat's seat alone"
@@ -348,7 +349,8 @@ def test_a_handoff_result_is_withheld_from_a_cloud_replay(world, tmp_path):
     assert not replay[-2]["content"].startswith(egress_gate.LOCAL_ONLY_MARK)
 
 
-def test_a_pinned_tasks_result_is_marked_local_and_never_spoken(world, monkeypatch):
+def _complete(world, monkeypatch, rec):
+    """Report one finished task with `rec` as its record; (chat lines, spoken lines)."""
     from agent_friday.services import notice_registry as nr
     lines, spoken = [], []
     monkeypatch.setattr(nr, "transcript_add", lambda eid, cid, msg, **kw: lines.append(msg))
@@ -356,14 +358,81 @@ def test_a_pinned_tasks_result_is_marked_local_and_never_spoken(world, monkeypat
     monkeypatch.setattr(nr, "voice_say", lambda *a, **k: spoken.append(a) or True)
     monkeypatch.setattr(nr, "_chat_open", lambda: True)
     with ag.TASKS_LOCK:
-        ag.TASKS["t-pinned"] = {"name": "Local handoff", "conversation_id": world.cid, "pin_to_seat": True}
+        ag.TASKS["t-pinned"] = {"name": "Local handoff", "conversation_id": world.cid, **rec}
     try:
         ag._report_task_completion("t-pinned", "Local handoff", "done", "Picnic booked.")
     finally:
         with ag.TASKS_LOCK:
             ag.TASKS.pop("t-pinned", None)
+    return lines, spoken
+
+
+def test_a_handoff_tasks_result_is_marked_local_and_never_spoken(world, monkeypatch):
+    lines, spoken = _complete(world, monkeypatch, {"pin_to_seat": True, "local_only_result": True})
     assert spoken == [], "a local result was spoken into a live call"
     assert lines and lines[-1]["meta"].get("local_only") is True
+
+
+def _post_to_chat(world, monkeypatch, task_id, kw, result):
+    """The finished task's line as the chat replays it, from the kwargs it was spawned with."""
+    from agent_friday.routes import chat as chat_route
+    from agent_friday.services import notice_registry as nr
+    monkeypatch.setattr(nr, "completion_target", lambda cid: nr.CHAT)
+    rec = {"name": "Finished work", "conversation_id": world.cid,
+           "pin_to_seat": bool(kw.get("pin_to_seat")),
+           "local_only_result": bool(kw.get("local_only_result"))}
+    with ag.TASKS_LOCK:
+        ag.TASKS[task_id] = rec
+    try:
+        cv.append(world.cid, {"role": "user", "text": "how did it go?"})
+        ag._report_task_completion(task_id, "Finished work", "done", result)
+    finally:
+        with ag.TASKS_LOCK:
+            ag.TASKS.pop(task_id, None)
+    return chat_route._conv_context(world.cid)
+
+
+def test_a_local_tier_spawn_task_result_is_not_marked(world, monkeypatch, tmp_path):
+    """A local tier pins the task to its seat; it promises nobody that the result stays here."""
+    from agent_friday.services import egress_gate
+    out = _call("spawn_task", {"name": "Summarise", "prompt": "Summarise the Springfield notes.",
+                               "tier": tiers.LARGE_LOCAL}, world.cid)
+    assert "Spawned" in out, out
+    args, kw = world.spawned[-1]
+    assert kw.get("pin_to_seat") is True and not kw.get("local_only_result")
+    result = "The Springfield notes cover the library fundraiser."
+    replay = _post_to_chat(world, monkeypatch, "t-tier", kw, result)
+    assert not replay[-1]["content"].startswith(egress_gate.LOCAL_ONLY_MARK)
+    gated = egress_gate._gate_messages(replay, "anthropic", tmp_path / "egress.jsonl", model=CLOUD)
+    assert result in gated[-1]["content"], "an ordinary task result was withheld by a blanket rule"
+
+
+def test_a_seat_handoff_result_is_marked_and_withheld_from_a_cloud_model(world, monkeypatch, tmp_path):
+    from agent_friday.services import egress_gate
+    _call("switch_seat", {"task": PRIVATE_TASK}, world.cid)
+    ap.decide(_cards()[0]["approval_id"], "approve")
+    args, kw = world.spawned[-1]
+    result = "Picnic booked at Riverside Park for the birthday, 2pm Saturday."
+    replay = _post_to_chat(world, monkeypatch, "t-handoff", kw, result)
+    assert replay[-1]["content"].startswith(egress_gate.LOCAL_ONLY_MARK)
+    gated = egress_gate._gate_messages(replay, "anthropic", tmp_path / "egress.jsonl", model=CLOUD)
+    assert result not in str(gated), "the handoff's result was sent to a cloud model"
+    assert "how did it go?" in str(gated)
+
+
+def test_a_handoff_result_is_never_recalled_to_a_cloud_model():
+    """Conversation search hands a cloud model only what it already received; a kept result never counts."""
+    from agent_friday.services import conversation_provenance as prov
+    kept = {"role": "friday", "text": "Picnic booked.", "meta": {"local_only": True, "sent_to": ["anthropic"]}}
+    assert prov.sent_to(kept) == set()
+    assert prov.sent_to({"meta": {"sent_to": ["anthropic"]}}) == {"anthropic"}
+
+
+def test_a_task_merely_pinned_to_its_seat_is_not_marked(world, monkeypatch):
+    """Pinning says where a task runs; only the handoff card promised its result stays here."""
+    lines, spoken = _complete(world, monkeypatch, {"pin_to_seat": True})
+    assert "local_only" not in ((lines[-1]["meta"] if lines else {}) or {})
+    assert spoken, "a pinned task's result was kept out of the live call without anyone asking"
 
 
 def test_the_handoff_card_shows_what_will_run_and_its_notice_does_not(world):

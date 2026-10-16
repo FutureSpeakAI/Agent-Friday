@@ -6674,12 +6674,14 @@ def _report_task_completion(task_id, name, status, result_text):
         _nreg.transcript_add('E77', _cv.resolve(cid), {"role": "friday", "text": text, "pinned": False,
                                                        "meta": meta})
 
-    # A task pinned to its local seat produced this on this PC (a handoff the
-    # owner approved, a private-voice task): its result stays on this PC. The
-    # chat line is marked so a cloud seat replaying this chat is never sent it
+    # A seat-handoff task (services/seat_handoff) runs on the local model
+    # because the owner approved a card that says its result stays on this PC.
+    # Only that task carries the flag; pinning a task to its seat says where
+    # it runs, not who may read what it produced. The chat line is marked so a
+    # cloud seat replaying this chat is never sent it
     # (services/egress_gate.LOCAL_ONLY_MARK), and it is not spoken into a live
     # call, whose model may be a cloud one.
-    local_only = bool(rec.get('pin_to_seat'))
+    local_only = bool(rec.get('local_only_result'))
     try:
         # One delivery, chosen by where the owner is: in a call it is spoken, in an
         # open chat it is one line, otherwise it waits in the panel's Updates.
@@ -6704,7 +6706,7 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
                 runner=None, pin_to_seat=False, workflow_context=None,
                 chain_retry=0, parent_task_id=None, task_id=None, inherited_policy=None,
-                crew_context=None, job=None):
+                crew_context=None, job=None, local_only_result=False):
     """Spawn a background task.
 
     job: optional dict describing this task in the Local AI queue:
@@ -6719,6 +6721,12 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     pin_to_seat: run every leg on `model` (a local seat) and nowhere else; a
         failure is the task's failure, never a cloud leg answering for it.
         Private-voice handoffs set it (local voice spec P3).
+
+    local_only_result: the owner approved a card that promised this task's
+        result stays on this PC (services/seat_handoff). The result's chat line
+        carries meta.local_only, which every cloud model is denied, and it is
+        not spoken into a live call. Nothing else sets it: pin_to_seat alone
+        does not.
 
     runner: optional callable ``runner(task_id) -> {"status", "result"}`` that
         does the task's work INSTEAD of the agent loop, for structured work
@@ -6854,6 +6862,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             **{k: v for k, v in (workflow_context or {}).items() if k in _WORKFLOW_CONTEXT_FIELDS},
             'model': model,
             'pin_to_seat': bool(pin_to_seat and model),
+            # Set only by an approved seat handoff: its result stays on this PC.
+            'local_only_result': bool(local_only_result),
             # Who this task answers to. `reconcile` reads this to decide where
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.
