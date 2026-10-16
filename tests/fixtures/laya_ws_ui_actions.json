@@ -284,6 +284,10 @@
     "audit_status": "new"
    },
    {"id": "settings.connectors", "group": "settings", "label": "connectors / accounts / keys", "audit_status": "N"},
+   {"id": "settings.connect_service", "group": "navigate", "label": "Connect your services: open one service's card (\"connect OpenRouter\")", "audit_status": "new"},
+   {"id": "settings.connections_local_only", "group": "settings", "label": "Connect your services: I'll just use local AI", "audit_status": "new"},
+   {"id": "settings.connection_test", "group": "settings", "label": "Connect your services: Test connection", "audit_status": "new"},
+   {"id": "settings.mcp_add", "group": "settings", "label": "Connect your services: add or remove an MCP server", "audit_status": "new"},
    {"id": "settings.local_voice_measure", "group": "settings", "label": "local voice: Measure now", "audit_status": "new"},
    {"id": "settings.local_voice_status", "group": "settings", "label": "local voice: can it run here, and why cloud voice", "audit_status": "new"},
    {"id": "settings.local_voice_switch_offer", "group": "settings", "label": "local voice: switch-back offer (switch back / keep cloud), once", "audit_status": "new"},

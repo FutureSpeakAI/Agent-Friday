@@ -397,7 +397,7 @@ def _on_connect(st, transcript, value, text):
     labels = setup_connections.connected_labels()
     _heard(transcript, copy.CONNECT_DONE + (
         " (connected: %s)" % ", ".join(labels[:8]) if labels else ""), "connect")
-    if _needs_a_cloud_key(st) and not _key_in_use():
+    if _needs_a_cloud_key(st) and not _key_in_use() and not _local_ai_only():
         _say(transcript, copy.NO_KEY_YET, "connect", one_key=True)
     _enter(st, transcript, "knowledge")
 
@@ -449,6 +449,15 @@ def _key_in_use() -> str | None:
         return one_key.key_in_use()
     except Exception:
         return None
+
+
+def _local_ai_only() -> bool:
+    """"I'll just use local AI" on the Connect screen: no key advice follows."""
+    try:
+        from agent_friday.services import connections_setup
+        return connections_setup.local_only()
+    except Exception:
+        return False
 
 
 def _needs_a_cloud_key(st: dict) -> bool:

@@ -16548,24 +16548,83 @@ function scSafeUrl(u) {
   return /^https?:\/\//i.test(String(u || '')) ? u : '';
 }
 
-function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip }) {
+// A test's answer in words a person can act on: what happened, then the fix.
+const SC_TEST_WORD = { pass: 'Test passed', fail: 'Test failed', not_connected: 'Not connected yet', unknown: 'Could not tell' };
+
+// The add-an-MCP-server form: a name, then an address OR a command. The
+// curated picks only fill the form; nothing is added until Add is pressed.
+function ScMcpAdd({ it, curated, onChanged }) {
+  const c = it.connect || {};
+  const [name, setName] = React.useState('');
+  const [url, setUrl] = React.useState('');
+  const [command, setCommand] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+  const pick = p => { setName(p.name); setUrl(p.url); setCommand(''); setMsg({ ok: true, text: p.label + ': ' + p.auth + ' Press Add to connect it.' }); };
+  const add = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await scJSON(c.endpoint, 'POST', { name: name.trim(), url: url.trim(), command: command.trim() });
+      const d = r.data || {};
+      if (!r.ok || d.ok === false) throw new Error(d.message || d.error || ('HTTP ' + r.status));
+      setMsg({ ok: true, text: 'Added ' + d.added + '. Open its card below to test it' + (d.remote ? ' or sign in.' : '.') });
+      setName(''); setUrl(''); setCommand('');
+      onChanged();
+    } catch (e) {
+      setMsg({ ok: false, text: 'Not added: ' + ((e && e.message) || 'unknown error') });
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="sc-mcp-add">
+      {(curated || []).length > 0 && <div className="sc-sub" style={{ margin: '8px 0 4px' }}>Pick one to fill the form:</div>}
+      <ul className="sc-curated">
+        {(curated || []).map(p => (
+          <li key={p.name}>
+            <button type="button" className="sc-btn quiet" onClick={() => pick(p)} aria-label={'Fill the form with ' + p.label}>{p.label}</button>
+            <span className="sc-dim"> {p.what}</span>
+            {scSafeUrl(p.docs) && <>{' '}<a className="sc-link quiet" href={p.docs} target="_blank" rel="noreferrer noopener">About</a></>}
+          </li>
+        ))}
+      </ul>
+      <label className="sc-field"><span>Name (letters and numbers)</span>
+        <input className="sc-input" type="text" autoComplete="off" spellCheck={false} value={name} onChange={e => setName(e.target.value)} />
+      </label>
+      <label className="sc-field"><span>Server address (https://…), for a server on the internet</span>
+        <input className="sc-input" type="url" autoComplete="off" spellCheck={false} value={url} onChange={e => setUrl(e.target.value)} />
+      </label>
+      <label className="sc-field"><span>Or the command that starts it on this computer</span>
+        <input className="sc-input" type="text" autoComplete="off" spellCheck={false} value={command} onChange={e => setCommand(e.target.value)} placeholder="npx -y some-mcp-server" />
+      </label>
+      <div className="sc-row">
+        <button type="button" className="sc-btn" disabled={busy || !name.trim() || (!url.trim() && !command.trim())} onClick={add}>{busy ? 'Adding…' : 'Add server'}</button>
+      </div>
+      {msg && <div role="status" className={'sc-msgline ' + (msg.ok ? 'ok' : 'bad')}>{msg.text}</div>}
+    </div>
+  );
+}
+
+function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip, curated }) {
   const [vals, setVals] = React.useState({});
   const [opts, setOpts] = React.useState({});
   const [label, setLabel] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState(null);
+  const [test, setTest] = React.useState(null);
   const c = it.connect || {};
   const domId = 'sc-item-' + it.id.replace(/[^a-z0-9]/gi, '-');
   const openUrl = u => { if (scSafeUrl(u)) window.open(u, '_blank', 'noopener'); };
-  const post = async (url, body) => {
-    const r = await scJSON(url, 'POST', body);
+  const post = async (url, body, method) => {
+    const r = await scJSON(url, method || 'POST', body);
     const d = r.data || {};
-    if (!r.ok || d.ok === false || d.status === 'error') throw new Error(d.error || d.message || ('HTTP ' + r.status));
+    if (!r.ok || d.ok === false || d.status === 'error') throw new Error(d.message || d.error || ('HTTP ' + r.status));
     return d;
   };
   const run = async fn => {
     setBusy(true);
     setMsg(null);
+    setTest(null);
     try { await fn(); } catch (e) {
       setMsg({ ok: false, text: 'That did not work: ' + ((e && e.message) || 'unknown error') });
     }
@@ -16573,12 +16632,27 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip }) {
     setVals({});           // secrets do not outlive the request
     onChanged();
   };
+  const runTest = async () => {
+    setBusy(true);
+    setTest({ state: 'running', text: 'Testing…' });
+    try {
+      const r = await scJSON(it.test, 'POST', {});
+      const d = r.data || {};
+      setTest(r.ok ? d : { state: 'unknown', text: 'The test could not run.', fix: 'Try again in a moment.' });
+    } catch (e) {
+      setTest({ state: 'unknown', text: 'The test could not run.', fix: 'Try again in a moment.' });
+    }
+    setBusy(false);
+    onChanged();
+  };
   const connect = () => run(async () => {
     if (c.kind === 'secret') {
       const v = (vals.key || '').trim();
       if (!v) throw new Error('paste the key first');
       await post(c.endpoint, { key: v });
-      setMsg({ ok: true, text: 'Saved, encrypted on this computer.' });
+      // A built-in that ships switched off is switched on with its key.
+      if (c.enable) await post(c.enable, { enabled: true }, 'PATCH');
+      setMsg({ ok: true, text: 'Saved, encrypted on this computer.' + (it.test ? ' Press Test connection to check it.' : '') });
       // Anthropic / OpenRouter: one token to say whether Friday can think now.
       if (c.verify) {
         const r = await scJSON(c.verify, 'POST', {});
@@ -16597,6 +16671,19 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip }) {
       const d = await post(c.endpoint, {});
       openUrl(d.connect_url);
       setMsg({ ok: true, text: 'Approve access in the browser window that opened.' });
+    } else if (c.kind === 'local_endpoint') {
+      const f = c.field || {};
+      const v = (vals[f.key] !== undefined ? vals[f.key] : (f.value || '')).trim();
+      await post(c.endpoint, { base_url: v || f.default, kind: c.endpoint_kind || '' });
+      setMsg({ ok: true, text: 'Saved. Press Test connection to check it.' });
+    } else if (c.kind === 'custom_endpoint') {
+      const d = await post(c.endpoint, { kind: 'custom', label: (vals.label || '').trim(), base_url: (vals.base_url || '').trim() });
+      setMsg({ ok: true, text: 'Added. It now has its own card: paste its key there if it needs one, then test it.' });
+      return d;
+    } else if (c.kind === 'mcp_server') {
+      const d = await post(c.sign_in, {});
+      openUrl(d.auth_url);
+      setMsg({ ok: true, text: 'The sign-in page opened in your browser. Approve there, then test it.' });
     } else if (c.kind === 'fields') {
       const fields = c.fields || [];
       if (c.shape === 'flat') {
@@ -16622,20 +16709,31 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip }) {
       setMsg({ ok: true, text: 'Saved. Secrets are stored encrypted and never shown again.' });
     }
   });
+  const remove = () => run(async () => {
+    await post(c.remove, undefined, 'DELETE');
+    setMsg({ ok: true, text: 'Removed.' });
+  });
   const fieldInput = f => (
     <label key={f.key} className="sc-field">
       <span>{f.label}{f.set ? ' (stored)' : ''}</span>
       <input className="sc-input" type={f.secret ? 'password' : 'text'}
         autoComplete={f.secret ? 'new-password' : 'off'} spellCheck={false}
-        value={vals[f.key] || ''} onChange={e => { const v = e.target.value; setVals(o => ({ ...o, [f.key]: v })); }}
+        value={vals[f.key] !== undefined ? vals[f.key] : (f.value || '')} onChange={e => { const v = e.target.value; setVals(o => ({ ...o, [f.key]: v })); }}
         aria-label={it.label + ': ' + f.label} />
     </label>
   );
-  const canConnect = ['secret', 'fields', 'google_oauth', 'oauth_connector', 'platform_oauth'].indexOf(c.kind) >= 0;
+  const canConnect = ['secret', 'fields', 'google_oauth', 'oauth_connector', 'platform_oauth', 'local_endpoint', 'custom_endpoint'].indexOf(c.kind) >= 0
+    || (c.kind === 'mcp_server' && !!c.sign_in);
+  const connectWord = (c.kind === 'secret' || c.kind === 'fields') ? 'Save securely'
+    : (c.kind === 'local_endpoint' || c.kind === 'custom_endpoint') ? 'Save'
+    : c.kind === 'mcp_server' ? 'Sign in'
+    : (c.kind === 'google_oauth' && it.status === 'connected') ? 'Add another account' : 'Connect';
+  const form = c.kind === 'mcp_add' || c.kind === 'custom_endpoint';
   const required = (it.permissions || []).filter(p => !p.optional);
   const optional = (it.permissions || []).filter(p => p.optional);
+  const access = it.access || [];
   return (
-    <div className="sc-item" id={domId}>
+    <div className="sc-item" id={domId} data-connection={it.id}>
       <div className="sc-item-head">
         <button type="button" className="sc-chip quiet" aria-expanded={open} aria-controls={domId + '-body'} onClick={onToggle}>
           <span aria-hidden="true">{open ? '▾' : '▸'}</span>
@@ -16643,14 +16741,17 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip }) {
         </button>
         <div className="sc-item-title">
           {it.label}
+          {it.recommended && <span className="sc-rec" title={it.recommended}>Recommended</span>}
           <div className="sc-item-unlocks">{it.unlocks}</div>
         </div>
-        <span className={'sc-pill ' + it.status}>{SC_STATUS[it.status] || it.status}</span>
+        {!form && <span className={'sc-pill ' + it.status}>{SC_STATUS[it.status] || it.status}</span>}
       </div>
       {open && <div id={domId + '-body'} className="sc-item-body">
-        <div className="sc-group" style={{ margin: '10px 0 2px' }}>What it asks for</div>
+        {it.recommended && <div className="sc-sub" style={{ margin: '8px 0 0' }}>Recommended: {it.recommended} Nothing is chosen for you.</div>}
+        <div className="sc-group" style={{ margin: '10px 0 2px' }}>What it can access</div>
         <ul className="sc-perms">
-          {required.map((p, i) => <li key={i}>{p.text}</li>)}
+          {required.map((p, i) => <li key={'p' + i}>{p.text}</li>)}
+          {access.map((t, i) => <li key={'a' + i}>{t}</li>)}
         </ul>
         {optional.map(p => (
           <label key={p.key} className="sc-optional">
@@ -16658,40 +16759,57 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip }) {
             <span>Also: {p.text} <em>(optional, off unless you tick it)</em></span>
           </label>
         ))}
+        {it.cost && <div className="sc-cost"><strong>Cost:</strong> {it.cost}</div>}
+        {(it.how || []).length > 0 && <>
+          <div className="sc-group" style={{ margin: '10px 0 2px' }}>How to connect</div>
+          <ol className="sc-how">{it.how.map((s, i) => <li key={i}>{s}</li>)}</ol>
+        </>}
         {it.detail && <div className="sc-sub" style={{ margin: '6px 0' }}>{it.detail}</div>}
-        {c.kind === 'secret' && fieldInput({ key: 'key', label: 'API key', secret: true })}
+        {c.kind === 'secret' && fieldInput({ key: 'key', label: 'API key (hidden as you type)', secret: true })}
         {c.kind === 'fields' && (c.fields || []).map(fieldInput)}
+        {c.kind === 'local_endpoint' && c.field && fieldInput(c.field)}
+        {c.kind === 'custom_endpoint' && <>
+          {fieldInput({ key: 'label', label: 'A short name', secret: false })}
+          {fieldInput({ key: 'base_url', label: 'Base address (ends in /v1)', secret: false })}
+        </>}
         {c.kind === 'google_oauth' && (
           <label className="sc-field">
             <span>A label for this account (optional)</span>
             <input className="sc-input" type="text" autoComplete="off" value={label} onChange={e => setLabel(e.target.value)} placeholder="Work, Personal" />
           </label>
         )}
+        {c.kind === 'mcp_add' && <ScMcpAdd it={it} curated={curated} onChanged={onChanged} />}
         {c.kind === 'external' && <ol className="sc-perms">{(c.steps || []).map((s, i) => <li key={i}>{s}</li>)}</ol>}
         {(c.kind === 'local' || c.kind === 'manual') && c.hint && <div className="sc-sub">{c.hint}</div>}
         {c.note && <div className="sc-sub">{c.note}</div>}
         {c.more && <div className="sc-sub">More options: {c.more}</div>}
-        <div className="sc-row">
-          {canConnect && <button type="button" className="sc-btn" disabled={busy} onClick={connect}>
-            {busy ? 'Working…' : (c.kind === 'secret' || c.kind === 'fields') ? 'Save securely'
-              : (c.kind === 'google_oauth' && it.status === 'connected') ? 'Add another account' : 'Connect'}
-          </button>}
-          {it.status !== 'connected' && it.status !== 'external' && (
+        {c.kind !== 'mcp_add' && <div className="sc-row">
+          {canConnect && <button type="button" className="sc-btn" disabled={busy} onClick={connect}>{busy ? 'Working…' : connectWord}</button>}
+          {it.test && <button type="button" className="sc-btn quiet" disabled={busy} onClick={runTest}>Test connection</button>}
+          {c.kind === 'mcp_server' && c.remove && <button type="button" className="sc-btn danger" disabled={busy} onClick={remove}>Remove</button>}
+          {!form && it.status !== 'connected' && it.status !== 'external' && c.kind !== 'mcp_server' && (
             <button type="button" className="sc-btn quiet" onClick={onSkip}>{it.status === 'skipped' ? 'Undo skip' : 'Skip'}</button>
           )}
-          {scSafeUrl(c.signup_url) && <a className="sc-link" href={c.signup_url} target="_blank" rel="noreferrer noopener">Get a key</a>}
+          {scSafeUrl(c.signup_url) && <a className="sc-link" href={c.signup_url} target="_blank" rel="noreferrer noopener">{(c.signup_label || 'Get a key') + ' / Sign up'}</a>}
           {scSafeUrl(it.docs_url) && <a className="sc-link quiet" href={it.docs_url} target="_blank" rel="noreferrer noopener">Docs</a>}
-        </div>
+        </div>}
         {msg && <div role="status" className={'sc-msgline ' + (msg.ok ? 'ok' : 'bad')}>{msg.text}</div>}
+        {test && <div role="status" className={'sc-msgline sc-test ' + (test.state === 'pass' ? 'ok' : test.state === 'fail' ? 'bad' : '')} data-test-state={test.state}>
+          {test.state !== 'running' && <strong>{(SC_TEST_WORD[test.state] || 'Result') + ': '}</strong>}{test.text}
+          {test.fix && <div className="sc-fix">How to fix: {test.fix}</div>}
+        </div>}
       </div>}
     </div>
   );
 }
 
-// The checklist. Used by the setup chat and by Settings > Connections.
-function SetupConnectionsPanel({ highlight }) {
+// "Connect your services": the one screen for setup and Settings > Connections.
+// Every entry is optional, nothing is preselected, and "I'll just use local
+// AI" is an answer in its own right, never followed by a nag.
+function SetupConnectionsPanel({ highlight, onLocalOnly }) {
   const [data, setData] = React.useState(null);
   const [open, setOpen] = React.useState(highlight || null);
+  const [said, setSaid] = React.useState('');
   const load = React.useCallback(() => {
     scJSON('/api/setup/connections').then(r => { if (r.ok) setData(r.data); });
   }, []);
@@ -16709,23 +16827,40 @@ function SetupConnectionsPanel({ highlight }) {
       const el = document.getElementById('sc-item-' + highlight.replace(/[^a-z0-9]/gi, '-'));
       if (el) {
         el.scrollIntoView({ block: 'center' });
-        const f = el.querySelector('input,button');
+        const f = el.querySelector('.sc-item-body input,.sc-item-body button') || el.querySelector('button');
         if (f) f.focus();
       }
     }, 80);
     return () => clearTimeout(t);
-  }, [highlight]);
-  if (!data) return <div className="sc-sub">Checking what's connected…</div>;
+  }, [highlight, data && data.items && data.items.length]);
+  if (!data) return <div className="sc-sub" role="status">Checking what's connected…</div>;
   const items = data.items || [];
-  const groups = (data.groups || []).filter(g => items.some(i => i.group === g.id));
+  const cats = (data.categories || []).filter(g => items.some(i => i.category === g.id));
+  const soon = data.coming_soon || [];
   const counts = data.counts || {};
   const skip = async it => {
     await scJSON('/api/setup/connections/' + encodeURIComponent(it.id) + '/skip', 'POST', { skipped: it.status !== 'skipped' });
     load();
   };
+  const localOnly = async on => {
+    const r = await scJSON('/api/setup/connections/local-only', 'POST', { on });
+    if (r.ok) {
+      setSaid(on ? 'Local AI it is. Nothing here is needed, and you will not be asked again. You can still connect anything later.' : 'Cloud services are back on the list.');
+      load();
+      if (on && onLocalOnly) onLocalOnly();
+    }
+  };
   return (
-    <div className="sc-connections">
-      <p className="sc-sub">
+    <div className="sc-connections" data-testid="connect-services">
+      <p className="sc-lead">Connect any services you want. Every one is optional, and you can come back any time from Settings &gt; Connections. Keys go into the secure fields only: they are stored encrypted on this computer and never appear in a conversation or a log.</p>
+      <div className="sc-row sc-local-choice">
+        {!data.local_only
+          ? <button type="button" className="sc-btn" onClick={() => localOnly(true)}>I'll just use local AI</button>
+          : <><span className="sc-sub" style={{ margin: 0 }}>You chose local AI only.</span>
+              <button type="button" className="sc-btn quiet" onClick={() => localOnly(false)}>Show cloud options again</button></>}
+      </div>
+      {said && <div role="status" className="sc-msgline ok">{said}</div>}
+      <p className="sc-sub" style={{ marginTop: 10 }}>
         {(counts.connected || 0) + ' connected'}{counts.skipped ? ' · ' + counts.skipped + ' skipped' : ''}{counts.needs_attention ? ' · ' + counts.needs_attention + ' need attention' : ''}. {data.never}
       </p>
       {data.one_key && data.one_key.line && (
@@ -16736,20 +16871,29 @@ function SetupConnectionsPanel({ highlight }) {
           ))}
         </p>
       )}
-      {groups.map(g => (
-        <section key={g.id} aria-label={g.label}>
-          <div className="sc-group">{g.label}</div>
-          {items.filter(i => i.group === g.id).map(it => (
-            <SetupConnectionItem key={it.id} it={it} open={open === it.id}
-              onToggle={() => setOpen(open === it.id ? null : it.id)}
-              onChanged={load} onSkip={() => skip(it)} />
-          ))}
-        </section>
-      ))}
+      {cats.map(g => {
+        const later = soon.filter(s => s.category === g.id);
+        return (
+          <section key={g.id} className="sc-cat" aria-labelledby={'sc-cat-' + g.id}>
+            <h3 id={'sc-cat-' + g.id} className="sc-cat-title">{g.label}</h3>
+            <p className="sc-sub sc-cat-desc">{g.desc}{g.id === 'mcp' && scSafeUrl(data.mcp_about_url) && <>{' '}<a className="sc-link quiet" href={data.mcp_about_url} target="_blank" rel="noreferrer noopener">What is MCP?</a></>}</p>
+            {items.filter(i => i.category === g.id).map(it => (
+              <SetupConnectionItem key={it.id} it={it} open={open === it.id} curated={data.curated_mcp}
+                onToggle={() => setOpen(open === it.id ? null : it.id)}
+                onChanged={load} onSkip={() => skip(it)} />
+            ))}
+            {later.length > 0 && (
+              <details className="sc-soon">
+                <summary>Coming soon ({later.length})</summary>
+                <ul className="sc-perms">{later.map(s => <li key={s.id}><strong>{s.label}</strong>: {s.note}</li>)}</ul>
+              </details>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }
-
 // The secure key form, opened by a `key_form` action (services/pasted_secrets):
 // a key withheld from a chat message, one the chat box stopped before sending,
 // or a key Friday needs. It shows the checklist card for that service, whose
@@ -17158,7 +17302,7 @@ function SetupChat({ onDone }) {
   const card = p.card;
   let cardEl = null;
   if (card === 'connections') {
-    cardEl = <div className="sc-card"><h2 tabIndex={-1} data-sc-focus="">Connect everything</h2><SetupConnectionsPanel highlight={highlight} /></div>;
+    cardEl = <div className="sc-card"><h2 tabIndex={-1} data-sc-focus="">Connect your services</h2><SetupConnectionsPanel highlight={highlight} onLocalOnly={() => answer({ action: 'local_only' }, '')} /></div>;
   } else if (card === 'basics') {
     cardEl = <SetupBasicsCard initial={st} busy={busy} onDone={v => answer(v, '')} />;
   } else if (card === 'research_seeds') {
@@ -22825,14 +22969,19 @@ function SettingsWS() {
   // 'phone' opens Connections scrolled to the Phone section.
   const [shownSection, setShownSection] = useState('');
   const [shownRow, setShownRow] = useState('');
+  // "Connect OpenRouter" (voice, a notice, a link): the Connections tab opens
+  // that service's card with its secure field focused.
+  const [connectFocus, setConnectFocus] = useState('');
   useTabState('settings', () => ({
     tab,
     section: shownSection,
-    row: shownRow
+    row: shownRow,
+    connect: connectFocus
   }));
   useNavTarget('settings', t => {
     if (!t || !t.tab && !t.section) return;
     if (t.tab) setTab(settingsTabId(t.tab));
+    if (t.connect) setConnectFocus(String(t.connect));
     setShownSection('');
     setShownRow('');
     // A row with a stable path: outlined once the tab has drawn it, and again while its panels load.
@@ -23008,7 +23157,12 @@ function SettingsWS() {
     desc: "Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed. Keys are added in Connections."
   }, with3DModels(/*#__PURE__*/React.createElement(ModelBrowser, {
     save: save
-  })))), tab === 'connections' && /*#__PURE__*/React.createElement(React.Fragment, null, window.MediaChannelsSettings ? /*#__PURE__*/React.createElement(window.MediaChannelsSettings, null) : null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  })))), tab === 'connections' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(StSection, {
+    title: "Connect your services",
+    desc: "AI models, creative tools, search, your accounts and any MCP server. All optional; the same screen setup shows."
+  }, /*#__PURE__*/React.createElement(SetupConnectionsPanel, {
+    highlight: connectFocus || null
+  })), window.MediaChannelsSettings ? /*#__PURE__*/React.createElement(window.MediaChannelsSettings, null) : null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
