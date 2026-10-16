@@ -506,6 +506,12 @@ def on_screen_block(stage: dict | None, now: float | None = None) -> str:
         title = _strip(it.get("title") or "", "on-screen list")
         mark = "*" if it.get("ref") in set((stage.get("selection") or {}).get("refs") or []) else " "
         lines.append("%s%d. %s - %s [%s]" % (mark, it.get("n", 0), who, title, tags))
+    opened = stage.get("open")
+    if opened and str(opened).startswith("mail:"):
+        # "This thread" is the open one: its ref is what search_email(thread=...) reads in full.
+        it = next((i for i in stage.get("items") or [] if i.get("ref") == opened), {})
+        lines.insert(3, "Open now: %s - %s (ref %s; read it whole with search_email thread=this)" % (
+            _strip(it.get("who") or "", "on-screen list"), _strip(it.get("title") or "", "on-screen list"), opened))
     text = "\n".join(lines)
     if len(text) > BLOCK_CHARS:
         text = text[:BLOCK_CHARS].rsplit("\n", 1)[0] + "\n[list cut]"

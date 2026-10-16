@@ -806,6 +806,18 @@ def _gate_text(text: str, provider: str, field: str,
     if parsed is None:
         return whole                      # not JSON; the span pass already ran
     gated = _gate_json_value(parsed, provider, field, log_path)
+    if isinstance(gated, dict):
+        # Say WHAT was withheld and WHY at the top of the result, not only as a marker inside a
+        # field the model may skim past: a part of an email thread missing without a word reads as
+        # "that message said nothing" (owner rule: never a silent drop).
+        changed = _changed_paths(parsed, gated)
+        if changed:
+            shown = ", ".join(changed[:8]) + (" and %d more" % (len(changed) - 8) if len(changed) > 8 else "")
+            gated["privacy_gate"] = (
+                "The privacy gate withheld %d part(s) of this result because they were classified "
+                "sensitive; they stayed on this device: %s. Tell the owner which items (which message "
+                "or field) were withheld and why; they can be read on a local seat. Do not guess what "
+                "the withheld parts said." % (len(changed), shown))
     try:
         return json.dumps(gated, default=str)
     except (TypeError, ValueError):
@@ -1097,6 +1109,21 @@ def _gate_json_value(node, provider: str, field: str,
         return [_gate_json_value(v, provider, f"{field}[{i}]", log_path)
                 for i, v in enumerate(node)]
     return node
+
+
+def _changed_paths(old, new, prefix: str = "") -> list:
+    """The paths (``messages[2].text``) whose string value the JSON gate changed."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        out = []
+        for k, v in old.items():
+            out += _changed_paths(v, new.get(k), "%s.%s" % (prefix, k) if prefix else str(k))
+        return out
+    if isinstance(old, list) and isinstance(new, list):
+        out = []
+        for i, (a, b) in enumerate(zip(old, new)):
+            out += _changed_paths(a, b, "%s[%d]" % (prefix, i))
+        return out
+    return [prefix or "(whole result)"] if isinstance(old, str) and old != new else []
 
 
 def _gate_tool_result(part: dict, provider: str, field: str,
