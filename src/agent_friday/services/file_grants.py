@@ -1134,7 +1134,7 @@ _SHELL_WALKERS = re.compile(r"\b(?:gci|get-childitem|dir|ls|robocopy|xcopy|forfi
 _SLASH_RECURSE = re.compile(r"\b(?:findstr|dir|robocopy|xcopy|forfiles|where)\b", re.I)
 _WHERE = re.compile(r"\bwhere\b", re.I)
 # A folder named from the home folder or the environment, not spelled out.
-_HOMEISH = re.compile(r"Path\.home\(|expanduser\(|environ|getenv\(|USERPROFILE|APPDATA|HOMEPATH")
+_HOMEISH = re.compile(r"Path\.home\(|expanduser\(|expandvars\(|environ|getenv\(|USERPROFILE|APPDATA|HOMEPATH")
 
 
 def _recursive_flag(text: str) -> bool:
@@ -1243,9 +1243,10 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
     # A program that walks a folder named from the home folder or the environment
     # (os.walk(expanduser('~/AppData'))) is refused whether or not the checker's
     # own expansion finds that folder: a walk of a folder it does find would be
-    # judged by how much of it fits the walk budget on this PC.
-    unnamed = bool((deep_walk or shallow_walk)
-                   and ((not out and _HOMEISH.search(t)) or homed))
+    # judged by how much of it fits the walk budget on this PC. A folder spelled
+    # out in full beside it does not clear it: that folder is checked, the
+    # home-named one never is.
+    unnamed = bool((deep_walk or shallow_walk) and (_HOMEISH.search(t) or homed))
     return out, unnamed, remote
 
 

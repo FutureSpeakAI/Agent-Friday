@@ -747,6 +747,12 @@ def test_a_walk_of_a_home_named_folder_is_refused_however_fast_it_walks(cards, t
                  "import os\nprint(os.listdir(os.path.expandvars('$HOME/Notes')))"):
         assert fg.raw_refusal_for_command(code), code
     assert fg.raw_refusal_for_command("import os\nprint(list(os.walk(r'%s')))" % (home / "Notes")) is None
+    # A clean folder spelled out in full beside it does not clear the home-named walk.
+    decoy = tmp_path / "Empty"
+    decoy.mkdir()
+    for code in ("import os\nos.walk(r'%s')\nfor r, d, fs in os.walk(os.getenv('LOCALAPPDATA')): print(fs)",
+                 "from pathlib import Path\nlist(Path(r'%s').rglob('*'))\nprint(list((Path.home()/'Notes').rglob('*')))"):
+        assert fg.raw_refusal_for_command(code % decoy), code
 
 
 def test_listing_a_folder_checks_only_its_own_files(cards, tmp_path):
