@@ -115,6 +115,33 @@ PUBLIC_QUERY_CARD_APPROVERS = frozenset({"owner:ui"})
 def _is_public_query_card(rec: Dict[str, Any]) -> bool:
     return isinstance((rec.get("payload") or {}).get("public_query"), dict)
 
+
+#: Cards whose title and description repeat what the action would carry (a path, an address, an event
+#: and its guests, a task's text). Their notices, and a text message offering them, name only the tool;
+#: the full words stay on the card in the app.
+PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff"})
+
+
+def notice_title(rec: Dict[str, Any]) -> str:
+    """The words a card's tray notice or text-message offer may carry: for a card that repeats the
+    action's details, a generic line naming only the tool; otherwise the card's own title."""
+    rec = rec or {}
+    if rec.get("kind") in PRIVATE_DETAIL_KINDS:
+        if rec.get("kind") == "seat_handoff":
+            tool = "switch_seat"
+        else:
+            tool = str((rec.get("payload") or {}).get("tool") or "").strip() or "an action"
+        return "Friday needs your approval for %s" % tool
+    return str(rec.get("title") or "")
+
+
+def notice_body(rec: Dict[str, Any]) -> str:
+    """A notice's body: for a card that repeats the action's details, where to decide it, nothing more."""
+    rec = rec or {}
+    if rec.get("kind") in PRIVATE_DETAIL_KINDS:
+        return "Open Friday to see what it would do, and to approve or decline it."
+    return str(rec.get("description") or rec.get("action_description") or "")
+
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
@@ -1015,7 +1042,7 @@ def _notify_pending(record: Dict[str, Any]) -> None:
             meta["detail"] = (record.get("action_description") or "")[:300]
     except Exception:
         pass
-    body = (record.get("description") or record.get("action_description") or "")
+    body = notice_body(record)
     if (record.get("payload") or {}).get("origin") == "laya_safe_write":
         # A card Laya raised lists subjects, sender names and addresses on its on-screen lines. The notice
         # (and anything that forwards it) says only what was asked and where to look.
@@ -1023,7 +1050,7 @@ def _notify_pending(record: Dict[str, Any]) -> None:
     try:
         _ne.push(
             meta=meta,
-            title=f"Approval needed: {record.get('title')}",
+            title=f"Approval needed: {notice_title(record)}",
             body=body[:300],
             priority="medium", source="approvals", kind="approval_pending",
             # `target` is the shape the notification tray's click handler

@@ -186,3 +186,83 @@ def test_calendar_title_with_attendees_keeps_them():
     assert "invite owner@example.com, guest@example.com" in title
     assert "invite guest@example.com" in agent._taint_title(
         "book_slot", {"title": "Picnic", "attendees": "guest@example.com"})
+
+
+# ── a chat "no" decides the card; notices name only the tool; a yes from elsewhere ──
+# These name the `isolated` fixture explicitly as well, so a plain driver that
+# does not apply autouse fixtures still isolates them.
+
+def test_a_chat_no_denies_the_card(isolated, calls):
+    call(turn("run this"))
+    card = pending_cards()[0]
+    turn("no")
+    rec = approvals.get_approval(card["approval_id"])
+    assert rec["status"] == "denied", "a chat no left the card live on the screen"
+    assert rec["decided_by"] == "owner" and rec["decision_note"] == "answered no in chat"
+    # A later click on the card runs nothing.
+    approvals.decide(card["approval_id"], "approve")
+    assert not calls
+
+
+def test_the_tray_notice_names_only_the_tool(isolated, calls, monkeypatch):
+    import agent_friday.notifications_engine as ne
+    pushed = []
+    monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw))
+    call(turn("run this"), command="Write-Output private-words")
+    (notice,) = [p for p in pushed if p.get("kind") == "approval_pending"]
+    shown = notice["title"] + " " + notice["body"]
+    assert "private-words" not in shown, shown
+    assert "run_command" in notice["title"]
+    # The card itself keeps the full question for the screen.
+    assert "private-words" in pending_cards()[0]["title"]
+
+
+def test_the_text_message_offer_names_only_the_tool(isolated, calls, monkeypatch):
+    from agent_friday.phone import config as phone_config
+    from agent_friday.phone import service as phone_service
+    sent = []
+    monkeypatch.setattr(phone_config, "load", lambda: {"enabled": True, "sms_approvals": True})
+    monkeypatch.setattr(phone_config, "verified_owner_cell", lambda: "owner-cell")
+    monkeypatch.setattr(phone_service, "_may_text_about", lambda rec: True)
+    monkeypatch.setattr(phone_service, "_gate_text", lambda t: t)
+    monkeypatch.setattr(phone_service, "_load_state", lambda name, default: {"codes": {}, "failures": []})
+    monkeypatch.setattr(phone_service, "_save_state", lambda name, st: None)
+    monkeypatch.setattr(phone_service, "text_owner", lambda body, reason="": sent.append(body))
+    monkeypatch.setattr(approvals, "_hold", lambda rec: None)     # the quiet-hours hold is not under test
+    call(turn("run this"), command="Write-Output private-words")
+    assert phone_service.offer_pending_approvals() == 1
+    assert "private-words" not in sent[0], sent[0]
+    assert "run_command" in sent[0]
+
+
+def test_a_yes_from_outside_the_owners_page_leaves_the_card_for_the_screen(isolated, calls):
+    call(turn("run this"))
+    card = pending_cards()[0]
+    ctx = agent.prepare_confirmation_ctx(
+        "same-day", "yes", {"authenticated": True, "conversation_id": CID, "owner_surface": False})
+    assert not ctx.get("confirm_granted_fp"), "a yes that is not the owner's own page granted the card"
+    agent.resume_confirmed_action(ctx)
+    assert call(ctx).startswith("[CONFIRMATION")
+    assert not calls
+    rec = approvals.get_approval(card["approval_id"])
+    assert rec["status"] == "pending" and not rec.get("consumed")
+
+
+def test_the_owner_surface_is_read_from_the_live_request(isolated, monkeypatch):
+    """Inside a request the surface is judged from the request itself, never taken from the caller."""
+    from flask import Flask
+    from agent_friday.services import reflex_chat
+    app = Flask("surface-check")
+    monkeypatch.setattr(reflex_chat, "_request_is_local", lambda: True)
+    monkeypatch.setattr(reflex_chat, "_request_is_page", lambda: True)
+    with app.test_request_context("/api/chat", method="POST",
+                                  json={"message": "yes", "source": "app_page"}):
+        assert agent.prepare_confirmation_ctx("same-day", "yes", {"conversation_id": CID})["owner_surface"] is True
+    with app.test_request_context("/api/chat", method="POST",
+                                  json={"message": "yes", "source": "sms"}):
+        ctx = agent.prepare_confirmation_ctx("same-day", "yes",
+                                             {"conversation_id": CID, "owner_surface": True})
+        assert ctx["owner_surface"] is False
+    with app.test_request_context("/api/chat", method="POST",
+                                  json={"message": "yes", "source": "app_page", "voice_mode": True}):
+        assert agent.prepare_confirmation_ctx("same-day", "yes", {"conversation_id": CID})["owner_surface"] is False

@@ -24,7 +24,12 @@ def test_chat_approval_returns_observed_output_without_model_regeneration(
 
     for name in ("_generate_agent", "_call_claude_agent", "_call_ollama", "_call_openai"):
         patch_app(name, no_generation)
-    response = client.post(endpoint, json={"message": "yes", "conversation_id": cid})
+    # The yes is the owner's own line on the app's page (its source and its
+    # verified session): only that decides the card raised by the first ask.
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
+    response = client.post(endpoint, json={"message": "yes", "conversation_id": cid,
+                                           "source": "app_page"})
     assert response.status_code == 200, response.get_data(as_text=True)
     body = response.get_json()
     assert calls == [inp]
@@ -45,3 +50,26 @@ def test_approved_navigation_returns_the_action_the_desktop_executes(client, mon
     with client.application.test_request_context():
         body = chat._confirmed_action_response("yes", approved).get_json()
     assert body["actions"] == [{"type": "navigate", "workspace": "knowledge"}]
+
+
+@pytest.mark.parametrize("endpoint", ["/api/chat", "/api/chat/send"])
+def test_a_yes_that_is_not_the_owners_page_leaves_the_card(endpoint, client, monkeypatch, patch_app):
+    """A yes posted without the page's verified session decides nothing: the card waits on the screen."""
+    from agent_friday.services import approvals
+    cid = conversations.create("Approval elsewhere")["id"]
+    ctx = agent.prepare_confirmation_ctx("same-day", "run it", {
+        "authenticated": True, "conversation_id": cid})
+    monkeypatch.setattr(agent, "_tools_requiring_confirmation", lambda: {"run_command"})
+    monkeypatch.setattr(agent, "_sandbox_policy", lambda *a: (True, ""))
+    inp = {"command": "Write-Output exact"}
+    assert "CONFIRMATION REQUIRED" in agent._execute_tool("run_command", inp, session_ctx=ctx)
+    card = [c for c in approvals.list_approvals(status="pending")
+            if (c.get("payload") or {}).get("conversation_id") == cid][0]
+    calls = []
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "run_command", lambda args: calls.append(args) or "x")
+    for name in ("_generate_agent", "_call_claude_agent", "_call_ollama", "_call_openai"):
+        patch_app(name, lambda *a, **k: ("model reply", []))
+    client.post(endpoint, json={"message": "yes", "conversation_id": cid, "source": "sms"})
+    assert calls == []
+    rec = approvals.get_approval(card["approval_id"])
+    assert rec["status"] == "pending" and not rec.get("consumed")
