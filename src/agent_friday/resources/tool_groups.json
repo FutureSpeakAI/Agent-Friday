@@ -261,6 +261,9 @@
   "find_free_slots": [
    "calendar"
   ],
+  "check_plan_travel": [
+   "calendar"
+  ],
   "generate_image": [
    "creative"
   ],

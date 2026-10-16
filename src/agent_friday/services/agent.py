@@ -767,6 +767,13 @@ CLAUDE_TOOLS = [
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "check_plan_travel", "description": "Read-only: before proposing a same-day plan of timed stops, check each gap. Rough drive estimate (straight line, no traffic) when both stops have lat/lon from a source (never guessed); flags a gap shorter than drive plus buffer, or says it couldn't check. Report what it says.",
+     "input_schema": {"type": "object", "properties": {
+         "stops": {"type": "array", "items": {"type": "object", "properties": {
+             "name": {"type": "string"}, "start": {"type": "string", "description": "ISO 8601 or HH:MM"},
+             "end": {"type": "string"}, "location": {"type": "string"},
+             "lat": {"type": "number"}, "lon": {"type": "number"}}, "required": ["name", "start"]}}},
+      "required": ["stops"]}},
     {"name": "find_free_slots", "description": "Read-only: find slots free on EVERY connected calendar/account within working hours, time zone, notice and buffers. Offer returned slots; for email put their labels in draft_email (card approval before sending). Disclose unreadable calendars as unchecked.",
      "input_schema": {"type": "object", "properties": {
          "duration_minutes": {"type": "integer"},
@@ -1762,7 +1769,41 @@ def _tool_create_calendar_event(inp):
         description=(inp.get("description") or "").strip(),
         attendees=inp.get("attendees") or None,
         account_id=(inp.get("account_id") or "").strip() or None)
-    return _calendar_write_summary(res, "create that event")
+    out = _calendar_write_summary(res, "create that event")
+    if isinstance(res, dict) and res.get("ok"):
+        out += _travel_postcheck(res, inp)
+    return out
+
+
+def _travel_postcheck(res, inp):
+    """Several events created in one turn are a plan: the travel to and from the
+    new one is checked against the others created this turn on the same day
+    (services/plan_travel), and a tight gap, or a pair it could not check, is
+    appended to the result for the model to tell the owner."""
+    try:
+        from agent_friday.services import plan_travel
+        from agent_friday.services import turn_plan as _tp
+        key = _tp.current_turn_id() or (
+            ("conv:%s" % _CURRENT_CONVERSATION.get()) if _CURRENT_CONVERSATION.get() else "")
+        warn = plan_travel.note_created_event(
+            key, str(res.get("title") or inp.get("title") or ""),
+            str(res.get("start") or inp.get("start") or ""), str(res.get("end") or inp.get("end") or ""),
+            str(inp.get("location") or ""))
+        return ("\n" + warn) if warn else ""
+    except Exception:
+        return ""
+
+
+def _tool_check_plan_travel(inp):
+    """Read-only: a rough travel check between consecutive same-day stops."""
+    from agent_friday.services import plan_travel
+    stops = (inp or {}).get("stops")
+    if not isinstance(stops, list) or len(stops) < 2:
+        return "check_plan_travel error: give at least two stops, each with a name and a start time."
+    res = plan_travel.check(stops)
+    pairs = [{k: v for k, v in p.items() if not k.startswith("_")} for p in res["pairs"]]
+    return json.dumps({"summary": res["text"], "flagged": res["flagged"],
+                       "unchecked": res["unchecked"], "pairs": pairs}, default=str)[:4000]
 
 
 def _tool_update_calendar_event(inp):
@@ -8860,6 +8901,7 @@ CLAUDE_TOOL_HANDLERS = {
     "delete_calendar_event": _tool_delete_calendar_event,
     "find_calendar_events": _tool_find_calendar_events,
     "find_free_slots": _tool_find_free_slots,
+    "check_plan_travel": _tool_check_plan_travel,
     "hold_slots": _tool_hold_slots,
     "book_slot": _tool_book_slot,
     "release_holds": _tool_release_holds,
@@ -9295,6 +9337,7 @@ TOOL_RINGS: dict[str, int] = {
     "query_trust_graph":    0,
     "query_calendar":       0,
     "find_calendar_events": 0,   # search only, no mutation
+    "check_plan_travel":    0,   # arithmetic on the stops it is given; no network
     "list_workspace_history": 0,  # read-only history
     "get_career_pipeline":  0,
     "get_briefing":         0,

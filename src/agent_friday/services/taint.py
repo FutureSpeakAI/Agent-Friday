@@ -675,6 +675,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "answer_card": {},
     "release_holds": {},
     "find_free_slots": {},
+    "check_plan_travel": {},
     "text_by_phone": {"to": "recipient", "body": "message_body"},
     "call_by_phone": {"to": "recipient", "message": "message_body"},
     "browse_web": {"url": "fetch_url"},
