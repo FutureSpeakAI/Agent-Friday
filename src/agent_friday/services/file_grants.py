@@ -1268,6 +1268,9 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
                 "at a time with read_file." % remote[0])
     held, asked, too_many, unjudged = [], 0, [], []
     for label, kind, p in named:
+        if kind == "too_deep":
+            return ("Not run: it hides a command inside more layers of encoding than I can unwrap, so I "
+                    "can't check what it reads for mail archives and statements. Run it as plain text.")
         if kind == "undecodable":
             return ("Not run: it hands PowerShell an encoded command that doesn't decode, so I can't "
                     "check what it reads for mail archives and statements. Run it as plain text.")
