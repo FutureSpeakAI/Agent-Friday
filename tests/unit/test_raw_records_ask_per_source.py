@@ -833,3 +833,55 @@ def test_csv_that_is_not_a_statement_is_passed_on(cards):
     bench = "run,model,latency\n1,alpha,12.30\n2,beta,14.10\n3,gamma,11.90\n"
     for out in (two_rows, prices, bench, "name,qty\nsoup,2\nbread,1\n"):
         assert rr.looks_like(out) is None, out
+
+
+# ── security review of the slice (a check that breaks holds) ────────────────
+
+def _broken(*a, **k):
+    raise RuntimeError("classifier broke")
+
+
+def test_a_command_check_that_breaks_refuses_the_command(cards, monkeypatch):
+    from agent_friday.services import raw_records as rr
+    monkeypatch.setattr(rr, "named_in", _broken)
+    out = fg.raw_refusal_for_command("type C:/x/Downloads/export.csv")
+    assert out and out.startswith("Not run")
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "_load_settings", lambda: {"model_routing": {"mode": "local_only"}})
+    assert fg.raw_refusal_for_command("type C:/x/Downloads/export.csv") is None, "nothing can leave"
+
+
+def test_an_output_check_that_breaks_withholds_the_output(cards, monkeypatch):
+    from agent_friday.services import raw_records as rr
+    monkeypatch.setattr(rr, "looks_like", _broken)
+    out = fg.raw_output_notice("Date,Description,Amount\n10/01/2026,STORE,-23.99")
+    assert out and out.startswith("[output withheld]")
+
+
+def test_a_file_check_that_breaks_withholds_the_read(cards, tmp_path, monkeypatch):
+    from agent_friday.services import agent, tool_hooks
+    from agent_friday.services import raw_records as rr
+    p = tmp_path / "exports" / "notes.md"
+    p.parent.mkdir(parents=True)
+    p.write_text("the secret contents", encoding="utf-8")
+    fg.create_scope_grant(str(p.parent), "folder", 7)
+    monkeypatch.setattr(rr, "kind_of", _broken)
+    try:
+        state = fg.check_grant(p).state
+    except Exception:
+        state = "raised"
+    assert state != "active", "a folder's permission is not let through by a broken check"
+    assert fg.raw_record_kind(p) is None, "a listing still takes it as not a record"
+    # read_file's own post hook, through tool_hooks' handling of a critical hook.
+    mine = [h for h in tool_hooks._POST_HOOKS if h.name == "file_grant_registration"]
+    assert mine and mine[0].critical
+    monkeypatch.setattr(tool_hooks, "_POST_HOOKS", mine)
+    ctx = tool_hooks.HookContext(tool_name="read_file", input={"path": str(p)})
+    out = tool_hooks.run_post_hooks(ctx, "the secret contents")
+    assert "secret" not in out and "withheld" in out
+    monkeypatch.setattr(agent, "_codebase_in_scope", lambda inp: {"id": "cb1"})
+    from agent_friday.services import codebases
+    monkeypatch.setattr(codebases, "path_of", lambda cid, rel: p)
+    monkeypatch.setattr(codebases, "read", lambda cid, rel: "the secret contents")
+    out = agent._tool_codebase_read({"path": "notes.md"})
+    assert out["status"] == "held" and "secret" not in out["content"]

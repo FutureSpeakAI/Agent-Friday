@@ -896,7 +896,8 @@ def check_grant(path: Path, sha256_hex: str | None = None) -> GrantCheck:
                                grant_kind="file")
     # A raw record (a mail archive, a bank statement) needs a yes for that
     # one file: a folder's permission does not cover it (owner decision O7).
-    if _raw_kind(path):
+    # A check that breaks raises: it never lets a folder's permission through.
+    if _raw_kind(path, strict=True):
         return GrantCheck(state="none")
     now = time.time()
     for g in state.grants.values():
@@ -909,16 +910,27 @@ def check_grant(path: Path, sha256_hex: str | None = None) -> GrantCheck:
     return GrantCheck(state="none")
 
 
-def raw_record_kind(path) -> str | None:
-    """"mail" / "finance" for a raw personal record (services/raw_records), else None."""
-    return _raw_kind(path)
+class RawCheckError(Exception):
+    """The raw-record check itself failed: the file may be a raw record."""
 
 
-def _raw_kind(path) -> str | None:
+def raw_record_kind(path, *, strict: bool = False) -> str | None:
+    """"mail" / "finance" for a raw personal record (services/raw_records), else None.
+    `strict` raises RawCheckError when the check cannot run, for a caller
+    that must hold the file back rather than guess."""
+    return _raw_kind(path, strict=strict)
+
+
+def _raw_kind(path, strict: bool = False) -> str | None:
+    """kind_of. A listing may take "not a record" when the check breaks;
+    a path that decides what reaches a cloud model (check_grant,
+    on_file_read) passes strict=True and gets RawCheckError instead."""
     try:
         from agent_friday.services import raw_records
         return raw_records.kind_of(path)
-    except Exception:
+    except Exception as e:
+        if strict:
+            raise RawCheckError(str(e)) from e
         return None
 
 
@@ -957,7 +969,7 @@ def on_file_read(path: Path, text: str) -> GrantCheck:
     except Exception:
         sha = None
     result = check_grant(path, sha256_hex=sha)
-    raw = _raw_kind(path)
+    raw = _raw_kind(path, strict=True)        # RawCheckError: the caller withholds the text
     if result.state == "denied":
         _register_deny_spans(text)
     elif raw and not (result.state == "active" and result.grant_kind == "file"):
@@ -982,10 +994,14 @@ def raw_output_notice(text: str) -> str | None:
     try:
         from agent_friday.services import raw_records
         kind = raw_records.looks_like(text)
-        if not kind or not _cloud_possible():
-            return None
-        what = raw_records.KIND_WORDS.get(kind, "a raw record")
+        what = raw_records.KIND_WORDS.get(kind or "", "a raw record")
     except Exception:
+        # A check that cannot run cannot clear the output.
+        if not _cloud_possible():
+            return None
+        return ("[output withheld] I couldn't check what this printed for mail archives and statements, "
+                "so it was held back. Tell the owner what you ran and that its output was held back.")
+    if not kind or not _cloud_possible():
         return None
     return ("[output withheld] What this printed reads like %s. Mail archives and statements reach "
             "a cloud model only with the owner's yes for that one file. If it came from a file, open "
@@ -1207,7 +1223,9 @@ def raw_refusal_for_command(text: str, cwd=None) -> str | None:
         named = raw_records.named_in(str(text or ""), cwd=cwd)
         folders, unnamed = _recursive_dirs(text, cwd)
     except Exception:
-        return None
+        # A check that cannot run cannot clear the command.
+        return ("Not run: I couldn't check what it reads for mail archives and statements. "
+                "Open the files you need one at a time with read_file instead.")
     if unnamed:
         return ("Not run: it looks through a folder it names only from the home folder or the "
                 "environment, so I can't check it for mail archives and statements first. Name the "

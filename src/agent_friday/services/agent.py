@@ -10507,7 +10507,11 @@ def _tool_codebase_read(inp):
     # A mail archive or statement inside a codebase is opened the way
     # read_file opens one: held, asked about, and not passed on (decision O7).
     from agent_friday.services import file_grants as _fg_raw
-    if _fg_raw.raw_record_kind(p):
+    try:
+        raw = _fg_raw.raw_record_kind(p, strict=True)
+    except _fg_raw.RawCheckError:
+        raw = "unchecked"              # a check that cannot run holds the file
+    if raw:
         try:
             check = _fg_raw.on_file_read(Path(p), str(content))
         except Exception:
@@ -13546,15 +13550,20 @@ def _hook_file_grant_registration(ctx, result):
     try:
         if path:
             p = Path(path).expanduser().resolve()
-            raw = _fg.raw_record_kind(p)
     except Exception:
         p = None
     if p is None:
         return result
+    # A raw-record check that cannot run raises RawCheckError out of this
+    # hook (here or inside on_file_read); the hook is critical, so the
+    # result is withheld rather than passed on unchecked (tool_hooks).
+    raw = _fg.raw_record_kind(p, strict=True)
     try:
         if not p.is_file():
             return result
         check = _fg.on_file_read(p, result)
+    except _fg.RawCheckError:
+        raise
     except Exception:
         if not raw:
             return result
@@ -13563,7 +13572,6 @@ def _hook_file_grant_registration(ctx, result):
         # A raw record without the owner's yes: its contents do not enter the
         # conversation at all (the hold also stops any quote of it), so a
         # cloud turn is never blocked by what one read left in its history.
-        # (A post hook that raises is passed over, so this one never raises.)
         try:
             if not _fg._cloud_possible():
                 return result
