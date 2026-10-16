@@ -1003,6 +1003,15 @@ def test_a_short_8_3_name_is_judged_by_the_real_name(cards, tmp_path):
     assert fg.raw_refusal_for_command("git diff HEAD~1 -- notes.md") is None
 
 
+def test_forfiles_and_where_walk_deep_with_their_recursion_flag(cards, tmp_path):
+    m = tmp_path / "m"
+    (m / "deep").mkdir(parents=True)
+    (m / "deep" / "Chase_Activity.csv").write_text("x", encoding="utf-8")
+    assert fg.raw_refusal_for_command('forfiles /p %s /s /c "cmd /c type @file"' % m)
+    assert fg.raw_refusal_for_command("where /r %s *" % m)
+    assert fg.raw_refusal_for_command('forfiles /p %s /c "cmd /c type @file"' % m) is None, "no /s: its own files"
+
+
 def test_device_and_loopback_spellings_are_judged_as_this_pcs_folders(cards, tmp_path):
     stmt, _inbox = _records(tmp_path)
     drive, rest = str(stmt.parent)[0], str(stmt.parent)[2:]
