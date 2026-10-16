@@ -12263,7 +12263,7 @@ function CalendarWS(){
   const[calsTick,setCalsTick]=useState(0);const[showCals,setShowCals]=useState(false);const[onlySpec,setOnlySpec]=useState('');
   const calsState=(window.CalendarViews?window.CalendarViews.useCalendars:calNoCalendars)(calsTick);
   const calSlug=window.CalendarViews?window.CalendarViews.slug:(x=>String(x));
-  const onlyCals=onlySpec?calsState.calendars.filter(c=>c.key===onlySpec||'cal-'+calSlug(c.name)===onlySpec||calSlug(c.name)===calSlug(onlySpec)):[];
+  const onlyCals=onlySpec?calsState.calendars.filter(c=>c.on&&(c.key===onlySpec||'cal-'+calSlug(c.name)===onlySpec||calSlug(c.name)===calSlug(onlySpec))):[];
   const onlyKeys=onlyCals.length?onlyCals.map(c=>c.key):null;
   useEffect(()=>{fridayDeclareNav(CAL_WS_ID,{sections:CAL_NAV_SECTIONS.concat(calsState.calendars.map(c=>({id:'cal-'+calSlug(c.name),label:c.name,key:'only'})))});},[calsState.calendars]);
   const setView=v=>{if(!CAL_VIEW_IDS.includes(v))return;setViewRaw(v);try{localStorage.setItem('friday_cal_view',v);}catch(_){}};

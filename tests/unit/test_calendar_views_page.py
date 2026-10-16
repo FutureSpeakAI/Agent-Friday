@@ -86,3 +86,13 @@ def test_events_at_the_same_time_sit_side_by_side_in_the_day_view(page):
     assert "CalendarViews.lanes(timedAll" in body and "dayLanes[e.id]" in body
     assert ".cal-timeline>.cal-event,.cal-timeline>.cal-gap{left:68px;box-sizing:border-box}" in VIEWS.read_text(encoding="utf-8"), \
         "Day-view events start after the hour labels instead of covering them"
+
+
+@pytest.mark.parametrize("page", ["index.html", "ui_parts/app.html"])
+def test_an_only_chip_never_names_a_calendar_the_owner_switched_off(page):
+    """"Show only my <name> calendar" narrows a view to calendars that are on.
+    The server reads nothing from a switched-off one, so naming it would draw an
+    empty week that looks free."""
+    src = _calendar_ws(_src(page))
+    line = next(l for l in src.splitlines() if "const onlyCals" in l)
+    assert re.search(r"filter\(\s*c\s*=>\s*c\.on\s*&&", line), line.strip()
