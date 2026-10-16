@@ -91,22 +91,31 @@ class TestConsentDecides:
         allowed, detail, _ = _check(ctl, tmp_path, "create_calendar_event", EVENT)
         assert not allowed and detail.startswith("cloud_denied_tier_")
 
-    def test_the_factory_default_cloud_only_is_not_consent(self, ctl, tmp_path, consent, monkeypatch):
-        # cloud_only that nobody chose (no owner routing change) consents to nothing.
-        from agent_friday.services import cloud_intent
-        monkeypatch.setattr(cloud_intent, "routing_mode", lambda: "cloud_only")
-        monkeypatch.setattr(cloud_intent, "mode_was_chosen", lambda mode=None: False,
-                            raising=False)
-        allowed, detail, _ = _check(ctl, tmp_path, "create_calendar_event", EVENT)
-        assert not allowed and detail.startswith("cloud_denied_tier_")
-
-    def test_a_cloud_only_mode_the_owner_chose_is_consent(self, ctl, tmp_path, consent, monkeypatch):
+    def test_the_routing_mode_alone_is_not_consent(self, ctl, tmp_path, consent, monkeypatch):
+        # cloud_only is a setting a settings write can set; consent is only the
+        # owner's recorded answer.
         from agent_friday.services import cloud_intent
         monkeypatch.setattr(cloud_intent, "routing_mode", lambda: "cloud_only")
         monkeypatch.setattr(cloud_intent, "mode_was_chosen", lambda mode=None: True,
                             raising=False)
         allowed, detail, _ = _check(ctl, tmp_path, "create_calendar_event", EVENT)
-        assert allowed, detail
+        assert not allowed and detail.startswith("cloud_denied_tier_")
+
+    def test_an_id_number_after_a_line_break_is_still_refused(self, ctl, tmp_path, consent):
+        # The input reaches the gate as JSON text, where a line break is the two
+        # characters backslash-n; the floor reads the decoded value.
+        consent(True)
+        event = dict(EVENT, description="Bring the forms\n123-45-6789")
+        allowed, detail, _ = _check(ctl, tmp_path, "create_calendar_event", event)
+        assert not allowed and detail.startswith("cloud_consent_floor:"), detail
+
+    def test_a_non_ascii_never_send_word_is_still_refused(self, ctl, tmp_path, consent, monkeypatch):
+        consent(True)
+        from agent_friday.services import judgment_gate
+        monkeypatch.setattr(judgment_gate, "never_send_tokens", lambda: ["Ångström"])
+        event = dict(EVENT, description="Lab results from Ångström clinic")
+        allowed, detail, _ = _check(ctl, tmp_path, "create_calendar_event", event)
+        assert not allowed and detail == "cloud_consent_floor:never_send", detail
 
 
 class TestNothingLeavesThisPc:

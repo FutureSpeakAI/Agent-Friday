@@ -88,12 +88,13 @@ def _no_egress(action, data_str) -> bool:
     return tier in LOCAL_TASK_TIERS
 
 
-# ── The owner's cloud consent (owner decision (b): cloud-only is consent) ───
+# ── The owner's cloud consent ───────────────────────────────────────────────
 # A topic-tier refusal guards the owner who has NOT agreed to share private
-# context with the cloud. An owner who has (an explicit "cloud_unrestricted"
-# answer, or a cloud_only mode the owner chose through a routing change, never
-# the factory default) has already decided, so a cloud seat's tool call is not
-# refused because its input mentions a place, a person or a health detail.
+# context with the cloud. An owner who has answered "cloud_unrestricted" has
+# already decided, so a cloud seat's tool call is not refused because its
+# input mentions a place, a person or a health detail. The answer is read only
+# from the consent record (privacy/cloud_consent, written by the owner's own
+# consent route), never from the routing mode, which a settings write can set.
 # What the owner never agreed to send stays refused: the never-send list,
 # credentials and keys, and ID, card and account numbers (_consent_floor).
 # Any failure to read the consent is "no consent": the ordinary gate applies.
@@ -101,24 +102,43 @@ def _no_egress(action, data_str) -> bool:
 def _cloud_consented() -> bool:
     try:
         from agent_friday.privacy import cloud_consent as _cc
-        if _cc.is_unrestricted_cloud():
-            return True
+        return bool(_cc.is_unrestricted_cloud())
     except Exception:
         return False
+
+
+def _floor_text(data) -> str:
+    """The text the floor reads: every key and string value of a JSON input,
+    decoded and joined by newlines, so an escape (\\n, \\uXXXX, a doubled
+    backslash) never hides a match; the raw text when it is not JSON."""
+    raw = data if isinstance(data, str) else json.dumps(data or {}, default=str)
     try:
-        from agent_friday.services import cloud_intent as _ci
-        chosen = getattr(_ci, "mode_was_chosen", None)
-        if chosen is None:
-            return False
-        return _ci.routing_mode() == "cloud_only" and bool(chosen("cloud_only"))
+        obj = json.loads(raw) if isinstance(raw, str) else raw
     except Exception:
-        return False
+        return str(raw or "")
+    parts: list = []
+
+    def walk(v):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                parts.append(str(k))
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+        elif v is not None:
+            parts.append(str(v))
+    walk(obj)
+    return "\n".join(parts)
 
 
-def _consent_floor(text) -> str:
-    """The kind of never-send material in ``text``, or "" when it is clear.
-    Fails closed: an unreadable check is a hit."""
-    text = str(text or "")
+def _consent_floor(data) -> str:
+    """The kind of never-send material in a tool input, or "" when it is
+    clear. Fails closed: an unreadable check is a hit."""
+    try:
+        text = _floor_text(data)
+    except Exception:
+        return "floor_unavailable"
     try:
         from agent_friday.services import judgment_gate as _jg
         if _jg.never_send_hits(text):
