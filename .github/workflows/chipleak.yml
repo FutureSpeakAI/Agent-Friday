@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -27,11 +27,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, python: "3.13", mode: alone }
-          - { os: windows-latest, python: "3.13", mode: chain }
-          - { os: ubuntu-latest,  python: "3.12", mode: chain }
-          - { os: windows-latest, python: "3.13", mode: bisect }
-          - { os: ubuntu-latest,  python: "3.12", mode: bisect }
+          - { os: windows-latest, python: "3.13", mode: watch }
+          - { os: ubuntu-latest,  python: "3.12", mode: watch }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

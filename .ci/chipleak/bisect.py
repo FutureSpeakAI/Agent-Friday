@@ -132,6 +132,14 @@ def main() -> int:
         return 0 if v == ["PASS"] * 3 else 1
     pre = [ln.strip().lstrip("﻿") for ln in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()
            if ln.strip()]
+    if mode == "watch":
+        here = str(Path(__file__).resolve().parent)
+        os.environ["PYTHONPATH"] = here + os.pathsep + os.environ.get("PYTHONPATH", "")
+        os.environ["LEAKWATCH_OUT"] = str((OUT / "leakwatch.jsonl").resolve())
+        FLAGS.extend(["-p", "leakwatch"])
+        v = run(pre, "watch")
+        log("WATCH (%d files + target): %s; per-test changes in leakwatch.jsonl" % (len(pre), v))
+        return 0
     if mode == "chain":
         v = run(pre, "chain")
         log("CHAIN (%d files + target): %s" % (len(pre), v))
