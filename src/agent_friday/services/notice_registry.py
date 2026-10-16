@@ -292,6 +292,21 @@ _ALL = [
     # A scheduled run that was due in quiet hours and waits for them to end.
     _e("NQ2", "services/scheduler.py:_defer_for_quiet", "scheduled_deferred", UPDATES,
        "sched-deferred:{schedule_id}:{day}", source="scheduler"),
+    # A saved job held because the model the owner pinned it to cannot answer: one card per
+    # job, closed by its next run that goes.
+    _e("SJ1", "services/scheduler.py:_notify_run:held", "scheduled_held", NEEDS_YOU,
+       "sched-held:{schedule_id}", source="scheduler", pk="scheduled_task"),
+    # Once, on the first start after draft_email began saving drafts: the jobs and workflows that
+    # were made to send email and so keep sending (services/email_jobs).
+    _e("MJ1", "services/email_jobs.py:_notify", "email_jobs_kept_sending", ACTIVITY,
+       "email-send-migration", source="scheduler"),
+    # The one-time offer to an install whose weekly show is two voices: Switch or Keep, never
+    # raised again after either answer or a dismissal (services/podcast_engine).
+    _e("PO1", "services/podcast_engine.py:maybe_offer_weekly_one_voice", "podcast_one_voice_offer", ACTIVITY,
+       "podcast-weekly-one-voice", source="podcasts"),
+    # A dock change made the moment the owner asked (no card), with its Undo.
+    _e("OC1", "services/setting_proposals.py:_offer_undo", "setting_changed", UPDATES,
+       "dock-change:{change_id}", source="settings", pk="info"),
     # ── cloud work orders (services/work_orders): local text only ────────────
     _e("WO1", "services/work_orders.py:enforce_switch", "work_order_switched_off", NEEDS_YOU,
        "work_orders:switch_off", source="work_orders", pk="warning"),
@@ -311,9 +326,6 @@ _ALL = [
     # credential endpoint. One per service at a time.
     _e("PK1", "services/pasted_secrets.py:ask_for_key", "key_needed", NEEDS_YOU,
        "key-needed:{target}", route=BUS, source="credentials"),
-    # ── data integrity: a store Friday cannot open or cannot vouch for ───────
-    _e("DI1", "services/integrity_report.py:_card", "data_integrity", NEEDS_YOU,
-       "data-integrity:{store}", source="integrity", pk="warning"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),

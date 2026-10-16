@@ -30,11 +30,13 @@
     "group": "settings",
     "label": "briefing prefs / local city / section order",
     "audit_status": "M"
-   }
+   },
+   {"id": "news.trust_scoring", "group": "settings", "label": "how trust scores move: learning rate, Boost and Ban amounts", "audit_status": "new"}
   ],
   "messages": [
    {"id": "messages.read_inbox", "group": "read", "label": "read inbox / unread", "audit_status": "L"},
    {"id": "messages.search_mail", "group": "read", "label": "search mail", "audit_status": "L"},
+   {"id": "messages.research_thread", "group": "read", "label": "thread view (every message of one conversation)", "audit_status": "new"},
    {"id": "messages.refresh", "group": "read", "label": "refresh", "audit_status": "L"},
    {"id": "messages.open_thread", "group": "navigate", "label": "open thread", "audit_status": "M"},
    {"id": "messages.filter_lanes", "group": "navigate", "label": "folders / lanes / accounts", "audit_status": "M"},
@@ -173,7 +175,10 @@
    {"id": "media.turn_into", "group": "create", "label": "turn into...", "audit_status": "M"},
    {"id": "media.schedule_publish", "group": "create", "label": "schedule / publish", "audit_status": "M"},
    {"id": "media.save_view", "group": "create", "label": "save view / collection", "audit_status": "N"},
-   {"id": "media.export", "group": "create", "label": "export / show in folder", "audit_status": "N"}
+   {"id": "media.export", "group": "create", "label": "export / show in folder", "audit_status": "N"},
+   {"id": "media.podcast_play", "group": "read", "label": "podcasts: play / pause an episode (the Podcasts view's Play)", "audit_status": "new"},
+   {"id": "media.podcast_hosts", "group": "settings", "label": "podcasts: the hosts' names (main host, co-host)", "audit_status": "new"},
+   {"id": "media.podcast_one_voice_offer", "group": "settings", "label": "podcasts: the one-time offer to make a two-voice weekly show one voice (Switch, Keep, close)", "audit_status": "new"}
   ],
   "library": [
    {"id": "library.search", "group": "read", "label": "search / ask library", "audit_status": "M"},
@@ -245,6 +250,8 @@
     "audit_status": "M"
    },
    {"id": "workflows.schedule", "group": "settings", "label": "schedule / notifications", "audit_status": "M"},
+   {"id": "workflows.job_choices", "group": "settings", "label": "a job's own choice (or Follow my default, which it names) for a run missed while closed and a run held by its pinned model, and whether its emails are sent or saved as drafts", "audit_status": "new"},
+   {"id": "workflows.email_choice", "group": "settings", "label": "a saved workflow run on request: whether its emails are sent (asks first unless pre-approved) or saved as drafts", "audit_status": "new"},
    {
     "id": "workflows.open_workflow",
     "group": "navigate",
@@ -270,7 +277,9 @@
    {"id": "system.activity_waiting", "group": "read", "label": "Activity: what is waiting, in queue order", "audit_status": "new"},
    {"id": "system.needs_you", "group": "read", "label": "Needs you and Updates: what waits for a decision, and today's digest", "audit_status": "new"},
    {"id": "system.quiet", "group": "settings", "label": "Quiet until morning (Needs you panel)", "audit_status": "new"},
-   {"id": "system.batch_decide", "group": "organize", "label": "approve or decline a batch of approvals", "audit_status": "new"}
+   {"id": "system.batch_decide", "group": "organize", "label": "approve or decline a batch of approvals", "audit_status": "new"},
+   {"id": "system.preapproved_sends", "group": "settings", "label": "see and revoke pre-approved sends on the Approvals card, and undo a message waiting to go under one", "audit_status": "new"},
+   {"id": "system.cloud_release_card", "group": "organize", "label": "money paragraphs in an email: Send to the cloud model or Keep on this PC, remember for the thread or sender; by voice, Send after a read-back", "audit_status": "new"}
   ],
   "settings": [
    {"id": "settings.open_section", "group": "navigate", "label": "open section", "audit_status": "M"},
@@ -295,7 +304,10 @@
    {"id": "settings.laya_confirm", "group": "settings", "label": "what Laya learned: confirm or drop a choice the deeper mind made", "audit_status": "new"},
    {"id": "settings.laya_refit", "group": "settings", "label": "what Laya learned: Learn now (a visible Local AI queue job)", "audit_status": "new"},
    {"id": "settings.laya_loosen", "group": "settings", "label": "what Laya learned: let her act on a lower score (a card; owner only)", "audit_status": "new"},
-   {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"}
+   {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"},
+   {"id": "settings.preapproved_sends", "group": "settings", "label": "pre-approve sends to named recipients, approve exactly the needs a skill declares (refused if it changed), approve a changed job or skill again, let voice use pre-approvals, revoke", "audit_status": "new"},
+   {"id": "settings.owner_choices", "group": "settings", "label": "the owner's standing choices: money paragraphs in email (and Forget), missed and held runs, unattended undo window, trust scoring, co-host name, dock by asking, notify guests", "audit_status": "new"},
+   {"id": "settings.mail_default_account", "group": "settings", "label": "Connections > Google accounts: default account for drafts (Ask me, or a connected Gmail account)", "audit_status": "new"}
   ]
  }
 }

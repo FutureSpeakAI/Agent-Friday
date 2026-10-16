@@ -115,12 +115,16 @@ TARGETS = {
         # done. Not that pip exited 0.
         "verify": ["torch", "torchaudio", "nemo"],
     },
-    # Not a pip target: downloads the Tier-1 ASR/TTS checkpoints via the
-    # engine's own ensure_ready() (same code path as first voice session).
+    # Not a pip target: the first-run voice wizard's "Download" step. It
+    # installs the pinned speech recognisers dictation and transcription need
+    # (feature_models.first_run_models), then the Piper voice through the
+    # engine's own ensure_ready(). The wizard shows each one with its size
+    # and licence first and posts consent, like every other model download.
     "tier1-models": {
-        "label": "Tier-1 voice model checkpoints (~300 MB)",
-        "disk_gb": 0.5,
+        "label": "Speech recognition models and the Piper voice",
+        "disk_gb": 0.8,
         "stages": [],
+        "consent": True,
     },
     # voice-system-clean-sheet.md §2.5 / §4.3: the CPU-mouth CANDIDATE. The
     # `kokoro-onnx` wheel (< 5 MB) plus the int8 model (~80 MB) and the
@@ -165,6 +169,63 @@ def _artifact_targets() -> dict:
 TARGETS.update(_artifact_targets())
 
 
+# One install target per feature (services/feature_models.FEATURES): the
+# "Speech recognition needs whisper base.en (141 MB) - Download" button. It
+# fetches that feature's missing pinned artifacts one after another as ONE
+# job, with the same consent, checksum and progress as a single artifact.
+def _feature_targets() -> dict:
+    from agent_friday.services import feature_models as fm
+    out = {}
+    for fid, f in fm.FEATURES.items():
+        # With what pip adds for the packages (voice_artifacts.deps_missing).
+        mb = sum(fm.artifact_size_mb(aid) + fm.artifact_deps_mb(aid)
+                 for aid in fm.artifacts_for(fid))
+        out["feature:" + fid] = {"label": "%s (up to %s MB)" % (f["label"], mb),
+                                 "disk_gb": max(0.1, round(mb * 2.2 / 1024, 1)),
+                                 "stages": [], "feature": fid}
+    return out
+
+
+TARGETS.update(_feature_targets())
+
+
+def _missing_modules(aid: str, _seen=None) -> list:
+    """Python modules an artifact (or anything it requires) runs on that are
+    not installed here, so pip would otherwise pull them unasked."""
+    import importlib.util
+    from agent_friday.services import voice_artifacts as va
+    seen = _seen if _seen is not None else set()
+    if aid in seen or aid not in va.ARTIFACTS:
+        return []
+    seen.add(aid)
+    a = va.ARTIFACTS[aid]
+    out = []
+    for m in a.get("needs_modules") or []:
+        try:
+            ok = importlib.util.find_spec(m) is not None
+        except Exception:
+            ok = False
+        if not ok and m not in out:
+            out.append(m)
+    for dep in a.get("requires") or []:
+        out += [m for m in _missing_modules(dep, seen) if m not in out]
+    return out
+
+
+def _needs_modules_refusal(aid: str) -> str:
+    """Why an artifact cannot be installed yet, or "" when it can."""
+    from agent_friday.services import voice_artifacts as va
+    miss = _missing_modules(aid)
+    if not miss:
+        return ""
+    names = {"torch": "PyTorch"}
+    return ("%s runs on %s, which is not installed on this computer, and "
+            "installing it here would quietly pull several gigabytes. Install "
+            "the memory tier (it brings PyTorch) first. Nothing was downloaded."
+            % (va.ARTIFACTS[aid]["label"],
+               " and ".join(names.get(m, m) for m in miss)))
+
+
 def _sha256_file(path) -> str:
     import hashlib
     h = hashlib.sha256()
@@ -203,6 +264,9 @@ def _install_artifact(aid: str) -> None:
     ok, why = va.pinned(aid)
     if not ok:
         raise RuntimeError("not installed: %s. Nothing was downloaded." % why)
+    refusal = _needs_modules_refusal(aid)
+    if refusal:
+        raise RuntimeError(refusal)
     a = va.ARTIFACTS[aid]
     for dep in a.get("requires") or []:
         _install_artifact(dep)
@@ -210,6 +274,9 @@ def _install_artifact(aid: str) -> None:
         rc = _run_pip_stage(["install", va.pip_spec(aid)])
         if rc != 0:
             raise RuntimeError(f"pip exited with code {rc} — see log")
+        return
+    if a["kind"] == "hf_files":
+        _install_hf_files(aid)
         return
     from agent_friday.core import runtime_dir
     # The same root voice_front / voice_ear_stream read from.
@@ -239,7 +306,48 @@ def _install_artifact(aid: str) -> None:
     _append_log(f"installed {a['label']} -> {dest}")
 
 
-def _download(url: str, dest, size_mb: int) -> None:
+def _install_hf_files(aid: str) -> None:
+    """Fetch every pinned file of one Hugging Face repo at its pinned commit,
+    check each against its SHA-256, and lay them out as that commit's snapshot
+    in the cache the reading library looks in, so its own offline lookup
+    (faster-whisper's ``local_files_only``, ``try_to_load_from_cache``) finds
+    them. ``refs/main`` is written last, only once every file is verified: a
+    stopped or failed install never points the cache at a partial snapshot.
+    A file already there with the pinned hash is kept, so Continue resumes."""
+    from agent_friday.services import voice_artifacts as va
+    a = va.ARTIFACTS[aid]
+    snap = va.snapshot_dir(aid)
+    snap.mkdir(parents=True, exist_ok=True)
+    total = va.size_bytes(aid)
+    done = 0
+    for path, (nbytes, sha) in sorted(a["files"].items()):
+        dest = snap.joinpath(*path.split("/"))
+        if dest.is_file() and dest.stat().st_size == nbytes and _sha256_file(dest) == sha:
+            done += nbytes
+            _set_progress(done, total)
+            continue
+        stage = dest.with_name(dest.name + ".download")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if stage.exists():
+            stage.unlink()
+        _download(va.hf_file_url(aid, path), stage, max(1, nbytes // 1048576),
+                  base=done, grand_total=total)
+        got = _sha256_file(stage)
+        if got != sha:
+            stage.unlink()
+            raise RuntimeError("%s: %s failed its checksum (got %s…, pinned %s…); the "
+                               "download was deleted and nothing was installed"
+                               % (a["label"], path, got[:12], sha[:12]))
+        stage.replace(dest)
+        done += nbytes
+        _set_progress(done, total)
+    refs = snap.parent.parent / "refs"
+    refs.mkdir(parents=True, exist_ok=True)
+    (refs / "main").write_text(a["revision"], encoding="utf-8")
+    _append_log(f"installed {a['label']} ({len(a['files'])} files, each verified) -> {snap}")
+
+
+def _download(url: str, dest, size_mb: int, base: int = 0, grand_total: int = 0) -> None:
     """Stream one allowlisted asset to disk with a size line in the log.
     Skips a file that already exists at a plausible size. A transfer that
     stopped part-way leaves ``<dest>.part``; the next call asks the server
@@ -281,7 +389,9 @@ def _download(url: str, dest, size_mb: int) -> None:
             length = 0
         total = offset + length if length else 0
         got = offset
-        _set_progress(got, total)
+        # ``base``/``grand_total``: this file is one of several in one job
+        # (an "hf_files" snapshot), so the bar shows the whole job.
+        _set_progress(base + got, grand_total or total)
         with open(tmp, "ab" if resuming else "wb") as f:
             while True:
                 if _CANCEL.is_set():
@@ -291,7 +401,7 @@ def _download(url: str, dest, size_mb: int) -> None:
                     break
                 f.write(chunk)
                 got += len(chunk)
-                _set_progress(got, total)
+                _set_progress(base + got, grand_total or total)
     if total and got < total:
         raise RuntimeError("the connection closed early (%d of %d bytes); "
                            "start again to continue where it stopped" % (got, total))
@@ -314,6 +424,17 @@ def artifact_installed(aid: str) -> bool:
         if a["kind"] == "pip":
             from importlib import metadata
             return metadata.version(a["package"]) == a.get("version")
+        if a["kind"] == "hf_files":
+            # Every pinned file at its pinned size, and the cache's ref names
+            # this commit (written only after all files verified). Sizes, not
+            # hashes: this answers every Settings poll.
+            snap = va.snapshot_dir(aid)
+            ref = snap.parent.parent / "refs" / "main"
+            if not ref.is_file() or ref.read_text(encoding="utf-8").strip() != a["revision"]:
+                return False
+            return all((snap.joinpath(*p.split("/"))).is_file()
+                       and snap.joinpath(*p.split("/")).stat().st_size == n
+                       for p, (n, _h) in a["files"].items())
         from agent_friday.core import runtime_dir
         dest = Path(runtime_dir()) / a["dest"]
         if a["kind"] == "file":
@@ -327,10 +448,22 @@ def artifact_rows() -> list:
     """Every voice artifact for the Settings screen: what it is, its size, its
     pin, whether it is installed, and the state of its download."""
     from agent_friday.services import voice_artifacts as va
+    from agent_friday.services import feature_models as fm
     job = status()
     out = []
     for row in va.public_rows():
-        row["installed"] = artifact_installed(row["id"])
+        # Present counts a model an earlier version already put in a cache the
+        # loader reads (feature_models.artifact_present), not only this pin.
+        row["installed"] = fm.artifact_present(row["id"])
+        # An older package that still works: "installed (0.7.4); 0.9.4 available".
+        row["upgrade"] = None
+        try:
+            if va.pip_state(row["id"]) == "older":
+                from importlib import metadata
+                a = va.ARTIFACTS[row["id"]]
+                row["upgrade"] = {"have": metadata.version(a["package"]), "pin": a["version"]}
+        except Exception:
+            pass
         row["job"] = None
         if job.get("target") == row["id"] and job.get("state") != "idle":
             row["job"] = {"state": job["state"], "error": job.get("error") or "",
@@ -476,12 +609,32 @@ def _run_job(target: str):
     spec = TARGETS[target]
     try:
         if target == "tier1-models":
+            # The speech recognisers are pinned, verified artifacts; loading
+            # never downloads them (local_voice.WhisperASR.load). The wizard
+            # showed exactly these, with sizes, before this consented click
+            # (feature_models.first_run_models).
+            from agent_friday.services import feature_models as fm
+            for aid in fm.first_run_models():
+                if _CANCEL.is_set():
+                    raise RuntimeError("cancelled")
+                _install_artifact(aid)
+            for fid in fm.FIRST_RUN_FEATURES:
+                fm.forget_refusal(fid)
             from agent_friday.services.local_voice import get_local_voice_engine
             eng = get_local_voice_engine()
             ok = eng.ensure_ready(progress=_append_log)
             if not ok:
                 raise RuntimeError(getattr(eng, "last_error", "") or
                                    "model download failed")
+        elif spec.get("feature"):
+            from agent_friday.services import feature_models as fm
+            # What is missing, then any older-but-working package's upgrade.
+            for aid in fm.to_install(spec["feature"]):
+                if _CANCEL.is_set():
+                    raise RuntimeError("cancelled")
+                _append_log("installing %s for %s" % (aid, fm.FEATURES[spec["feature"]]["label"]))
+                _install_artifact(aid)
+            fm.forget_refusal(spec["feature"])
         elif spec.get("artifact"):
             _install_artifact(spec["artifact"])
         else:
@@ -544,12 +697,24 @@ def start(target: str) -> dict:
         ok, why = _disk_ok(TARGETS[target]["disk_gb"])
         if not ok:
             return {"state": "error", "error": why}
+        wanted = []
         if TARGETS[target].get("artifact"):
+            wanted = [TARGETS[target]["artifact"]]
+        elif TARGETS[target].get("feature"):
+            from agent_friday.services import feature_models as _fm
+            wanted = _fm.to_install(TARGETS[target]["feature"])
+        elif target == "tier1-models":
+            from agent_friday.services import feature_models as _fm
+            wanted = _fm.first_run_models()
+        for aid in wanted:
             from agent_friday.services.voice_artifacts import pinned
-            ok, why = pinned(TARGETS[target]["artifact"])
+            ok, why = pinned(aid)
             if not ok:
                 return {"state": "error",
                         "error": "%s. Nothing was downloaded." % why}
+            why = _needs_modules_refusal(aid)
+            if why:
+                return {"state": "error", "error": why}
         # REFUSE rather than replace a library this process is holding open.
         # pip will happily overwrite torch/lib/*.dll underneath a live process;
         # what the user gets is a native "entry point could not be located"

@@ -448,6 +448,25 @@ if ($leaks.Count -gt 0) {
 }
 Say-Ok "$copied top-level item(s); $($cleared.Count) placeholder(s) examined and cleared; no live credentials."
 
+# --- The shipped-files manifest (the update guard's reference) -----------
+#
+# app-files.sha256 lands in the install folder with everything else. The NEXT
+# installer compares the installed files against it and backs up any that a
+# person or a helper changed before replacing them (lib\AppFiles.ps1); the
+# in-app update check reads it too (services\update_guard.py). Written AFTER
+# the tracked-tree guard above, since it is generated, not committed.
+. (Join-Path $Here 'lib\AppFiles.ps1')
+try {
+    $manifestCount = Write-AppFilesManifest -Root $Payload
+} catch {
+    Say-Problem -What "The shipped-files manifest could not be written: $($_.Exception.Message)" `
+                -WhatToDo 'An update from this release could not warn before replacing changed files. Fix the cause and build again.'
+    Write-Log "BUILD ABORTED - app-files.sha256 not written: $($_.Exception.Message)" 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.appfiles' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+Say-Ok "Recorded a SHA-256 for each of $manifestCount shipped file(s) in app-files.sha256."
+
 # =========================================================================
 #  2. Bundle the embeddable Python
 # =========================================================================

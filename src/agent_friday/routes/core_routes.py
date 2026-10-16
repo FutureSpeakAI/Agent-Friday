@@ -166,6 +166,22 @@ def _web_fonts_head() -> str:
         return ''
 
 
+def _user_override_tags() -> str:
+    try:
+        from agent_friday.services import user_overrides as _uo
+        return _uo.page_tags()
+    except Exception:
+        return ''
+
+
+def _build_id_script() -> str:
+    """The build this page was served from, recorded before anything runs, so
+    static/js/friday_build_watch.js can tell when the server behind an open tab
+    has been updated (Part 2 #9: stale tabs). `<` is escaped like the others."""
+    data = json.dumps(_build_id()).replace('<', '\\u003c')
+    return f'<script>window.__FRIDAY_BUILD_ID__={data};</script>'
+
+
 def _serve_index(extra_head: str = ''):
     try:
         with open('index.html', encoding='utf-8') as _f:
@@ -174,8 +190,14 @@ def _serve_index(extra_head: str = ''):
             f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";</script>'  # pragma: allowlist secret
         )
         # Inject early in <head> so the token is available before any fetch calls.
-        _html = _html.replace('<head>', f'<head>\n{_token_script}{_local_address_script()}'
+        _html = _html.replace('<head>', f'<head>\n{_token_script}{_build_id_script()}{_local_address_script()}'
                                         f'{_installed_bundles_script()}{_web_fonts_head()}{extra_head}', 1)
+        # The person's own css (~/.friday/overrides/static), AFTER the
+        # page's own so it wins; services/user_overrides decides what loads.
+        _user_tags = _user_override_tags()
+        if _user_tags and '</body>' in _html:
+            _i = _html.rfind('</body>')
+            _html = _html[:_i] + _user_tags + _html[_i:]
         return Response(_html, content_type='text/html')
     except FileNotFoundError:
         return ("index.html not found. It is tracked in git — restore it with "
@@ -189,6 +211,36 @@ def serve_static_asset(filename):
     # (inside the package) — not the process cwd that serve_ui's
     # open('index.html') uses — so this route 404'd everything. Anchor to cwd.
     return send_from_directory(os.path.abspath('static'), filename)
+
+
+@core_bp.route('/user-overrides/static/<name>')
+def serve_user_override_asset(name):
+    """One stylesheet from ~/.friday/overrides/static, only if it is loaded
+    now (plain .css name, overrides.static_css on, resolved inside the
+    folder). Never a script, never a directory walk. The file is the one the
+    folder listing names (static_asset), served through send_from_directory."""
+    try:
+        from agent_friday.services import user_overrides as _uo
+        found = _uo.static_asset(name)
+    except Exception:
+        found = None
+    if found is None:
+        return "Not an override file that is switched on.", 404
+    folder, listed = found
+    resp = send_from_directory(str(folder), listed, max_age=0)
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@core_bp.route('/api/overrides/status')
+def overrides_status():
+    """What ~/.friday/overrides holds and what of it is applied. Read-only."""
+    try:
+        from agent_friday.services import user_overrides as _uo
+        return jsonify({"status": "ok", **_uo.status()})
+    except Exception as e:  # noqa: BLE001
+        traceback.print_exc()
+        return api_error(e, "Couldn't read the overrides folder")
 
 
 @core_bp.route('/assets/<path:filename>')
@@ -671,6 +723,17 @@ def _version_fields():
     return version, release_name
 
 
+def _build_id():
+    """The build of the page this process serves (services/app_version.build_id),
+    hashed from the same directory `_serve_index` and /static read: the working
+    directory. None if it cannot be computed; the page then never prompts."""
+    try:
+        from agent_friday.services.app_version import build_id
+        return build_id(Path(os.path.abspath('.')))
+    except Exception:
+        return None
+
+
 def _health_fallback():
     """An immediate answer while a computation is slow: the last good payload
     marked stale, else the cheap boot verdict marked as still computing."""
@@ -695,6 +758,7 @@ def _health_fallback():
         "computing": True,
         "version": version,
         "release_name": release_name,
+        "build_id": _build_id(),
         "uptime_seconds": int(_time.time() - SERVER_START_TS),
         "server_start": datetime.fromtimestamp(SERVER_START_TS).isoformat(),
     }
@@ -962,6 +1026,9 @@ def _health_payload():
         },
         "version": _app_version,
         "release_name": _release_name,
+        # An open tab compares this with the id it loaded with
+        # (window.__FRIDAY_BUILD_ID__) and offers a reload when they differ.
+        "build_id": _build_id(),
         "mood": _mood,
         "memory_entries": _memory_entries,
         "vault_count": _vault_count,
@@ -986,10 +1053,6 @@ def _health_payload():
             "encryption_enabled": _vault_state.get("enabled", False),
             "warning": _vault_warning,
         },
-        # Stores Friday cannot open or cannot vouch for (services/
-        # integrity_report): an encrypted file no known key opens, a broken
-        # memory tamper-check. Counts and kinds only.
-        "data_integrity": _data_integrity(),
         "governance": {
             "enabled": True,
             "version": "v4.4",
@@ -1875,6 +1938,11 @@ def api_settings():
         if interrupt_error is not None:
             return jsonify(interrupt_error), 400
 
+        from agent_friday.services import owner_choices as _oc
+        choice_error = _oc.validate(new_settings)
+        if choice_error is not None:
+            return jsonify(choice_error), 400
+
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting
         # the non-persistent offline routing overlay (mode=local_only).
@@ -2393,13 +2461,3 @@ def analyze_file():
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't analyze the file", 200, shape="bare", key="analysis", filename=filename)
-
-
-def _data_integrity() -> dict:
-    try:
-        from agent_friday.services import integrity_report
-        return integrity_report.health_field()
-    except Exception as e:  # never fail health; say the check itself failed
-        return {"ok": False, "problems": [{"store": "integrity_report",
-                "state": "check_failed", "records": None,
-                "message": "Friday could not run its data checks (%s)." % type(e).__name__}]}

@@ -153,7 +153,8 @@ def _ask(mode, docs, title, city, llm):
     ask = _ASK[mode] % city if "%s" in _ASK[mode] else _ASK[mode]
     user = ("STORY: %s\n\nSOURCES:\n\n%s\n\n%s\nReturn {\"findings\": [{\"text\": \"...\", \"cites\": [\"D1\"]}], "
             "\"read\": [\"...\"], %s}." % (title, "\n\n".join(lines), ask, shape))
-    raw, _model = llm(SYSTEM, user, max_tokens=2500)
+    from agent_friday.services.agent_identity import named
+    raw, _model = llm(named(SYSTEM), user, max_tokens=2500)
     return raw if isinstance(raw, dict) else {}
 
 

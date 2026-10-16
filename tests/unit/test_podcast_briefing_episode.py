@@ -182,10 +182,12 @@ def test_a_briefing_is_friday_alone_by_default(home, monkeypatch, speaker):
     assert {v for v, _t in speaker} == {"af_heart"}
 
 
-def test_front_page_and_editorial_are_solo_weekly_and_deep_dives_two_hosts():
+def test_front_page_and_editorial_are_solo_weekly_two_hosts_and_any_other_one_voice():
     assert pe.format_for("briefing") == "solo" and pe.format_for("front_page") == "solo"
     assert pe.format_for("editorial") == "solo"
-    assert pe.format_for("weekly") == "duo" and pe.format_for("") == "duo"
+    # Any other episode is one voice unless the owner asks for two (field install report, Part 1 #9).
+    # The weekly too, since the owner chose one voice by default for every show (two hosts are asked for).
+    assert pe.format_for("weekly") == "solo" and pe.format_for("") == "solo"
 
 
 def test_a_solo_writer_is_told_so_and_a_speaker_b_line_is_friday_s(home, monkeypatch, speaker):
@@ -240,7 +242,7 @@ def test_the_format_tool_travels_with_news_not_the_always_on_catalogue():
 
 
 def test_a_two_host_episode_keeps_both_hosts(home, monkeypatch, speaker):
-    pe.create([{"kind": "text", "text": "x", "title": "Notes"}])
+    pe.create([{"kind": "text", "text": "x", "title": "Notes"}], hosts="duo")
     ep = pe.list_episodes()[0]
     assert ep["format"] == "duo"
 

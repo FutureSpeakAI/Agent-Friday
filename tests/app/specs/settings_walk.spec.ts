@@ -66,7 +66,7 @@ const GUARDED = /phone|twilio|texting|sms|voicemail|your cell|computer control|v
  * whose per-folder ticks choose what its Save button adds to the Library (/api/library/add) or grants to cloud models
  * (/api/privacy/file-grants) and are cleared after the save). Their pickers feed a button that is not pressed here, so changing one saves nothing by design.
  */
-const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspaces|published pages|google accounts|texting registration|model browser|your knowledge|permission|grant/i;
+const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspaces|published pages|google accounts|texting registration|model browser|your knowledge|permission|grant|pre-approved sends/i;
 /** Sections that are accounts and phone lines from top to bottom: opened and listed, never changed. */
 const LOOK_ONLY_SECTIONS = new Set(['connections']);
 

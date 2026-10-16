@@ -115,17 +115,12 @@ _REAL_ENCODER = Path(os.environ.get("FRIDAY_REAL_HOME") or Path.home()) / ".frid
 def encoder(monkeypatch):
     """The real Laya 2 encoder files where this machine has them (read only);
     the test home is a temp folder without them. Skipped where they are
-    absent (CI), which is the only place this gate does not run. The loaded
-    session is process-wide, so it is forgotten afterwards: a later test in the
-    same worker sees the scratch home's state (no encoder), not this one's."""
+    absent (CI), which is the only place this gate does not run."""
     from agent_friday.services import laya2_encoder
     if not all((_REAL_ENCODER / n).is_file() for n in laya2_encoder.REQUIRED_FILES):
         pytest.skip("the Laya 2 encoder is not on this machine")
     monkeypatch.setattr(laya2_encoder, "artifacts_dir", lambda: _REAL_ENCODER)
     monkeypatch.setattr(lr, "_protos", None)
-    laya2_encoder.reset()
-    yield
-    laya2_encoder.reset()
 
 
 def test_held_out_routing_never_runs_an_unwanted_action_and_keeps_its_score(encoder):

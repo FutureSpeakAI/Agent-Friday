@@ -146,16 +146,11 @@ def test_wrap_and_unwrap_keep_every_credential_readable(client, keystore):
     assert ks.decrypt(keystore) == b"stored credential"
 
 
-def test_changing_the_vault_passphrase_rewraps_the_keystore(keystore, monkeypatch, tmp_path):
+def test_changing_the_vault_passphrase_rewraps_the_keystore(keystore, monkeypatch):
     import sys
     import types
-    import agent_friday.core as core
     from agent_friday.services import vault_passphrase as vp
 
-    # A home with no sealed files: a passphrase change over sealed data is a
-    # rotation, which is offline only; the shared test home holds other tests'.
-    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path / "fresh-home")
-    vp.reset_cache()
     ks.set_wrap("passphrase", PASS)
     store: dict = {}
     fake = types.SimpleNamespace(

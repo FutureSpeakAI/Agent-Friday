@@ -198,7 +198,9 @@ def test_both_pages_carry_the_same_helper():
 def test_the_app_takes_her_name_only_from_loaded_settings(rel):
     text = _read(rel)
     app = text[text.index("function App("):]
-    assert re.search(r"if \(agentSettings\.workspace_layouts\) fridaySetName\(agentSettings\.agent_name\);", app), rel
+    # The optional second argument is identity.name_in_lockup (wordmark/titles).
+    assert re.search(r"if \(agentSettings\.workspace_layouts\) fridaySetName\(agentSettings\.agent_name"
+                     r"(, \(\(agentSettings\.identity \|\| \{\}\)\.name_in_lockup\))?\);", app), rel
 
 
 @pytest.mark.parametrize("rel", WORKSPACE_SCRIPTS)

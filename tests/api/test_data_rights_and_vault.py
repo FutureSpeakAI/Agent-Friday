@@ -38,10 +38,6 @@ class TestVaultPassphrase:
             get_password=lambda service, account: values.get((service, account)))
         monkeypatch.setitem(sys.modules, "keyring", fake)
         monkeypatch.setattr(vp, "file_homes", lambda: [tmp_path / "vault-credential"])
-        # Arming a first passphrase is checked against the sealed files of the
-        # home it serves; the shared API test home holds other tests' files.
-        import agent_friday.core as core
-        monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path / "fresh-home")
         vp.reset_cache()
         yield
         vp.reset_cache()

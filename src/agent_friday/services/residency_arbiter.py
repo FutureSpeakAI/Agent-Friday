@@ -858,6 +858,10 @@ class LlamaServerBackend:
         self._load_lock = threading.RLock()
         self._last_load: dict = {}     # model_id -> the kwargs it was last loaded with
         self._vision_wanted: set = set()
+        # model_id -> the GPU layer count the plan sized this seat at
+        # (services/local_sizing: whole, partial offload, or 0 = CPU). Set by
+        # the Arbiter before it loads a planned seat; read by `_spawn_once`.
+        self.planned_gpu_layers: dict = {}
 
     def resident(self):
         return {m: 0 for m in self.procs}
@@ -1180,11 +1184,127 @@ class LlamaServerBackend:
 
     @classmethod
     def seat_cap(cls, model_id):
-        """The largest window this model may be served at on this machine."""
+        """The largest window this model may be served at on this machine.
+
+        A declared window below Friday's own prompt is lifted to the prompt
+        floor (services/local_sizing.lift_declared_ctx): the installer's
+        8,192 on an 8 GB laptop made every local call with a ~20k prompt fail
+        "exceeds the available context size". A person's override in
+        ~/.friday/overrides is kept as written.
+        """
         declared = cls._declared_num_ctx(model_id)
         if declared:
+            declared = cls._declared_at_least_the_prompt(model_id, declared)
             return min(int(declared), int(cls.MAX_SEAT_NUM_CTX))
         return int(cls.MAX_SEAT_NUM_CTX)
+
+    @staticmethod
+    def _declared_at_least_the_prompt(model_id, declared):
+        """`declared`, or the prompt floor when that is larger. Never raises.
+
+        Only a generative chat model carries Friday's prompt; an embedder or
+        a vision model keeps the window it declared. The prompt size is the
+        CACHED one (local_sizing.cached_prompt_tokens): assembling the system
+        prompt from here recursed back into this method.
+        """
+        try:
+            from agent_friday.services import local_sizing as _lz
+            from agent_friday.services import model_store as _ms
+            rec = _ms.get(model_id) or {}
+            if not _lz.carries_friday_prompt(rec):
+                return int(declared)
+            ov = rec.get("user_override") or {}
+            return _lz.lift_declared_ctx(
+                model_id, int(declared),
+                prompt=_lz.cached_prompt_tokens()["tokens"], cfg=_lz.settings(),
+                model_window=rec.get("context_window"),
+                overridden="num_ctx" in ov)
+        except Exception:
+            return int(declared)
+
+    def _planned_gpu_layers(self, model_id):
+        """The plan's GPU layer count for this seat, unless the person pinned
+        one in ~/.friday/overrides (an override outranks the plan)."""
+        n = (getattr(self, "planned_gpu_layers", None) or {}).get(model_id)
+        if n is None:
+            return None
+        try:
+            from agent_friday.services import model_store as _ms
+            ov = (_ms.get(model_id) or {}).get("user_override") or {}
+            if "n_gpu_layers" in ov or "placement" in ov:
+                return None
+        except Exception:
+            pass
+        return int(n)
+
+    def _layers_for_raised_window(self, model_id, num_ctx, cmd):
+        """GPU layers for a seat served above its record's serve_num_ctx.
+
+        `seat_cap` lifts an installer window below Friday's prompt (8,192 on
+        an 8 GB laptop) to the prompt floor. The record's -ngl was computed
+        for the old window, and the bigger KV cache on top of it over-commits
+        the card. This re-fits the layers to the VRAM the installer budgeted
+        (local_sizing.layers_for_raised_window) and logs the change. None
+        when nothing was raised, nothing is known about the model's size, or
+        a person's override pins the window or the layers. Never raises.
+        """
+        try:
+            declared = self._declared_num_ctx(model_id)
+            if not declared or int(num_ctx or 0) <= int(declared):
+                return None
+            from agent_friday.services import local_sizing as _lz
+            from agent_friday.services import model_store as _ms
+            rec = _ms.get(model_id) or {}
+            ov = rec.get("user_override") or {}
+            if any(k in ov for k in ("num_ctx", "n_gpu_layers", "placement")):
+                return None
+            if not _lz.carries_friday_prompt(rec):
+                return None
+            ngl = _lz.ALL_LAYERS
+            if "-ngl" in cmd and cmd.index("-ngl") + 1 < len(cmd):
+                ngl = int(cmd[cmd.index("-ngl") + 1])
+            elif "--n-gpu-layers" in cmd and cmd.index("--n-gpu-layers") + 1 < len(cmd):
+                ngl = int(cmd[cmd.index("--n-gpu-layers") + 1])
+            if ngl == 0:
+                return None
+            if "--cache-type-k" in cmd and cmd.index("--cache-type-k") + 1 < len(cmd):
+                kv = cmd[cmd.index("--cache-type-k") + 1]
+            else:
+                kv = self._kv_cache_type() or "f16"
+            entry = dict(rec, model_id=model_id)
+            r = _lz.layers_for_raised_window(
+                entry, ngl, int(declared), int(num_ctx), kv_type=kv,
+                kv_table=_lz.kv_layouts())
+            n = r.get("n_gpu_layers")
+            if n is None:
+                __import__("logging").getLogger("friday.local_sizing").warning(
+                    "[arbiter] %s: window raised %d -> %d above its declared "
+                    "value, but %s, so its -ngl %d could not be re-fitted",
+                    model_id, int(declared), int(num_ctx), r.get("reason"), ngl)
+                return None
+            if int(n) != ngl:
+                __import__("logging").getLogger("friday.local_sizing").info(
+                    "[arbiter] %s: window raised %d -> %d tokens to hold Friday's "
+                    "prompt; GPU layers %d -> %d (%s)", model_id, int(declared),
+                    int(num_ctx), ngl, int(n), r.get("reason"))
+            return int(n)
+        except Exception:
+            return None
+
+    def _is_cpu_seat(self, cmd):
+        """True when this command puts no layers on the GPU and the
+        local_sizing.cpu_seats_hide_gpu setting is on."""
+        try:
+            for flag in ("-ngl", "--n-gpu-layers", "--gpu-layers"):
+                if flag in cmd:
+                    at = cmd.index(flag)
+                    if at + 1 < len(cmd) and str(cmd[at + 1]).strip() == "0":
+                        from agent_friday.services import local_sizing as _lz
+                        return bool(_lz.settings().get("cpu_seats_hide_gpu", True))
+                    return False
+        except Exception:
+            pass
+        return False
 
     @staticmethod
     def _declared_serve_args(model_id):
@@ -1193,7 +1313,16 @@ class LlamaServerBackend:
         # brain choice the Model Soup offers); its flags live with it.
         if str(model_id).startswith("voice-front:"):
             from agent_friday.services.voice_front import SERVE_ARGS
-            return list(SERVE_ARGS)
+            # A person's override (~/.friday/overrides/models.json, keyed by
+            # the seat id, e.g. "voice-front:ternary-bonsai:1.7b" with
+            # "placement": "cpu") applies here too.
+            try:
+                from agent_friday.services import user_overrides as _uo
+                return list(_uo.apply_to_record(
+                    str(model_id), {"serve_args": list(SERVE_ARGS)},
+                    component="voice_front").get("serve_args") or SERVE_ARGS)
+            except Exception:
+                return list(SERVE_ARGS)
         try:
             from agent_friday.services import model_store as _ms
             rec = _ms.get(model_id) or {}
@@ -1401,6 +1530,21 @@ class LlamaServerBackend:
         # per-model fact belongs in the per-model record, not in a class
         # constant that some other model's measurement set.
         cmd = _merge_declared_args(cmd, self._declared_serve_args(model_id))
+        # The plan's placement (services/local_sizing): every layer, a partial
+        # offload that keeps the window at Friday's prompt floor, or 0 for a
+        # small helper moved to the CPU so the big model keeps the card. It
+        # outranks the record's installer-time -ngl, which was sized for a
+        # smaller window; a person's override outranks both.
+        _ngl = self._planned_gpu_layers(model_id)
+        if _ngl is not None:
+            cmd = _merge_declared_args(cmd, ["-ngl", str(_ngl)])
+        else:
+            # Not sized by the plan, but the window may still have been raised
+            # above the record's serve_num_ctx (seat_cap's prompt floor). The
+            # record's -ngl was sized for the smaller window: re-fit it.
+            _ngl = self._layers_for_raised_window(model_id, num_ctx, cmd)
+            if _ngl is not None:
+                cmd = _merge_declared_args(cmd, ["-ngl", str(_ngl)])
         # See KV_CACHE_TYPE above. Settings can pin this back to "f16" without
         # a code change; `_spawn_with_fallback` retries unquantized if the
         # binary rejects the flag, so a build that does not support it costs a
@@ -1477,6 +1621,20 @@ class LlamaServerBackend:
             cmd += ["--lora", str(lora_path)]
         if n_cpu_moe is not None:
             cmd += ["--n-cpu-moe", str(n_cpu_moe)]
+        # A CPU SEAT KEEPS OFF THE CARD. `-ngl 0` moves no layers, but a CUDA
+        # build still opens the device and allocates its compute buffer there,
+        # which on an 8 GB card is memory the big model was planned to have.
+        # `--device none` (llama.cpp: "none = don't offload") and, for the
+        # CUDA runtime itself, CUDA_VISIBLE_DEVICES=-1 in this child only.
+        spawn_env = None
+        if self._is_cpu_seat(cmd):
+            if "--device" not in cmd and "-dev" not in cmd:
+                cmd += ["--device", "none"]
+            spawn_env = dict(os.environ, CUDA_VISIBLE_DEVICES="-1")
+            __import__("logging").getLogger("friday.local_sizing").info(
+                "[arbiter] %s runs on the CPU (-ngl 0): spawned with "
+                "--device none and CUDA_VISIBLE_DEVICES=-1 so it allocates "
+                "nothing on the GPU", model_id)
         # THE SEAT'S OWN BANNER, KEPT. This was stdout=DEVNULL/stderr=DEVNULL,
         # which threw away the only place llama.cpp ever states what it
         # actually did: the context it settled on, the KV cache type, whether
@@ -1502,14 +1660,16 @@ class LlamaServerBackend:
                               port)).encode())
                 proc = subprocess.Popen(cmd, stdout=_fh,
                                         stderr=subprocess.STDOUT,
-                                        cwd=str(Path(binary).parent))
+                                        cwd=str(Path(binary).parent),
+                                        env=spawn_env)
         except Exception:
             # Never let logging cost a seat. If the file cannot be opened we
             # are back to the old behaviour, which worked -- silently.
             log_path = None
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL,
-                                    cwd=str(Path(binary).parent))
+                                    cwd=str(Path(binary).parent),
+                                    env=spawn_env)
         t0 = time.time()
         while time.time() - t0 < timeout:
             if proc.poll() is not None:
@@ -2131,10 +2291,15 @@ class Arbiter:
             _cloud = _sb.cloud_seats_from_settings(_ls() or {})
         except Exception:
             pass
+        try:
+            from agent_friday.services import local_sizing as _lz
+            _sizing = _lz.sizing_inputs()
+        except Exception:
+            _sizing = None
         self.plan = rp.plan(self.profile, self.entries, overrides,
                             overhead_tokens=context_budget.overhead_tokens(),
                             image_model=_configured_image_model(),
-                            cloud_roles=_cloud)
+                            cloud_roles=_cloud, sizing=_sizing)
         self.planned_at = time.time()
         return self.plan
 
@@ -3422,6 +3587,21 @@ class Arbiter:
             gguf = None
         if gguf:
             port = PORT_BASE + len(self.llama.procs)
+            # The plan's GPU layer count (local_sizing), when it sized one.
+            _planned = getattr(self.llama, "planned_gpu_layers", None)
+            if isinstance(_planned, dict):
+                if seat.get("n_gpu_layers") is None:
+                    _planned.pop(seat["model_id"], None)
+                else:
+                    _planned[seat["model_id"]] = int(seat["n_gpu_layers"])
+            _sz = seat.get("sizing") or {}
+            if _sz:
+                __import__("logging").getLogger("friday.local_sizing").info(
+                    "[arbiter] %s as %s on %s, %s GPU layers, %s tokens (%s): %s%s",
+                    seat["model_id"], role, seat.get("device"),
+                    seat.get("n_gpu_layers"), seat.get("num_ctx"),
+                    _sz.get("basis"), _sz.get("reason"),
+                    ("; " + _sz["measure_later"]) if _sz.get("measure_later") else "")
             try:
                 took = self.llama.load(seat["model_id"], seat["num_ctx"],
                                        gguf_path=gguf, port=port,
@@ -3490,6 +3670,14 @@ class Arbiter:
         t0 = time.time()
         if gguf:
             port = PORT_BASE + 20 + len(self.llama.procs)
+            # A leased seat the plan sized from an estimate carries its own
+            # GPU layer count (local_sizing), exactly as a pinned one does.
+            _planned = getattr(self.llama, "planned_gpu_layers", None)
+            if isinstance(_planned, dict):
+                if seat.get("n_gpu_layers") is None:
+                    _planned.pop(seat["model_id"], None)
+                else:
+                    _planned[seat["model_id"]] = int(seat["n_gpu_layers"])
             took = self.llama.load(
                 seat["model_id"], seat["num_ctx"] or 2048, gguf_path=gguf,
                 port=port,

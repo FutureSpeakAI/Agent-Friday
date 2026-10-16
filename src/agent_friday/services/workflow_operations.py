@@ -104,7 +104,7 @@ def validate_timing(when):
     if not isinstance(when, dict) or not isinstance(when.get("spec", {}), dict):
         raise UserFacingValueError("Choose a supported schedule and its timing.")
     trigger, spec = when.get("trigger"), copy.deepcopy(when.get("spec") or {})
-    if trigger not in ("daily", "weekly", "interval", "once"):
+    if trigger not in ("daily", "weekly", "monthly", "interval", "once"):
         raise UserFacingValueError("That timing isn't one Friday can keep.")
     def number(key, default, low, high, integer=True):
         value = spec.get(key, default)
@@ -113,9 +113,14 @@ def validate_timing(when):
         if (integer and int(value) != value) or not low <= value <= high:
             raise UserFacingValueError(f"Schedule {key} must be between {low} and {high}.")
         return int(value) if integer else value
-    if trigger in ("daily", "weekly"):
+    if trigger in ("daily", "weekly", "monthly"):
         spec["hour"] = number("hour", 8, 0, 23)
         spec["minute"] = number("minute", 0, 0, 59)
+    if trigger == "monthly":
+        # 1-31, or -1 for the last day; a day the month lacks runs on its last day.
+        spec["day"] = number("day", 1, -1, 31)
+        if spec["day"] == 0:
+            raise UserFacingValueError("Choose a day of the month from 1 to 31, or the last day.")
     if trigger == "weekly":
         days = spec.get("weekdays", [spec.get("weekday", 0)])
         if not isinstance(days, list) or not days or any(type(d) is not int or not 0 <= d <= 6 for d in days):

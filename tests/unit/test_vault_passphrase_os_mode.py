@@ -70,10 +70,6 @@ def _remove_keyring(monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     home = tmp_path / ".friday"
-    # A fresh home: store() checks the passphrase against the sealed files of
-    # the home it serves, and the worker's shared test home holds other tests'.
-    import agent_friday.core as core
-    monkeypatch.setattr(core, "FRIDAY_DIR", home)
     monkeypatch.setattr(vp, "_SECURITY_DIR", home / "security")
     monkeypatch.setattr(vp, "_from_start_bat", lambda: "")
     for var in ("FRIDAY_OS_MODE", "FRIDAY_VAULT_PASSPHRASE", "FRIDAY_PASSWORD"):

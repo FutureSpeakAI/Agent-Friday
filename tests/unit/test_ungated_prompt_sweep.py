@@ -289,13 +289,19 @@ class TestPersonaEvalLive:
 import agent_friday.services.scheduler as sched_mod
 
 
-def _run_afternoon_briefing(monkeypatch, *, predicted_provider, force_ungated=False):
+def _run_afternoon_briefing(monkeypatch, *, predicted_provider, force_ungated=False,
+                            slim=False):
+    """`slim=False` is the owner's `job_prompts.slim: false`: the briefing's
+    full, gated prompt, which is what the three gating tests below pin. The
+    default slim job prompt carries no vault content at all (last test)."""
     captured = {}
 
     def _fake_generate_text(messages, system=None, **kw):
         captured['system'] = system
         return "briefing body"
 
+    from agent_friday.services import job_prompt
+    monkeypatch.setattr(job_prompt, "enabled", lambda: slim)
     monkeypatch.setattr(mr, "_generate_text", _fake_generate_text)
     monkeypatch.setattr(mr, "_predict_route_provider",
                         lambda **kw: predicted_provider)
@@ -322,6 +328,12 @@ class TestAfternoonBriefing:
         system = _run_afternoon_briefing(monkeypatch, predicted_provider='cloud',
                                          force_ungated=True)
         assert TIER2_SECRET in system, "ungated reproduction did not leak"
+
+    @pytest.mark.parametrize("predicted", ["cloud", "local"])
+    def test_slim_job_prompt_carries_no_vault_content(self, monkeypatch, predicted):
+        system = _run_afternoon_briefing(monkeypatch, predicted_provider=predicted,
+                                         force_ungated=True, slim=True)
+        assert system and TIER2_SECRET not in system
 
 
 # ═══════════════════════════════════════════════════════════════════════════

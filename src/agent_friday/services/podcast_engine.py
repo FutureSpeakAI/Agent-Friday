@@ -9,11 +9,16 @@ and `charts/` in data mode.
 
 The invariants this module keeps:
 
-* **The script is written locally.** `_llm_json` calls `local_call` on the
-  model `scheduler._resolve_local_seat()` finds serving, inside
-  `local_only_guard.local_only`, so any cloud transport reached by accident
-  refuses. There is no cloud writer. No local model, no episode: the episode
-  fails with that reason; it does not go to the cloud.
+* **The script is written locally in a local routing mode.** `_llm_json`
+  calls `local_call` on the model `scheduler._resolve_local_seat()` finds
+  serving, inside `local_only_guard.local_only`, so any cloud transport
+  reached by accident refuses. No local model, no episode: the episode fails
+  with that reason; it does not go to the cloud. Under a cloud_only mode the
+  owner chose (not the factory value), that choice is the consent: a
+  non-private episode is written on the routine cloud model
+  (`cloud_intent.background_route`, `writer_scope`), with a larger output
+  budget (`cloud_writer_tokens`). A private episode is written locally in
+  every mode.
 * **Every spoken line is accountable.** Each line carries the source ids it
   rests on. A line citing a source that does not exist is cut, a line with a
   number and no citation is cut, and in data mode a line with a number that is
@@ -155,14 +160,56 @@ def _spoken_credit(ep: dict) -> str:
     return "%s from %s" % (show_name(ep) or "a podcast", brand.PRODUCT)
 
 
-#: Who is on the show: Friday alone ("solo") or Friday with a co-host ("duo").
+#: Who is on the show: she alone ("solo") or she with a co-host ("duo").
 #: A briefing, the front page and an editorial are one voice, like a newscast
-#: or an op-ed; the weekly and episodes made from the owner's own sources are
-#: a conversation. "any" is every episode not made by a routine. The owner
-#: can change each; these are shown as the recommended choice.
+#: or an op-ed; the weekly is a conversation. "any" is every episode not made
+#: by a routine: one voice unless the owner asks for two, for that episode
+#: (`create(hosts=...)`) or for all of them. The owner can change each; these
+#: are shown as the recommended choice.
 FORMATS = ("solo", "duo")
+#: The owner's decision: every show is one voice unless they choose two hosts
+#: (the weekly was two hosts before; a saved choice is kept).
 RECOMMENDED_FORMAT = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
-                      "weekly": "duo", "any": "duo"}
+                      "weekly": "solo", "any": "solo"}
+#: Host "a"'s voice when she has no local voice of her own to lend it.
+FALLBACK_HOST_VOICE = "af_heart"
+#: The "any" format installs were seeded with before one voice became the
+#: default, and the stamp that says the saved block has been moved off it.
+_PRE_SOLO_ANY = "duo"
+FORMAT_MIGRATION_KEY = "format_migrated"
+#: The co-host's name when the owner has not named them (Settings, the
+#: podcasts' host names, or one episode's own `host_names`), once she has been
+#: renamed: then "Agent Friday" is free to be the co-host. A voice id never
+#: names a host: the voice is how a host sounds, not who they are.
+COHOST_DEFAULT_NAME = brand.PRODUCT
+#: The co-host's name when she still has her default name (Friday): "Agent
+#: Friday" beside "Friday" would be two hosts with one name, so a distinct one.
+COHOST_NEUTRAL_NAME = "Nova"
+
+
+def agent_renamed(settings=None) -> bool:
+    """Has the owner given her a name of their own (anything but her default)?"""
+    try:
+        if settings is None:
+            from agent_friday.core import _load_settings
+            settings = _load_settings() or {}
+        return brand.her_name((settings or {}).get("agent_name")) != brand.her_name("")
+    except Exception:
+        return False
+
+
+def cohost_default_name(settings=None) -> str:
+    """The co-host's name when the owner has not named them: "Agent Friday" only if she has been
+    renamed; otherwise COHOST_NEUTRAL_NAME, so the two hosts never share her name."""
+    return COHOST_DEFAULT_NAME if agent_renamed(settings) else COHOST_NEUTRAL_NAME
+#: A host's name is a name: this long at most, without the characters a
+#: transcript line ("Name: words") or a caption cue uses.
+HOST_NAME_MAX = 40
+_NOT_IN_A_NAME = re.compile(r"[\x00-\x1f\x7f:<>\[\]{}|\\\"]+")
+#: Stamped once the saved co-host has been checked for a name that was only
+#: ever its voice id's ("bf_emma" seeded as "Emma"); such a name is cleared,
+#: so the co-host takes the default. A name chosen afterwards is kept.
+HOSTS_MIGRATION_KEY = "host_names_migrated"
 #: Commit headroom the out-of-process voice (Kokoro on the CPU) needs, in MB:
 #: measured on the reference PC speaking eight podcast lines, its private memory
 #: peaked at 2.7 GB and the machine's commit rose by at most 3.0 GB; this is that
@@ -185,8 +232,10 @@ DEFAULTS = {
     "length": {"front_page": RECOMMENDED_LENGTH, "briefing": RECOMMENDED_LENGTH,
                "weekly": RECOMMENDED_LENGTH, "editorial": RECOMMENDED_LENGTH,
                "any": RECOMMENDED_LENGTH},
+    # Blank names follow the owner's settings: host "a" is her (her name),
+    # host "b" is cohost_default_name() unless the owner named the co-host.
     "hosts": {"a": {"name": "Friday", "voice": "af_heart"},
-              "b": {"name": "Emma", "voice": "bf_emma"}},
+              "b": {"name": "", "voice": "bf_emma"}},
     "on_ready": "notify",
     "cloud_voice": False,
 }
@@ -260,24 +309,144 @@ def _migrate_length(own: dict) -> tuple[dict, bool]:
     return out, True
 
 
+def _migrate_format(own: dict) -> tuple[dict, bool]:
+    """(block, changed): a saved format table that is exactly the seeded one
+    (every show at its old recommended value, "any" two hosts) moves "any" to
+    one voice, the new default. Stamped so it runs once; a table the owner
+    changed in any way is left as it is."""
+    if not own or own.get(FORMAT_MIGRATION_KEY):
+        return own, False
+    out = copy.deepcopy(own)
+    # The table installs were seeded with then (the weekly was two hosts).
+    seeded = {"briefing": "solo", "front_page": "solo", "editorial": "solo",
+              "weekly": "duo", "any": _PRE_SOLO_ANY}
+    if out.get("format") == seeded:
+        out["format"]["any"] = RECOMMENDED_FORMAT["any"]
+    out[FORMAT_MIGRATION_KEY] = True
+    return out, True
+
+
+def voice_label(voice) -> str:
+    """The name a voice id spells ("bf_emma" -> "Emma"): never a host's name."""
+    m = re.match(r"^[a-z]{1,3}_([a-z]+)$", str(voice or "").strip().lower())
+    return m.group(1).capitalize() if m else ""
+
+
+def _migrate_hosts(own: dict) -> tuple[dict, bool]:
+    """(block, changed): a saved co-host whose name is only its voice id's
+    (the seeded "Emma" for bf_emma) loses that name and takes the default.
+    Stamped so it runs once; a name the owner gives later is theirs."""
+    if not own or own.get(HOSTS_MIGRATION_KEY):
+        return own, False
+    out = copy.deepcopy(own)
+    b = ((out.get("hosts") or {}).get("b"))
+    if isinstance(b, dict):
+        name = str(b.get("name") or "").strip()
+        if name and name.lower() == voice_label(b.get("voice")).lower():
+            b["name"] = ""
+    out[HOSTS_MIGRATION_KEY] = True
+    return out, True
+
+
+def clean_host_name(name) -> str:
+    """A host's name as it is kept: one line, plain characters, at most
+    HOST_NAME_MAX long. "" for none."""
+    text = _NOT_IN_A_NAME.sub(" ", str(name or ""))
+    return " ".join(text.split())[:HOST_NAME_MAX].strip()
+
+
+def _host_follows_identity(cfg: dict, own: dict) -> None:
+    """Host "a" is her: her name and her voice unless the owner set the show's
+    host themselves, and the pronouns her voice (or the owner) gives her.
+
+    ``own`` is the podcasts block as saved (the settings store keeps a
+    top-level block whole, so it is the owner's own, not merged defaults). A
+    field is "not set" only when it is absent or blank there; a saved value
+    is the owner's, even one that equals an old default ("Friday", af_heart).
+    """
+    from agent_friday.services import agent_identity
+    mine = ((own.get("hosts") or {}).get("a") or {})
+    a = cfg["hosts"]["a"]
+    if not str(mine.get("name") or "").strip():
+        a["name"] = her_name()
+    if not str(mine.get("voice") or "").strip():
+        a["voice"] = agent_identity.local_kokoro_voice() or FALLBACK_HOST_VOICE
+    a["pronouns"] = agent_identity.pronouns(voice=a["voice"])
+    b = cfg["hosts"].get("b") or {}
+    if b:
+        if not clean_host_name(((own.get("hosts") or {}).get("b") or {}).get("name")):
+            b["name"] = cohost_default_name()
+        b["pronouns"] = agent_identity.pronouns_for_voice(b.get("voice"))
+
+
 def settings() -> dict:
     try:
         from agent_friday.core import _load_settings, _save_settings
         own = (_load_settings() or {}).get("podcasts") or {}
         own, changed = _migrate_length(own)
+        own, f_changed = _migrate_format(own)
+        own, h_changed = _migrate_hosts(own)
+        changed = changed or f_changed or h_changed
         if changed:
             try:
                 _save_settings({"podcasts": own})
             except Exception:
-                log.warning("podcast length migration was not saved", exc_info=True)
+                log.warning("podcast settings migration was not saved", exc_info=True)
         cfg = _merge(DEFAULTS, own)
     except Exception:
         own, cfg = {}, copy.deepcopy(DEFAULTS)
-    # The first host is her, by the name the owner gave her, unless the owner
-    # named the show's host themselves.
-    if not (((own.get("hosts") or {}).get("a") or {}).get("name")):
-        cfg["hosts"]["a"]["name"] = her_name()
+    # The first host is her, by the name the owner gave her and in her voice,
+    # unless the owner set the show's host themselves.
+    try:
+        _host_follows_identity(cfg, own)
+    except Exception:
+        log.warning("podcast host could not follow her identity", exc_info=True)
+        if not (((own.get("hosts") or {}).get("a") or {}).get("name")):
+            cfg["hosts"]["a"]["name"] = her_name()
+        if not (((own.get("hosts") or {}).get("b") or {}).get("name")):
+            cfg["hosts"]["b"]["name"] = cohost_default_name()
     return cfg
+
+
+def host_names() -> dict:
+    """Each host's name now, the name they have when the owner gives none,
+    and the owner's own ("" when not set)."""
+    try:
+        from agent_friday.core import _load_settings
+        own = ((_load_settings() or {}).get("podcasts") or {})
+        own, _ = _migrate_hosts(own)
+    except Exception:
+        own = {}
+    now = settings()["hosts"]
+    defaults = {"a": her_name(), "b": cohost_default_name()}
+    return {k: {"name": now[k]["name"], "default": defaults[k],
+                "own": clean_host_name(((own.get("hosts") or {}).get(k) or {}).get("name"))}
+            for k in ("a", "b")}
+
+
+def check_host_names(a: str, b: str) -> None:
+    """Two hosts are two people: refuse the same name for both."""
+    if a and b and a.casefold() == b.casefold():
+        raise PodcastRefused("the two hosts need different names (both would be %s)" % a)
+
+
+def set_host_names(a=None, b=None) -> dict:
+    """Name the main host ("a", her) and the co-host ("b") for every episode.
+    None leaves a host as it is; "" puts it back to the default (her name,
+    cohost_default_name())."""
+    now = host_names()
+    want = {}
+    for key, value in (("a", a), ("b", b)):
+        if value is None:
+            continue
+        want[key] = clean_host_name(value)
+        if str(value).strip() and not want[key]:
+            raise PodcastRefused("a host's name needs letters, not only punctuation")
+    check_host_names(want.get("a", now["a"]["own"]) or now["a"]["default"],
+                     want.get("b", now["b"]["own"]) or now["b"]["default"])
+    if want:
+        _save_podcasts({"hosts": {k: {"name": v} for k, v in want.items()}})
+    return host_names()
 
 
 def home_city() -> str:
@@ -307,19 +476,122 @@ def check_format(routine: str, fmt: str) -> None:
 
 def _save_podcasts(change: dict) -> None:
     """Write `change` into the owner's podcasts settings. The settings store
-    replaces a top-level block it does not deep-merge, so the block is
-    written whole: setting one show's format or length never resets the
-    other shows, the hosts or the routines' switches."""
+    deep-merges the podcasts block (core._DEEP_MERGED_BLOCKS); the block is
+    still written whole here so the one-time length migration is saved with
+    it: setting one show's format or length never resets the other shows,
+    the hosts or the routines' switches."""
     from agent_friday.core import _load_settings, _save_settings
     own, _ = _migrate_length(copy.deepcopy((_load_settings() or {}).get("podcasts") or {}))
+    own, _ = _migrate_format(own)
+    own, _ = _migrate_hosts(own)
     _merge_into(own, change)
     _save_settings({"podcasts": own})
 
 
-def set_format(routine: str, fmt: str) -> None:
+def set_format(routine: str, fmt: str) -> str:
+    """Set one show's format. Returns the once-only co-host question when two hosts are chosen and the
+    co-host has no name of the owner's (`cohost_question`), else ""."""
     key = routine or "any"
     check_format(routine, fmt)
     _save_podcasts({"format": {key: fmt}})
+    return cohost_question() if fmt == "duo" else ""
+
+
+#: Asked once, the first time the owner chooses two hosts while the co-host has no name of theirs.
+COHOST_QUESTION = ("Your co-host has no name yet. What should they be called? Until you say, they are "
+                   "%s. (Settings > Voice > Podcasts > Co-host's name changes it any time.)")
+
+
+def cohost_question(mark: bool = True) -> str:
+    """The question to put to the owner when two hosts are chosen and the co-host has no name of their
+    own, once ever (podcasts.cohost_name_asked); "" when it is not needed or was asked before. The
+    suggestion is cohost_default_name(): "Agent Friday" only if she has been renamed."""
+    try:
+        from agent_friday.core import _load_settings
+        s = _load_settings() or {}
+    except Exception:
+        return ""
+    pod = s.get("podcasts") if isinstance(s.get("podcasts"), dict) else {}
+    if pod.get("cohost_name_asked"):
+        return ""
+    if clean_host_name(((pod.get("hosts") or {}).get("b") or {}).get("name")):
+        return ""
+    if mark:
+        try:
+            _save_podcasts({"cohost_name_asked": True})
+        except Exception:
+            log.warning("could not record that the co-host's name was asked", exc_info=True)
+    return COHOST_QUESTION % cohost_default_name(s)
+
+
+#: The one-time offer to an install whose weekly show is two voices: "Weekly is two voices; want one
+#: voice?" One notice (Activity), and the choice on the Podcasts page: Switch, Keep, or close it.
+#: Saved in the podcasts block: "" never offered, "offered" (waiting), "switched", "kept" or
+#: "dismissed". Offered at most once, ever; nothing here changes the format except the owner's Switch.
+WEEKLY_OFFER_KEY = "weekly_one_voice_offer"
+WEEKLY_OFFER_NOTICE = "podcast-weekly-one-voice"
+
+
+def weekly_offer_state() -> str:
+    try:
+        from agent_friday.core import _load_settings
+        pod = (_load_settings() or {}).get("podcasts")
+        return str((pod if isinstance(pod, dict) else {}).get(WEEKLY_OFFER_KEY) or "")
+    except Exception:
+        return ""
+
+
+def maybe_offer_weekly_one_voice() -> bool:
+    """Raise the ONE offer when the saved weekly show is two voices and it was never offered. The
+    state is saved as "offered" before the notice goes, so it is never raised twice, and a dismissed
+    notice is never raised again. Never changes the format. Never raises."""
+    try:
+        from agent_friday.core import _load_settings
+        pod = (_load_settings() or {}).get("podcasts")
+        pod = pod if isinstance(pod, dict) else {}
+        if pod.get(WEEKLY_OFFER_KEY):
+            return False
+        if ((pod.get("format") or {}).get("weekly")) != "duo":
+            return False
+        _save_podcasts({WEEKLY_OFFER_KEY: "offered"})
+    except Exception as e:
+        log.debug("weekly one-voice offer skipped: %s", e)
+        return False
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.push(title="Weekly is two voices; want one voice?",
+                body=("Your weekly show, The Week, is read by two hosts; every other show is one voice now. "
+                      "The choice (Switch or Keep) is on the Podcasts page. Nothing changes unless you "
+                      "switch, and you are not asked again."),
+                priority="low", source="podcasts", kind="podcast_one_voice_offer", tier="fyi",
+                emitter="PO1", dedupe_key=WEEKLY_OFFER_NOTICE, resolve_key=WEEKLY_OFFER_NOTICE,
+                target={"workspace": "studio", "view": "podcasts"},
+                actions=[{"label": "See the choice", "workspace": "studio", "view": "podcasts"}])
+    except Exception as e:
+        log.warning("weekly one-voice offer not shown: %s", e)
+    return True
+
+
+def decide_weekly_one_voice(choice: str) -> dict:
+    """The owner's answer to the offer: "switch" makes the weekly one voice, "keep" leaves it,
+    "dismiss" closes it without an answer (the format stays). Any of them closes it for good."""
+    choice = str(choice or "").strip().lower()
+    if choice not in ("switch", "keep", "dismiss"):
+        return {"ok": False, "message": "Say switch or keep."}
+    if weekly_offer_state() != "offered":
+        return {"ok": False, "message": "There is no offer waiting."}
+    if choice == "switch":
+        _save_podcasts({"format": {"weekly": "solo"}, WEEKLY_OFFER_KEY: "switched"})
+    else:
+        _save_podcasts({WEEKLY_OFFER_KEY: "kept" if choice == "keep" else "dismissed"})
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.resolve(WEEKLY_OFFER_NOTICE)
+    except Exception:
+        pass
+    return {"ok": True, "choice": choice, "format": format_for("weekly"),
+            "message": ("The Week is one voice from the next episode." if choice == "switch"
+                        else "The Week stays two voices. You will not be asked again.")}
 
 
 def formats() -> dict:
@@ -503,12 +775,18 @@ def _new_id() -> str:
 def create(refs: list[dict], *, title: str = "", length: str = "",
            mode: str = "auto", origin: str = "user", attached: dict | None = None,
            voice_engine: str = "local", instructions: str = "",
-           show: str = "") -> dict:
+           show: str = "", hosts: str = "", host_names=None) -> dict:
     """Queue an episode and wake the worker. Returns the queued episode.
 
-    Never writes, speaks or reads anything itself: a routine calling this is
-    back in milliseconds.
+    `hosts` is "solo" or "duo" for this episode alone; "" is the show's own
+    setting. `host_names` names the hosts for this episode alone: [main,
+    co-host] or {"a": ..., "b": ...}; a blank or missing one keeps the
+    owner's setting. Never writes, speaks or reads anything itself: a routine
+    calling this is back in milliseconds.
     """
+    hosts_asked = str(hosts or "").strip().lower()
+    if hosts_asked and hosts_asked not in FORMATS:
+        raise PodcastRefused("an episode is \"solo\" (%s alone) or \"duo\" (two hosts)" % her_name())
     refs = [r for r in (refs or []) if isinstance(r, dict)]
     if not refs:
         raise PodcastRefused("an episode needs at least one source")
@@ -533,7 +811,13 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
     voice_engine = voice_engine if voice_engine in ("local", "cloud") else "local"
     if voice_engine == "cloud":
         _refuse_cloud_voice(private)
-    hosts = cfg["hosts"]
+    on_air = copy.deepcopy(cfg["hosts"])
+    if isinstance(host_names, (list, tuple)):
+        host_names = dict(zip(("a", "b"), host_names))
+    for key, value in (host_names or {}).items() if isinstance(host_names, dict) else ():
+        name = clean_host_name(value)
+        if key in on_air and name:
+            on_air[key]["name"] = name
     # The show is the routine's whose material this is (the Briefing made into
     # an episode on request is still the Briefing): its host setting decides,
     # whatever mode the model asked for. Past episodes never steer it.
@@ -541,6 +825,10 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         (str(r.get("routine")) for r in refs if r.get("kind") == "news_run" and r.get("routine")), "")
     # A length asked for is kept; otherwise the show's own setting decides.
     length = length if length in LENGTHS else length_for(routine)
+    fmt = hosts_asked or format_for(routine)
+    if fmt == "duo":
+        # Two people on air: the transcript and the captions tell them apart by name.
+        check_host_names(on_air["a"]["name"], on_air["b"]["name"])
     ep = {
         "id": _new_id(),
         "title": (title or "").strip()[:160],
@@ -556,8 +844,8 @@ def create(refs: list[dict], *, title: str = "", length: str = "",
         "refs": refs,
         "instructions": (instructions or "").strip()[:1000],
         "voice_engine": voice_engine,
-        "hosts": hosts,
-        "format": format_for(routine),
+        "hosts": on_air,
+        "format": fmt,
         "home": home_city(),
         # Each story is told from its full article where the page can be read
         # (`deepen`), not only from the feed's summary.
@@ -586,8 +874,8 @@ def _refuse_cloud_voice(private: bool) -> None:
             "This episode is built from your private material, so it is spoken "
             "on this computer only. A cloud voice is not available for it.")
     try:
-        from agent_friday.core import _load_settings
-        mode = ((_load_settings() or {}).get("model_routing") or {}).get("mode")
+        from agent_friday.services import cloud_intent
+        mode = cloud_intent.normalize_mode(cloud_intent._stored_mode())
     except Exception:
         mode = "local_only"
     if mode == "local_only":
@@ -618,10 +906,111 @@ def delete(eid: str) -> bool:
     return not d.exists()
 
 
-# ── writing (local model only) ──────────────────────────────────────────────
+# ── writing (the local model; the cloud only under a chosen cloud_only) ────
+
+#: A cloud writer's output budget: three times the local one, and never under
+#: 8,000 tokens. The local budgets are sized to a slow seat; a cloud model's
+#: JSON for the same outline ran past 2,000 tokens, came back cut off, and the
+#: episode failed with "did not return a usable script".
+CLOUD_WRITER_FACTOR = 3
+CLOUD_WRITER_MIN_TOKENS = 8000
+
+_wlog = logging.getLogger("friday.podcast")
+
+#: The writer's route for the episode being written on this thread (set by
+#: `_write` through `writer_scope`). Unset means the local model: Discuss, the
+#: private summary and every other caller of `_llm_json` stay local.
+_WRITER = threading.local()
+
+
+def cloud_writer_tokens(max_tokens: int) -> int:
+    return max(CLOUD_WRITER_FACTOR * int(max_tokens or 0), CLOUD_WRITER_MIN_TOKENS)
+
+
+def writer_route(ep: dict):
+    """Where this episode's script is written: `cloud_intent.background_route`
+    for a podcast, or None (the local model) for a private episode, which stays
+    on this computer in every mode."""
+    if (ep or {}).get("privacy") == "private":
+        return None
+    try:
+        from agent_friday.services import cloud_intent
+        from agent_friday.services.scheduler import _resolve_local_seat
+        return cloud_intent.background_route("podcast", local_serving=_resolve_local_seat)
+    except Exception as e:
+        _wlog.debug("podcast writer route unavailable: %s", e)
+        return None
+
+
+def writer_is_cloud(route) -> bool:
+    return route is not None and getattr(route, "route", "") == "cloud"
+
+
+class writer_scope:
+    """`with writer_scope(route):` -- `_llm_json` calls inside write on that route."""
+
+    def __init__(self, route):
+        self.route = route
+        self.used_cloud = False
+
+    def __enter__(self):
+        self._prev = (getattr(_WRITER, "route", None), getattr(_WRITER, "used_cloud", False))
+        _WRITER.route = self.route
+        _WRITER.used_cloud = False
+        return self
+
+    def __exit__(self, *exc):
+        self.used_cloud = bool(getattr(_WRITER, "used_cloud", False))
+        _WRITER.route, _WRITER.used_cloud = self._prev
+        return False
+
+
+def _unusable(raw, where: str, budget: int) -> None:
+    """Say in friday.log what came back when a reply was not usable JSON: its
+    length and first characters, never the prompt."""
+    text = raw if isinstance(raw, str) else ("" if raw is None else repr(raw))
+    _wlog.warning("podcast writer: the %s model's reply was not usable JSON "
+                  "(%d chars, max_tokens=%d): %r", where, len(text), budget,
+                  text[:160])
+
+
+def _cloud_llm_json(system: str, user: str, *, max_tokens: int):
+    """One JSON call to the routine cloud model, inside the routine scope that
+    a cloud routing mode releases and pins. Returns (parsed, model name), or
+    None when the scope was not released (the mode changed): write locally."""
+    from agent_friday.services import local_call, local_only_guard
+    from agent_friday.services import reasoning_trace as _rt
+    from agent_friday.services.model_router import _generate_text
+    budget = cloud_writer_tokens(max_tokens)
+    with local_only_guard.local_only("Podcast", kind="routine", job="podcast") as scope, \
+            _rt.scope("podcast", "Podcast script"):
+        if not scope.released:
+            return None
+        model = local_only_guard.pinned_model()
+        raw = _generate_text([{"role": "user", "content": user}], system=system,
+                             model=model or None, max_tokens=budget,
+                             orb_label="Podcast script", workspace="podcasts")
+        out = local_call.extract_json(raw) if isinstance(raw, str) else None
+        if out is None:
+            _rt.set_reason("the cloud model did not return a usable script")
+    if out is None:
+        _unusable(raw, "cloud", budget)
+        raise render.RenderError("writer_failed",
+                                 "The cloud model did not return a usable script.")
+    _WRITER.used_cloud = True
+    return out, model or "cloud"
+
 
 def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, str]:
-    """One JSON call to the LOCAL model. Returns (parsed, model name)."""
+    """One JSON call to the writer. Returns (parsed, model name).
+
+    The LOCAL model, unless the episode being written on this thread is not
+    private and the owner chose cloud_only (`writer_scope`, set by
+    `_write`): then the routine cloud model, with `cloud_writer_tokens`."""
+    if writer_is_cloud(getattr(_WRITER, "route", None)):
+        got = _cloud_llm_json(system, user, max_tokens=max_tokens)
+        if got is not None:
+            return got
     from agent_friday.services import local_call, local_only_guard
     from agent_friday.services.scheduler import _resolve_local_seat
     seat = _resolve_local_seat()
@@ -640,40 +1029,65 @@ def _llm_json(system: str, user: str, *, max_tokens: int = 3000) -> tuple[dict, 
         else:
             _rt.model_call(seat, provider="local", seat="local")
     if out is None:
+        _unusable(None, "local", max_tokens)
         raise render.RenderError("writer_failed",
                                  "The local model did not return a usable script.")
     return out, seat
 
 
-SOLO_VOICE = (
-    "Her delivery: evidence first and dry. The calm authority of a network "
-    "anchor; the explainer's habit of building from what you need to know to "
-    "why it matters today; deadpan understatement, and now and then one dry, "
-    "well-placed aside (never at the expense of anyone harmed). Full sentences "
-    "with verbs: no flat fragments such as \"It's context.\" or \"It's the "
-    "scale.\" She labels her read as hers. When something is not confirmed, "
-    "she says so once, in the story, as a fact about the story (\"police have "
-    "not named a motive\"), never as a remark about herself or her process.\n")
+def _solo_voice(p: dict) -> str:
+    """The solo host's delivery, in the host's own pronouns (`p`: pronoun_forms)."""
+    they, their, self_ = p["subject"], p["possessive"], p["reflexive"]
+    says, labels = ("say", "label") if they == "they" else ("says", "labels")
+    owns = "theirs" if their == "their" else ("hers" if their == "her" else their)
+    return (
+        f"{their.capitalize()} delivery: evidence first and dry. The calm authority of a network "
+        "anchor; the explainer's habit of building from what you need to know to "
+        "why it matters today; deadpan understatement, and now and then one dry, "
+        "well-placed aside (never at the expense of anyone harmed). Full sentences "
+        "with verbs: no flat fragments such as \"It's context.\" or \"It's the "
+        f"scale.\" {they.capitalize()} {labels} {their} read as {owns}. When something is not confirmed, "
+        f"{they} {says} so once, in the story, as a fact about the story (\"police have "
+        f"not named a motive\"), never as a remark about {self_} or {their} process.\n")
+
+
+#: The solo delivery as she/her, as it has always read.
+SOLO_VOICE = _solo_voice({"subject": "she", "object": "her", "possessive": "her", "reflexive": "herself"})
+
+
+def _host_pronouns(host: dict) -> dict:
+    """A host's pronoun forms: the host's own (settings) or from the voice."""
+    from agent_friday.services import agent_identity
+    label = str((host or {}).get("pronouns") or "") or agent_identity.pronouns_for_voice((host or {}).get("voice"))
+    return agent_identity.pronoun_forms(label)
 
 
 def _host_brief(hosts: dict, fmt: str = "duo") -> str:
-    """Friday's own character (docs/brand/BRAND.md "Voice"): alone, or with a
-    co-host who keeps her honest. Never a generic two-host show."""
+    """Her own character (docs/brand/BRAND.md "Voice"): alone, or with a
+    co-host who keeps her honest. Never a generic two-host show. Each host is
+    written in the pronouns of the voice that speaks it (or the owner's)."""
     a, b = hosts["a"]["name"], hosts["b"]["name"]
+    pa, pb = _host_pronouns(hosts["a"]), _host_pronouns(hosts["b"])
+    they, their = pa["subject"], pa["possessive"]
+    plural = they == "they"
+    is_, has, labels, says = ("are", "have", "label", "say") if plural else ("is", "has", "labels", "says")
+    owns = "theirs" if their == "their" else ("hers" if their == "her" else their)
     if fmt == "solo":
         return (f"One host: speaker \"a\", {a}, alone. There is no co-host; every "
-                f"line is hers and speaks to the listener directly.\n" + SOLO_VOICE)
+                f"line is {owns} and speaks to the listener directly.\n" + _solo_voice(pa))
+    b_they = pb["subject"]
+    asks, pushes, names = ("ask", "push", "name") if b_they == "they" else ("asks", "pushes", "names")
     return (
-        f"Two hosts. Speaker \"a\" is {a}. She is calm and perceptive, with a dry "
-        f"warmth, and has a point of view of her own. Answer first, then the "
-        f"evidence: what the sources say, how sure she is, and what she did not "
-        f"check. She labels her opinion as her read and says plainly when the "
-        f"evidence is thin. Speaker \"b\" is {b}: she asks what a sharp listener "
-        f"would ask, pushes back on {a}'s read, and names what is missing or "
+        f"Two hosts. Speaker \"a\" is {a}. {they.capitalize()} {is_} calm and perceptive, with a dry "
+        f"warmth, and {has} a point of view of {their} own. Answer first, then the "
+        f"evidence: what the sources say, how sure {they} {is_}, and what {they} did not "
+        f"check. {they.capitalize()} {labels} {their} opinion as {their} read and {says} plainly when the "
+        f"evidence is thin. Speaker \"b\" is {b}: {b_they} {asks} what a sharp listener "
+        f"would ask, {pushes} back on {a}'s read, and {names} what is missing or "
         f"contested. Neither host praises the other or agrees just to agree.\n"
-        f"These are her character, not phrases to repeat: say what she did not "
+        f"These are {their} character, not phrases to repeat: say what {they} did not "
         f"check once, where it matters, not as a refrain, and vary the wording; "
-        f"\"my read\" is for her opinion, not every line. Once a point is made, "
+        f"\"my read\" is for {their} opinion, not every line. Once a point is made, "
         f"move on to the next.\n")
 
 
@@ -1692,14 +2106,29 @@ def _gather(ep: dict) -> list[dict]:
         others = ep["refs"]
     extra = []
     errors = []
+    warnings = []
     for r in others:
         try:
-            extra += sources_mod.resolve(r)
+            got, warned = sources_mod.resolve_with_warnings(r)
+            extra += got
+            warnings += warned
         except sources_mod.SourceError as e:
             errors.append("%s — %s" % (sources_mod.describe(r), e))
     if errors and not (extra or docs):
         raise render.RenderError("sources_unreadable", "; ".join(errors[:4]))
-    ep["source_errors"] = errors
+    # A page named twice (a web source and a link in the notes, or two
+    # notes) is one source.
+    seen, unique = set(), []
+    for d in extra:
+        key = sources_mod.link_key(d["url"]) if d.get("url") else None
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        unique.append(d)
+    extra = unique
+    # Shown with the episode's sources, never dropped in silence.
+    ep["source_errors"] = errors + warnings
     numbered = sources_mod.number(extra)
     if docs:
         # Facts keep their F ids; documents follow as S ids.
@@ -1809,15 +2238,27 @@ def queue_job(ep: dict) -> dict:
 def _write(eid: str, ep: dict, orb: str, stop) -> dict | None:
     """The writing stage: sources, the script, the gate. Returns the updated
     episode, or None when it was stopped while writing."""
-    ep = _update(eid, status="writing", stage_detail="the local model is writing")
+    route = writer_route(ep)
+    ep = _update(eid, status="writing", stage_detail=(
+        "the cloud model is writing" if writer_is_cloud(route)
+        else "the local model is writing"))
     docs = _gather(ep)
     if not docs:
         raise render.RenderError("no_sources", "There was nothing to talk about.")
+    if writer_is_cloud(route) and any(d.get("private") for d in docs):
+        # A private source (a dataset's facts, a file) keeps the script on
+        # this computer, whatever the routing mode.
+        route = None
+        ep = _update(eid, stage_detail="the local model is writing")
     if (ep.get("attached") or {}).get("routine") and not ep.get("open"):
         ep = _update(eid, open=stamp_open(dict(ep))["open"])
-    script = write_script(ep, docs, progress=lambda i, n: (
-        _update(eid, progress={"stage": "writing", "done": i, "of": n}),
-        _orb(orb, "progress", ep, (i / n) * 0.4)), stop=stop)
+    if writer_is_cloud(route):
+        _wlog.info("podcast %s: the script is written on the cloud model %s: %s",
+                   eid, route.model or "(configured)", route.reason)
+    with writer_scope(route) as _ws:
+        script = write_script(ep, docs, progress=lambda i, n: (
+            _update(eid, progress={"stage": "writing", "done": i, "of": n}),
+            _orb(orb, "progress", ep, (i / n) * 0.4)), stop=stop)
     if stop():
         return None
     hard = [p for p in script["script_check"]["problems"] if p["code"] in quality.HARD_CODES]
@@ -1843,6 +2284,7 @@ def _write(eid: str, ep: dict, orb: str, stop) -> dict | None:
                  # Which stories were told from their full article, which from a summary.
                  articles=script.get("depth") or None,
                  writer_model=script["model"],
+                 writer_where="cloud" if _ws.used_cloud else "this computer",
                  facts=[{k: f[k] for k in ("id", "text", "expr") if k in f}
                         for f in ep.get("_facts") or [] if not f.get("names_only")] or None,
                  charts=ep.get("charts"), data=ep.get("data"),
@@ -2231,6 +2673,8 @@ def transcript_bytes(ep: dict) -> bytes:
                                                      (" (via %s)" % s["via"]) if s.get("via") else "",
                                                      s["title"], s["url"])
                                for s in heard] or ["  (no linked source)"])
+    # What could not be used, said where the sources are, never dropped in silence.
+    out += ["  Not used: %s" % e for e in ep.get("source_errors") or []]
     return ("\n".join(out) + "\n").encode("utf-8-sig")
 
 
@@ -2254,7 +2698,7 @@ def _write_provenance(ep: dict, audio: Path) -> None:
     try:
         from agent_friday.services import provenance
         chain = [{"tool": "podcast_engine.write_script", "model": ep.get("writer_model"),
-                  "where": "this computer"}]
+                  "where": ep.get("writer_where") or "this computer"}]
         if ep.get("voice_engine") == "cloud":
             chain.append({"tool": "gemini_tts", "where": "cloud (owner's choice)"})
         else:

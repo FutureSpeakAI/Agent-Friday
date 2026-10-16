@@ -1166,8 +1166,6 @@ def _store_passphrase_and_say(pw: str) -> list:
         written = []
     if written:
         console.print(f"  [dim]Stored in: {', '.join(written)}.[/dim]")
-    elif getattr(_vp, "LAST_STORE_REFUSAL", ""):
-        console.print("  [red]Not stored:[/red] [dim]" + _vp.LAST_STORE_REFUSAL + ".[/dim]")
     else:
         console.print("  [red]Friday could not store the passphrase on this computer\n"
                       "  (no OS keychain and no DPAPI).[/red] [dim]Set\n"
@@ -1335,8 +1333,6 @@ def step_vault_password(total: int, existing: str, step: int = 2) -> str:
         console.print("  [green]Vault encryption enabled.[/green]  "
                       f"[dim]Passphrase stored in: {', '.join(written)}.[/dim]\n")
         _record_onboarding(vault_skipped=False)
-    elif getattr(_vp, "LAST_STORE_REFUSAL", ""):
-        console.print("  [red]Not stored:[/red] [dim]" + _vp.LAST_STORE_REFUSAL + ".[/dim]\n")
     else:
         # Do NOT quietly fall back to a file. The whole point of this release is
         # that the passphrase stopped living somewhere that gets deleted.
@@ -1860,6 +1856,10 @@ def main():
     if chosen_mode:
         block = dict(config.get("model_routing") or existing.get("model_routing") or {})
         block["mode"] = chosen_mode
+        # The owner answered the routing screen: the record that this mode was
+        # chosen, not seeded (cloud_intent.mode_was_chosen).
+        block["mode_chosen"] = str(chosen_mode).strip().lower()
+        block["mode_chosen_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         config["model_routing"] = block
 
     # Defaults that server expects
