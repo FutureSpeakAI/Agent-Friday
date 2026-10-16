@@ -256,9 +256,9 @@ def test_both_agent_loops_and_voice_mark_the_input_as_sent():
     claude_src = inspect.getsource(A._call_claude_agent_run)
     oai_src = inspect.getsource(A._oai_agentic_loop_run)
     assert "for_tool_call as _pq_call" in claude_src
-    assert "tu.name, tu.input):" in claude_src
+    assert "_pq_name, tu.input):" in claude_src
     assert "for_tool_call as _pq_call" in oai_src
-    assert "model or \"\", tname, targs):" in oai_src
+    assert "model or \"\", _pq_name, targs):" in oai_src
     for src in (claude_src, oai_src):
         assert "author_provider=_LOOP_PROVIDER.get()" in src
     assert "_pq_call(c.get(\"provider\", \"cloud\"), \"\", tool, a)" in inspect.getsource(V)
@@ -782,9 +782,10 @@ def wire(monkeypatch, cards):
 
 
 def _hold(query, *, provider="anthropic", model="claude-x", request=None,
-          pii_lookup=None, tool="search_web"):
+          pii_lookup=None, tool="search_web", args=None):
     from agent_friday.services import agent as A
-    args = {"query": query} if tool == "search_web" else {"question": query}
+    if args is None:
+        args = {"query": query} if tool == "search_web" else {"question": query}
     return A._public_query_hold(provider, model, tool, args,
                                 pii_lookup=pii_lookup,
                                 request=request if request is not None
@@ -925,26 +926,38 @@ def test_a_floor_item_is_refused_even_with_approval(cards, wire, floor):
         "an approval let a never-send token out"
 
 
-def test_voice_and_local_seats_are_unaffected(cards, wire):
-    """(5) A local seat never asks (nothing leaves the device); a voice seat
-    has no card to wait on, so the live dispatcher does not ask and its query
-    keeps the floor-only rule. Red on f6212dc4b: no _public_query_hold."""
-    from agent_friday.privacy import public_query as pq
+def test_a_cloud_voice_seat_asks_and_a_local_seat_does_not(cards, wire):
+    """(5) The owner's rule covers every cloud-written search, spoken ones
+    included: a cloud voice seat's search that repeats the owner's words
+    waits on the card (the seat is told it waits on screen); a local voice
+    seat and a local chat seat never ask. Red on 55b31e73a: the voice
+    dispatcher sent the shared query straight to the search engine."""
     from agent_friday.services import voice_engine as V
-    from agent_friday.services import web_search as ws
+    ap = cards["ap"]
     assert _hold(SHARED_Q, provider="ollama", model="llama3.1:8b") is None
     assert _hold(SHARED_Q, provider="local", model="") is None
-    assert _pending(cards["ap"]) == []
+    assert _pending(ap) == []
     # The same query from a cloud-tagged model is a cloud seat: it asks.
     assert _hold(SHARED_Q, provider="ollama", model="glm-4.6:cloud").startswith(
         "[APPROVAL CARD RAISED]")
+    for c in _pending(ap):
+        ap.decide(c["approval_id"], "deny", decided_by="owner:ui")
 
-    voice_src = inspect.getsource(V)
-    assert "_public_query_hold" not in voice_src and "needs_approval" not in voice_src
-    with pq.for_tool_call("anthropic", "", "search_web", {"query": SHARED_Q}):
-        gated, refusal = ws._gate_search_query(SHARED_Q, "duckduckgo-scrape")
-    assert refusal == "" and gated == SHARED_Q
-    assert not any(SHARED_Q in t for t in wire["topic"])
+    voice_q = "the doctor wants to talk on Thursday about results"
+    said = V._voice_tool_run("search_web", {"query": voice_q}, lambda _o: None,
+                             session={"conversation_id": CONV_ID,
+                                      "owner_text": EMAIL_LINE})
+    assert str(said).startswith("[APPROVAL CARD RAISED]"), said
+    assert "on screen" in said
+    assert voice_q not in wire["sent"], "a cloud voice seat's shared query went out"
+    assert [c["action_description"] for c in _pending(ap)] == [voice_q]
+
+    before = len(_pending(ap))
+    said = V._voice_tool_run("search_web", {"query": voice_q}, lambda _o: None,
+                             session={"conversation_id": CONV_ID, "engine": "local",
+                                      "owner_text": EMAIL_LINE})
+    assert not str(said).startswith("[APPROVAL CARD RAISED]")
+    assert len(_pending(ap)) == before, "a local voice seat raised a card"
 
 
 def test_both_agent_loops_ask_before_running_a_shared_query():
@@ -987,3 +1000,129 @@ def test_the_replay_registry_is_keyed_by_provider_and_model(tmp_path):
     # seal_outbound checks the seat the payload itself names.
     assert 'model=str(model or payload.get("model") or "")' in \
         inspect.getsource(eg.seal_outbound)
+
+
+# ── the card shows all of what Send sends (critic review of 55b31e73a) ─────
+
+def _crafted_card(ap, query, shown):
+    """A search card whose stored action text is `shown` (the store keeps at
+    most 1000 characters of it) while Send would run `query`."""
+    return ap.create_approval(
+        kind="tool_confirm", subject_type="tool_action",
+        subject_id="public_query:test:%d" % len(query), title="Send this web search?",
+        action_description=shown, description="This search repeats words.",
+        force_gate=True, requested_by="public_query",
+        payload={"tool": "search_web", "input": {"query": query},
+                 "conversation_id": CONV_ID,
+                 "public_query": {"provider": "anthropic", "model": "claude-x",
+                                  "engine": "DuckDuckGo", "texts": [query]}})
+
+
+def test_a_query_longer_than_the_card_is_not_carded_or_sent(cards, wire):
+    """HIGH. The store cuts a card's action text at 1000 characters, while
+    Send ran the whole input. Red on 55b31e73a: a 1,300-character shared
+    query raised a card that showed only its first 1000 characters, and an
+    approved card whose text no longer matched its input still ran."""
+    ap = cards["ap"]
+    long_q = SHARED_Q + " tail" * 260
+    assert len(long_q) > 1000
+    said = _hold(long_q)
+    assert said.startswith("[NOT RUN]") and "too long" in said, said
+    assert _pending(ap) == []
+
+    card = _crafted_card(ap, long_q, long_q[:1000])
+    assert card["action_description"] != long_q
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    assert wire["sent"] == [], "Send ran text the card never showed"
+    assert any("did not match" in t for t in cards["posted"])
+
+
+def test_invisible_format_characters_are_not_carded(cards, wire):
+    """LOW. A bidi override or zero-width character makes the card read
+    differently from what is sent. Red on 55b31e73a: the card was raised."""
+    for ch in ("‮", "​"):
+        said = _hold(SHARED_Q + ch + " gnirts")
+        assert said.startswith("[NOT RUN]") and "invisible" in said, said
+    assert _pending(cards["ap"]) == []
+
+
+def test_a_search_card_is_approved_only_by_the_send_button(cards, wire):
+    """MEDIUM. Only the owner's click on screen, where the exact text shows,
+    sends a search card: not voice, not a text message, not a chat claim, not
+    a batch. Red on 55b31e73a: decide() with owner:sms or owner:/voice/
+    approved it."""
+    from agent_friday.services import approval_batches as ab
+    ap = cards["ap"]
+    _hold(SHARED_Q)
+    [card] = _pending(ap)
+    aid = card["approval_id"]
+    for who in ("owner:sms", "owner:/voice/", "owner", "friday"):
+        assert ap.decide(aid, "approve", decided_by=who)["status"] == "pending", who
+        assert "Send button" in ap.refusal_for(aid, "approve", who)
+    assert not ap.claim_chat_confirmation(aid, "search_web", {"query": SHARED_Q})
+    assert not ab.batchable(ap.get_approval(aid))
+    assert ap.decide(aid, "deny", decided_by="owner:sms")["status"] == "denied"
+
+
+def test_a_deep_research_card_shows_its_context_and_says_what_the_job_sends(cards):
+    """MEDIUM. deep_research's context shapes the searches the job derives,
+    and those derived searches are not the text shown. Red on 55b31e73a: the
+    card showed only the question and said Send sends exactly that."""
+    ap = cards["ap"]
+    said = _hold(SHARED_Q, tool="deep_research",
+                 args={"question": SHARED_Q, "context": "for a family member"})
+    assert said.startswith("[APPROVAL CARD RAISED]"), said
+    [card] = _pending(ap)
+    assert card["action_description"] == SHARED_Q + "\nBackground: for a family member"
+    assert "standard privacy gate" in card["description"]
+    assert "sends exactly the text shown" not in card["description"]
+
+
+def test_a_card_that_cannot_be_prepared_does_not_abort_the_turn(cards, monkeypatch):
+    """LOW. Red on 55b31e73a: the subject was computed outside the try, so a
+    failure there raised out of the agent loop instead of NOT RUN."""
+    from agent_friday.services import taint
+
+    def boom(*_a, **_k):
+        raise RuntimeError("ledger down")
+
+    monkeypatch.setattr(taint, "fingerprint", boom)
+    said = _hold(SHARED_Q)
+    assert said.startswith("[NOT RUN]"), said
+    assert _pending(cards["ap"]) == []
+
+
+def test_the_approved_search_report_names_the_card_and_is_scrubbed(cards, wire, monkeypatch):
+    """Cheap fix 7. Red on 55b31e73a: the post-back quoted the tool input and
+    the raw result, so an address in a result row went into the transcript
+    that replays to cloud seats."""
+    from agent_friday.services import web_search as W
+    addr = "someone.synthetic@example.org"
+
+    def ddg(q, n):
+        wire["sent"].append(q)
+        return {"status": W.SearchStatus.OK, "detail": "", "results": [
+            {"title": "Synthetic row", "url": "https://example.org/r",
+             "snippet": "write to " + addr}]}
+
+    monkeypatch.setattr(W, "_duckduckgo", ddg)
+    ap = cards["ap"]
+    _hold(SHARED_Q)
+    [card] = _pending(ap)
+    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    assert wire["sent"] == [SHARED_Q]
+    [report] = [t for t in cards["posted"] if t.startswith("Approved search (card ")]
+    assert addr not in report and '{"query"' not in report
+
+
+def test_the_vault_check_and_the_card_judge_the_tool_that_will_run():
+    """LOW-MED. A near-miss name ("search.web") runs search_web, so the vault
+    check and the card must judge search_web. Red on 55b31e73a: both loops
+    passed the raw name, which is no public-query tool, so no card asked."""
+    from agent_friday.services import agent as A
+    assert A._resolve_tool_name("search.web")[0] == "search_web"
+    assert A._resolve_tool_name("deep-research")[0] == "deep_research"
+    for src in (inspect.getsource(A._call_claude_agent_run),
+                inspect.getsource(A._oai_agentic_loop_run)):
+        assert "_resolve_tool_name(" in src and "_pq_name" in src
+        assert "_zt_provider, _pq_name," in src

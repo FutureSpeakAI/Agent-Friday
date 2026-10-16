@@ -106,6 +106,15 @@ DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 #: message, not a typed reply, not any other channel; declining is open to every channel.
 LAYA_CARD_APPROVERS = frozenset({"owner:ui", "owner:/voice/"})
 
+#: Who may APPROVE a search card (payload.public_query, privacy/public_query): only the Send button on the
+#: screen, where the owner sees the exact text that would go out. Not voice, not a text message, not a chat
+#: reply, not a batch; declining is open to every channel.
+PUBLIC_QUERY_CARD_APPROVERS = frozenset({"owner:ui"})
+
+
+def _is_public_query_card(rec: Dict[str, Any]) -> bool:
+    return isinstance((rec.get("payload") or {}).get("public_query"), dict)
+
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
@@ -575,7 +584,7 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
     with _LOCK:
         recs = _read_store()
         rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
-        if (not rec or rec.get("kind") != "tool_confirm"
+        if (not rec or rec.get("kind") != "tool_confirm" or _is_public_query_card(rec)
                 or rec.get("status") not in {"pending", "approved"}
                 or rec.get("consumed") or rec.get("executing_at")):
             return False
@@ -694,6 +703,9 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if (decision == "approve" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
                 and decided_by not in LAYA_CARD_APPROVERS):
             return dict(rec), False
+        if (decision == "approve" and _is_public_query_card(rec)
+                and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
@@ -715,6 +727,10 @@ def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
             and decided_by not in LAYA_CARD_APPROVERS):
         return ("A card Laya raised is approved with its own Approve button in the app, where you see which "
                 "conversations. It cannot be approved from here.")
+    if (rec.get("status") == "pending" and _is_public_query_card(rec)
+            and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
+        return ("A search card is sent only with its own Send button in the app, where you see the exact "
+                "text that would go out. It cannot be approved from here.")
     return ""
 
 

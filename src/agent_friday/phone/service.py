@@ -595,6 +595,8 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
                 continue
             if (rec.get("payload") or {}).get("origin") == "laya_safe_write":
                 continue                    # a card Laya raised is approved on the screen (or by voice): no text offer
+            if isinstance((rec.get("payload") or {}).get("public_query"), dict):
+                continue                    # a search card is sent only from its Send button, where its text shows
             code, salt = _new_code(), secrets.token_hex(8)
             title = _gate_text((rec.get("title") or "an action")[:120])
             body = ("Friday needs your approval: %s\nReply YES %s to approve or NO %s to "
@@ -659,6 +661,10 @@ def handle_approval_reply(text: str, now: Optional[float] = None) -> Optional[st
             _save_state("sms_approvals.json", st)
             return ("A card Laya raised is approved only on screen, in the app, where you see which "
                     "conversations. Nothing was changed; reply NO %s to decline it." % code)
+        if decision == "approve" and isinstance((card.get("payload") or {}).get("public_query"), dict):
+            _save_state("sms_approvals.json", st)
+            return ("A search card is sent only on screen, in the app, where you see the exact text. "
+                    "Nothing was changed; reply NO %s to decline it." % code)
         if decision == "approve" and card.get("kind") in ap.SCREEN_ONLY_KINDS:
             # Said plainly, and the code is kept so a NO still works: this kind
             # of card is approved only by a click on screen.

@@ -125,9 +125,24 @@ Which tools ask (``CARD_TOOLS``): ``search_web`` (the query goes to the
 configured search backend chain) and ``deep_research`` (the question and
 sub-questions seed a research job that searches that same chain).
 ``search_news`` does not ask: its query is matched against the news feed
-already on this computer and is not sent anywhere. Voice seats do not ask
-(a live call has no card to wait on; their queries keep the rules above) and
+already on this computer and is not sent anywhere. A cloud voice seat asks
+too (services/voice_engine: the card waits on screen and the seat says so);
 local seats never ask (nothing leaves the device).
+
+A paraphrase does not ask: the check is verbatim runs and filled-in tags, so a
+seat that restates private context in its own words is not caught here. That
+is a known limit of a deterministic check, not a promise.
+
+The card must show all of what Send sends, faithfully. A card's text is every
+public query string plus, for deep_research, its ``context``
+(``card_text_for``); a text longer than ``CARD_TEXT_MAX`` or holding invisible
+format characters (Unicode Cf, bidi controls) is not carded and does not run
+(``card_problem``). An approved card runs only when its stored text is still
+exactly ``card_text_for`` its input (``approved_texts``). Only the Send button
+on screen approves one (approvals.PUBLIC_QUERY_CARD_APPROVERS): not voice, a
+text message, a chat reply or a batch. For deep_research, Send starts the job
+with the text shown; the searches the job derives from it each go through the
+ordinary privacy gate, and the card says so.
 """
 
 from __future__ import annotations
@@ -836,22 +851,60 @@ def needs_approval(provider: str, model: str, tool: str, sent_args: Any,
 
 def card_title(share: Share) -> str:
     if share.tool == "deep_research":
-        return "Start deep research that searches the web with this text?"
+        return "Start deep research with this text?"
     return "Send this web search?"
 
 
+#: The most text a card may show. The approvals store keeps at most this many
+#: characters of a card's action text (approvals.create_approval), and a card
+#: must show all of what Send would send, so a longer query is not carded.
+CARD_TEXT_MAX = 1000
+
+
+def card_text_for(tool: str, args: Any) -> str:
+    """Exactly what a card shows for `tool` run with `args`: every public
+    query string, one per line, and for deep_research the background
+    (`context`) the job also starts from. approved_scope recomputes this from
+    the card's payload and runs it only when it equals what the card showed."""
+    parts = split_args(str(tool or ""), args)
+    lines = list(parts[0]) if parts else []
+    if str(tool or "") == "deep_research" and isinstance(args, dict):
+        ctx = args.get("context")
+        if isinstance(ctx, str) and ctx.strip():
+            lines.append("Background: " + ctx)
+    return "\n".join(lines)
+
+
 def card_text(share: Share) -> str:
-    """Exactly the text that would go out, one string per line."""
-    return "\n".join(share.texts)
+    return card_text_for(share.tool, share.args)
+
+
+def card_problem(share: Share) -> str:
+    """Why `share` cannot be shown faithfully on a card ("" when it can): text
+    too long for the card to hold, or invisible formatting characters
+    (Unicode Cf: zero-width and bidi controls) that would make the shown text
+    read differently from what is sent."""
+    text = card_text(share)
+    if len(text) > CARD_TEXT_MAX:
+        return ("the query is too long to show on an approval card; shorten "
+                "the query")
+    if any(unicodedata.category(ch) == "Cf" for ch in text):
+        return ("the query holds invisible formatting characters that would "
+                "make the card read differently from what is sent; rewrite it "
+                "without them")
+    return ""
 
 
 def card_why(share: Share) -> str:
     why = " and ".join(_SHARE_REASON_TEXT.get(r, r) for r in share.reasons)
-    goes = (f"The research job searches {share.engine} with it and reads the "
-            f"pages it finds." if share.tool == "deep_research"
-            else f"It goes to {share.engine}.")
-    return (f"This search {why}. {goes} Send sends exactly the text shown; "
-            f"Don't send sends nothing.")
+    if share.tool == "deep_research":
+        return (f"This research request {why}. Send starts a research job with "
+                f"exactly the text shown. The job plans its own searches from "
+                f"it; each search it derives goes through the standard privacy "
+                f"gate before it is sent to {share.engine}, and it reads the "
+                f"pages it finds. Don't send starts nothing.")
+    return (f"This search {why}. Send sends exactly the text shown to "
+            f"{share.engine}. Don't send sends nothing.")
 
 
 def card_note(share: Share) -> str:
@@ -859,11 +912,12 @@ def card_note(share: Share) -> str:
     why = " and ".join(_SHARE_REASON_TEXT.get(r, r) for r in share.reasons)
     return (f"[APPROVAL CARD RAISED] '{share.tool}' was NOT executed and "
             f"nothing was sent: the query {why}, so the user decides on an "
-            f"approval card whether to send it to {share.engine}. Do NOT call "
-            f"it again this turn and do not ask for a yes in chat instead. "
-            f"Tell the user plainly that a card is waiting (Approvals) and "
-            f"what it is for. If they choose Send, the search runs and its "
-            f"result is posted into this conversation.")
+            f"approval card on screen whether to send it to {share.engine}. "
+            f"Do NOT call it again this turn and do not ask for a yes in chat "
+            f"or by voice instead: only the Send button on the card approves "
+            f"it. Tell the user plainly that a card is waiting on screen "
+            f"(Approvals) and what it is for. If they choose Send, the search "
+            f"runs and its result is posted into this conversation.")
 
 
 def declined_note(tool: str) -> str:
@@ -873,24 +927,45 @@ def declined_note(tool: str) -> str:
             f"without it, or ask the user how they would like to go on.")
 
 
-def approved_scope(payload: Any):
-    """The context an approved public-query card runs in.
+def is_public_query_card(record: Any) -> bool:
+    """A card raised by agent._public_query_card (payload.public_query)."""
+    return (isinstance(record, dict)
+            and isinstance((record.get("payload") or {}).get("public_query"), dict))
 
-    cloud_authored(provider, <the approved strings>) when `payload` is a
-    public-query card's payload whose input still holds exactly the strings
-    the card showed; otherwise a no-op, which keeps the ordinary topic gate.
-    The search gates then apply the floor (gate_outbound) to exactly those
-    strings: an approval never lets a floor item out."""
+
+def approved_texts(record: Any) -> Optional[list]:
+    """The strings an approved public-query card may send, or None when the
+    card does not hold up: its input must still hold exactly the strings it
+    listed, AND its stored action text must be exactly card_text_for(its
+    input) -- what the owner saw is all of what runs. services/approval_executor
+    does not run a public-query card for which this is None."""
     try:
-        pq = (payload or {}).get("public_query")
-        tool = str((payload or {}).get("tool") or "")
+        payload = (record or {}).get("payload") or {}
+        pq = payload.get("public_query")
+        tool = str(payload.get("tool") or "")
         if not isinstance(pq, dict) or tool not in CARD_TOOLS:
-            return contextlib.nullcontext()
-        parts = split_args(tool, (payload or {}).get("input"))
+            return None
+        args = payload.get("input")
+        parts = split_args(tool, args)
         texts = list(parts[0]) if parts else []
         shown = [x for x in (pq.get("texts") or []) if isinstance(x, str)]
         if not texts or [_norm_query(t) for t in texts] != [_norm_query(t) for t in shown]:
-            return contextlib.nullcontext()
-        return cloud_authored(str(pq.get("provider") or "cloud"), texts)
+            return None
+        if (record or {}).get("action_description") != card_text_for(tool, args):
+            return None
+        return texts
     except Exception:
+        return None
+
+
+def approved_scope(record: Any):
+    """The context an approved public-query card runs in:
+    cloud_authored(provider, approved_texts(record)), so the search gates
+    apply the floor (gate_outbound) to exactly those strings -- an approval
+    never lets a floor item out. A no-op for any other card (or one that does
+    not hold up), which keeps the ordinary topic gate."""
+    texts = approved_texts(record)
+    if not texts:
         return contextlib.nullcontext()
+    pq = ((record or {}).get("payload") or {}).get("public_query") or {}
+    return cloud_authored(str(pq.get("provider") or "cloud"), texts)

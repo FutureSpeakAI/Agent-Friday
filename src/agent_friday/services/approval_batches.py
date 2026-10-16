@@ -77,6 +77,8 @@ def batchable(rec: dict) -> bool:
     allowed = BATCHABLE_KINDS.get(rec.get("kind"))
     if allowed is None or rec.get("kind") in _approvals().SCREEN_ONLY_KINDS:
         return False
+    if isinstance((rec.get("payload") or {}).get("public_query"), dict):
+        return False                         # a search card is sent only from its own Send button
     cls = str(rec.get("policy_class") or "")
     if cls in NEVER_BATCH_CLASSES or cls not in allowed:
         return False                         # an allowlist of (kind, class) pairs, not a keyword guess
