@@ -885,3 +885,14 @@ def test_a_file_check_that_breaks_withholds_the_read(cards, tmp_path, monkeypatc
     monkeypatch.setattr(codebases, "read", lambda cid, rel: "the secret contents")
     out = agent._tool_codebase_read({"path": "notes.md"})
     assert out["status"] == "held" and "secret" not in out["content"]
+
+
+def test_the_address_line_check_is_linear():
+    import time
+    lines = ["%s%s!" % ("to: " if i % 2 else "", "ab" * 50) for i in range(2000)]
+    t0 = time.monotonic()
+    for u in lines:
+        jg._skip(u, False)
+    assert time.monotonic() - t0 < 0.5
+    assert jg._skip("to: sam doe <~pii~>", False) and jg._skip("~pii~", False)
+    assert not jg._skip("~pii~ diagnosed: melanoma, stage two, see the attached", False)

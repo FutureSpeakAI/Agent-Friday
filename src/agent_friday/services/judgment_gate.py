@@ -301,8 +301,11 @@ _SEPARATOR = re.compile(
 _WORD = re.compile(r"[^\W\d_]{2,}")
 # An address line and nothing else: an optional header name, up to three
 # words of a name, then the address. "~pii~ diagnosed: melanoma" is not one.
+# Each name word ends in whitespace, so a long word splits into words one
+# way only (no backtracking over every split of it).
 _ADDRESS_ONLY = re.compile(
-    r"^(?:(?:to|from|cc|bcc|reply-to|sender|sent by)\s*:\s*)?(?:[^\W\d_][\w.'-]{0,30} ?){0,3}[<(]?~pii~[>),;\s]*$", re.I)
+    r"^(?:(?:to|from|cc|bcc|reply-to|sender|sent by)\s*:\s*)?(?:[^\W\d_][\w.'-]{0,30}\s+){0,3}[<(]?~pii~[>),;\s]*$",
+    re.I)
 
 
 def _words(u: str) -> int:
@@ -317,7 +320,7 @@ def _skip(u: str, finance: bool) -> bool:
         return True                      # a footer that carries a figure is content
     if len(u) < RAW_SPECIFIC and _COMMON.match(u):
         return True
-    if _ADDRESS_ONLY.match(u):
+    if "~pii~" in u and _ADDRESS_ONLY.match(u):
         return True                      # a name and an address ("to: Sam Doe <~pii~"), nothing more
     if finance and len(u) < RAW_UNIT_MIN and (not any(c.isdigit() for c in u) or _FINANCE_SHAPE.match(u)):
         return True
