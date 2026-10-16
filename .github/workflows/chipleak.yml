@@ -1,4 +1,4 @@
-name: chipleak
+﻿name: chipleak
 
 # CI-only (draft PR, never merged): reproduce and bisect the order-dependent
 # failure of tests/api/test_workspace_job_card_ui.py. The PC has < 4 GB free.
@@ -43,7 +43,7 @@ jobs:
       - name: Chromium for Playwright
         run: python -m playwright install --with-deps chromium
       - name: ${{ matrix.mode }}
-        run: python .ci/chipleak/bisect.py ${{ matrix.mode }} out .ci/chipleak/pre.txt
+        run: python .ci/chipleak/chipbisect.py ${{ matrix.mode }} out .ci/chipleak/pre.txt
       - name: Keep logs, junit, desk payloads and shots
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
