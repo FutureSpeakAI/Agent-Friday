@@ -16,8 +16,14 @@ WHAT THIS IS NOT
     which reconstructs the whole outbound request and scans it for anything
     identifying, and the test directly below it which proves that scanner fires.
 
-    It is also not a downloader. It never fetches an asset, never unpacks
-    anything, never runs an installer. The notification carries a LINK.
+    It is also not a downloader. It never fetches an installer, never unpacks
+    anything, never runs one. The notification carries a LINK. The one asset
+    it reads is the newest release's small signed manifest
+    (release-manifest.json and its .minisig), to say whether the release
+    really comes from FutureSpeak before recommending it: the signature must
+    verify against trust_keys.RELEASE_KEYS, the manifest must name the same
+    version, must not have expired, and must not be older than what is
+    installed. Those reads carry nothing about this install either.
 
     And it is not a fourth update path. `install.ps1` is how Friday updates;
     `friday status` is where the version truth lives. This module consumes
@@ -265,9 +271,108 @@ def check_for_update() -> dict:
             and result["latest_sequence"] > result["current_sequence"]):
         result["update_available"] = True
         result["reason"] = "update_available"
+        result["verification"] = verify_release(newest, current_sequence=result["current_sequence"])
+        if result["verification"]["state"] in refused_states():
+            # A manifest that is present and fails is not a release to recommend.
+            result["update_available"] = False
+            result["reason"] = "release_not_verified"
     else:
         result["reason"] = "up_to_date"
     return result
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  The signed release manifest
+# ═════════════════════════════════════════════════════════════════════════════
+
+MANIFEST_ASSET = "release-manifest.json"
+MANIFEST_MAX_BYTES = 256 * 1024
+#: A manifest that is present and fails one of these is refused outright.
+REFUSED_STATES = ("bad_signature", "expired", "downgrade", "mismatch")
+#: The name the release key signs into each manifest's trusted comment.
+MANIFEST_NAME = "agent-friday-release"
+
+
+def refused_states() -> tuple:
+    """Once this copy has a release key, a release whose manifest is missing
+    or cannot be read is refused too: stripping the signature must not be a
+    way past checking it."""
+    from agent_friday.services import trust_keys
+    if trust_keys.RELEASE_KEYS:
+        return REFUSED_STATES + ("unsigned", "unreachable")
+    return REFUSED_STATES
+
+#: Test seam: callable(url, max_bytes) -> bytes. None means a plain GET.
+FETCH_ASSET = None
+
+
+def _fetch_asset(url: str, max_bytes: int) -> bytes:
+    from agent_friday.services import web_safety
+    resp = web_safety.safe_get(url, timeout=REQUEST_TIMEOUT, stream=True)
+    try:
+        if resp.status_code != 200:
+            raise ValueError("HTTP %d" % resp.status_code)
+        out = bytearray()
+        for chunk in resp.iter_content(32 * 1024):
+            out += chunk
+            if len(out) > max_bytes:
+                raise ValueError("too large")
+        return bytes(out)
+    finally:
+        resp.close()
+
+
+def verify_release(release: dict, *, current_sequence=None, today=None) -> dict:
+    """{"state", "words"}: whether the release's signed manifest says it is ours.
+
+    state: verified | unsigned (no manifest published) | no_trusted_key |
+    unreachable | bad_signature | expired | downgrade | mismatch."""
+    from datetime import date, datetime, timezone
+
+    from agent_friday.services import minisign, trust_keys
+    assets = {str(a.get("name") or ""): str(a.get("browser_download_url") or "")
+              for a in (release.get("assets") or []) if isinstance(a, dict)}
+    murl, surl = assets.get(MANIFEST_ASSET), assets.get(MANIFEST_ASSET + ".minisig")
+    if not murl or not surl:
+        return {"state": "unsigned",
+                "words": ("This release has no signed manifest, so I couldn't check it came from "
+                          "FutureSpeak. Compare the installer's SHA-256 with the one on the release page "
+                          "before running it.")}
+    if not trust_keys.RELEASE_KEYS:
+        return {"state": "no_trusted_key",
+                "words": "This copy of Friday has no release-signing key to check against yet."}
+    get = FETCH_ASSET or _fetch_asset
+    try:
+        body = get(murl, MANIFEST_MAX_BYTES)
+        sig = get(surl, 4096).decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001
+        _log.info("update check: manifest unreachable (%s)", type(e).__name__)
+        return {"state": "unreachable", "words": "I couldn't read the release's signed manifest."}
+    try:
+        signed = minisign.verify(body, sig, trust_keys.RELEASE_KEYS)
+        manifest = json.loads(body.decode("utf-8"))
+    except (minisign.SignatureError, ValueError, UnicodeDecodeError) as e:
+        return {"state": "bad_signature",
+                "words": "The release's manifest does not verify (%s). I won't recommend it." % e}
+    if signed["meta"].get("name") != MANIFEST_NAME:
+        return {"state": "bad_signature",
+                "words": "The signature is not for a release manifest. I won't recommend it."}
+    tag = str(release.get("tag_name") or "").lstrip("vV")
+    if not isinstance(manifest, dict) or str(manifest.get("version") or "").lstrip("vV") != tag:
+        return {"state": "mismatch", "words": "The signed manifest names a different version. I won't recommend it."}
+    try:
+        expires = date.fromisoformat(str(manifest.get("expires") or ""))
+    except ValueError:
+        return {"state": "bad_signature", "words": "The signed manifest has no expiry. I won't recommend it."}
+    if expires < (today or datetime.now(timezone.utc).date()):
+        return {"state": "expired", "words": "The release's signed manifest expired on %s." % expires.isoformat()}
+    seq = manifest.get("build_sequence")
+    if not isinstance(seq, int) or isinstance(seq, bool):
+        return {"state": "mismatch", "words": "The signed manifest has no build number. I won't recommend it."}
+    if current_sequence is not None and seq <= current_sequence:
+        return {"state": "downgrade", "words": "The signed manifest is for a build no newer than yours."}
+    return {"state": "verified", "words": "Its release manifest is signed by FutureSpeak and verified.",
+            "files": dict(manifest.get("files") or {})}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -294,6 +399,9 @@ def _announce(result: dict) -> None:
         "It updates Friday in place; your notes, settings and "
         "connected accounts are kept."
     )
+    words = (result.get("verification") or {}).get("words")
+    if words:
+        body += "\n\n" + words
     if truth.get("disagreement"):
         body += "\n\nAlso worth knowing: " + truth["disagreement"]
     changes = _local_changes()
@@ -352,6 +460,7 @@ def run_update_check(force: bool = False) -> dict:
                 state["latest_version"] = result["latest_version"]
                 state["latest_url"] = result["latest_url"]
                 state["update_available"] = result["update_available"]
+                state["verification"] = (result.get("verification") or {}).get("state")
 
             already = state.get("notified_version")
             should_announce = bool(
@@ -394,6 +503,7 @@ def status() -> dict[str, Any]:
         "latest_version": state.get("latest_version"),
         "latest_url": state.get("latest_url") or RELEASES_PAGE,
         "update_available": bool(state.get("update_available")),
+        "verification": state.get("verification"),
         "releases_page": RELEASES_PAGE,
         "schedule_id": SCHEDULE_ID,
         "enabled": is_enabled(),
