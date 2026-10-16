@@ -158,25 +158,40 @@ def withholds_request_body(fn):
     """A route whose JSON body carries the owner's text (a prompt, a steer, a
     schedule, a workflow step) keeps no key from it.
 
-    Every string in the parsed body is withheld in place before the handler
-    runs (the whole-string catch only on FREE_TEXT_FIELDS), in the object every later `request.get_json` returns. A JSON reply
+    Every string in the parsed body is withheld in place when the handler
+    first reads it (the whole-string catch only on FREE_TEXT_FIELDS), in the
+    object every `request.get_json` then returns. The body is not parsed
+    before the handler asks for it, so a route that refuses before reading
+    its body (a private Studio mutation) still never parses it. A JSON reply
     then carries `key_withheld` (kinds only) and a `key_form` action, as the
     chat routes' replies do.
     """
     @wraps(fn)
     def _inner(*args, **kwargs):
         from flask import jsonify, request
-        data = request.get_json(silent=True)
-        if isinstance(data, (dict, list)):
-            kinds = _body_kinds(data)
-            if kinds:
-                clean = _scrub_body(data)
-                if isinstance(data, dict):
-                    data.clear()
-                    data.update(clean)
-                else:
-                    data[:] = clean
-                request.environ.setdefault(REQUEST_KEYS_ENV, []).extend(kinds)
+        req = request._get_current_object()
+        read_json = type(req).get_json
+        held = {}
+
+        def get_json(*a, **k):
+            if "data" not in held:
+                data = read_json(req, *a, **k)
+                if isinstance(data, (dict, list)):
+                    kinds = _body_kinds(data)
+                    if kinds:
+                        clean = _scrub_body(data)
+                        if isinstance(data, dict):
+                            data.clear()
+                            data.update(clean)
+                        else:
+                            data[:] = clean
+                        req.environ.setdefault(REQUEST_KEYS_ENV, []).extend(kinds)
+                if data is None:
+                    return None          # silent miss: a later strict read still raises
+                held["data"] = data
+            return held["data"]
+
+        req.get_json = get_json
         rv = fn(*args, **kwargs)
         kinds = request.environ.get(REQUEST_KEYS_ENV)
         if not kinds:
