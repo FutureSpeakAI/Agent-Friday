@@ -13402,7 +13402,7 @@ def _public_query_hold(provider, model, name, tool_input, *, pii_lookup=None,
     Returns None when the call may run, else the text the model gets instead:
 
       * a query that shares private text from the conversation (a long run
-        copied from non-public context, or a [PII:...] tag that would be
+        copied out of non-public context, or a [PII:...] tag that would be
         filled in) raises a `tool_confirm` approval card showing exactly the
         text that would go out and the search engine it goes to. Nothing runs
         until the owner chooses Send; services/approval_executor then runs

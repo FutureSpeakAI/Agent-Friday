@@ -666,7 +666,7 @@ def gate_outbound(text: str, provider: str, field: str) -> tuple[str, str]:
 #: leaves it.
 CARD_TOOLS = frozenset({"search_web", "deep_research"})
 
-#: How many consecutive words copied from non-public context make a query
+#: How many consecutive words copied out of non-public context make a query
 #: "share private text". Long enough that a short topic phrase the owner also
 #: typed ("Texas court ruling") does not ask; short enough that an email line
 #: or a sentence from a note does.
