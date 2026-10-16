@@ -15256,6 +15256,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 except Exception:
                     pass
                 _final_text = "".join(text_parts).strip()
+                _final_text = _guard_final_reply(
+                    _final_text, model=model or ANTHROPIC_MODEL_DEFAULT, seat="cloud",
+                    provider="anthropic", tool_trace=tool_trace,
+                    tools_offered=True, session_ctx=session_ctx)
                 if not _final_text:
                     _pilot_outcome(session_ctx, "error")
                     # A declined request comes back as stop_reason "refusal"
@@ -15537,6 +15541,32 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
 # The wrapper above only sets the loop-provider ContextVar; its signature is
 # the real one's (inspect.signature follows __wrapped__).
 _call_claude_agent.__wrapped__ = _call_claude_agent_run
+
+
+def _guard_final_reply(text, *, model, seat, provider, tool_trace, tools_offered,
+                       session_ctx=None):
+    """services/text_toolcalls.guard_final, logged where a person can find it.
+
+    Every change it makes is printed to friday.log and written to the task
+    journal, so a reply Friday rewrote is never a mystery afterwards."""
+    try:
+        from agent_friday.services import text_toolcalls as _txt
+        out, ev = _txt.guard_final(text, model=model, seat=seat, provider=provider,
+                                   tool_trace=tool_trace, tools_offered=tools_offered)
+    except Exception as _ge:
+        print(f"  [reply-guard] skipped: {_ge}")
+        return text
+    if ev:
+        print(f"  [reply-guard] {ev['kind']}: model={model} seat={seat} "
+              f"provider={provider} tools={','.join(ev.get('names') or []) or '-'}")
+        try:
+            _journal().decision("reply_guard", ev["kind"],
+                                reason=f"model={model} seat={seat} tools="
+                                       f"{','.join(ev.get('names') or []) or '-'}",
+                                session_ctx=session_ctx)
+        except Exception:
+            pass
+    return out
 
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
@@ -15864,6 +15894,26 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     msg = dict(msg, content=_rest, tool_calls=_found)
             except Exception:
                 pass
+        # A call written as TEXT (<invoke name=...>, <tool_call>{json}) is
+        # routed like a native one when it names a tool offered this turn;
+        # anything else stays in the words for the final guard to report.
+        if oai_tools and not tool_calls and _chan_text:
+            try:
+                from agent_friday.services import text_toolcalls as _txt
+                # Routed only on a seat Friday serves here: cloud seats speak
+                # native tool calls, so markup in their text is quoted, not meant.
+                _found, _rest, _refused = _txt.extract(_chan_text, oai_tools,
+                                                       route=(_led_seat == "local"))
+                if _found:
+                    if _refused:
+                        print(f"  [oai-loop] {model}: text tool call(s) not offered "
+                              f"this turn, not run: {', '.join(_refused)}")
+                        _rest = (_rest + "\n(Not run, not available on this turn: "
+                                 + ", ".join(_refused) + ")").strip()
+                    tool_calls = _found
+                    msg = dict(msg, content=_rest, tool_calls=_found)
+            except Exception:
+                pass
         for _crew_call in tool_calls:
             _crew_denial = _host_action_denial((_crew_call.get("function") or {}).get("name"), session_ctx)
             if _crew_denial:
@@ -15998,6 +16048,13 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     _c, text = _chan.extract(text, oai_tools)
                 except Exception:
                     pass
+            # Tool-call markup that never ran is replaced by a notice naming
+            # the model and the seat, and "I'm loading it" with no tool behind
+            # it gets an honest line. Never silence.
+            text = _guard_final_reply(text, model=model, seat=_led_seat,
+                                      provider=_meter_as, tool_trace=tool_trace,
+                                      tools_offered=bool(oai_tools),
+                                      session_ctx=session_ctx)
             # Keep the DESCRIPTION. Overwriting it with f'Done ({model})'
             # makes every finished orb in the holographic desktop read the
             # same thing — and read the model twice, since the scene already
