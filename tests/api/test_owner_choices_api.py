@@ -152,6 +152,9 @@ def test_the_calendar_delete_route_passes_the_notify_guests_box(client, monkeypa
     monkeypatch.setattr(cw, "_service", lambda account_id=None: (svc, None))
     monkeypatch.setattr(cw, "_drop_calendar_cache", lambda: None)
     monkeypatch.setattr(action_gate, "verify_claws", lambda: (True, "ok"))
+    # Posted as the Calendar page does (the owner's click).
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
     d = client.post("/api/calendar/events/ev9/delete", json={}).get_json()
     assert calls[-1].get("sendUpdates") == "none" and d["guests_notified"] is False
     assert "not told" in d.get("guests_told", "")

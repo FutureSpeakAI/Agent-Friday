@@ -166,6 +166,12 @@ def api_calendar_event_delete(event_id):
     list; every other id is a Google event (calendar_write.delete_event)."""
     from agent_friday.governance import action_gate as _gate
     from agent_friday.services import calendar_write as cw
+    from agent_friday.services import screen_click
+    # The owner's click on this server's own page (same-origin browser headers and the page's
+    # rotating token). A loopback caller without them, such as a command a model ran, deletes nothing.
+    if not screen_click.screen_session(request):
+        return jsonify({"status": "error", "ok": False, "id": str(event_id or ""),
+                        "message": "Nothing was deleted: events are deleted from the Calendar page."}), 403
     data = request.get_json(silent=True) or {}
     eid = str(event_id or "").strip()
     if eid.startswith("local-"):
