@@ -422,6 +422,38 @@ def profile() -> Dict[str, Any]:
         return {"available": False, "error": exception_text(e), "traits": {}, "facts": []}
 
 
+def facts_from_source(category: str, source: str, limit: int = 100) -> List[Dict[str, Any]]:
+    """The facts one source wrote in one category, oldest first, with ids: what
+    a panel that lets the owner delete them one by one needs."""
+    try:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT fact_id, text, ts FROM facts WHERE category=? AND source=? "
+            "ORDER BY ts ASC LIMIT ?", (_slug(category), str(source), int(limit))).fetchall()
+        conn.close()
+        return [{"fact_id": f, "text": t, "ts": ts} for f, t, ts in rows]
+    except Exception:
+        return []
+
+
+def forget_fact(fact_id: str, *, source: Optional[str] = None) -> Dict[str, Any]:
+    """Delete one fact by id; with `source`, only a fact from that source."""
+    with _LOCK:
+        try:
+            conn = _connect()
+            if source is None:
+                cur = conn.execute("DELETE FROM facts WHERE fact_id=?", (str(fact_id),))
+            else:
+                cur = conn.execute("DELETE FROM facts WHERE fact_id=? AND source=?",
+                                   (str(fact_id), str(source)))
+            conn.commit()
+            n = cur.rowcount
+            conn.close()
+            return {"ok": n > 0, "deleted": n}
+        except Exception as e:
+            return {"ok": False, "error": exception_text(e)}
+
+
 def forget(category: Optional[str] = None) -> Dict[str, Any]:
     """Reset the user model — all of it, or one fact category."""
     with _LOCK:

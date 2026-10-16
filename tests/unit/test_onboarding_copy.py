@@ -225,10 +225,23 @@ def test_every_screen_renders():
 def test_the_vault_screen_comes_after_the_screen_that_explains_why():
     """'Vault first' taken literally puts a passphrase prompt in front of a user
     who has not been told what a vault is. Screen 1 is what makes screen 2 make
-    sense -- but the vault still precedes every cosmetic choice."""
+    sense -- but the vault still precedes every other screen, and the setup
+    conversation (which asks everything personal) comes after all of them."""
     order = list(oc.SCREEN_ORDER)
     assert order.index("collects") < order.index("vault")
-    assert order.index("vault") < order.index("routing")
+    assert order.index("vault") == 1
+
+
+def test_where_friday_thinks_is_asked_once_in_the_conversation_not_on_a_screen():
+    """The routing screen and its cloud follow-up moved into the conversation's
+    posture step, which writes the consent, the routing mode and the
+    scheduled-jobs answer from one choice. Asking it on a screen as well would
+    ask the same question twice."""
+    from agent_friday.services import setup_chat_copy as sc_copy
+    assert "routing" not in oc.SCREEN_ORDER and "cloud_ack" not in oc.SCREEN_ORDER
+    assert "posture" in sc_copy.STAGES
+    # the terminal wizard still renders the routing screen by name
+    assert oc.screen("routing")["choices"]
 
 
 def test_the_delete_path_copy_names_where_the_button_actually_is():

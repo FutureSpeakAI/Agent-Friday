@@ -14,12 +14,16 @@ from agent_friday.services import setup_chat as sc
 from agent_friday.services import setup_chat_copy as copy
 from agent_friday.services import setup_profile as profile
 
+from setup_walk_helpers import AFTER_STYLE, PREAMBLE, answer_through
+
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     import agent_friday.core as core
     from agent_friday.services import setup_connections, setup_reader, soul
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import user_model as _um
+    monkeypatch.setattr(_um, "DB_PATH", tmp_path / "user_model.db")
     monkeypatch.setattr(soul, "SOUL_FILE", tmp_path / "SOUL.md")
     monkeypatch.setattr(soul, "HISTORY_DIR", tmp_path / "soul_history")
     monkeypatch.setattr(soul, "FRIDAY_DIR", tmp_path)
@@ -46,8 +50,7 @@ def home(tmp_path, monkeypatch):
 def _walk_to(stage, **kw):
     """Drive a fresh chat to `stage` with ordinary answers."""
     sc.begin(kw.get("routing", "local_only"), "")
-    steps = [("welcome", None, "Sam"), ("agent_name", "Friday", ""),
-             ("basics", {"minor_mode": False, "distribution": "default"}, ""),
+    steps = list(PREAMBLE) + [
              ("connect", "done", ""), ("knowledge", "skip", ""), ("reader", "ok", "")]
     for s, v, t in steps:
         if sc.load_state()["stage"] == stage:
@@ -102,9 +105,9 @@ def test_resume_after_a_restart_returns_the_same_stage_and_transcript(home):
 
 
 def test_the_transcript_is_encrypted_at_rest(home):
-    _walk_to("agent_name")
+    _walk_to("about_city")
     raw = profile.transcript_path().read_bytes()
-    assert b"Sam" not in raw and b"what should I call you" not in raw
+    assert b"Sam" not in raw and b"What should I call you" not in raw
 
 
 def test_every_question_can_be_skipped_by_typing_skip(home):
@@ -146,7 +149,7 @@ def test_answers_become_a_style_and_saving_writes_the_block(home):
     sc.answer("style", {"action": "save"}, "")
     from agent_friday.services import soul
     assert profile.BLOCK_START in soul.load_soul()
-    assert sc.load_state()["stage"] == "room_voice"
+    assert sc.load_state()["stage"] == "routines"
     assert {"response_length": "concise", "communication_style": "casual"}.items() \
         <= home["settings"][-1].items()
 
@@ -157,6 +160,8 @@ def test_personality_json_is_written_only_when_setup_finishes(home):
     for _ in copy.QUESTIONS:
         sc.answer("questions", "skip", "")
     sc.answer("style", {"action": "skip"}, "")
+    assert sc.load_state()["stage"] == "routines"
+    answer_through(sc, AFTER_STYLE)
     assert sc.load_state()["stage"] == "room_voice"
     sc.answer("room_voice", "skip", "")
     assert sc.load_state()["stage"] == "brain_warm"
@@ -241,8 +246,8 @@ def test_a_cloud_reader_needs_the_cloud_mode_and_an_explicit_yes(home, monkeypat
     assert setup_reader.options("local_only")["cloud"] is None
     # cloud mode offers it, but "keep it here" means rules.
     sc.begin("cloud_only", "")
-    for s, v, t in [("welcome", "skip", ""), ("agent_name", "Friday", ""),
-                    ("basics", {}, ""), ("connect", "done", ""), ("knowledge", "skip", "")]:
+    answer_through(sc, PREAMBLE)
+    for s, v, t in [("connect", "done", ""), ("knowledge", "skip", "")]:
         sc.answer(s, v, t)
     chips = [c["value"] for c in sc.view()["prompt"]["chips"]]
     assert chips == ["cloud", "rules"]
@@ -323,7 +328,8 @@ def test_leaving_connect_opens_the_knowledge_stage_with_a_panel_and_no_chosen_fo
     assert v["stage"] == "knowledge" and v["prompt"]["card"] == "knowledge"
     assert [(c["value"], c["label"]) for c in v["prompt"]["chips"]] == [("skip", "Not now")]
     assert copy.KNOWLEDGE in _texts()
-    assert [g["label"] for g in v["groups"]][1:3] == ["Connect", "Your files"]
+    labels = [g["label"] for g in v["groups"]]
+    assert labels[labels.index("Connect") + 1] == "Your files"
 
 
 def test_the_stage_says_the_two_kinds_of_access_apart_and_that_not_now_skips():

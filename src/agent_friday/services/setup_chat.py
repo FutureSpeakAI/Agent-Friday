@@ -39,6 +39,8 @@ from agent_friday.paths import friday_home
 from agent_friday.services import secret_shapes
 from agent_friday.services import setup_chat_copy as copy
 from agent_friday.services import setup_profile as profile
+from agent_friday.services import setup_record as record
+from agent_friday.services import setup_steps as steps
 
 _log = logging.getLogger("friday.setup_chat")
 from agent_friday.user_errors import UserFacingError, log_failure
@@ -76,6 +78,10 @@ def _default_state() -> dict:
             "cloud_confirmed": False, "skipped_connections": [],
             "research": {"state": "not_asked", "job_id": "", "task_id": ""},
             "questions_skipped": False, "style_saved": False,
+            "talk": "", "screen_reader": False, "offer": "", "offer_state": "",
+            "posture": "", "client_tz": "", "tz_guess": "", "tz_asking": False,
+            "about_written": 0, "never_send_added": 0, "money": "", "routines_on": [],
+            "household": "", "resume_said": 0.0,
             "completed": False, "rerun": False, "started": now, "updated": now}
 
 
@@ -140,19 +146,53 @@ def _ask_question(st: dict, transcript: list, i: int) -> None:
     _say(transcript, text, "questions", question=qid)
 
 
+def _money_wanted(st: dict) -> bool:
+    """Money is asked only when the cloud is in play: a posture that uses it,
+    or (with no posture answered) a routing mode that does."""
+    posture = st.get("posture") or ""
+    if posture:
+        return posture != "local"
+    return (st.get("routing_mode") or "") not in ("local_only",)
+
+
 def _enter(st: dict, transcript: list, stage: str) -> None:
     """Move to `stage` and say its opening line(s)."""
+    if stage == "money" and not _money_wanted(st):
+        stage = "scheduled_cloud"
     if stage == "scheduled_cloud" and not _scheduled_cloud_wanted(st):
-        stage = "room_voice"
+        stage = "routines"
     st["stage"] = stage
+    agent = st.get("agent_name") or "Friday"
     if stage == "welcome":
         _say(transcript, copy.WELCOME_BACK if st.get("rerun") else copy.WELCOME, stage)
+    elif stage == "offer":
+        _say(transcript, copy.OFFER, stage)
     elif stage == "agent_name":
+        _say(transcript, copy.AGENT_NAME, stage)
+    elif stage == "voice":
+        _say(transcript, (copy.VOICE_ASK if steps.voice_options() else copy.VOICE_NONE)
+             .format(agent=agent), stage)
+    elif stage == "pronouns":
+        _say(transcript, copy.PRONOUNS_ASK, stage)
+    elif stage == "framing":
+        _say(transcript, copy.FRAMING_ASK, stage)
+    elif stage == "about_name":
+        _say(transcript, copy.ABOUT_NAME, stage)
+    elif stage == "about_city":
         name = profile.load_profile().get("name") or ""
-        _say(transcript, (copy.AGENT_NAME.format(name=name) if name
-                          else copy.AGENT_NAME_NO_NAME), stage)
+        _say(transcript, copy.ABOUT_CITY.format(name=name) if name
+             else copy.ABOUT_CITY_NO_NAME, stage)
+    elif stage == "about_tz":
+        guess = steps.valid_zone(st.get("client_tz") or "")
+        st["tz_guess"], st["tz_asking"] = guess, not guess
+        _say(transcript, copy.ABOUT_TZ.format(zone=steps.zone_words(guess)) if guess
+             else copy.ABOUT_TZ_ASK, stage)
     elif stage == "basics":
-        _say(transcript, copy.BASICS.format(agent=st.get("agent_name") or "Friday"), stage)
+        _say(transcript, copy.BASICS, stage)
+    elif stage == "posture":
+        _say(transcript, copy.POSTURE_ASK, stage)
+    elif stage == "never_send":
+        _say(transcript, copy.NEVER_SEND_ASK, stage)
     elif stage == "connect":
         _say(transcript, copy.CONNECT, stage)
         if _needs_a_cloud_key(st):
@@ -177,8 +217,18 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
              else copy.STYLE_INTRO, stage, **_style_badge())
     elif stage == "research_review":
         _say(transcript, copy.RESEARCH_REVIEW, stage)
+    elif stage == "money":
+        usd = steps.money_estimate()
+        _say(transcript, copy.MONEY_ASK.format(
+            estimate=copy.MONEY_ESTIMATE.format(usd=usd) if usd else ""), stage)
     elif stage == "scheduled_cloud":
         _say(transcript, _scheduled_cloud_question(), stage)
+    elif stage == "routines":
+        _say(transcript, copy.ROUTINES_ASK, stage)
+    elif stage == "memory_rules":
+        _say(transcript, copy.MEMORY_RULES, stage)
+    elif stage == "household":
+        _say(transcript, copy.HOUSEHOLD_ASK, stage)
     elif stage == "room_voice":
         _say(transcript, copy.ROOM_VOICE_ASK, stage)
     elif stage == "brain_warm":
@@ -202,18 +252,66 @@ def _chips(pairs) -> list:
     return [{"value": v, "label": lbl} for v, lbl in pairs]
 
 
+def _rec_chips(pairs, recommended) -> list:
+    """Chips with the recommended one LABELLED (never pre-selected)."""
+    out = []
+    for v, lbl in pairs:
+        chip = {"value": v, "label": lbl}
+        if recommended is not None and str(v) == str(recommended):
+            chip["label"] = lbl + copy.RECOMMENDED_SUFFIX
+            chip["recommended"] = True
+        out.append(chip)
+    return out
+
+
 def _prompt(st: dict) -> dict:
     stage = st["stage"]
     p = {"stage": stage, "input": "none", "chips": [], "card": None,
-         "placeholder": ""}
+         "placeholder": "", "recommended": steps.recommended_for(stage) is not None}
+    skip = ("skip", copy.SKIP)
     if stage == "welcome":
-        p.update(input="text", placeholder="Your name",
-                 chips=_chips((("skip", copy.SKIP),)))
+        p.update(input="text", placeholder="Talk or type",
+                 chips=_chips(copy.TALK_CHIPS))
+    elif stage == "offer":
+        p.update(input="text", chips=_chips(copy.OFFER_CHIPS))
     elif stage == "agent_name":
         p.update(input="text", placeholder="Friday",
                  chips=_chips((("Friday", "Friday"),)))
+    elif stage == "voice":
+        opts = steps.voice_options()
+        p.update(input="text", chips=[{"value": o["value"], "label": o["name"]} for o in opts]
+                 + _chips((("later", copy.VOICE_LATER),)),
+                 card="voices" if opts else None, voices=opts)
+    elif stage == "pronouns":
+        p.update(input="text", placeholder="Or type them",
+                 chips=_chips(steps.PRONOUN_CHOICES))
+    elif stage == "framing":
+        p.update(input="text", chips=_chips(steps.FRAMING_CHOICES + (skip,)))
+    elif stage == "about_name":
+        p.update(input="text", placeholder="Your name", chips=_chips((skip,)),
+                 card="about")
+    elif stage == "about_city":
+        p.update(input="text", placeholder="e.g. Springfield, IL", chips=_chips((skip,)),
+                 card="about")
+    elif stage == "about_tz":
+        if st.get("tz_guess") and not st.get("tz_asking"):
+            p.update(input="text", chips=_chips(copy.ABOUT_TZ_CHIPS + (skip,)), card="about")
+        else:
+            p.update(input="text", placeholder="e.g. America/Chicago",
+                     chips=_chips((skip,)), card="about")
     elif stage == "basics":
         p.update(card="basics")
+    elif stage == "posture":
+        view = steps.posture_view()
+        chips = [{"value": c["value"], "label": c["label"] + (
+                    copy.RECOMMENDED_SUFFIX if c["recommended"] else ""),
+                  **({"recommended": True} if c["recommended"] else {})}
+                 for c in view["cards"] if c["available"]]
+        p.update(input="text", card="posture", posture=view,
+                 chips=chips + _chips((skip,)))
+    elif stage == "never_send":
+        p.update(input="text", placeholder="One per line, or separated by commas",
+                 chips=_chips((("none", "Nothing to add"),)))
     elif stage == "connect":
         p.update(card="connections", chips=_chips((("done", copy.CONNECT_DONE),)))
     elif stage == "knowledge":
@@ -238,8 +336,22 @@ def _prompt(st: dict) -> dict:
         p.update(card="style")
     elif stage == "research_review":
         p.update(card="research_review", chips=_chips((("done", "Done reviewing"),)))
+    elif stage == "money":
+        p.update(input="text", placeholder=copy.MONEY_OTHER_HINT,
+                 chips=_rec_chips(steps.MONEY_CHOICES, steps.MONEY_RECOMMENDED)
+                 + _chips((skip,)))
     elif stage == "scheduled_cloud":
-        p.update(chips=_chips(copy.SCHEDULED_CLOUD_CHIPS))
+        p.update(chips=_rec_chips(copy.SCHEDULED_CLOUD_CHIPS, steps.recommended_for(stage)))
+    elif stage == "routines":
+        p.update(input="text", placeholder="Or name the ones you want", card="routines",
+                 routines=steps.routines_view(st.get("posture") or ""),
+                 chips=_chips((("none", copy.ROUTINES_NONE),)))
+    elif stage == "memory_rules":
+        p.update(card="memory_rules", chips=_chips(copy.MEMORY_RULES_CHIPS),
+                 rules={"save": list(copy.MEMORY_SAVE_WITHOUT_ASKING),
+                        "ask": list(copy.MEMORY_ALWAYS_ASK)})
+    elif stage == "household":
+        p.update(input="text", chips=_chips(copy.HOUSEHOLD_CHIPS))
     elif stage == "room_voice":
         p.update(chips=_chips(copy.ROOM_VOICE_CHIPS))
     elif stage == "brain_warm":
@@ -270,6 +382,95 @@ def research_view(st: dict | None = None) -> dict:
     return r
 
 
+#: Reopening after this long away says where setup got to, once.
+RESUME_AFTER_S = 30 * 60
+
+
+def _where(stage: str) -> str:
+    for _g, label, stages in copy.STAGE_GROUPS:
+        if stage in stages:
+            return '"%s"' % label
+    return "where we were"
+
+
+def _resume_due(st: dict, transcript: list) -> bool:
+    if not st.get("consent_done") or st.get("completed") or not transcript:
+        return False
+    if st["stage"] in ("welcome", "done"):
+        return False
+    last = max(float(st.get("updated") or 0), float(st.get("resume_said") or 0))
+    return time.time() - last >= RESUME_AFTER_S
+
+
+_TALK_LABELS = {"talk": "Talk", "type": "Type"}
+
+
+def _acks() -> dict:
+    try:
+        from agent_friday import core
+        return json.loads((core.FRIDAY_DIR / "onboarding.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _lock_row(acks: dict) -> tuple:
+    if "vault_skipped" not in acks:
+        return ("not reached", "not reached")
+    if acks.get("vault_skipped"):
+        return ("skipped for now", record.HOW_WORDS["default"])
+    return ("passphrase set", record.HOW_WORDS["you"])
+
+
+def receipt(st: dict | None = None) -> list:
+    """The setup receipt: one row per step, with who decided it.
+
+    Built from the setup record (who decided) and the state (what), never
+    from an answer the person typed: the name and city are on the About you
+    card, not here."""
+    st = st or load_state()
+    by = record.latest_by_step()
+    acks = _acks()
+
+    def how(step):
+        r = by.get(step)
+        return r.get("how_words") if r else "not reached"
+
+    pron = ""
+    try:
+        from agent_friday.core import _load_settings
+        ident = (_load_settings() or {}).get("identity") or {}
+        pron = str(ident.get("pronouns") or "") if isinstance(ident, dict) else ""
+    except Exception:
+        pass
+    rows = [
+        ("How we talk", ("Screen reader" if st.get("screen_reader") else
+                         _TALK_LABELS.get(st.get("talk") or "", "Type")), how("welcome")),
+        ("The offer", {"inbox": "Clean up your inbox", "none": "None for now"}
+         .get(st.get("offer") or "", "Not chosen"), how("offer")),
+        ("My name", st.get("agent_name") or "Friday", how("agent_name")),
+        ("My pronouns", {"name_only": "my name instead"}.get(pron, pron or "my name instead"),
+         how("pronouns")),
+        ("About you", "%d line%s on your card" % (
+            int(st.get("about_written") or 0), "" if int(st.get("about_written") or 0) == 1 else "s"),
+         how("about_name")),
+        ("Where I think", copy.POSTURE_LABELS.get(st.get("posture") or "", "Not chosen yet"),
+         how("posture")),
+        ("Never-send list", "%d of your own, plus the built-in protections"
+         % int(st.get("never_send_added") or 0), how("never_send")),
+        ("The lock", *_lock_row(acks)),
+        ("Monthly ceiling", {"none": "no cap", "skipped": "no cap", "": "not asked"}
+         .get(st.get("money") or "", "$%s a month" % (st.get("money") or "")), how("money")),
+        ("Routines", ", ".join(st.get("routines_on") or []) or "none scheduled", how("routines")),
+        ("Spoken approvals in a room", (by.get("room_voice") or {}).get("decision") or "",
+         how("room_voice")),
+        ("Checking for updates", {"on": "once a week", "off": "never"}
+         .get(str(acks.get("updates_choice") or ""), "not answered"),
+         "you" if acks.get("updates_choice") in ("on", "off") else "not answered"),
+        ("Voice check", "not run yet: it comes once my voice is installed", "not reached"),
+    ]
+    return [{"label": a, "value": b, "how": c} for a, b, c in rows]
+
+
 def view() -> dict:
     """Everything the chat window needs to draw itself. Never a secret."""
     from agent_friday.services import setup_reader
@@ -278,6 +479,12 @@ def view() -> dict:
         transcript = profile.load_transcript()
         if st["consent_done"] and not transcript and not st["completed"]:
             _enter(st, transcript, st["stage"])
+            profile.save_transcript(transcript)
+            save_state(st)
+        elif _resume_due(st, transcript):
+            _say(transcript, copy.RESUME.format(where=_where(st["stage"])), st["stage"],
+                 resume=True)
+            st["resume_said"] = time.time()
             profile.save_transcript(transcript)
             save_state(st)
         # Named once it is chosen, so the header never claims a reader early.
@@ -301,7 +508,16 @@ def view() -> dict:
             "example_prompt": copy.EXAMPLE_PROMPT,
             "copy": {"key_in_chat": copy.KEY_IN_CHAT, "use_options": copy.USE_OPTIONS,
                      "research_ask": copy.RESEARCH_ASK,
-                     "set_up_later": copy.SET_UP_LATER},
+                     "set_up_later": copy.SET_UP_LATER,
+                     "use_recommended": copy.USE_RECOMMENDED,
+                     "receipt_title": copy.RECEIPT_TITLE, "receipt_note": copy.RECEIPT_NOTE},
+            "talk": st.get("talk") or "", "screen_reader": bool(st.get("screen_reader")),
+            "offer": {"choice": st.get("offer") or "", "state": st.get("offer_state") or ""},
+            "posture": st.get("posture") or "",
+            "about": (steps.about_lines()
+                      if st["stage"] in ("about_name", "about_city", "about_tz", "finish")
+                      else None),
+            "receipt": (receipt(st) if st["stage"] in ("finish", "done") else None),
         }
 
 
@@ -342,10 +558,15 @@ def _clean_agent_name(text: str) -> str:
     return s or "Friday"
 
 
-def answer(stage: str, value=None, text: str = "") -> dict:
-    """Apply one answer for `stage`. Raises Conflict if the chat moved on."""
+def answer(stage: str, value=None, text: str = "", client_tz: str = "") -> dict:
+    """Apply one answer for `stage`. Raises Conflict if the chat moved on.
+
+    `client_tz` is the page's own IANA time zone, offered (never assumed) at
+    the time-zone step."""
     with _LOCK:
         st = load_state()
+        if client_tz and steps.valid_zone(client_tz):
+            st["client_tz"] = steps.valid_zone(client_tz)
         if not st["consent_done"]:
             raise Conflict("the consent screens come first")
         if stage != st["stage"]:
@@ -360,26 +581,246 @@ def answer(stage: str, value=None, text: str = "") -> dict:
     return view()
 
 
+def _how(st: dict, default: str = "you") -> str:
+    """Who made the decision being applied: "recommended" while "Use
+    recommended for the rest" is applying it, else `default`."""
+    return "recommended" if st.get("_applying_recommended") else default
+
+
+def _pick(value, text, options: dict):
+    """The option a value or a typed/spoken answer names, or None.
+
+    `options` maps each option value to the words that mean it. A value sent
+    by a chip wins; otherwise the text is matched whole, ignoring case and
+    punctuation, so "I'd rather type" and "type" both work by voice.
+    """
+    if value is not None and str(value) in options:
+        return str(value)
+    t = " ".join(re.sub(r"[^a-z0-9/ ]", " ", str(text or "").lower()).split())
+    # A polite lead-in is not part of the answer ("I'd rather talk" is "talk");
+    # anything else must be the whole answer, so a longer sentence that merely
+    # contains an option's words ("I don't want to clean up my inbox") is not it.
+    t = _LEAD_IN.sub("", t).strip()
+    if not t:
+        return None
+    for opt, words in options.items():
+        if t == opt or t in words:
+            return opt
+    return None
+
+
+_LEAD_IN = re.compile(r"^(?:(?:please|ok|okay|yes|um|well)\s+)?(?:(?:i d|i would|i ll|i will|let s|lets|i want to|i d like to)\s+)?"
+                      r"(?:(?:rather|prefer to|like to)\s+)?")
+
+
+def _refuse_choice(labels) -> None:
+    msg = "Say or tap one of: %s." % ", ".join(labels)
+    raise Refused(msg, {"error": "not_an_option", "message": msg})
+
+
+_TALK_WORDS = {
+    "talk": ("talk", "talking", "voice", "speak", "out loud", "rather talk", "talk to you"),
+    "type": ("type", "typing", "text", "keyboard", "write", "rather type"),
+    "screen_reader": ("screen reader", "i use a screen reader", "nvda", "jaws", "narrator"),
+}
+
+
 def _on_welcome(st, transcript, value, text):
     text = _guard_text(text)
-    if value == "skip" or not text or _is_skip(text):
-        _heard(transcript, copy.SKIP, "welcome")
-        st["has_name"] = False
-        profile.set_name("")
+    if value == "skip" or _is_skip(text):
+        choice, how = "type", "default"
     else:
-        name = profile._clean_name(text)
-        _heard(transcript, name, "welcome")
-        profile.set_name(name)
-        st["has_name"] = bool(name)
+        choice, how = _pick(value, text, _TALK_WORDS), _how(st)
+        if choice is None:
+            _refuse_choice([lbl for _v, lbl in copy.TALK_CHIPS])
+    st["talk"] = "type" if choice == "screen_reader" else choice
+    st["screen_reader"] = choice == "screen_reader"
+    _heard(transcript, dict(copy.TALK_CHIPS)[choice] if how == "you" else copy.SKIP, "welcome")
+    _say(transcript, {"talk": copy.TALK_OK, "type": copy.TYPE_OK,
+                      "screen_reader": copy.SCREEN_READER_OK}[choice], "welcome")
+    record.append("welcome", choice, how)
+    _enter(st, transcript, "offer")
+
+
+_OFFER_WORDS = {
+    "inbox": ("inbox", "clean up my inbox", "clean up", "clean up the inbox", "email",
+              "yes", "the inbox", "sure"),
+    "none": ("none", "no", "none for now", "not now", "no thanks", "nothing"),
+}
+
+
+def _on_offer(st, transcript, value, text):
+    text = _guard_text(text)
+    if value == "skip" or _is_skip(text):
+        choice, how = "none", "default"
+    else:
+        choice, how = _pick(value, text, _OFFER_WORDS), _how(st)
+        if choice is None:
+            _refuse_choice([lbl for _v, lbl in copy.OFFER_CHIPS])
+    st["offer"] = choice
+    st["offer_state"] = "waiting_for_email" if choice == "inbox" else "declined"
+    _heard(transcript, dict(copy.OFFER_CHIPS)[choice], "offer")
+    _say(transcript, copy.OFFER_INBOX if choice == "inbox" else copy.OFFER_NONE, "offer")
+    record.append("offer", choice, how)
     _enter(st, transcript, "agent_name")
 
 
 def _on_agent_name(st, transcript, value, text):
     text = _guard_text(text) or str(value or "")
-    name = _clean_agent_name("Friday" if (not text or _is_skip(text)) else text)
+    skipped = not text or _is_skip(text)
+    name = _clean_agent_name("Friday" if skipped else text)
     st["agent_name"] = name
     _heard(transcript, name, "agent_name")
+    record.append("agent_name", "kept Friday" if name == "Friday" else "a name of your own",
+                  "default" if skipped else "you")
+    _enter(st, transcript, "voice")
+
+
+def _on_voice(st, transcript, value, text):
+    text = _guard_text(text)
+    opts = {o["value"]: (o["name"].lower(), o["label"].lower()) for o in steps.voice_options()}
+    opts_all = dict(opts, later=("later", "choose later", "not now"))
+    choice = None if (value == "skip" or _is_skip(text)) else _pick(value, text, opts_all)
+    if choice in opts:
+        steps.apply_voice(choice)
+        name = next(o["name"] for o in steps.voice_options() if o["value"] == choice)
+        _heard(transcript, name, "voice")
+        _say(transcript, copy.VOICE_SET.format(voice=name), "voice")
+        record.append("voice", choice, _how(st))
+    else:
+        if text and choice is None and opts:
+            _refuse_choice([o["name"] for o in steps.voice_options()] + [copy.VOICE_LATER])
+        _heard(transcript, copy.VOICE_LATER if opts else "OK", "voice")
+        if opts:
+            _say(transcript, copy.VOICE_LATER_OK, "voice")
+        record.append("voice", "later", "default")
+    _enter(st, transcript, "pronouns")
+
+
+def _on_pronouns(st, transcript, value, text):
+    text = _guard_text(text)
+    agent = st.get("agent_name") or "Friday"
+    labels = dict(steps.PRONOUN_CHOICES)
+    if value == "skip" or _is_skip(text) or (not text and not value):
+        label, how = "name_only", "default"
+    else:
+        label = str(value) if str(value) in labels else steps.parse_pronouns(text)
+        how = _how(st)
+    if label is None:
+        steps.apply_pronouns("name_only", note=text)
+        _heard(transcript, text[:40], "pronouns")
+        _say(transcript, copy.PRONOUNS_OTHER, "pronouns")
+        record.append("pronouns", "something else (name used)", "you")
+    else:
+        steps.apply_pronouns(label)
+        _heard(transcript, labels[label], "pronouns")
+        _say(transcript, copy.PRONOUNS_NAME_ONLY.format(agent=agent) if label == "name_only"
+             else copy.PRONOUNS_SET.format(p=label), "pronouns")
+        record.append("pronouns", label, how)
+    _enter(st, transcript, "framing")
+
+
+_FRAMING_WORDS = {
+    "assistant": ("assistant", "an assistant"),
+    "colleague": ("colleague", "a colleague", "coworker", "co-worker"),
+    "family": ("family", "more like family", "like family", "friend"),
+}
+
+
+def _on_framing(st, transcript, value, text):
+    text = _guard_text(text)
+    choice = None if (value == "skip" or _is_skip(text)) else _pick(value, text, _FRAMING_WORDS)
+    if choice is None and text and not _is_skip(text):
+        _refuse_choice([lbl for _v, lbl in steps.FRAMING_CHOICES] + [copy.SKIP])
+    if choice:
+        steps.apply_framing(choice)
+        _heard(transcript, dict(steps.FRAMING_CHOICES)[choice], "framing")
+        _say(transcript, copy.FRAMING_SET, "framing")
+        record.append("framing", choice, _how(st))
+    else:
+        _heard(transcript, copy.SKIP, "framing")
+        record.append("framing", "not chosen", "default")
+    _enter(st, transcript, "about_name")
+
+
+def _on_about_name(st, transcript, value, text):
+    text = _guard_text(text)
+    if value == "skip" or not text or _is_skip(text):
+        _heard(transcript, copy.SKIP, "about_name")
+        st["has_name"] = False
+        profile.set_name("")
+        record.append("about_name", "not given", "default")
+    else:
+        name = profile._clean_name(text)
+        _heard(transcript, name, "about_name")
+        profile.set_name(name)
+        st["has_name"] = bool(name)
+        if name:
+            if steps.note_about("Goes by %s" % name):
+                st["about_written"] = int(st.get("about_written") or 0) + 1
+            steps.shield_identifiers([name])
+        record.append("about_name", "given", "you")
+    _enter(st, transcript, "about_city")
+
+
+def _on_about_city(st, transcript, value, text):
+    text = _guard_text(text)
+    if value == "skip" or not text or _is_skip(text):
+        _heard(transcript, copy.SKIP, "about_city")
+        record.append("about_city", "not given", "default")
+    else:
+        place = steps.parse_place(text)
+        _heard(transcript, place["label"] or text[:80], "about_city")
+        if place["label"] and steps.note_about("Lives in %s" % place["label"]):
+            st["about_written"] = int(st.get("about_written") or 0) + 1
+        record.append("about_city", "given", "you", state_known=bool(place["state"]))
+    _enter(st, transcript, "about_tz")
+
+
+def _finish_about(st, transcript) -> None:
+    if int(st.get("about_written") or 0):
+        _say(transcript, copy.ABOUT_SAVED if st.get("has_name") else copy.ABOUT_SAVED_NO_NAME,
+             "about_tz")
+    else:
+        _say(transcript, copy.ABOUT_NOTHING, "about_tz")
     _enter(st, transcript, "basics")
+
+
+def _set_zone(st, transcript, zone: str, how: str) -> None:
+    steps.apply_timezone(zone)
+    if steps.note_about("Time zone: %s" % zone):
+        st["about_written"] = int(st.get("about_written") or 0) + 1
+    record.append("about_tz", "set", how)
+
+
+def _on_about_tz(st, transcript, value, text):
+    text = _guard_text(text)
+    guess = st.get("tz_guess") or ""
+    if value == "skip" or _is_skip(text):
+        _heard(transcript, copy.SKIP, "about_tz")
+        record.append("about_tz", "not confirmed", "default")
+        _finish_about(st, transcript)
+        return
+    if guess and not st.get("tz_asking"):
+        yes = _pick(value, text, {"yes": ("yes", "right", "correct", "yep", "that's right"),
+                                  "no": ("no", "wrong", "different", "no it's different")})
+        if yes == "yes":
+            _heard(transcript, "Yes", "about_tz")
+            _set_zone(st, transcript, guess, "you")
+            _finish_about(st, transcript)
+            return
+        if yes == "no":
+            _heard(transcript, "No, it's different", "about_tz")
+            st["tz_asking"] = True
+            _say(transcript, copy.ABOUT_TZ_ASK, "about_tz")
+            return
+    zone = steps.valid_zone(text or str(value or ""))
+    if not zone:
+        raise Refused(copy.ABOUT_TZ_BAD, {"error": "bad_zone", "message": copy.ABOUT_TZ_BAD})
+    _heard(transcript, zone, "about_tz")
+    st["tz_asking"] = False
+    _set_zone(st, transcript, zone, "you")
+    _finish_about(st, transcript)
 
 
 def _on_basics(st, transcript, value, text):
@@ -389,6 +830,46 @@ def _on_basics(st, transcript, value, text):
     st["distribution"] = dist or "default"
     _heard(transcript, "%s, %s profile" % (
         "For my child" if st["minor_mode"] else "For me", st["distribution"]), "basics")
+    record.append("basics", "for a child" if st["minor_mode"] else "for me", "you",
+                  profile=st["distribution"])
+    _enter(st, transcript, "posture")
+
+
+def _on_posture(st, transcript, value, text):
+    text = _guard_text(text)
+    if value == "skip" or _is_skip(text) or (not text and value is None):
+        _heard(transcript, copy.SKIP, "posture")
+        _say(transcript, copy.POSTURE_SKIPPED, "posture")
+        record.append("posture", "not chosen", "default")
+        _enter(st, transcript, "never_send")
+        return
+    choice = str(value) if str(value) in steps.POSTURES else steps.parse_posture(text)
+    if choice is None:
+        _refuse_choice(list(copy.POSTURE_LABELS.values()) + [copy.SKIP])
+    try:
+        out = steps.apply_posture(choice)
+    except steps.PostureUnavailable as e:
+        msg = copy.POSTURE_UNAVAILABLE.format(why=str(e).rstrip("."))
+        raise Refused(msg, {"error": "posture_unavailable", "message": msg})
+    st["posture"] = choice
+    st["routing_mode"] = out["routing_mode"]
+    _heard(transcript, copy.POSTURE_LABELS[choice], "posture")
+    _say(transcript, copy.POSTURE_SET[choice], "posture")
+    record.append("posture", choice, _how(st), routing=out["routing_mode"])
+    _enter(st, transcript, "never_send")
+
+
+def _on_never_send(st, transcript, value, text):
+    text = _guard_text(text)
+    items = [] if (value in ("none", "skip") or _is_skip(text)) else steps.parse_never_send(text)
+    added = steps.apply_never_send(items) if items else []
+    st["never_send_added"] = int(st.get("never_send_added") or 0) + len(added)
+    _heard(transcript, ("%d item%s" % (len(items), "" if len(items) == 1 else "s"))
+           if items else "Nothing to add", "never_send")
+    _say(transcript, copy.NEVER_SEND_SET.format(n=len(added)) if added
+         else copy.NEVER_SEND_NONE, "never_send")
+    record.append("never_send", "%d added" % len(added), "you" if items else "default",
+                  count=len(added))
     _enter(st, transcript, "connect")
 
 
@@ -399,7 +880,35 @@ def _on_connect(st, transcript, value, text):
         " (connected: %s)" % ", ".join(labels[:8]) if labels else ""), "connect")
     if _needs_a_cloud_key(st) and not _key_in_use():
         _say(transcript, copy.NO_KEY_YET, "connect", one_key=True)
+    record.append("connect", "%d connected" % len(labels), "you", count=len(labels))
+    _start_offer_if_ready(st, transcript)
     _enter(st, transcript, "knowledge")
+
+
+#: Test seam and extension point: callable(st) -> {"state", "text"} that
+#: starts the chosen offer's job once its prerequisites exist (the inbox
+#: offer registers itself). None means no offer job is wired.
+OFFER_STARTER = None
+
+
+def _start_offer_if_ready(st, transcript) -> None:
+    """The offer starts only after identity, posture and the lock exist
+    (first-run spec E-02); its own prerequisite (an inbox) is checked by its
+    starter. Never raises: the conversation goes on either way."""
+    if st.get("offer") != "inbox" or st.get("offer_state") not in ("waiting_for_email", ""):
+        return
+    starter = OFFER_STARTER
+    if starter is None:
+        return
+    try:
+        out = dict(starter(st) or {})
+    except Exception as e:
+        _log.warning("the inbox offer could not start: %s", type(e).__name__)
+        return
+    if out.get("state"):
+        st["offer_state"] = out["state"]
+    if out.get("text"):
+        _say(transcript, out["text"], st.get("stage") or "connect")
 
 
 def _count(value, key) -> int:
@@ -632,7 +1141,7 @@ def _after_style(st, transcript):
         _say(transcript, copy.RESEARCH_STILL_RUNNING, "style")
     elif state == "empty":
         _say(transcript, copy.RESEARCH_NOTHING, "style")
-    _enter(st, transcript, "scheduled_cloud")
+    _enter(st, transcript, "money")
 
 
 def _on_style(st, transcript, value, text):
@@ -666,7 +1175,7 @@ def _on_research_review(st, transcript, value, text):
     r = research_view(st)
     _heard(transcript, "Done reviewing (%d kept)" % int(r.get("accepted") or 0),
            "research_review")
-    _enter(st, transcript, "scheduled_cloud")
+    _enter(st, transcript, "money")
 
 
 # ── Scheduled jobs on a cloud model ──────────────────────────────────────────
@@ -717,13 +1226,110 @@ def _on_scheduled_cloud(st, transcript, value, text):
         scheduled_cloud.save({"allow": True})
         _heard(transcript, labels["yes"], "scheduled_cloud")
         _say(transcript, copy.SCHEDULED_CLOUD_YES, "scheduled_cloud")
+        record.append("scheduled_cloud", "cloud allowed", _how(st))
     elif choice in ("no", "n", labels["no"].lower()):
         scheduled_cloud.save({"allow": False})
         _heard(transcript, labels["no"], "scheduled_cloud")
         _say(transcript, copy.SCHEDULED_CLOUD_NO, "scheduled_cloud")
+        record.append("scheduled_cloud", "kept paused", "you")
     else:
         _heard(transcript, copy.SKIP, "scheduled_cloud")
         _say(transcript, copy.SCHEDULED_CLOUD_SKIPPED, "scheduled_cloud")
+        record.append("scheduled_cloud", "not answered", "default")
+    _enter(st, transcript, "routines")
+
+
+def _on_money(st, transcript, value, text):
+    text = _guard_text(text)
+    if value == "skip" or _is_skip(text):
+        _heard(transcript, copy.SKIP, "money")
+        _say(transcript, copy.MONEY_SKIPPED, "money")
+        st["money"] = "skipped"
+        record.append("money", "no cap", "default")
+        _enter(st, transcript, "scheduled_cloud")
+        return
+    v = str(value) if value is not None else ""
+    low = text.lower().strip()
+    if v == "none" or low in ("none", "no", "no cap", "no limit", "nothing"):
+        amount = None
+    elif v in dict(steps.MONEY_CHOICES):
+        amount = float(v)
+    else:
+        amount = steps.parse_amount(text)
+        if amount is None:
+            _refuse_choice([lbl for _v, lbl in steps.MONEY_CHOICES] + [copy.MONEY_OTHER_HINT])
+    steps.apply_monthly_cap(amount)
+    st["money"] = ("%.2f" % amount) if amount else "none"
+    _heard(transcript, ("$%.2f a month" % amount) if amount else "No cap", "money")
+    _say(transcript, copy.MONEY_SET.format(usd=amount) if amount else copy.MONEY_NONE, "money")
+    record.append("money", "monthly cap" if amount else "no cap", _how(st),
+                  amount_usd=round(amount, 2) if amount else 0)
+    _enter(st, transcript, "scheduled_cloud")
+
+
+def _routine_picks_from_text(text: str) -> dict:
+    t = text.lower()
+    picks = {}
+    for r in steps.routines_view():
+        words = r["label"].lower()
+        if words in t or words.split()[0] in t.split():
+            picks[r["id"]] = {"on": True}
+    return picks
+
+
+def _on_routines(st, transcript, value, text):
+    text = _guard_text(text)
+    if value == "skip" or _is_skip(text):
+        _heard(transcript, copy.SKIP, "routines")
+        if not st.get("rerun"):
+            steps.routines_all_off()
+            st["routines_on"] = []
+            _say(transcript, copy.ROUTINES_SET_NONE, "routines")
+        record.append("routines", "left as they were" if st.get("rerun") else "none", "default")
+        _enter(st, transcript, "memory_rules")
+        return
+    if value == "none" or text.lower().strip() in ("none", "no", "nothing", "none for now"):
+        picks = {}
+    elif isinstance(value, dict):
+        picks = value.get("routines") if isinstance(value.get("routines"), dict) else {}
+    else:
+        picks = _routine_picks_from_text(text)
+        if text and not picks:
+            _refuse_choice([r["label"] for r in steps.routines_view()] + [copy.ROUTINES_NONE])
+    on = steps.apply_routines(picks)
+    st["routines_on"] = on
+    _heard(transcript, ", ".join(on) if on else copy.ROUTINES_NONE, "routines")
+    _say(transcript, copy.ROUTINES_SET.format(names=", ".join(on)) if on
+         else copy.ROUTINES_SET_NONE, "routines")
+    record.append("routines", "%d on" % len(on), "you", on=on)
+    _enter(st, transcript, "memory_rules")
+
+
+def _on_memory_rules(st, transcript, value, text):
+    _guard_text(text)
+    _heard(transcript, dict(copy.MEMORY_RULES_CHIPS)["ok"], "memory_rules")
+    _say(transcript, copy.MEMORY_RULES_OK, "memory_rules")
+    record.append("memory_rules", "seen", "you")
+    _enter(st, transcript, "household")
+
+
+def _on_household(st, transcript, value, text):
+    text = _guard_text(text)
+    choice = None if (value == "skip" or _is_skip(text)) else _pick(value, text, {
+        "no": ("no", "no just me", "just me", "only me", "nobody"),
+        "yes": ("yes", "yeah", "someone else", "my family", "others")})
+    if choice is None and text and not _is_skip(text):
+        _refuse_choice([lbl for _v, lbl in copy.HOUSEHOLD_CHIPS])
+    st["household"] = choice or ""
+    if choice == "yes":
+        _heard(transcript, "Yes", "household")
+        _say(transcript, copy.HOUSEHOLD_YES, "household", link="windows_users")
+    elif choice == "no":
+        _heard(transcript, dict(copy.HOUSEHOLD_CHIPS)["no"], "household")
+        _say(transcript, copy.HOUSEHOLD_NO, "household")
+    else:
+        _heard(transcript, copy.SKIP, "household")
+    record.append("household", choice or "not answered", "you" if choice else "default")
     _enter(st, transcript, "room_voice")
 
 
@@ -746,8 +1352,10 @@ def _on_room_voice(st, transcript, value, text):
     if want is None:
         _heard(transcript, copy.SKIP, "room_voice")
         _say(transcript, copy.ROOM_VOICE_SKIPPED, "room_voice")
+        record.append("room_voice", "name required", "default")
     else:
         _set_room_approvals_require_name(want)
+        record.append("room_voice", "name required" if want else "anyone", "you")
         _heard(transcript, labels["name"] if want else labels["anyone"], "room_voice")
         _say(transcript, copy.ROOM_VOICE_NAME if want else copy.ROOM_VOICE_ANYONE,
              "room_voice")
@@ -787,8 +1395,10 @@ def _on_brain_warm(st, transcript, value, text):
     if want is None:
         _heard(transcript, copy.SKIP, "brain_warm")
         _say(transcript, copy.BRAIN_WARM_SKIPPED, "brain_warm")
+        record.append("brain_warm", "hand it back", "default")
     else:
         _set_keep_brain_warm(want)
+        record.append("brain_warm", "keep warm" if want else "hand it back", "you")
         _heard(transcript, labels["keep"] if want else labels["release"],
                "brain_warm")
         _say(transcript, copy.BRAIN_WARM_KEEP if want
@@ -812,11 +1422,16 @@ def _on_finish(st, transcript, value, text):
 
 
 _HANDLERS = {
-    "welcome": _on_welcome, "agent_name": _on_agent_name, "basics": _on_basics,
-    "connect": _on_connect, "knowledge": _on_knowledge, "reader": _on_reader, "research_ask": _on_research_ask,
+    "welcome": _on_welcome, "offer": _on_offer, "agent_name": _on_agent_name,
+    "voice": _on_voice, "pronouns": _on_pronouns, "framing": _on_framing,
+    "about_name": _on_about_name, "about_city": _on_about_city, "about_tz": _on_about_tz,
+    "basics": _on_basics, "posture": _on_posture, "never_send": _on_never_send,
+    "connect": _on_connect, "knowledge": _on_knowledge, "reader": _on_reader,
+    "research_ask": _on_research_ask,
     "research_seeds": _on_research_seeds, "questions": _on_questions,
     "style": _on_style, "research_review": _on_research_review,
-    "scheduled_cloud": _on_scheduled_cloud,
+    "money": _on_money, "scheduled_cloud": _on_scheduled_cloud, "routines": _on_routines,
+    "memory_rules": _on_memory_rules, "household": _on_household,
     "room_voice": _on_room_voice, "brain_warm": _on_brain_warm,
     "finish": _on_finish,
 }
@@ -853,9 +1468,94 @@ def skip_all() -> dict:
         transcript = profile.load_transcript()
         _heard(transcript, copy.SET_UP_LATER, st["stage"])
         profile.save_transcript(transcript)
+        # Nothing is scheduled without a tick: on a first setup that never
+        # reached the routines step, every routine it would have offered is off.
+        if (not st.get("rerun")
+                and STAGES.index(st["stage"]) <= STAGES.index("routines")):
+            try:
+                steps.routines_all_off()
+            except Exception as e:  # noqa: BLE001
+                _log.warning("set up later could not switch the routines off: %s",
+                             type(e).__name__)
+        record.append(st["stage"], "set up later", "default")
         _complete(st)
         save_state(st)
     return view()
+
+
+def use_recommended(stage: str = "") -> dict:
+    """"Use the recommended answer": apply the recommended answer to the step
+    on screen (and only that one: a question the person has not seen is never
+    answered for them), and say so. `stage` is the step the page showed; a
+    press for a step the chat has moved past is a conflict, not an answer."""
+    with _LOCK:
+        st = load_state()
+        if not st["consent_done"] or st["completed"]:
+            raise Conflict("setup is not running")
+        if stage and stage != st["stage"]:
+            raise Conflict("the chat is on %r, not %r" % (st["stage"], stage))
+        if steps.recommended_for(st["stage"]) is None:
+            msg = "There's no recommended answer for this one; it's yours to choose."
+            raise Refused(msg, {"error": "no_recommendation", "message": msg})
+        transcript = profile.load_transcript()
+        # Only the step on screen: the next step's question has not been seen,
+        # so nothing is answered for it.
+        stage = st["stage"]
+        st["_applying_recommended"] = True
+        try:
+            before = len(transcript)
+            _HANDLERS[stage](st, transcript, steps.recommended_for(stage), "")
+            # The chat's own echo of the answer is replaced by one summary.
+            del transcript[before:before + 1]
+            filled = [_where(stage).strip('"')]
+        finally:
+            st.pop("_applying_recommended", None)
+        if filled:
+            _say(transcript, "I used the recommended answer for: %s." % ", ".join(filled),
+                 st["stage"], recommended=True)
+        profile.save_transcript(transcript)
+        save_state(st)
+    return view()
+
+
+def set_talk(mode: str) -> dict:
+    """Switch between talking and typing at any step."""
+    if mode not in ("talk", "type", "screen_reader"):
+        raise Refused("talk or type", {"error": "bad_mode"})
+    with _LOCK:
+        st = load_state()
+        st["talk"] = "type" if mode == "screen_reader" else mode
+        st["screen_reader"] = mode == "screen_reader"
+        save_state(st)
+        record.append("talk_switch", mode, "you")
+    return view()
+
+
+def forget_about_line(fact_id: str) -> dict:
+    """Delete one line of the About you card (the person's own act)."""
+    if not re.fullmatch(r"[0-9a-f]{6,40}", str(fact_id or "")):
+        raise Refused("no such line", {"error": "bad_id"})
+    with _LOCK:
+        ok = steps.forget_about_line(fact_id)
+        if ok:
+            st = load_state()
+            st["about_written"] = max(0, int(st.get("about_written") or 0) - 1)
+            save_state(st)
+            record.append("about_card", "line deleted", "you")
+    return {"ok": ok, "about": steps.about_lines()}
+
+
+def open_windows_users() -> dict:
+    """Open Windows' own "Other users" page (the household step's button)."""
+    import os
+    import sys
+    if not sys.platform.startswith("win"):
+        return {"ok": False, "message": "This opens a Windows page; it needs Windows."}
+    try:
+        os.startfile(steps.WINDOWS_OTHER_USERS)  # noqa: S606 - a fixed Windows settings URI
+        return {"ok": True}
+    except OSError as e:
+        return {"ok": False, "message": "Windows did not open the page (%s)." % type(e).__name__}
 
 
 def rerun() -> dict:
@@ -865,7 +1565,8 @@ def rerun() -> dict:
         st = load_state()
         keep = {k: st[k] for k in ("routing_mode", "agent_name", "distribution",
                                    "minor_mode", "skipped_connections", "reader",
-                                   "cloud_confirmed")}
+                                   "cloud_confirmed", "talk", "screen_reader",
+                                   "offer", "offer_state", "posture")}
         research = st.get("research") or {}
         new = _default_state()
         new.update(keep)
