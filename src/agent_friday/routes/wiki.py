@@ -151,7 +151,17 @@ def wiki_structure():
 
 @wiki_bp.route('/api/wiki/update', methods=['POST'])
 def wiki_update():
-    """Agent or user proposes a wiki update. If auto=true, stored as pending; else applied immediately."""
+    """Change a page through the API. ``auto: true`` queues it for approval in
+    Knowledge; otherwise it is applied now.
+
+    No page of the owner's UI calls this: the editor saves and creates through
+    ``PUT /api/wiki/edit``. A caller here is a script or tool holding the
+    session token, so it is held to the Knowledge approve rule: an overwrite
+    or append of a page that exists applies only with the ``before_sha256`` of
+    the page as the caller showed it (SHA-256 of the page text with LF line
+    endings; see ``wiki_before_sha256``). Without it the answer is 409
+    ``stale`` carrying the page's current ``before_sha256``, and nothing is
+    written. An edit (``old_value``) and a new page apply as before."""
     data = request.get_json(force=True, silent=True) or {}
     file = data.get("file", "")
     section = data.get("section", "")
@@ -173,7 +183,7 @@ def wiki_update():
     res = apply_wiki_proposal_result({
         "file": file, "section": section, "old_value": old_value, "new_value": new_value,
         "mode": mode,
-    }, before_sha256=data.get("before_sha256"))
+    }, before_sha256=data.get("before_sha256"), require_preview=True)
     if res["status"] == "stale":
         return jsonify(dict(res, status="stale")), 409
     if not res["ok"]:
