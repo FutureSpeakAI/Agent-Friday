@@ -29,6 +29,8 @@ def _reset_answer():
 
 @pytest.fixture(autouse=True)
 def _clean_store(friday_dir, monkeypatch):
+    # An established install (setup finished): the paused notice is about it.
+    monkeypatch.setattr(s, "_setup_finished", lambda: True)
     for f in (s.SCHEDULES_FILE, s.RUNS_FILE):
         if f.exists():
             f.unlink()

@@ -876,9 +876,17 @@ def _on_never_send(st, transcript, value, text):
 def _on_connect(st, transcript, value, text):
     from agent_friday.services import setup_connections
     labels = setup_connections.connected_labels()
+    if isinstance(value, dict) and value.get("action") == "local_only":
+        # "I'll just use local AI" on the Connect screen: an answer, recorded
+        # as the person's own, and never followed by key advice.
+        _heard(transcript, "I'll just use local AI", "connect")
+        record.append("connect", "local AI only", "you", count=len(labels))
+        _start_offer_if_ready(st, transcript)
+        _enter(st, transcript, "knowledge")
+        return
     _heard(transcript, copy.CONNECT_DONE + (
         " (connected: %s)" % ", ".join(labels[:8]) if labels else ""), "connect")
-    if _needs_a_cloud_key(st) and not _key_in_use():
+    if _needs_a_cloud_key(st) and not _key_in_use() and not _local_ai_only():
         _say(transcript, copy.NO_KEY_YET, "connect", one_key=True)
     record.append("connect", "%d connected" % len(labels), "you", count=len(labels))
     _start_offer_if_ready(st, transcript)
@@ -959,6 +967,15 @@ def _key_in_use() -> str | None:
         return one_key.key_in_use()
     except Exception:
         return None
+
+
+def _local_ai_only() -> bool:
+    """"I'll just use local AI" on the Connect screen: no key advice follows."""
+    try:
+        from agent_friday.services import connections_setup
+        return connections_setup.local_only()
+    except Exception:
+        return False
 
 
 def _needs_a_cloud_key(st: dict) -> bool:

@@ -141,6 +141,19 @@ def _catch_up_ready(rec):
     return r.route == "local" and _parked_reason() is None
 
 
+def _setup_finished() -> bool:
+    """Has first-run setup finished (or "Set up later" been chosen)?
+
+    The same test the app uses to skip the setup wizard
+    (core._is_existing_install). Read at call time; a failure to read counts
+    as finished, so an established install never goes quiet by accident.
+    """
+    try:
+        return bool(core._is_existing_install())
+    except Exception:
+        return True
+
+
 def _paused(rec, reason, *, no_local_model=True):
     """Raise the right skip for a local-only run that cannot reach a local seat.
 
@@ -149,7 +162,7 @@ def _paused(rec, reason, *, no_local_model=True):
     exists but is parked, which the "no local model" status entry would misstate.
     """
     if (rec or {}).get("id") in LOCAL_ONLY_BY_DEFAULT:
-        if no_local_model:
+        if no_local_model and _setup_finished():
             try:
                 from agent_friday.services import scheduled_cloud as _sc
                 _sc.notify_paused()
@@ -1498,6 +1511,13 @@ def _notify_run(rec, status, summary):
     success). Failures always notify regardless of mode."""
     # The notification engine lives in services.voice_engine; import lazily so
     # the scheduler stays a leaf module.
+    if not _setup_finished():
+        # Before first-run setup is finished nothing has been connected or
+        # chosen yet: a routine that could not run is recorded in its history
+        # but raises no card, so a fresh install opens without a pile of
+        # notices about services the person has not been asked about.
+        _log.debug("run notice for %s held: setup not finished", rec.get("id"))
+        return
     try:
         from agent_friday.services.voice_engine import _notif_engine as _ne
     except Exception:
