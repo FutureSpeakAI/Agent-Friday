@@ -998,8 +998,13 @@ def test_the_replay_registry_is_keyed_by_provider_and_model(tmp_path):
     assert replayed("claude-b") != MEDICAID_Q, \
         "one model's query replayed to another model as its own"
     # seal_outbound checks the seat the payload itself names.
-    assert 'model=str(model or payload.get("model") or "")' in \
-        inspect.getsource(eg.seal_outbound)
+    def sealed_query(model):
+        out = eg.seal_outbound({"model": model, "messages": history}, "anthropic",
+                               log_path=tmp_path / "sealed.jsonl")
+        return out["messages"][0]["content"][0]["input"]["query"]
+    assert sealed_query("claude-a") == MEDICAID_Q
+    assert sealed_query("claude-b") != MEDICAID_Q, \
+        "seal_outbound replayed one model's query to another model"
 
 
 # ── the card shows all of what Send sends (critic review of 55b31e73a) ─────
