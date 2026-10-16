@@ -55387,11 +55387,27 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');
   return E(StSection, { title: 'What answers you', desc: ('The model that will answer your next message, where it runs and what it costs, and how ' + fridayName() + ' chooses between this machine and the cloud.') },
-    E(SoupRow, {
-      label: 'Now answering',
+    // ONE TRUTH: the model that actually answered the last message
+    // (soup.answer, recorded by the chat routes), not a guess from the
+    // routing settings. When the two differ, both show and the card says why.
+    (soup.answer && soup.answer.answering && soup.answer.answering.basis === 'answered')
+      ? E(SoupRow, {
+          label: 'Answering you',
+          main: (soup.answer.answering.label || soup.answer.answering.model) + ' · ' + (soup.answer.answering.where === 'local' ? 'this machine' : (soup.answer.answering.provider || 'cloud')),
+          detail: 'last reply ' + (fmtAgo(soup.answer.answering.at) || 'just now') + (soup.answer.answering.workspace ? ' · ' + soup.answer.answering.workspace : ''),
+          state: soup.answer.disagrees ? 'loading' : (soup.answer.answering.where === 'local' ? 'proven' : 'ready'),
+          reason: soup.answer.note || soup.answer.answering.why || '',
+        })
+      : E(SoupRow, {
+          label: 'Now answering',
+          main: (now.label || now.model || 'nothing') + ' · ' + whereTxt(now),
+          detail: stateDetail(now) + (now.where === 'cloud' && now.cost_per_turn_usd ? ' · ' + fmtUsd(now.cost_per_turn_usd) + ' / turn' : now.where === 'local' ? ' · $0' : ''),
+          state: now.state, reason: now.why || now.reason,
+        }),
+    soup.answer && soup.answer.next && E(SoupRow, {
+      label: 'Next message, by your settings',
       main: (now.label || now.model || 'nothing') + ' · ' + whereTxt(now),
-      detail: stateDetail(now) + (now.where === 'cloud' && now.cost_per_turn_usd ? ' · ' + fmtUsd(now.cost_per_turn_usd) + ' / turn' : now.where === 'local' ? ' · $0' : ''),
-      state: now.state, reason: now.why || now.reason,
+      detail: stateDetail(now), state: now.state, reason: now.why || now.reason,
     }),
     soup.local && soup.local.model && now.model !== soup.local.model && E(SoupRow, {
       label: 'Local model',

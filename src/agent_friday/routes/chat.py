@@ -652,6 +652,25 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
         "installed model in the seat picker." % (chosen, actual, chosen))
 
 
+def _record_answering(model, seat, gen, workspace, conversation_id, route_info,
+                      conv_seat=None):
+    """The model that answered this reply, for the Models card's one truth
+    (services/answer_truth). No message text leaves this function."""
+    try:
+        from agent_friday.services import answer_truth as _at
+        _why = ''
+        if isinstance(conv_seat, dict) and str(conv_seat.get('model') or '').strip():
+            # A model chosen for this chat outranks the routing mode: say so.
+            _why = 'the model chosen for this chat (%s)' % str(conv_seat['model']).strip()
+        elif isinstance(route_info, dict):
+            _why = str(route_info.get('reason') or route_info.get('why') or '')
+        _at.record(model, seat=seat,
+                   provider=((gen or {}).get('provider') if isinstance(gen, dict) else None),
+                   workspace=workspace, conversation_id=conversation_id, why=_why)
+    except Exception as _ae:
+        print(f"  [chat] answering-model record skipped: {_ae}")
+
+
 def _explicit_local_pick(conv_seat, routed_model):
     """The local model the owner bound this conversation to, when this turn
     routed to it; otherwise None. A failure of that seat is reported, never
@@ -2828,6 +2847,8 @@ def chat():
             friday_msg['fallback_chain'] = _fallback_chain
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class})
+        _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
+                          _route_info, locals().get('_conv_seat'))
 
         # ── Context log: append both turns unless off-record. ──
         if not settings.get('off_record'):
@@ -3522,6 +3543,7 @@ def chat_send():
             _seat_events, _seat_model, _seat_class = [], '', ''
         # Badge truth: prefer the ACTUAL generator over the configured seat.
         _fallback_chain = []
+        _gen = None
         try:
             if _attr2 is not None:
                 _gen = _attr2.last_generation()
@@ -3587,6 +3609,8 @@ def chat_send():
             friday_msg['seat_notice'] = _send_seat_notice
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class})
+        _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
+                          None, {'model': _conv_seat_model} if (_conv_seat_model or '').strip() else None)
 
         # Prune and save
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
