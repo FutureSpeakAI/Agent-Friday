@@ -41,7 +41,7 @@ VERIFIED_URLS = frozenset({
     "https://platform.inworld.ai",
     "https://api-dashboard.search.brave.com/app/keys",
     "https://www.firecrawl.dev/app/api-keys",
-    "https://accounts.google.com/signup",
+    "https://accounts.google.com/lifecycle/flows/signup",
     "https://github.com/settings/personal-access-tokens/new",
     "https://api.slack.com/apps",
     "https://discord.com/developers/applications",
