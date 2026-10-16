@@ -636,3 +636,77 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
             "before": {"summary": before.get("summary"),
                        "location": before.get("location") or "",
                        "description": (before.get("description") or "")[:300]}}
+
+
+RSVP_RESPONSES = ("accepted", "tentative", "declined")
+
+
+def _account_email(account_id) -> str:
+    """The connected account's own address, lowercased; '' when it is not known."""
+    try:
+        from agent_friday.services import google_accounts as ga
+        for a in ga.list_accounts() or []:
+            if isinstance(a, dict) and a.get("id") == account_id:
+                return str(a.get("email") or "").lower()
+    except Exception:
+        pass
+    return ""
+
+
+def respond_to_event(event_id: str, response: str, *, account_id=None,
+                     calendar_id: str = "primary") -> dict:
+    """The owner's reply to an invitation: going, maybe or not going.
+
+    Sends only the owner's own row of the guest list (the attendee Google
+    marks `self`) with `attendeesOmitted`, so the other guests' rows are never
+    written back from an earlier read; Google tells the organiser. Refused when the event has
+    no invitation for the owner (her own event, or one she is not on).
+    `before` is the reply it replaced, so the page can say what changed."""
+    if not _cal(calendar_id):
+        return {"error": "that is not a calendar id; nothing was changed"}
+    response = str(response or "").strip().lower()
+    if response not in RSVP_RESPONSES:
+        return {"error": "a reply is one of: " + ", ".join(RSVP_RESPONSES)}
+    ready, why = write_ready()
+    if not ready:
+        return {"error": why, "needs_reconnect": True}
+    aid, acct_err = resolve_write_account(account_id)
+    if acct_err:
+        return {"error": acct_err, "needs_account": True}
+    svc, err = _service(aid)
+    if svc is None:
+        return {"error": err}
+    try:
+        ev = svc.events().get(calendarId=_cal(calendar_id), eventId=event_id).execute()
+    except Exception as e:
+        return {"error": "could not read event %s: %s" % (event_id, e)}
+    attendees = [dict(a) for a in (ev.get("attendees") or [])]
+    # Google's `self` is "the calendar this copy sits on". On a calendar shared with her that is someone
+    # else, so the row is hers only on her own primary calendar or when it carries her own address.
+    own = _account_email(aid)
+    mine = [a for a in attendees if a.get("self") and (_cal(calendar_id) == "primary"
+                                                       or (own and str(a.get("email") or "").lower() == own))]
+    if not mine:
+        return {"error": "there is no invitation for you on “%s” to reply to"
+                % (ev.get("summary") or "this event")}
+    org = ev.get("organizer") or {}
+    if org.get("self") and (_cal(calendar_id) == "primary" or (own and str(org.get("email") or "").lower() == own)
+                            or mine[0].get("organizer")):
+        return {"error": "you organise “%s”; there is no invitation to reply to"
+                % (ev.get("summary") or "this event")}
+    before = mine[0].get("responseStatus") or "needsAction"
+    if before == response:
+        return {"ok": True, "unchanged": True, "id": event_id, "response": response, "before": before}
+    row = dict(mine[0], responseStatus=response)
+    # sendUpdates takes only all, externalOnly or none: there is no organiser-only setting. A patch that
+    # carries only her own row with attendeesOmitted changes only her reply, and Google's notice of a reply
+    # goes to the organiser; externalOnly would skip an organiser in her own domain and none would tell
+    # nobody, so the reply keeps "all".
+    try:
+        out = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
+                                 body={"attendees": [row], "attendeesOmitted": True}, sendUpdates="all").execute()
+    except Exception as e:
+        return {"error": "could not send the reply: %s" % e}
+    _drop_calendar_cache()
+    return {"ok": True, "id": out.get("id") or event_id, "title": out.get("summary") or ev.get("summary"),
+            "response": response, "before": before, "account_id": aid, "calendar_id": _cal(calendar_id)}

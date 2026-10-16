@@ -292,6 +292,9 @@ def normalize(ev: dict, cal: dict) -> dict | None:
         "reminders_source": source,
         "self_rsvp": _self_rsvp(ev, cal),
         "organizer_self": organizer_self,
+        # Who hears a reply to an invitation: the confirmation names them before anything is sent.
+        "organizer_email": str(org.get("email") or "")[:200],
+        "organizer_name": str(org.get("displayName") or "")[:200],
         "can_edit": can_edit,
         "recurring": bool(ev.get("recurringEventId")),
         "busy": ev.get("transparency") != "transparent",

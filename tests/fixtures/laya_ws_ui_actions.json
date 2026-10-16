@@ -79,7 +79,8 @@
    {"id": "calendar.switch_view", "group": "navigate", "label": "switch day / week / month view", "audit_status": "new"},
    {"id": "calendar.free_busy", "group": "navigate", "label": "free / busy view", "audit_status": "new"},
    {"id": "calendar.only_calendars", "group": "select", "label": "show only some calendars (Friday's chip)", "audit_status": "new"},
-   {"id": "calendar.toggle_calendar", "group": "settings", "label": "switch a calendar on or off in Friday", "audit_status": "new"}
+   {"id": "calendar.toggle_calendar", "group": "settings", "label": "switch a calendar on or off in Friday", "audit_status": "new"},
+   {"id": "calendar.rsvp", "group": "organize", "label": "reply to an invitation (going / maybe / not going)", "audit_status": "new"}
   ],
   "family": [
    {"id": "family.view", "group": "read", "label": "view members / dates / countdowns", "audit_status": "N"},

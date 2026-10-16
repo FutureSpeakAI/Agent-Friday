@@ -115,7 +115,8 @@
   function eventLabel(ev) {
     const t = ev.all_day ? 'all day' : timeOf(ev.start_time) + (ev.end_time ? ' to ' + timeOf(ev.end_time) : '');
     const rem = reminderText(ev);
-    return ev.title + ', ' + t + (ev.calendar_name ? ', ' + ev.calendar_name : '') + (rem ? '. ' + rem : '');
+    const rsvp = ev.self_rsvp && !ev.organizer_self ? '. Your reply: ' + ({ accepted: 'going', tentative: 'maybe', declined: 'not going' }[ev.self_rsvp] || 'not yet') : '';
+    return ev.title + ', ' + t + (ev.calendar_name ? ', ' + ev.calendar_name : '') + (rem ? '. ' + rem : '') + rsvp;
   }
 
   function ViewSwitch(props) {
@@ -599,6 +600,68 @@
               'Busy' + (b.calendars.length ? ' · ' + b.calendars.join(', ') : '')); })))));
   }
 
+  // ── replying to an invitation: the owner's click, then a confirmation, because the organiser hears it ─────
+  const RSVP_EVENT = 'friday:cal-propose-rsvp';
+  const RSVP_WORDS = { accepted: 'Going', tentative: 'Maybe', declined: 'Not going', needsAction: 'Not replied' };
+  function RsvpButtons(props) {
+    const ev = props.ev;
+    if (!ev || !ev.self_rsvp || ev.organizer_self || ev.source !== 'google') return null;
+    return h('span', { className: 'calv-rsvp', role: 'group', 'aria-label': 'Your reply to ' + ev.title, onClick: e => e.stopPropagation() },
+      h('span', { className: 'calv-rsvp-now' }, RSVP_WORDS[ev.self_rsvp] || ev.self_rsvp),
+      ['accepted', 'tentative', 'declined'].map(r => h('button', {
+        key: r, type: 'button', className: 'calv-rsvp-btn' + (ev.self_rsvp === r ? ' on' : ''), 'aria-pressed': ev.self_rsvp === r,
+        disabled: ev.self_rsvp === r,
+        onClick: e => { e.stopPropagation(); window.dispatchEvent(new CustomEvent(RSVP_EVENT, { detail: { ev, response: r } })); },
+      }, RSVP_WORDS[r])));
+  }
+  // The confirmation names who hears the reply: the organiser's name and address as Google gives them.
+  function organiserLine(ev) {
+    const name = String(ev.organizer_name || '').trim(), email = String(ev.organizer_email || '').trim();
+    const named = name && email && name.toLowerCase() !== email.toLowerCase() ? name + ' (' + email + ')' : (name || email);
+    return named ? 'Google will let the organiser, ' + named + ', know.' : 'Google will let the organiser know.';
+  }
+  function RsvpLayer(props) {
+    const { useState, useEffect, useRef } = R();
+    const [pending, setPending] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [done, setDone] = useState(null);
+    const cancelRef = useRef(null);
+    useEffect(() => {
+      const on = e => { if (e.detail && e.detail.ev) setPending(e.detail); };
+      window.addEventListener(RSVP_EVENT, on);
+      return () => window.removeEventListener(RSVP_EVENT, on);
+    }, []);
+    useEffect(() => { if (pending && cancelRef.current) cancelRef.current.focus(); }, [pending]);
+    useEffect(() => { if (!done) return; const t = setTimeout(() => setDone(null), done.failed ? 15000 : 8000); return () => clearTimeout(t); }, [done]);
+    const send = async () => {
+      const p = pending;
+      setBusy(true);
+      try {
+        const r = await api('/api/calendar/events/' + encodeURIComponent(p.ev.id) + '/rsvp', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calendar_key: p.ev.calendar_key, response: p.response, confirmed: true }),
+        });
+        const d = await r.json();
+        if (r.ok && d.status === 'ok') { setDone({ text: 'Replied “' + RSVP_WORDS[p.response] + '” to “' + p.ev.title + '”. You can change it any time.' }); if (props.onReplied) props.onReplied(); }
+        else setDone({ text: "Couldn't send the reply: " + (d.message || 'Google did not take it') + '. Nothing was sent.', failed: true });
+      } catch (_) { setDone({ text: "Couldn't reach " + who() + ' to send the reply. Nothing was sent.', failed: true }); }
+      setBusy(false);
+      setPending(null);
+    };
+    return h(R().Fragment, null,
+      pending ? h('div', { className: 'calv-modal-back', onClick: () => !busy && setPending(null) },
+        h('div', { className: 'calv-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'calv-rsvp-title', onClick: e => e.stopPropagation(),
+          onKeyDown: e => { if (e.key === 'Escape') { e.stopPropagation(); if (!busy) setPending(null); } } },
+          h('div', { id: 'calv-rsvp-title', className: 'calv-modal-title' }, 'Reply “' + RSVP_WORDS[pending.response] + '” to “' + pending.ev.title + '”?'),
+          h('div', { className: 'calv-modal-line' }, whenText(pending.ev.start_time)),
+          h('div', { className: 'calv-modal-dim' }, organiserLine(pending.ev)),
+          h('div', { className: 'calv-modal-actions' },
+            h('button', { type: 'button', className: 'btn', ref: cancelRef, onClick: () => setPending(null), disabled: busy }, 'Cancel'),
+            h('button', { type: 'button', className: 'btn active', onClick: send, disabled: busy }, busy ? 'Sending…' : 'Send reply')))) : null,
+      done ? h('div', { className: 'calv-undo' + (done.failed ? ' failed' : ''), role: done.failed ? 'alert' : 'status' },
+        h('span', null, done.text), h('button', { type: 'button', className: 'btn', 'aria-label': 'Dismiss', onClick: () => setDone(null) }, '×')) : null);
+  }
+
   // ── styles (tokens only; the event colour arrives as --ev) ─────────────────
   const CSS = `
 .calv-toolbar{position:relative;display:flex;align-items:center;gap:var(--fr-gap,8px);flex-wrap:wrap;margin:0 0 10px}
@@ -671,6 +734,11 @@
 .calv-free,.calv-busy{position:absolute;left:2px;right:2px;box-sizing:border-box;border-radius:6px;font-size:10px;padding:2px 6px;overflow:hidden}
 .calv-free{border:1px dashed var(--fr-glass-edge);color:var(--fr-dim)}
 .calv-busy{background:color-mix(in srgb,var(--fr-neutral) 35%,transparent);border-left:3px solid var(--fr-neutral);color:var(--fr-text)}
+.calv-rsvp{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+.calv-rsvp-now{color:var(--fr-dim)}
+.calv-rsvp-btn{background:none;border:1px solid var(--fr-glass-edge);border-radius:6px;color:var(--fr-text);font-size:10px;padding:1px 6px;cursor:pointer;min-height:20px}
+.calv-rsvp-btn.on{border-color:var(--fr-cyan);color:var(--fr-cyan);cursor:default}
+.calv-rsvp-btn:focus-visible{box-shadow:var(--fr-focus);outline:none}
 @container (max-width:719px){.calv-cell{min-height:64px}.calv-chip-time{display:none}}
 `;
   function injectStyle() {
@@ -682,5 +750,5 @@
   }
   if (document.head) injectStyle(); else document.addEventListener('DOMContentLoaded', injectStyle);
 
-  window.CalendarViews = { VIEWS, ViewSwitch, Nav, WeekView, MonthView, FreeBusyView, CalendarsPanel, OnlyChip, useCalendars, slug, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
+  window.CalendarViews = { RsvpButtons, RsvpLayer, VIEWS, ViewSwitch, Nav, WeekView, MonthView, FreeBusyView, CalendarsPanel, OnlyChip, useCalendars, slug, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
 })();

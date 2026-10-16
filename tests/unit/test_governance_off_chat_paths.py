@@ -526,6 +526,9 @@ REVIEWED_SINKS = {
     ("services/calendar_write.py", "update_event"):
         "the update_calendar_event tool, which is outward; or the owner's confirmed drag "
         "(routes/calendar.py api_calendar_move_event -> item_actions.move_event_by_owner, with Undo)",
+    ("services/calendar_write.py", "respond_to_event"):
+        "the owner's confirmed reply in the Calendar (routes/calendar.py api_calendar_rsvp, refused "
+        "without confirmed); changes only the owner's own guest row",
     ("services/calendar_write.py", "annotate_events"):
         "the annotate_calendar_events tool, which is outward",
     ("services/calendar_write.py", "delete_event"):

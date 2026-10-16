@@ -272,3 +272,14 @@ def test_on_someone_elses_calendar_googles_self_is_not_the_owner_and_her_own_cop
     assert b["self_rsvp"] == "needsAction"
     by = {c["key"]: c for c in (mine, shared)}
     assert sorted([a, b], key=lambda e: cv._rank(e, by))[0]["calendar_key"] == "home|primary"
+
+
+def test_an_invitation_carries_the_name_and_address_of_its_organiser():
+    from agent_friday.services import calendar_views as cv
+    s = DAY.replace(hour=12).astimezone()
+    raw = {"id": "inv", "summary": "Lunch with Dana", "start": {"dateTime": s.isoformat()},
+           "end": {"dateTime": (s + timedelta(hours=1)).isoformat()},
+           "organizer": {"email": "dana@example.com", "displayName": "Dana Example"}}
+    n = cv.normalize(raw, {"key": "home|primary", "calendar_id": "primary", "primary": True, "access_role": "owner"})
+    assert n["organizer_email"] == "dana@example.com" and n["organizer_name"] == "Dana Example"
+    assert n["organizer_self"] is False

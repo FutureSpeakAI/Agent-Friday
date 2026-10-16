@@ -224,6 +224,11 @@
    "action": "calendar.toggle_calendar",
    "kind": "by_design",
    "reason": "Which calendars Friday reads is the owner's tick; by voice she narrows a view (only_calendars), never what she reads."
+  },
+  {
+   "action": "calendar.rsvp",
+   "kind": "by_design",
+   "reason": "A reply to an invitation reaches the organiser, so it stays the owner's click and confirmation, like sending mail."
   }
  ],
  "resolver_sources": [],
