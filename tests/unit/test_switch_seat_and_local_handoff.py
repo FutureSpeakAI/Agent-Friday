@@ -43,6 +43,11 @@ def world(tmp_path, monkeypatch):
             return tiers.Resolution(tier, CLOUD, is_local=False)
         return tiers.Resolution(tier, seat["local"])
     monkeypatch.setattr(tiers, "resolve", resolve)
+    # What this computer's local daemon really has, and where it listens.
+    from agent_friday.services import seat_handoff as sh
+    here = {"models": {LOCAL, CLOUD_TAGGED}, "url": "http://127.0.0.1:11434"}
+    monkeypatch.setattr(sh, "_inventory", lambda: set(here["models"]))
+    monkeypatch.setattr(sh, "_serving_url", lambda model: here["url"])
     spawned = []
     monkeypatch.setattr(ag, "_spawn_task",
                         lambda *a, **k: spawned.append((a, k)) or "task-local-1")
@@ -52,7 +57,7 @@ def world(tmp_path, monkeypatch):
     from agent_friday.services import item_actions
     monkeypatch.setattr(item_actions, "_post_back", lambda cid, text, aid: posted.append((cid, text)))
     conv = cv.create("Weekend plans", seat={"model": CLOUD, "provider": "anthropic"})
-    return types.SimpleNamespace(seat=seat, spawned=spawned, posted=posted, cid=conv["id"])
+    return types.SimpleNamespace(seat=seat, spawned=spawned, posted=posted, cid=conv["id"], here=here)
 
 
 def _cards():
@@ -217,8 +222,13 @@ def test_a_vault_refusal_carries_the_offer_and_one_card(world, monkeypatch):
     assert len(cards) == 1, [c["title"] for c in cards]
     card = cards[0]
     assert card["kind"] == "seat_handoff" and LOCAL in card["title"]
-    assert card["approval_id"] in res["tu0"] and card["approval_id"] in res["tu1"]
+    assert card["approval_id"] in res["tu1"]
     assert len(card["payload"]["steps"]) == 2, "both refused steps ride on the one card"
+    # The first refusal's card was retired, not edited, when the second step joined.
+    first = res["tu0"].split("ONE card (", 1)[1].split(")", 1)[0]
+    assert first != card["approval_id"]
+    assert ap.get_approval(first)["status"] == "expired"
+    assert len(ap.get_approval(first)["payload"]["steps"]) == 1
     # Approving it hands the refused work to the local model, pinned there.
     ap.decide(card["approval_id"], "approve")
     assert len(world.spawned) == 1
@@ -312,4 +322,149 @@ def test_refusals_at_the_same_moment_join_one_card(world, monkeypatch):
         ag._CURRENT_CONVERSATION.reset(tok)
     cards = _cards()
     assert len(cards) == 1, [c["approval_id"] for c in cards]
-    assert all(cards[0]["approval_id"] in r for r in out), out
+    assert len(cards[0]["payload"]["steps"]) == 4, "every refused step rides on the one live card"
+    assert all("ONE card (" in r for r in out), out
+
+
+
+# ── the post-back stays on this PC; the card shows what runs; nothing changes under the owner ──
+
+def test_a_handoff_result_is_withheld_from_a_cloud_replay(world, tmp_path):
+    from agent_friday.services import egress_gate
+    secret = "Picnic booked at Riverside Park for the birthday, 2pm Saturday."
+    payload = {"messages": [{"role": "user", "content": "how did it go?"},
+                            {"role": "assistant", "content": egress_gate.mark_local_only(secret)}]}
+    out = egress_gate.seal_outbound(payload, "anthropic", log_path=tmp_path / "egress.jsonl",
+                                    model=CLOUD)
+    assert secret not in str(out["messages"]), "a local-only result was sent to a cloud model"
+    assert out["messages"][0]["content"] == "how did it go?"
+    assert egress_gate.seal_outbound(payload, "ollama", model=LOCAL) == payload, "a local seat reads it"
+    # The stored line carries the mark on replay, and only that line does.
+    from agent_friday.routes import chat as chat_route
+    cv.append(world.cid, {"role": "user", "text": "hand it to the local model"})
+    cv.append(world.cid, {"role": "friday", "text": secret, "meta": {"local_only": True}})
+    replay = chat_route._conv_context(world.cid)
+    assert replay[-1]["content"].startswith(egress_gate.LOCAL_ONLY_MARK)
+    assert not replay[-2]["content"].startswith(egress_gate.LOCAL_ONLY_MARK)
+
+
+def test_a_pinned_tasks_result_is_marked_local_and_never_spoken(world, monkeypatch):
+    from agent_friday.services import notice_registry as nr
+    lines, spoken = [], []
+    monkeypatch.setattr(nr, "transcript_add", lambda eid, cid, msg, **kw: lines.append(msg))
+    monkeypatch.setattr(nr, "completion_target", lambda cid: nr.SPOKEN)
+    monkeypatch.setattr(nr, "voice_say", lambda *a, **k: spoken.append(a) or True)
+    monkeypatch.setattr(nr, "_chat_open", lambda: True)
+    with ag.TASKS_LOCK:
+        ag.TASKS["t-pinned"] = {"name": "Local handoff", "conversation_id": world.cid, "pin_to_seat": True}
+    try:
+        ag._report_task_completion("t-pinned", "Local handoff", "done", "Picnic booked.")
+    finally:
+        with ag.TASKS_LOCK:
+            ag.TASKS.pop("t-pinned", None)
+    assert spoken == [], "a local result was spoken into a live call"
+    assert lines and lines[-1]["meta"].get("local_only") is True
+
+
+def test_the_handoff_card_shows_what_will_run_and_its_notice_does_not(world):
+    from agent_friday.services import seat_handoff as sh
+    tok = ag._CURRENT_CONVERSATION.set(world.cid)
+    try:
+        sh.denial_result("create_calendar_event",
+                         {"summary": "Daughter's birthday picnic", "location": "Riverside Park"},
+                         "cloud_denied_tier_TIER_2", {"conversation_id": world.cid,
+                                                      "owner_text": "put the picnic on my calendar"})
+    finally:
+        ag._CURRENT_CONVERSATION.reset(tok)
+    (card,) = _cards()
+    assert "Riverside Park" in card["description"], card["description"]
+    assert "create_calendar_event" in card["description"]
+    assert "kept on this PC" in card["description"]
+    shown = ap.notice_title(card) + " " + ap.notice_body(card)
+    assert "Riverside Park" not in shown and "picnic" not in shown.lower()
+
+
+def test_an_outward_step_inside_the_handoff_task_raises_its_own_card(world, monkeypatch):
+    """The handoff task runs as a background task, which the chat confirmation gate does not ask;
+    the governance checkpoint holds its outward steps on their own cards."""
+    ran = []
+    monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, "create_calendar_event", lambda inp: ran.append(1) or "ok")
+    ctx = {"authenticated": True, "is_background_task": True, "task_id": "task-local-1",
+           "conversation_id": world.cid, "pin_to_seat": True}
+    out = ag._execute_tool("create_calendar_event",
+                           {"title": "Birthday picnic", "start": "2026-10-17T14:00:00"}, session_ctx=ctx)
+    assert not ran, out
+
+
+def test_a_later_refusal_never_changes_the_card_on_screen(world):
+    from agent_friday.services import seat_handoff as sh
+    tok = ag._CURRENT_CONVERSATION.set(world.cid)
+    try:
+        sh.denial_result("create_calendar_event", {"summary": "Picnic"}, "cloud_denied_tier_TIER_2",
+                         {"conversation_id": world.cid})
+        (shown,) = _cards()
+        sh.denial_result("create_calendar_event", {"summary": "Zoo trip"}, "cloud_denied_tier_TIER_2",
+                         {"conversation_id": world.cid})
+    finally:
+        ag._CURRENT_CONVERSATION.reset(tok)
+    before = ap.get_approval(shown["approval_id"])
+    assert before["description"] == shown["description"], "the card on screen was edited under the owner"
+    assert before["payload"] == shown["payload"]
+    assert before["status"] == "expired"
+    (live,) = _cards()
+    assert live["approval_id"] != shown["approval_id"]
+    assert [st["input"]["summary"] for st in live["payload"]["steps"]] == ["Picnic", "Zoo trip"]
+    # Approving the retired card runs nothing.
+    ap.decide(shown["approval_id"], "approve")
+    assert world.spawned == []
+
+
+def test_a_retired_card_decided_first_keeps_its_own_steps(world):
+    from agent_friday.services import seat_handoff as sh
+    tok = ag._CURRENT_CONVERSATION.set(world.cid)
+    try:
+        sh.denial_result("create_calendar_event", {"summary": "Picnic"}, "cloud_denied_tier_TIER_2",
+                         {"conversation_id": world.cid})
+        (first,) = _cards()
+        ap.decide(first["approval_id"], "approve")          # decided before the next refusal
+        sh.denial_result("create_calendar_event", {"summary": "Zoo trip"}, "cloud_denied_tier_TIER_2",
+                         {"conversation_id": world.cid})
+    finally:
+        ag._CURRENT_CONVERSATION.reset(tok)
+    (live,) = _cards()
+    assert [st["input"]["summary"] for st in live["payload"]["steps"]] == ["Zoo trip"]
+
+
+def test_a_model_this_computer_does_not_serve_is_no_local_target(world):
+    world.here["models"] = set()
+    out = _call("switch_seat", {"task": PRIVATE_TASK}, world.cid)
+    assert out.startswith("SEAT_FAIL"), out
+    world.here["models"] = {LOCAL}
+    world.here["url"] = "http://192.0.2.10:11434"
+    out = _call("switch_seat", {"task": PRIVATE_TASK}, world.cid)
+    assert out.startswith("SEAT_FAIL"), out
+    assert _cards() == []
+
+
+def test_local_is_checked_again_when_the_card_is_decided(world):
+    out = _call("switch_seat", {"task": PRIVATE_TASK}, world.cid)
+    assert out.startswith("SEAT_NEEDS_YES:"), out
+    world.here["url"] = "http://192.0.2.10:11434"            # the daemon moved off this PC meanwhile
+    ap.decide(_cards()[0]["approval_id"], "approve")
+    assert world.spawned == [], "a handoff ran on a model that no longer runs here"
+    assert world.posted and "Nothing was run" in world.posted[-1][1]
+
+
+def test_a_switch_to_cloud_card_says_the_conversation_goes_to_that_model(world):
+    conv = cv.create("Local chat", seat={"model": LOCAL, "provider": "ollama"})
+    out = _call("switch_seat", {"to": "cloud"}, conv["id"])
+    assert out.startswith("SEAT_NEEDS_YES:"), out
+    (card,) = _cards()
+    assert "conversation so far" in card["description"] and CLOUD in card["description"]
+
+
+def test_cards_with_no_conversation_are_never_joined(world):
+    from agent_friday.services import seat_handoff as sh
+    sh.denial_result("create_calendar_event", {"summary": "Picnic"}, "cloud_denied_tier_TIER_2", {})
+    sh.denial_result("create_calendar_event", {"summary": "Zoo trip"}, "cloud_denied_tier_TIER_2", {})
+    assert len(_cards()) == 2

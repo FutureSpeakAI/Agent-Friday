@@ -510,15 +510,18 @@ def completion_target(conversation_id: Optional[str]) -> str:
 
 
 def deliver_completion(conversation_id: Optional[str], *, text: str, panel: Callable[[], Any],
-                       chat: Callable[[], Any], emitter_id: str = "E77") -> str:
+                       chat: Callable[[], Any], emitter_id: str = "E77",
+                       spoken: bool = True) -> str:
     """Deliver one completion in the one place the owner is. `panel` and `chat`
     do today's write (a card; a transcript line); the spoken line goes through
     the live call. A call that has gone by the time we speak falls back to the
     chat line or the card, so the result is never only said into a dropped
-    call. Returns where it went."""
+    call. `spoken=False` keeps a result out of the live call (its model may be
+    a cloud one) and delivers it as the chat line or the card. Returns where
+    it went."""
     target = completion_target(conversation_id)
     if target == SPOKEN:
-        if voice_say(emitter_id, str(conversation_id), text, kind="task_result"):
+        if spoken and voice_say(emitter_id, str(conversation_id), text, kind="task_result"):
             return SPOKEN
         target = CHAT if _chat_open() else PANEL
     if target == CHAT:

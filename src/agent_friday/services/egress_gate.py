@@ -1044,6 +1044,13 @@ def _gate_messages(messages: list, provider: str,
         out = msg
         if "content" in msg:
             content = msg["content"]
+            if isinstance(content, str) and LOCAL_ONLY_MARK in content:
+                # A result the local model produced on this PC (a handoff the
+                # owner approved): it never leaves the device, under any consent.
+                _log(provider, f"message[{i}].content", Tier.SENSITIVE, "block",
+                     "local-only result withheld from a cloud model", log_path)
+                gated.append({**out, "content": _LOCAL_ONLY_WITHHELD})
+                continue
             if isinstance(content, str):
                 _g = _gate_text(content, provider, f"message[{i}].content", log_path)
                 if content and not _g:
@@ -1056,7 +1063,12 @@ def _gate_messages(messages: list, provider: str,
             elif isinstance(content, list):
                 new_parts = []
                 for j, part in enumerate(content):
-                    if isinstance(part, dict) and part.get("type") == "text":
+                    if (isinstance(part, dict) and part.get("type") == "text"
+                            and LOCAL_ONLY_MARK in str(part.get("text") or "")):
+                        _log(provider, f"message[{i}].content[{j}].text", Tier.SENSITIVE, "block",
+                             "local-only result withheld from a cloud model", log_path)
+                        new_parts.append({**part, "text": _LOCAL_ONLY_WITHHELD})
+                    elif isinstance(part, dict) and part.get("type") == "text":
                         new_parts.append({
                             **part,
                             "text": _gate_text(
@@ -1087,6 +1099,26 @@ def _gate_messages(messages: list, provider: str,
                 model=model)}
         gated.append(out)
     return gated
+
+
+#: The mark a replayed history line carries when it holds a result the local
+#: model produced on this PC (services/seat_handoff: a task the owner handed to
+#: the local model, posted back into a chat that stays on a cloud seat). The
+#: gate withholds any message carrying it from every cloud model, whatever the
+#: consent; a local seat reads it as it is. Stored rows carry
+#: meta.local_only, and routes/chat._conv_context adds the mark on replay.
+LOCAL_ONLY_MARK = "[on this PC only] "
+
+_LOCAL_ONLY_WITHHELD = ("[EGRESS-GATE: a result the local model produced on this "
+                        "computer was withheld; it stays on this device. Do not "
+                        "guess what it said. If the user wants to discuss it, "
+                        "they can switch this chat to the local model.]")
+
+
+def mark_local_only(text: str) -> str:
+    """`text` as a replayed history line that no cloud model may read."""
+    text = str(text or "")
+    return text if text.startswith(LOCAL_ONLY_MARK) else LOCAL_ONLY_MARK + text
 
 
 # What the model sees in place of a fully withheld user/assistant message.

@@ -6668,15 +6668,24 @@ def _report_task_completion(task_id, name, status, result_text):
     def chat_line():
         from agent_friday.services import conversations as _cv
         from agent_friday.services import notice_registry as _nreg
+        meta = {"kind": "task_result", "task_id": task_id, "status": status}
+        if local_only:
+            meta["local_only"] = True
         _nreg.transcript_add('E77', _cv.resolve(cid), {"role": "friday", "text": text, "pinned": False,
-                                                       "meta": {"kind": "task_result", "task_id": task_id,
-                                                                "status": status}})
+                                                       "meta": meta})
 
+    # A task pinned to its local seat produced this on this PC (a handoff the
+    # owner approved, a private-voice task): its result stays on this PC. The
+    # chat line is marked so a cloud seat replaying this chat is never sent it
+    # (services/egress_gate.LOCAL_ONLY_MARK), and it is not spoken into a live
+    # call, whose model may be a cloud one.
+    local_only = bool(rec.get('pin_to_seat'))
     try:
         # One delivery, chosen by where the owner is: in a call it is spoken, in an
         # open chat it is one line, otherwise it waits in the panel's Updates.
         from agent_friday.services import notice_registry as _nreg
-        _nreg.deliver_completion(cid, text=text, panel=card, chat=chat_line)
+        _nreg.deliver_completion(cid, text=text, panel=card, chat=chat_line,
+                                 spoken=not local_only)
     except Exception as ne:
         try:
             _task_log(task_id, f'Completion notice could not be sent: {ne}')
