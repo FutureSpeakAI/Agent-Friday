@@ -119,7 +119,9 @@ def _check(name: str, body: bytes, sig_text: str, *, min_version: int = 0,
 
 def cached(name: str) -> dict | None:
     """The cached list, re-verified now; None when there is none or it no
-    longer verifies (an edited or expired cache is not used)."""
+    longer verifies (an edited or expired cache is not used), when it is
+    older than a version already accepted here (a cache swapped for an
+    older signed list), or when the record of those versions cannot be read."""
     if name not in LISTS:
         raise ValueError(name)
     body_p, sig_p = _paths(name)
@@ -129,7 +131,7 @@ def cached(name: str) -> dict | None:
         except OSError:
             return None
     try:
-        return _check(name, body, sig)
+        return _check(name, body, sig, min_version=_highest_seen(name, strict=True))
     except ListUnavailable as e:
         _log.warning("cached public list not used: %s", e)
         return None
@@ -140,12 +142,20 @@ def _versions_path() -> Path:
     return friday_home() / "privacy" / "public_list_versions.json"
 
 
-def _highest_seen(name: str) -> int:
+def _highest_seen(name: str, strict: bool = False) -> int:
     """The highest version of `name` ever accepted here, kept apart from the
-    cache, so deleting or losing the cache does not reopen an older list."""
+    cache, so deleting or losing the cache does not reopen an older list.
+    0 when nothing was ever accepted. A record that exists but cannot be
+    read is 0 too, unless `strict`: then ListUnavailable, since the floor
+    it held is unknown."""
+    p = _versions_path()
     try:
-        return int((json.loads(_versions_path().read_text(encoding="utf-8")) or {}).get(name) or 0)
-    except Exception:
+        if not p.exists():
+            return 0
+        return int((json.loads(p.read_text(encoding="utf-8")) or {}).get(name) or 0)
+    except Exception as e:
+        if strict:
+            raise ListUnavailable("the record of %s list versions cannot be read" % name) from e
         return 0
 
 
