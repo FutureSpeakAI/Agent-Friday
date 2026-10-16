@@ -29,7 +29,7 @@ SCAN_SUFFIXES = {".py", ".js", ".ts", ".txt", ".md"}
 KNOWN_LOWERCASE_PROJECTS = {"podcastfy", "headroom", "goose", "adrian"}
 
 #: Hyphenated English the grammar would otherwise read as a project.
-ENGLISH_COMPOUNDS = {"load-time", "file-grants", "read-only", "run-time", "built-in", "in-memory", "on-disk", "two-speaker", "per-user"}
+ENGLISH_COMPOUNDS = {"load-time", "file-grants", "read-only", "run-time", "built-in", "in-memory", "on-disk", "two-speaker", "per-user", "non-public"}
 
 #: "ported from obsidian-wiki's graph_analysis.py", "vendored verbatim from graphrag-workbench",
 #: "Python port of graphrag-workbench's force-simulation", "adapted from podcastfy".
