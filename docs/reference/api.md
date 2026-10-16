@@ -1067,6 +1067,10 @@ Favicon.
 - `GET /api/steps/active` — `{ "list": { "id", "title", "steps": [ { "n", "text", "state" } ] } | null }`: the step list of the run in progress. States: waiting, doing, done, held, skipped, stopped, failed. Held in memory only.
 - `POST /api/steps/<id>/stop` — the same stop, by list id. `{ "ok", "text" }`.
 
+### A saved workflow's email choice
+
+- `PATCH /api/workflows/chains/<name>` with `{ "email_send": true | false }` — whether the emails the workflow writes when run on request are sent (each asks first unless pre-approved) or saved as drafts in Gmail. 200 `{ "slug", "email_send" }`; 400 for any other body; 404 for an unknown workflow. Kept on the workflow record outside the content a job pre-approval fingerprints, so it never voids one. For a scheduled workflow, `PATCH /api/schedules/<id>` with `email_send` sets the job and its workflow together.
+
 ### Settings changes Friday proposed
 
 - `GET /api/settings/changes?path=<row path>&limit=<n>` — recent changes to Settings rows made through a card, newest first: `{ id, path, label, old, new, by, at, undone, undoable }`. The values kept for Undo stay server-side.
