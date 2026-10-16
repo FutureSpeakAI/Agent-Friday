@@ -905,21 +905,38 @@ def step_creative_engine(total: int, existing: str) -> str:
         console.print(f"  [red]Enter 1–{len(engines)}.[/red]")
 
 
-def step_brain(total: int, existing_anthro: str, existing_gemini: str) -> tuple[str, str]:
-    """Decide local vs cloud from the hardware, and get a working key stored.
+#: The model providers the terminal screen can take a key for, in order. Every
+#: one is a provider the registry can use; the full list, the other categories
+#: and the live tests are on Friday's own Connect your services screen.
+CLI_PROVIDERS = ("anthropic", "openrouter", "openai", "google-gemini", "groq",
+                 "mistral", "xai", "deepseek", "together")
 
-    Replaces the old "here are two key prompts" screen. The difference that
-    matters: this asks the planner what THIS machine can actually be good at,
-    and says so, instead of presenting the same choice to every user and
-    letting the weak-hardware case discover the consequences later.
+
+def connect_choices(capable: bool) -> list:
+    """The three answers to "how should Friday think?", in order. Each is
+    (key, text, recommended_reason). Nothing is preselected: the prompt has no
+    default, so the person types their own answer."""
+    return [
+        ("1", "I'll just use local AI: nothing to connect, nothing leaves this computer",
+         "most private" if capable else ""),
+        ("2", "Connect an AI model provider now (the key is hidden as you type)", ""),
+        ("3", "Later: Friday's Connect your services screen has every service, "
+              "sign-up links and a test button", ""),
+    ]
+
+
+def step_brain(total: int, existing_anthro: str, existing_gemini: str) -> tuple[str, str]:
+    """Connect your services, in the terminal: local AI, a provider key now, or
+    later in Friday's own screen. Every answer is optional and none is assumed.
 
     Keys go through the encrypted credential store, never a launch script, and
-    are validated with a real call before being stored.
+    are checked with a real call where Friday has one before being stored.
     """
     from agent_friday import setup_brain as sb
+    from agent_friday.services import connections_guide as cg
 
     _clear()
-    _header(5, total, "HOW FRIDAY THINKS")
+    _header(5, total, "CONNECT YOUR SERVICES")
 
     with console.status("  Checking what this machine can run...", spinner="dots"):
         a = sb.assess()
@@ -927,54 +944,88 @@ def step_brain(total: int, existing_anthro: str, existing_gemini: str) -> tuple[
     console.print(f"  {a['reason']}\n")
     if a.get("brain_label"):
         console.print(f"  [dim]Local model for this machine: {a['brain_label']}[/dim]\n")
+    console.print("  Everything here is optional. You can change it any time in "
+                  "Friday: Settings > Connections.\n")
     console.print(Rule(style="dim"))
     console.print()
 
-    anthro = existing_anthro or ""
-    if a["capable"]:
-        # Capable hardware gets a genuine choice. Assuming cloud here would be
-        # as wrong as never asking — running entirely on your own machine is
-        # the point of this project, not a fallback.
-        console.print("  [bold]You have a real choice here.[/bold]\n")
-        console.print("    [cyan]1[/cyan]  Local only — nothing leaves this machine")
-        console.print("    [cyan]2[/cyan]  Add a Claude key — sharper answers, all tools")
-        console.print("    [cyan]3[/cyan]  Both — local by default, Claude when it helps\n")
-        choice = Prompt.ask("  Which?", choices=["1", "2", "3"], default="3")
-        if choice == "1":
-            console.print("\n  [green]Local only. You can add a key any time in "
-                          "Settings -> Connections.[/green]\n")
-            _pause()
-            return "", existing_gemini or ""
-    else:
-        console.print("  [bold]Friday needs a Claude key to be useful on this "
-                      "machine.[/bold]")
-        console.print("  [dim]You can skip it, but see what stops working "
-                      "below.[/dim]\n")
-
-    console.print("  [dim]Get one at: console.anthropic.com/settings/keys[/dim]\n")
-    anthro = _store_validated_key(
-        "anthropic", "Anthropic key (sk-ant-...)", anthro,
-        skippable_note=("Skipping means Friday uses this machine's local model. "
-                        "On this machine that may mean no tool use."))
-
+    for key, text, why in connect_choices(bool(a["capable"])):
+        tag = f"  [green](Recommended: {why})[/green]" if why else ""
+        console.print(f"    [cyan]{key}[/cyan]  {text}{tag}")
     console.print()
-    console.print(Rule(style="dim"))
-    console.print()
-    console.print("  [bold]Google Gemini key[/bold]  [dim](optional)[/dim]")
-    console.print("  [dim]This one is what powers voice and image generation.[/dim]")
-    console.print("  [dim]Get one at: aistudio.google.com/app/apikey[/dim]\n")
-    gemini = _store_validated_key(
-        "google-gemini", "Gemini key (AIza...)", existing_gemini or "",
-        skippable_note="Voice and image generation stay unavailable without it.")
+    choice = Prompt.ask("  Which?", choices=["1", "2", "3"])
 
-    # Say what they have and have not, before they leave the screen.
-    console.print()
+    if choice == "1":
+        try:
+            from agent_friday.services import connections_setup as cx
+            cx.set_local_only(True)
+        except Exception:
+            pass
+        console.print("\n  [green]Local AI it is. Nothing to connect.[/green]\n")
+        _pause()
+        return existing_anthro or "", existing_gemini or ""
+    if choice == "3":
+        console.print("\n  [green]Fine. Open Settings > Connections in Friday "
+                      "whenever you like.[/green]\n")
+        _pause()
+        return existing_anthro or "", existing_gemini or ""
+
+    stored = {"anthropic": existing_anthro or "", "google-gemini": existing_gemini or ""}
+    from agent_friday.services.provider_registry import get_provider_registry
+    reg = get_provider_registry()
+    while True:
+        console.print()
+        rows = []
+        for i, name in enumerate(CLI_PROVIDERS, 1):
+            prov = reg.get_provider(name) or {}
+            g = cg.GUIDE.get("provider:" + name) or {}
+            rows.append(name)
+            rec = "  [green](Recommended)[/green]" if g.get("recommended") else ""
+            console.print(f"    [cyan]{i}[/cyan]  {prov.get('label') or name}{rec}")
+            if g.get("cost"):
+                console.print(f"        [dim]{g['cost']}[/dim]")
+        console.print()
+        pick = Prompt.ask("  Which provider? (Enter to stop)", default="")
+        if not pick.strip():
+            break
+        try:
+            name = rows[int(pick) - 1]
+        except (ValueError, IndexError):
+            console.print(f"  [red]Enter 1-{len(rows)}, or press Enter to stop.[/red]")
+            continue
+        g = cg.GUIDE.get("provider:" + name) or {}
+        label = (reg.get_provider(name) or {}).get("label") or name
+        for step in cg.how_for("provider:" + name, label, "secret"):
+            console.print(f"  [dim]- {step}[/dim]")
+        if g.get("signup"):
+            console.print(f"  [dim]Get a key: {g['signup']}[/dim]\n")
+        key = _store_validated_key(name, f"{label} key", stored.get(name, ""))
+        if key:
+            stored[name] = key
+            _enable_provider(name)
+        if not Confirm.ask("  Connect another provider?", default=False):
+            break
+
+    anthro, gemini = stored.get("anthropic", ""), stored.get("google-gemini", "")
     notice = sb.missing_capability_notice(bool(anthro), bool(gemini))
     if notice:
-        console.print(Panel("\n".join(notice), border_style="yellow",
+        console.print(Panel("\n".join(notice), border_style="dim",
                             padding=(1, 4), title="What you have"))
     _pause()
     return anthro, gemini
+
+
+def _enable_provider(name: str) -> None:
+    """A built-in provider that ships switched off is switched on once its key
+    is stored, or the key would sit unused."""
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        reg = get_provider_registry()
+        prov = reg.get_provider(name) or {}
+        if prov and prov.get("enabled") is False:
+            reg.update_provider(name, {"enabled": True})
+    except Exception:
+        pass
 
 
 def _store_validated_key(provider: str, label: str, existing: str,
@@ -1886,12 +1937,23 @@ def main():
 
     # Launch?
     console.print()
-    if Confirm.ask("  Launch Agent Friday now?", default=True):
+    if launched_by_installer():
+        # The installer asks "Start Friday now?" next and starts the tray in
+        # its own window. Starting the server here would run it inside the
+        # installer's console, printing its start-up chatter there.
+        console.print("  [cyan]Setup saved. The installer will offer to start "
+                      "Friday next.[/cyan]\n")
+    elif Confirm.ask("  Launch Agent Friday now?", default=True):
         _launch()
     else:
         console.print(
             "\n  [cyan]Run [bold]friday[/bold] or [bold]start.bat[/bold] to launch.[/cyan]\n"
         )
+
+
+def launched_by_installer() -> bool:
+    """Was this wizard started by the Windows installer (install.ps1)?"""
+    return os.environ.get("FRIDAY_SETUP_FROM_INSTALLER", "").strip() == "1"
 
 
 def _launch():

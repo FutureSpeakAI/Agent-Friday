@@ -1183,6 +1183,8 @@ def _kick_stale_catalog_refresh(cat_meta):
             try:
                 from agent_friday.services.hosted_catalog import refresh
                 result = refresh(name)
+                if result.get("status") in ("no_key", "not_connected"):
+                    return      # a provider nobody connected: nothing to say
                 print(f"  [CATALOG] background refresh {name}: "
                       f"{result.get('status')} ({result.get('count', 0)} models)")
             except Exception as e:

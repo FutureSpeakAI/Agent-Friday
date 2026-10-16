@@ -353,18 +353,18 @@ def auth_headers(prov: dict | None, api_key: str | None = None) -> dict:
 # descriptor that names its own `signup_url` keeps it; an unknown provider
 # that names none is left empty rather than sent somewhere invented.
 SIGNUP_URLS = {
-    "anthropic":   "https://console.anthropic.com/settings/keys",
+    "anthropic":   "https://platform.claude.com/settings/keys",
     "openai":      "https://platform.openai.com/api-keys",
     "google-gemini": "https://aistudio.google.com/app/apikey",
-    "openrouter":  "https://openrouter.ai/keys",
+    "openrouter":  "https://openrouter.ai/settings/keys",
     "huggingface": "https://huggingface.co/settings/tokens",
     "groq":        "https://console.groq.com/keys",
-    "together":    "https://api.together.xyz/settings/api-keys",
-    "fireworks":   "https://fireworks.ai/account/api-keys",
-    "mistral":     "https://console.mistral.ai/api-keys",
+    "together":    "https://api.together.ai/settings/projects/~current/api-keys",
+    "fireworks":   "https://app.fireworks.ai/settings/users/api-keys",
+    "mistral":     "https://console.mistral.ai",
     "deepseek":    "https://platform.deepseek.com/api_keys",
     "xai":         "https://console.x.ai",
-    "perplexity":  "https://www.perplexity.ai/settings/api",
+    "perplexity":  "https://console.perplexity.ai/",
     "cohere":      "https://dashboard.cohere.com/api-keys",
     "kie":         "https://kie.ai/api-key",
 }
