@@ -196,7 +196,11 @@ def _library_chunks() -> Iterable[dict]:
             if doc["shelf"] != "open" or is_meeting(doc):
                 continue
             cloud_ok = bool((_load_settings() or {}).get("library_cloud_answers", False))
-            sens = 1 if (cloud_ok and fg.check_grant(Path(doc["path"])).state == "active") else 2
+            try:
+                granted = cloud_ok and fg.check_grant(Path(doc["path"])).state == "active"
+            except fg.RawCheckError:
+                granted = False            # a check that breaks keeps this document on this PC
+            sens = 1 if granted else 2
             for p in st.q("SELECT id, text FROM passages WHERE doc_id=? ORDER BY id", (doc["id"],)):
                 yield {"id": f"lib:{doc['id']}#{p['id']}", "text": p["text"], "sensitivity": sens,
                        "source_path": doc["path"],

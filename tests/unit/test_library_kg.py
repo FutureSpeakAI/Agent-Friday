@@ -68,6 +68,26 @@ def test_a_document_with_its_own_cloud_permission_is_the_only_public_one(tmp_pat
     assert by_doc[str(notes)] == 1 and 2 in by_doc.values()
 
 
+def test_a_raw_check_that_breaks_keeps_one_document_local_not_the_batch(tmp_path, monkeypatch):
+    from agent_friday.services import file_grants as fg
+    isolate_library(tmp_path, monkeypatch)          # also run by _env under pytest; harmless twice
+    install_fake_encoder(monkeypatch)
+    st, root = _lib(tmp_path)
+    fg.create_file_grant(str(root / "notes.txt"))
+    real = fg.check_grant
+
+    def breaks_on_lease(path, *a, **k):
+        if Path(path).name == "lease.txt":
+            raise fg.RawCheckError("classifier broke")
+        return real(path, *a, **k)
+    monkeypatch.setattr(fg, "check_grant", breaks_on_lease)
+    kg = _choice(monkeypatch, "on", library_cloud_answers=True)
+    by_doc = {c["provenance"]["docs"][0]: c["sensitivity"] for c in kg._library_chunks()}
+    ids = {Path(r["path"]).name: str(r["id"]) for r in st.q("SELECT id, path FROM documents")}
+    assert by_doc.get(ids["lease.txt"]) == 2, "the document whose check broke stays on this PC"
+    assert by_doc.get(ids["notes.txt"]) == 1, "and the rest of the batch is still offered"
+
+
 def test_the_vault_shelf_is_never_offered_to_the_graph(tmp_path, monkeypatch):
     import os
     from agent_friday.services.library import grants, indexer, shelf
