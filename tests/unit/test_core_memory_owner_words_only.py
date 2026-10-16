@@ -158,7 +158,26 @@ def test_a_replace_whose_old_line_the_owner_did_not_name_waits():
     assert cm.entries("user") == ["Allergic to penicillin."]
     queued = cm.pending()
     assert len(queued) == 1 and queued[0]["op"] == "replace"
-    assert (queued[0]["old"], queued[0]["text"]) == ("penicillin", "Moved to Denver.")
+    assert (queued[0]["old"], queued[0]["text"]) == ("Allergic to penicillin.", "Moved to Denver.")
+
+
+@pytest.mark.parametrize("line, old", [
+    ("Sister is diabetic.", "d"),          # "I'd" holds the piece "d"
+    ("Dislikes cilantro.", "like"),        # a word of the owner's inside another word
+])
+@pytest.mark.parametrize("action", ["replace", "remove"])
+def test_a_fragment_the_owner_said_does_not_pick_a_line_they_did_not_name(line, old, action):
+    # `old` is only a pointer: the WHOLE line it resolves to must rest on the
+    # owner's words, or the change waits on the card naming that line.
+    cm.add("user", line, actor="owner")
+    inp = {"action": action, "target": "user", "old": old}
+    if action == "replace":
+        inp["text"] = "Likes Thai food."
+    out = _call(_chat_ctx("conv-frag-%s-%s" % (action, old)), "I'd like Thai food tonight.", inp)
+    assert out.startswith("NOT SAVED YET"), out
+    assert cm.entries("user") == [line]
+    queued = cm.pending()
+    assert len(queued) == 1 and queued[0]["op"] == action and queued[0]["old"] == line
 
 
 def test_a_replace_the_owner_named_both_halves_of_saves_silently():

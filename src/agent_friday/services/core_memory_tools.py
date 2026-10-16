@@ -53,6 +53,9 @@ RINGS = {"update_core_memory": 1}
 #: How much of an entry's content words must appear in the owner's own words
 #: for it to save without asking (see `_rests_on_owner_words`).
 OWNER_WORDS_COVERAGE = 0.6
+#: How much of the WHOLE line a replace or remove changes must appear in the
+#: owner's own words ("from Austin to Denver" names "Lives in Austin.").
+OWNER_LINE_COVERAGE = 0.5
 #: Spoken owner words older than this no longer back a save.
 VOICE_WORDS_MAX_AGE_S = 300.0
 
@@ -104,13 +107,13 @@ def owner_words(ctx: dict) -> str:
         return ""
 
 
-def _rests_on_owner_words(text: str, words: str) -> bool:
+def _rests_on_owner_words(text: str, words: str, coverage: float = OWNER_WORDS_COVERAGE) -> bool:
     from agent_friday.services.core_memory import content_words
     want = content_words(text)
     if not want or not words:
         return False
     have = content_words(words)
-    return len(want & have) / len(want) >= OWNER_WORDS_COVERAGE
+    return len(want & have) / len(want) >= coverage
 
 
 def _read_outside_content(ctx: dict) -> bool:
@@ -190,17 +193,26 @@ def _tool_update_core_memory(inp=None) -> str:
         # (a page, a mail, a tool result, a carried summary, someone who is not
         # the owner, a relay) waits for the owner's OK. An approved card for
         # exactly this call (the gate's owner decision) is the OK.
-        # A replace rests on BOTH halves: the new wording and the line it
-        # overwrites (`old`). The owner's "I moved to Denver" backs a line
-        # about Denver, not the overwrite of whichever line Friday names.
+        # A replace rests on BOTH halves: the new wording and the WHOLE line
+        # it overwrites; a remove rests on the whole line. `old` is only a
+        # pointer (any substring picks a line), so the line it resolves to is
+        # what the owner must have named. The owner's "I moved to Denver"
+        # backs a line about Denver, not the overwrite of whichever line a
+        # fragment such as "d" or "like" happens to pick.
         ctx = _ctx()
         words = owner_words(ctx)
+        if action in ("replace", "remove"):
+            line, miss = core_memory.resolve_line(target, inp.get("old") or "")
+            if miss:
+                return "NOT CHANGED: " + miss
+            inp = dict(inp, old=line)               # act on, or queue, exactly this line
         if not words:
             return _ask_first(target, action, inp,
                               "It did not come from the user's own words in this conversation.")
         if action in ("add", "replace") and not _rests_on_owner_words(inp.get("text") or "", words):
             return _ask_first(target, action, inp, "The user did not say this in their own words.")
-        if action in ("replace", "remove") and not _rests_on_owner_words(inp.get("old") or "", words):
+        if action in ("replace", "remove") and not _rests_on_owner_words(
+                inp["old"], words, OWNER_LINE_COVERAGE):
             return _ask_first(target, action, inp,
                               "The user did not name the line this changes in their own words.")
         if _read_outside_content(ctx):

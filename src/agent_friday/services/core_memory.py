@@ -473,12 +473,33 @@ def _pending_path() -> Path:
     return _dir() / "pending.jsonl"
 
 
+def resolve_line(target: str, old: str):
+    """(the whole line `old` identifies, None) or (None, why not). The reason
+    never lists the lines, whoever reads it."""
+    tok = REVEAL_USER.set(False)
+    try:
+        items = entries(target)
+        i, miss = _match(items, old)
+    finally:
+        REVEAL_USER.reset(tok)
+    return (None, miss) if miss else (items[i], None)
+
+
 def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
           reason: str = "") -> Dict[str, Any]:
-    """File a change for the owner to approve. Duplicates are not queued twice."""
+    """File a change for the owner to approve. Duplicates are not queued twice.
+
+    A replace or remove stores the WHOLE line it changes, resolved now, so the
+    card shows the owner exactly which line it is and Keep changes that line
+    and no other (`decide` matches it exactly)."""
     if target not in TARGETS or op not in ("add", "replace", "remove"):
         return _err("bad target or op")
     text, old = _clean(text), _clean(old)
+    if op in ("replace", "remove"):
+        line, miss = resolve_line(target, old)
+        if miss:
+            return _err("NOT QUEUED: " + miss)
+        old = line
     if op in ("add", "replace"):
         why = refusal(text)
         if why:
@@ -515,6 +536,11 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
         res: Dict[str, Any] = {"ok": True}
         if approve:
             t, op = row["target"], row["op"]
+            if op in ("replace", "remove") and (row.get("old") or "") not in entries(t):
+                # The queued line is matched exactly: a fragment could now
+                # pick a different line than the one the card showed.
+                return _err("NOT CHANGED: the line this suggestion changes is no longer on the "
+                            "card as it was; discard it")
             if op == "add":
                 res = add(t, row.get("text") or "", actor="owner")
             elif op == "replace":

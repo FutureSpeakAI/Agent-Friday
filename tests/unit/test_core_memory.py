@@ -90,6 +90,24 @@ def test_an_owner_delete_leaves_no_copy_in_the_journal_or_the_queue():
     assert "Mo." not in on_disk and "Momo" not in on_disk
 
 
+def test_a_queued_change_names_the_whole_line_and_keep_changes_only_that_line():
+    cm.add("user", "Has a cat called Mo.", actor="owner")
+    pid = cm.queue("user", "replace", old="called Mo", text="Has a cat called Momo.",
+                   source="review")["id"]
+    assert cm.pending()[0]["old"] == "Has a cat called Mo."      # what the card shows
+    # The line changes and another line now holds the fragment.
+    cm.replace("user", "Has a cat called Mo.", "Has a dog called Rex.", actor="friday")
+    cm.add("user", "Was called Mo at school.", actor="owner")
+    r = cm.decide(pid, True)
+    assert not r["ok"] and "no longer on the card" in r["error"]
+    assert cm.entries("user") == ["Has a dog called Rex.", "Was called Mo at school."]
+
+
+def test_a_change_aimed_at_no_line_is_not_queued():
+    assert not cm.queue("user", "remove", old="nothing like this", source="review")["ok"]
+    assert cm.pending() == []
+
+
 def test_owner_changes_reach_open_conversations_and_fridays_do_not():
     gen = prompt_freeze._OWNER_GENERATION
     cm.add("user", "Friday saved this.", actor="friday")

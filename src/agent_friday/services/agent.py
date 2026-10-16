@@ -753,12 +753,11 @@ CLAUDE_TOOLS = [
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string"}}, "required": ["query"]}},
-    {"name": "check_plan_travel", "description": "Read-only: before proposing a same-day plan of timed stops, check each gap. Rough drive estimate (straight line, no traffic) when both stops have lat/lon from a source (never guessed); flags a gap shorter than drive plus buffer, or says it couldn't check. Report what it says.",
+    {"name": "check_plan_travel", "description": "Read-only: check gaps between same-day timed stops. Rough drive estimate only from sourced lat/lon (never guessed); flags too-short gaps or says it couldn't check.",
      "input_schema": {"type": "object", "properties": {
          "stops": {"type": "array", "items": {"type": "object", "properties": {
-             "name": {"type": "string"}, "start": {"type": "string", "description": "ISO 8601 or HH:MM"},
-             "end": {"type": "string"}, "location": {"type": "string"},
-             "lat": {"type": "number"}, "lon": {"type": "number"}}, "required": ["name", "start"]}}},
+             "name": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"},
+             "lat": {"type": "number"}, "lon": {"type": "number"}}}}},
       "required": ["stops"]}},
     {"name": "find_free_slots", "description": "Read-only: find slots free on EVERY connected calendar/account within working hours, time zone, notice and buffers. Offer returned slots; for email put their labels in draft_email (card approval before sending). Disclose unreadable calendars as unchecked.",
      "input_schema": {"type": "object", "properties": {
@@ -873,10 +872,9 @@ CLAUDE_TOOLS = [
                                                "description": "The model the user named, in their words."}},
                       "required": ["model"]}},
     {"name": "switch_seat",
-     "description": "Raise ONE owner card: to=local|cloud moves THIS chat's "
-                    "model; task=full instructions runs one task on the local "
-                    "model instead. Use it when the owner asks, or after a "
-                    "cloud-seat privacy refusal. Nothing changes until approved.",
+     "description": "Owner card: to=local|cloud switches this chat's model, or "
+                    "task= runs one task on the local model. Nothing changes "
+                    "until approved.",
      "input_schema": {"type": "object", "properties": {
          "to": {"type": "string"}, "task": {"type": "string"}}}},
     {"name": "navigate", "description": "Open a named built-in workspace on the user's desktop. Use for requests to open, show or switch workspaces; operate the interface rather than give directions. Workspaces: " + _ws_registry.tool_list() + ".",
