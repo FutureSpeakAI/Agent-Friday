@@ -92,3 +92,29 @@ def test_the_post_takes_no_proxy_from_the_environment(mu, monkeypatch):
     _post_returning(monkeypatch, 200, seen)
     mu.unsubscribe("acct", "m1")
     assert seen[0][1]["proxies"] == {"http": None, "https": None, "all": None}
+
+
+def test_the_post_goes_only_to_the_entry_the_dkim_rule_approved(mu, monkeypatch):
+    """A header listing a third party's address first and the sender's own
+    second: classify approves the second, so only the second is dialled."""
+    from agent_friday.services import web_safety
+    pinned = []
+
+    @contextlib.contextmanager
+    def fake_pinned(url):
+        pinned.append(url)
+        yield ["93.184.216.34"]
+    monkeypatch.setattr(web_safety, "pinned", fake_pinned)
+    two = {"from": "News <news@list.example.test>",
+           "list-unsubscribe": "<https://tracker.example.net/u/9>, <https://list.example.test/u/1>",
+           "list-unsubscribe-post": "List-Unsubscribe=One-Click",
+           "authentication-results*": ["mx.google.com; dkim=pass header.i=@list.example.test"]}
+    monkeypatch.setattr(mu, "_headers", lambda a, m: dict(two))
+    seen = []
+    _post_returning(monkeypatch, 200, seen)
+    out = mu.unsubscribe("acct", "m1")
+    assert [u for u, _ in seen] == ["https://list.example.test/u/1"]
+    assert pinned == ["https://list.example.test/u/1"]
+    assert out["status"] == "done" and out["host"] == "list.example.test"
+    opt = mu.options("acct", "m1")
+    assert opt["method"] == "one_click" and opt["host"] == "list.example.test"

@@ -83,10 +83,13 @@ def _headers(account_id: str, message_id: str) -> dict:
     return out
 
 
-def _one_click_allowed(h: dict) -> bool:
-    """The same rule the inbox clean-up applies: DKIM passed for the sender's
+def _one_click_target(h: dict) -> str:
+    """The one address Friday may POST to, or "".
+
+    The same rule the inbox clean-up applies: DKIM passed for the sender's
     own organisation, by the provider's verdict, and the address is on that
-    domain or the From domain."""
+    domain or the From domain. The address returned is the entry that rule
+    approved, never merely the first entry in the header."""
     from agent_friday.services import inbox_cleanup as ic
     hdrs = {"from": [h.get("from", "")], "list-unsubscribe": [h.get("list-unsubscribe", "")],
             "list-unsubscribe-post": [h.get("list-unsubscribe-post", "")],
@@ -94,7 +97,10 @@ def _one_click_allowed(h: dict) -> bool:
     rows: dict = {}
     ic.add_message(rows, ic.normalize(hdrs, msg_id="m", ts=1.0, via_gmail=True))
     row = next(iter(rows.values()), None)
-    return bool(row) and ic.classify(row)["route"] == "one_click"
+    if not row:
+        return ""
+    verdict = ic.classify(row)
+    return (verdict.get("url") or "") if verdict.get("route") == "one_click" else ""
 
 
 def _post(url: str):
@@ -116,22 +122,26 @@ def options(account_id: str, message_id: str) -> dict:
     """What leaving this list would involve, for the confirm dialog."""
     h = _headers(account_id, message_id)
     ways = parse_header(h.get("list-unsubscribe", ""))
-    one_click = (bool(ways["https"]) and "list-unsubscribe=one-click" in (h.get("list-unsubscribe-post") or "").lower()
-                 and _one_click_allowed(h))
+    target = ""
+    if ways["https"] and "list-unsubscribe=one-click" in (h.get("list-unsubscribe-post") or "").lower():
+        target = _one_click_target(h)
+    one_click = bool(target)
     method = "one_click" if one_click else "mailto" if ways["mailto"] else "link" if ways["https"] else None
+    shown = target or (ways["https"][0] if ways["https"] else "")
     return {"status": "ok" if method else "none", "method": method, "sender": h.get("from", ""),
             "mailto": _mailto(ways["mailto"][0]) if ways["mailto"] else None,
             "url": ways["https"][0] if ways["https"] and not one_click else None,
-            "host": urlsplit(ways["https"][0]).hostname if ways["https"] else None}
+            "host": urlsplit(shown).hostname if shown else None}
 
 
 def unsubscribe(account_id: str, message_id: str) -> dict:
     """Do the part Friday can do itself. -> {"status": "done" | "next" | "none" | "error", ...}"""
     opt = options(account_id, message_id)
     if opt["method"] == "one_click":
-        h = _headers(account_id, message_id)
-        url = parse_header(h.get("list-unsubscribe", ""))["https"][0]
-        if not _public_host(url):
+        # The entry the DKIM rule approved, read afresh: the first entry in
+        # the header may be a third party's tracker.
+        url = _one_click_target(_headers(account_id, message_id))
+        if not url or not _public_host(url):
             return {"status": "error", "method": "one_click",
                     "message": "The list's unsubscribe address is not a public web address, so Friday did not contact it."}
         from agent_friday.services import web_safety
