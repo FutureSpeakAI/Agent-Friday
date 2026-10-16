@@ -244,4 +244,4 @@ jobs:
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
             artifact/release-manifest.json \
             --repo "${{ github.repository }}" --verify-tag --latest \
-            --title "Agent Friday Beta 1.1" --notes-file "$RUNNER_TEMP/notes.md"
+            --title "Agent Friday Beta 1.2" --notes-file "$RUNNER_TEMP/notes.md"
