@@ -525,6 +525,13 @@ def status() -> dict:
             # so, but the requested download is not marked done: whether to
             # drop it stays the owner's call.
             _note_once(row["seat"], row["model_id"], got, "the owner's configured model serves the seat")
+    # A seat whose runtime cannot serve is not done, whatever its weights say,
+    # and the card names the reason instead of "did not finish downloading".
+    for row in out:
+        if row.get("state") == "installed" and not row.get("served_by"):
+            why = _runtime_problem_for(row["model_id"])
+            if why:
+                row.update(state="failed", error=why)
     states = {r["state"] for r in out}
     if satisfied and not alive and out and states == {"installed"}:
         # Persist it: the next boot must not start a download for a seat the
@@ -563,6 +570,19 @@ def _run_front(row: dict, rows: list) -> None:
     apply_seat("fast_responder", row["model_id"])
 
 
+def _runtime_problem_for(model_id: str) -> Optional[str]:
+    """Why the runtime this shortlist model needs cannot serve, or None."""
+    try:
+        from agent_friday.services import model_download as md
+        from agent_friday.services import model_shortlist as sl
+        if (sl.get(model_id) or {}).get("runtime") != "prism-fork":
+            return None
+        return md.installed_runtime_problem("prism-fork")
+    except Exception as e:  # noqa: BLE001 - a check that cannot run is not a finding
+        log.debug("first run: runtime check skipped: %s", e)
+        return None
+
+
 def _run(req: dict) -> None:
     from agent_friday.services import model_download as md
     from agent_friday.services import model_store
@@ -584,6 +604,15 @@ def _run(req: dict) -> None:
             have = (row["model_id"] if row["model_id"] in model_store.available()
                     else installed_equivalent(row["model_id"]))
             if have:
+                # Weights on disk are not a working seat: a runtime from the
+                # launch release unpacked without its server, so the seat could
+                # never start and the card never cleared. Repair it first.
+                _rt_problem = _runtime_problem_for(row["model_id"])
+                if _rt_problem:
+                    log.warning("first run: %s", _rt_problem)
+                    row["state"], row["phase"] = "downloading", "runtime"
+                    _write_status({"seats": rows})
+                    md.repair_runtime()
                 # Installed already, perhaps under another spelling
                 # (bonsai2-27b for bonsai2:27b): seat the record that exists.
                 if have != row["model_id"]:
