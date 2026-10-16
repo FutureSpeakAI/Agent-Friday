@@ -63,13 +63,73 @@ def _local_only() -> bool:
     return mode == "local_only"
 
 
+def _inventory():
+    """The model names a daemon on this computer can serve (the Ollama daemon's installed tags and
+    the local descriptors' models), or None when that cannot be verified."""
+    try:
+        from agent_friday.services.model_seat_gate import _installed_local_models
+        return _installed_local_models()
+    except Exception:
+        return None
+
+
+def _serving_url(model: str) -> str:
+    """The address `model` is served from: its local descriptor's base_url, else the Ollama URL."""
+    try:
+        from agent_friday.services.model_seat_gate import _local_openai_descriptor
+        desc = _local_openai_descriptor(model)
+        if desc:
+            return str(desc.get("base_url") or "")
+    except Exception:
+        return ""
+    try:
+        from agent_friday.services.local_call import ollama_url
+        return ollama_url()
+    except Exception:
+        return ""
+
+
+def _loopback(url: str) -> bool:
+    """True only for an http(s) address on this machine (localhost, 127.0.0.0/8, ::1)."""
+    try:
+        import ipaddress
+        from urllib.parse import urlparse
+        u = urlparse(str(url or ""))
+        if u.scheme not in ("http", "https") or not u.hostname:
+            return False
+        host = u.hostname.strip("[]").lower()
+        if host == "localhost":
+            return True
+        return ipaddress.ip_address(host).is_loopback
+    except Exception:
+        return False
+
+
+def _runs_here(model: str) -> str:
+    """Empty when `model` really runs on this computer, else why not. By name (not a cloud id or a
+    cloud-tagged Ollama model), by the local daemon's inventory, and by the address it is served
+    from (loopback only): a "local" model relayed to another host is not local."""
+    from agent_friday.privacy.vault_access import is_on_device
+    if not is_on_device(model):
+        return "%s does not run on this computer" % model
+    names = _inventory()
+    if names is None:
+        return "this computer's local models could not be listed"
+    if model not in names:
+        return "%s is not installed on this computer" % model
+    if not _loopback(_serving_url(model)):
+        return "%s is served from another computer" % model
+    return ""
+
+
 def local_target() -> tuple:
     """(model, reason): the on-device model a handoff runs on, or ("", why there is none).
 
     The large local seat, as the owner bound it. Never substitutes across the local/cloud line: a seat
-    bound to a cloud model, or to a cloud-tagged Ollama model, is no local target.
+    bound to a cloud model, to a cloud-tagged Ollama model, to a model the local daemon does not have,
+    or to a daemon that is not on this computer, is no local target. Checked when the card is raised
+    and again when it is decided.
     """
-    from agent_friday.privacy.vault_access import is_on_device
     try:
         from agent_friday.services import tiers
         res = tiers.resolve(tiers.LARGE_LOCAL)
@@ -77,8 +137,11 @@ def local_target() -> tuple:
         return "", "the local seat could not be read (%s)" % e
     if not res.ok:
         return "", res.reason or "no local model is available"
-    if not res.is_local or not is_on_device(res.model):
+    if not res.is_local:
         return "", "%s does not run on this computer" % res.model
+    why = _runs_here(res.model)
+    if why:
+        return "", why
     return res.model, ""
 
 
@@ -148,7 +211,10 @@ def _ctx():
 
 
 def _pending(cid: str, action: str):
-    """The pending card of this kind for this conversation and action, or None."""
+    """The pending card of this kind for this conversation and action, or None. A card with no
+    conversation is never joined: two unrelated requests must not share one."""
+    if not cid:
+        return None
     try:
         from agent_friday.services import approvals as ap
         for rec in ap.list_approvals(status="pending", kind=KIND):
@@ -160,21 +226,38 @@ def _pending(cid: str, action: str):
     return None
 
 
+#: How much of one step's input the card shows.
+STEP_INPUT_CHARS = 300
+
+
 def _handoff_text(model: str, payload: dict) -> tuple:
-    """(title, description) for a handoff card."""
+    """(title, description) for a handoff card. The description shows what will run: the task's
+    text, the owner's request and every refused step with its input. It is for the card on the
+    screen only; notices and text messages name only the tool (approvals.notice_title)."""
     name = payload.get("title") or "this task"
     steps = payload.get("steps") or []
-    lines = ["Friday hands this to %s, the model on this computer, and posts the result in this chat. "
-             "This chat stays on its current model." % model, "", "Task: " + name]
+    lines = ["Friday hands this to %s, the model on this computer. The result is posted in this chat "
+             "and kept on this PC: the chat's cloud model is not sent it. This chat stays on its "
+             "current model." % model, "", "Task: " + name]
     task = str(payload.get("task") or "").strip()
     if task and task != name:
-        lines.append(task[:600])
+        lines.append(task[:900])
+    said = str(payload.get("owner_text") or "").strip()
+    if said and said not in (name, task):
+        lines += ["", "Your request: " + said[:400]]
     if steps:
-        lines.append("")
-        lines.append("Refused on the cloud seat: " + ", ".join(s.get("tool") for s in steps[:MAX_STEPS])
-                     + (" and %d more" % (len(steps) - MAX_STEPS) if len(steps) > MAX_STEPS else ""))
-    lines += ["", "To move the whole chat to the local model instead, say \"switch this chat to local\"."]
-    return ("Run this on the local model (%s)?" % model)[:200], "\n".join(lines)[:1900]
+        lines += ["", "Steps it will run (refused on the cloud seat):"]
+        for st in steps[:MAX_STEPS]:
+            inp = json.dumps(st.get("input") or {}, default=str, ensure_ascii=False)
+            if len(inp) > STEP_INPUT_CHARS:
+                inp = inp[:STEP_INPUT_CHARS] + "..."
+            lines.append("- %s %s" % (st.get("tool"), inp))
+        if len(steps) > MAX_STEPS:
+            lines.append("- and %d more" % (len(steps) - MAX_STEPS))
+    lines += ["", "Anything in it that sends, books, deletes or changes something outside this computer "
+              "still asks you on its own card.",
+              "", "To move the whole chat to the local model instead, say \"switch this chat to local\"."]
+    return ("Run this on the local model (%s)?" % model)[:200], "\n".join(lines)[:3800]
 
 
 def _raise(payload: dict) -> dict:
@@ -191,20 +274,29 @@ def _raise_locked(payload: dict) -> dict:
     model = payload["model"]
     have = _pending(cid, action)
     if have is not None:
+        if action != "handoff":
+            return have
         old = dict(have.get("payload") or {})
-        if action == "handoff":
-            steps = list(old.get("steps") or [])
-            for s in payload.get("steps") or []:
-                if s not in steps:
-                    steps.append(s)
-            old["steps"] = steps
-            if payload.get("task") and payload.get("task") not in str(old.get("task") or ""):
-                old["task"] = (str(old.get("task") or "") + "\n\n" + payload["task"]).strip()
-            if not old.get("owner_text") and payload.get("owner_text"):
-                old["owner_text"] = payload["owner_text"]
-            title, desc = _handoff_text(old.get("model") or model, old)
-            return ap._patch(have["approval_id"], payload=old, description=desc) or have
-        return have
+        merged = dict(old)
+        steps = list(old.get("steps") or [])
+        for st in payload.get("steps") or []:
+            if st not in steps:
+                steps.append(st)
+        merged["steps"] = steps
+        if payload.get("task") and payload.get("task") not in str(old.get("task") or ""):
+            merged["task"] = (str(old.get("task") or "") + "\n\n" + payload["task"]).strip()
+        if not old.get("owner_text") and payload.get("owner_text"):
+            merged["owner_text"] = payload["owner_text"]
+        if merged == old:
+            return have
+        # The card on the screen is never changed under the owner: what they approve is what they
+        # saw. The joined request goes on a NEW card and the old one is retired; if the owner
+        # decided the old one meanwhile, only the new part goes on the new card.
+        retired = ap.expire_matching(
+            lambda r, _aid=have["approval_id"]: r.get("approval_id") == _aid,
+            "system:seat_handoff", "replaced by a card that also carries a later refused step")
+        payload = merged if retired else payload
+        model = payload.get("model") or model
     if action == "handoff":
         title, desc = _handoff_text(model, payload)
         what = "hand one task to the local model %s on this computer" % model
@@ -213,6 +305,9 @@ def _raise_locked(payload: dict) -> dict:
         title = ("Switch this chat to %s?" % model)[:200]
         desc = ("This chat would answer on %s (%s) from your next message. Now: %s. Pick a model in the chat "
                 "header at any time to change it back." % (model, where, payload.get("from") or "the default"))
+        if payload.get("to") != "local":
+            desc += (" From your next message, the conversation so far is sent to %s, off this computer, "
+                     "as each turn's history." % model)
         what = "switch this conversation's model to %s" % model
     return ap.create_approval(
         kind=KIND, subject_type="conversation",

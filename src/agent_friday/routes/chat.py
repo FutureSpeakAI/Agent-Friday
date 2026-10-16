@@ -481,6 +481,11 @@ def _conv_context(cid, limit=None, exclude_id=None):
                 _library_cite.remember_library_reply(text)
             if role == 'assistant':
                 text = _with_receipts(text, (m.get('meta') or {}).get('receipts'))
+            if (m.get('meta') or {}).get('local_only'):
+                # A result the local model produced on this PC: replayed with
+                # the mark the egress gate withholds from every cloud model.
+                from agent_friday.services.egress_gate import mark_local_only
+                text = mark_local_only(text)
             out.append({"role": role, "content": text})
             nxt = rows[i + 1] if i + 1 < len(rows) else None
             if (role == 'user'

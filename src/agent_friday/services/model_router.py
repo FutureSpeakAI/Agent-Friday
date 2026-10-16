@@ -2456,6 +2456,11 @@ def _compress_trajectory(messages, model=None):
     for m in old_turns:
         role = 'USER' if m.get('role') == 'user' else 'FRIDAY'
         text = (m.get('content') or '')[:2000]  # cap per turn
+        from agent_friday.services.egress_gate import LOCAL_ONLY_MARK
+        if isinstance(text, str) and LOCAL_ONLY_MARK in text:
+            # The summary is replayed to whichever model serves later turns: a
+            # result kept on this PC is named, never summarised into it.
+            text = "(a result the local model produced on this PC, kept on this PC)"
         if role == 'FRIDAY':
             # The summary of old turns is written once and replayed in every later turn, to whichever
             # model serves them; an answer drawn from the Library does not go into it.
