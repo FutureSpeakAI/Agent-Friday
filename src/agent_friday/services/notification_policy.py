@@ -117,7 +117,7 @@ def is_muted(kind: str, source: str) -> bool:
 
 
 #: Tools and approval kinds that propose a change to Friday's memory.
-MEMORY_TOOLS = {"learn_skill", "correct_wiki", "propose_wiki_update"}
+MEMORY_TOOLS = {"learn_skill", "correct_wiki", "propose_wiki_update", "update_core_memory"}
 MEMORY_APPROVAL_KINDS = {"learning_skill_change"}
 MEMORY_TITLE = "Save something into Friday's memory"
 MEMORY_GROUP = "memory_proposals"

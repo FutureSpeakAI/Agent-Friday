@@ -358,6 +358,42 @@ def _stored_messages(cid: str) -> list[dict]:
     return out
 
 
+def find(cid: str, message_id: str) -> dict | None:
+    """The stored (or off-record) message with this id, or None."""
+    if not message_id:
+        return None
+    for m in messages(cid):
+        if m.get("id") == message_id:
+            return m
+    return None
+
+
+def set_meta(cid: str, message_id: str, **fields) -> bool:
+    """Merge `fields` into one message's meta, in place. True when it was found.
+
+    A turn's user row is written when the turn is accepted and its status
+    changes when the turn ends; this is that change. Off-record rows live in
+    memory only and are updated there.
+    """
+    if not message_id:
+        return False
+    from agent_friday.services import off_record as _off
+    with _LOCK:
+        for m in _off.recalled(cid):
+            if m.get("id") == message_id:
+                m["meta"] = {**(m.get("meta") or {}), **fields}
+                return True
+        found = []
+
+        def _merge(m):
+            if m.get("id") == message_id:
+                found.append(True)
+                return {**m, "meta": {**(m.get("meta") or {}), **fields}}
+            return m
+        rewrite(cid, _merge)
+        return bool(found)
+
+
 def rewrite(cid: str, fn) -> int:
     """Apply `fn(message) -> message` to each stored message and rewrite the
     file once, atomically. Returns how many messages changed. For the few

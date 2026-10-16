@@ -2634,7 +2634,14 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None,
             seat = _seats.resolve("brain")
         except Exception:
             seat = None
-    _is_local_brain = bool(seat)
+    # A cloud-tagged model served through the local daemon ("glm-4.6:cloud")
+    # runs off this PC: its prompt is gated as cloud, like /api/chat's.
+    try:
+        from agent_friday.services.local_only_guard import is_cloud_model_tag as _icmt
+        _cloud_tagged = bool(seat) and _icmt(str(seat))
+    except Exception:
+        _cloud_tagged = False
+    _is_local_brain = bool(seat) and not _cloud_tagged
     _prov = "local" if _is_local_brain else "cloud"
     _vault_control = None if _is_local_brain else (
         _get_vault_control() if _vault_local_only() else None)
@@ -2661,7 +2668,7 @@ def _build_voice_system_prompt(settings=None, description=None, seat=None,
         full_ctx = _get_friday_system_prompt(
             provider=_prov, vault_control=_vault_control,
             vault_fallback=_vault_cloud_fallback(),
-            freeze_key=conversation_id)
+            freeze_key=conversation_id, model=str(seat or ''))
     except Exception as e:
         full_ctx = f"(context load failed: {e})"
     # The same length rule and persona as the cloud voice: the text-chat
@@ -2774,6 +2781,16 @@ def _front_persona_style(style):
     return (cut[:end + 1] if end > 200 else cut.rstrip()).strip()
 
 
+def _front_privacy_block():
+    """The privacy policy in force (services/privacy_policy_summary), read from
+    the live settings when the prompt is built. Never raises."""
+    try:
+        from agent_friday.services.privacy_policy_summary import summary
+        return summary() + "\n"
+    except Exception:
+        return ""
+
+
 def _front_prompt_budget(contract, model_label):
     """Tokens the front's standing prompt may cost, or None when the contract
     carries no declarations to measure (see voice_front.system_budget_tokens)."""
@@ -2811,6 +2828,7 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
     from agent_friday.services.voice_delivery import front_instruction
     names = list((contract or {}).get("names") or [])
     label = model_label or "a small local model"
+    privacy_block = _front_privacy_block()
     style = ""
     try:
         style = _front_persona_style(_get_voice_style_prompt() or "")
@@ -2831,6 +2849,7 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
             "Never state that an action succeeded unless the tool result in this "
             "turn says so. A withheld, failed, or missing result is reported as "
             "exactly that.\n"
+            + privacy_block
             + VOICE_FRONT_HANDOFF_RULE
             + VOICE_FRONT_NEWS_RULE + "\n"
             + VOICE_FRONT_TOOL_RULE
@@ -2938,6 +2957,7 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
         "Never state that an action succeeded unless the tool result in this "
         "turn says so. A withheld, failed, or missing result is reported as "
         "exactly that.\n"
+        + _front_privacy_block()
         + VOICE_SPEAKER_RULE
         + "== WHAT YOU KNOW (a digest; your deeper mind holds your full memory) ==\n"
         + voice_context_digest.build(settings, budget_tokens=SPEAKER_DIGEST_TOKENS, front=True)
@@ -3067,10 +3087,44 @@ _NEUTRAL_QUESTION = "I asked which one you meant; the choices were on your scree
 def _persist_local_turn(tool_session, user_text, agent_text, conversation_id):
     """Save a completed local voice turn. A turn that read a card aloud or asked a question built from the
     owner's screen keeps only a neutral line in the conversation (set by ``_run_routed_front_turn``): the
-    words were spoken, but a later typed turn on a cloud model reads this history."""
+    words were spoken, but a later typed turn on a cloud model reads this history.
+
+    The reply is checked against the turn's own tool receipts first (``_guard_voice_reply``): a spoken
+    "it's on your calendar" with no calendar write that succeeded is saved saying it was NOT done."""
     neutral = tool_session.pop("history_text", None)
-    saved = _persist_voice_turn(user_text, neutral or agent_text, conversation_id=conversation_id, provider="local")
+    checked, _fixed, receipts = _guard_voice_reply(tool_session, agent_text)
+    extra = {"receipts": receipts} if receipts else {}
+    saved = _persist_voice_turn(user_text, neutral or checked, conversation_id=conversation_id,
+                                provider="local", **extra)
     return neutral or saved       # the session logs the neutral line for the end-of-call summary too
+
+
+def _guard_voice_reply(session, agent_text):
+    """(text, findings, receipts) for a finished voice turn: the write-claim law
+    (services/voice_engine.guard_voice_reply) on the words, against this
+    call's receipts for the turn. Never raises."""
+    try:
+        from agent_friday.services.voice_engine import guard_voice_reply
+        return guard_voice_reply(session, agent_text)
+    except Exception:
+        return agent_text, [], []
+
+
+def _voice_claim_correction(findings) -> str:
+    """What the live model is handed after a turn whose words claimed a write
+    that did not happen: the correction, to be said aloud in a sentence."""
+    fixes = []
+    for f in findings or []:
+        r = str(f.get("rewrite") or "").strip()
+        if r and r not in fixes:
+            fixes.append(r)
+    if not fixes:
+        return ""
+    return ("your last reply said something was done that did not happen this "
+            "turn. Correct it aloud now in one short sentence, plainly: "
+            + " ".join(fixes))
+
+
 _CARD_LINE_FALLBACK = ("I have a change waiting for your OK; the details are on your screen. "
                        "Shall I go ahead?")
 
@@ -5631,13 +5685,28 @@ if sock is not None:
                 agent_text = ''.join(out_buf).strip()
                 in_buf.clear()
                 out_buf.clear()
+                # The write-claim law, on what was just said: a completed write
+                # needs a successful write receipt from this turn. The words are
+                # already spoken, so the transcript keeps the corrected text and
+                # the model is told to say the correction aloud.
+                _said_text = agent_text
+                agent_text, _claim_fixes, _turn_receipts = _guard_voice_reply(
+                    _voice_session, agent_text)
+                if _claim_fixes and not _crew[0]:
+                    _note = _voice_claim_correction(_claim_fixes)
+                    if _note:
+                        _inject_q.append((_note, "notice"))
+                    _safe_send({"type": "claim_check",
+                                "findings": [{"kind": f.get("kind"), "quote": f.get("quote"),
+                                              "rewrite": f.get("rewrite")}
+                                             for f in _claim_fixes]})
                 _live_laya.for_call(_voice_session).on_turn_end(user_text)
                 _voice_session["owner_text"] = ""        # a relay in the next turn cannot carry this one's words
                 _voice_session["owner_text_at"] = 0.0
                 if not user_text and not agent_text:
                     return
-                if agent_text and not _crew[0]:
-                    _voice_session["spoken"].append(agent_text)
+                if _said_text and not _crew[0]:
+                    _voice_session["spoken"].append(_said_text)
                     del _voice_session["spoken"][:-60]
                 try:
                     _voice_session["conv_state"] = _vcs.update(
@@ -5657,9 +5726,11 @@ if sock is not None:
                     except Exception:
                         pass
                 try:
+                    _receipts_kw = ({"receipts": _turn_receipts}
+                                    if _turn_receipts and not _crew[0] else {})
                     _persist_voice_turn(user_text, "" if _crew[0] else agent_text,
                                         conversation_id=conversation_id or _open_cid[0],
-                                        provider="google-gemini")
+                                        provider="google-gemini", **_receipts_kw)
                 except Exception as e:
                     print(f'[live] persist_voice_turn error: {e}')
                 _safe_send({

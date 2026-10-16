@@ -258,6 +258,9 @@
   "find_free_slots": [
    "calendar"
   ],
+  "check_plan_travel": [
+   "calendar"
+  ],
   "generate_image": [
    "creative"
   ],
@@ -480,6 +483,9 @@
   "propose_wiki_update": [
    "wiki_knowledge"
   ],
+  "update_core_memory": [
+   "wiki_knowledge"
+  ],
   "publish_artifact": [
    "code",
    "web"
@@ -632,6 +638,10 @@
   ],
   "switch_model": [
    "settings"
+  ],
+  "switch_seat": [
+   "settings",
+   "privacy"
   ],
   "talk_crew": [
    "crew"

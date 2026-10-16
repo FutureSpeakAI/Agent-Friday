@@ -30,10 +30,12 @@ DROPPED_SECTIONS = (
     "AVAILABLE TOOLS", "COMPUTER CONTROL", "SELF-IMPROVEMENT",
     "TASK DELEGATION", "PACKAGE INSTALLATION", "AUTONOMOUS OPERATION",
     "WHAT YOU CAN DO ON THIS COMPUTER", "SAY WHAT YOU ARE ABOUT TO DO",
+    # The voice front states it in its own fixed part (routes/voice).
+    "PRIVACY POLICY",
 )
 
 #: Taken first, in this order, after the preamble.
-PRIORITY_SECTIONS = ("CORE IDENTITY", "AGENT PERSONALITY", "USER MODEL",
+PRIORITY_SECTIONS = ("CORE IDENTITY", "AGENT PERSONALITY", "CORE MEMORY", "USER MODEL",
                      "LEARNED HEURISTICS", "CAPABILITY DISCOVERY")
 
 _HEADER = re.compile(r"^== (.+?) ==\s*$", re.M)
@@ -91,12 +93,12 @@ FRONT_LEFT_TO_THE_DEEPER_MIND = ("SELF-KNOWLEDGE", "RESPONSE PREFERENCES", "THIS
 #: Sections the front takes first, in this order, after the preamble: who she
 #: is, the compiled laws, who the owner is, then the honesty sections.
 FRONT_PRIORITY_SECTIONS = (
-    "CORE IDENTITY", "AGENT PERSONALITY", "ASIMOV", "USER MODEL",
+    "CORE IDENTITY", "AGENT PERSONALITY", "ASIMOV", "CORE MEMORY", "USER MODEL",
     "LEARNED HEURISTICS", "HONEST DEGRADATION", "HONEST LIMITS",
     "WHAT YOU ACTUALLY ARE", "CAPABILITY DISCOVERY")
 
 #: Sections the front keeps in some form however tight the budget.
-FRONT_MUST_KEEP = ("CORE IDENTITY", "AGENT PERSONALITY", "ASIMOV", "USER MODEL")
+FRONT_MUST_KEEP = ("CORE IDENTITY", "AGENT PERSONALITY", "ASIMOV", "CORE MEMORY", "USER MODEL")
 
 #: One section never takes more than this many characters of the front's digest.
 FRONT_SECTION_MAX_CHARS = 1800

@@ -184,7 +184,7 @@ _TEXT_CHAT_ONLY = re.compile(
 _RANKS = (
     (re.compile(r"SELF-KNOWLEDGE"), 20),
     (re.compile(r"THIS SEAT|LEARNED HEURISTICS|USER MODEL"), 40),
-    (re.compile(r"ABOUT AGENT FRIDAY|WHAT YOU ACTUALLY ARE"), 50),
+    (re.compile(r"ABOUT AGENT FRIDAY|WHAT YOU ACTUALLY ARE|CORE MEMORY"), 50),
     (re.compile(r"HONEST LIMITS"), 60),
 )
 _CONTEXT_RANK = 30           # everything else: recalled context, tasks, clock
