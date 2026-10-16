@@ -1242,6 +1242,31 @@ def _lead_sentence(text) -> str:
     return _LEAD_SENTENCE.split(str(text or "").strip(), maxsplit=1)[0]
 
 
+#: Optional properties the SPOKEN contract leaves out, because voice reaches the
+#: same thing another way and the contract has a fixed budget
+#: (VOICE_CONTRACT_MAX_TOKENS less 300). Host names by voice go through
+#: set_setting ("settings.podcasts.hosts.<a|b>"), which asks for the owner's yes.
+_VOICE_DROPPED_PROPERTIES = {
+    "podcast_format": ("host", "name"),
+    "make_podcast": ("host_names",),
+}
+
+
+def _voice_declaration(tool: dict) -> dict:
+    """The spoken contract's copy of a declaration: optional properties in
+    _VOICE_DROPPED_PROPERTIES left out (the shared registry is never edited)."""
+    drop = _VOICE_DROPPED_PROPERTIES.get(tool["function"]["name"])
+    if not drop:
+        return tool
+    t = copy.deepcopy(tool)
+    params = t["function"].get("parameters") or {}
+    props = params.get("properties")
+    for name in drop:
+        if isinstance(props, dict) and name not in (params.get("required") or []):
+            props.pop(name, None)
+    return t
+
+
 def _compact_declaration(tool: dict) -> dict:
     """Concise descriptions with names, types and required fields unchanged."""
     t = copy.deepcopy(tool)
@@ -1300,7 +1325,7 @@ def build_voice_tool_contract(full: bool = False, compact: bool = True) -> dict:
                     or {"type": "object", "properties": {}}}})
         except Exception as e:  # pragma: no cover - import-time failure
             _log.error("full voice toolkit unavailable (registry import failed): %s", e)
-    tools = [t for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED
+    tools = [_voice_declaration(t) for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED
              and t["function"]["name"] not in CLOUD_LIVE_ONLY]
     if compact:
         tools = [_compact_declaration(t) for t in tools]

@@ -297,7 +297,7 @@ register_hooks()
 PATHS = ("settings.models.chat_model", "settings.display.workspace_layout.<workspace>", "settings.display.start_screen",
          "settings.accessibility.big_mode", "settings.hologram.window.<dial>", "settings.calls.stand_back",
          "settings.podcasts.format.<show>", "settings.podcasts.length.<show>",
-         "settings.laya.live_reflex", "settings.display.dock.<workspace> (show / hide; op=list lists them)")
+         "settings.podcasts.hosts.<a|b>", "settings.laya.live_reflex", "settings.display.dock.<workspace> (show / hide; op=list lists them)")
 _LAYOUT_VALUES = ("normal", "fullscreen_chat")
 
 
@@ -334,6 +334,13 @@ def _route(path: str, value: str):
         return "call_mode", {"action": "set_mode", "mode": v}
     if p == "settings.laya.live_reflex":
         return "live_laya", {"action": "reflex", "mode": v.lower()}
+    if p.startswith("settings.podcasts.hosts"):
+        host = p.split(".", 3)[3] if p.count(".") >= 3 else ""
+        host = {"main": "a", "her": "a", "co_host": "b", "cohost": "b"}.get(host, host)
+        if host not in ("a", "b"):
+            return "SETTING_FAIL: say which host: settings.podcasts.hosts.a (the main host) or .b (the co-host)."
+        # The name as said, not lower-cased: a blank one puts the default back.
+        return "podcast_format", {"host": host, "name": str(value if value is not None else "").strip()}
     if p.startswith("settings.podcasts.format"):
         show = p.split(".", 3)[3] if p.count(".") >= 3 else "any"
         return "podcast_format", {"routine": show, "format": v}

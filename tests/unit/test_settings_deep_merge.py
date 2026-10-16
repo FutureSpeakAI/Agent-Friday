@@ -89,8 +89,10 @@ def test_a_partial_block_on_a_file_without_that_block_stores_only_what_was_saved
     assert cfg["length"] == pe.DEFAULTS["length"]
     # The default second host is filled in (the reader may add derived keys,
     # e.g. pronouns from the voice, so compare the stored fields).
+    # A blank stored name is "the default", which the reader fills in.
     for k, v in pe.DEFAULTS["hosts"]["b"].items():
-        assert cfg["hosts"]["b"][k] == v, k
+        want = pe.COHOST_DEFAULT_NAME if (k == "name" and not v) else v
+        assert cfg["hosts"]["b"][k] == want, k
 
 
 def test_other_partial_writers_keep_their_siblings(friday_dir):

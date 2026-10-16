@@ -17887,6 +17887,12 @@ function podcastLinked(ep) {
 }
 // The linked sources segment by segment (episode.segments, services/podcast_engine.py
 // segment_sources); an episode made before segments were kept lists them once.
+// What an episode could not use (a source that could not be read, a link in
+// pasted notes that cannot be listed): shown with its sources, never dropped
+// in silence (episode.source_errors, services/podcast_engine.py _gather).
+function podcastNotUsed(ep) {
+  return (ep.source_errors || []).filter(x => typeof x === 'string' && x);
+}
 function podcastSegments(ep) {
   const linked = new Set(podcastLinked(ep).map(s => s.id));
   const segs = (ep.segments || []).map(g => ({ chapter: g.chapter, title: g.title || '',
@@ -18241,14 +18247,15 @@ function PodcastPlayer() {
         'aria-current': i === cur ? 'true' : undefined,
         style: { padding: '3px 4px', borderRadius: 4, cursor: 'pointer', background: i === cur ? PODCAST_C.accentSoft : 'transparent' }
       }, h('b', null, who(ln.speaker) + ': '), fridayTM(ln.text), (ln.cites || []).map(cite)))),
-    podcastLinked(ep).length ? h('div', { role: 'list', 'aria-label': 'Sources', style: { marginTop: 10, borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
+    (podcastLinked(ep).length || podcastNotUsed(ep).length) ? h('div', { role: 'list', 'aria-label': 'Sources', style: { marginTop: 10, borderTop: '1px solid ' + PODCAST_C.line, paddingTop: 6 } },
       h('div', { style: { fontWeight: 600, color: PODCAST_C.accent, marginBottom: 4 } }, 'Sources'),
       // Grouped by segment: each claim can be traced to the report it rests on.
       podcastSegments(ep).map(g => [g.title ? h('div', { key: 'seg-' + g.chapter, style: { fontSize: PODCAST_C.sm, color: PODCAST_C.dim, marginTop: 4 } }, g.title) : null]
         .concat(g.sources.map(s => h('div', { key: g.chapter + ':' + s.id, role: 'listitem', style: { fontSize: PODCAST_C.md, margin: '2px 0' } },
           s.outlet ? h('b', null, s.outlet + ': ') : null,
           h('a', { href: s.url, target: '_blank', rel: 'noopener noreferrer', style: { color: PODCAST_C.accent } }, s.title),
-          s.read ? h('span', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm } }, ' · ' + s.read) : null))))) : null,
+          s.read ? h('span', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm } }, ' · ' + s.read) : null)))),
+      podcastNotUsed(ep).map((x, i) => h('div', { key: 'nu' + i, role: 'listitem', style: { fontSize: PODCAST_C.sm, color: PODCAST_C.error, margin: '2px 0' } }, '⚠ Not used: ' + x))) : null,
     (ep.rejected || []).length ? h('div', { style: { color: PODCAST_C.dim, fontSize: PODCAST_C.sm, marginTop: 8 } },
       (ep.rejected || []).length + ' line(s) were cut before speaking because they could not be traced to a source.') : null) : null);
   return popped ? ReactDOM.createPortal(frame, popped.el) : frame;
@@ -18370,6 +18377,16 @@ function PodcastsView() {
   const [msg, setMsg] = useState('');
   const [formats, setFormats] = useState(null);
   useEffect(() => { fetch('/api/podcasts/formats').then(r => r.json()).then(d => setFormats(d.formats || null)).catch(() => {}); }, []);
+  // The hosts' names (Settings: podcasts.hosts): "a" is her, "b" the co-host.
+  // A blank box is the default, shown as the placeholder.
+  const [hostNames, setHostNames] = useState(null);
+  const [hostDraft, setHostDraft] = useState({ a: '', b: '' });
+  const [hostMsg, setHostMsg] = useState('');
+  const takeHosts = (hn) => { setHostNames(hn); setHostDraft({ a: (hn.a || {}).own || '', b: (hn.b || {}).own || '' }); };
+  useEffect(() => { fetch('/api/podcasts/hosts').then(r => r.json()).then(d => { if (d.hosts) takeHosts(d.hosts); }).catch(() => {}); }, []);
+  const saveHosts = () => fetch('/api/podcasts/hosts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hostDraft) })
+    .then(r => r.json()).then(d => { if (d.hosts) { takeHosts(d.hosts); setHostMsg('Saved. Episodes made from now on use these names.'); } else setHostMsg(d.message || 'Could not save the names.'); })
+    .catch(() => setHostMsg('Could not save the names.'));
   const setFormat = (routine, format) => fetch('/api/podcasts/formats', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ routine: routine, format: format }) })
     .then(r => r.json()).then(d => { if (d.formats) setFormats(d.formats); }).catch(() => {});
   const refresh = () => fetch('/api/podcasts?limit=60').then(r => r.json()).then(d => setEps(d.episodes || [])).catch(() => {});
@@ -18420,6 +18437,15 @@ function PodcastsView() {
         h('select', { value: formats[key].format, 'aria-label': label + ': who is on the show', onChange: (e) => setFormat(key, e.target.value), style: field },
           [['solo', fridayName() + ' alone'], ['duo', 'Two hosts']].map(([v, t]) => h('option', { key: v, value: v, style: { color: PODCAST_C.text, background: PODCAST_C.surface } },
             t + (formats[key].recommended === v ? ' (recommended)' : ''))))) : null)) : null,
+    hostNames ? h('section', { 'aria-label': 'The hosts\u2019 names', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' } },
+      h('div', { style: { width: '100%', fontWeight: 600 } }, 'The hosts\u2019 names'),
+      [['a', 'Main host'], ['b', 'Co-host']].map(([k, label]) => h('label', { key: k, style: { display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: PODCAST_C.md } },
+        label,
+        h('input', { value: hostDraft[k], maxLength: 40, placeholder: (hostNames[k] || {}).default || '', 'aria-label': label + '\u2019s name (blank: ' + ((hostNames[k] || {}).default || 'the default') + ')', style: field,
+          onChange: (e) => { const v = e.target.value; setHostMsg(''); setHostDraft(Object.assign({}, hostDraft, { [k]: v })); } }))),
+      h('button', { className: 'btn', onClick: saveHosts }, 'Save names'),
+      hostMsg ? h('div', { role: 'status', style: { width: '100%', fontSize: PODCAST_C.sm, color: PODCAST_C.dim } }, hostMsg) : null,
+      h('div', { style: { width: '100%', fontSize: PODCAST_C.sm, color: PODCAST_C.dim } }, 'A blank name is the default. One episode can have other names: ask for them when you ask for the episode.')) : null,
     h('section', { 'aria-label': 'Make a podcast', style: { border: '1px solid ' + PODCAST_C.line, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
       rows.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'flex-start' } },
         h('select', { 'aria-label': 'Source type', value: r.kind, style: field,
