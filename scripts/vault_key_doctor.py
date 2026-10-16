@@ -48,7 +48,6 @@ usage: python scripts/vault_key_doctor.py [--repair-keychain] [--recover-kg]
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -216,9 +215,10 @@ def report() -> dict:
     homes = vp._candidates()
     groups: dict = {}
     rows = []
+    # Homes holding the same value share a group; the value itself is the key,
+    # held only in memory and never printed (the report names groups P1, P2...).
     for value, src in homes:
-        fp = hashlib.sha256(b"doctor|" + value.encode()).digest()
-        g = groups.setdefault(fp, {"name": "P%d" % (len(groups) + 1), "value": value})
+        g = groups.setdefault(value, {"name": "P%d" % (len(groups) + 1), "value": value})
         rows.append({"home": src, "group": g["name"]})
     keys = {g["name"]: vc.derive_key(g["value"], salt) for g in groups.values()}
     files = vp.sealed_files(full=True)
