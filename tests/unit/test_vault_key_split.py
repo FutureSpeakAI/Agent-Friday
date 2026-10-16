@@ -590,18 +590,18 @@ def test_recovery_never_merges_kept_copies_into_a_live_file_and_retires_them(kg,
     assert again["ok"] and again["resealed"] == [] and again["retired_unmerged"] == []
 
 
-def test_recovery_restores_a_kept_copy_whose_live_file_is_absent(kg, env, monkeypatch):
+def test_recovery_restores_a_dropped_copy_whose_live_file_is_absent(kg, env, monkeypatch):
     from agent_friday.privacy import vault_crypto as vc
     import agent_friday.services.agent as agent
     monkeypatch.setattr(agent, "_get_vault_key", lambda: kg.k_current)
-    (kg.dir / "entities.sensitive.kept-20261001T000000.json").write_bytes(
+    (kg.dir / "entities.sensitive.dropped-20261001T000000.json").write_bytes(
         vc.encrypt(json.dumps([{"id": "old1"}]).encode(), kg.k_old))
     kg.legacy([("launcher:FRIDAY_PASSWORD", kg.k_old)])
     out = _doctor().recover_kg()
     assert out["ok"] and out["resealed"][0]["records"] == 1
     live = kg.dir / "entities.sensitive.json"
     assert json.loads(vc.decrypt(live.read_bytes(), kg.k_current)) == [{"id": "old1"}]
-    assert not list(kg.dir.glob("*.kept-*.json"))
+    assert not list(kg.dir.glob("*.dropped-*.json"))
 
 
 def test_backups_of_one_name_never_overwrite_each_other(tmp_path):
@@ -833,3 +833,110 @@ def test_the_keystore_is_not_counted_as_embedded_ciphertext(env, keystore, monke
     keystore.create(wrap="passphrase", passphrase="A")    # its wrap follows store() itself
     assert keystore.KEYSTORE_PATH.exists()
     assert env.vp.embedded_sealed_files() == []
+
+
+# ── recovery restores only what a no-key save dropped ─────────────────────
+
+def test_a_save_that_removed_the_last_private_records_is_never_undone(kg, env, monkeypatch):
+    import agent_friday.services.agent as agent
+    monkeypatch.setattr(agent, "_get_vault_key", lambda: kg.k_current)
+    p, _ = _sealed_entities(kg, kg.k_old, 3)              # opens only with an older key
+    kg.legacy([("launcher:FRIDAY_PASSWORD", kg.k_old)])
+    store = kg.st.KnowledgeGraphStore(kg.dir)
+    assert len(store.load("entities")) == 3
+    store.save("entities", [])                            # a purge removed them all
+    assert not p.exists()
+    out = _doctor().recover_kg()
+    assert out["ok"] and out["resealed"] == []
+    assert not p.exists(), "removed records were restored"
+    assert [x["records_not_merged"] for x in out["retired_unmerged"]] == [3]
+
+
+def test_a_no_key_save_marks_its_copy_dropped_and_recovery_restores_it(kg, env, monkeypatch):
+    from agent_friday.privacy import vault_crypto as vc
+    import agent_friday.services.agent as agent
+    p, _ = _sealed_entities(kg, kg.k_old, 3)
+    kg.legacy([("launcher:FRIDAY_PASSWORD", kg.k_old)])
+    monkeypatch.setattr(kg.st, "_vault_key", lambda: None)   # no key this run
+    kg.st._KEYS_CACHE.clear()
+    store = kg.st.KnowledgeGraphStore(kg.dir)
+    store.load("entities")
+    out = store.save("entities", [{"id": "s", "provenance": {"sensitivity": 3}}])
+    assert out["dropped"] == 1 and not p.exists()
+    assert list(kg.dir.glob("entities.sensitive.dropped-*.json"))
+    monkeypatch.setattr(kg.st, "_vault_key", lambda: kg.k_current)
+    monkeypatch.setattr(agent, "_get_vault_key", lambda: kg.k_current)
+    kg.st._KEYS_CACHE.clear()
+    rec = _doctor().recover_kg()
+    assert rec["ok"] and rec["resealed"][0]["records"] == 3
+    assert len(json.loads(vc.decrypt(p.read_bytes(), kg.k_current))) == 3
+
+
+def test_recovery_restores_only_the_newest_dropped_copy(kg, env, monkeypatch):
+    from agent_friday.privacy import vault_crypto as vc
+    import agent_friday.services.agent as agent
+    monkeypatch.setattr(agent, "_get_vault_key", lambda: kg.k_current)
+    for stamp, rid in (("20261001T000000", "older"), ("20261002T000000", "newer")):
+        (kg.dir / ("entities.sensitive.dropped-%s.json" % stamp)).write_bytes(
+            vc.encrypt(json.dumps([{"id": rid}]).encode(), kg.k_old))
+    kg.legacy([("launcher:FRIDAY_PASSWORD", kg.k_old)])
+    out = _doctor().recover_kg()
+    live = kg.dir / "entities.sensitive.json"
+    assert json.loads(vc.decrypt(live.read_bytes(), kg.k_current)) == [{"id": "newer"}]
+    assert len(out["retired_unmerged"]) == 1
+    assert not list(kg.dir.glob("*.dropped-*.json"))
+
+
+# ── a refused rotation keeps nothing ──────────────────────────────────────
+
+def test_a_refused_rotation_keeps_nothing(env):
+    env.seal("vault/legal/a.vault", b"a", "A")
+    env.seal("vault/legal/b.vault", b"b", "A")
+    env.seal("wiki/entities/x.md", b"x", "OTHER")
+    env.keyring.set_password("agent-friday", "vault-passphrase", "A")
+    env.launcher("OTHER")
+    assert env.vp.store("B", rotate=True) == []
+    assert _kept(env) == [], "a value was kept for a rotation that never happened"
+
+
+# ── the graph's background check ──────────────────────────────────────────
+
+def test_a_background_check_overtaken_by_a_key_change_records_nothing(kg, monkeypatch):
+    from agent_friday.services import vault_passphrase as vp
+    p, _ = _sealed_entities(kg, kg.k_old, 2)
+
+    def opens_while_the_key_changes(raw):
+        vp.reset_cache()                           # a store() lands mid-check
+        return None, None
+    monkeypatch.setattr(kg.st, "_open_sealed", opens_while_the_key_changes)
+    kg.st._CHECKING.set()
+    kg.st._check_in_background([p])
+    assert str(p) not in kg.st.SENSITIVE_STATE
+    assert not kg.st._CHECKING.is_set()
+
+
+def test_a_failed_thread_start_never_shuts_the_check_gate(kg, monkeypatch):
+    import threading
+    _sealed_entities(kg, kg.k_old, 2)
+
+    class NoThreads:
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+    monkeypatch.setattr(threading, "Thread", NoThreads)
+    assert kg.st._integrity_probe() == []
+    assert not kg.st._CHECKING.is_set()
+
+
+# ── refusals are counted, not hoarded ─────────────────────────────────────
+
+def test_refusals_are_counted_and_the_reasons_bounded(kg):
+    _sealed_entities(kg, kg.k_old, 2)
+    kg.legacy([])
+    store = kg.st.KnowledgeGraphStore(kg.dir)
+    store.load("entities")
+    for _ in range(30):
+        store.save("entities", [])
+    assert store.refusals == 30 and len(store.refused) <= 20

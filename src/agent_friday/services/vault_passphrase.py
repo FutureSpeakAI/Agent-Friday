@@ -759,23 +759,9 @@ def store(passphrase: str, *, rotate: bool = False) -> list[str]:
                        "scripts/vault_key_doctor.py with Friday stopped")
     follow_keystore = ks_state == "ok" and prior != passphrase
 
-    # NEVER OVERWRITE A HOME'S DIFFERENT VALUE WITHOUT KEEPING IT. It may be
-    # the only key for files, kept copies or a keystore sealed under it.
-    displaced: list[str] = []
-    if keychain_is_this_homes():
-        kv = _from_keyring()
-        if kv and kv != passphrase:
-            displaced.append(kv)
-    if dpapi_available():
-        dv = _from_dpapi_file()
-        if dv and dv != passphrase and dv not in displaced:
-            displaced.append(dv)
-    for v in displaced:
-        try:
-            keep_displaced(v)
-        except RuntimeError as e:
-            return _refuse("%s, so nothing was written" % e)
-
+    # The rotation runs first: every reason it can refuse (embedded
+    # ciphertext, files another passphrase opens) is found before anything is
+    # kept or written, and a refusal leaves the home exactly as it was.
     rotation = None
     if rotating:
         rotation = rotate_files(current, passphrase)
@@ -792,6 +778,25 @@ def store(passphrase: str, *, rotate: bool = False) -> list[str]:
                            % (why, len(failed), rotation.get("backup_dir")))
         return _refuse("%s; every file was put back%s" % (
             why, " and nothing was changed" if keystore_back else ""))
+
+    # NEVER OVERWRITE A HOME'S DIFFERENT VALUE WITHOUT KEEPING IT. It may be
+    # the only key for files, kept copies or a keystore sealed under it.
+    displaced: list[str] = []
+    if keychain_is_this_homes():
+        kv = _from_keyring()
+        if kv and kv != passphrase:
+            displaced.append(kv)
+    if dpapi_available():
+        dv = _from_dpapi_file()
+        if dv and dv != passphrase and dv not in displaced:
+            displaced.append(dv)
+    for v in displaced:
+        try:
+            keep_displaced(v)
+        except RuntimeError as e:
+            if rotation:
+                return _put_back("%s, so nothing was written" % e)
+            return _refuse("%s, so nothing was written" % e)
 
     # It is rewrapped BEFORE any home is written; if that fails, the rotation
     # is undone and nothing is written, so the keystore, the files and the
@@ -1349,8 +1354,11 @@ def _integrity_probe() -> list:
     if _CACHE is None:
         if not _RESOLVING.is_set():
             _RESOLVING.set()
-            __import__("threading").Thread(target=_resolve_in_background,
-                                           name="vault-resolve", daemon=True).start()
+            try:
+                __import__("threading").Thread(target=_resolve_in_background,
+                                               name="vault-resolve", daemon=True).start()
+            except Exception:
+                _RESOLVING.clear()        # never leave the gate shut on a failed start
         c = {}
     else:
         c = dict(LAST_CONFLICT or {})

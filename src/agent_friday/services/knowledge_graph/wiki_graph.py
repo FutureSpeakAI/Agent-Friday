@@ -779,7 +779,7 @@ def rebuild_tier_a(store: Optional[KnowledgeGraphStore] = None,
         all_entities, all_rels, all_comms,
         seed=int(kg_settings().get("layout_seed", 1337)))
 
-    refused_before = len(getattr(store, "refused", []))
+    refused_before = getattr(store, "refusals", 0)
     store.save("entities", all_entities)
     store.save("relationships", all_rels)
     store.save("communities", all_comms)
@@ -798,7 +798,7 @@ def rebuild_tier_a(store: Optional[KnowledgeGraphStore] = None,
                         produced=[f"page:{_page_key(rel)}"])
     if SOUL_FILE.exists():
         manifest.record(SOUL_FILE, kind="soul", produced=[f"page:{SOUL_ID}"])
-    if len(getattr(store, "refused", [])) == refused_before:   # a refused save keeps its pages due
+    if getattr(store, "refusals", 0) == refused_before:   # a refused save keeps its pages due
         manifest.save()
 
     return {
