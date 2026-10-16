@@ -59439,7 +59439,7 @@ function DockSettingsPanel() {
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
-    apiFetch('/api/settings').then(r => r.json()).then(d => {
+    const load = () => apiFetch('/api/settings').then(r => r.json()).then(d => {
       const s = (d && d.settings) || {};
       const c = s.dock_custom;
       setCustom(c && typeof c === 'object'
@@ -59448,6 +59448,11 @@ function DockSettingsPanel() {
       setShowAll(s.show_all_workspaces !== false);
       setLoaded(true);
     }).catch(() => setLoaded(true));
+    load();
+    // Friday changed the dock (set_setting, after the owner's Yes): the open panel reads it again.
+    const on = e => { if (String(e && e.detail && e.detail.path || '').indexOf('settings.display.dock') === 0) load(); };
+    window.addEventListener('friday:settings-changed', on);
+    return () => window.removeEventListener('friday:settings-changed', on);
   }, []);
 
   const shape = dockArrangement(custom, showAll);
@@ -69037,6 +69042,19 @@ function App() {
       if (window.fridaySaveDock) delete window.fridaySaveDock;
     };
   }, [agentSettings]);
+  // A dock change Friday made (set_setting settings.display.dock.<ws>, after the owner's Yes, or its Undo)
+  // arrives as settings_changed with that path: read dock_custom again so the dock reshapes without a reload.
+  useEffect(() => {
+    const on = e => {
+      const p = String(e && e.detail && e.detail.path || '');
+      if (p.indexOf('settings.display.dock') !== 0) return;
+      fetch('/api/settings').then(r => r.json()).then(d => {
+        if (d && d.settings && d.settings.dock_custom) setAgentSettings(a => Object.assign({}, a, { dock_custom: d.settings.dock_custom }));
+      }).catch(() => {});
+    };
+    window.addEventListener('friday:settings-changed', on);
+    return () => window.removeEventListener('friday:settings-changed', on);
+  }, []);
 
   /* A WORKSPACE IS ADDRESSABLE BY URL, so any of them can be a tab.
      ?workspace=code opens that workspace on load, which is all a new Friday
