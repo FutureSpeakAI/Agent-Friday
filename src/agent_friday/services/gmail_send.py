@@ -35,8 +35,12 @@ message to a real person they know. So the gate is not a setting. It is structur
 SENDING NEEDS gmail.send, ALWAYS. The owner may also grant gmail.modify
 ("Reconnect with sending"), which Google would let send mail too; this module
 never sends on the strength of modify. Modify is used for one thing here:
-saving a draft into Gmail when the owner presses "Save draft" — writing to
-their own mailbox, not to anyone else, and never on Friday's own initiative.
+saving a draft into the owner's own Gmail Drafts — when they press "Save
+draft", or when they ask Friday to draft a message (the draft_email tool,
+whose default is to save, not send). A draft reaches nobody: it is a write to
+their own mailbox, receipted, with no card. Sending it is a separate,
+explicit request (draft_email with send=true), which goes through
+request_send and its card like any other send.
 
 AFTER APPROVAL, A SHORT HOLD. An approved message waits UNDO_SECONDS (or
 until the time it was scheduled for) in a held queue on disk, and the owner
@@ -56,6 +60,7 @@ import hashlib
 import json
 import logging
 import re
+from email import policy as _email_policy
 from email.message import EmailMessage
 from agent_friday.user_errors import UserFacingError, log_failure
 
@@ -637,12 +642,59 @@ def _mime_raw(payload: dict, extras: dict) -> str:
         maintype, _, subtype = (a.get("mime") or "application/octet-stream").partition("/")
         msg.add_attachment(data, maintype=maintype or "application",
                            subtype=subtype or "octet-stream", filename=a.get("filename"))
-    return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    # CRLF line endings (RFC 5322, which Gmail's `raw` field asks for); a
+    # non-ASCII subject is RFC 2047 encoded and the body declares UTF-8.
+    return base64.urlsafe_b64encode(msg.as_bytes(policy=_email_policy.SMTP)).decode("ascii")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  DRAFTS — saved into the owner's own Gmail when they press "Save draft"
+#  DRAFTS — saved into the owner's own Gmail Drafts; nothing is sent
 # ═══════════════════════════════════════════════════════════════════════════
+
+class DraftScopeMissing(SendRefused):
+    """The account has not granted gmail.modify, so Gmail will not take a
+    draft from Friday. Nothing was saved. `account` is the account's public
+    record (id, email, label)."""
+
+    def __init__(self, account: dict, *, google_said: bool = False):
+        who = account.get("email") or account.get("label") or account.get("id") or "That account"
+        super().__init__(
+            "%s has not given Friday permission to save drafts in its Gmail%s, so nothing "
+            "was saved and nothing was sent. To allow it: Settings > Connections > Google, "
+            "press \"Reconnect with sending\" on %s." % (
+                who, " (Google refused the draft for that reason)" if google_said else "", who))
+        self.account = account
+
+
+class DraftNeedsAccount(SendRefused):
+    """More than one account and nothing says which: the owner is asked."""
+
+    def __init__(self, message: str, accounts: list):
+        super().__init__(message)
+        self.accounts = accounts
+
+
+#: Opens one draft in Gmail on the web. `compose=` takes the draft's MESSAGE id
+#: (the hex id Gmail returns in draft.message.id), not the draft id ("r-..."),
+#: and /u/<address>/ picks the signed-in account by its address, so the link
+#: opens the right mailbox when several are signed in.
+DRAFT_LINK = "https://mail.google.com/mail/u/%s/#drafts?compose=%s"
+DRAFTS_FOLDER_LINK = "https://mail.google.com/mail/u/%s/#drafts"
+
+
+def draft_link(account_email: str, message_id: str | None) -> str:
+    from urllib.parse import quote
+    who = quote(str(account_email or "0"), safe="@")
+    if message_id and re.fullmatch(r"[0-9A-Za-z_-]+", str(message_id)):
+        return DRAFT_LINK % (who, message_id)
+    return DRAFTS_FOLDER_LINK % who
+
+
+def _google_refused_scope(e) -> bool:
+    msg = str(getattr(e, "message", "") or e).lower()
+    return getattr(e, "kind", "") == "auth" and ("insufficient" in msg or "scope" in msg
+                                                 or "permission" in msg)
+
 
 def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", cc=None,
                bcc=None, html: str | None = None, thread_id: str | None = None,
@@ -650,15 +702,17 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
                attachments=None) -> dict:
     """Write a draft into the account's Gmail Drafts. Sends nothing, asks
     nothing: the draft sits in the owner's own mailbox, and sending it from Friday
-    still goes through request_send and an approval card."""
+    still goes through request_send and an approval card.
+
+    The account's recorded scopes are checked first (they are what Google
+    returned at connect time); if Google itself refuses for lack of a scope,
+    that is reported the same way. Either way: DraftScopeMissing, nothing saved."""
     from agent_friday.services import google_accounts as G
     rec = G.get_account(account_id) if account_id else None
     if not rec:
         raise SendRefused("which account should the draft go to?")
     if G.GMAIL_MODIFY not in (rec.get("scopes") or []):
-        raise SendRefused("%s has not allowed Friday to change its mailbox, so drafts can't be "
-                          "saved to Gmail. Use Reconnect with sending in Settings."
-                          % (rec.get("email") or account_id))
+        raise DraftScopeMissing(rec)
     tos = [a for a in _addresses(to or [])] if to else []
     extras = _extras(html, thread_id, in_reply_to, references, attachments)
     raw = _mime_raw({"to": tos, "cc": _addresses(cc or []), "bcc": _addresses(bcc or []),
@@ -668,16 +722,188 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
         msg["threadId"] = extras["thread_id"]
     creds = G.credentials_for(account_id)
     if not creds:
-        raise SendRefused("that account's credentials could not be read")
+        raise SendRefused("that account's credentials could not be read, so nothing was saved")
     from googleapiclient.discovery import build
     from agent_friday.services import gmail_api
     svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
     try:
         d = gmail_api.execute(svc.users().drafts().create(userId="me", body={"message": msg}))
     except gmail_api.GmailError as e:
-        raise SendRefused("Gmail did not save the draft (error %s)." % log_failure(e, "Gmail draft failed"),
-                          detail="Gmail did not save the draft: %s" % e)
-    return {"ok": True, "draft_id": d.get("id"), "account_id": account_id}
+        if _google_refused_scope(e):
+            raise DraftScopeMissing(rec, google_said=True) from e
+        raise SendRefused("Gmail did not save the draft (error %s). Nothing was saved."
+                          % log_failure(e, "Gmail draft failed"),
+                          detail="Gmail did not save the draft: %s. Nothing was saved." % e)
+    m = (d or {}).get("message") or {}
+    return {"ok": True, "draft_id": d.get("id"), "account_id": account_id,
+            "message_id": m.get("id"), "thread_id": m.get("threadId") or thread_id,
+            "account_email": rec.get("email"), "account_label": rec.get("label"),
+            "link": draft_link(rec.get("email"), m.get("id"))}
+
+
+# ── Drafts the model asks for (the draft_email tool) ───────────────────────────
+
+def wants_send(args) -> bool:
+    """Did this draft_email call ask to SEND? Only an explicit yes counts:
+    anything else saves a draft into the owner's own Gmail and sends nothing."""
+    v = (args or {}).get("send") if isinstance(args, dict) else None
+    if isinstance(v, bool):
+        return v
+    return str(v or "").strip().lower() in ("true", "yes", "1")
+
+
+def _norm(x) -> str:
+    return str(x or "").strip().lower()
+
+
+def _account_public(r: dict) -> dict:
+    from agent_friday.services import google_accounts as G
+    return {"id": r.get("id"), "email": r.get("email"), "label": r.get("label"),
+            "can_save_drafts": G.GMAIL_MODIFY in (r.get("scopes") or [])}
+
+
+def mail_accounts() -> list:
+    """Connected accounts with Gmail switched on, as public records."""
+    from agent_friday.services import google_accounts as G
+    try:
+        recs = G.list_accounts()
+    except Exception:
+        recs = []
+    return [r for r in recs if (r.get("services") or {}).get("gmail", True)]
+
+
+def match_account(want, accounts: list) -> dict | None:
+    """An account by its id, address or label (case-insensitive), or None."""
+    w = _norm(want)
+    if not w:
+        return None
+    for key in ("id", "email", "label"):
+        hit = [a for a in accounts if _norm(a.get(key)) == w]
+        if len(hit) == 1:
+            return hit[0]
+    return None
+
+
+def default_account_id() -> str:
+    """The owner's default account for mail, if they set one (settings
+    `mail_default_account`: an id, address or label); "" when unset."""
+    try:
+        from agent_friday.core import _load_settings
+        return str((_load_settings() or {}).get("mail_default_account") or "").strip()
+    except Exception:
+        return ""
+
+
+def _who(a: dict) -> str:
+    em, lab = a.get("email") or a.get("id"), a.get("label")
+    return "%s (%s)" % (em, lab) if lab and _norm(lab) != _norm(em) else str(em)
+
+
+def choose_account(want=None, thread_account: str | None = None) -> tuple:
+    """(account record, how it was chosen) for a draft. Order: the account
+    named > the account the replied-to conversation is in > the owner's
+    default > the only account. Several accounts and none of those: raises
+    DraftNeedsAccount listing them; never a guess."""
+    accounts = mail_accounts()
+    if not accounts:
+        raise SendRefused("no Google account with Gmail is connected, so no draft could be saved. "
+                          "Connect one in Settings > Connections > Google. Nothing was saved.")
+    if _norm(want):
+        hit = match_account(want, accounts)
+        if hit is None:
+            raise DraftNeedsAccount(
+                "No connected account matches %r. Connected: %s. Ask which one; nothing was saved."
+                % (str(want), "; ".join(_who(a) for a in accounts)), [_account_public(a) for a in accounts])
+        return hit, "the account you named"
+    if thread_account:
+        hit = match_account(thread_account, accounts)
+        if hit is not None:
+            return hit, "the account the conversation is in"
+    dflt = default_account_id()
+    if dflt:
+        hit = match_account(dflt, accounts)
+        if hit is not None:
+            return hit, "your default account"
+    if len(accounts) == 1:
+        return accounts[0], "your only connected account"
+    raise DraftNeedsAccount(
+        "Which account should the draft go to: %s? Nothing was saved yet."
+        % " or ".join(_who(a) for a in accounts), [_account_public(a) for a in accounts])
+
+
+def _bare(header_value) -> list:
+    """Addresses only, from a header value like 'Pat <pat@x.org>, b@y.org'."""
+    from email.utils import getaddresses
+    out = []
+    for _name, addr in getaddresses([str(header_value or "")]):
+        addr = addr.strip()
+        if addr and _ADDR.match(addr) and _norm(addr) not in {_norm(a) for a in out}:
+            out.append(addr)
+    return out
+
+
+def reply_context(thread, account_hint: str | None = None, reply_all: bool = False,
+                  own_addresses=()) -> dict:
+    """What a reply to a conversation needs, from its LAST message: the
+    thread id, the account it is in, In-Reply-To and References, a "Re:"
+    subject, and the recipients (the sender, or Reply-To; with reply_all,
+    everyone else on To and Cc too; the owner's own addresses never). If the
+    last message is the owner's own, the reply goes to whom that one went to.
+    `thread`: a search_email ref ("mail:<account>:<thread>") or a thread id.
+    Quotes nothing."""
+    from agent_friday.services import gmail_read
+    from agent_friday.services.screen_stage import split_mail_ref
+    t = str(thread or "").strip()
+    try:
+        from agent_friday.services import mail_thread as _mt
+        if t.lower() in _mt.DEICTIC:
+            ref, how = _mt.resolve_deictic()
+            if not ref:
+                raise SendRefused(how + " Nothing was saved.")
+            t = ref
+    except SendRefused:
+        raise
+    except Exception:
+        pass
+    pair = split_mail_ref(t)
+    account, tid = pair if pair else (account_hint, t)
+    if not tid:
+        raise SendRefused("that is not a conversation reference. Nothing was saved.")
+    res = gmail_read.get_thread(tid, account or None)
+    if res.get("status") != "ok" or not res.get("messages"):
+        raise SendRefused("the conversation to reply to could not be read (%s). Nothing was saved."
+                          % (res.get("error") or res.get("kind") or "empty"))
+    last = res["messages"][-1]
+    mine = {_norm(a) for a in own_addresses if a}
+    try:
+        from agent_friday.services import google_accounts as G
+        rec = G.get_account(res.get("account_id")) or {}
+        if rec.get("email"):
+            mine.add(_norm(rec["email"]))
+    except Exception:
+        pass
+    sender = _bare(last.get("sender"))
+    if sender and _norm(sender[0]) in mine:
+        to = [a for a in _bare(last.get("to")) if _norm(a) not in mine]
+        cc = [a for a in _bare(last.get("cc")) if _norm(a) not in mine] if reply_all else []
+    else:
+        to = _bare(last.get("reply_to")) or sender
+        cc = []
+        if reply_all:
+            seen = {_norm(a) for a in to} | mine
+            for a in _bare(last.get("to")) + _bare(last.get("cc")):
+                if _norm(a) not in seen:
+                    seen.add(_norm(a))
+                    cc.append(a)
+    subj = str(last.get("subject") or "").strip()
+    if subj == "(no subject)":
+        subj = ""
+    if not re.match(r"(?i)^re\s*:", subj):
+        subj = ("Re: " + subj).strip()
+    mid = str(last.get("message_id_header") or "").strip()
+    return {"account_id": res.get("account_id"), "thread_id": tid, "to": to, "cc": cc,
+            "subject": subj, "in_reply_to": mid or None,
+            "references": str(last.get("references") or "").strip() or None}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

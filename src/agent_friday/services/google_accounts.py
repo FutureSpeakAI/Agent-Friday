@@ -500,6 +500,23 @@ def get_account(account_id: str) -> dict | None:
     return None
 
 
+def granted_scopes(creds) -> list:
+    """The scopes Google actually GRANTED, for the account record.
+
+    google-auth-oauthlib puts the scopes Friday ASKED for on `creds.scopes`
+    and what Google's token response said was granted on
+    `creds.granted_scopes`. A person can untick a permission on Google's
+    screen, so only the second is evidence: recording `scopes` would say an
+    account may save drafts (gmail.modify) or send when it may not. Older
+    credentials without `granted_scopes` fall back to `scopes`."""
+    g = getattr(creds, "granted_scopes", None)
+    if isinstance(g, str):
+        g = g.split()
+    if isinstance(g, (list, tuple, set, frozenset)) and g:
+        return [str(x) for x in g]
+    return list(getattr(creds, "scopes", None) or GOOGLE_MULTI_SCOPES)
+
+
 def upsert_account(creds, label: str = "", services: dict | None = None,
                    email: str | None = None) -> dict:
     """Add a new account (or update an existing one on re-consent).
@@ -516,7 +533,7 @@ def upsert_account(creds, label: str = "", services: dict | None = None,
         accounts = index.setdefault("accounts", [])
         existing = next((r for r in accounts if r.get("id") == aid), None)
         method = _persist_token(aid, creds)
-        granted = list(getattr(creds, "scopes", None) or GOOGLE_MULTI_SCOPES)
+        granted = granted_scopes(creds)
         if existing:
             existing.update({
                 "email": email, "status": "connected", "last_sync": _now_iso(),

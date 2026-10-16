@@ -344,6 +344,14 @@
     "args_equal": {
      "thread": "this"
     }
+   },
+   {
+    "text": "draft a reply to Dana and save it",
+    "decision": "defer"
+   },
+   {
+    "text": "save a draft email to the team about the venue change",
+    "decision": "defer"
    }
   ],
   "laya_router_holdout2.json": [

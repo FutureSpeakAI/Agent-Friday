@@ -221,16 +221,15 @@ def refused_send_permissions(skill) -> list:
     """What a skill declares that can never be pre-approved, each with the
     plain reason ([{"action", "recipient", "why"}]), so Settings can say so
     rather than drop it silently."""
-    from agent_friday.governance.send_grants import SEND_ACTIONS, normalize_recipients
+    from agent_friday.governance.send_grants import SEND_ACTIONS, recipient_refusal
     out = []
     for action, rcpts in (getattr(skill, "permissions", None) or {}).items():
         if action not in SEND_ACTIONS:
             continue
         for r in rcpts:
-            try:
-                normalize_recipients([r])
-            except ValueError as e:
-                out.append({"action": action, "recipient": str(r), "why": str(e)})
+            why = recipient_refusal(r)
+            if why:
+                out.append({"action": action, "recipient": str(r), "why": why})
     return out
 
 

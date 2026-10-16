@@ -120,7 +120,9 @@ def repin_claws() -> str:
 #: Friday's own tools that act outside the conversation: other people, money,
 #: accounts, publishing, code execution, or no undo.
 OUTWARD_TOOLS = frozenset({
-    "draft_email",                  # its own card is the gate (SELF_GATED)
+    # draft_email is judged by argument (BY_ARGUMENT, classify): saving a
+    # draft is an own-mailbox write; send=true is outward and its own card
+    # is the gate (SELF_GATED).
     # Decided, not yet reviewed for internal: each waits for a card, as an
     # unclassified tool does. notifications can also mute and clear the
     # owner's cards, so a turn steered by something it read could silence an
@@ -177,7 +179,8 @@ OUTWARD_TOOLS = frozenset({
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
-#: action itself (draft_email only queues; gmail_send sends on approval).
+#: action itself (draft_email with send=true only queues; gmail_send sends on
+#: approval).
 SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         "career_update_tracker", "publish_artifact", "workspace_swap",
                         "site_action", "domain_action",
@@ -429,7 +432,11 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # By what the scheduled job will do when it fires: creating
                          # or resuming a schedule for a job that sends, posts, buys or
                          # deletes is outward; the rest is a timetable (services/schedule_tools).
-                         "schedule_job"})
+                         "schedule_job",
+                         # By whether it sends: saving a draft into the owner's
+                         # own Gmail is an own-mailbox write (no card, receipted);
+                         # send=true is outward and raises its own card.
+                         "draft_email"})
 
 #: Tools whose outward case is decided on a card even in an interactive chat,
 #: never by a yes/no question. generate_video and generate_music are outward
@@ -822,6 +829,10 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
             return _st.classify(a)
         except Exception as e:
             return OUTWARD, f"the schedule could not be classified ({e})"
+    if tool_name == "draft_email":
+        if _own_mailbox_draft(tool_name, a):
+            return INTERNAL, OWN_MAILBOX_WHY
+        return OUTWARD, "it asks to send an email to other people"
     if tool_name == "content_create_post":
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"
@@ -850,6 +861,24 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
             return OUTWARD, "a connector tool that is not a read"
         return _connector_read(tool_name, a)
     return OUTWARD, "an unknown tool is treated as outward"
+
+
+#: Why a draft save is internal, in the receipt.
+OWN_MAILBOX_WHY = ("an own-mailbox write: it saves a draft in the owner's own Gmail "
+                   "and sends nothing to anyone")
+
+
+def _own_mailbox_draft(tool_name: str, args) -> bool:
+    """draft_email that saves (no send=true): a write to the owner's own
+    mailbox. A draft reaches nobody, so it needs no card, whatever the
+    recipients' provenance; sending it is a separate, carded request."""
+    if tool_name != "draft_email":
+        return False
+    try:
+        from agent_friday.services.gmail_send import wants_send
+        return not wants_send(args or {})
+    except Exception:
+        return False
 
 
 def _outward_reads_policy() -> str:
@@ -1249,6 +1278,10 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
     if klass == "forbidden":
         return Verdict("deny", klass, f"not allowed: {why}")
     if klass == INTERNAL:
+        if tainted and _own_mailbox_draft(tool_name, args):
+            # A recipient read in an email is the normal case for a reply. The
+            # draft reaches nobody; the send that could is asked separately.
+            return Verdict("allow", klass, why + " (some details came from content read)")
         return Verdict("card" if tainted else "allow", klass, why)
     if klass == OBSERVE:
         # A read at a connected service: runs unasked, receipted as observe.

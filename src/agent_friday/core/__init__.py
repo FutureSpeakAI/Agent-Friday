@@ -3529,6 +3529,10 @@ DEFAULT_SETTINGS = {
     # The Undo window of an email sent unattended under a pre-approval, in
     # seconds (10 to 600). Sends the owner approves in person keep 10 s.
     "unattended_send_undo_s": 120,
+    # The account an email draft goes to when the owner names none and it is
+    # not a reply (an account id, address or label). Empty: with more than
+    # one account Friday asks which (services/gmail_send.choose_account).
+    "mail_default_account": "",
     # How fast news-outlet trust moves off its starting score (the prior's
     # weight, in pseudo-observations: higher learns slower), and the owner's
     # Boost/Ban amounts (source_trust_graph.py). The starting score stays 0.5.

@@ -73,7 +73,7 @@ def _send(to, *, ctx=None, subject=None, body="Synthetic weekly status."):
     from agent_friday.services import agent
     # A fresh subject: an identical message reuses its live card (gmail_send._live_card).
     subject = subject or "Weekly status " + uuid.uuid4().hex[:6]
-    out = agent._execute_tool("draft_email", {"to": to, "subject": subject, "body": body},
+    out = agent._execute_tool("draft_email", {"to": to, "subject": subject, "body": body, "send": True},
                               session_ctx=dict(ctx or SCHEDULED))
     return json.loads(out)
 
@@ -130,7 +130,7 @@ def test_revoking_a_grant_makes_the_send_ask_again(client):
 def test_a_grant_revoked_between_the_checkpoint_and_the_handler_is_not_used(client):
     from agent_friday.governance import send_grants
     g = _grant(client, scope="recipients", recipients=[TEAM])
-    v = action_gate.authorize("draft_email", {"to": TEAM}, dict(SCHEDULED), clean=True)
+    v = action_gate.authorize("draft_email", {"to": TEAM, "send": True}, dict(SCHEDULED), clean=True)
     assert v.action == "allow" and v.grant["grant_id"] == g["grant_id"]
     send_grants.revoke(g["grant_id"])
     tok = action_gate.DECIDED.set(g["grant_id"])
@@ -147,7 +147,7 @@ def test_a_job_grant_covers_that_scheduled_job_only_and_a_tainted_send_never(cli
     other = dict(SCHEDULED, schedule_id="sch_other", task_id="task_other")
     res = _send(TEAM, ctx=other)
     assert not res.get("pre_approved") and _pending_for(res["approval_id"])
-    assert action_gate.authorize("draft_email", {"to": TEAM}, dict(SCHEDULED), tainted=True).grant is None
+    assert action_gate.authorize("draft_email", {"to": TEAM, "send": True}, dict(SCHEDULED), tainted=True).grant is None
 
 
 def _write_skill(name, perms):
