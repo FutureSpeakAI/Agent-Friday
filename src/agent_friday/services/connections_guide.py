@@ -224,7 +224,7 @@ GUIDE: dict = {
     },
     # Accounts
     "google": {
-        "signup": "https://accounts.google.com/signup", "signup_label": "Sign up",
+        "signup": "https://accounts.google.com/lifecycle/flows/signup", "signup_label": "Sign up",
         "cost": "Free.",
         "how": ("Tick any extra permission you want (sending, mailbox changes); "
                 "both start off.",
