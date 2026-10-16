@@ -479,6 +479,8 @@ def _conv_context(cid, limit=None, exclude_id=None):
             if role == 'assistant' and (m.get('meta') or {}).get('library'):
                 # A reply that read the Library is recognised wherever history is replayed or summarised.
                 _library_cite.remember_library_reply(text)
+            if role == 'assistant':
+                text = _with_receipts(text, (m.get('meta') or {}).get('receipts'))
             out.append({"role": role, "content": text})
             nxt = rows[i + 1] if i + 1 < len(rows) else None
             if (role == 'user'
@@ -486,6 +488,37 @@ def _conv_context(cid, limit=None, exclude_id=None):
                     and (nxt is None or nxt.get('role') == 'user')):
                 out.append({"role": "assistant", "content": _NO_REPLY_NOTE})
     return out
+
+
+def _with_receipts(text, receipts):
+    """An earlier assistant turn as the model reads it: the one-line record of
+    what its tools actually did, then what it said. Without the line a later
+    turn sees only the words, and cannot tell "I added it" from a refused
+    write (services/completion_receipts.receipt_line)."""
+    try:
+        from agent_friday.services.completion_receipts import receipt_line
+        line = receipt_line(receipts)
+    except Exception:
+        line = ""
+    return (line + "\n" + text) if line else text
+
+
+def _turn_receipts(*traces, pii_lookup=None):
+    """The compact receipts this turn keeps in its assistant message's meta:
+    every tool call of every attempt, each once."""
+    seen, merged = set(), []
+    for trace in traces:
+        for entry in (trace or []):
+            if id(entry) in seen:
+                continue
+            seen.add(id(entry))
+            merged.append(entry)
+    try:
+        from agent_friday.services.completion_receipts import compact_receipts
+        clean = (lambda t: _rehydrate_pii(t, pii_lookup)) if pii_lookup else None
+        return compact_receipts(merged, clean=clean)
+    except Exception:
+        return []
 
 
 def _offer_turn_response(message, text, offer, *, conversation_id, workspace='',
@@ -1716,7 +1749,11 @@ def chat():
                         threading.Timer(2.0, process_remove, args=(_comp_pid,)).start()
                     except Exception:
                         pass
-                    messages = compressor.compress(messages, model=_selected_model)
+                    from agent_friday.services.completion_receipts import (
+                        compress_keeping_receipts)
+                    messages = compress_keeping_receipts(
+                        lambda _m: compressor.compress(_m, model=_selected_model),
+                        messages)
             except Exception as _ce:
                 # Compression is best-effort — never block a chat on it.
                 print(f"  [HEADROOM] skipped: {_ce}")
@@ -3060,9 +3097,14 @@ def chat():
             _note_saved = _unfinished.wrote_note(tool_trace)
         except Exception:
             _note_saved = False
+        _receipts_kept = _turn_receipts(
+            _integrity_meta.get('turn_trace'), tool_trace, pii_lookup=pii_lookup)
+        if _receipts_kept:
+            friday_msg['receipts'] = _receipts_kept
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class,
-                            'note_saved': _note_saved})
+                            'note_saved': _note_saved,
+                            **({'receipts': _receipts_kept} if _receipts_kept else {})})
         _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
                           _route_info, locals().get('_conv_seat'))
 
@@ -3670,6 +3712,8 @@ def chat_send():
             if text:
                 if role == 'assistant' and msg.get('library'):
                     _library_cite.remember_library_reply(text)
+                if role == 'assistant':
+                    text = _with_receipts(text, msg.get('receipts'))
                 messages.append({"role": role, "content": text})
         # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
         # memory too -- including this assistant's own earlier answers -- so a
@@ -3836,9 +3880,13 @@ def chat_send():
             _note_saved = _unfinished.wrote_note(tool_trace)
         except Exception:
             _note_saved = False
+        _receipts_kept = _turn_receipts(_send_integrity.get('turn_trace'), tool_trace)
+        if _receipts_kept:
+            friday_msg['receipts'] = _receipts_kept
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class,
-                            'note_saved': _note_saved})
+                            'note_saved': _note_saved,
+                            **({'receipts': _receipts_kept} if _receipts_kept else {})})
         _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
                           None, {'model': _conv_seat_model} if (_conv_seat_model or '').strip() else None)
 
