@@ -245,18 +245,105 @@ def test_a_custom_endpoint_is_added_without_a_key_and_gets_its_own_card(client, 
                         json={"kind": "custom", "label": "Team Gateway",
                               "base_url": "https://gateway.example.com/v1"})
         assert r.status_code == 200, r.get_json()
-        assert r.get_json()["item"] == "custom:team-gateway"
-        p = reg.get_provider("team-gateway")
+        assert r.get_json()["item"] == "custom:custom-team-gateway"
+        p = reg.get_provider("custom-team-gateway")
         assert p["base_url"] == "https://gateway.example.com/v1" and p["enabled"] is True
+        assert p["label"] == "Team Gateway"
         items = {i["id"]: i for i in client.get("/api/setup/connections").get_json()["items"]}
-        card = items["custom:team-gateway"]
+        card = items["custom:custom-team-gateway"]
+        assert card["label"] == "Team Gateway"
         assert card["connect"]["kind"] == "secret"
-        assert card["connect"]["endpoint"] == "/api/providers/team-gateway/key"
+        assert card["connect"]["endpoint"] == "/api/providers/custom-team-gateway/key"
         r = client.post("/api/setup/connections/endpoint",
                         json={"kind": "custom", "label": "Plain", "base_url": "http://gateway.example.com/v1"})
         assert r.status_code == 422 and "https" in r.get_json()["message"]
     finally:
-        reg.remove_provider("team-gateway")
+        reg.remove_provider("custom-team-gateway")
+
+
+FAKE_VOICE = "sk_" + "Vv1Oo2Ii3Cc4Ee5Kk6Ee7Yy8" + "Nn9Oo0"   # pragma: allowlist secret
+FAKE_GATEWAY = "gw-" + "Gg1Aa2Tt3Ee4Ww5Aa6Yy7" + "Kk8"   # pragma: allowlist secret
+
+
+def test_a_custom_endpoint_named_after_a_stored_key_never_reads_or_overwrites_it(
+        client, home, monkeypatch):
+    """The credential store keeps keys by name, including names no descriptor
+    declares (elevenlabs, brave, firecrawl, inworld). A custom endpoint labelled
+    "ElevenLabs" has a name of its own: it never sends the real ElevenLabs key
+    to the address the person typed, and its key never replaces that one."""
+    import requests
+    from agent_friday.services import credential_store as cs
+    from agent_friday.services.provider_registry import get_provider_registry
+    from agent_friday.routing.provider_descriptors import provider_api_key
+    monkeypatch.setattr(cs, "_PROVIDER_KEYS_DIR", home["path"] / "provider_keys")
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    reg = get_provider_registry()
+    cs.set_provider_key("elevenlabs", FAKE_VOICE)
+    name = ""
+    try:
+        r = client.post("/api/setup/connections/endpoint",
+                        json={"kind": "custom", "label": "ElevenLabs",
+                              "base_url": "https://gateway.example.com/v1"})
+        assert r.status_code == 200, r.get_json()
+        name = r.get_json()["provider"]
+        assert name != "elevenlabs" and not cs.get_provider_key(name)
+        prov = reg.get_provider(name)
+        assert provider_api_key(prov) != FAKE_VOICE   # pragma: allowlist secret
+
+        sent = []
+
+        def fake_get(url, headers=None, **_):
+            sent.append((url, dict(headers or {})))
+            return _Resp(200, {"data": []})
+        monkeypatch.setattr(requests, "get", fake_get)
+        client.post("/api/setup/connections/%s/test" % r.get_json()["item"], json={})
+        assert sent and FAKE_VOICE not in repr(sent)
+
+        card = {i["id"]: i for i in client.get("/api/setup/connections")
+                .get_json()["items"]}[r.get_json()["item"]]
+        assert client.post(card["connect"]["endpoint"],
+                           json={"key": FAKE_GATEWAY}).status_code == 200
+        assert cs.get_provider_key("elevenlabs") == FAKE_VOICE
+        assert cs.get_provider_key(name) == FAKE_GATEWAY
+    finally:
+        if name:
+            reg.remove_provider(name)
+            cs.delete_provider_key(name)
+            cs.clear_provider_key_live(name)
+        cs.delete_provider_key("elevenlabs")
+
+
+def test_a_second_custom_endpoint_with_the_same_name_is_refused(client, home):
+    from agent_friday.services.provider_registry import get_provider_registry
+    reg = get_provider_registry()
+    body = {"kind": "custom", "label": "Team Gateway",
+            "base_url": "https://gateway.example.com/v1"}
+    try:
+        assert client.post("/api/setup/connections/endpoint", json=body).status_code == 200
+        r = client.post("/api/setup/connections/endpoint",
+                        json={**body, "label": "team  gateway",
+                              "base_url": "https://other.example.com/v1"})
+        assert r.status_code == 422 and "already" in r.get_json()["message"], r.get_json()
+        assert reg.get_provider("custom-team-gateway")["base_url"] ==             "https://gateway.example.com/v1"
+    finally:
+        reg.remove_provider("custom-team-gateway")
+
+
+def test_add_provider_can_refuse_to_overwrite(home):
+    from agent_friday.services.provider_registry import (
+        ProviderExistsError, get_provider_registry)
+    reg = get_provider_registry()
+    desc = {"name": "custom-refuse-check", "label": "Refuse check",
+            "type": "openai-compatible", "base_url": "https://a.example.com/v1",
+            "auth": {"type": "none"}, "models": [], "enabled": True}
+    try:
+        reg.add_provider(desc)
+        with pytest.raises(ProviderExistsError):
+            reg.add_provider({**desc, "base_url": "https://b.example.com/v1"},
+                             replace=False)
+        assert reg.get_provider("custom-refuse-check")["base_url"] == "https://a.example.com/v1"
+    finally:
+        reg.remove_provider("custom-refuse-check")
 
 
 def test_lm_studio_stays_on_this_computer(client, home):

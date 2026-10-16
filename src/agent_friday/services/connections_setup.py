@@ -255,6 +255,7 @@ def _test_openai_endpoint(name: str, label: str) -> dict:
     if not prov:
         return _out(NOT_CONNECTED, "%s isn't set up yet." % label,
                     "Fill in the address and press Save.")
+    label = prov.get("label") or label
     import requests
     from agent_friday.routing.provider_descriptors import auth_headers, provider_api_key
     base = (prov.get("base_url") or "").rstrip("/")
@@ -410,26 +411,38 @@ def save_ollama(url: str) -> dict:
     return {"saved": True, "base_url": url}
 
 
-_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
+
+#: Every custom endpoint's provider name starts with this. A provider's key is
+#: stored and read under its name (credential_store, provider_api_key), and
+#: the store also holds keys under names no descriptor declares (elevenlabs,
+#: inworld, brave, firecrawl, ...). Without its own namespace a custom endpoint
+#: labelled after one of those would read that service's real key, send it to
+#: the address the person typed, and overwrite it when a key is saved on its
+#: card. The free-text label is shown; it never becomes a credential name.
+CUSTOM_PREFIX = "custom-"
 
 
 def save_endpoint(kind: str, label: str, base_url: str) -> dict:
-    """Add (or update) an OpenAI-compatible endpoint: LM Studio, or a custom one.
-    The descriptor carries no key; a key, if needed, goes through the secure
-    field afterwards (POST /api/providers/<name>/key)."""
-    from agent_friday.services.provider_registry import get_provider_registry
+    """Add an OpenAI-compatible endpoint: LM Studio (added or updated), or a
+    custom one (added once; a second one with the same name is refused). The
+    descriptor carries no key; a key, if needed, goes through the secure field
+    afterwards (POST /api/providers/<name>/key)."""
+    from agent_friday.services.provider_registry import (
+        ProviderExistsError, get_provider_registry)
     if kind == "lmstudio":
         name, label = LMSTUDIO_PROVIDER, "LM Studio"
         url = _clean_url(base_url or LMSTUDIO_DEFAULT, local_only=True)
         auth = {"type": "none"}
     elif kind == "custom":
         label = re.sub(r"\s+", " ", str(label or "")).strip()[:40]
-        name = re.sub(r"[^a-z0-9-]+", "-", label.lower()).strip("-")[:31]
-        if not label or not _NAME_RE.match(name or ""):
+        slug = re.sub(r"[^a-z0-9-]+", "-", label.lower()).strip("-")[:24].strip("-")
+        if not label or not _NAME_RE.match(slug or ""):
             raise Refused("Give it a short name, letters and numbers.")
-        if name in ("custom", LMSTUDIO_PROVIDER) or (
-                get_provider_registry().is_builtin(name)):
-            raise Refused("That name is taken; pick another.")
+        name = CUSTOM_PREFIX + slug
+        if get_provider_registry().get_provider(name) is not None:
+            raise Refused("You already have one called %s; pick another name."
+                          % label)
         url = _clean_url(base_url, local_only=False)
         auth = {"type": "env_var",
                 "key": "FRIDAY_%s_API_KEY" % name.upper().replace("-", "_")}
@@ -440,7 +453,10 @@ def save_endpoint(kind: str, label: str, base_url: str) -> dict:
             "base_url": url, "auth": auth, "models": [],
             "classification": "local" if is_private_host(url) else "cloud",
             "enabled": True}
-    get_provider_registry().add_provider(desc)
+    try:
+        get_provider_registry().add_provider(desc, replace=(kind == "lmstudio"))
+    except ProviderExistsError:
+        raise Refused("You already have one called %s; pick another name." % label)
     try:
         from agent_friday.services.model_discovery import invalidate_cache
         invalidate_cache(name)
