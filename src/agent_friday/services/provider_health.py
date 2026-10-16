@@ -232,6 +232,14 @@ def _ollama_installed(prov) -> bool:
     return bool(local) and (Path(local) / "Programs" / "Ollama" / "ollama.exe").exists()
 
 
+def _lists_models(mgr) -> bool:
+    """Does the Ollama at this address answer with any installed model?"""
+    try:
+        return bool(mgr.list_models())
+    except Exception:
+        return False
+
+
 def _check(name, deep=False) -> dict:
     prov = _provider(name)
     if not prov:
@@ -760,6 +768,10 @@ def inference_probe(name, prov=None, use_cache=True, explicit=False) -> dict | N
                 return _result(NOT_CONNECTED, "no local model installed", False)
             from agent_friday.routing.ollama_manager import get_manager
             mgr = get_manager(prov.get("base_url") or "http://localhost:11434")
+            if not _ollama_installed(prov) and not _lists_models(mgr):
+                # A model named in settings, but no Ollama on this computer
+                # and nothing answering: never set up, not broken.
+                return _result(NOT_CONNECTED, "Ollama is not installed on this computer", False)
             # This is the call site decision D1 requires: `health_check` did a
             # real generation but had ZERO callers anywhere in the tree.
             out = mgr.probe_generate(
