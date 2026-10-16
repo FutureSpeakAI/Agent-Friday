@@ -14,8 +14,10 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');
-const index = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const app = fs.readFileSync(path.join(root, 'ui_parts', 'app.html'), 'utf8');
+// A Windows checkout may carry CRLF endings; the page's blocks are matched on LF.
+const read = p => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
+const index = read(path.join(root, 'index.html'));
+const app = read(path.join(root, 'ui_parts', 'app.html'));
 
 function pageBlock(source, name) {
   const m = new RegExp('/\\* ' + name + ':begin \\*/\\n([\\s\\S]*?)/\\* ' + name + ':end \\*/').exec(source);
