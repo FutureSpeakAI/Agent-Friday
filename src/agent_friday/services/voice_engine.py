@@ -1093,7 +1093,7 @@ _COMPACT_TOOL_DESCRIPTIONS = {
     "home_cards": "List before replacing a Simple Home card; actions only navigate; saved is not shown.",
     "customize_workspace": "Reversibly change presentation, not code; null clears a field; check history before an ambiguous revert.",
     "navigate_to": "Open an exact item; only NAV_OK confirms display. kind=workspace|email|mail_search|file|wiki_page|graph_node|news_article|creation|settings|calendar|contact|content_post. id=existing ID; workspace for kind=workspace; section=named tab; query=Gmail syntax for mail_search; new_tab=Chrome; max=maximize.",
-    "make_podcast": "Make a two-host podcast with sourced claims/computed numbers. sources: {kind:file|wiki|dataset,path}, {kind:kg_node|conversation,id}, {kind:creation,filename}, {kind:url,url}, {kind:text,text}, {kind:news_run,routine,run_id}. topic=wiki notes; length short≈2m|standard≈5m|long≈10m. voice=local; cloud only if owner asks and cloud voices are enabled.",
+    "make_podcast": "Make a solo/duo podcast with sourced claims/computed numbers. sources: {kind:file|wiki|dataset,path}, {kind:kg_node|conversation,id}, {kind:creation,filename}, {kind:url,url}, {kind:text,text}, {kind:news_run,routine,run_id}. topic=wiki notes; length short≈2m|standard≈5m|long≈10m. voice=local; cloud only if owner asks and cloud voices are enabled.",
     "media_show": "Show media by view/kind/project/status/date. view=today|in progress|needs me|published|everything; board=Pipeline; calendar=Calendar.",
     "organize_email": "Gmail approval cards: action=archive|inbox|read|unread|star|unstar|label|unlabel|move|trash|restore|spam|not_spam; query, search_email thread_ids or selection=screen(ticked); label for label/unlabel/move; replaces=prior card.",
     "spawn_task": "Start background work from full prompt. on_complete_* starts follow-up on success; await real results.",
@@ -1207,7 +1207,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
     "write_file": {"path": None, "content": None, "mode": None},
     "open_path": {"path": None, "in_browser": None},
     "search_email": {"query": None},
-    "make_podcast": {"sources": None, "topic": None, "length": None, "instructions": None, "voice": None},
+    "make_podcast": {"sources": None, "topic": None, "length": None, "instructions": None, "voice": None, "hosts": None},
     "media_play": {"kind": None},
     "media_turn": {"query": None, "into": None},
     "podcast_play": {"routine": None},
@@ -1951,7 +1951,18 @@ def _voice_tool_run(name, args, send_client, session=None, owner_utterance=False
     from agent_friday.services.agent import _execute_tool
 
     def _governed(tool, fn, a):
-        return _execute_tool(tool, a, handler=fn, session_ctx=_ctx())
+        c = _ctx()
+        if owner_utterance:
+            # The rule layer's call on the owner's own words: not text a cloud
+            # seat authored, so the search gates keep their ordinary policy.
+            return _execute_tool(tool, a, handler=fn, session_ctx=c)
+        # Voice parity with the chat loops: a cloud voice seat's search query
+        # is its own text (owner decision (a), privacy/public_query). The
+        # mark records `a` as the seat sent it; only those exact strings are
+        # floor-only at the search gates.
+        from agent_friday.privacy.public_query import for_tool_call as _pq_call
+        with _pq_call(c.get("provider", "cloud"), "", tool, a):
+            return _execute_tool(tool, a, handler=fn, session_ctx=c)
 
     try:
         from agent_friday.services import live_session_plan as _lsp

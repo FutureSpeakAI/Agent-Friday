@@ -23,6 +23,11 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   conversation starts, in text chat and in voice. Anything Friday saves during
   the conversation is stored at once and used from the next conversation. Your
   own edits and deletions apply straight away.
+- **Spending caps ship off and are ready to be asked about at setup.** The daily creation ceiling ($0.50) and the per-workspace task budgets (1000ψ a month, 100ψ a task) no longer apply until you set them; every cap is listed in one registry (services/spending_caps.py) with a plain-language question and a suggested figure for the first-run setup conversation, and the workspace budget panel says "No cap (ask me during setup)" when one is off. An existing install is migrated once, with a line in friday.log: a stored $0.50 ceiling you never answered for, and a workspace policy at exactly the old 1000ψ/100ψ, are switched off so the setup conversation asks about them; any other figure is kept.
+
+### Fixed
+
+- **Saving part of a settings block keeps the rest of it.** A save of one podcast show's format, one host's voice, one working-hours time and the like no longer replaces the whole block; nested settings merge key by key, lists and the maps a caller prunes are still replaced whole.
 
 ---
 

@@ -739,7 +739,8 @@ def generate_self_improvement_report(limit: int = 20, reflect=None,
                     f"Focus areas: {json.dumps([f['area'] for f in focus])}.\n\n"
                     "Write your private reflection."
                 )
-                txt = reflect(prompt, system=_REFLECTION_SYSTEM)
+                from agent_friday.services.agent_identity import named
+                txt = reflect(prompt, system=named(_REFLECTION_SYSTEM))
                 if isinstance(txt, tuple):   # tolerate (text, trace) shaped returns
                     txt = txt[0]
                 report["reflection"] = (txt or "").strip()

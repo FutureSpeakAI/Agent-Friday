@@ -122,7 +122,9 @@ from agent_friday.services.wiki_engine import (
     _mirror_wiki_file,
     _propose_wiki_update,
     _safe_wiki_path,
+    wiki_path_hidden as _we_path_hidden,
     wiki_read_text,
+    wiki_replace_in_page,
     wiki_write_text,
 )  # noqa: E501
 from agent_friday.user_errors import ExceptionText, UserFacingValueError, clip
@@ -169,7 +171,8 @@ def _generate_crew_agent(messages, *, system, max_tokens, temperature,
     if session_ctx.get("crew_binding") != binding:
         raise RuntimeError("The Crew reasoning binding changed; start a new turn.")
     settings = _load_settings()
-    if str((settings.get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+    from agent_friday.services.cloud_intent import normalize_mode as _nm
+    if _nm((settings.get("model_routing") or {}).get("mode")) == "local_only":
         raise RuntimeError("Local-only mode is on. Cloud Crew is unavailable; no offline substitution was made.")
     provider, model = binding["provider"], binding["model"]
     refuse_if_active(provider, model)
@@ -1102,21 +1105,48 @@ def _tool_search_web(inp):
                 f"(backend: {out.get('backend')}).\n"
                 + (f"Backend detail: {detail}\n" if detail else "")
                 + _ws.status_note(out))
-    lines = [f"Search results for '{q}' (backend: {out.get('backend')}, "
-             f"{len(results)} results). URLs below are real and fetchable — "
-             f"pass one verbatim to browse_web:\n"]
+    header = (f"Search results for '{q}' (backend: {out.get('backend')}, "
+              f"{len(results)} results). URLs below are real and fetchable — "
+              f"pass one verbatim to browse_web:")
+    # Each row is its OWN paragraph (a blank line between rows), and that exact
+    # rendered paragraph is registered as published text: the egress gate's
+    # span pass splits a replayed result on blank lines and lets a paragraph
+    # through only when it is exactly a registered string. Nothing exempts a
+    # paragraph because each of its lines is registered on its own.
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception:
+        _eg = None
+    paras = [header]
     for i, r in enumerate(results, 1):
         # `.get`, not `[...]`. web_search normalises every backend's rows to
         # title/url/snippet now, so this should never be missing - but a hard
         # subscript here is what turned one backend's different field name
         # into "Tool error (search_web): 'snippet'" on every search for a day.
         # A renderer should degrade to a blank line, not take down the tool.
-        lines.append(f"{i}. {r.get('title') or r.get('url') or ''}\n"
-                     f"   {r.get('snippet') or r.get('description') or ''}\n"
-                     f"   {r.get('url') or ''}")
+        row = (f"{i}. {r.get('title') or r.get('url') or ''}\n"
+               f"   {r.get('snippet') or r.get('description') or ''}\n"
+               f"   {r.get('url') or ''}")
+        paras.append(row)
+        if _eg is not None:
+            try:
+                _eg.register_public_text(row, origin=f"web-search:{out.get('backend')}")
+            except Exception:
+                pass
+    # The header repeats the query. It replays to the cloud seat as that
+    # seat's own text ONLY when the query is exactly what the seat wrote
+    # (privacy/public_query.cloud_author_of); otherwise it is ordinary text.
+    if _eg is not None:
+        try:
+            from agent_friday.privacy.public_query import cloud_author_of as _pq_author
+            _author = _pq_author(q)
+            if _author:
+                _eg.register_provider_echo(header, _author)
+        except Exception:
+            pass
     if out.get('detail'):
-        lines.append(f"\n[note: {out['detail']}]")
-    return '\n'.join(lines)[:100_000]
+        paras.append(f"[note: {out['detail']}]")
+    return '\n\n'.join(paras)[:100_000]
 
 
 def _tool_browse_web(inp):
@@ -2351,6 +2381,8 @@ def _tool_search_wiki(inp):
                 partial = True
                 break
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            if _we_path_hidden(f, root):   # .git, .obsidian, .draft.md: not pages
                 continue
             try:
                 content = wiki_read_text(f)
@@ -6275,7 +6307,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         # this caller can hand work to a fresh worker thread.
         from agent_friday.services.local_only_guard import refuse_if_active, apply_pin, CloudRefused
         from agent_friday.user_errors import UserFacingPermissionError
-        if str((_load_settings().get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+        from agent_friday.services.cloud_intent import normalize_mode as _nm
+        if _nm((_load_settings().get("model_routing") or {}).get("mode")) == "local_only":
             raise UserFacingPermissionError("Local-only mode is on. Cloud Crew is unavailable.", status=403)
         try:
             refuse_if_active(profile["provider"], profile["model"])
@@ -7640,7 +7673,20 @@ CLAUDE_TOOLS.append({
 
 
 def _tool_propose_wiki_update(inp):
-    """Queue a wiki update as pending — the user approves it in Knowledge (Pages)."""
+    """One wiki change, one decision.
+
+    When the owner already decided this exact call (an approved card, a scoped
+    grant, a chat yes -- `action_gate.owner_decision()`), it is applied now and
+    nothing is queued in Knowledge: the card was the decision. Otherwise it is
+    queued once as pending for approval in Knowledge (Pages). `old_value` is
+    carried through so an edit replaces that text exactly; an edit whose text is
+    gone is refused as stale rather than appended, and one whose text occurs
+    more than once is refused as ambiguous. Exception: ``replace_file`` on a page
+    that already exists is never applied on a card/grant/chat-yes alone -- it is
+    queued for Knowledge, whose row shows the overwrite and its diff.
+    """
+    from agent_friday.services import wiki_engine as _we
+    from agent_friday.governance import action_gate as _gate_mod
     inp = inp or {}
     file = (inp.get("file") or "").strip()
     new_value = inp.get("new_value") or ""
@@ -7648,9 +7694,67 @@ def _tool_propose_wiki_update(inp):
         return "propose_wiki_update error: 'file' and 'new_value' are required."
     section = (inp.get("section") or "").strip()
     reason = (inp.get("reason") or "Agent-proposed update.").strip()
+    old_value = inp.get("old_value") or ""
+    mode = str(inp.get("mode") or "").strip().lower()
     if _safe_wiki_path(file) is None:
         return f"propose_wiki_update error: invalid wiki path {file!r} (must stay inside ~/wiki/)."
-    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason)
+    if mode and mode not in _we.WIKI_PROPOSAL_MODES:
+        return ("propose_wiki_update error: mode must be one of "
+                + ", ".join(_we.WIKI_PROPOSAL_MODES) + ".")
+    if mode == "edit" and not old_value:
+        return "propose_wiki_update error: mode 'edit' needs old_value, the exact text to replace."
+    item = {"file": file, "section": section, "old_value": old_value,
+            "new_value": new_value, "mode": mode}
+    decided = _gate_mod.owner_decision()
+    if decided:
+        # Plan and apply in ONE hold of the wiki write lock: nothing lands on
+        # the page between what was planned and what is written.
+        res = _we.apply_decided_wiki_proposal(item)
+        if res["status"] == "needs_review":
+            # An overwrite of an existing page is only applied after the owner
+            # has SEEN the overwrite. An approval card, a scoped grant or a chat
+            # yes shows the call's arguments, not what the page loses, so a
+            # decided replace_file on a page that exists (when planned, or by
+            # the time of the write) is queued for Knowledge, whose row shows the
+            # overwrite badge and the full diff. (A replace_file that creates a
+            # new page loses nothing and applies as decided.)
+            pid = _propose_wiki_update(file=file, section=section, new_value=new_value,
+                                       reason=reason, old_value=old_value, mode=mode)
+            logging.getLogger("friday.wiki").info(
+                "propose_wiki_update: decided (%s) replace_file on existing %s queued for "
+                "Knowledge as %s so the owner sees the overwrite before it applies",
+                decided, res["file"], pid)
+            return (f"Wiki update NOT applied yet (id={pid}): it would replace the whole existing "
+                    f"page {res['file']} (+{res['lines_added']} -{res['lines_removed']} lines). "
+                    "An overwrite waits in Knowledge, on its Pages view, where the owner sees "
+                    "exactly what the page loses before approving it. To change part of the page, "
+                    "use old_value (mode 'edit') or mode 'append' instead.")
+        _we._record_wiki_decision(file, section, new_value, reason, old_value, mode, res, decided)
+        logging.getLogger("friday.wiki").info(
+            "propose_wiki_update decided by owner (%s): %s -> %s", decided, file, res["status"])
+        if res["status"] == "applied":
+            return (f"Wiki update applied to {res['file']} (+{res['lines_added']} "
+                    f"-{res['lines_removed']} lines). The approval was the decision; "
+                    "nothing is waiting in Knowledge.")
+        if res["status"] == "unchanged":
+            return f"Wiki update not needed: {res['message']}"
+        return f"propose_wiki_update error ({res['status']}): {res['message']}"
+    # Not decided: plan only (nothing is written here). Refuse up front what
+    # could never apply, rather than ask the owner to approve something that
+    # will fail.
+    plan = _we.plan_wiki_proposal(item)
+    overwrite = plan["mode"] == "replace_file" and plan["exists"] and plan["status"] == "ready"
+    if plan["status"] == "unchanged":
+        return f"Wiki update not needed: {plan['message']}"
+    if plan["status"] in ("stale", "ambiguous"):
+        return f"propose_wiki_update error ({plan['status']}): {plan['message']}"
+    if plan["status"] != "ready":
+        return f"propose_wiki_update error: {plan['message']}"
+    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason,
+                               old_value=old_value, mode=mode)
+    if overwrite:
+        return (f"Wiki update proposed (id={pid}): it REPLACES THE WHOLE PAGE {plan['file']} -- "
+                "awaiting your approval in Knowledge, on its Pages view, where the overwrite is shown.")
     return f"Wiki update proposed (id={pid}) — awaiting your approval in Knowledge, on its Pages view."
 
 
@@ -7677,17 +7781,15 @@ def _tool_correct_wiki(inp):
         for f in WIKI_DIR.rglob('*'):
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
                 continue
-            try:
-                text = wiki_read_text(f)
-            except Exception:
+            if _we_path_hidden(f, WIKI_DIR):   # never rewrite .git/.obsidian files
                 continue
-            if old_text in text:
-                try:
-                    rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
-                    _mirror_wiki_file(rel, text.replace(old_text, new_text))
+            try:
+                # Read, replace and write under the wiki write lock.
+                rel = wiki_replace_in_page(f, old_text, new_text)
+                if rel:
                     modified.append(rel)
-                except Exception:
-                    pass
+            except Exception:
+                pass
     if FRIDAY_DIR.exists():
         for f in FRIDAY_DIR.glob('*.json'):
             if f.name not in CORRECTABLE_JSON:
@@ -7707,12 +7809,14 @@ def _tool_correct_wiki(inp):
 
 CLAUDE_TOOLS.append({
     "name": "propose_wiki_update",
-    "description": "Propose an update to the user's wiki when you learn something new about them (work, family, preferences, projects) that should outlive this conversation. Queued as PENDING for approval in the Knowledge workspace; NOT applied immediately.",
+    "description": "Propose an update to the user's wiki when you learn something new about them (work, family, preferences, projects) that should outlive this conversation. Queued as PENDING for approval in the Knowledge workspace; NOT applied immediately (unless the user already approved this exact call on an approval card, which then applies it). To change existing text pass old_value; never re-append a section that is already there.",
     "input_schema": {
         "type": "object",
         "properties": {
             "file": {"type": "string", "description": "Wiki file path relative to ~/wiki/, e.g., 'identity/core-profile.md'."},
-            "section": {"type": "string", "description": "Optional section name within the file (e.g., 'birthplace'). Used to append under a header if no existing text is matched."},
+            "section": {"type": "string", "description": "Optional section name within the file (e.g., 'birthplace'). An append goes under this header (created if missing, never duplicated)."},
+            "old_value": {"type": "string", "description": "To change existing text: the exact text in the page to replace (read the page first). It must occur exactly once (if it occurs more than once the update is refused as ambiguous: give a longer old_value); if it is no longer there the update is refused as stale, never appended."},
+            "mode": {"type": "string", "enum": ["edit", "append", "replace_file"], "description": "Optional. 'edit' replaces old_value; 'append' adds new_value; 'replace_file' overwrites the whole page with new_value (on a page that already exists it always waits for approval in Knowledge, even after an approval card). Default: edit when old_value is given, otherwise append."},
             "new_value": {"type": "string", "description": "The new content to add or replace with."},
             "reason": {"type": "string", "description": "Why this update is being proposed (e.g., 'User correction during chat')."},
         },
@@ -14473,7 +14577,8 @@ def _crew_model_authority(session_ctx):
         crew_runtime.require_public_host_origin(sc.get("_crew_host_origin"))
     for aid, revision in (sc.get("crew_context_sources") or {}).items():
         crew_access.validate_dispatch(aid, binding["project_id"], revision)
-    if str((_load_settings().get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+    from agent_friday.services.cloud_intent import normalize_mode as _nm
+    if _nm((_load_settings().get("model_routing") or {}).get("mode")) == "local_only":
         raise crew_runtime.CrewRoomError("Local-only mode is on. This Crew model request was stopped.")
     refuse_if_active(profile["provider"], profile["model"])
     if apply_pin(profile["provider"], profile["model"]) != profile["model"]:
@@ -15173,6 +15278,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         # own (privacy/public_provenance). Without a key there
                         # is no exemption and the gate behaves as it always did.
                         taint_key=_taint_mod.ledger_key(session_ctx),
+                        # The name history replays to this seat under, for the
+                        # public-query provenance record (privacy/public_query).
+                        author_provider=_LOOP_PROVIDER.get() or _zt_provider,
                     )
                     _crew_denial = _host_action_denial(tu.name, session_ctx)
                     if _crew_denial:
@@ -15184,11 +15292,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _tool_ms = int((_time.time() - _t_tool) * 1000)
                         _orb_tool_trace(orb_id, tu.name, tu.input, _zt_result, _tool_ms)
                         _ledger_tool_call(tu.name, _zt_result, _tool_ms, orb_id, session_ctx)
+                        from agent_friday.privacy.vault_access import refusal_text as _zt_text
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tu.id,
-                            "content": f"[VAULT ACCESS DENIED] This tool call references {_zt_detail} data. "
-                                       f"Switch to a local model to access sensitive content.",
+                            "content": _zt_text(tu.name, _zt_detail),
                         })
                         continue
 
@@ -15207,7 +15315,14 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 # through: a held action is not work that is happening.
                 _mtok = _CURRENT_MODEL.set(str(kwargs.get("model") or model or ""))
                 try:
-                    result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                    # A cloud seat's search query is its own text (owner decision
+                    # (a), privacy/public_query). The mark records tu.input AS
+                    # SENT, before _execute_tool restores [PII:...] tags: only
+                    # those exact strings are floor-only at the search gates.
+                    from agent_friday.privacy.public_query import for_tool_call as _pq_call
+                    with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
+                                  str(kwargs.get("model") or model or ""), tu.name, tu.input):
+                        result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
                 # Cleared on the SUCCESS path only, deliberately not in a
@@ -15936,6 +16051,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     # See the other call site: the provenance ledger lets the
                     # gate exempt a business's published contact details.
                     taint_key=_taint_mod.ledger_key(session_ctx),
+                    author_provider=_LOOP_PROVIDER.get() or _zt_provider,
                 )
                 _crew_denial = _host_action_denial(tname, session_ctx)
                 if _crew_denial:
@@ -15947,9 +16063,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     _tool_ms = int((_time.time() - _t_tool) * 1000)
                     _orb_tool_trace(orb_id, tname, targs, _zt_result, _tool_ms)
                     _ledger_tool_call(tname, _zt_result, _tool_ms, orb_id, session_ctx)
+                    from agent_friday.privacy.vault_access import refusal_text as _zt_text
                     convo.append({"role": "tool", "tool_call_id": tcid,
-                                  "content": f"[VAULT ACCESS DENIED] references {_zt_detail} "
-                                             f"data — switch to a local model to access it."})
+                                  "content": _zt_text(tname, _zt_detail)})
                     continue
 
             # A TOOL CALLED WITHOUT ITS SCHEMA STILL RUNS - and now arrives
@@ -16004,8 +16120,15 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 # returns what it has by then, marked partial. The budget is read,
                 # never enforced by interruption, so no action is cut off.
                 from agent_friday.services import tool_deadline as _td
+                # A cloud seat's search query is its own text (owner decision
+                # (a), privacy/public_query). The mark records targs AS SENT,
+                # before _execute_tool restores [PII:...] tags: only those
+                # exact strings are floor-only at the search gates.
+                from agent_friday.privacy.public_query import for_tool_call as _pq_call
                 with (_td.budget(_td.LOCAL_TOOL_BUDGET_S) if _compact_seat == "local"
-                      else _ctxlib.nullcontext()):
+                      else _ctxlib.nullcontext()), \
+                        _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
+                                 model or "", tname, targs):
                     result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                            session_ctx=session_ctx)
             finally:
