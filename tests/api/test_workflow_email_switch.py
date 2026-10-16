@@ -168,3 +168,44 @@ def test_switching_a_workflows_emails_never_voids_a_job_pre_approval_and_the_job
     assert _run_on_request(slug).get("saved") is True, "the job was switched to drafts but Run now still sent"
     assert _job_draft(job["id"]).get("saved") is True
     assert send_grants.job_fingerprint(job["id"]) == before
+
+
+# ── one source of truth: the workflow record ────────────────────────────────
+
+def _record(slug):
+    from agent_friday.services import agent
+    return agent.load_workflow_chain(slug) or {}
+
+
+def test_the_one_time_mark_writes_send_onto_the_workflow_record(monkeypatch, client, saved):
+    from agent_friday.services import email_jobs
+    slug = _workflow("Monthly invoices to accounts", "Write the summary and email it to accounts.")
+    _first_start(monkeypatch)
+    assert _record(slug).get("email_send") is True, "the workflow's own record does not say it sends"
+    st = email_jobs.state()
+    assert slug in st.get("send_workflows", []), "the migration record lost what it did"
+    # The record alone decides: dropping the migration list changes nothing.
+    email_jobs._write_state(dict(st, send_workflows=[]))
+    assert email_jobs.workflow_sends(slug) is True
+
+
+def test_the_migration_list_alone_no_longer_decides(monkeypatch, client, saved):
+    from agent_friday.services import email_jobs
+    slug = _workflow("Notes", "Tidy my notes.")
+    email_jobs._write_state({"done": True, "flags_written": True, "send_workflows": [slug]})
+    assert email_jobs.workflow_sends(slug) is False, "a list in a state file still decides over the record"
+
+
+def test_an_install_marked_before_the_record_flag_gets_it_written_once(monkeypatch, client, saved):
+    from agent_friday.services import email_jobs
+    sends = _workflow("Weekly status to the team", "Write the weekly status and email it to the team.")
+    chose = _workflow("Daily digest", "Write the digest and email it to me.")
+    client.patch("/api/workflows/chains/" + chose, json={"email_send": False})   # the owner chose drafts
+    email_jobs._write_state({"done": True, "send_workflows": [sends, chose]})       # an older install
+    email_jobs.migrate()
+    assert _record(sends).get("email_send") is True
+    assert _record(chose).get("email_send") is False, "the owner's own choice was overwritten"
+    assert email_jobs.state().get("flags_written") is True
+    client.patch("/api/workflows/chains/" + sends, json={"email_send": False})
+    email_jobs.migrate()                                                              # idempotent
+    assert _record(sends).get("email_send") is False, "a second start undid the owner's switch"
