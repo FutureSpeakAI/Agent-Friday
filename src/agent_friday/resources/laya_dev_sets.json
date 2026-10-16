@@ -23,6 +23,21 @@
     "tool": "navigate_to"
    },
    {
+    "text": "can you show me just the family calendar",
+    "decision": "tool",
+    "tool": "navigate_to"
+   },
+   {
+    "text": "show me the free/busy view",
+    "decision": "tool",
+    "tool": "navigate_to"
+   },
+   {
+    "text": "bring back all my calendars",
+    "decision": "tool",
+    "tool": "navigate_to"
+   },
+   {
     "text": "do I have anything tomorrow morning",
     "decision": "tool",
     "tool": "query_calendar"

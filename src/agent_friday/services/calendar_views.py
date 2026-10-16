@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from agent_friday.services.calendar_engine import CALENDAR_DIR
 
@@ -391,3 +391,102 @@ def multi_calendar_available() -> bool:
     """Whether the multi-account store is in use (the legacy single-token
     install keeps the old one-calendar read)."""
     return bool(_accounts())
+
+
+# ── free and busy ────────────────────────────────────────────────────────────
+
+MAX_FREEBUSY_DAYS = 14
+
+
+def _instant(text, end_of_day=False):
+    """An aware datetime for an event time; an all-day date is local midnight."""
+    s = str(text or "")
+    if not s:
+        return None
+    try:
+        if len(s) == 10:
+            d = datetime.fromisoformat(s)
+            return d.astimezone()
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.astimezone()
+
+
+def _hm(text, default):
+    try:
+        h, m = str(text).split(":")
+        return int(h), int(m)
+    except (TypeError, ValueError):
+        return default
+
+
+def free_busy(events, start, end, *, working=None) -> dict:
+    """Busy and free time per day in [start, end), from events already read.
+
+    Busy is every event that holds the time in Google (its "show as busy"), that
+    the owner has not declined, on any switched-on calendar; overlapping events
+    merge into one block, which names its calendars and never its titles. Free is
+    what is left inside working hours on working days (the `scheduling` settings
+    Friday uses to offer meeting times). Nothing is asked of Google: no free/busy
+    query leaves this PC; it is worked out from the events already shown."""
+    if working is None:
+        try:
+            from agent_friday.services.scheduling import scheduling_settings
+            working = scheduling_settings()
+        except Exception:
+            working = {}
+    wh = (working or {}).get("working_hours") or {}
+    ws, we = _hm(wh.get("start"), (9, 0)), _hm(wh.get("end"), (17, 0))
+    wdays = {int(d) for d in ((working or {}).get("working_days") or [0, 1, 2, 3, 4])}
+    blocks = []
+    for ev in events or []:
+        if not ev.get("busy", True) or ev.get("self_rsvp") == "declined":
+            continue
+        s, e = _instant(ev.get("start_time")), _instant(ev.get("end_time"))
+        if s is None:
+            continue
+        if e is None or e <= s:
+            e = s + timedelta(hours=1)
+        blocks.append((s, e, ev.get("calendar_name") or ""))
+    blocks.sort(key=lambda b: b[0])
+    days, total_free = [], 0
+    d0 = start.date() if hasattr(start, "date") else start
+    n = (end.date() - d0).days if hasattr(end, "date") else (end - d0).days
+    for i in range(max(0, n)):
+        day = d0 + timedelta(days=i)
+        lo = datetime(day.year, day.month, day.day).astimezone()
+        hi = lo + timedelta(days=1)
+        merged = []
+        for s, e, cal in blocks:
+            s2, e2 = max(s, lo), min(e, hi)
+            if e2 <= s2:
+                continue
+            if merged and s2 <= merged[-1][1]:
+                m = merged[-1]
+                m[1] = max(m[1], e2)
+                if cal and cal not in m[2]:
+                    m[2].append(cal)
+            else:
+                merged.append([s2, e2, [cal] if cal else []])
+        free = []
+        if day.weekday() in wdays:
+            # Built from the wall clock each day, so a clock change keeps working hours where they are.
+            cur = datetime(day.year, day.month, day.day, ws[0], ws[1]).astimezone()
+            stop = datetime(day.year, day.month, day.day, we[0], we[1]).astimezone()
+            for s, e, _ in merged:
+                if s > cur and cur < stop:
+                    free.append((cur, min(s, stop)))
+                cur = max(cur, e)
+            if cur < stop:
+                free.append((cur, stop))
+        free = [(a, b) for a, b in free if (b - a) >= timedelta(minutes=15)]
+        mins = sum(int((b - a).total_seconds() // 60) for a, b in free)
+        total_free += mins
+        days.append({"date": day.isoformat(), "working": day.weekday() in wdays,
+                     "busy": [{"start": s.isoformat(), "end": e.isoformat(), "calendars": c} for s, e, c in merged],
+                     "free": [{"start": a.isoformat(), "end": b.isoformat(),
+                               "minutes": int((b - a).total_seconds() // 60)} for a, b in free],
+                     "free_minutes": mins})
+    return {"days": days, "free_minutes": total_free,
+            "working": {"start": "%02d:%02d" % ws, "end": "%02d:%02d" % we, "days": sorted(wdays)}}
