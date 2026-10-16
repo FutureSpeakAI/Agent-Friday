@@ -757,6 +757,12 @@ CLAUDE_TOOLS = [
          "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."},
          "account_id": {"type": "string"}},
       "required": ["event_id"]}},
+    {"name": "delete_calendar_event", "description": "Delete one calendar event by id (find it first with find_calendar_events). The user is asked first, by name and time; nothing is deleted before their yes. Guests are not sent a cancellation. Say what was deleted.",
+     "input_schema": {"type": "object", "properties": {
+         "event_id": {"type": "string"},
+         "calendar_id": {"type": "string", "description": "Leave out for the main calendar."},
+         "account_id": {"type": "string"}},
+      "required": ["event_id"]}},
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string"}}, "required": ["query"]}},
@@ -1757,6 +1763,35 @@ def _tool_update_calendar_event(inp):
         allow_clearing=bool(inp.get("allow_clearing")),
         account_id=(inp.get("account_id") or "").strip() or None)
     return _calendar_write_summary(res, "update that event")
+
+
+def _tool_delete_calendar_event(inp):
+    """Delete one event. Outward (action_gate): this runs only after the owner's yes, which named the event."""
+    from agent_friday.services import calendar_write as cw
+    inp = inp or {}
+    eid = (inp.get("event_id") or "").strip()
+    if not eid:
+        return "delete_calendar_event error: 'event_id' is required."
+    res = cw.delete_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
+                          account_id=(inp.get("account_id") or "").strip() or None)
+    return _calendar_write_summary(res, "delete that event")
+
+
+def _calendar_event_words(inp):
+    """'“Dentist” (2026-10-21T10:00:00-05:00)' for a card, read from the calendar; the id if it cannot be read."""
+    inp = inp or {}
+    eid = str(inp.get("event_id") or "").strip()
+    try:
+        from agent_friday.services import calendar_write as cw
+        got = cw.read_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
+                            account_id=(inp.get("account_id") or "").strip() or None)
+    except Exception:
+        got = {}
+    b = got.get("before") if got.get("ok") else None
+    if not b:
+        return f"with id {_short_txt(eid, 40)} (it could not be read: {_short_txt(got.get('error') or 'unknown', 80)})"
+    guests = f", {b['guests']} guest(s), who are not told" if b.get("guests") else ""
+    return f"“{_short_txt(b.get('title'))}” ({b.get('start') or 'no time'}{guests})"
 
 
 def _tool_find_calendar_events(inp):
@@ -8464,6 +8499,7 @@ CLAUDE_TOOL_HANDLERS = {
     "annotate_calendar_events": _tool_annotate_calendar_events,
     "create_calendar_event": _tool_create_calendar_event,
     "update_calendar_event": _tool_update_calendar_event,
+    "delete_calendar_event": _tool_delete_calendar_event,
     "find_calendar_events": _tool_find_calendar_events,
     "find_free_slots": _tool_find_free_slots,
     "hold_slots": _tool_hold_slots,
@@ -8948,6 +8984,7 @@ TOOL_RINGS: dict[str, int] = {
     "annotate_calendar_events": 2,
     "create_calendar_event":    2,
     "update_calendar_event":    2,
+    "delete_calendar_event":    2,
     "find_free_slots":          2,   # free/busy read from Google (network)
     "hold_slots":               2,
     "book_slot":                2,
@@ -13534,6 +13571,9 @@ def _taint_title(name, inp):
         return f"Create calendar event “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
     if name == "book_slot":
         return f"Book “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
+    if name == "delete_calendar_event":
+        # Named from the calendar itself, never from the model's words: the yes is for this event.
+        return f"Delete the calendar event {_calendar_event_words(inp)}"
     if name == "hold_slots":
         return f"Hold {len(inp.get('slots') or [])} time(s) on your calendar for “{_short_txt(inp.get('title'))}”"
     if name in ("browse_web", "open_url"):

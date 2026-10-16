@@ -227,6 +227,9 @@
   "delegate_to_friday": [
    "voice"
   ],
+  "delete_calendar_event": [
+   "calendar"
+  ],
   "delete_task": [
    "tasks"
   ],
