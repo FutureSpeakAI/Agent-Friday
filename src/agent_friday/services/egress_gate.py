@@ -576,10 +576,12 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
     verdict = "ALLOW" if action == "allow" else "BLOCK"
     # Structured log (survives pythonw / no-console launches). INFO for allow,
     # WARNING for a block so a withheld leak is visible even at a raised log level.
+    # The reason can quote the judgment model on the text, so it goes only to
+    # the egress record below, never to friday.log.
     _dlog.log(
         logging.INFO if action == "allow" else logging.WARNING,
-        "%s provider=%s field=%s tier=%s (%s)",
-        verdict, provider, field, Tier.NAMES.get(tier, tier), reason,
+        "%s provider=%s field=%s tier=%s",
+        verdict, provider, field, Tier.NAMES.get(tier, tier),
     )
     dest = log_path or _DEFAULT_LOG
     try:
