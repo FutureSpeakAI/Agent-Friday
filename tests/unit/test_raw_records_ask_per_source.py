@@ -1065,3 +1065,12 @@ def test_a_decode_that_breaks_refuses_the_command(cards, monkeypatch):
     out = fg.raw_refusal_for_command("powershell -enc %s" % _encoded("Get-Date"))
     assert out and out.startswith("Not run")
 
+
+def test_decoy_encoded_commands_do_not_hide_the_real_one(cards, tmp_path):
+    from agent_friday.services import raw_records as rr
+    stmt, _inbox = _records(tmp_path)
+    decoys = " ".join("-e %s" % _encoded("Get-Date -Format %d" % i) for i in range(20))
+    cmd = "powershell %s -e %s" % (decoys, _encoded("Get-Content '%s'" % stmt))
+    assert "finance" in [k for _l, k, _p in rr.named_in(cmd)]
+    out = fg.raw_refusal_for_command(cmd)
+    assert out and stmt.name in out
