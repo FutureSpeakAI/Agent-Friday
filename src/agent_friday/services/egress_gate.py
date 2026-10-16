@@ -115,6 +115,12 @@ def is_local_provider(name: str) -> bool:
 _LOG_LOCK = threading.Lock()
 _DEFAULT_LOG = friday_home() / "vault" / "egress-log.jsonl"
 
+#: Provider names friday.log may carry; any other provider is logged as "other"
+#: (the egress record keeps the exact name).
+_LOG_PROVIDERS = ("anthropic", "openai", "gemini", "google", "openrouter", "xai", "grok",
+                  "mistral", "groq", "deepseek", "perplexity", "together", "cloud",
+                  "ollama", "local", "brave", "firecrawl", "duckduckgo")
+
 # Structured logger for the single most security-sensitive line in the codebase —
 # every cloud egress allow/block decision. Using `print()` here (the prior state)
 # meant that under pythonw.exe / a detached tray launch (no console) these decisions
@@ -576,12 +582,22 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
     verdict = "ALLOW" if action == "allow" else "BLOCK"
     # Structured log (survives pythonw / no-console launches). INFO for allow,
     # WARNING for a block so a withheld leak is visible even at a raised log level.
-    # The reason can quote the judgment model on the text, so it goes only to
-    # the egress record below, never to friday.log.
+    # Each logged word is SELECTED from a constant table by comparison, never
+    # copied from the call (CodeQL py/clear-text-logging): the reason can quote
+    # the judgment model on the text, and the field path and tier were derived
+    # from it. All of them go to the egress record below, never to friday.log.
+    tier_word = "TIER_?"
+    for _num, _name in Tier.NAMES.items():
+        if tier == _num:
+            tier_word = _name
+    provider_word = "other"
+    for _p in _LOG_PROVIDERS:
+        if str(provider or "").lower() == _p:
+            provider_word = _p
     _dlog.log(
         logging.INFO if action == "allow" else logging.WARNING,
-        "%s provider=%s field=%s tier=%s",
-        verdict, provider, field, Tier.NAMES.get(tier, tier),
+        "%s provider=%s tier=%s (field and reason: the egress record)",
+        verdict, provider_word, tier_word,
     )
     dest = log_path or _DEFAULT_LOG
     try:
