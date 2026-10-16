@@ -12465,6 +12465,21 @@ _NEGATIVE_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: A reply that is a refusal and nothing else: "no", "no thanks", "cancel",
+#: "stop", "don't". Only such a reply decides an approval card from chat. A
+#: refusal word that opens a correction or a new request ("No, I meant the
+#: other one", "Wait, which file?") answers the chat question but not the card.
+_REFUSE_WORDS = (
+    r"no(?: thanks| thank you| way)?|nope|nah|don'?t|do not|stop|cancel(?: it| that)?|"
+    r"never ?mind|not now|"
+    r"skip(?: it)?|leave it|hold off|forget it|deny|decline"
+)
+_REFUSE_WHOLE_RE = re.compile(
+    r"\s*(?:(?:um+|uh+|erm?|ah|well|so|actually)\b[\s,.!-]*)*(?:" + _REFUSE_WORDS
+    + r")(?:[\s,.!;]+(?:" + _REFUSE_WORDS + r"|thanks|thank you|please))*[\s,.!]*",
+    re.IGNORECASE)
+_REFUSE_MAX_CHARS = 40
+
 
 def _is_affirmative(message: str) -> bool:
     """True if `message` reads as the user approving a pending action.
@@ -12491,6 +12506,15 @@ def _is_negative(message: str) -> bool:
     if _is_ambiguous(m):
         return False
     return bool(_NEGATIVE_RE.match(m))
+
+
+def _is_bare_refusal(message: str) -> bool:
+    """True when the whole message is a refusal: one short line with no new
+    request in it. See `_REFUSE_WHOLE_RE`."""
+    m = message or ""
+    if "\n" in m.strip() or len(m.strip()) > _REFUSE_MAX_CHARS:
+        return False
+    return _is_negative(m) and bool(_REFUSE_WHOLE_RE.fullmatch(m))
 
 
 def _is_ambiguous(message: str) -> bool:
@@ -12613,27 +12637,29 @@ def _clear_pending(session_id, fingerprint=None):
             _PENDING_CONFIRMATIONS.pop(session_id, None)
 
 
-def _deny_pending_cards(session_id):
-    """Deny the approval card of every pending question in this session.
+def _deny_awaiting_card(session_id):
+    """Deny the approval card of the question this reply answers, and no other.
 
-    A chat no and the card are answers to one request: the no decides the
-    card, so it cannot be approved later from the screen as if nobody had
-    answered. A card already decided elsewhere is left as it is."""
+    A bare chat no and the card are answers to one request: the no decides
+    that card, so it cannot be approved later from the screen as if nobody had
+    answered. The question answered is the one most recently asked and still
+    awaiting a reply (the same one a yes would grant); cards of older
+    questions stay live on the screen. A card already decided elsewhere is
+    left as it is. Returns the denied card's id, or None."""
     with _PENDING_LOCK:
-        aids = [e.get("approval_id") for e in (_PENDING_CONFIRMATIONS.get(session_id) or {}).values()
-                if e.get("approval_id")]
-    if not aids:
-        return
+        awaiting = [e for e in (_PENDING_CONFIRMATIONS.get(session_id) or {}).values()
+                    if e.get("awaiting_reply")]
+        newest = max(awaiting, key=lambda e: e.get("seq") or 0) if awaiting else None
+        aid = (newest or {}).get("approval_id")
+    if not aid:
+        return None
     try:
         from agent_friday.services import approvals as _appr
+        _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat")
     except Exception as e:
-        _log.warning("could not deny the confirmation cards: %s", e)
-        return
-    for aid in aids:
-        try:
-            _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat")
-        except Exception as e:
-            _log.warning("could not deny confirmation card %s: %s", aid, e)
+        _log.warning("could not deny confirmation card %s: %s", aid, e)
+        return None
+    return aid
 
 
 def _owner_surface(message, given, ctx):
@@ -12728,9 +12754,13 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         return ctx
 
     if _is_negative(message):
-        # A no answers the card too: the question in chat and its card are one
-        # request, so declining one never leaves the other live on the screen.
-        _deny_pending_cards(session_id)
+        # A bare no from the owner's own page answers the card of the question
+        # it replies to: the question in chat and its card are one request.
+        # A no that opens a correction or a new request ("No, I meant the
+        # other one"), or a no from any other surface, answers only the chat
+        # question; every card stays live on the screen.
+        if ctx.get("owner_surface") is True and _is_bare_refusal(message):
+            _deny_awaiting_card(session_id)
         _clear_pending(session_id)
         return ctx
 
@@ -12745,10 +12775,11 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
             return ctx
         newest = max(eligible, key=lambda kv: kv[1].get("seq") or 0)
         fp, entry = newest
-        if entry.get("approval_id") and ctx.get("owner_surface") is False:
+        if entry.get("approval_id") and ctx.get("owner_surface") is not True:
             # The question has a card, and this yes did not come from the
-            # owner's own page on this PC (a phone, a relay, voice, a script):
-            # it decides nothing. The card waits for the screen.
+            # owner's own page on this PC (a phone, a relay, voice, a script,
+            # or a caller that never said): it decides nothing. The card
+            # waits for the screen.
             ctx["confirm_on_card"] = entry.get("approval_id")
             return ctx
         with _PENDING_LOCK:
@@ -13482,10 +13513,11 @@ def _hook_confirmation_gate(ctx):
             _granted = bool(_entry and _entry.get("granted")
                             and (not _claimed or _claimed == _replay.get("claim")))
             _off_page = bool(_granted and _entry.get("approval_id")
-                             and (session_ctx or {}).get("owner_surface") is False)
+                             and (session_ctx or {}).get("owner_surface") is not True)
             if _off_page:
                 # Only the owner's own page on this PC decides a card from
-                # chat; any other surface leaves it for the screen.
+                # chat; any other surface, or none named, leaves it for the
+                # screen.
                 _entry["granted"] = False
                 _granted = False
             if _granted:

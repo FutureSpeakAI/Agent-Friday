@@ -74,7 +74,7 @@ def calls(tmp_path, monkeypatch, home):
 
 
 def _turn(message):
-    return agent.prepare_confirmation_ctx(SID, message, {"authenticated": True})
+    return agent.prepare_confirmation_ctx(SID, message, {"authenticated": True, "owner_surface": True})
 
 
 def _run(name, inp, ctx):

@@ -89,7 +89,7 @@ def gate(tmp_path, monkeypatch, google):
 
 
 def _turn(message):
-    return agent.prepare_confirmation_ctx(SID, message, {"authenticated": True})
+    return agent.prepare_confirmation_ctx(SID, message, {"authenticated": True, "owner_surface": True})
 
 
 # ── calendar_write.delete_event: the contract the Calendar page builds on ──────

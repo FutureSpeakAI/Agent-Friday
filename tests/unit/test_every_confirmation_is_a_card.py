@@ -47,7 +47,7 @@ def calls(monkeypatch):
 
 def turn(text):
     return agent.prepare_confirmation_ctx(
-        "same-day", text, {"authenticated": True, "conversation_id": CID})
+        "same-day", text, {"authenticated": True, "conversation_id": CID, "owner_surface": True})
 
 
 def call(ctx, command="Write-Output first"):

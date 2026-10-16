@@ -112,7 +112,7 @@ class TestTheLoopItself:
         """
         wrote = []
         for i, msg in enumerate(self.TRANSCRIPT):
-            ctx = agent.prepare_confirmation_ctx(SID, msg, {})
+            ctx = agent.prepare_confirmation_ctx(SID, msg, {"owner_surface": True})
             if _allowed(_gate("write_file", {"path": "bold-panel-prep.md"}, ctx)):
                 wrote.append(i)
         assert wrote, (
@@ -137,9 +137,9 @@ class TestTheLoopItself:
         shapes - leading filler, and a yes in final position - which the old
         start-anchored pattern could not see by construction.
         """
-        ctx = agent.prepare_confirmation_ctx(SID, "write it", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"owner_surface": True})
         _gate("write_file", {"path": "brief.md"}, ctx)
-        granted = agent.prepare_confirmation_ctx(SID, reply, {})
+        granted = agent.prepare_confirmation_ctx(SID, reply, {"owner_surface": True})
         assert _allowed(_gate("write_file", {"path": "brief.md"}, granted)), (
             "%r was not heard as approval" % reply)
 
@@ -152,7 +152,7 @@ class TestTheLoopItself:
         """
         asked = []
         for msg in ["do the thing", "what?", "huh?", "???", "hello?"]:
-            ctx = agent.prepare_confirmation_ctx(SID, msg, {})
+            ctx = agent.prepare_confirmation_ctx(SID, msg, {"owner_surface": True})
             v = _gate("write_file", {"path": "brief.md"}, ctx)
             if not _allowed(v):
                 asked.append(_text(v))
@@ -173,19 +173,19 @@ class TestTheLoopItself:
         assert not agent._is_negative("don't ask again, just do it")
         assert not agent._is_affirmative("don't ask again, just do it")
 
-        ctx = agent.prepare_confirmation_ctx(SID, "write it", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"owner_surface": True})
         _gate("write_file", {"path": "brief.md"}, ctx)
-        after = agent.prepare_confirmation_ctx(SID, "don't ask again, just do it", {})
+        after = agent.prepare_confirmation_ctx(SID, "don't ask again, just do it", {"owner_surface": True})
         assert SID in agent._PENDING_CONFIRMATIONS, (
             "an ambiguous reply threw the pending action away")
         assert not after.get("confirm_granted"), (
             "an ambiguous reply was taken as approval")
 
     def test_a_plain_no_still_cancels(self):
-        ctx = agent.prepare_confirmation_ctx(SID, "write it", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"owner_surface": True})
         _gate("write_file", {"path": "brief.md"}, ctx)
         assert SID in agent._PENDING_CONFIRMATIONS
-        agent.prepare_confirmation_ctx(SID, "no, don't", {})
+        agent.prepare_confirmation_ctx(SID, "no, don't", {"owner_surface": True})
         assert SID not in agent._PENDING_CONFIRMATIONS
 
 
@@ -202,10 +202,10 @@ class TestTheGrantIsBoundToTheAction:
         whatever gated call the model made next - regardless of whether it was
         the thing the user had been shown.
         """
-        ctx = agent.prepare_confirmation_ctx(SID, "make me the brief", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "make me the brief", {"owner_surface": True})
         _gate("write_file", {"path": "bold-panel-prep.md"}, ctx)
 
-        yes = agent.prepare_confirmation_ctx(SID, "yes", {})
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})
         other = _gate("write_file",
                       {"path": "C:/Windows/System32/drivers/etc/hosts"}, yes)
         assert not _allowed(other), (
@@ -215,17 +215,17 @@ class TestTheGrantIsBoundToTheAction:
         assert _allowed(same), "the approved file itself was refused"
 
     def test_a_yes_for_one_tool_does_not_authorise_a_different_tool(self):
-        ctx = agent.prepare_confirmation_ctx(SID, "switch workspace", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "switch workspace", {"owner_surface": True})
         _gate("navigate", {"workspace": "news"}, ctx)
-        yes = agent.prepare_confirmation_ctx(SID, "yes", {})
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})
         assert not _allowed(_gate("write_file", {"path": "anything.md"}, yes)), (
             "a yes for `navigate` authorised a `write_file`")
 
     def test_a_grant_is_spent_once(self):
         """One decision, one action - the same rule gmail_send lives by."""
-        ctx = agent.prepare_confirmation_ctx(SID, "write it", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"owner_surface": True})
         _gate("write_file", {"path": "brief.md"}, ctx)
-        yes = agent.prepare_confirmation_ctx(SID, "yes", {})
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})
         assert _allowed(_gate("write_file", {"path": "brief.md"}, yes))
         again = _gate("write_file", {"path": "brief.md"}, yes)
         assert not _allowed(again), "one yes authorised two writes"
@@ -267,9 +267,9 @@ class TestTwoSurfacesOneDay:
             "holds; the isolation tests below need rewriting, not deleting")
 
     def test_one_surface_does_not_clobber_the_others_pending_action(self):
-        chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {})
+        chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {"owner_surface": True})
         _gate("write_file", {"path": "brief.md"}, chat)
-        front = agent.prepare_confirmation_ctx(SID, "switch to code", {})
+        front = agent.prepare_confirmation_ctx(SID, "switch to code", {"owner_surface": True})
         _gate("navigate", {"workspace": "code"}, front)
 
         assert len(agent._PENDING_CONFIRMATIONS.get(SID) or {}) == 2, (
@@ -278,12 +278,12 @@ class TestTwoSurfacesOneDay:
     def test_a_yes_on_one_surface_does_not_grant_the_others_action(self):
         """The leak, stated as the user would experience it: they answer the
         front page and the chat tab quietly writes a file."""
-        chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {})
+        chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {"owner_surface": True})
         _gate("write_file", {"path": "brief.md"}, chat)
-        front = agent.prepare_confirmation_ctx(SID, "switch to code", {})
+        front = agent.prepare_confirmation_ctx(SID, "switch to code", {"owner_surface": True})
         _gate("navigate", {"workspace": "code"}, front)
 
-        yes = agent.prepare_confirmation_ctx(SID, "yes", {})   # meant: navigate
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})   # meant: navigate
         assert not _allowed(_gate("write_file", {"path": "brief.md"}, yes)), (
             "a yes intended for the front page's navigate authorised the chat "
             "tab's file write")
@@ -298,12 +298,12 @@ class TestTwoSurfacesOneDay:
         front page's navigate authorises the chat tab's file write."""
         import time as _t
         monkeypatch.setattr(_t, "time", lambda: 1758500000.0)
-        chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {})
+        chat = agent.prepare_confirmation_ctx(SID, "write me the brief", {"owner_surface": True})
         _gate("write_file", {"path": "brief.md"}, chat)
-        front = agent.prepare_confirmation_ctx(SID, "switch to code", {})
+        front = agent.prepare_confirmation_ctx(SID, "switch to code", {"owner_surface": True})
         _gate("navigate", {"workspace": "code"}, front)
 
-        yes = agent.prepare_confirmation_ctx(SID, "yes", {})   # meant: navigate
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"owner_surface": True})   # meant: navigate
         assert yes.get("confirm_granted_tool") == "navigate"
         assert not _allowed(_gate("write_file", {"path": "brief.md"}, yes)), (
             "a yes intended for the front page's navigate authorised the chat "
@@ -320,7 +320,7 @@ class TestNothingElseMoved:
     one it fixed."""
 
     def test_the_first_call_still_asks_and_does_not_execute(self):
-        ctx = agent.prepare_confirmation_ctx(SID, "write it", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"owner_surface": True})
         v = _gate("write_file", {"path": "brief.md"}, ctx)
         assert not _allowed(v)
         assert _text(v).startswith("[CONFIRMATION REQUIRED]")
@@ -329,7 +329,7 @@ class TestNothingElseMoved:
         """Escalation is not approval. The twice-asked action must still be
         refused until a human decides it."""
         for msg in ["write it", "what?", "hmm", "anything", "still there?"]:
-            ctx = agent.prepare_confirmation_ctx(SID, msg, {})
+            ctx = agent.prepare_confirmation_ctx(SID, msg, {"owner_surface": True})
             assert not _allowed(_gate("write_file", {"path": "brief.md"}, ctx)), (
                 "the action ran without anyone approving it")
 
@@ -344,7 +344,7 @@ class TestNothingElseMoved:
                               {"authenticated": True}))
 
     def test_a_read_only_tool_is_still_never_gated(self):
-        ctx = agent.prepare_confirmation_ctx(SID, "anything", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "anything", {"owner_surface": True})
         assert _allowed(_gate("query_calendar", {}, ctx))
 
     def test_a_write_into_the_creations_folder_is_still_preapproved(self):
@@ -353,7 +353,7 @@ class TestNothingElseMoved:
         root = getattr(_core, "CREATIONS_DIR", None)
         if not root:
             pytest.skip("no CREATIONS_DIR on this install")
-        ctx = agent.prepare_confirmation_ctx(SID, "save it", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "save it", {"owner_surface": True})
         assert _allowed(_gate("write_file",
                               {"path": str(pathlib.Path(root) / "x.md")}, ctx))
 
@@ -363,7 +363,7 @@ class TestNothingElseMoved:
         A model that calls the same tool twice in one breath is being wrong on
         its own; that must not consume the user's one chance to answer.
         """
-        ctx = agent.prepare_confirmation_ctx(SID, "write it", {})
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"owner_surface": True})
         for _ in range(4):
             v = _gate("write_file", {"path": "brief.md"}, ctx)
             assert _text(v).startswith("[CONFIRMATION REQUIRED]"), (
@@ -399,7 +399,7 @@ class TestThroughExecuteTool:
         target = tmp_path / "bold-panel-prep.md"
         replies = []
         for msg in TestTheLoopItself.TRANSCRIPT:
-            ctx = agent.prepare_confirmation_ctx(SID, msg, {"authenticated": True})
+            ctx = agent.prepare_confirmation_ctx(SID, msg, {"authenticated": True, "owner_surface": True})
             replies.append(agent._execute_tool(
                 "write_file",
                 {"path": str(target), "content": "# Bold panel prep\n"},
@@ -413,7 +413,7 @@ class TestThroughExecuteTool:
         target = tmp_path / "x.md"
         asked = 0
         for msg in ["write it", "what?", "huh?", "???"]:
-            ctx = agent.prepare_confirmation_ctx(SID, msg, {"authenticated": True})
+            ctx = agent.prepare_confirmation_ctx(SID, msg, {"authenticated": True, "owner_surface": True})
             out = agent._execute_tool(
                 "write_file", {"path": str(target), "content": "x"},
                 session_ctx=ctx)
@@ -424,7 +424,7 @@ class TestThroughExecuteTool:
 
     def test_an_unapproved_write_never_reaches_the_disk(self, tmp_path):
         target = tmp_path / "never.md"
-        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"authenticated": True})
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"authenticated": True, "owner_surface": True})
         agent._execute_tool("write_file", {"path": str(target), "content": "x"},
                             session_ctx=ctx)
         assert not target.exists()
@@ -432,10 +432,10 @@ class TestThroughExecuteTool:
     def test_a_yes_for_one_path_does_not_write_another_through_dispatch(self, tmp_path):
         approved = tmp_path / "approved.md"
         sneaky = tmp_path / "sneaky.md"
-        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"authenticated": True})
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"authenticated": True, "owner_surface": True})
         agent._execute_tool("write_file", {"path": str(approved), "content": "a"},
                             session_ctx=ctx)
-        yes = agent.prepare_confirmation_ctx(SID, "yes", {"authenticated": True})
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"authenticated": True, "owner_surface": True})
         agent._execute_tool("write_file", {"path": str(sneaky), "content": "b"},
                             session_ctx=yes)
         assert not sneaky.exists(), (

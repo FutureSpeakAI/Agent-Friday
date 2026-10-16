@@ -313,6 +313,9 @@ def approval_turn(message: str, data: Optional[dict], *, session_id, conversatio
             return None
         from agent_friday.services import agent
         ctx = _base_ctx(conversation_id, "rule", authenticated)
+        # trusted_surface passed above: this is the owner's own page. Inside a
+        # request the agent judges the request again and can only lower it.
+        ctx["owner_surface"] = True
         ctx = agent.prepare_confirmation_ctx(session_id, message, ctx)
         if not ctx.get("confirm_granted_fp"):
             return None

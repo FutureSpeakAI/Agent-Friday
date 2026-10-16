@@ -46,7 +46,7 @@ def test_approved_navigation_returns_the_action_the_desktop_executes(client, mon
     assert "CONFIRMATION REQUIRED" in agent._execute_tool(
         "navigate", {"workspace": "knowledge"}, session_ctx=ctx)
     approved = agent.prepare_confirmation_ctx("same-day", "yes", {
-        "authenticated": True, "conversation_id": cid})
+        "authenticated": True, "conversation_id": cid, "owner_surface": True})
     with client.application.test_request_context():
         body = chat._confirmed_action_response("yes", approved).get_json()
     assert body["actions"] == [{"type": "navigate", "workspace": "knowledge"}]
