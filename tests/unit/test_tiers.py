@@ -191,3 +191,23 @@ def test_spawn_task_without_a_tier_is_unchanged(monkeypatch):
         "name": "Ordinary", "prompt": "Do the thing."}))
     assert out["status"] == "running"
     assert seen.get("model") is None
+
+def test_a_local_tier_task_is_pinned_to_its_seat(monkeypatch):
+    """A local-tier task stays on the local seat: a failing leg is reported,
+    never retried on a cloud model (the vault gate lets it through because
+    nothing leaves this PC). The cloud tier and no tier are not pinned."""
+    import json as _json
+    from agent_friday.services import agent as _agent
+
+    _routing(monkeypatch, heavy_hitter="bonsai2:27b", reasoning="claude-sonnet-5")
+    _live(monkeypatch, "bonsai2:27b")
+    seen = []
+    monkeypatch.setattr(_agent, "_spawn_task",
+                        lambda *a, **k: seen.append(k) or "task-5")
+
+    _agent._tool_spawn_task({"name": "Local", "prompt": "Read.", "tier": "large_local"})
+    _agent._tool_spawn_task({"name": "Cloud", "prompt": "Think.", "tier": "cloud_frontier"})
+    _agent._tool_spawn_task({"name": "Any", "prompt": "Do."})
+    assert seen[0].get("pin_to_seat") is True and seen[0].get("model") == "bonsai2:27b"
+    assert not seen[1].get("pin_to_seat")
+    assert not seen[2].get("pin_to_seat")
