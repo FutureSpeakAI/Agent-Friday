@@ -3138,6 +3138,16 @@ def _pending_voice_card(spoken_ids, conversation_id):
         return None
 
 
+def _end_voice_grant_turn(conversation_id, taint_key):
+    """A spoken turn is over: a skill read in it stops counting as in use for
+    its send pre-approval (governance/send_grants), as a typed turn's does."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        _sg.end_turn({"conversation_id": conversation_id, "taint_key": taint_key})
+    except Exception:
+        pass
+
+
 def _run_routed_front_turn(user_text, on_delta, *, front, tool_session, seat_turn,
                            send, session, owner_voice=False):
     """One routed local voice turn: system one decides, the governed runner
@@ -4605,6 +4615,14 @@ if sock is not None:
                 return reply
 
             def _generate(user_text, on_delta, cancel):
+                try:
+                    return _generate_once(user_text, on_delta, cancel)
+                finally:
+                    # The spoken turn is over: a skill read in it stops
+                    # counting as in use for its send pre-approval.
+                    _end_voice_grant_turn(_tool_session.get("conversation_id"), "voice-local")
+
+            def _generate_once(user_text, on_delta, cancel):
                 # A local failure is an OFFER, spoken, never a cloud call. A bare
                 # yes answers it only under the voice card rules: this call's
                 # offer, voiced in the previous turn, exactly one pending
@@ -6320,6 +6338,8 @@ if sock is not None:
                                                     _safe_send(_bud["frame"])
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
+                                                _end_voice_grant_turn((_voice_session or {}).get("conversation_id"),
+                                                                      "voice-live")
                                                 # The conversation so far, when it
                                                 # changed: joins his next turn and
                                                 # asks for no reply of its own.

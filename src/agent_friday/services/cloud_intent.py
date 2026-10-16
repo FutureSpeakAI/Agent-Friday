@@ -96,6 +96,15 @@ read are all NOT chosen, and keep the other rows.
 What is NOT routine stays local in every mode: a ``local_only`` scope opened
 for privacy (compaction, meeting capture, memory review, citations, a private
 podcast episode) and a local-only schedule the owner wrote themselves.
+
+Saved jobs the owner pinned to a model (``pinned_job_route``)
+-------------------------------------------------------------
+
+A saved job (a workflow or a scheduled prompt) the owner pinned to one model
+runs on exactly that model, in every mode: the pin is the owner's choice and
+its consent. A pinned model that cannot answer (a local seat not serving, a
+cloud service with no key) HOLDS the run with the reason; it is never moved
+to another model. An unpinned saved job follows the ordinary routing.
 """
 
 from __future__ import annotations
@@ -604,6 +613,76 @@ def background_route(job, *, local_serving=None, mode=None) -> BackgroundRoute:
     return BackgroundRoute(
         "skip", "no local model is serving, the routing mode is %s%s, and this job "
         "is not allowed onto a cloud model" % (m.replace("_", " "), unchosen), m)
+
+
+def _cloud_model_ready(model: str):
+    """(ready, why) for a cloud model a saved job is pinned to: Friday knows
+    which service serves it and that service has its key."""
+    try:
+        import agent_friday.core as core
+        provider = core._provider_for_model(model)
+    except Exception:
+        provider = None
+    if not provider:
+        return False, "Friday does not know which service serves %s" % model
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        if get_provider_registry().is_provider_available(provider):
+            return True, ""
+    except Exception as e:
+        return False, "the %s service could not be checked (%s)" % (provider, e)
+    return False, "the %s service is not set up (no key, or switched off)" % provider
+
+
+def pinned_job_route(model, *, local_serving=None, cloud_ready=None) -> BackgroundRoute:
+    """Where a saved job the OWNER pinned to ``model`` runs right now.
+
+    The second half of the one decision (``background_route`` is the first,
+    for Friday's own routines). The pin is the owner's choice of model, made
+    when the job was saved, and it is the consent: a cloud pin runs on that
+    cloud model in every routing mode (``scheduled_cloud`` intent, the same as
+    a routine allowed onto the cloud), a local pin runs on that local seat in
+    every mode. The routing mode does not move a pinned job, and nothing else
+    does either: when the pinned model cannot answer, the run is ``held`` with
+    the reason, never sent to another model.
+
+    ``local_serving(model)`` and ``cloud_ready(model)`` are for tests; by
+    default the seat is asked what it is serving (``local_call.describe_dispatch``)
+    and the provider registry whether the cloud service has its key.
+    """
+    model = str(model or "").strip()
+    m = _background_mode()
+    if not model:
+        return BackgroundRoute("held", "it has no pinned model", m)
+    from agent_friday.services.local_only_guard import is_cloud_model_tag
+    local = None
+    if not is_cloud_model_tag(model):
+        try:
+            from agent_friday.services.visible_jobs import is_local_model
+            local = is_local_model(model)
+        except Exception:
+            local = None
+    if local:
+        if local_serving is None:
+            def local_serving(name):
+                from agent_friday.services.local_call import describe_dispatch
+                return (describe_dispatch(name) or {}).get("route") in ("seat", "daemon")
+        try:
+            up = bool(local_serving(model))
+        except Exception:
+            up = False
+        if up:
+            return BackgroundRoute("local", "pinned to the local model %s, which is serving" % model,
+                                   m, local_model=model)
+        return BackgroundRoute(
+            "held", "its pinned local model %s is not serving on this computer. It was not "
+            "moved to another model" % model, m)
+    ready, why = (cloud_ready(model) if cloud_ready is not None else _cloud_model_ready(model))
+    if ready:
+        return BackgroundRoute("cloud", "pinned by you to the cloud model %s" % model, m, model)
+    return BackgroundRoute(
+        "held", "its pinned model %s is not available: %s. It was not moved to another "
+        "model" % (model, why or "unknown reason"), m)
 
 
 def opens_cloud(mode: str | None = None) -> bool:

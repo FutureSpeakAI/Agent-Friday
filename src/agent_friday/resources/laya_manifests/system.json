@@ -219,6 +219,7 @@
   }
  ],
  "not_for_laya": [
+  {"action": "system.preapproved_sends", "kind": "by_design", "reason": "A pre-approval, and taking back a message sent under one, is the owner's own decision: no tool may make, widen, revoke or undo it."},
   {
    "action": "system.delete_context",
    "kind": "gap",

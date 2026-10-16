@@ -1129,6 +1129,38 @@ def _ag_tools_for_turn(workspace, conversation_id):
     return _tfw(workspace, conversation_id=conversation_id)
 
 
+#: The heading _build_memory_context_block puts over recalled conversations
+#: (the live-state block it may also return is Friday's own state, not recall).
+_RECALL_MARKER = "== RELEVANT PAST CONVERSATIONS"
+_RECALL_WHY = "this turn's prompt carried recalled past conversations"
+
+
+def _note_recall_turn(session_id, conversation_id):
+    try:
+        from agent_friday.governance import outside_content as _oc
+        key = f"conversation:{conversation_id}" if conversation_id else session_id
+        _oc.note_turn({"taint_key": key, "session_id": session_id,
+                       "conversation_id": conversation_id}, _RECALL_WHY)
+    except Exception:
+        pass
+
+
+def _end_grant_turn(sess_ctx, session_id, conversation_id):
+    """The turn is over, however it ended (an instant reply returns before
+    the turn's context exists): a skill read in it stops counting as in use
+    for its send pre-approval, and what counted as outside content for this
+    turn only is forgotten (governance/send_grants, outside_content)."""
+    try:
+        from agent_friday.governance import send_grants as _sg_end
+        _sg_end.end_turn(sess_ctx or {})
+        if session_id or conversation_id:
+            _sg_end.end_turn({"session_id": session_id, "conversation_id": conversation_id,
+                              "taint_key": (f"conversation:{conversation_id}"
+                                            if conversation_id else session_id)})
+    except Exception:
+        pass
+
+
 @chat_bp.route('/api/chat', methods=['POST'])
 @_withhold_pasted_keys
 @_traced_turn
@@ -2160,6 +2192,11 @@ def chat():
         # the confirmation gate is live, and grants a pending action when this
         # message is the user's "yes" to a question Friday asked last turn.
         _sess_ctx = prepare_confirmation_ctx(session_id, message, _sess_ctx)
+        if _RECALL_MARKER in (_mem_part or ""):
+            # Recalled past conversations are text Friday did not write in
+            # this turn and cannot vouch for: no pre-approved send this turn
+            # (governance/outside_content).
+            _sess_ctx["outside_in_prompt"] = _RECALL_WHY
         _confirmed_response = _confirmed_action_response(message, _sess_ctx)
         if _confirmed_response is not None:
             return _confirmed_response
@@ -3039,6 +3076,7 @@ def chat():
             core.turn_end()
         except Exception:
             pass
+        _end_grant_turn(_sess_ctx, locals().get("session_id"), locals().get("_conversation_id"))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3334,8 +3372,14 @@ def chat_send():
             # else above, so a local seat's memory recall isn't scrubbed as
             # if it were headed to the cloud either.
             try:
+                _recall = _build_memory_context_block(message, _session_id)
+                if _RECALL_MARKER in (_recall or ""):
+                    # As in /api/chat: no pre-approved send in a turn whose
+                    # prompt carried recalled conversations. The prompt is
+                    # built inside the loop, so the turn is noted by key.
+                    _note_recall_turn(_session_id, _conversation_id)
                 _mem_block = (_slicer.gate_block(
-                                  "memory", _build_memory_context_block(message, _session_id),
+                                  "memory", _recall,
                                   name="relevant_past_conversations",
                                   marker="== RELEVANT PAST CONVERSATIONS")
                               + _slicer.gate_block(
@@ -3646,6 +3690,7 @@ def chat_send():
             core.turn_end()
         except Exception:
             pass
+        _end_grant_turn(_sess_ctx, locals().get("_session_id"), locals().get("_conversation_id"))
 
 
 @chat_bp.route('/api/chat/pin/<msg_id>', methods=['POST'])

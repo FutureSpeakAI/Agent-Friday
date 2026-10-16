@@ -272,7 +272,8 @@
    {"id": "system.activity_waiting", "group": "read", "label": "Activity: what is waiting, in queue order", "audit_status": "new"},
    {"id": "system.needs_you", "group": "read", "label": "Needs you and Updates: what waits for a decision, and today's digest", "audit_status": "new"},
    {"id": "system.quiet", "group": "settings", "label": "Quiet until morning (Needs you panel)", "audit_status": "new"},
-   {"id": "system.batch_decide", "group": "organize", "label": "approve or decline a batch of approvals", "audit_status": "new"}
+   {"id": "system.batch_decide", "group": "organize", "label": "approve or decline a batch of approvals", "audit_status": "new"},
+   {"id": "system.preapproved_sends", "group": "settings", "label": "see and revoke pre-approved sends on the Approvals card, and undo a message waiting to go under one", "audit_status": "new"}
   ],
   "settings": [
    {"id": "settings.open_section", "group": "navigate", "label": "open section", "audit_status": "M"},
@@ -297,7 +298,8 @@
    {"id": "settings.laya_confirm", "group": "settings", "label": "what Laya learned: confirm or drop a choice the deeper mind made", "audit_status": "new"},
    {"id": "settings.laya_refit", "group": "settings", "label": "what Laya learned: Learn now (a visible Local AI queue job)", "audit_status": "new"},
    {"id": "settings.laya_loosen", "group": "settings", "label": "what Laya learned: let her act on a lower score (a card; owner only)", "audit_status": "new"},
-   {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"}
+   {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"},
+   {"id": "settings.preapproved_sends", "group": "settings", "label": "pre-approve sends to named recipients, approve exactly the needs a skill declares (refused if it changed), approve a changed job or skill again, let voice use pre-approvals, revoke", "audit_status": "new"}
   ]
  }
 }

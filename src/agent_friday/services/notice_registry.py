@@ -292,6 +292,10 @@ _ALL = [
     # A scheduled run that was due in quiet hours and waits for them to end.
     _e("NQ2", "services/scheduler.py:_defer_for_quiet", "scheduled_deferred", UPDATES,
        "sched-deferred:{schedule_id}:{day}", source="scheduler"),
+    # A saved job held because the model the owner pinned it to cannot answer: one card per
+    # job, closed by its next run that goes.
+    _e("SJ1", "services/scheduler.py:_notify_run:held", "scheduled_held", NEEDS_YOU,
+       "sched-held:{schedule_id}", source="scheduler", pk="scheduled_task"),
     # ── cloud work orders (services/work_orders): local text only ────────────
     _e("WO1", "services/work_orders.py:enforce_switch", "work_order_switched_off", NEEDS_YOU,
        "work_orders:switch_off", source="work_orders", pk="warning"),
