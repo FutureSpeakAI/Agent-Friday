@@ -129,6 +129,10 @@ def _ai_items() -> list:
                    "endpoint": "/api/providers/%s/key" % name,
                    "test": "/api/providers/%s/test" % name,
                    "signup_url": SIGNUP_URLS.get(name, "")}
+        if p.get("enabled") is False:
+            # A built-in that ships switched off: saving its key switches it on,
+            # or the key would be stored and never used.
+            connect["enable"] = "/api/providers/%s" % name
         if name in _ONE_KEY:
             # Saving either key is followed by a one-token check that says
             # whether Friday can think now.
@@ -418,8 +422,8 @@ def _secret_connect(name: str, signup: str = "") -> dict:
 def _search_items() -> list:
     out = []
     for name, label, env_key, signup, perm in (
-            ("brave", "Brave Search", "BRAVE_API_KEY",
-             "https://api.search.brave.com/app/keys",
+            ("brave", "Brave Search", "BRAVE_SEARCH_API_KEY",
+             "https://api-dashboard.search.brave.com/app/keys",
              "Your search queries are sent to Brave with your key."),
             ("firecrawl", "Firecrawl", "FIRECRAWL_API_KEY",
              "https://www.firecrawl.dev/app/api-keys",
@@ -467,12 +471,136 @@ def _network_items() -> list:
         docs_url="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/")]
 
 
+# ── Local runtimes and custom endpoints ──────────────────────────────────────
+
+def _endpoint_items() -> list:
+    from agent_friday.services import connections_setup as cx
+    from agent_friday.services.provider_registry import get_provider_registry
+    reg = get_provider_registry()
+    out = []
+    oll = reg.get_provider("ollama-local") or {}
+    oll_url = (oll.get("base_url") or cx.OLLAMA_DEFAULT).rstrip("/")
+    # Status without a probe: the list never waits on a daemon. Test connection
+    # is what asks it.
+    oll_custom = oll_url != cx.OLLAMA_DEFAULT
+    out.append(_item(
+        "local:ollama", "ai", "Ollama (on this computer)",
+        unlocks="Run the open models you pull into Ollama, privately.",
+        permissions=[_perm("Nothing leaves this computer unless you point it "
+                           "at another machine.")],
+        connect={"kind": "local_endpoint", "endpoint": "/api/setup/connections/ollama",
+                 "field": {"key": "base_url", "label": "Ollama address",
+                           "value": oll_url, "default": cx.OLLAMA_DEFAULT}},
+        status=NOT_CONNECTED,
+        detail=("Address set to %s." % oll_url) if oll_custom else ""))
+    lm = reg.get_provider(cx.LMSTUDIO_PROVIDER)
+    out.append(_item(
+        "local:lmstudio", "ai", "LM Studio (on this computer)",
+        unlocks="Use the models you download in LM Studio, privately.",
+        permissions=[_perm("Nothing leaves this computer.")],
+        connect={"kind": "local_endpoint", "endpoint": "/api/setup/connections/endpoint",
+                 "endpoint_kind": "lmstudio",
+                 "field": {"key": "base_url", "label": "LM Studio server address",
+                           "value": ((lm or {}).get("base_url") or cx.LMSTUDIO_DEFAULT),
+                           "default": cx.LMSTUDIO_DEFAULT}},
+        status=CONNECTED if lm else NOT_CONNECTED,
+        detail="Added." if lm else ""))
+    for name, p in cx.custom_endpoints():
+        status, detail = _provider_status(name, reg)
+        auth = (p.get("auth") or {}).get("type")
+        if auth == "none":
+            status, detail = CONNECTED, "Added; needs no key."
+        out.append(_item(
+            "custom:" + name, "ai", p.get("label") or name,
+            unlocks="Models from your own OpenAI-compatible service.",
+            permissions=[_perm(copy.PROVIDER_PERMISSION.format(label=p.get("label") or name))],
+            connect=(_secret_connect(name) if auth != "none" else
+                     {"kind": "manual", "hint": "Added; it needs no key."}),
+            status=status if status != NOT_CONNECTED else ATTENTION,
+            detail=detail or "Added. Paste its key if it needs one."))
+    out.append(_item(
+        "custom:openai", "ai", "Any OpenAI-compatible service",
+        unlocks="Connect a service that speaks the OpenAI API, by its address.",
+        permissions=[_perm("Whatever you send it, under the same never-send "
+                           "checks as any cloud model.")],
+        connect={"kind": "custom_endpoint", "endpoint": "/api/setup/connections/endpoint",
+                 "endpoint_kind": "custom"},
+        status=NOT_CONNECTED))
+    return out
+
+
+# ── MCP servers ──────────────────────────────────────────────────────────────
+
+def _mcp_items() -> list:
+    from agent_friday.services import connections_setup as cx
+    mgr = cx._manager()
+    live = (mgr.status() if mgr else {}) or {}
+    out = []
+    for s in cx.mcp_servers():
+        info = live.get(s["name"]) or {}
+        st = info.get("status") or ("disabled" if not s["enabled"] else "")
+        if st == "ready":
+            status, detail = CONNECTED, "%d tools." % int(info.get("tool_count") or 0)
+        elif st in ("error", "crashed", "needs_auth"):
+            status = ATTENTION
+            detail = ("Needs you to sign in." if st == "needs_auth"
+                      else "Not answering. Test it to see why.")
+        else:
+            status, detail = NOT_CONNECTED, ("Switched off." if st == "disabled" else "")
+        out.append(_item(
+            "mcp:" + s["name"], "mcp", s["name"],
+            unlocks=("Tools from %s." % s["target"]) if s["remote"] else
+                    ("Tools from a program on this computer (%s)." % s["target"]),
+            permissions=[_perm(t) for t in _mcp_access()],
+            connect={"kind": "mcp_server", "name": s["name"], "remote": s["remote"],
+                     "remove": "/api/setup/connections/mcp/%s" % s["name"],
+                     "sign_in": ("/api/setup/connections/mcp/%s/sign-in" % s["name"]
+                                 if s["remote"] else "")},
+            status=status, detail=detail))
+    out.append(_item(
+        "mcp:add", "mcp", "Add an MCP server",
+        unlocks="Plug in any tool server: paste its address or command, or pick one.",
+        permissions=[_perm(t) for t in _mcp_access()],
+        connect={"kind": "mcp_add", "endpoint": "/api/setup/connections/mcp"},
+        status=NOT_CONNECTED))
+    return out
+
+
+def _mcp_access() -> tuple:
+    from agent_friday.services import connections_guide as cg
+    return cg.ACCESS_MCP
+
+
 _BUILDERS = (
-    ("ai", _ai_items), ("google", _google_items), ("phone", _phone_items),
+    ("ai", _ai_items), ("endpoints", _endpoint_items), ("mcp", _mcp_items),
+    ("google", _google_items), ("phone", _phone_items),
     ("connectors", _connector_items), ("social", _platform_items),
     ("messaging", _channel_items), ("search", _search_items),
     ("voice", _voice_items), ("network", _network_items),
 )
+
+
+def _add_guide(it: dict) -> None:
+    """Fold the guide in: category, how-to, cost, recommended, what it can
+    reach, the verified sign-up link, and the test endpoint."""
+    from agent_friday.services import connections_guide as cg
+    from agent_friday.services import connections_setup as cx
+    iid, c = it["id"], it["connect"]
+    it["category"] = (cg.ITEM_CATEGORY.get(iid)
+                      or ("mcp" if iid.startswith("mcp:") else None)
+                      or cg.GROUP_TO_CATEGORY.get(it["group"], "more"))
+    g = cg.guide_fields(iid, it["label"], c.get("kind", ""))
+    it["how"] = g["how"]
+    it["cost"] = g["cost"]
+    it["recommended"] = g["recommended"]
+    if g["signup_url"]:
+        c["signup_url"] = g["signup_url"]
+    if c.get("signup_url"):
+        c["signup_label"] = g["signup_label"] or "Get a key"
+    it["access"] = list(cg.access_for(iid, it["category"]))
+    it["test"] = ("/api/setup/connections/%s/test" % iid
+                  if cx.testable(iid) and c.get("kind") not in ("mcp_add", "custom_endpoint")
+                  else "")
 
 
 def checklist(skipped=()) -> dict:
@@ -488,20 +616,37 @@ def checklist(skipped=()) -> dict:
     for it in items:
         if it["id"] in skipped and it["status"] == NOT_CONNECTED:
             it["status"] = SKIPPED
+        _add_guide(it)
+    from agent_friday.services import connections_guide as cg
+    from agent_friday.services import connections_setup as cx
+    cat_order = {c: i for i, (c, _l, _d) in enumerate(cg.CATEGORIES)}
     order = {g: i for i, (g, _) in enumerate(GROUPS)}
-    items.sort(key=lambda it: order.get(it["group"], 99))
+    # Stable: within a category, the old group order and then the builder order.
+    items.sort(key=lambda it: (cat_order.get(it["category"], 99),
+                               order.get(it["group"], 99)))
     counts = {}
     for it in items:
+        if it["connect"].get("kind") in ("mcp_add", "custom_endpoint"):
+            continue                      # forms, not services
         counts[it["status"]] = counts.get(it["status"], 0) + 1
-    try:
-        from agent_friday.services import one_key
-        one = one_key.status()
-    except Exception as e:
-        _log.warning("setup checklist: one-key status could not be read: %s", e)
-        one = None
+    local_only = cx.local_only()
+    one = None
+    if not local_only:
+        # "One key is enough" is advice for someone choosing the cloud; after
+        # "I'll just use local AI" it is not said again.
+        try:
+            from agent_friday.services import one_key
+            one = one_key.status()
+        except Exception as e:
+            _log.warning("setup checklist: one-key status could not be read: %s", e)
     return {"groups": [{"id": g, "label": lbl} for g, lbl in GROUPS],
+            "categories": [{"id": c, "label": lbl, "desc": desc}
+                           for c, lbl, desc in cg.CATEGORIES],
             "items": items, "counts": counts, "errors": errors,
-            "one_key": one,
+            "one_key": one, "local_only": local_only,
+            "coming_soon": [dict(x) for x in cg.COMING_SOON],
+            "curated_mcp": [dict(x) for x in cg.CURATED_MCP],
+            "mcp_about_url": cg.MCP_SPEC_URL,
             "never": ("Friday never reads your browser's saved passwords or "
                       "cookies, never opens other apps' credential files, and "
                       "never asks for a password in the chat.")}

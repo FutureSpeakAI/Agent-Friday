@@ -426,6 +426,13 @@ def _legacy_keys() -> list[tuple[str, bytes]]:
                     sources.append((label, v))
             except Exception:
                 continue
+        # A passphrase a home held before store() replaced it is kept
+        # (vault_passphrase.keep_displaced), because it may be the only key
+        # for something sealed under it. It is a read key here like any other.
+        try:
+            sources.extend(_vp.kept_values())
+        except Exception:
+            pass
         for label, pw in sources:
             try:
                 k = _vc.derive_key(pw, salt)

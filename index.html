@@ -1257,6 +1257,20 @@ window.addEventListener('DOMContentLoaded',function(){
         .sc-msgline { font-size: 12px; margin-top: 8px; }
         .sc-msgline.ok { color: var(--st-ok); }
         .sc-msgline.bad { color: var(--st-danger); }
+        .sc-lead { font-size: 13px; color: var(--st-label); line-height: 1.6; margin: 0 0 10px; }
+        .sc-local-choice { margin: 4px 0 6px; }
+        .sc-cat { margin-top: 18px; }
+        .sc-cat-title { margin: 0 0 2px; font-size: 13.5px; font-weight: 600; color: var(--st-text); }
+        .sc-cat-desc { margin: 0 0 8px; }
+        .sc-rec { display: inline-block; margin-left: 8px; font-size: 10.5px; padding: 1px 7px; border-radius: 10px;
+            border: 1px solid rgba(0,212,255,0.4); color: var(--st-accent); vertical-align: 1px; }
+        .sc-cost { font-size: 12px; color: var(--st-label); margin: 6px 0; }
+        .sc-how { margin: 4px 0 8px; padding-left: 20px; font-size: 12px; color: var(--st-label); line-height: 1.6; }
+        .sc-fix { margin-top: 4px; color: var(--st-label); }
+        .sc-curated { list-style: none; margin: 0 0 6px; padding: 0; font-size: 12px; }
+        .sc-curated li { margin: 4px 0; }
+        .sc-soon { margin: 4px 0 8px; font-size: 12px; color: var(--st-dim); }
+        .sc-soon summary { cursor: pointer; padding: 4px 0; }
         .sc-option { border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
         .sc-option.on { border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.06); }
         .sc-option-label { font-size: 13px; color: #fff; }
@@ -50179,37 +50193,161 @@ const SC_STATUS = {
   needs_attention: 'Needs attention',
   not_connected: 'Not connected',
   skipped: 'Skipped',
-  external: ('Set up outside ' + FRIDAY_BRAND.name)
+  external: 'Set up outside ' + FRIDAY_BRAND.name
 };
 function scSafeUrl(u) {
   return /^https?:\/\//i.test(String(u || '')) ? u : '';
+}
+
+// A test's answer in words a person can act on: what happened, then the fix.
+const SC_TEST_WORD = {
+  pass: 'Test passed',
+  fail: 'Test failed',
+  not_connected: 'Not connected yet',
+  unknown: 'Could not tell'
+};
+
+// The add-an-MCP-server form: a name, then an address OR a command. The
+// curated picks only fill the form; nothing is added until Add is pressed.
+function ScMcpAdd({
+  it,
+  curated,
+  onChanged
+}) {
+  const c = it.connect || {};
+  const [name, setName] = React.useState('');
+  const [url, setUrl] = React.useState('');
+  const [command, setCommand] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+  const pick = p => {
+    setName(p.name);
+    setUrl(p.url);
+    setCommand('');
+    setMsg({
+      ok: true,
+      text: p.label + ': ' + p.auth + ' Press Add to connect it.'
+    });
+  };
+  const add = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await scJSON(c.endpoint, 'POST', {
+        name: name.trim(),
+        url: url.trim(),
+        command: command.trim()
+      });
+      const d = r.data || {};
+      if (!r.ok || d.ok === false) throw new Error(d.message || d.error || 'HTTP ' + r.status);
+      setMsg({
+        ok: true,
+        text: 'Added ' + d.added + '. Open its card below to test it' + (d.remote ? ' or sign in.' : '.')
+      });
+      setName('');
+      setUrl('');
+      setCommand('');
+      onChanged();
+    } catch (e) {
+      setMsg({
+        ok: false,
+        text: 'Not added: ' + (e && e.message || 'unknown error')
+      });
+    }
+    setBusy(false);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sc-mcp-add"
+  }, (curated || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub",
+    style: {
+      margin: '8px 0 4px'
+    }
+  }, "Pick one to fill the form:"), /*#__PURE__*/React.createElement("ul", {
+    className: "sc-curated"
+  }, (curated || []).map(p => /*#__PURE__*/React.createElement("li", {
+    key: p.name
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: () => pick(p),
+    "aria-label": 'Fill the form with ' + p.label
+  }, p.label), /*#__PURE__*/React.createElement("span", {
+    className: "sc-dim"
+  }, " ", p.what), scSafeUrl(p.docs) && /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("a", {
+    className: "sc-link quiet",
+    href: p.docs,
+    target: "_blank",
+    rel: "noreferrer noopener"
+  }, "About"))))), /*#__PURE__*/React.createElement("label", {
+    className: "sc-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Name (letters and numbers)"), /*#__PURE__*/React.createElement("input", {
+    className: "sc-input",
+    type: "text",
+    autoComplete: "off",
+    spellCheck: false,
+    value: name,
+    onChange: e => setName(e.target.value)
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "sc-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Server address (https://\u2026), for a server on the internet"), /*#__PURE__*/React.createElement("input", {
+    className: "sc-input",
+    type: "url",
+    autoComplete: "off",
+    spellCheck: false,
+    value: url,
+    onChange: e => setUrl(e.target.value)
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "sc-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Or the command that starts it on this computer"), /*#__PURE__*/React.createElement("input", {
+    className: "sc-input",
+    type: "text",
+    autoComplete: "off",
+    spellCheck: false,
+    value: command,
+    onChange: e => setCommand(e.target.value),
+    placeholder: "npx -y some-mcp-server"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    disabled: busy || !name.trim() || !url.trim() && !command.trim(),
+    onClick: add
+  }, busy ? 'Adding…' : 'Add server')), msg && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    className: 'sc-msgline ' + (msg.ok ? 'ok' : 'bad')
+  }, msg.text));
 }
 function SetupConnectionItem({
   it,
   open,
   onToggle,
   onChanged,
-  onSkip
+  onSkip,
+  curated
 }) {
   const [vals, setVals] = React.useState({});
   const [opts, setOpts] = React.useState({});
   const [label, setLabel] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState(null);
+  const [test, setTest] = React.useState(null);
   const c = it.connect || {};
   const domId = 'sc-item-' + it.id.replace(/[^a-z0-9]/gi, '-');
   const openUrl = u => {
     if (scSafeUrl(u)) window.open(u, '_blank', 'noopener');
   };
-  const post = async (url, body) => {
-    const r = await scJSON(url, 'POST', body);
+  const post = async (url, body, method) => {
+    const r = await scJSON(url, method || 'POST', body);
     const d = r.data || {};
-    if (!r.ok || d.ok === false || d.status === 'error') throw new Error(d.error || d.message || 'HTTP ' + r.status);
+    if (!r.ok || d.ok === false || d.status === 'error') throw new Error(d.message || d.error || 'HTTP ' + r.status);
     return d;
   };
   const run = async fn => {
     setBusy(true);
     setMsg(null);
+    setTest(null);
     try {
       await fn();
     } catch (e) {
@@ -50222,6 +50360,30 @@ function SetupConnectionItem({
     setVals({}); // secrets do not outlive the request
     onChanged();
   };
+  const runTest = async () => {
+    setBusy(true);
+    setTest({
+      state: 'running',
+      text: 'Testing…'
+    });
+    try {
+      const r = await scJSON(it.test, 'POST', {});
+      const d = r.data || {};
+      setTest(r.ok ? d : {
+        state: 'unknown',
+        text: 'The test could not run.',
+        fix: 'Try again in a moment.'
+      });
+    } catch (e) {
+      setTest({
+        state: 'unknown',
+        text: 'The test could not run.',
+        fix: 'Try again in a moment.'
+      });
+    }
+    setBusy(false);
+    onChanged();
+  };
   const connect = () => run(async () => {
     if (c.kind === 'secret') {
       const v = (vals.key || '').trim();
@@ -50229,9 +50391,13 @@ function SetupConnectionItem({
       await post(c.endpoint, {
         key: v
       });
+      // A built-in that ships switched off is switched on with its key.
+      if (c.enable) await post(c.enable, {
+        enabled: true
+      }, 'PATCH');
       setMsg({
         ok: true,
-        text: 'Saved, encrypted on this computer.'
+        text: 'Saved, encrypted on this computer.' + (it.test ? ' Press Test connection to check it.' : '')
       });
       // Anthropic / OpenRouter: one token to say whether Friday can think now.
       if (c.verify) {
@@ -50266,6 +50432,35 @@ function SetupConnectionItem({
       setMsg({
         ok: true,
         text: 'Approve access in the browser window that opened.'
+      });
+    } else if (c.kind === 'local_endpoint') {
+      const f = c.field || {};
+      const v = (vals[f.key] !== undefined ? vals[f.key] : f.value || '').trim();
+      await post(c.endpoint, {
+        base_url: v || f.default,
+        kind: c.endpoint_kind || ''
+      });
+      setMsg({
+        ok: true,
+        text: 'Saved. Press Test connection to check it.'
+      });
+    } else if (c.kind === 'custom_endpoint') {
+      const d = await post(c.endpoint, {
+        kind: 'custom',
+        label: (vals.label || '').trim(),
+        base_url: (vals.base_url || '').trim()
+      });
+      setMsg({
+        ok: true,
+        text: 'Added. It now has its own card: paste its key there if it needs one, then test it.'
+      });
+      return d;
+    } else if (c.kind === 'mcp_server') {
+      const d = await post(c.sign_in, {});
+      openUrl(d.auth_url);
+      setMsg({
+        ok: true,
+        text: 'The sign-in page opened in your browser. Approve there, then test it.'
       });
     } else if (c.kind === 'fields') {
       const fields = c.fields || [];
@@ -50307,6 +50502,13 @@ function SetupConnectionItem({
       });
     }
   });
+  const remove = () => run(async () => {
+    await post(c.remove, undefined, 'DELETE');
+    setMsg({
+      ok: true,
+      text: 'Removed.'
+    });
+  });
   const fieldInput = f => /*#__PURE__*/React.createElement("label", {
     key: f.key,
     className: "sc-field"
@@ -50315,7 +50517,7 @@ function SetupConnectionItem({
     type: f.secret ? 'password' : 'text',
     autoComplete: f.secret ? 'new-password' : 'off',
     spellCheck: false,
-    value: vals[f.key] || '',
+    value: vals[f.key] !== undefined ? vals[f.key] : f.value || '',
     onChange: e => {
       const v = e.target.value;
       setVals(o => ({
@@ -50325,12 +50527,16 @@ function SetupConnectionItem({
     },
     "aria-label": it.label + ': ' + f.label
   }));
-  const canConnect = ['secret', 'fields', 'google_oauth', 'oauth_connector', 'platform_oauth'].indexOf(c.kind) >= 0;
+  const canConnect = ['secret', 'fields', 'google_oauth', 'oauth_connector', 'platform_oauth', 'local_endpoint', 'custom_endpoint'].indexOf(c.kind) >= 0 || c.kind === 'mcp_server' && !!c.sign_in;
+  const connectWord = c.kind === 'secret' || c.kind === 'fields' ? 'Save securely' : c.kind === 'local_endpoint' || c.kind === 'custom_endpoint' ? 'Save' : c.kind === 'mcp_server' ? 'Sign in' : c.kind === 'google_oauth' && it.status === 'connected' ? 'Add another account' : 'Connect';
+  const form = c.kind === 'mcp_add' || c.kind === 'custom_endpoint';
   const required = (it.permissions || []).filter(p => !p.optional);
   const optional = (it.permissions || []).filter(p => p.optional);
+  const access = it.access || [];
   return /*#__PURE__*/React.createElement("div", {
     className: "sc-item",
-    id: domId
+    id: domId,
+    "data-connection": it.id
   }, /*#__PURE__*/React.createElement("div", {
     className: "sc-item-head"
   }, /*#__PURE__*/React.createElement("button", {
@@ -50345,23 +50551,33 @@ function SetupConnectionItem({
     className: "sc-sr"
   }, (open ? 'Hide details for ' : 'Show details for ') + it.label)), /*#__PURE__*/React.createElement("div", {
     className: "sc-item-title"
-  }, it.label, /*#__PURE__*/React.createElement("div", {
+  }, it.label, it.recommended && /*#__PURE__*/React.createElement("span", {
+    className: "sc-rec",
+    title: it.recommended
+  }, "Recommended"), /*#__PURE__*/React.createElement("div", {
     className: "sc-item-unlocks"
-  }, it.unlocks)), /*#__PURE__*/React.createElement("span", {
+  }, it.unlocks)), !form && /*#__PURE__*/React.createElement("span", {
     className: 'sc-pill ' + it.status
   }, SC_STATUS[it.status] || it.status)), open && /*#__PURE__*/React.createElement("div", {
     id: domId + '-body',
     className: "sc-item-body"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, it.recommended && /*#__PURE__*/React.createElement("div", {
+    className: "sc-sub",
+    style: {
+      margin: '8px 0 0'
+    }
+  }, "Recommended: ", it.recommended, " Nothing is chosen for you."), /*#__PURE__*/React.createElement("div", {
     className: "sc-group",
     style: {
       margin: '10px 0 2px'
     }
-  }, "What it asks for"), /*#__PURE__*/React.createElement("ul", {
+  }, "What it can access"), /*#__PURE__*/React.createElement("ul", {
     className: "sc-perms"
   }, required.map((p, i) => /*#__PURE__*/React.createElement("li", {
-    key: i
-  }, p.text))), optional.map(p => /*#__PURE__*/React.createElement("label", {
+    key: 'p' + i
+  }, p.text)), access.map((t, i) => /*#__PURE__*/React.createElement("li", {
+    key: 'a' + i
+  }, t))), optional.map(p => /*#__PURE__*/React.createElement("label", {
     key: p.key,
     className: "sc-optional"
   }, /*#__PURE__*/React.createElement("input", {
@@ -50374,16 +50590,35 @@ function SetupConnectionItem({
         [p.key]: v
       }));
     }
-  }), /*#__PURE__*/React.createElement("span", null, "Also: ", p.text, " ", /*#__PURE__*/React.createElement("em", null, "(optional, off unless you tick it)")))), it.detail && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("span", null, "Also: ", p.text, " ", /*#__PURE__*/React.createElement("em", null, "(optional, off unless you tick it)")))), it.cost && /*#__PURE__*/React.createElement("div", {
+    className: "sc-cost"
+  }, /*#__PURE__*/React.createElement("strong", null, "Cost:"), " ", it.cost), (it.how || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "sc-group",
+    style: {
+      margin: '10px 0 2px'
+    }
+  }, "How to connect"), /*#__PURE__*/React.createElement("ol", {
+    className: "sc-how"
+  }, it.how.map((s, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, s)))), it.detail && /*#__PURE__*/React.createElement("div", {
     className: "sc-sub",
     style: {
       margin: '6px 0'
     }
   }, it.detail), c.kind === 'secret' && fieldInput({
     key: 'key',
-    label: 'API key',
+    label: 'API key (hidden as you type)',
     secret: true
-  }), c.kind === 'fields' && (c.fields || []).map(fieldInput), c.kind === 'google_oauth' && /*#__PURE__*/React.createElement("label", {
+  }), c.kind === 'fields' && (c.fields || []).map(fieldInput), c.kind === 'local_endpoint' && c.field && fieldInput(c.field), c.kind === 'custom_endpoint' && /*#__PURE__*/React.createElement(React.Fragment, null, fieldInput({
+    key: 'label',
+    label: 'A short name',
+    secret: false
+  }), fieldInput({
+    key: 'base_url',
+    label: 'Base address (ends in /v1)',
+    secret: false
+  })), c.kind === 'google_oauth' && /*#__PURE__*/React.createElement("label", {
     className: "sc-field"
   }, /*#__PURE__*/React.createElement("span", null, "A label for this account (optional)"), /*#__PURE__*/React.createElement("input", {
     className: "sc-input",
@@ -50392,7 +50627,11 @@ function SetupConnectionItem({
     value: label,
     onChange: e => setLabel(e.target.value),
     placeholder: "Work, Personal"
-  })), c.kind === 'external' && /*#__PURE__*/React.createElement("ol", {
+  })), c.kind === 'mcp_add' && /*#__PURE__*/React.createElement(ScMcpAdd, {
+    it: it,
+    curated: curated,
+    onChanged: onChanged
+  }), c.kind === 'external' && /*#__PURE__*/React.createElement("ol", {
     className: "sc-perms"
   }, (c.steps || []).map((s, i) => /*#__PURE__*/React.createElement("li", {
     key: i
@@ -50402,14 +50641,24 @@ function SetupConnectionItem({
     className: "sc-sub"
   }, c.note), c.more && /*#__PURE__*/React.createElement("div", {
     className: "sc-sub"
-  }, "More options: ", c.more), /*#__PURE__*/React.createElement("div", {
+  }, "More options: ", c.more), c.kind !== 'mcp_add' && /*#__PURE__*/React.createElement("div", {
     className: "sc-row"
   }, canConnect && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "sc-btn",
     disabled: busy,
     onClick: connect
-  }, busy ? 'Working…' : c.kind === 'secret' || c.kind === 'fields' ? 'Save securely' : c.kind === 'google_oauth' && it.status === 'connected' ? 'Add another account' : 'Connect'), it.status !== 'connected' && it.status !== 'external' && /*#__PURE__*/React.createElement("button", {
+  }, busy ? 'Working…' : connectWord), it.test && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    disabled: busy,
+    onClick: runTest
+  }, "Test connection"), c.kind === 'mcp_server' && c.remove && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn danger",
+    disabled: busy,
+    onClick: remove
+  }, "Remove"), !form && it.status !== 'connected' && it.status !== 'external' && c.kind !== 'mcp_server' && /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "sc-btn quiet",
     onClick: onSkip
@@ -50418,7 +50667,7 @@ function SetupConnectionItem({
     href: c.signup_url,
     target: "_blank",
     rel: "noreferrer noopener"
-  }, "Get a key"), scSafeUrl(it.docs_url) && /*#__PURE__*/React.createElement("a", {
+  }, (c.signup_label || 'Get a key') + ' / Sign up'), scSafeUrl(it.docs_url) && /*#__PURE__*/React.createElement("a", {
     className: "sc-link quiet",
     href: it.docs_url,
     target: "_blank",
@@ -50426,15 +50675,25 @@ function SetupConnectionItem({
   }, "Docs")), msg && /*#__PURE__*/React.createElement("div", {
     role: "status",
     className: 'sc-msgline ' + (msg.ok ? 'ok' : 'bad')
-  }, msg.text)));
+  }, msg.text), test && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    className: 'sc-msgline sc-test ' + (test.state === 'pass' ? 'ok' : test.state === 'fail' ? 'bad' : ''),
+    "data-test-state": test.state
+  }, test.state !== 'running' && /*#__PURE__*/React.createElement("strong", null, (SC_TEST_WORD[test.state] || 'Result') + ': '), test.text, test.fix && /*#__PURE__*/React.createElement("div", {
+    className: "sc-fix"
+  }, "How to fix: ", test.fix))));
 }
 
-// The checklist. Used by the setup chat and by Settings > Connections.
+// "Connect your services": the one screen for setup and Settings > Connections.
+// Every entry is optional, nothing is preselected, and "I'll just use local
+// AI" is an answer in its own right, never followed by a nag.
 function SetupConnectionsPanel({
-  highlight
+  highlight,
+  onLocalOnly
 }) {
   const [data, setData] = React.useState(null);
   const [open, setOpen] = React.useState(highlight || null);
+  const [said, setSaid] = React.useState('');
   const load = React.useCallback(() => {
     scJSON('/api/setup/connections').then(r => {
       if (r.ok) setData(r.data);
@@ -50456,17 +50715,19 @@ function SetupConnectionsPanel({
         el.scrollIntoView({
           block: 'center'
         });
-        const f = el.querySelector('input,button');
+        const f = el.querySelector('.sc-item-body input,.sc-item-body button') || el.querySelector('button');
         if (f) f.focus();
       }
     }, 80);
     return () => clearTimeout(t);
-  }, [highlight]);
+  }, [highlight, data && data.items && data.items.length]);
   if (!data) return /*#__PURE__*/React.createElement("div", {
-    className: "sc-sub"
+    className: "sc-sub",
+    role: "status"
   }, "Checking what's connected\u2026");
   const items = data.items || [];
-  const groups = (data.groups || []).filter(g => items.some(i => i.group === g.id));
+  const cats = (data.categories || []).filter(g => items.some(i => i.category === g.id));
+  const soon = data.coming_soon || [];
   const counts = data.counts || {};
   const skip = async it => {
     await scJSON('/api/setup/connections/' + encodeURIComponent(it.id) + '/skip', 'POST', {
@@ -50474,10 +50735,44 @@ function SetupConnectionsPanel({
     });
     load();
   };
+  const localOnly = async on => {
+    const r = await scJSON('/api/setup/connections/local-only', 'POST', {
+      on
+    });
+    if (r.ok) {
+      setSaid(on ? 'Local AI it is. Nothing here is needed, and you will not be asked again. You can still connect anything later.' : 'Cloud services are back on the list.');
+      load();
+      if (on && onLocalOnly) onLocalOnly();
+    }
+  };
   return /*#__PURE__*/React.createElement("div", {
-    className: "sc-connections"
+    className: "sc-connections",
+    "data-testid": "connect-services"
   }, /*#__PURE__*/React.createElement("p", {
-    className: "sc-sub"
+    className: "sc-lead"
+  }, "Connect any services you want. Every one is optional, and you can come back any time from Settings > Connections. Keys go into the secure fields only: they are stored encrypted on this computer and never appear in a conversation or a log."), /*#__PURE__*/React.createElement("div", {
+    className: "sc-row sc-local-choice"
+  }, !data.local_only ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn",
+    onClick: () => localOnly(true)
+  }, "I'll just use local AI") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "sc-sub",
+    style: {
+      margin: 0
+    }
+  }, "You chose local AI only."), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "sc-btn quiet",
+    onClick: () => localOnly(false)
+  }, "Show cloud options again"))), said && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    className: "sc-msgline ok"
+  }, said), /*#__PURE__*/React.createElement("p", {
+    className: "sc-sub",
+    style: {
+      marginTop: 10
+    }
   }, (counts.connected || 0) + ' connected', counts.skipped ? ' · ' + counts.skipped + ' skipped' : '', counts.needs_attention ? ' · ' + counts.needs_attention + ' need attention' : '', ". ", data.never), data.one_key && data.one_key.line && /*#__PURE__*/React.createElement("p", {
     className: "sc-sub"
   }, data.one_key.line, ' ', (data.one_key.links || []).filter(l => scSafeUrl(l.url)).map(l => /*#__PURE__*/React.createElement(React.Fragment, {
@@ -50487,19 +50782,38 @@ function SetupConnectionsPanel({
     href: l.url,
     target: "_blank",
     rel: "noreferrer noopener"
-  }, l.label)))), groups.map(g =>/*#__PURE__*/React.createElement("section", {
-    key: g.id,
-    "aria-label": g.label
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "sc-group"
-  }, g.label), items.filter(i => i.group === g.id).map(it => /*#__PURE__*/React.createElement(SetupConnectionItem, {
-    key: it.id,
-    it: it,
-    open: open === it.id,
-    onToggle: () => setOpen(open === it.id ? null : it.id),
-    onChanged: load,
-    onSkip: () => skip(it)
-  })))));
+  }, l.label)))), cats.map(g => {
+    const later = soon.filter(s => s.category === g.id);
+    return /*#__PURE__*/React.createElement("section", {
+      key: g.id,
+      className: "sc-cat",
+      "aria-labelledby": 'sc-cat-' + g.id
+    }, /*#__PURE__*/React.createElement("h3", {
+      id: 'sc-cat-' + g.id,
+      className: "sc-cat-title"
+    }, g.label), /*#__PURE__*/React.createElement("p", {
+      className: "sc-sub sc-cat-desc"
+    }, g.desc, g.id === 'mcp' && scSafeUrl(data.mcp_about_url) && /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("a", {
+      className: "sc-link quiet",
+      href: data.mcp_about_url,
+      target: "_blank",
+      rel: "noreferrer noopener"
+    }, "What is MCP?"))), items.filter(i => i.category === g.id).map(it => /*#__PURE__*/React.createElement(SetupConnectionItem, {
+      key: it.id,
+      it: it,
+      open: open === it.id,
+      curated: data.curated_mcp,
+      onToggle: () => setOpen(open === it.id ? null : it.id),
+      onChanged: load,
+      onSkip: () => skip(it)
+    })), later.length > 0 && /*#__PURE__*/React.createElement("details", {
+      className: "sc-soon"
+    }, /*#__PURE__*/React.createElement("summary", null, "Coming soon (", later.length, ")"), /*#__PURE__*/React.createElement("ul", {
+      className: "sc-perms"
+    }, later.map(s => /*#__PURE__*/React.createElement("li", {
+      key: s.id
+    }, /*#__PURE__*/React.createElement("strong", null, s.label), ": ", s.note)))));
+  }));
 }
 // The secure key form, opened by a `key_form` action (services/pasted_secrets):
 // a key withheld from a chat message, one the chat box stopped before sending,
@@ -51632,8 +51946,11 @@ function SetupChat({
     }, /*#__PURE__*/React.createElement("h2", {
       tabIndex: -1,
       "data-sc-focus": ""
-    }, "Connect everything"), /*#__PURE__*/React.createElement(SetupConnectionsPanel, {
-      highlight: highlight
+    }, "Connect your services"), /*#__PURE__*/React.createElement(SetupConnectionsPanel, {
+      highlight: highlight,
+      onLocalOnly: () => answer({
+        action: 'local_only'
+      }, '')
     }));
   } else if (card === 'basics') {
     cardEl = /*#__PURE__*/React.createElement(SetupBasicsCard, {
@@ -60362,8 +60679,9 @@ function ProviderStatusDot({
     color = '#555';
     title = 'disabled';
   } else if (!prov.available) {
-    color = '#f59e0b';
-    title = 'needs attention (no key)';
+    // Never set up is not a fault: grey, "not connected", no warning colour.
+    color = '#555';
+    title = 'not connected';
   } else if (avail === 'ok' || avail === 'unknown') {
     color = '#00ff80';
     title = avail === 'ok' ? 'healthy' : 'ready';
@@ -63523,14 +63841,19 @@ function SettingsWS() {
   // 'phone' opens Connections scrolled to the Phone section.
   const [shownSection, setShownSection] = useState('');
   const [shownRow, setShownRow] = useState('');
+  // "Connect OpenRouter" (voice, a notice, a link): the Connections tab opens
+  // that service's card with its secure field focused.
+  const [connectFocus, setConnectFocus] = useState('');
   useTabState('settings', () => ({
     tab,
     section: shownSection,
-    row: shownRow
+    row: shownRow,
+    connect: connectFocus
   }));
   useNavTarget('settings', t => {
     if (!t || !t.tab && !t.section) return;
     if (t.tab) setTab(settingsTabId(t.tab));
+    if (t.connect) setConnectFocus(String(t.connect));
     setShownSection('');
     setShownRow('');
     // A row with a stable path: outlined once the tab has drawn it, and again while its panels load.
@@ -63701,7 +64024,12 @@ function SettingsWS() {
   }), /*#__PURE__*/React.createElement(SettingsNotificationMutes, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
-  }), tab === 'connections' && /*#__PURE__*/React.createElement(React.Fragment, null, window.MediaChannelsSettings ? /*#__PURE__*/React.createElement(window.MediaChannelsSettings, null) : null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), tab === 'connections' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(StSection, {
+    title: "Connect your services",
+    desc: "AI models, creative tools, search, your accounts and any MCP server. All optional; the same screen setup shows."
+  }, /*#__PURE__*/React.createElement(SetupConnectionsPanel, {
+    highlight: connectFocus || null
+  })), window.MediaChannelsSettings ? /*#__PURE__*/React.createElement(window.MediaChannelsSettings, null) : null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {

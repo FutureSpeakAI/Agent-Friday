@@ -986,6 +986,10 @@ def _health_payload():
             "encryption_enabled": _vault_state.get("enabled", False),
             "warning": _vault_warning,
         },
+        # Stores Friday cannot open or cannot vouch for (services/
+        # integrity_report): an encrypted file no known key opens, a broken
+        # memory tamper-check. Counts and kinds only.
+        "data_integrity": _data_integrity(),
         "governance": {
             "enabled": True,
             "version": "v4.4",
@@ -1112,6 +1116,8 @@ def _kick_stale_catalog_refresh(cat_meta):
             try:
                 from agent_friday.services.hosted_catalog import refresh
                 result = refresh(name)
+                if result.get("status") in ("no_key", "not_connected"):
+                    return      # a provider nobody connected: nothing to say
                 print(f"  [CATALOG] background refresh {name}: "
                       f"{result.get('status')} ({result.get('count', 0)} models)")
             except Exception as e:
@@ -2389,3 +2395,13 @@ def analyze_file():
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't analyze the file", 200, shape="bare", key="analysis", filename=filename)
+
+
+def _data_integrity() -> dict:
+    try:
+        from agent_friday.services import integrity_report
+        return integrity_report.health_field()
+    except Exception as e:  # never fail health; say the check itself failed
+        return {"ok": False, "problems": [{"store": "integrity_report",
+                "state": "check_failed", "records": None,
+                "message": "Friday could not run its data checks (%s)." % type(e).__name__}]}

@@ -1248,10 +1248,23 @@ def get_genai_client():
             if GEMINI_API_KEY:
                 _genai_client = genai.Client(api_key=GEMINI_API_KEY)  # pragma: allowlist secret
             else:
-                print("  [FRIDAY] WARNING: No GEMINI_API_KEY set. Creative endpoints disabled.")
+                # Not connected is not an error: Gemini is optional, and the
+                # surfaces that need it say so in Settings > Connections. Said
+                # once, at debug, never to the console.
+                _genai_absent_once("no Gemini key connected; Gemini features are off")
         except ImportError:
-            print("  [FRIDAY] WARNING: google-genai not installed. Creative endpoints disabled.")
+            _genai_absent_once("google-genai is not installed; Gemini features are off")
     return _genai_client
+
+
+_GENAI_ABSENT_SAID: set = set()
+
+
+def _genai_absent_once(why: str) -> None:
+    if why in _GENAI_ABSENT_SAID:
+        return
+    _GENAI_ABSENT_SAID.add(why)
+    logging.getLogger("friday.core").debug("%s", why)
 
 
 # ── ElevenLabs (text-to-speech) ────────────────────────────────

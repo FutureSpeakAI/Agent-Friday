@@ -13663,42 +13663,16 @@ _MCP_REG_LOCK = threading.Lock()
 
 
 def _default_mcp_servers() -> dict:
-    """Seed config for ~/.friday/mcp_servers.json.
+    """Seed config for ~/.friday/mcp_servers.json: no servers.
 
-    Paths are derived from the user's home (never hardcoded) so this stays
-    portable and PII-free. The Gmail connector is enabled only when its built
-    entry point is actually present on disk; the Calendar entry ships disabled
-    with the npx invocation pre-filled so it's one flag away from running.
+    A fresh install has connected nothing, so it lists nothing. Gmail and
+    Calendar are the Google account connector (Settings > Connections), and
+    any MCP server the person wants is added there, by name, URL or command.
+    Seeding placeholder entries made every new install list two "configured"
+    servers the person never asked for, one of them pointing at a developer's
+    local checkout.
     """
-    home = Path.home()
-    servers: dict = {}
-
-    gmail_dist = home / "Projects" / "gmail-mcp-multi" / "dist" / "index.js"
-    servers["gmail"] = {
-        "command": "node",
-        "args": [str(gmail_dist)],
-        "env": {},
-        # Only auto-enable if the build exists; otherwise leave wired but off so
-        # boot never fails trying to spawn a missing file.
-        "enabled": gmail_dist.exists(),
-        "note": "gmail-mcp-multi (search/read/send/labels). Needs OAuth creds in "
-                "~/.gmail-mcp/ — run its `authenticate` tool or `npm run auth`.",
-    }
-
-    # Google Calendar — no local server is installed, so wire up the published
-    # npx package disabled-by-default. Flip "enabled": true after dropping a
-    # Google OAuth client JSON and pointing GOOGLE_OAUTH_CREDENTIALS at it.
-    servers["calendar"] = {
-        "command": "npx",
-        "args": ["-y", "@cocal/google-calendar-mcp"],
-        "env": {
-            "GOOGLE_OAUTH_CREDENTIALS": str(home / ".friday" / "credentials.json"),
-        },
-        "enabled": False,
-        "note": "@cocal/google-calendar-mcp via npx. Set enabled:true and ensure "
-                "GOOGLE_OAUTH_CREDENTIALS points at a valid Google OAuth client.",
-    }
-    return {"servers": servers}
+    return {"servers": {}}
 
 
 def _load_mcp_servers() -> dict:

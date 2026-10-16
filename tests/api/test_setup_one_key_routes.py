@@ -34,14 +34,14 @@ def test_the_checklist_names_the_one_key_in_use_and_says_it_is_enough(client, ho
     assert one["in_use"] == "openrouter" and one["sufficient"] is True
     assert "OpenRouter" in one["line"] and "enough" in one["line"]
     assert [lnk["url"] for lnk in one["links"]] == [
-        "https://console.anthropic.com/settings/keys", "https://openrouter.ai/keys"]
+        "https://platform.claude.com/settings/keys", "https://openrouter.ai/settings/keys"]
     ai = [it for it in d["items"] if it["group"] == "ai" and it["id"] != "local"]
     assert [it["id"] for it in ai[:2]] == ["provider:anthropic", "provider:openrouter"]
     orow = ai[1]
     assert orow["connect"]["verify"] == "/api/setup/verify-key/openrouter"
-    assert orow["connect"]["signup_url"] == "https://openrouter.ai/keys"
+    assert orow["connect"]["signup_url"] == "https://openrouter.ai/settings/keys"
     assert "enough" in orow["detail"]
-    assert ai[0]["connect"]["signup_url"] == "https://console.anthropic.com/settings/keys"
+    assert ai[0]["connect"]["signup_url"] == "https://platform.claude.com/settings/keys"
     assert FAKE_OR not in json.dumps(d)
 
 

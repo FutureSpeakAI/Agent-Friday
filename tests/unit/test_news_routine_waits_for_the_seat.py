@@ -86,6 +86,11 @@ def test_a_parked_seat_makes_the_run_wait_with_the_reason(monkeypatch):
 
 
 def test_the_catch_up_runs_as_soon_as_the_seat_is_back(monkeypatch):
+    # A catch-up belongs to the day it was marked, so "five minutes later" must
+    # stay on that day: the scheduler's clock is held at midday, wherever the
+    # suite happens to run near midnight.
+    noon = s._now_central().replace(hour=12, minute=0, second=0, microsecond=0)
+    monkeypatch.setattr(s, "_now_central", lambda: noon)
     seat = _Seat(monkeypatch, serving=False, parked=True)
     calls = []
     _register(monkeypatch, "t_fp2", lambda: calls.append(1) or {"ok": True})

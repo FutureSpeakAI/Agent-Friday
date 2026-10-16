@@ -128,7 +128,7 @@ from flask import Blueprint as _Blueprint
 ROUTE_MODULES = [
     'actions', 'agent_workspaces', 'activity', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
     'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code', 'compute',
-    'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_routes', 'desktop',
+    'connect_services', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'inbox_cleanup', 'insights',
     'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'learning', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_proposals',
@@ -1319,6 +1319,13 @@ if __name__ == '__main__':
         _la.boot(_port)
     except Exception as _la_err:
         print(f"  Local address: skipped ({_la_err})")
+    # Say out loud, once, any store Friday cannot open or cannot vouch for
+    # (services/integrity_report): log, /api/health and one Needs-you card.
+    try:
+        from agent_friday.services import integrity_report as _ir
+        _ir.check_after_boot()
+    except Exception as _ir_err:
+        print(f"  Data integrity: check unavailable ({_ir_err})")
     # Deliberately after the boot-guard thread and before app.run(): the warm
     # waits on its own, so this only registers the intention.
     try:
