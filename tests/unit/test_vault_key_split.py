@@ -337,13 +337,16 @@ def test_a_failed_keep_aborts_the_save_and_the_clear(kg, monkeypatch):
     layout = kg.dir / "layout.json"
     layout.write_text("{}", encoding="utf-8")
 
-    real_write = Path.write_bytes
+    # The kept copy is written through the vault's durable writer; a failure
+    # there is what a full disk looks like to the keep.
+    from agent_friday.services import vault_passphrase as vp
+    real_durable = vp._durable_write
 
-    def failing_write(self, data):
-        if ".kept-" in self.name:
+    def failing_durable(path, data):
+        if ".kept-" in Path(path).name:
             raise OSError("disk full")
-        return real_write(self, data)
-    monkeypatch.setattr(Path, "write_bytes", failing_write)
+        return real_durable(path, data)
+    monkeypatch.setattr(vp, "_durable_write", failing_durable)
 
     store = kg.st.KnowledgeGraphStore(kg.dir)
     out = store.save("entities", [{"id": "x", "provenance": {"sensitivity": 3}}])
