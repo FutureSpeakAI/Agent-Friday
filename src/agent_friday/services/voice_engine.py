@@ -1951,7 +1951,18 @@ def _voice_tool_run(name, args, send_client, session=None, owner_utterance=False
     from agent_friday.services.agent import _execute_tool
 
     def _governed(tool, fn, a):
-        return _execute_tool(tool, a, handler=fn, session_ctx=_ctx())
+        c = _ctx()
+        if owner_utterance:
+            # The rule layer's call on the owner's own words: not text a cloud
+            # seat authored, so the search gates keep their ordinary policy.
+            return _execute_tool(tool, a, handler=fn, session_ctx=c)
+        # Voice parity with the chat loops: a cloud voice seat's search query
+        # is its own text (owner decision (a), privacy/public_query). The
+        # mark records `a` as the seat sent it; only those exact strings are
+        # floor-only at the search gates.
+        from agent_friday.privacy.public_query import for_tool_call as _pq_call
+        with _pq_call(c.get("provider", "cloud"), "", tool, a):
+            return _execute_tool(tool, a, handler=fn, session_ctx=c)
 
     try:
         from agent_friday.services import live_session_plan as _lsp

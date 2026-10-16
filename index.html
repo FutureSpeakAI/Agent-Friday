@@ -64825,6 +64825,9 @@ function ApprovalCardBody({
     busy: busy,
     onDecide: onDecide
   });
+  // A search that shares text from the conversation (privacy/public_query):
+  // the exact text that would go out, where it goes, and Send / Don't send.
+  const pq = a && a.payload && a.payload.public_query;
   return /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -64840,12 +64843,33 @@ function ApprovalCardBody({
       color: '#ddd'
     }
   }, a.title), a.action_description && /*#__PURE__*/React.createElement("div", {
-    style: {
+    "data-testid": pq ? "public-query-text" : undefined,
+    style: pq ? {
+      fontSize: 11,
+      color: '#ddd',
+      marginTop: 4,
+      fontFamily: "'JetBrains Mono', monospace",
+      whiteSpace: 'pre-wrap',
+      overflowWrap: 'anywhere'
+    } : {
       fontSize: 11,
       color: '#999',
       marginTop: 2
     }
-  }, a.action_description), fridayIsBatchCard(a) && /*#__PURE__*/React.createElement("ul", {
+  }, a.action_description), pq && /*#__PURE__*/React.createElement("div", {
+    "data-testid": "public-query-engine",
+    style: {
+      fontSize: 11,
+      color: '#b8c7dc',
+      marginTop: 4
+    }
+  }, "Goes to: ", pq.engine), pq && a.description && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#7f93ad',
+      marginTop: 4
+    }
+  }, a.description), fridayIsBatchCard(a) && /*#__PURE__*/React.createElement("ul", {
     "data-testid": "batch-lines",
     style: {
       fontSize: 11,
@@ -64889,7 +64913,7 @@ function ApprovalCardBody({
     },
     disabled: !!busy,
     onClick: () => onDecide(a.approval_id, 'approve')
-  }, "Approve"), /*#__PURE__*/React.createElement("button", {
+  }, pq ? "Send" : "Approve"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11,
@@ -64898,7 +64922,7 @@ function ApprovalCardBody({
     },
     disabled: !!busy,
     onClick: () => onDecide(a.approval_id, 'deny')
-  }, "Deny")));
+  }, pq ? "Don't send" : "Deny")));
 }
 // The popup: on every page, whatever is open or focused, as long as a card is
 // waiting. "Later" folds it in this page only, to a pill on the desktop and the

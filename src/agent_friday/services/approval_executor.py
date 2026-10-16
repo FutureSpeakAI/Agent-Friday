@@ -133,10 +133,16 @@ def _on_decision(record: dict) -> None:
     if record.get("kind") == "tool_confirm":
         from agent_friday.services.agent import clear_confirmation_card
         clear_confirmation_card(record.get("approval_id"))
+    payload = record.get("payload") or {}
+    if record.get("status") == "denied" and isinstance(payload.get("public_query"), dict):
+        # Don't send on a search card (privacy/public_query): nothing runs, and
+        # the conversation that asked is told so in plain words. No query text.
+        _post_back(record, "You chose Don't send on the search card. Nothing "
+                           "was sent to %s."
+                   % (payload["public_query"].get("engine") or "the search engine"))
     if record.get("status") != "approved":
         return                                  # denied, expired, blocked: nothing runs
 
-    payload = record.get("payload") or {}
     tool = payload.get("tool")
     args = payload.get("input")
     if not tool or not isinstance(args, dict):
@@ -172,7 +178,12 @@ def _on_decision(record: dict) -> None:
            "conversation_id": payload.get("conversation_id") or ""}
     started = time.time()
     try:
-        result = _run_tool(tool, args, session_ctx=ctx)
+        # An approved search card (privacy/public_query): exactly the strings
+        # the card showed are floor-only at the search gates while it runs.
+        # Any other card: a no-op.
+        from agent_friday.privacy.public_query import approved_scope
+        with approved_scope(payload):
+            result = _run_tool(tool, args, session_ctx=ctx)
         from agent_friday.services.completion_receipts import receipt_ok
         ok = receipt_ok({"name": tool, "result": result})
         if tool == "navigate" and str(result).startswith("NAV_OK:"):
