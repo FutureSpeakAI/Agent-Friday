@@ -2787,6 +2787,16 @@ def _front_persona_style(style):
     return (cut[:end + 1] if end > 200 else cut.rstrip()).strip()
 
 
+def _front_privacy_block():
+    """The privacy policy in force (services/privacy_policy_summary), read from
+    the live settings when the prompt is built. Never raises."""
+    try:
+        from agent_friday.services.privacy_policy_summary import summary
+        return summary() + "\n"
+    except Exception:
+        return ""
+
+
 def _front_prompt_budget(contract, model_label):
     """Tokens the front's standing prompt may cost, or None when the contract
     carries no declarations to measure (see voice_front.system_budget_tokens)."""
@@ -2824,6 +2834,7 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
     from agent_friday.services.voice_delivery import front_instruction
     names = list((contract or {}).get("names") or [])
     label = model_label or "a small local model"
+    privacy_block = _front_privacy_block()
     style = ""
     try:
         style = _front_persona_style(_get_voice_style_prompt() or "")
@@ -2846,6 +2857,7 @@ def _build_front_system_prompt(settings=None, contract=None, model_label=None):
             "Never state that an action succeeded unless the tool result in this "
             "turn says so. A withheld, failed, or missing result is reported as "
             "exactly that.\n"
+            + privacy_block
             + _named(VOICE_FRONT_HANDOFF_RULE, settings)
             + VOICE_FRONT_NEWS_RULE + "\n"
             + VOICE_FRONT_TOOL_RULE
@@ -2954,6 +2966,7 @@ def _build_front_speaker_prompt(settings=None, model_label=None):
         "Never state that an action succeeded unless the tool result in this "
         "turn says so. A withheld, failed, or missing result is reported as "
         "exactly that.\n"
+        + _front_privacy_block()
         + VOICE_SPEAKER_RULE
         + "== WHAT YOU KNOW (a digest; your deeper mind holds your full memory) ==\n"
         + voice_context_digest.build(settings, budget_tokens=SPEAKER_DIGEST_TOKENS, front=True)
