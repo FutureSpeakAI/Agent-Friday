@@ -153,6 +153,10 @@ def list_wiki_pages(wiki_dir: Optional[Path] = None) -> list[Path]:
         rel_parts = p.relative_to(root).parts
         if any(part in SKIP_DIRS for part in rel_parts):
             continue
+        # A dot segment (.trash, notes/.draft.md) is not a page: the wiki
+        # routes refuse such paths, so the index does not list them either.
+        if any(part.startswith(".") for part in rel_parts):
+            continue
         if p.stem.startswith("_"):        # _index.md and friends: generated
             continue
         if len(rel_parts) == 1 and p.stem.upper() == "README":

@@ -28,17 +28,17 @@
    "id": "settings.toggle_setting",
    "action": "settings.toggle_setting",
    "group": "settings",
-   "ui": {"control": "toggle / set a setting (meeting retention is owner-only)"},
+   "ui": {"control": "toggle / set a setting (meeting retention is owner-only); show / hide a workspace in the dock (settings.display.dock.<ws>: done at once with an Undo unless the owner chose ask first)"},
    "tool": "set_setting",
    "also_tools": [],
    "gate": {"class": "internal", "ring": 1, "card": "none"},
    "laya_tier": "model_only",
-   "phrasings": ["turn off the morning briefing"],
+   "phrasings": ["turn off the morning briefing", "show the Trust workspace in the dock", "hide Finance from the dock", "which workspaces are hidden from the dock"],
    "deictic": [],
    "undo": null,
    "voice": {"live": false, "shared": true},
    "quiet_result": null,
-   "eval": []
+   "eval": ["tests/unit/test_set_setting_dock.py::test_showing_a_hidden_workspace_waits_for_the_yes_then_the_dock_shows_it", "tests/unit/test_owner_choices.py::test_showing_a_workspace_by_asking_is_done_at_once_with_an_undo"]
   },
   {
    "id": "settings.model_provider",
@@ -148,6 +148,9 @@
   }
  ],
  "not_for_laya": [
+  {"action": "settings.owner_choices", "kind": "by_design", "reason": "These are the owner's standing decisions, asked once at first run; Friday follows them and never changes them on its own word."},
+  {"action": "settings.mail_default_account", "kind": "by_design", "reason": "The account a new draft goes to when none is named is the owner's choice (Connections > Google accounts); Friday asks when it is unset."},
+  {"action": "settings.preapproved_sends", "kind": "by_design", "reason": "A pre-approval is the owner's own decision: no tool may make, widen, re-approve or revoke one, or let voice use them; a skill's needs are approved as seen."},
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
   {
    "action": "settings.local_voice_measure",
@@ -173,6 +176,26 @@
    "action": "settings.interruptions",
    "kind": "by_design",
    "reason": "The interruption limit, quiet-hour times and Focus Assist are the owner's to loosen; by voice Laya can only quiet things (quiet until morning)."
+  },
+  {
+   "action": "settings.core_memory_card",
+   "kind": "by_design",
+   "reason": "The memory card is the owner's view of what Friday keeps; Friday reads it in every prompt and lists it with update_core_memory show."
+  },
+  {
+   "action": "settings.core_memory_line",
+   "kind": "by_design",
+   "reason": "Adding, editing and deleting a line is the owner's control over their own data; Friday's own path is update_core_memory, carded when tainted."
+  },
+  {
+   "action": "settings.core_memory_review",
+   "kind": "by_design",
+   "reason": "Only the owner keeps or discards a suggestion from dreaming or the background review; no model approves its own suggestion."
+  },
+  {
+   "action": "settings.core_memory_undo",
+   "kind": "by_design",
+   "reason": "Undoing a change Friday made to her memory is the owner's correction; Laya never runs it."
   },
   {
    "action": "settings.laya_report",

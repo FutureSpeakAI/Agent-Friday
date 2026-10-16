@@ -439,7 +439,15 @@ except Exception:
     pass
 
 
-def _conv_context(cid, limit=None):
+#: Stands in for the reply a stored message never got, so the next turn's model
+#: sees the message, sees that it was not answered, and the roles still alternate.
+_NO_REPLY_NOTE = "[No reply was given to this message: the turn did not complete.]"
+
+#: A user row whose turn has not (yet) produced a reply.
+_UNANSWERED_STATUSES = ("received", "unanswered")
+
+
+def _conv_context(cid, limit=None, exclude_id=None):
     """This conversation's replayable turns — never another conversation's.
 
     The window starts where `_history_start` says: by token budget, in whole
@@ -449,26 +457,68 @@ def _conv_context(cid, limit=None):
     against 0.43 s when the prefix held). The budget walks back from the
     newest row and the start is deterministic in the stored rows, so it is
     the same after a restart. `limit` is an optional hard cap on top.
+
+    `exclude_id` is the running turn's own user row (stored when the turn was
+    accepted); the caller appends that message itself. A user row whose turn
+    never produced a reply stays in the context, followed by `_NO_REPLY_NOTE`.
     """
     from agent_friday.services import conversations as _conv
     rows = _conv.messages(cid)
     rows = rows[_history_start(rows):]
     if limit:
         rows = rows[-int(limit):]
+    # System lines (seat changes, interruption notices) are transparency
+    # surfaces, not conversation, and are never replayed into model context.
+    rows = [m for m in rows if m.get('role') not in ('system', 'system_report')
+            and not (exclude_id and m.get('id') == exclude_id)]
     out = []
-    for m in rows:
-        # System lines (seat changes, interruption notices) are transparency
-        # surfaces, not conversation, and are never replayed into model context.
-        if m.get('role') in ('system', 'system_report'):
-            continue
+    for i, m in enumerate(rows):
         role = 'user' if m.get('role') == 'user' else 'assistant'
         text = m.get('text') or ''
         if text:
             if role == 'assistant' and (m.get('meta') or {}).get('library'):
                 # A reply that read the Library is recognised wherever history is replayed or summarised.
                 _library_cite.remember_library_reply(text)
+            if role == 'assistant':
+                text = _with_receipts(text, (m.get('meta') or {}).get('receipts'))
             out.append({"role": role, "content": text})
+            nxt = rows[i + 1] if i + 1 < len(rows) else None
+            if (role == 'user'
+                    and (m.get('meta') or {}).get('status') in _UNANSWERED_STATUSES
+                    and (nxt is None or nxt.get('role') == 'user')):
+                out.append({"role": "assistant", "content": _NO_REPLY_NOTE})
     return out
+
+
+def _with_receipts(text, receipts):
+    """An earlier assistant turn as the model reads it: the one-line record of
+    what its tools actually did, then what it said. Without the line a later
+    turn sees only the words, and cannot tell "I added it" from a refused
+    write (services/completion_receipts.receipt_line)."""
+    try:
+        from agent_friday.services.completion_receipts import receipt_line
+        line = receipt_line(receipts)
+    except Exception:
+        line = ""
+    return (line + "\n" + text) if line else text
+
+
+def _turn_receipts(*traces, pii_lookup=None):
+    """The compact receipts this turn keeps in its assistant message's meta:
+    every tool call of every attempt, each once."""
+    seen, merged = set(), []
+    for trace in traces:
+        for entry in (trace or []):
+            if id(entry) in seen:
+                continue
+            seen.add(id(entry))
+            merged.append(entry)
+    try:
+        from agent_friday.services.completion_receipts import compact_receipts
+        clean = (lambda t: _rehydrate_pii(t, pii_lookup)) if pii_lookup else None
+        return compact_receipts(merged, clean=clean)
+    except Exception:
+        return []
 
 
 def _offer_turn_response(message, text, offer, *, conversation_id, workspace='',
@@ -503,9 +553,133 @@ def _offer_turn_response(message, text, offer, *, conversation_id, workspace='',
     return jsonify(body)
 
 
-def _persist_turn(cid, user_msg, friday_msg, meta=None):
-    """Write a completed exchange to its conversation (and the legacy mirror)."""
+#: The user row a request stored when its turn was accepted. On the WSGI
+#: environ for the same reason as _PASTED_KEYS_ENV: /api/chat/stream runs
+#: chat() on a worker thread under a copied request context, which shares the
+#: request's environ but not flask.g.
+_ACCEPTED_ENV = "friday.accepted_user_msg"
+
+_CLIENT_ID_UNSAFE = re.compile(r"[^A-Za-z0-9_.:-]")
+
+
+def _client_message_id(data):
+    """The stored id of the owner's message, from the client's own id.
+
+    `client_msg_id` when the client sends one, else its `turn_id`; the client
+    reuses the id when it resends the same message, which is what lets the
+    store recognise a resend. None when the client sent neither.
+    """
+    data = data or {}
+    raw = str(data.get('client_msg_id') or data.get('turn_id') or '').strip()
+    safe = _CLIENT_ID_UNSAFE.sub('', raw)[:80]
+    return ('u-' + safe) if safe else None
+
+
+def _accepted_turn():
+    try:
+        return request.environ.get(_ACCEPTED_ENV)
+    except Exception:
+        return None
+
+
+def _accept_user_message(data):
+    """Store the owner's words the moment the turn is accepted.
+
+    The user row is written before any model runs, with meta.status
+    "received", so a turn that fails, or a process that dies mid-turn, still
+    leaves the message in the conversation and in the next turn's context.
+    `_persist_turn` completes the same row ("answered") instead of writing a
+    second one; `_settle_accepted_turn` marks it "unanswered" when the turn
+    ends without a reply.
+
+    A resend is not a second message: the same client id, or the same text
+    as the conversation's last message when that one was never answered,
+    reuses the stored row. Idempotent per request.
+    """
+    env = request.environ
+    if _ACCEPTED_ENV in env:
+        return env[_ACCEPTED_ENV]
+    data = data or {}
+    message = data.get('message')
+    if not isinstance(message, str) or not message.strip():
+        return None
     from agent_friday.services import conversations as _conv
+    from agent_friday.services import conversation_provenance as _prov
+    cid = _conv_id_from(data)
+    mid = _client_message_id(data)
+    try:
+        existing = _conv.find(cid, mid) if mid else None
+        if existing is None:
+            last = next((m for m in reversed(_conv.messages(cid))
+                         if m.get('role') not in ('system', 'system_report')), None)
+            if (last is not None and last.get('role') == 'user'
+                    and (last.get('meta') or {}).get('status') in _UNANSWERED_STATUSES
+                    and (last.get('text') or '') == message and last.get('id')):
+                existing = last
+        if existing is not None:
+            mid = existing['id']
+            _conv.set_meta(cid, mid, status="received")
+            for _m in reversed(CHAT_HISTORY):
+                if _m.get('id') == mid:
+                    _m['status'] = 'received'
+                    break
+        else:
+            mid = mid or str(uuid.uuid4())
+            _settings = _load_settings() or {}
+            _pmeta = _prov.chat_turn_meta(bool(_settings.get('off_record')))
+            _conv.append(cid, {"id": mid, "role": "user", "text": message,
+                               "pinned": False,
+                               "meta": dict(_pmeta, kind="turn", status="received")})
+            _mirror = {'id': mid, 'timestamp': datetime.now().isoformat(),
+                       'role': 'user', 'text': message, 'pinned': False,
+                       'sources': [], 'workspace': data.get('workspace', '') or '',
+                       'conversation_id': cid, 'status': 'received'}
+            if _prov.stops_storage(_settings):
+                _mirror['off_record'] = True
+            CHAT_HISTORY.append(_mirror)
+            try:
+                _save_chat_history(CHAT_HISTORY)
+            except Exception:
+                pass
+    except Exception as _e:
+        print(f"  [conversations] could not store the message on accept in {cid}: {_e}")
+        return None
+    rec = {"cid": cid, "id": mid, "answered": False,
+           "resent": existing is not None}
+    env[_ACCEPTED_ENV] = rec
+    return rec
+
+
+def _settle_accepted_turn():
+    """The turn ended without `_persist_turn`: its message stays, "unanswered"."""
+    rec = _accepted_turn()
+    if not rec or rec.get("answered") or rec.get("settled"):
+        return
+    rec["settled"] = True
+    try:
+        from agent_friday.services import conversations as _conv
+        _conv.set_meta(rec["cid"], rec["id"], status="unanswered")
+    except Exception as _e:
+        print(f"  [conversations] could not mark {rec.get('id')} unanswered: {_e}")
+    for _m in reversed(CHAT_HISTORY):
+        if _m.get('id') == rec["id"]:
+            _m['status'] = 'unanswered'
+            break
+
+
+def _persist_turn(cid, user_msg, friday_msg, meta=None):
+    """Write a completed exchange to its conversation (and the legacy mirror).
+
+    When the request's message was stored on accept (`_accept_user_message`),
+    that row is completed rather than written again.
+    """
+    from agent_friday.services import conversations as _conv
+    _acc = _accepted_turn()
+    _reuse = bool(_acc and not _acc.get("answered") and (not cid or _acc.get("cid") == cid))
+    if _reuse:
+        cid = _acc["cid"]
+        _acc["answered"] = True
+        user_msg['id'] = _acc["id"]
     from agent_friday.services import conversation_provenance as _prov
     _settings = _load_settings() or {}
     # Which provider received this exchange, so a later call knows what it
@@ -529,10 +703,13 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     except Exception as _e:
         print(f"  [artifacts] fenced block not absorbed: {_e}")
     try:
-        _conv.append(cid, {"id": user_msg.get('id'), "role": "user",
-                           "text": user_msg.get('text') or '',
-                           "pinned": bool(user_msg.get('pinned')),
-                           "meta": dict(_pmeta, kind="turn")})
+        if _reuse:
+            _conv.set_meta(cid, user_msg['id'], status="answered")
+        else:
+            _conv.append(cid, {"id": user_msg.get('id'), "role": "user",
+                               "text": user_msg.get('text') or '',
+                               "pinned": bool(user_msg.get('pinned')),
+                               "meta": dict(_pmeta, kind="turn")})
         _conv.append(cid, {"id": friday_msg.get('id'), "role": "friday",
                            "text": friday_msg.get('text') or '',
                            "pinned": bool(friday_msg.get('pinned')),
@@ -556,7 +733,14 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
                 _m['off_record'] = True
         except Exception:
             pass
-    CHAT_HISTORY.append(user_msg)
+    _mirrored = None
+    if _reuse:
+        _mirrored = next((m for m in reversed(CHAT_HISTORY)
+                          if m.get('id') == user_msg['id']), None)
+    if _mirrored is not None:
+        _mirrored['status'] = 'answered'
+    else:
+        CHAT_HISTORY.append(user_msg)
     CHAT_HISTORY.append(friday_msg)
 
 
@@ -650,6 +834,25 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
         "You chose %s for the reasoning seat, but it is not installed on this "
         "machine; this turn was answered by %s instead. Install %s or pick an "
         "installed model in the seat picker." % (chosen, actual, chosen))
+
+
+def _record_answering(model, seat, gen, workspace, conversation_id, route_info,
+                      conv_seat=None):
+    """The model that answered this reply, for the Models card's one truth
+    (services/answer_truth). No message text leaves this function."""
+    try:
+        from agent_friday.services import answer_truth as _at
+        _why = ''
+        if isinstance(conv_seat, dict) and str(conv_seat.get('model') or '').strip():
+            # A model chosen for this chat outranks the routing mode: say so.
+            _why = 'the model chosen for this chat (%s)' % str(conv_seat['model']).strip()
+        elif isinstance(route_info, dict):
+            _why = str(route_info.get('reason') or route_info.get('why') or '')
+        _at.record(model, seat=seat,
+                   provider=((gen or {}).get('provider') if isinstance(gen, dict) else None),
+                   workspace=workspace, conversation_id=conversation_id, why=_why)
+    except Exception as _ae:
+        print(f"  [chat] answering-model record skipped: {_ae}")
 
 
 def _explicit_local_pick(conv_seat, routed_model):
@@ -1005,6 +1208,13 @@ def chat_stream():
     _turn_id = (str((request.get_json(silent=True) or {}).get('turn_id') or '')
                 .strip() or uuid.uuid4().hex[:12])
 
+    # The owner's message is stored before the turn starts, and the `started`
+    # frame says so: a client that saw it knows the server has the message.
+    try:
+        _accepted = _accept_user_message(request.get_json(silent=True) or {})
+    except Exception:
+        _accepted = None
+
     _tid = "tr_" + uuid.uuid4().hex[:16]
     q.put(("trace", _tid))
     try:
@@ -1038,6 +1248,7 @@ def chat_stream():
             except Exception:
                 pass
         finally:
+            _settle_accepted_turn()
             _crew_runtime.HOST_ORIGIN.reset(_crew_token)
             _PILOT_OFF_RECORD.reset(_pilot_privacy_token)
             try:
@@ -1063,7 +1274,9 @@ def chat_stream():
         # dropped connection, re-POST the whole turn to /api/chat -- running and
         # billing it twice. A turn id it can poll instead is the difference
         # between recovering and repeating.
-        yield "data: " + json.dumps({"started": True, "turn_id": _turn_id}) + SEP
+        yield "data: " + json.dumps({"started": True, "turn_id": _turn_id,
+                                     "accepted": bool(_accepted),
+                                     "message_id": (_accepted or {}).get("id")}) + SEP
         while True:
             try:
                 kind, val = q.get(timeout=_STREAM_KEEPALIVE_S)
@@ -1108,6 +1321,38 @@ def _ag_tools_for_turn(workspace, conversation_id):
     the hub's when the chat is in the hub (services/agent.tools_for_workspace)."""
     from agent_friday.services.agent import tools_for_workspace as _tfw
     return _tfw(workspace, conversation_id=conversation_id)
+
+
+#: The heading _build_memory_context_block puts over recalled conversations
+#: (the live-state block it may also return is Friday's own state, not recall).
+_RECALL_MARKER = "== RELEVANT PAST CONVERSATIONS"
+_RECALL_WHY = "this turn's prompt carried recalled past conversations"
+
+
+def _note_recall_turn(session_id, conversation_id):
+    try:
+        from agent_friday.governance import outside_content as _oc
+        key = f"conversation:{conversation_id}" if conversation_id else session_id
+        _oc.note_turn({"taint_key": key, "session_id": session_id,
+                       "conversation_id": conversation_id}, _RECALL_WHY)
+    except Exception:
+        pass
+
+
+def _end_grant_turn(sess_ctx, session_id, conversation_id):
+    """The turn is over, however it ended (an instant reply returns before
+    the turn's context exists): a skill read in it stops counting as in use
+    for its send pre-approval, and what counted as outside content for this
+    turn only is forgotten (governance/send_grants, outside_content)."""
+    try:
+        from agent_friday.governance import send_grants as _sg_end
+        _sg_end.end_turn(sess_ctx or {})
+        if session_id or conversation_id:
+            _sg_end.end_turn({"session_id": session_id, "conversation_id": conversation_id,
+                              "taint_key": (f"conversation:{conversation_id}"
+                                            if conversation_id else session_id)})
+    except Exception:
+        pass
 
 
 @chat_bp.route('/api/chat', methods=['POST'])
@@ -1169,6 +1414,8 @@ def chat():
                 "error": "empty_message",
                 "sources": [], "tool_trace": [], "actions": [],
             }), 400
+        # The owner's words are stored now, before anything below can fail.
+        _accepted_id = (_accept_user_message(data) or {}).get("id")
         include_vision = data.get('includeVision', False)
         voice_mode = bool(data.get('voice_mode', False))
         # Source Production Mode — when true, Friday cites every factual claim
@@ -1435,7 +1682,7 @@ def chat():
         # char count is above the soft limit — older turns get summarised.
         # THIS conversation's history. Reading the global list here is what
         # let two open chats contaminate each other's context.
-        raw_history = _conv_context(_conversation_id)
+        raw_history = _conv_context(_conversation_id, exclude_id=_accepted_id)
         messages = _compress_trajectory(raw_history)
         # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
         # memory too -- including this assistant's own earlier answers -- so a
@@ -1502,7 +1749,11 @@ def chat():
                         threading.Timer(2.0, process_remove, args=(_comp_pid,)).start()
                     except Exception:
                         pass
-                    messages = compressor.compress(messages, model=_selected_model)
+                    from agent_friday.services.completion_receipts import (
+                        compress_keeping_receipts)
+                    messages = compress_keeping_receipts(
+                        lambda _m: compressor.compress(_m, model=_selected_model),
+                        messages)
             except Exception as _ce:
                 # Compression is best-effort — never block a chat on it.
                 print(f"  [HEADROOM] skipped: {_ce}")
@@ -1931,6 +2182,10 @@ def chat():
             except Exception:
                 return None
 
+        # What the household capture did with this message (set once the turn's
+        # context exists, below); its note rides in this turn's tail.
+        _household_note = {"text": ""}
+
         def _prep_for(provider, model=None):
             """The system prompt for `provider`, in two parts.
 
@@ -1996,7 +2251,9 @@ def chat():
             # prompt next conversation, so the head stays the same bytes.
             try:
                 from agent_friday.services.model_router import memory_head_blocks
-                head = head + memory_head_blocks(workspace, _conversation_id)
+                head = head + memory_head_blocks(
+                    workspace, _conversation_id, provider=provider, vault_control=vc,
+                    vault_fallback=_vault_cloud_fallback(), model=_prep_model)
             except Exception:
                 pass
             # What this chat's panel holds rides in the tail, with what this
@@ -2029,6 +2286,16 @@ def chat():
                 tail = tail + _plans.context_block(_conversation_id)
             except Exception:
                 pass
+            # An explicit "note this in my wiki" that no turn has carried out
+            # yet (services/unfinished_requests).
+            try:
+                from agent_friday.services import unfinished_requests as _unfinished
+                tail = tail + _unfinished.context_block(
+                    _conversation_id, exclude_id=_accepted_id)
+            except Exception:
+                pass
+            if _household_note["text"]:
+                tail = tail + "\n\n" + _household_note["text"] + "\n"
             if voice_mode:
                 # Constant while voice mode is on, so it belongs to the head;
                 # at its end, not its start, so it never moves the prefix.
@@ -2141,9 +2408,23 @@ def chat():
         # the confirmation gate is live, and grants a pending action when this
         # message is the user's "yes" to a question Friday asked last turn.
         _sess_ctx = prepare_confirmation_ctx(session_id, message, _sess_ctx)
+        if _RECALL_MARKER in (_mem_part or ""):
+            # Recalled past conversations are text Friday did not write in
+            # this turn and cannot vouch for: no pre-approved send this turn
+            # (governance/outside_content).
+            _sess_ctx["outside_in_prompt"] = _RECALL_WHY
         _confirmed_response = _confirmed_action_response(message, _sess_ctx)
         if _confirmed_response is not None:
             return _confirmed_response
+        # The owner stated household basics: say what happened to them in this
+        # turn's context, so the reply neither claims nor repeats the save.
+        _hh_note = str((_sess_ctx.get("household_capture") or {}).get("note") or "")
+        if _hh_note:
+            _household_note["text"] = _hh_note
+            try:
+                system_prompt, sources, pii_lookup = _prep_for(_provider)
+            except Exception:
+                pass
 
         # ── Safety net: local-first, no Anthropic key. ──
         # The router classifies every tool-enabled chat as TOOL_USE → cloud (and
@@ -2826,8 +3107,21 @@ def chat():
             friday_msg['seat_notice'] = _seat_notice
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
+        try:
+            from agent_friday.services import unfinished_requests as _unfinished
+            _note_saved = _unfinished.wrote_note(tool_trace)
+        except Exception:
+            _note_saved = False
+        _receipts_kept = _turn_receipts(
+            _integrity_meta.get('turn_trace'), tool_trace, pii_lookup=pii_lookup)
+        if _receipts_kept:
+            friday_msg['receipts'] = _receipts_kept
         _persist_turn(_conversation_id, user_msg, friday_msg,
-                      meta={'model': _seat_model, 'seat': _seat_class})
+                      meta={'model': _seat_model, 'seat': _seat_class,
+                            'note_saved': _note_saved,
+                            **({'receipts': _receipts_kept} if _receipts_kept else {})})
+        _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
+                          _route_info, locals().get('_conv_seat'))
 
         # ── Context log: append both turns unless off-record. ──
         if not settings.get('off_record'):
@@ -3012,12 +3306,14 @@ def chat():
         _LOG.exception("chat turn failed")
         return jsonify({"response": "[Friday offline] " + error_text(e, "Couldn't answer that message")})
     finally:
+        _settle_accepted_turn()
         _pilot_call(_pilot, "finish", error=_pilot_error,
                     outcome=_sess_ctx.get("_laya_pilot_outcome", _pilot_outcome))
         try:
             core.turn_end()
         except Exception:
             pass
+        _end_grant_turn(_sess_ctx, locals().get("session_id"), locals().get("_conversation_id"))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3313,8 +3609,14 @@ def chat_send():
             # else above, so a local seat's memory recall isn't scrubbed as
             # if it were headed to the cloud either.
             try:
+                _recall = _build_memory_context_block(message, _session_id)
+                if _RECALL_MARKER in (_recall or ""):
+                    # As in /api/chat: no pre-approved send in a turn whose
+                    # prompt carried recalled conversations. The prompt is
+                    # built inside the loop, so the turn is noted by key.
+                    _note_recall_turn(_session_id, _conversation_id)
                 _mem_block = (_slicer.gate_block(
-                                  "memory", _build_memory_context_block(message, _session_id),
+                                  "memory", _recall,
                                   name="relevant_past_conversations",
                                   marker="== RELEVANT PAST CONVERSATIONS")
                               + _slicer.gate_block(
@@ -3425,6 +3727,8 @@ def chat_send():
             if text:
                 if role == 'assistant' and msg.get('library'):
                     _library_cite.remember_library_reply(text)
+                if role == 'assistant':
+                    text = _with_receipts(text, msg.get('receipts'))
                 messages.append({"role": role, "content": text})
         # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
         # memory too -- including this assistant's own earlier answers -- so a
@@ -3522,6 +3826,7 @@ def chat_send():
             _seat_events, _seat_model, _seat_class = [], '', ''
         # Badge truth: prefer the ACTUAL generator over the configured seat.
         _fallback_chain = []
+        _gen = None
         try:
             if _attr2 is not None:
                 _gen = _attr2.last_generation()
@@ -3585,8 +3890,20 @@ def chat_send():
             friday_msg['fallback_chain'] = _fallback_chain
         if _send_seat_notice:
             friday_msg['seat_notice'] = _send_seat_notice
+        try:
+            from agent_friday.services import unfinished_requests as _unfinished
+            _note_saved = _unfinished.wrote_note(tool_trace)
+        except Exception:
+            _note_saved = False
+        _receipts_kept = _turn_receipts(_send_integrity.get('turn_trace'), tool_trace)
+        if _receipts_kept:
+            friday_msg['receipts'] = _receipts_kept
         _persist_turn(_conversation_id, user_msg, friday_msg,
-                      meta={'model': _seat_model, 'seat': _seat_class})
+                      meta={'model': _seat_model, 'seat': _seat_class,
+                            'note_saved': _note_saved,
+                            **({'receipts': _receipts_kept} if _receipts_kept else {})})
+        _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
+                          None, {'model': _conv_seat_model} if (_conv_seat_model or '').strip() else None)
 
         # Prune and save
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
@@ -3622,6 +3939,7 @@ def chat_send():
             core.turn_end()
         except Exception:
             pass
+        _end_grant_turn(_sess_ctx, locals().get("_session_id"), locals().get("_conversation_id"))
 
 
 @chat_bp.route('/api/chat/pin/<msg_id>', methods=['POST'])

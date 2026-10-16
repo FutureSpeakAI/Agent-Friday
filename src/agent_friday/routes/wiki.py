@@ -2,6 +2,7 @@
 import io
 import json
 import glob
+import logging
 import subprocess
 import base64
 import secrets
@@ -36,14 +37,22 @@ from agent_friday.services.model_router import (
 )  # noqa: E501
 from agent_friday.services.wiki_engine import (
     _apply_wiki_proposal,
+    apply_wiki_proposal_result,
+    decide_wiki_proposal,
+    preview_wiki_proposal,
+    wiki_proposal_preview,
+    WIKI_PROPOSAL_MODES,
     _delete_wiki_file,
     _load_pending_wiki,
     _mirror_wiki_file,
     _propose_wiki_update,
     _safe_wiki_path,
     _save_pending_wiki,
+    _PENDING_LOCK,
     VAULT_LOCKED_PLACEHOLDER,
+    wiki_path_hidden,
     wiki_read_text,
+    wiki_replace_in_page,
     wiki_write_text,
 )  # noqa: E501
 from agent_friday.routes._errors import log_failure
@@ -116,7 +125,8 @@ def wiki_structure():
                 page_entries = sorted(entries, key=lambda entry: entry.name)
             for entry in page_entries:
                 f = Path(entry.name)
-                if f.suffix not in ('.md', '.txt') or not entry.is_file(follow_symlinks=False):
+                if (f.suffix not in ('.md', '.txt') or entry.name.startswith('.')
+                        or not entry.is_file(follow_symlinks=False)):
                     continue
                 try:
                     metadata = entry.stat(follow_symlinks=False)
@@ -141,68 +151,92 @@ def wiki_structure():
 
 @wiki_bp.route('/api/wiki/update', methods=['POST'])
 def wiki_update():
-    """Agent or user proposes a wiki update. If auto=true, stored as pending; else applied immediately."""
+    """Change a page through the API. ``auto: true`` queues it for approval in
+    Knowledge; otherwise it is applied now.
+
+    No page of the owner's UI calls this: the editor saves and creates through
+    ``PUT /api/wiki/edit``. A caller here is a script or tool holding the
+    session token, so it is held to the Knowledge approve rule: an overwrite
+    or append of a page that exists applies only with the ``before_sha256`` of
+    the page as the caller showed it (SHA-256 of the page text with LF line
+    endings; see ``wiki_before_sha256``). Without it the answer is 409
+    ``stale`` carrying the page's current ``before_sha256``, and nothing is
+    written. An edit (``old_value``) and a new page apply as before."""
     data = request.get_json(force=True, silent=True) or {}
     file = data.get("file", "")
     section = data.get("section", "")
     old_value = data.get("old_value", "")
     new_value = data.get("new_value", "")
     reason = data.get("reason", "")
+    mode = str(data.get("mode") or "").strip().lower()
     auto = bool(data.get("auto"))
     if not file or new_value is None:
         return jsonify({"status": "error", "message": "file and new_value required"}), 400
     if _safe_wiki_path(file) is None:
         return jsonify({"status": "error", "message": "invalid wiki path"}), 400
+    if mode and mode not in WIKI_PROPOSAL_MODES:
+        return jsonify({"status": "error", "message": "mode must be one of "
+                        + ", ".join(WIKI_PROPOSAL_MODES)}), 400
     if auto:
-        pid = _propose_wiki_update(file, section, new_value, reason, old_value)
+        pid = _propose_wiki_update(file, section, new_value, reason, old_value, mode=mode)
         return jsonify({"status": "ok", "queued": True, "id": pid})
-    ok, msg = _apply_wiki_proposal({
+    res = apply_wiki_proposal_result({
         "file": file, "section": section, "old_value": old_value, "new_value": new_value,
-    })
-    if not ok:
-        return jsonify({"status": "error", "message": msg}), 400
-    return jsonify({"status": "ok", "applied": True})
+        "mode": mode,
+    }, before_sha256=data.get("before_sha256"), require_preview=True)
+    if res["status"] == "stale":
+        return jsonify(dict(res, status="stale")), 409
+    if not res["ok"]:
+        return jsonify(dict(res, status="error", result=res["status"])), 400
+    return jsonify(dict(res, status="ok", applied=True, result=res["status"]))
 
 
 @wiki_bp.route('/api/wiki/pending', methods=['GET'])
 def wiki_pending():
+    """Pending proposals, each with its ``preview`` (badge new/edit/append/
+    overwrite, headline, line counts, unified diff) so the row shows what
+    approving would do -- an overwrite never reads as an append."""
     items = [p for p in _load_pending_wiki() if p.get("status") == "pending"]
+    for p in items:
+        try:
+            p["preview"] = wiki_proposal_preview(p)
+        except Exception as e:  # noqa: BLE001 - the row still lists; the UI falls back by mode
+            logging.getLogger("friday.wiki").warning(
+                "wiki pending preview failed for %s: %s", p.get("id"), e)
     return jsonify({"status": "ok", "pending": items})
 
 
 @wiki_bp.route('/api/wiki/pending/<pid>/approve', methods=['POST'])
 def wiki_pending_approve(pid):
-    items = _load_pending_wiki()
-    target = None
-    for it in items:
-        if it.get("id") == pid:
-            target = it
-            break
-    if target is None:
-        return jsonify({"status": "not_found"}), 404
-    ok, msg = _apply_wiki_proposal(target)
-    if not ok:
-        return jsonify({"status": "error", "message": msg}), 400
-    target["status"] = "approved"
-    target["resolved"] = datetime.utcnow().isoformat() + "Z"
-    _save_pending_wiki(items)
-    return jsonify({"status": "ok", "approved": pid})
+    """Apply one proposal once. The JSON ``status`` is what happened:
+    applied (``already`` when it was applied before), stale, failed, or the
+    proposal's final state when it was already decided another way.
+
+    The body's ``before_sha256`` is the hash from the preview the owner saw;
+    a page that changed since answers 409 ``stale``. An overwrite or append of
+    an existing page without it also answers 409 ``stale`` (reopen the preview).
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    before = (data.get("before_sha256") if isinstance(data, dict) else None) \
+        or request.args.get("before_sha256")
+    code, payload = decide_wiki_proposal(pid, "approve", before_sha256=before)
+    return jsonify(payload), code
 
 
 @wiki_bp.route('/api/wiki/pending/<pid>/reject', methods=['POST'])
 def wiki_pending_reject(pid):
-    items = _load_pending_wiki()
-    found = False
-    for it in items:
-        if it.get("id") == pid:
-            it["status"] = "rejected"
-            it["resolved"] = datetime.utcnow().isoformat() + "Z"
-            found = True
-            break
-    if not found:
-        return jsonify({"status": "not_found"}), 404
-    _save_pending_wiki(items)
-    return jsonify({"status": "ok", "rejected": pid})
+    code, payload = decide_wiki_proposal(pid, "reject")
+    return jsonify(payload), code
+
+
+@wiki_bp.route('/api/wiki/pending/<pid>/preview', methods=['GET'])
+def wiki_pending_preview(pid):
+    """Headline, badge (new/edit/append/overwrite), unified diff and line
+    counts for one proposal, and its state. Reads only."""
+    out = preview_wiki_proposal(pid)
+    if out is None:
+        return jsonify({"status": "not_found", "id": pid}), 404
+    return jsonify(out)
 
 
 @wiki_bp.route('/api/wiki/edit', methods=['PUT'])
@@ -216,19 +250,23 @@ def wiki_edit():
     path = _safe_wiki_path(file)
     if path is None:
         return jsonify({"status": "error", "message": "invalid wiki path"}), 400
-    # Creating a page never replaces one: the form that asks checked a list
-    # that can be stale (another tab, Friday, the Drive mirror).
-    if data.get("create") and path.exists():
-        return jsonify({"status": "error", "exists": True,
-                        "message": "A page with that name already exists."}), 409
-    # A page that reads as the locked-vault placeholder is ciphertext this
-    # process cannot see. Whatever the editor sends was written against the
-    # placeholder, so saving it would replace the page; refuse until unlocked.
-    if path.is_file() and wiki_read_text(path).startswith(VAULT_LOCKED_PLACEHOLDER):
-        return jsonify({"status": "error", "locked": True,
-                        "message": "This page is encrypted and the vault is locked. "
-                                   "Unlock the vault before editing it."}), 409
-    _mirror_wiki_file(file, content)
+    # Checks and write in one hold of the wiki write lock, so a proposal
+    # apply or a correction never lands between "it does not exist" and the
+    # write.
+    with _PENDING_LOCK:
+        # Creating a page never replaces one: the form that asks checked a list
+        # that can be stale (another tab, Friday, the Drive mirror).
+        if data.get("create") and path.exists():
+            return jsonify({"status": "error", "exists": True,
+                            "message": "A page with that name already exists."}), 409
+        # A page that reads as the locked-vault placeholder is ciphertext this
+        # process cannot see. Whatever the editor sends was written against the
+        # placeholder, so saving it would replace the page; refuse until unlocked.
+        if path.is_file() and wiki_read_text(path).startswith(VAULT_LOCKED_PLACEHOLDER):
+            return jsonify({"status": "error", "locked": True,
+                            "message": "This page is encrypted and the vault is locked. "
+                                       "Unlock the vault before editing it."}), 409
+        _mirror_wiki_file(file, content)
     return jsonify({"status": "ok", "saved": file, "bytes": len(content)})
 
 
@@ -259,6 +297,8 @@ def wiki_search():
     if WIKI_DIR.exists():
         for f in WIKI_DIR.rglob('*'):
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            if wiki_path_hidden(f, WIKI_DIR):   # .git, .obsidian, .draft.md: not pages
                 continue
             try:
                 text = wiki_read_text(f)
@@ -295,18 +335,15 @@ def wiki_correct():
         for f in WIKI_DIR.rglob('*'):
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
                 continue
-            try:
-                text = wiki_read_text(f)
-            except Exception:
+            if wiki_path_hidden(f, WIKI_DIR):   # never rewrite .git/.obsidian files
                 continue
-            if old_text in text:
-                new_content = text.replace(old_text, new_text)
-                try:
-                    rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
-                    _mirror_wiki_file(rel, new_content)
+            try:
+                # Read, replace and write under the wiki write lock.
+                rel = wiki_replace_in_page(f, old_text, new_text)
+                if rel:
                     modified.append({"scope": "wiki", "path": rel})
-                except Exception as e:
-                    print(f"  [WIKI] Correct failed for {f}: {e}")
+            except Exception as e:
+                print(f"  [WIKI] Correct failed for {f}: {e}")
     if FRIDAY_DIR.exists():
         for f in FRIDAY_DIR.glob('*.json'):
             try:

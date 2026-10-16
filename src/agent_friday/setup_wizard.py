@@ -1860,6 +1860,10 @@ def main():
     if chosen_mode:
         block = dict(config.get("model_routing") or existing.get("model_routing") or {})
         block["mode"] = chosen_mode
+        # The owner answered the routing screen: the record that this mode was
+        # chosen, not seeded (cloud_intent.mode_was_chosen).
+        block["mode_chosen"] = str(chosen_mode).strip().lower()
+        block["mode_chosen_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         config["model_routing"] = block
 
     # Defaults that server expects

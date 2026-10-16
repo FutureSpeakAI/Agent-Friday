@@ -21,7 +21,10 @@ def test_installing_misaki_installs_the_english_model_first(monkeypatch):
     specs = []
     monkeypatch.setattr(vi, "_run_pip_stage", lambda args: specs.append(args[-1]) or 0)
     vi._install_artifact("misaki")
-    assert specs == ["en-core-web-sm @ " + URL, "misaki==0.7.4"]
+    # kokoro 0.9.4 (the one release that installs beside numpy 2.x) needs
+    # misaki[en]>=0.9.4; the English extra's espeakng-loader goes in at its pin.
+    assert specs == ["en-core-web-sm @ " + URL + "#sha256=" + va.ARTIFACTS["spacy-en-core-web-sm"]["sha256"],
+                     "espeakng-loader==0.2.4", "misaki[en]==0.9.4"]
 
 
 def test_the_model_is_a_declared_pinned_mit_artifact():

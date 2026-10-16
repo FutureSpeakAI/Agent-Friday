@@ -68,6 +68,22 @@
    "eval": ["laya_router_eval.json#Search my email for the invoice from Acme."]
   },
   {
+   "id": "messages.research_thread",
+   "action": "messages.research_thread",
+   "group": "read",
+   "ui": {"control": "thread view (every message of one conversation)"},
+   "tool": "search_email",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["research this email thread", "summarise the thread with Robin Vale about the venue", "what did everyone say in that thread"],
+   "deictic": ["this"],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["laya_router_eval.json#research this email thread", "laya_router_eval.json#summarise the thread with Robin Vale about the venue", "laya_router_eval.json#what did everyone say in that thread", "tests/unit/test_email_thread_research.py::test_text_research_this_email_thread_routes_to_a_thread_read", "tests/unit/test_email_thread_research.py::test_voice_research_this_email_thread_reaches_search_email"]
+  },
+  {
    "id": "messages.refresh",
    "action": "messages.refresh",
    "group": "read",
@@ -246,14 +262,14 @@
    "ui": {"control": "compose / reply / reply all / forward"},
    "tool": "draft_email",
    "also_tools": [],
-   "gate": {"class": "self_gated", "ring": 2, "card": "own_card"},
+   "gate": {"class": "self_gated", "ring": 2, "card": "by_argument"},
    "laya_tier": "model_only",
-   "phrasings": ["write a reply to Dana", "draft an email to the team"],
+   "phrasings": ["write a reply to Dana", "draft an email to the team", "draft a reply to Dana and save it", "save a draft email to the team about the venue change"],
    "deictic": [],
    "undo": null,
    "voice": {"live": false, "shared": false},
    "quiet_result": null,
-   "eval": []
+   "eval": ["laya_router_eval.json#draft a reply to Dana and save it", "laya_router_eval.json#save a draft email to the team about the venue change", "tests/unit/test_gmail_draft_save.py::test_text_draft_a_reply_and_save_it_defers_to_the_model_with_draft_email_in_reach", "tests/unit/test_gmail_draft_save.py::test_voice_draft_a_reply_and_save_it_delegates_to_the_chat_agent", "tests/unit/test_gmail_draft_save.py::test_voice_draft_a_reply_and_save_it_delegates_and_the_delegated_call_saves"]
   },
   {
    "id": "messages.accounts",

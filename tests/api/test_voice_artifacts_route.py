@@ -15,6 +15,9 @@ CASCADE = ("voice-ear-streaming", "sherpa-onnx", "voice-front-4b",
 def _rows(client, monkeypatch, engine):
     monkeypatch.setattr(vr, "_resolve_voice_engine", lambda *a, **k: {"engine": engine})
     monkeypatch.setattr(vi, "artifact_installed", lambda aid: False)
+    # Nothing installed at all: no older package version either.
+    from agent_friday.services import voice_artifacts as va
+    monkeypatch.setattr(va, "pip_state", lambda aid: None)
     r = client.get("/api/voice/artifacts")
     assert r.status_code == 200
     return {a["id"]: a for a in r.get_json()["artifacts"]}
@@ -67,5 +70,16 @@ def test_a_confirmed_download_starts(client, monkeypatch):
 def test_a_non_artifact_target_keeps_its_old_contract(client, monkeypatch):
     started = []
     monkeypatch.setattr(vi, "start", lambda t: started.append(t) or {"state": "running"})
+    r = client.post("/api/voice/setup/install", json={"target": "voice-local-lite"})
+    assert r.status_code == 200 and started == ["voice-local-lite"]
+
+
+def test_the_wizard_model_download_needs_the_confirmed_click(client, monkeypatch):
+    """tier1-models fetches the whisper recognisers (and the Piper voice); the
+    wizard shows them with sizes first, so the route wants that consent."""
+    started = []
+    monkeypatch.setattr(vi, "start", lambda t: started.append(t) or {"state": "running"})
     r = client.post("/api/voice/setup/install", json={"target": "tier1-models"})
+    assert r.status_code == 400 and started == []
+    r = client.post("/api/voice/setup/install", json={"target": "tier1-models", "consent": True})
     assert r.status_code == 200 and started == ["tier1-models"]

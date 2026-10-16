@@ -155,7 +155,27 @@ def _gate_outbound(value: str, field: str) -> tuple[str, str]:
     web_fetch.py is not, and a gate that lives only in SOME callers is not a
     gate. Same shape as web_search._gate_search_query: fail closed on any
     gate failure.
+
+    Owner decision (a), 2026-10-15 (privacy/public_query.py): a SEARCH QUERY
+    that is exactly the text a cloud seat sent -- public_query
+    .cloud_author_of(value), recorded by the agent loops before [PII:...]
+    tags are put back -- is checked only against the never-send floor and
+    the owner's identifiers, never topic-classified. Every other value keeps
+    the ordinary path below: a rehydrated query, a query from a local seat or
+    a background job, and every scrape URL (a URL is not search text; its
+    query string can carry context out).
     """
+    if field == "firecrawl.search.query":
+        try:
+            from agent_friday.privacy import public_query as _pq
+            _cloud_author = _pq.cloud_author_of(value)
+        except Exception:
+            _cloud_author = ""      # not provably cloud-authored: ordinary path
+        if _cloud_author:
+            try:
+                return _pq.gate_outbound(value, "firecrawl", field)
+            except Exception as e:
+                return "", ExceptionText(f"the privacy gate failed ({e}) — not sent to Firecrawl")
     try:
         from agent_friday.services import egress_gate as _eg
     except Exception as e:

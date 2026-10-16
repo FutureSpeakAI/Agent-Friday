@@ -80,10 +80,11 @@ def test_a_bare_time_repeats_daily():
         "trigger": "daily", "spec": {"hour": 7, "minute": 0}}
 
 
-def test_monthly_is_refused_out_loud_not_guessed():
-    w, _, note = wo.parse_when("every month, total my freelance invoices", now=NOW)
-    assert w is None
-    assert "monthly" in note
+def test_monthly_is_read_as_a_monthly_timetable_not_guessed_as_something_else():
+    # The scheduler keeps monthly timetables now (day 1-31, or the last day).
+    w, rest, note = wo.parse_when("every month, total my freelance invoices", now=NOW)
+    assert w == {"trigger": "monthly", "spec": {"day": 1, "hour": 9, "minute": 0}}
+    assert rest == "Total my freelance invoices" and note == ""
 
 
 def test_the_timing_words_are_taken_out_of_the_task():

@@ -155,6 +155,17 @@ def _latest_ready(routine: str = "") -> dict | None:
     return max(eps, key=lambda ep: (_ready_at(ep), str(ep.get("id") or "")))
 
 
+def _host_names_arg(value):
+    """make_podcast's `host_names`: [main, co-host] (or one "A, B" string)."""
+    if isinstance(value, str):
+        value = [v for v in value.split(",")]
+    if isinstance(value, dict):
+        return {k: str(v or "") for k, v in value.items() if k in ("a", "b")}
+    if isinstance(value, (list, tuple)):
+        return [str(v or "") for v in value[:2]]
+    return None
+
+
 def _tool_make_podcast(inp):
     inp = inp or {}
     refs = [r for r in (inp.get("sources") or []) if isinstance(r, dict)]
@@ -191,11 +202,19 @@ def _tool_make_podcast(inp):
                        mode=str(inp.get("mode") or "auto"),
                        instructions=str(inp.get("instructions") or ""),
                        voice_engine=str(inp.get("voice") or "local"),
+                       hosts=str(inp.get("hosts") or ""),
+                       host_names=_host_names_arg(inp.get("host_names")),
                        origin="user")
     except pe.PodcastRefused as e:
         return json.dumps({"status": "refused", "message": str(e)})
     mins = pe.LENGTH_MINUTES[ep["length"]]
+    # Two hosts and a co-host with no name of the owner's: ask them once what to call them.
+    names = _host_names_arg(inp.get("host_names"))
+    named_b = (names.get("b") if isinstance(names, dict)
+               else (names[1] if isinstance(names, list) and len(names) > 1 else ""))
+    ask = pe.cohost_question() if ep.get("format") == "duo" and not str(named_b or "").strip() else ""
     return json.dumps({
+        **({"ask_owner": "Ask the owner, once: " + ask} if ask else {}),
         "status": "queued", "episode_id": ep["id"], "privacy": ep["privacy"],
         "mode": ep["mode"], "sources": len(refs),
         "message": ("Queued a %s-minute %sepisode from %d source%s. It's written by the "
@@ -207,9 +226,44 @@ def _tool_make_podcast(inp):
     })
 
 
+def _change_podcast_host_name(inp):
+    """Name a host for every episode: "a" (her) or "b" (the co-host). A blank
+    name puts the default back. Held for the owner's yes like every setting."""
+    host = str(inp.get("host") or "").strip().lower()
+    if host not in ("a", "b"):
+        return json.dumps({"status": "error", "message": "host is \"a\" (the main host) or \"b\" (the co-host)"})
+    now = pe.host_names()
+    new = pe.clean_host_name(inp.get("name"))
+    try:
+        if str(inp.get("name") or "").strip() and not new:
+            raise pe.PodcastRefused("a host's name needs letters, not only punctuation")
+        pe.check_host_names(*[(new if k == host else now[k]["own"]) or now[k]["default"] for k in ("a", "b")])
+    except pe.PodcastRefused as e:
+        return json.dumps({"status": "error", "message": str(e)})
+    from agent_friday.services import setting_proposals as _sp
+    which = "the main host" if host == "a" else "the co-host"
+    try:
+        held = _sp.hold("podcast_format", inp, old=now[host]["name"], new=new or now[host]["default"],
+                        label="%s's name on the podcasts" % which,
+                        consequence="Episodes made from now on use it; finished episodes keep theirs.")
+    except Exception as e:  # noqa: BLE001 - a setting is never written without its check
+        return json.dumps({"status": "error", "message": "The change could not be put to you: %s" % e})
+    if held:
+        return json.dumps({"status": "needs_yes" if held.startswith("SETTING_NEEDS_YES") else "ok", "message": held})
+    try:
+        names = pe.set_host_names(**{host: new})
+    except pe.PodcastRefused as e:
+        return json.dumps({"status": "error", "message": str(e)})
+    return json.dumps({"status": "ok", "hosts": names,
+                       "message": "%s is now %s, from the next episode." % (which.capitalize(), names[host]["name"])})
+
+
 def _tool_podcast_format(inp):
-    """Read or set who is on each show: Friday alone (solo) or two hosts (duo)."""
+    """Read or set who is on each show: Friday alone (solo) or two hosts (duo),
+    and (`host` with `name`) what the hosts are called."""
     inp = inp or {}
+    if inp.get("host"):
+        return _change_podcast_host_name(inp)
     routine = str(inp.get("routine") or "").strip()
     fmt = str(inp.get("format") or "").strip().lower()
     if fmt:
@@ -228,9 +282,12 @@ def _tool_podcast_format(inp):
         if held:
             return json.dumps({"status": "needs_yes" if held.startswith("SETTING_NEEDS_YES") else "ok", "message": held})
         try:
-            pe.set_format(routine if routine != "any" else "", fmt)
+            ask = pe.set_format(routine if routine != "any" else "", fmt)
         except pe.PodcastRefused as e:
             return json.dumps({"status": "error", "message": str(e)})
+        if ask:
+            return json.dumps({"status": "ok", "formats": pe.formats(), "ask_owner": ask,
+                               "message": "%s is now %s. Ask the owner, once: %s" % (routine or "any", fmt, ask)})
     return json.dumps({"status": "ok", "formats": pe.formats(),
                        "message": ("%s is now %s." % (routine or "any", fmt)) if fmt else ""})
 
@@ -392,7 +449,7 @@ def _tool_podcast_source(inp):
 TOOLS = [
     {"name": "make_podcast",
      "description": (
-         "Make a two-host podcast episode (chapters, transcript, a source per claim) "
+         "Make a podcast episode (chapters, transcript, a source per claim) "
          "from any sources: files, wiki pages, graph entries, a conversation, "
          "creations, datasets (CSV/XLSX: data mode, only computed numbers), web "
          "pages or text; or `topic` for the owner's wiki notes. Made locally; "
@@ -412,13 +469,19 @@ TOOLS = [
          "instructions": {"type": "string", "description": "Angle or emphasis the owner asked for."},
          "voice": {"type": "string", "enum": ["local", "cloud"],
                    "description": "local (default). cloud only if the owner asks and has switched cloud voices on."},
+         "hosts": {"type": "string", "enum": ["solo", "duo"],
+                   "description": "This episode only."},
+         "host_names": {"type": "array", "items": {"type": "string"}, "description": "Main, co-host."},
      }}},
     {"name": "podcast_format",
-     "description": ("Who is on each show: solo (Friday alone) or duo (two hosts). No "
-                     "format: read all, with the recommended one. With routine and format: set it."),
+     "description": ("Who is on each show: solo (you alone) or duo (two hosts). No "
+                     "format: read all, with the recommended one. With routine and format: set it. "
+                     "With host and name: what that host is called on every episode (blank: the default)."),
      "input_schema": {"type": "object", "properties": {
          "routine": {"type": "string", "enum": ["briefing", "front_page", "editorial", "weekly", "any"]},
-         "format": {"type": "string", "enum": ["solo", "duo"]}}}},
+         "format": {"type": "string", "enum": ["solo", "duo"]},
+         "host": {"type": "string", "enum": ["a", "b"], "description": "a: you; b: the co-host."},
+         "name": {"type": "string"}}}},
     {"name": "podcast_length",
      "description": ("How long a show's episodes run: short ~2 min, standard ~5 min "
                      "(recommended), long ~10 min. No length, minutes or change: read all. "

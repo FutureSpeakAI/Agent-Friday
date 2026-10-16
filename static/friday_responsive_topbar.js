@@ -2,6 +2,9 @@
 (function (scope) {
   'use strict';
 
+  // An item marked `keep` (the Activity button while anything waits for the owner: an approval, a
+  // card that needs them, a held send) is placed right after the brand and never moves into the
+  // pullout; every other chip, whatever its priority, collapses first.
   function packTopbar(available, items, triggerWidth, gap) {
     const present = items.filter(item => item.width > 0);
     const total = present.reduce((sum, item) => sum + item.width, 0) + Math.max(0, present.length - 1) * gap;
@@ -9,19 +12,39 @@
     const brand = present.find(item => item.brand);
     const visible = new Set(brand ? [brand.id] : []);
     let remaining = Math.max(0, available - triggerWidth - (brand ? brand.width + gap : 0));
-    present.filter(item => !item.brand).sort((a, b) => b.priority - a.priority || a.order - b.order).forEach(item => {
+    present.filter(item => !item.brand && item.keep).forEach(item => { visible.add(item.id); remaining -= item.width + gap; });
+    present.filter(item => !item.brand && !item.keep).sort((a, b) => b.priority - a.priority || a.order - b.order).forEach(item => {
       if (item.width + gap <= remaining) { visible.add(item.id); remaining -= item.width + gap; }
     });
     return {visible: present.filter(item => visible.has(item.id)).map(item => item.id), overflow: present.filter(item => !visible.has(item.id)).map(item => item.id)};
   }
 
-  if (typeof module === 'object' && module.exports) module.exports = {packTopbar};
+  // Whether anything waits for the owner, published by the page (approvals feed, the Needs-you lane);
+  // the top bar re-packs when it changes, so Activity stays in sight while something waits.
+  function waitingStore() {
+    let state = {approvals: 0, needs: 0};
+    const subs = new Set();
+    const now = () => (state.approvals || 0) > 0 || (state.needs || 0) > 0;
+    return {
+      set(part) { const before = now(); state = Object.assign({}, state, part || {}); if (now() !== before) subs.forEach(fn => { try { fn(now()); } catch (_) {} }); },
+      get: now,
+      subscribe(fn) { subs.add(fn); return () => subs.delete(fn); }
+    };
+  }
+  // Placement facts for one top-bar item, given whether anything waits.
+  function itemFacts(text, waiting) {
+    if (text === 'Activity') return {priority: 40, kind: 'activity', keep: !!waiting};
+    return null;
+  }
+
+  if (typeof module === 'object' && module.exports) module.exports = {packTopbar, waitingStore, itemFacts};
+  if (scope && !scope.fridayWaiting) scope.fridayWaiting = waitingStore();
   if (!scope || !scope.React || !scope.ReactDOM) return;
   const React = scope.React, h = React.createElement;
   const {useState, useRef, useLayoutEffect, useEffect} = React;
   const focusable = 'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]';
 
-  function metadata(node, group, index) {
+  function metadata(node, group, index, waiting) {
     const props = node.props || {}, name = typeof node.type === 'function' ? node.type.name : '';
     const text = typeof props.children === 'string' ? props.children : '';
     const label = props['aria-label'] || props.title || text;
@@ -31,6 +54,8 @@
     if (name === 'StandaloneApprovals') return {group:'controls', priority:95, kind:'approvals'};
     if (name === 'ArbiterStrip' || props.className === 'top-bar-clock' || node.type === 'span') return {group:'system', priority:props.className === 'cc-indicator' ? 99 : 5};
     if (!group) {
+      const facts = itemFacts(text, waiting);
+      if (facts) return Object.assign({group:'navigation'}, facts);
       const nestedControl = React.Children.toArray(props.children).find(child => React.isValidElement(child) && child.type === 'button');
       return {group:'navigation', priority:text === 'Projects' ? 75 : text === 'Activity' ? 40 : String(props.className || '').includes('depth') ? 65 : 50,
         kind:nestedControl?.props['aria-label'] === 'Scene selection' ? 'scene' : nestedControl?.props['aria-label'] === 'Model selection' ? 'model' : undefined};
@@ -44,6 +69,8 @@
     const groups = useRef({}), slots = useRef(new Map()), frame = useRef(0), mounted = useRef(true);
     const requestMeasure = useRef(() => {}), dismissNative = useRef(onDismissMenus), openRef = useRef(false);
     const [open, setOpen] = useState(false), [overflowCount, setOverflowCount] = useState(0);
+    const [waiting, setWaiting] = useState(() => !!(scope.fridayWaiting && scope.fridayWaiting.get()));
+    useEffect(() => scope.fridayWaiting ? scope.fridayWaiting.subscribe(setWaiting) : undefined, []);
     dismissNative.current = onDismissMenus; openRef.current = open;
     const descriptors = [];
     React.Children.forEach(children, (group, groupIndex) => {
@@ -51,7 +78,7 @@
       React.Children.forEach(group.props.children, (node, index) => {
         if (!React.isValidElement(node) || (node.type === 'span' && node.props.children === '|')) return;
         const id = groupIndex + ':' + index;
-        const item = Object.assign({id, node, order:descriptors.length}, metadata(node, groupIndex, index));
+        const item = Object.assign({id, node, order:descriptors.length}, metadata(node, groupIndex, index, waiting));
         if (!slots.current.has(id)) {
           const element = document.createElement('div');
           element.className = 'friday-topbar-cell'; element.dataset.topbarItem = id;
@@ -61,6 +88,7 @@
         item.element.dataset.group = item.group;
         item.element.classList.toggle('friday-topbar-brand', !!item.brand);
         if (item.kind) item.element.dataset.kind = item.kind;
+        item.element.dataset.keep = item.keep ? 'true' : 'false';
         descriptors.push(item);
       });
     });

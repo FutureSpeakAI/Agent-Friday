@@ -1,9 +1,11 @@
 """Podcast API (services/podcast_engine.py).
 
     GET    /api/podcasts                   episodes, newest first (?routine, ?run_id, ?limit)
-    POST   /api/podcasts                   {sources, title, length, mode, instructions, voice}
+    POST   /api/podcasts                   {sources, title, length, mode, instructions, voice, hosts, host_names}
     GET    /api/podcasts/for-run           ?routine=&run_id= -> that run's episode or null
     POST   /api/podcasts/listen            {routine, run_id} -> that run's episode, queued to be spoken now (local voice)
+    GET    /api/podcasts/hosts             the hosts' names: now, default, the owner's own
+    PUT    /api/podcasts/hosts             {a?, b?}: name the main host / the co-host ("" = default)
     GET    /api/podcasts/voices            installed local voices and the podcast settings
     POST   /api/podcasts/now-playing       {episode_id, t, playing} from the desktop player
     GET    /api/podcasts/<id>              one episode: chapters, cited lines, sources, check
@@ -78,10 +80,18 @@ def podcasts_create():
                        length=str(data.get("length") or ""),   # "": the owner's setting
                        mode=str(data.get("mode") or "auto"),
                        instructions=str(data.get("instructions") or ""),
-                       voice_engine=str(data.get("voice") or "local"), origin="user")
+                       voice_engine=str(data.get("voice") or "local"),
+                       hosts=str(data.get("hosts") or ""),
+                       host_names=data.get("host_names") if isinstance(data.get("host_names"), (list, dict)) else None,
+                       origin="user")
     except Exception as e:
         return api_error(e, "Couldn't start the episode", status=400)
-    return jsonify(public_result({"status": "ok", "episode": pe.summary(ep)},
+    hn = data.get("host_names")
+    named_b = hn.get("b") if isinstance(hn, dict) else (hn[1] if isinstance(hn, list) and len(hn) > 1 else "")
+    ask = pe.cohost_question() if ep.get("format") == "duo" and not str(named_b or "").strip() else ""
+    return jsonify(public_result({"status": "ok", "episode": pe.summary(ep),
+                                  **({"ask_cohost_name": ask, "cohost_suggestion": pe.cohost_default_name()}
+                                     if ask else {})},
                                  "Couldn't start the episode")), 202
 
 
@@ -121,10 +131,45 @@ def podcasts_set_format():
     data = request.get_json(silent=True) or {}
     try:
         routine = str(data.get("routine") or "")
-        pe.set_format("" if routine == "any" else routine, str(data.get("format") or ""))
+        ask = pe.set_format("" if routine == "any" else routine, str(data.get("format") or ""))
     except pe.PodcastRefused as e:
         return api_error(e, "Couldn't change the show's format", status=400)
-    return jsonify({"status": "ok", "formats": pe.formats()})
+    # Two hosts chosen and the co-host unnamed: the page asks the owner once (the suggestion is
+    # podcast_engine.cohost_default_name()).
+    return jsonify({"status": "ok", "formats": pe.formats(),
+                    **({"ask_cohost_name": ask, "cohost_suggestion": pe.cohost_default_name()} if ask else {})})
+
+
+@podcasts_bp.route('/api/podcasts/weekly-one-voice', methods=['GET'])
+def podcasts_weekly_offer():
+    """Whether the one-time "one voice for the weekly?" choice is waiting on the Podcasts page."""
+    return jsonify({"status": "ok", "state": pe.weekly_offer_state(), "weekly": pe.format_for("weekly")})
+
+
+@podcasts_bp.route('/api/podcasts/weekly-one-voice', methods=['POST'])
+def podcasts_weekly_one_voice():
+    """The owner's answer to the one-time offer on the Podcasts page: switch, keep or dismiss."""
+    data = request.get_json(silent=True) or {}
+    out = pe.decide_weekly_one_voice(str(data.get("choice") or ""))
+    return jsonify({"status": "ok" if out.get("ok") else "error", **out}), (200 if out.get("ok") else 409)
+
+
+@podcasts_bp.route('/api/podcasts/hosts', methods=['GET'])
+def podcasts_hosts():
+    """The hosts' names: "a" is her, "b" the co-host."""
+    return jsonify({"status": "ok", "hosts": pe.host_names()})
+
+
+@podcasts_bp.route('/api/podcasts/hosts', methods=['PUT'])
+def podcasts_set_hosts():
+    """The owner names the hosts in the Podcasts view (their own click)."""
+    data = request.get_json(silent=True) or {}
+    try:
+        names = pe.set_host_names(a=data.get("a") if "a" in data else None,
+                                  b=data.get("b") if "b" in data else None)
+    except pe.PodcastRefused as e:
+        return api_error(e, "Couldn't change the hosts' names", status=400)
+    return jsonify({"status": "ok", "hosts": names})
 
 
 @podcasts_bp.route('/api/podcasts/now-playing', methods=['POST'])

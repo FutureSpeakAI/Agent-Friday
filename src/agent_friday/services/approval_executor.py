@@ -133,10 +133,16 @@ def _on_decision(record: dict) -> None:
     if record.get("kind") == "tool_confirm":
         from agent_friday.services.agent import clear_confirmation_card
         clear_confirmation_card(record.get("approval_id"))
+    payload = record.get("payload") or {}
+    if record.get("status") == "denied" and isinstance(payload.get("public_query"), dict):
+        # Don't send on a search card (privacy/public_query): nothing runs, and
+        # the conversation that asked is told so in plain words. No query text.
+        _post_back(record, "You chose Don't send on the search card. Nothing "
+                           "was sent to %s."
+                   % (payload["public_query"].get("engine") or "the search engine"))
     if record.get("status") != "approved":
         return                                  # denied, expired, blocked: nothing runs
 
-    payload = record.get("payload") or {}
     tool = payload.get("tool")
     args = payload.get("input")
     if not tool or not isinstance(args, dict):
@@ -149,6 +155,16 @@ def _on_decision(record: dict) -> None:
 
     aid = record.get("approval_id")
     from agent_friday.services import approvals as _ap
+    from agent_friday.privacy import public_query as _pq
+    search_card = _pq.is_public_query_card(record)
+    if search_card and not _pq.approved_texts(record):
+        # A search card whose input is not exactly what it showed: not run.
+        if _ap.claim_for_execution(aid):
+            _ap.mark_used(aid, "approval_executor",
+                          detail={"ok": False, "error": "card text does not match its input"})
+            _post_back(record, "The search card you approved did not match what it "
+                               "would send, so nothing was sent.")
+        return
     if not _ap.claim_for_execution(aid):
         return                                  # someone else already has it
 
@@ -172,7 +188,11 @@ def _on_decision(record: dict) -> None:
            "conversation_id": payload.get("conversation_id") or ""}
     started = time.time()
     try:
-        result = _run_tool(tool, args, session_ctx=ctx)
+        # An approved search card (privacy/public_query): exactly the strings
+        # the card showed are floor-only at the search gates while it runs.
+        # Any other card: a no-op.
+        with _pq.approved_scope(record):
+            result = _run_tool(tool, args, session_ctx=ctx)
         from agent_friday.services.completion_receipts import receipt_ok
         ok = receipt_ok({"name": tool, "result": result})
         if tool == "navigate" and str(result).startswith("NAV_OK:"):
@@ -190,10 +210,30 @@ def _on_decision(record: dict) -> None:
                   detail={"ok": ok, "took_ms": took,
                           "result": str(result)[:800]})
 
-    if ok:
+    if search_card:
+        # A search card's report names the card, not the query, and its result
+        # is PII-scrubbed: the transcript replays to cloud seats.
+        _post_back(record, _scrubbed(
+            ("Approved search (card %s) result:\n\n%s" if ok else
+             "You approved search card %s, but it did not go through: %s")
+            % (aid, str(result)[:600 if ok else 400])))
+        if not ok:
+            _log.warning("approved search card %s failed", aid)
+    elif ok:
         _post_back(record, "Approved action result: %s\n\n%s"
                    % (_describe(tool, args), str(result)[:600]))
     else:
         _post_back(record, "You approved %s, but it did not go through: %s"
                    % (_describe(tool, args), str(result)[:400]))
         _log.warning("approved action %s failed: %s", tool, result)
+
+
+def _scrubbed(text: str) -> str:
+    """`text` with PII replaced by tags (core._scrub_pii); when the scrub
+    cannot run, a fixed line is posted instead of the text."""
+    try:
+        from agent_friday.core import _scrub_pii
+        return _scrub_pii(text)[0]
+    except Exception:
+        return ("An approved search ran; its result could not be checked for "
+                "private details, so it is not shown here.")

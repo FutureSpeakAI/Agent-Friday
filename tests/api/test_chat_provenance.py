@@ -21,7 +21,10 @@ class TestChatProvenanceWiring:
 
     def test_model_minted_url_renders_inert(self, client, monkeypatch):
         def dispatch(messages, **kwargs):
-            return ("Added to your calendar: [web:https://calendar.fake/evt-12345]", [])
+            # Not a write claim: "Added to your calendar" with no create
+            # behind it is rewritten by the write-claim guard before the
+            # provenance pass this test is about.
+            return ("Your next event: [web:https://calendar.fake/evt-12345]", [])
 
         monkeypatch.setattr(chat_mod, "_call_claude_agent", dispatch)
         resp = client.post("/api/chat", json={"message": "what's on my calendar"})

@@ -82,6 +82,7 @@ from agent_friday.services.news_engine import (
     _list_weekly_digests,
     _load_annotation_record,
     _load_archive_day,
+    _live_trust_overlay,
     _load_banned_sources,
     _load_boosted_sources,
     _load_briefing_prefs,
@@ -584,7 +585,7 @@ def front_page_audio():
                         "message": "This Front Page has no content to read."}), 400
     try:
         from agent_friday.services.news_engine import local_news_run
-        with local_news_run("Front Page read-aloud"):
+        with local_news_run("Front Page read-aloud", kind="private"):
             buf = _synthesize_tts_wav(script, voice=data.get("voice"), style="briefing")
         return send_file(buf, mimetype='audio/wav')
     except Exception as e:
@@ -809,6 +810,9 @@ def news_archive():
         records.sort(key=lambda a: (a.get('source') or '').lower())
     total = len(records)
     page = records[offset:offset + limit]
+    # Trust is read live for the page served: the archived value is a
+    # snapshot from first fetch, often the outlet's untouched prior.
+    page = _live_trust_overlay(page, banned=banned)
     return jsonify({
         "status": "ok",
         "items": page,
@@ -955,10 +959,13 @@ def api_source_trust_one(domain):
     if not _HAS_TRUST_GRAPHS:
         return jsonify({"status": "error", "message": "source trust graph unavailable"}), 501
     try:
-        rec = get_source_trust_graph(friday_dir=FRIDAY_DIR).get(domain)
+        g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
+        rec = g.get(domain)
         if not rec:
             return jsonify({"status": "error", "message": "source not found"}), 404
-        return jsonify({"status": "ok", "source": rec})
+        # What each dimension is based on and the evidence behind it, so the
+        # detail view says what is measured instead of showing bare numbers.
+        return jsonify({"status": "ok", "source": rec, "breakdown": g.explain(domain)})
     except Exception as e:
         return api_error(e, "Couldn't load that source")
 

@@ -14,6 +14,7 @@ no edit here.
 from __future__ import annotations
 
 import json
+import logging
 import platform
 import sys
 from functools import lru_cache
@@ -39,9 +40,19 @@ def entries() -> list[dict]:
 
 
 def get(model_id: str) -> dict | None:
-    for m in _load().get("models") or []:
+    """The shortlist entry for ``model_id``: the exact id first, then an
+    equivalent spelling (``bonsai2-27b`` finds ``bonsai2:27b``; see
+    ``model_ids.canonical``). The entry keeps its own ``id``."""
+    models = _load().get("models") or []
+    for m in models:
         if m.get("id") == model_id:
             return dict(m)
+    from agent_friday.services.model_ids import canonical
+    key = canonical(model_id)
+    if key:
+        for m in models:
+            if canonical(m.get("id")) == key:
+                return dict(m)
     return None
 
 
@@ -112,19 +123,88 @@ def runtime_asset_names(backend: str, fam: str | None = None) -> list[str]:
     return out
 
 
+#: A release's CUDA runtime DLL pack. Its name ENDS with the same platform
+#: suffix as the server archive (``cudart-llama-bin-win-cuda-12.4-x64.zip``
+#: vs ``llama-prism-b10743-bin-win-cuda-12.4-x64.zip``), so a suffix match
+#: alone cannot tell them apart.
+CUDART_PREFIX = "cudart-"
+
+#: What the server archive's name carries; every llama.cpp release names its
+#: builds ``llama-<build>-bin-<platform>``.
+SERVER_ASSET_MARK = "llama"
+
+
+def _asset_row(a: dict, role: str) -> dict:
+    digest = str(a.get("digest") or "")
+    return {"name": str(a.get("name") or ""),
+            "url": a.get("browser_download_url"),
+            "size": a.get("size"),
+            "sha256": digest.split(":", 1)[1] if digest.startswith("sha256:") else None,
+            "role": role}
+
+
+def _is_server_archive(name: str, suffix: str) -> bool:
+    low = name.lower()
+    return (not low.startswith(CUDART_PREFIX)
+            and SERVER_ASSET_MARK in low
+            and low.endswith(suffix.lower()))
+
+
+def _is_cudart_pack(name: str, runtime_name: str) -> bool:
+    low = name.lower()
+    return low.startswith(CUDART_PREFIX) and low.endswith(runtime_name.lower())
+
+
 def pick_release_assets(release: dict, backend: str, fam: str | None = None) -> list[dict]:
     """From a GitHub release payload, the assets this machine needs:
-    `{name, url, size, sha256}` each, main binary first."""
+    `{name, url, size, sha256, role}` each, the server archive first.
+
+    Each asset is chosen by an explicit rule, never by suffix alone:
+
+      * the SERVER archive (role ``server``) does not start with ``cudart-``,
+        carries ``llama`` in its name, and ends with the platform suffix for
+        (os, backend); among several, one starting ``llama-`` is preferred;
+      * the CUDA runtime DLL pack (role ``cuda_runtime``, CUDA builds only)
+        starts with ``cudart-`` and ends with the spec's runtime name.
+
+    The same asset is never returned twice. With no server archive the list
+    is empty: a DLL pack alone serves nothing. Each choice and the reason for
+    it is written to friday.log.
+    """
+    log = logging.getLogger("friday.model_shortlist")
+    fam = fam or os_family()
     wanted = runtime_asset_names(backend, fam)
-    out = []
-    for suffix in wanted:
-        for a in release.get("assets") or []:
-            name = str(a.get("name") or "")
-            if name.endswith(suffix):
-                digest = str(a.get("digest") or "")
-                out.append({"name": name,
-                            "url": a.get("browser_download_url"),
-                            "size": a.get("size"),
-                            "sha256": digest.split(":", 1)[1] if digest.startswith("sha256:") else None})
-                break
+    assets = [a for a in (release.get("assets") or []) if isinstance(a, dict)]
+    if not wanted:
+        log.warning("runtime assets: no build is listed for %s/%s", fam, backend)
+        return []
+    suffix = wanted[0]
+    servers = [a for a in assets if _is_server_archive(str(a.get("name") or ""), suffix)]
+    skipped = [str(a.get("name") or "") for a in assets
+               if str(a.get("name") or "").lower().endswith(suffix.lower())
+               and a not in servers]
+    if not servers:
+        log.warning("runtime assets: no server archive matches *%s for %s/%s "
+                    "(not cudart-*, contains %r); skipped %s",
+                    suffix, fam, backend, SERVER_ASSET_MARK, skipped or "nothing")
+        return []
+    servers.sort(key=lambda a: 0 if str(a.get("name") or "").lower().startswith("llama-") else 1)
+    main = _asset_row(servers[0], "server")
+    log.info("runtime assets: server archive %s for %s/%s (ends with %s, not cudart-*, "
+             "contains %r)%s", main["name"], fam, backend, suffix, SERVER_ASSET_MARK,
+             ("; skipped %s" % ", ".join(skipped)) if skipped else "")
+    out = [main]
+    for runtime_name in wanted[1:]:
+        packs = [a for a in assets
+                 if _is_cudart_pack(str(a.get("name") or ""), runtime_name)
+                 and str(a.get("name") or "") != main["name"]]
+        if not packs:
+            log.warning("runtime assets: no CUDA runtime pack %s in the release; the server "
+                        "archive may not start without its DLLs", runtime_name)
+            continue
+        exact = [a for a in packs if str(a.get("name") or "").lower() == runtime_name.lower()]
+        pack = _asset_row((exact or packs)[0], "cuda_runtime")
+        log.info("runtime assets: CUDA runtime pack %s (starts with %s, ends with %s)",
+                 pack["name"], CUDART_PREFIX, runtime_name)
+        out.append(pack)
     return out

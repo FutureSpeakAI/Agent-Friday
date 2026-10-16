@@ -227,6 +227,9 @@
   "delegate_to_friday": [
    "voice"
   ],
+  "delete_calendar_event": [
+   "calendar"
+  ],
   "delete_task": [
    "tasks"
   ],
@@ -256,6 +259,9 @@
    "calendar"
   ],
   "find_free_slots": [
+   "calendar"
+  ],
+  "check_plan_travel": [
    "calendar"
   ],
   "generate_image": [
@@ -480,6 +486,9 @@
   "propose_wiki_update": [
    "wiki_knowledge"
   ],
+  "update_core_memory": [
+   "wiki_knowledge"
+  ],
   "publish_artifact": [
    "code",
    "web"
@@ -488,7 +497,8 @@
    "calendar"
   ],
   "query_trust_graph": [
-   "people_trust"
+   "people_trust",
+   "news"
   ],
   "queue_status": [
    "settings"
@@ -536,6 +546,9 @@
   "save_output": [
    "files",
    "creative"
+  ],
+  "schedule_job": [
+   "workflows"
   ],
   "screen_select": [
    "workspace"
@@ -632,6 +645,10 @@
   ],
   "switch_model": [
    "settings"
+  ],
+  "switch_seat": [
+   "settings",
+   "privacy"
   ],
   "talk_crew": [
    "crew"

@@ -13,7 +13,25 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+### Added
+
+- **A memory card you can read and edit** (Settings > Privacy & Data > Memory
+  card). Friday keeps two short notes that she reads at the start of every
+  conversation: what she knows about you, and what she has learned about
+  working with you. Each has a size limit, so when one is full she merges or
+  drops lines before adding another. You can see, edit and delete every line,
+  undo any change she made, and keep or discard suggestions waiting for your
+  review. She saves on her own when you tell her something; anything she
+  picked up from a page, a mail or a file asks you first. Nothing she notes
+  overnight is used until you keep it. The notes are plain files on this PC
+  (`.friday/core_memory`). The older list of facts Friday kept about you moves
+  over once: the ones you entered or approved go onto the card, and the ones
+  she noted without asking wait for your review.
+
 ### Changed
+
+- **Nightly dreaming no longer writes into what Friday knows.** What it finds
+  in the day's conversations waits on the memory card for your Keep.
 
 - **What Friday remembers about you is fixed for the length of a
   conversation.** Her instructions open with what she has learned about you
@@ -23,6 +41,11 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   conversation starts, in text chat and in voice. Anything Friday saves during
   the conversation is stored at once and used from the next conversation. Your
   own edits and deletions apply straight away.
+- **Spending caps ship off and are ready to be asked about at setup.** The daily creation ceiling ($0.50) and the per-workspace task budgets (1000ψ a month, 100ψ a task) no longer apply until you set them; every cap is listed in one registry (services/spending_caps.py) with a plain-language question and a suggested figure for the first-run setup conversation, and the workspace budget panel says "No cap (ask me during setup)" when one is off. An existing install is migrated once, with a line in friday.log: a stored $0.50 ceiling you never answered for, and a workspace policy at exactly the old 1000ψ/100ψ, are switched off so the setup conversation asks about them; any other figure is kept.
+
+### Fixed
+
+- **Saving part of a settings block keeps the rest of it.** A save of one podcast show's format, one host's voice, one working-hours time and the like no longer replaces the whole block; nested settings merge key by key, lists and the maps a caller prunes are still replaced whole.
 
 ---
 

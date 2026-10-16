@@ -42,7 +42,12 @@ MAX_SYSTEM_PROMPT_TOKENS = 6_000
 #: plans, publishing, build and run, projects by voice) are NOT in this
 #: catalogue: they are a workspace's own tools (agent.WORKSPACE_TOOLS), sent
 #: only to a chat that is in the hub and handed over by name anywhere else.
-MAX_TOOL_CATALOGUE_TOKENS = 23_000
+#: Raised from 23,000 for two owner-requested capabilities that need real
+#: tools: deleting a calendar event (delete_calendar_event, ~120 tokens) and
+#: reading a whole email thread (search_email's thread/offset, ~100), plus
+#: the trust query covering outlets and the dock/podcast setting paths; their
+#: descriptions were trimmed first. Measured on Windows CI: ~23,070.
+MAX_TOOL_CATALOGUE_TOKENS = 23_500
 
 #: What a turn actually sends by default: the tool index (name and one line
 #: per tool, services/tool_catalogue.py) plus the few resident tools. ~3,425

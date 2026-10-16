@@ -29,6 +29,10 @@ def _clean_store(friday_dir, monkeypatch):
             p.unlink()
     s._RUNNING.clear()
     monkeypatch.setattr(s, "_cloud_model_for", lambda rec: None)
+    # Waiting for the seat is the LOCAL routing modes' behaviour; under a cloud
+    # mode the routine runs on the cloud (tests/unit/test_mode_truth.py).
+    from agent_friday.services import cloud_intent
+    monkeypatch.setattr(cloud_intent, "_stored_mode", lambda: "local_preferred")
     yield
     for _ in range(200):           # let a dispatched run finish writing
         if not s._RUNNING:

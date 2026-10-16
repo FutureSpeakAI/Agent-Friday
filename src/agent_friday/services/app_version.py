@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -86,6 +87,77 @@ def display_version(app_root: Optional[Path] = None) -> Optional[str]:
     if sequence_for_version(v) == BUILD_SEQUENCE:
         return RELEASE_NAME
     return v
+
+
+#: The files whose bytes ARE the page a browser tab runs: the served index and
+#: every script, stylesheet and HTML fragment under static/.
+_UI_SUFFIXES = (".js", ".css", ".html", ".mjs")
+_build_ids: dict = {}
+_build_lock = threading.Lock()
+
+
+def _ui_fingerprint(ui_root: Path) -> str:
+    """sha256 over index.html and the UI files under static/, by relative path
+    and content, in a fixed order. Missing files simply do not contribute."""
+    import hashlib
+    h = hashlib.sha256()
+    files = []
+    idx = ui_root / "index.html"
+    if idx.is_file():
+        files.append(idx)
+    static = ui_root / "static"
+    if static.is_dir():
+        files.extend(p for p in static.rglob("*")
+                     if p.is_file() and p.suffix.lower() in _UI_SUFFIXES)
+    for p in sorted(files, key=lambda q: q.relative_to(ui_root).as_posix()):
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        h.update(p.relative_to(ui_root).as_posix().encode("utf-8"))
+        h.update(b"\0")
+        h.update(data)
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def build_id(ui_root: Optional[Path] = None, app_root: Optional[Path] = None) -> str:
+    """Which build of the page this server process serves: "<version>+<hash>".
+
+    The version alone cannot tell two builds of the same beta apart, and an
+    update that ships a fix under the same version number is exactly the case
+    where an open tab keeps running the old JavaScript. So the id also carries
+    a short hash of the UI files themselves (index.html and static/).
+
+    Computed ONCE per process and per root, on first use, then served from
+    memory: /api/health is polled every few seconds and must stay cheap. A
+    restart is what changes the files a tab would get on reload, and a restart
+    starts a new process, so once per process is the honest granularity.
+
+    `ui_root` is the directory the server serves index.html and static/ from
+    (its working directory); it defaults to the app root.
+    """
+    root = Path(ui_root) if ui_root is not None else _app_root(app_root)
+    try:
+        key = str(root.resolve())
+    except OSError:
+        key = str(root)
+    with _build_lock:
+        cached = _build_ids.get(key)
+        if cached is not None:
+            return cached
+        try:
+            digest = _ui_fingerprint(root)[:12]
+        except Exception:  # an unreadable tree still gets a stable, honest id
+            digest = "unhashed"
+        bid = f"{running_version(app_root) or 'unknown'}+{digest}"
+        _build_ids[key] = bid
+        return bid
+
+
+def _reset_build_id_for_tests() -> None:
+    with _build_lock:
+        _build_ids.clear()
 
 
 def installed_manifest(app_root: Optional[Path] = None) -> dict:

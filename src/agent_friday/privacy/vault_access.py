@@ -21,11 +21,20 @@ module decides what a given provider is *allowed to see*; the router decides
 
 import json
 import hashlib
+import logging
 import threading
 import time
 from pathlib import Path
 
 from agent_friday.services.local_only_guard import is_cloud_model_tag
+
+# Verdicts go to friday.log (the "friday" logger tree), not print(): under
+# pythonw there is no console and a printed refusal is lost.
+_log = logging.getLogger("friday.privacy.vault_access")
+
+#: The component a check_action refusal names, unless the public-query floor
+#: (privacy/public_query) refused it, which names itself.
+COMPONENT = "privacy.vault_access"
 
 
 class Tier:
@@ -61,6 +70,226 @@ LOCAL_PROVIDERS = {"ollama", "local"}
 # vault data to the provider nor transmit its input off-device. Decisions
 # for these tools are still classified and audit-logged.
 LOCAL_SINK_TOOLS = frozenset({"learn_skill", "write_file"})
+
+
+# ── An email draft saved in the owner's own mailbox ─────────────────────────
+# draft_email WITHOUT send=true saves a draft into the owner's own Gmail
+# Drafts. Its arguments are the cloud provider's own words (it has already
+# seen them), the draft reaches nobody (a recipient on a draft receives
+# nothing), and the result carries ids and a link, not vault data. So the
+# input-tier deny is the same category error it is for LOCAL_SINK_TOOLS: a
+# draft about a doctor's appointment was refused on a cloud seat, and nothing
+# was saved, for a write that leaves no one else's hands. Allowed and logged
+# as "own_mailbox_draft_<tier>". draft_email with send=true reaches other
+# people and keeps the ordinary input-tier deny.
+OWN_MAILBOX_DRAFT_TOOLS = frozenset({"draft_email"})
+
+
+def _own_mailbox_draft(action, data_str) -> bool:
+    if str(action or "") not in OWN_MAILBOX_DRAFT_TOOLS:
+        return False
+    try:
+        args = json.loads(data_str) if isinstance(data_str, str) else (data_str or {})
+        from agent_friday.services.gmail_send import wants_send
+        return isinstance(args, dict) and not wants_send(args)
+    except Exception:
+        return False                  # unreadable -> the ordinary deny applies
+
+
+# ── An email SEND written on a cloud seat ───────────────────────────────────
+# draft_email with send=true whose text rates above PUBLIC used to be refused
+# outright on a cloud seat. The owner's rule is that they decide once informed:
+# the send now goes to the approval card, which shows exactly what would be
+# sent (from, recipients, subject, body), with Send and Don't send, and a
+# pre-approval does not cover it (gmail_send.request_send reads the
+# `sensitive_cloud_send` mark the agent loop puts on the call). Allowed here
+# and logged as "cloud_send_card_<tier>". The floor does not move: never-send
+# list items, credentials, and ID, card or account numbers are refused, with
+# the reason in plain words.
+CLOUD_SEND_CARD_PREFIX = "cloud_send_card_"
+_FLOOR_PREFIX = "cloud_send_floor:"
+#: The floor's kinds, in the words the owner reads.
+FLOOR_WORDS = {
+    "never_send": "it contains something on your never-send list",
+    "credential": "it contains what looks like a password, key or other credential",
+    "card": "it contains a payment card number",
+    "ssn": "it contains an ID number (a Social Security number)",
+    "routing": "it contains a bank routing or account number",
+    "api_key": "it contains an API key",
+    "vault_document": "it contains a vault document (legal, finances or family)",
+}
+
+
+def _email_send(action, data_str) -> bool:
+    """draft_email asking to SEND (send=true)."""
+    if str(action or "") not in OWN_MAILBOX_DRAFT_TOOLS:
+        return False
+    try:
+        args = json.loads(data_str) if isinstance(data_str, str) else (data_str or {})
+        from agent_friday.services.gmail_send import wants_send
+        return isinstance(args, dict) and wants_send(args)
+    except Exception:
+        return False
+
+
+# ── Local handoff: data moving TO an on-device model ────────────────────────
+# `switch_seat` (services/seat_handoff) raises ONE approval card that, once
+# the owner approves it, hands a task to the local model or moves the chat to
+# it. Its arguments are authored by the provider (it has already seen them),
+# they are stored on this machine in the card, and the tool returns only the
+# card id and the local model's name. A cloud-seat input-tier deny there would
+# refuse the one route by which private work reaches a model allowed to see
+# it, so the call is exempt -- but only when the caller has resolved the
+# handoff's target model and that model really runs on this machine. A
+# cloud-tagged Ollama model (`glm-4.6:cloud`) is relayed to ollama.com and is
+# cloud for this purpose whatever its provider says; with no verified target
+# the deny stands. Every exemption is logged with the target model.
+#
+# Growing this set is a security decision: a member must hand its input only
+# to an on-device model, behind the owner's own approval, and return nothing
+# from the vault to the provider.
+LOCAL_HANDOFF_TOOLS = frozenset({"switch_seat"})
+
+
+def is_on_device(model) -> bool:
+    """True only for a model id that runs on this machine.
+
+    Conservative: an empty name, a cloud-tagged Ollama model, an id the router
+    does not class as local, or any failure to tell is NOT on-device.
+    """
+    name = str(model or "").strip()
+    if not name or is_cloud_model_tag(name):
+        return False
+    try:
+        from agent_friday.services import local_seats
+        return bool(local_seats._is_local_name(name))
+    except Exception:
+        return False
+
+
+def send_floor(text) -> str:
+    """The never-send floor for an outgoing message: the kind it hits
+    (a FLOOR_WORDS key), or "" when it is clear. Fails closed."""
+    text = str(text or "")
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        never = _jg.never_send_hits(text)
+        if never:
+            low = text.lower()
+            if any(m in low for m in ("vault/legal/", "vault/finances/", "vault/family/",
+                                      "vault\\legal\\", "vault\\finances\\", "vault\\family\\")):
+                return "vault_document"
+            return "never_send"
+        hard = _jg.hard_identifier_hits(text)
+        if hard:
+            return hard[0] if hard[0] in FLOOR_WORDS else "card"
+    except Exception:
+        return "never_send"
+    try:
+        from agent_friday.services import secret_shapes as _ss
+        if _ss.looks_like_secret(text):
+            return "credential"
+    except Exception:
+        pass
+    return ""
+
+
+def is_cloud_send_card(detail) -> bool:
+    return str(detail or "").startswith(CLOUD_SEND_CARD_PREFIX)
+
+
+# ── Tools that send nothing off this PC ─────────────────────────────────────
+# The same boundary as LOCAL_SINK_TOOLS, for tools whose whole effect stays on
+# this machine: local_model_status reads the local seat's state (no input at
+# all), and spawn_task with a LOCAL tier hands a prompt the cloud seat itself
+# wrote to an on-device model. A cloud-seat rule has nothing to protect there:
+# the input goes TO local, never away from it. spawn_task without a tier, or
+# with the cloud tier, keeps the ordinary input-tier gate.
+NO_EGRESS_TOOLS = frozenset({"local_model_status"})
+LOCAL_TASK_TIERS = frozenset({"small_local", "large_local"})
+
+
+def _no_egress(action, data_str) -> bool:
+    name = str(action or "")
+    if name in NO_EGRESS_TOOLS:
+        return True
+    if name != "spawn_task":
+        return False
+    try:
+        args = json.loads(data_str) if isinstance(data_str, str) else (data_str or {})
+        tier = str((args or {}).get("tier") or "").strip().lower()
+    except Exception:
+        return False                  # unreadable -> the ordinary gate applies
+    return tier in LOCAL_TASK_TIERS
+
+
+# ── The owner's cloud consent ───────────────────────────────────────────────
+# A topic-tier refusal guards the owner who has NOT agreed to share private
+# context with the cloud. An owner who has answered "cloud_unrestricted" has
+# already decided, so a cloud seat's tool call is not refused because its
+# input mentions a place, a person or a health detail. The answer is read only
+# from the consent record (privacy/cloud_consent, written by the owner's own
+# consent route), never from the routing mode, which a settings write can set.
+# What the owner never agreed to send stays refused: the never-send list,
+# credentials and keys, and ID, card and account numbers (_consent_floor).
+# Any failure to read the consent is "no consent": the ordinary gate applies.
+
+def _cloud_consented() -> bool:
+    try:
+        from agent_friday.privacy import cloud_consent as _cc
+        return bool(_cc.is_unrestricted_cloud())
+    except Exception:
+        return False
+
+
+def _floor_text(data) -> str:
+    """The text the floor reads: every key and string value of a JSON input,
+    decoded and joined by newlines, so an escape (\\n, \\uXXXX, a doubled
+    backslash) never hides a match; the raw text when it is not JSON."""
+    raw = data if isinstance(data, str) else json.dumps(data or {}, default=str)
+    try:
+        obj = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return str(raw or "")
+    parts: list = []
+
+    def walk(v):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                parts.append(str(k))
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+        elif v is not None:
+            parts.append(str(v))
+    walk(obj)
+    return "\n".join(parts)
+
+
+def _consent_floor(data) -> str:
+    """The kind of never-send material in a tool input, or "" when it is
+    clear. Fails closed: an unreadable check is a hit."""
+    try:
+        text = _floor_text(data)
+    except Exception:
+        return "floor_unavailable"
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        if _jg.never_send_hits(text):
+            return "never_send"
+        hard = _jg.hard_identifier_hits(text)
+        if hard:
+            return str(hard[0])
+    except Exception:
+        return "floor_unavailable"
+    try:
+        from agent_friday.services import secret_shapes as _ss
+        if _ss.looks_like_secret(text):
+            return "credential"
+    except Exception:
+        return "floor_unavailable"
+    return ""
 
 
 # ── Keyword lists exposed for legacy callers ────────────────────────────────
@@ -277,31 +506,115 @@ class VaultAccessControl:
             except Exception:
                 pass
         verdict = "ALLOW" if allowed else "DENY"
-        print(f"  [VAULT] {verdict} provider={entry['provider']} "
-              f"tier={entry['tier']} ({detail})")
+        _log.debug("[VAULT] %s provider=%s tier=%s (%s)",
+                   verdict, entry["provider"], entry["tier"], detail)
 
     # ── Continuous Authorization (zero-trust per-action gate) ─────
 
     def check_action(self, provider, action, data, access_log_path=None,
-                     *, taint_key=None, model=""):
+                     *, taint_key=None, model="", author_provider="",
+                     author_model="", handoff_model=""):
         """Zero-trust per-action authorization check.
 
         Called before every tool call in the agent loop. Classifies the
         tool input data, gates access by provider, and appends every
         decision to access-log.jsonl for auditability.
 
+        PUBLIC QUERY TEXT (owner decision (a), 2026-10-15; see
+        privacy/public_query.py): for a cloud provider, the public query fields
+        of search_web / search_news / deep_research are NOT
+        topic-classified. They are checked only against the never-send floor
+        and the owner's personal identifiers. Any other argument of those
+        tools is classified exactly as before. Same with or without consent.
+        browse_web.url is not public query text (a URL's query string can
+        carry context out), so a URL keeps the ordinary classification.
+
+        When a cloud provider's public query passes, each exact string is
+        recorded (public_query.record_cloud_query) under (`author_provider`,
+        `author_model`): the provider name and model the egress gate will
+        replay history to (defaulting to `provider` and `model`). Only a
+        recorded string replays to that same seat under the floor; any other
+        replayed query keeps the ordinary gate.
+
+        Every refusal is logged to friday.log (WARNING, component + reason +
+        tool, never the value) as well as to access-log.jsonl.
+
+        `handoff_model` is the model a LOCAL_HANDOFF_TOOLS call would hand its
+        input to, resolved by the caller from the owner's seat bindings (never
+        from the tool's own arguments). It is consulted only for those tools.
+
         Returns (allowed: bool, detail: str, tier: int).
         """
         data_str = data if isinstance(data, str) else json.dumps(data or {}, default=str)
-        tier = self.classify(data_str)
+        local = self.can_access(provider, model)
+        pq_split = None
+        if not local:
+            try:
+                from agent_friday.privacy import public_query as _pq
+                _args = json.loads(data_str) if isinstance(data, str) else data
+                pq_split = _pq.split_args(str(action or ""), _args)
+            except Exception:
+                # Not a mapping, or the module is unreachable: the ordinary
+                # policy (topic classification of the whole input) applies.
+                pq_split = None
+        pq_refusal = None
+        if pq_split is not None:
+            _texts, _rest = pq_split
+            try:
+                pq_refusal = _pq.check(_texts, action=str(action or ""),
+                                       provider=str(provider or ""),
+                                       surface="check_action", log=False)
+            except Exception as _e:   # fail closed
+                pq_refusal = _pq.Refusal("floor_unavailable",
+                                         kinds=(type(_e).__name__,))
+            # The tool's OTHER arguments keep the ordinary policy.
+            tier = (self.classify(json.dumps(_rest, default=str))
+                    if _rest else Tier.PUBLIC)
+        else:
+            tier = self.classify(data_str)
         allowed = True
         detail = "action_allowed"
 
-        if tier > Tier.PUBLIC and not self.can_access(provider, model):
+        if pq_refusal is not None:
+            allowed = False
+            detail = f"public_query_refused:{pq_refusal.reason}"
+            tier = max(tier, Tier.SENSITIVE)
+        elif tier > Tier.PUBLIC and not local:
             if str(action or "") in LOCAL_SINK_TOOLS:
                 # Provider-authored content flowing device-ward only — see
                 # the LOCAL_SINK_TOOLS note. Allowed, but logged as such.
                 detail = f"local_sink_exempt_{Tier.NAMES.get(tier, tier)}"
+            elif _own_mailbox_draft(action, data_str):
+                # A draft in the owner's own mailbox; see the note above.
+                detail = f"own_mailbox_draft_{Tier.NAMES.get(tier, tier)}"
+            elif _email_send(action, data_str):
+                # A SEND written on a cloud seat with private details: the owner decides on a
+                # card that shows exactly what would go (see the note above send_floor). The
+                # never-send floor still refuses, with its plain reason.
+                floor = send_floor(data_str)
+                if floor:
+                    allowed = False
+                    detail = f"{_FLOOR_PREFIX}{floor}"
+                else:
+                    detail = f"{CLOUD_SEND_CARD_PREFIX}{Tier.NAMES.get(tier, tier)}"
+            elif _no_egress(action, data_str):
+                # Nothing leaves this PC; see the NO_EGRESS_TOOLS note.
+                detail = f"no_egress_{Tier.NAMES.get(tier, tier)}"
+            elif (str(action or "") in LOCAL_HANDOFF_TOOLS
+                  and is_on_device(handoff_model)):
+                # Bound for an on-device model, behind the owner's card -- see
+                # the LOCAL_HANDOFF_TOOLS note. Allowed, logged with the target.
+                detail = (f"local_handoff_exempt_{Tier.NAMES.get(tier, tier)}: "
+                          f"to {str(handoff_model).strip()}")
+            elif _cloud_consented():
+                # The owner agreed to share private context with the cloud;
+                # only the never-send floor still refuses.
+                floor = _consent_floor(data_str)
+                if floor:
+                    allowed = False
+                    detail = f"cloud_consent_floor:{floor}"
+                else:
+                    detail = f"cloud_consent_{Tier.NAMES.get(tier, tier)}"
             else:
                 allowed = False
                 detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"
@@ -320,14 +633,27 @@ class VaultAccessControl:
                 if taint_key:
                     try:
                         from agent_friday.privacy import public_provenance as _pbp
-                        _ok, _why = _pbp.exempt(data, action=str(action or ""),
-                                                taint_key=taint_key)
+                        _ok, _why = _pbp.exempt(
+                            pq_split[1] if pq_split is not None else data,
+                            action=str(action or ""), taint_key=taint_key)
                     except Exception as _e:
                         _ok, _why = False, f"provenance check failed ({_e})"
                     if _ok:
                         allowed = True
                         detail = ("public_web_provenance_"
                                   f"{Tier.NAMES.get(tier, tier)}: {_why}")
+
+        if allowed and pq_split is not None and detail == "action_allowed":
+            detail = "public_query_ok"
+        if allowed and pq_split is not None and pq_refusal is None:
+            # Replay provenance: this cloud provider wrote exactly these
+            # strings and they passed. Only these may later replay to the
+            # same provider under the floor (egress_gate._gate_tool_args).
+            try:
+                _pq.record_cloud_query(author_provider or provider, pq_split[0],
+                                       model=author_model or model)
+            except Exception:
+                pass                  # unrecorded -> the replay keeps the ordinary gate
 
         entry = {
             "ts": time.time(),
@@ -363,9 +689,16 @@ class VaultAccessControl:
                 pass
 
         self._record(provider, tier, allowed, f"check_action:{action}")
-        verdict = "ALLOW" if allowed else "DENY"
-        print(f"  [VAULT-ZT] {verdict} provider={entry['provider']} "
-              f"action={action} tier={entry['tier']}")
+        if allowed:
+            _log.debug("[VAULT-ZT] ALLOW provider=%s action=%s tier=%s (%s)",
+                       entry["provider"], action, entry["tier"], detail)
+        else:
+            # Every refusal names its component and reason in friday.log.
+            # Kinds and tiers only -- never the tool input.
+            _comp, _reason = denial_component(detail)
+            _log.warning("[VAULT-ZT] REFUSED component=%s reason=%s tool=%s "
+                         "provider=%s tier=%s",
+                         _comp, _reason, action, entry["provider"], entry["tier"])
         return allowed, detail, tier
 
     def regate_on_provider_change(self, old_provider, new_provider, pending_data,
@@ -395,8 +728,8 @@ class VaultAccessControl:
         else:
             redacted = "[VAULT-PROTECTED — provider changed; data redacted]"
 
-        print(f"  [VAULT-ZT] REGATE provider {old_provider}->{new_provider} "
-              f"tier={Tier.NAMES.get(tier, tier)} — data redacted")
+        _log.info("[VAULT-ZT] REGATE provider %s->%s tier=%s - data redacted",
+                  old_provider, new_provider, Tier.NAMES.get(tier, tier))
         return redacted, True
 
     def stats(self):
@@ -406,3 +739,53 @@ class VaultAccessControl:
                 "denied": self._counts["denied"],
                 "recent": list(self._log[-50:]),
             }
+
+
+# ── Refusal transparency ────────────────────────────────────────────────────
+
+_PQ_PREFIX = "public_query_refused:"
+
+
+def denial_component(detail):
+    """(component, reason) for a check_action detail string."""
+    d = str(detail or "")
+    if d.startswith(_PQ_PREFIX):
+        return "privacy.public_query", d[len(_PQ_PREFIX):] or "unknown"
+    if d.startswith(_FLOOR_PREFIX):
+        return "privacy.never_send_floor", d[len(_FLOOR_PREFIX):] or "never_send"
+    return COMPONENT, d or "unknown"
+
+
+def refusal_text(action, detail):
+    """What the MODEL is told when check_action refuses a tool call.
+
+    Names the component and the reason, and tells the model to report the
+    skipped step to the user rather than leave it out silently. Never carries
+    the tool input. Keeps the "[VAULT ACCESS DENIED]" prefix that trace and
+    orb correlation read.
+    """
+    comp, reason = denial_component(detail)
+    if comp == "privacy.never_send_floor":
+        why = FLOOR_WORDS.get(reason, FLOOR_WORDS["never_send"])
+        return (f"[VAULT ACCESS DENIED] component={comp} reason={reason} tool={action}: "
+                f"this email was NOT sent and no card was raised, because {why}. That never "
+                f"leaves this PC by email, whoever approves it. Tell the user plainly that it was "
+                f"not sent and why, in those words; offer to send it without that part.")
+    if comp == "privacy.public_query":
+        try:
+            from agent_friday.privacy.public_query import _REASON_TEXT
+            why = _REASON_TEXT.get(reason, reason)
+        except Exception:
+            why = reason
+        remedy = ("Nothing was sent. Rephrase the query without that part "
+                  "(the topic itself is fine), or have a local model handle it.")
+    else:
+        why = f"the input classifies as {reason.replace('cloud_denied_tier_', '')} private data"
+        remedy = "Switch to a local model to work with this content."
+        if str(action or "") in OWN_MAILBOX_DRAFT_TOOLS:
+            remedy += (" Saving it as a draft (draft_email without send) is not blocked: "
+                       "a draft stays in the owner's own Gmail and reaches nobody.")
+    return (f"[VAULT ACCESS DENIED] component={comp} reason={reason} "
+            f"tool={action}: {why}. {remedy} This step was skipped: tell the "
+            f"user which part you could not do and why (name {comp} and the "
+            f"reason) instead of silently leaving it out.")

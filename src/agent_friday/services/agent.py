@@ -122,7 +122,9 @@ from agent_friday.services.wiki_engine import (
     _mirror_wiki_file,
     _propose_wiki_update,
     _safe_wiki_path,
+    wiki_path_hidden as _we_path_hidden,
     wiki_read_text,
+    wiki_replace_in_page,
     wiki_write_text,
 )  # noqa: E501
 from agent_friday.user_errors import ExceptionText, UserFacingValueError, clip
@@ -169,7 +171,8 @@ def _generate_crew_agent(messages, *, system, max_tokens, temperature,
     if session_ctx.get("crew_binding") != binding:
         raise RuntimeError("The Crew reasoning binding changed; start a new turn.")
     settings = _load_settings()
-    if str((settings.get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+    from agent_friday.services.cloud_intent import normalize_mode as _nm
+    if _nm((settings.get("model_routing") or {}).get("mode")) == "local_only":
         raise RuntimeError("Local-only mode is on. Cloud Crew is unavailable; no offline substitution was made.")
     provider, model = binding["provider"], binding["model"]
     refuse_if_active(provider, model)
@@ -721,8 +724,12 @@ CLAUDE_TOOLS = [
      }, "required": ["path", "content"]}},
     {"name": "write_clipboard", "description": "Copy text to the user's Windows clipboard.",
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-    {"name": "query_trust_graph", "description": "Look up a person in the trust graph by name or alias and return their entry (scores, evidence count, last interaction).",
-     "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+    {"name": "query_trust_graph", "description": "Trust graph entry for a person, organisation or news source (domain, name or article URL): every dimension's score or 'not measured', its basis and evidence count, and the owner's Boost/Ban.",
+     "input_schema": {"type": "object", "properties": {
+         "name": {"type": "string", "description": "Name, alias, domain or article URL."},
+         "kind": {"type": "string", "enum": ["any", "person", "organisation", "source"],
+                  "description": "Default any: people, organisations, then sources."}},
+      "required": ["name"]}},
     {"name": "annotate_calendar_events", "description": "Append location, phone or note to EVERY matching calendar event, keeping existing values and returning prior values for undo. Edits the whole recurring series; dry_run previews. For a read-only token, explain Google needs reconnection for event editing and offer to start it. Never substitute a map, directions or another action for the edit.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "Text to match against event titles/descriptions, e.g. 'dentist'."},
@@ -750,9 +757,23 @@ CLAUDE_TOOLS = [
          "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."},
          "account_id": {"type": "string"}},
       "required": ["event_id"]}},
+    {"name": "delete_calendar_event", "description": "Delete one calendar event by id (find it first with find_calendar_events). The user is asked first, by name and time; nothing is deleted before their yes. Guests get a cancellation only with notify_guests. Say what was deleted and whether guests were told.",
+     "input_schema": {"type": "object", "properties": {
+         "event_id": {"type": "string"},
+         "calendar_id": {"type": "string", "description": "Leave out for the main calendar."},
+         "account_id": {"type": "string"},
+         "notify_guests": {"type": "boolean", "description": "Only if the user asked to tell the guests."}},
+      "required": ["event_id"]}},
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "check_plan_travel", "description": "Read-only: before proposing a same-day plan of timed stops, check each gap. Rough drive estimate (straight line, no traffic) when both stops have lat/lon from a source (never guessed); flags a gap shorter than drive plus buffer, or says it couldn't check. Report what it says.",
+     "input_schema": {"type": "object", "properties": {
+         "stops": {"type": "array", "items": {"type": "object", "properties": {
+             "name": {"type": "string"}, "start": {"type": "string", "description": "ISO 8601 or HH:MM"},
+             "end": {"type": "string"}, "location": {"type": "string"},
+             "lat": {"type": "number"}, "lon": {"type": "number"}}, "required": ["name", "start"]}}},
+      "required": ["stops"]}},
     {"name": "find_free_slots", "description": "Read-only: find slots free on EVERY connected calendar/account within working hours, time zone, notice and buffers. Offer returned slots; for email put their labels in draft_email (card approval before sending). Disclose unreadable calendars as unchecked.",
      "input_schema": {"type": "object", "properties": {
          "duration_minutes": {"type": "integer"},
@@ -787,8 +808,12 @@ CLAUDE_TOOLS = [
     {"name": "query_calendar", "description": "Read today's and tomorrow's Google Calendar events. Built-in integration: 'not connected' needs one-time OAuth; offer setup, never claim calendar access is unavailable.",
      "input_schema": {"type": "object", "properties": {
          "day": {"type": "string", "format": "date", "description": "Only this day (YYYY-MM-DD); omit for both."}}}},
-    {"name": "search_email", "description": "Search/read recent Gmail across connected accounts (read-only). Gmail operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes, OR. Empty query returns recent unread. Not connected means OAuth setup is needed: offer it, without claiming Gmail is unavailable. search_failed/error means the search failed, never zero results.",
-     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:alex after:2026-09-01'. Empty means recent unread."}}, "required": ["query"]}},
+    {"name": "search_email", "description": "Search/read Gmail across connected accounts (read-only). Gmail operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes, OR. Empty query returns recent unread. Hits are snippets: to read a conversation pass thread=<hit ref> (every message in full, quoted replies removed, attachments); 'this' = open on screen, 'top' = best match of query. Never summarise a thread from snippets. Not connected means OAuth setup is needed: offer it, without claiming Gmail is unavailable. search_failed/error means the search failed, never zero results.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:alex after:2026-09-01'. Empty means recent unread."},
+         "thread": {"type": "string", "description": "A hit's ref or thread id, 'this' or 'top'."},
+         "offset": {"type": "integer", "description": "First message to read (0-based), after a shortened read."}},
+      "required": ["query"]}},
     {"name": "search_drive", "description": "Read-only: search file/folder names across all connected Google accounts. Returns id, name, mime_type and account; pass id + mime_type to read_doc for Docs/Sheets. Report missing Drive permission per account, not as 'not connected'.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Name substring to search for; omit for the most recently modified files."}}}},
     {"name": "read_doc", "description": "Read a Google Doc's text or Sheet's first-tab values by id from search_drive. Omit account_id to try connected accounts until one has access.",
@@ -865,6 +890,13 @@ CLAUDE_TOOLS = [
                       "properties": {"model": {"type": "string",
                                                "description": "The model the user named, in their words."}},
                       "required": ["model"]}},
+    {"name": "switch_seat",
+     "description": "Raise ONE owner card: to=local|cloud moves THIS chat's "
+                    "model; task=full instructions runs one task on the local "
+                    "model instead. Use it when the owner asks, or after a "
+                    "cloud-seat privacy refusal. Nothing changes until approved.",
+     "input_schema": {"type": "object", "properties": {
+         "to": {"type": "string"}, "task": {"type": "string"}}}},
     {"name": "navigate", "description": "Open a named built-in workspace on the user's desktop. Use for requests to open, show or switch workspaces; operate the interface rather than give directions. Workspaces: " + _ws_registry.tool_list() + ".",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "navigate_to", "description": "Open a workspace tab, mail thread/search, Studio file, creation, news story, Knowledge page/node, Settings section, calendar day/meeting, contact, post or Media card (kind=card). Pass the user's words as query or a known exact id. new_tab opens a maximized Chrome tab; max fills the desktop. No approval. NAV_OK confirms display; NAV_PARTIAL opened something else; NAV_FAIL gives the reason and closest matches.",
@@ -892,7 +924,7 @@ CLAUDE_TOOLS = [
          "detail": {"type": "string", "enum": ["brief", "full"], "description": "brief (default): a few lines; full: the structured snapshot."},
          "look": {"type": "string", "enum": ["screen"], "description": "screen: what the user's open workspace shows now (rows, ticks, filters), as counts for voice."},
          "pin": {"type": "boolean"}}}},
-    {"name": "set_setting", "description": "Change one Settings row by its path; op=undo changes nothing and says where the row's own Undo is (30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>.",
+    {"name": "set_setting", "description": "Change one Settings row by its path; op=undo changes nothing and says where the row's own Undo is (30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>, .podcasts.hosts.<a|b> (host name), .display.dock.<ws> (value show or hide; op=list says what the dock shows and hides).",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string"}}, "required": ["path"]}},
     {"name": "task_control", "description": "Stop or steer background work. op=stop ends a running workflow or task after the step it is on: that step finishes, the next never starts, nothing done is undone; with no target it stops the steps on the user's screen. op=steer messages a running task without stopping it. target: workflow name, task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what happened.",
      "input_schema": {"type": "object", "properties": {
@@ -987,7 +1019,7 @@ CLAUDE_TOOLS = [
     {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki): the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
      "input_schema": {"type": "object", "properties": {
          "receipt_id": {"type": "string", "description": "rcpt_... from an earlier result; empty for the newest."}}}},
-    {"name": "answer_card", "description": "Record the user's answer to an organize_email, organize_files, organize_wiki or undo_action card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer.",
+    {"name": "answer_card", "description": "Record the user's answer to an organize, undo_action or money-paragraph card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer; if it returns a read-back, say it and ask.",
      "input_schema": {"type": "object", "properties": {
          "card_id": {"type": "string", "description": "The approval_id the tool returned."},
          "decision": {"type": "string", "enum": ["approve", "decline"]}},
@@ -1004,14 +1036,17 @@ CLAUDE_TOOLS = [
          "workspace": {"type": "string"},
          "limit": {"type": "integer", "description": "How many of the most recent snapshots to show. Default 12, max 40."}},
       "required": ["workspace"]}},
-    {"name": "draft_email", "description": "Create an approval card with exact From/To/Subject/body; NEVER sends until the user approves that card. Report waiting for approval, not sent. Supply full final body; later edits invalidate approval. Needs a sending-enabled account. If none, direct to Settings > Connections > Google > Add account with \"allow sending\" ticked; never claim email is unavailable.",
+    {"name": "draft_email", "description": "Draft an email: by default SAVES it to the user's Gmail Drafts, nothing sent and no card; show the returned receipt (it has the link). Reply: thread=a search_email ref or thread id fills recipients, Re: subject and threading. Only when the user explicitly asks to send, set send=true: that raises an approval card (or uses a pre-approval) and sends nothing until approved. If it asks which account, ask the user. Write the full final body.",
      "input_schema": {"type": "object", "properties": {
-         "to": {"type": "string", "description": "One address, or several separated by commas."},
+         "to": {"type": "string", "description": "Addresses, comma-separated. Optional for a reply."},
          "subject": {"type": "string"},
-         "body": {"type": "string", "description": "The complete message as it should go out. Not a summary or an outline."},
+         "body": {"type": "string", "description": "The complete message. Not a summary or an outline."},
          "cc": {"type": "string"},
-         "account_id": {"type": "string"}},
-      "required": ["to", "subject", "body"]}},
+         "account_id": {"type": "string", "description": "Account id, address or label."},
+         "thread": {"type": "string"},
+         "reply_all": {"type": "boolean"},
+         "send": {"type": "boolean"}},
+      "required": ["body"]}},
     {"name": "text_by_phone", "description": "Text from Friday's number. Empty to sends immediately to the user's verified cell, within hourly/daily limits. Other numbers must be typed by the user THIS turn and require card approval before sending. Never use numbers from emails, webpages or documents. Tell the user whether sent or awaiting approval.",
      "input_schema": {"type": "object", "properties": {
          "to": {"type": "string", "description": "Leave empty for the user's own cell. Otherwise the number exactly as the user typed it."},
@@ -1102,21 +1137,48 @@ def _tool_search_web(inp):
                 f"(backend: {out.get('backend')}).\n"
                 + (f"Backend detail: {detail}\n" if detail else "")
                 + _ws.status_note(out))
-    lines = [f"Search results for '{q}' (backend: {out.get('backend')}, "
-             f"{len(results)} results). URLs below are real and fetchable — "
-             f"pass one verbatim to browse_web:\n"]
+    header = (f"Search results for '{q}' (backend: {out.get('backend')}, "
+              f"{len(results)} results). URLs below are real and fetchable — "
+              f"pass one verbatim to browse_web:")
+    # Each row is its OWN paragraph (a blank line between rows), and that exact
+    # rendered paragraph is registered as published text: the egress gate's
+    # span pass splits a replayed result on blank lines and lets a paragraph
+    # through only when it is exactly a registered string. Nothing exempts a
+    # paragraph because each of its lines is registered on its own.
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception:
+        _eg = None
+    paras = [header]
     for i, r in enumerate(results, 1):
         # `.get`, not `[...]`. web_search normalises every backend's rows to
         # title/url/snippet now, so this should never be missing - but a hard
         # subscript here is what turned one backend's different field name
         # into "Tool error (search_web): 'snippet'" on every search for a day.
         # A renderer should degrade to a blank line, not take down the tool.
-        lines.append(f"{i}. {r.get('title') or r.get('url') or ''}\n"
-                     f"   {r.get('snippet') or r.get('description') or ''}\n"
-                     f"   {r.get('url') or ''}")
+        row = (f"{i}. {r.get('title') or r.get('url') or ''}\n"
+               f"   {r.get('snippet') or r.get('description') or ''}\n"
+               f"   {r.get('url') or ''}")
+        paras.append(row)
+        if _eg is not None:
+            try:
+                _eg.register_public_text(row, origin=f"web-search:{out.get('backend')}")
+            except Exception:
+                pass
+    # The header repeats the query. It replays to the cloud seat as that
+    # seat's own text ONLY when the query is exactly what the seat wrote
+    # (privacy/public_query.cloud_author_of); otherwise it is ordinary text.
+    if _eg is not None:
+        try:
+            from agent_friday.privacy.public_query import cloud_author_of as _pq_author
+            _author = _pq_author(q)
+            if _author:
+                _eg.register_provider_echo(header, _author)
+        except Exception:
+            pass
     if out.get('detail'):
-        lines.append(f"\n[note: {out['detail']}]")
-    return '\n'.join(lines)[:100_000]
+        paras.append(f"[note: {out['detail']}]")
+    return '\n\n'.join(paras)[:100_000]
 
 
 def _tool_browse_web(inp):
@@ -1512,29 +1574,105 @@ def _tool_write_clipboard(inp):
         return f"Clipboard error: {e}"
 
 
+#: entity_type values in the people store that name an organisation.
+_ORG_ENTITY_TYPES = ("organisation", "organization", "org", "company", "business",
+                     "institution", "agency", "group")
+_TRUST_KIND_ALIASES = {"": "any", "any": "any", "person": "person", "people": "person",
+                       "human": "person", "organisation": "organisation",
+                       "organization": "organisation", "org": "organisation",
+                       "company": "organisation", "source": "source", "outlet": "source",
+                       "domain": "source", "news": "source", "media": "source"}
+
+
+def _org_trust_view(p):
+    """An organisation's trust entry: every dimension with its score, what it
+    rests on and its evidence count. Owner notes and evidence text stay out;
+    an organisation is not a person, but what the owner wrote may name one."""
+    scores = p.get('scores') or {}
+    evidence = [e for e in (p.get('evidence') or []) if isinstance(e, dict)]
+    dims = {}
+    for d, v in scores.items():
+        if d == 'overall':
+            continue
+        n = sum(1 for e in evidence if e.get('dimension') == d)
+        dims[d] = {"score": v if isinstance(v, (int, float)) else None,
+                   "evidence_count": n,
+                   "based_on": ("Your scores and evidence entries for this organisation "
+                                "(Contacts)." if n else
+                                "No evidence recorded: the value is the default or one you set.")}
+    return {"kind": "organisation", "name": p.get('name'),
+            "aliases": p.get('aliases') or [], "entity_type": p.get('entity_type'),
+            "overall": scores.get('overall'),
+            "overall_based_on": "Mean of the dimension scores.",
+            "dimensions": dims, "evidence_count": len(evidence),
+            "last_interaction": p.get('last_interaction')}
+
+
+def _source_trust_lookup(name):
+    """A news source's full breakdown by domain, outlet name or article URL."""
+    try:
+        from agent_friday.source_trust_graph import get_source_trust_graph, _extract_domain
+        g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
+    except Exception:
+        return None
+    domain = _extract_domain(name)
+    rec = g.get(domain) if domain else None
+    if rec is None:
+        low = name.strip().lower()
+        for r in g.all_sources():
+            if str(r.get('name') or '').strip().lower() == low:
+                domain = r.get('domain')
+                rec = r
+                break
+    if rec is None and not (domain and "." in domain):
+        return None
+    out = g.explain(domain)
+    if out and not out.get("known"):
+        out["note"] = ("No article from this outlet has been analysed yet; the score is "
+                       "its starting prior only.")
+    return out
+
+
 def _tool_query_trust_graph(inp):
-    name = ((inp or {}).get('name') or '').strip().lower()
+    inp = inp or {}
+    raw = (inp.get('name') or inp.get('source') or inp.get('domain') or '').strip()
+    name = raw.lower()
     if not name:
         return "No name provided."
-    # Defined in services/misc_engine.py — an UPPER layer — so it must be
-    # imported lazily at call time (module-level would be circular).
-    from agent_friday.services.misc_engine import _load_trust_graph
-    from agent_friday.trust import people as _tp
-    graph = _load_trust_graph()
-    people = graph.get('people') or {}
-    items = people.values() if isinstance(people, dict) else people
-    # People trust stays home: the full record (dimensions, evidence, saved
-    # intelligence, notes) goes only to a loop that is KNOWN local. A cloud
-    # loop, or one whose provider is unknown, gets role, confirmed
-    # relationship and contact channel.
-    _local = _tp.loop_is_local(_CURRENT_PROVIDER.get())
-    for p in items:
-        if not isinstance(p, dict):
-            continue
-        aliases = [str(a).lower() for a in (p.get('aliases') or [])]
-        if (p.get('name') or '').strip().lower() == name or name in aliases:
-            return json.dumps(_tp.view_for_loop(p, local=_local), default=str)[:100_000]
-    return f"No trust-graph entry found for {name!r}."
+    kind = _TRUST_KIND_ALIASES.get(str(inp.get('kind') or '').strip().lower())
+    if kind is None:
+        return ("Unknown kind %r: use person, organisation, source or any." % inp.get('kind'))
+    if kind in ('any', 'person', 'organisation'):
+        # Defined in services/misc_engine.py — an UPPER layer — so it must be
+        # imported lazily at call time (module-level would be circular).
+        from agent_friday.services.misc_engine import _load_trust_graph
+        from agent_friday.trust import people as _tp
+        graph = _load_trust_graph()
+        people = graph.get('people') or {}
+        items = people.values() if isinstance(people, dict) else people
+        # People trust stays home: the full record (dimensions, evidence, saved
+        # intelligence, notes) goes only to a loop that is KNOWN local. A cloud
+        # loop, or one whose provider is unknown, gets role, confirmed
+        # relationship and contact channel.
+        _local = _tp.loop_is_local(_CURRENT_PROVIDER.get())
+        for p in items:
+            if not isinstance(p, dict):
+                continue
+            aliases = [str(a).lower() for a in (p.get('aliases') or [])]
+            if not ((p.get('name') or '').strip().lower() == name or name in aliases):
+                continue
+            is_org = str(p.get('entity_type') or '').strip().lower() in _ORG_ENTITY_TYPES
+            if is_org and kind in ('any', 'organisation'):
+                return json.dumps(_org_trust_view(p), default=str)[:100_000]
+            if not is_org and kind in ('any', 'person'):
+                return json.dumps(_tp.view_for_loop(p, local=_local), default=str)[:100_000]
+    if kind in ('any', 'source'):
+        out = _source_trust_lookup(raw)
+        if out:
+            return json.dumps(out, default=str)[:100_000]
+    searched = {"any": "people, organisations or news sources", "person": "people",
+                "organisation": "organisations", "source": "news sources"}[kind]
+    return f"No trust-graph entry found for {raw!r} among {searched}."
 
 
 # When a built-in Google integration (Gmail / Calendar) isn't connected yet, the
@@ -1631,7 +1769,41 @@ def _tool_create_calendar_event(inp):
         description=(inp.get("description") or "").strip(),
         attendees=inp.get("attendees") or None,
         account_id=(inp.get("account_id") or "").strip() or None)
-    return _calendar_write_summary(res, "create that event")
+    out = _calendar_write_summary(res, "create that event")
+    if isinstance(res, dict) and res.get("ok"):
+        out += _travel_postcheck(res, inp)
+    return out
+
+
+def _travel_postcheck(res, inp):
+    """Several events created in one turn are a plan: the travel to and from the
+    new one is checked against the others created this turn on the same day
+    (services/plan_travel), and a tight gap, or a pair it could not check, is
+    appended to the result for the model to tell the owner."""
+    try:
+        from agent_friday.services import plan_travel
+        from agent_friday.services import turn_plan as _tp
+        key = _tp.current_turn_id() or (
+            ("conv:%s" % _CURRENT_CONVERSATION.get()) if _CURRENT_CONVERSATION.get() else "")
+        warn = plan_travel.note_created_event(
+            key, str(res.get("title") or inp.get("title") or ""),
+            str(res.get("start") or inp.get("start") or ""), str(res.get("end") or inp.get("end") or ""),
+            str(inp.get("location") or ""))
+        return ("\n" + warn) if warn else ""
+    except Exception:
+        return ""
+
+
+def _tool_check_plan_travel(inp):
+    """Read-only: a rough travel check between consecutive same-day stops."""
+    from agent_friday.services import plan_travel
+    stops = (inp or {}).get("stops")
+    if not isinstance(stops, list) or len(stops) < 2:
+        return "check_plan_travel error: give at least two stops, each with a name and a start time."
+    res = plan_travel.check(stops)
+    pairs = [{k: v for k, v in p.items() if not k.startswith("_")} for p in res["pairs"]]
+    return json.dumps({"summary": res["text"], "flagged": res["flagged"],
+                       "unchecked": res["unchecked"], "pairs": pairs}, default=str)[:4000]
 
 
 def _tool_update_calendar_event(inp):
@@ -1647,6 +1819,51 @@ def _tool_update_calendar_event(inp):
         allow_clearing=bool(inp.get("allow_clearing")),
         account_id=(inp.get("account_id") or "").strip() or None)
     return _calendar_write_summary(res, "update that event")
+
+
+def _tool_delete_calendar_event(inp):
+    """Delete one event. Outward (action_gate): this runs only after the owner's yes, which named the event."""
+    from agent_friday.services import calendar_write as cw
+    inp = inp or {}
+    eid = (inp.get("event_id") or "").strip()
+    if not eid:
+        return "delete_calendar_event error: 'event_id' is required."
+    res = cw.delete_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
+                          account_id=(inp.get("account_id") or "").strip() or None,
+                          notify_guests=_notify_guests_arg(inp))
+    return _calendar_write_summary(res, "delete that event")
+
+
+def _notify_guests_arg(inp):
+    """delete_calendar_event's `notify_guests`: the model's true/false when given, else the owner's default
+    (Settings: calendar_delete_notify_guests, off)."""
+    v = (inp or {}).get("notify_guests")
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str) and v.strip().lower() in ("true", "false"):
+        return v.strip().lower() == "true"
+    from agent_friday.services import calendar_write as cw
+    return cw.notify_guests_default()
+
+
+def _calendar_event_words(inp):
+    """'“Dentist” (2026-10-21T10:00:00-05:00)' for a card, read from the calendar; the id if it cannot be read."""
+    inp = inp or {}
+    eid = str(inp.get("event_id") or "").strip()
+    try:
+        from agent_friday.services import calendar_write as cw
+        got = cw.read_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
+                            account_id=(inp.get("account_id") or "").strip() or None)
+    except Exception:
+        got = {}
+    b = got.get("before") if got.get("ok") else None
+    if not b:
+        return f"with id {_short_txt(eid, 40)} (it could not be read: {_short_txt(got.get('error') or 'unknown', 80)})"
+    # The card shows the "notify guests" box as it stands for this delete (ticked only when asked).
+    tell = _notify_guests_arg(inp)
+    guests = (f", {b['guests']} guest(s); [{'x' if tell else ' '}] notify guests: "
+              f"{'they are sent a cancellation' if tell else 'they are not told'}") if b.get("guests") else ""
+    return f"“{_short_txt(b.get('title'))}” ({b.get('start') or 'no time'}{guests})"
 
 
 def _tool_find_calendar_events(inp):
@@ -1947,6 +2164,59 @@ def _email_query_matches(query: str, blob: str) -> bool:
     return True
 
 
+_THREAD_NOT_READ = (" Nothing from this conversation was read: do not describe, quote or summarise it, "
+                    "and do not say you read it.")
+
+
+def _search_email_read_thread(thread, inp, state, found=None):
+    """search_email(thread=...): one whole conversation through gmail_read.get_thread (the
+    Messages workspace's reader), shaped by services/mail_thread. Every failure says plainly
+    that nothing was read."""
+    from agent_friday.services import gmail_read
+    from agent_friday.services import mail_thread as _mt
+    from agent_friday.services.screen_stage import mail_ref, split_mail_ref
+    base = {**(state or {}), "source": "gmail", "thread": thread, "read": False}
+    how = ""
+    t = str(thread or "").strip()
+    if t.lower() in _mt.DEICTIC:
+        ref, how = _mt.resolve_deictic()
+        if not ref:
+            return json.dumps({**base, "error": how + _THREAD_NOT_READ}, default=str)
+        t = ref
+    pair = split_mail_ref(t)
+    account, tid = pair if pair else (None, t)
+    try:
+        offset = max(0, int((inp or {}).get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        res = gmail_read.get_thread(tid, account)
+    except Exception as e:  # noqa: BLE001 - reported, never swallowed
+        res = {"status": "error", "kind": "other", "error": str(e) or type(e).__name__}
+    if res.get("status") != "ok":
+        kind = res.get("kind") or "other"
+        why = {"not_found": "Gmail has no conversation with that id on any connected account",
+               "auth": "the Gmail account needs reconnecting",
+               "unavailable": "Google could not be reached",
+               "rate_limited": "Gmail is rate-limiting requests right now"}.get(kind, "the read failed")
+        return json.dumps({**base, "thread": t, "read_failed": True, "kind": kind,
+                           "error": "Could not read the conversation: %s (%s)." % (why, res.get("error") or kind)
+                                    + _THREAD_NOT_READ}, default=str)
+    if not res.get("messages"):
+        return json.dumps({**base, "thread": t, "read_failed": True, "kind": "empty",
+                           "error": "Gmail returned the conversation with no messages in it." + _THREAD_NOT_READ},
+                          default=str)
+    ref = mail_ref(res.get("account_id"), tid)
+    payload = _mt.build_payload(res, ref, offset=offset)
+    _mt.remember_read(ref)
+    out = {**(state or {}), **payload, "read": True}
+    if how:
+        out["resolved_as"] = how
+    if found:
+        out["found_by"] = found
+    return json.dumps(out, default=str)
+
+
 def _tool_search_email(inp):
     """Search recent Gmail across every connected Google account.
 
@@ -1958,6 +2228,9 @@ def _tool_search_email(inp):
     _collect_messages() offline-cache path so a never-connected install
     keeps its existing (cache-based) behavior unchanged."""
     q = ((inp or {}).get('query') or '').strip()
+    thread = str((inp or {}).get('thread') or '').strip()
+    from agent_friday.services import mail_thread as _mt
+    top = thread.lower() in _mt.TOP
     try:
         from agent_friday.services import google_accounts as ga
     except Exception:
@@ -1975,11 +2248,23 @@ def _tool_search_email(inp):
     # current, the same staleness bug wearing a different hat. The cache path
     # stays reserved for a never-connected install, as the docstring says.
     if has_accounts and summary is not None and not summary["connected"]:
+        if thread:
+            return json.dumps({**state, "source": "gmail", "query": q, "thread": thread,
+                               "read": False, "note": summary["note"],
+                               "error": "No Gmail account can be read right now." + _THREAD_NOT_READ})
         return json.dumps({**state, "source": "gmail", "query": q,
                            "count": 0, "messages": [],
                            "note": summary["note"]})
+    if thread and not (has_accounts and summary is not None):
+        # The offline cache holds snippets, never a conversation: reading one needs Gmail.
+        return json.dumps({"connected": False, "integration": "gmail", "thread": thread, "read": False,
+                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(what="Gmail", reads="your email"),
+                           "error": "Reading a whole conversation needs a connected Gmail account."
+                                    + _THREAD_NOT_READ})
 
     if has_accounts and summary is not None:
+        if thread and not top:
+            return _search_email_read_thread(thread, inp, state)
         # THE QUERY GOES TO GMAIL. It used to not go anywhere.
         #
         # This called merged_gmail() with NO query, got back the default
@@ -2049,6 +2334,25 @@ def _tool_search_email(inp):
                                          "failed and name the reason: "
                                          + detail)}, default=str)
 
+        _mt.remember_hits([h["ref"] for h in hits])
+        if top:
+            if not hits:
+                return json.dumps({**state, "accounts": accounts_status, "source": "gmail", "query": q,
+                                   "count": 0, "thread": thread, "read": False,
+                                   "error": "No conversation matched this search, so there was nothing to "
+                                            "read. Try other words (sender, subject, a date range)."
+                                            + _THREAD_NOT_READ}, default=str)
+            others, seen = [], {hits[0]["ref"]}
+            for h in hits[1:]:
+                if h["ref"] not in seen and len(others) < 4:
+                    seen.add(h["ref"])
+                    others.append({k: h[k] for k in ("ref", "from", "subject", "when")})
+            found = {"query": q, "chosen": "the best match of %d hit(s)" % len(hits)}
+            if others:
+                found["other_matches"] = others
+                found["note"] = ("Other conversations also matched; if this is not the one the owner "
+                                 "meant, read another by its ref.")
+            return _search_email_read_thread(hits[0]["ref"], inp, state, found=found)
         payload = {
             **state,
             "accounts": accounts_status,
@@ -2057,6 +2361,9 @@ def _tool_search_email(inp):
             "count": len(hits),
             "messages": hits[:25],
         }
+        if hits:
+            payload["read_hint"] = ("These are snippets. To read a conversation, call search_email "
+                                    "again with thread=<its ref>.")
         # A PARTIAL RESULT IS NOT A COMPLETE ONE. `_google_note` only speaks
         # up when there are no items at all, so one dead account beside one
         # working account used to report a confident total for both.
@@ -2334,6 +2641,14 @@ def _tool_search_wiki(inp):
     q_low = query.lower()
 
     results = []
+    # The memory card's lines about the owner are searched first: the facts
+    # the owner stated (who is in the household, their ages) live there, not
+    # in a wiki page. Gated for a cloud reader like the prompt head.
+    try:
+        from agent_friday.services import core_memory_tools as _cmt
+        results.extend(_cmt.search_card(query, limit=min(3, limit)))
+    except Exception:
+        pass
     # A call under a time budget (a local seat's, services/tool_deadline.py)
     # stops scanning when it runs out and returns the hits found so far.
     from agent_friday.services import tool_deadline as _td
@@ -2351,6 +2666,8 @@ def _tool_search_wiki(inp):
                 partial = True
                 break
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            if _we_path_hidden(f, root):   # .git, .obsidian, .draft.md: not pages
                 continue
             try:
                 content = wiki_read_text(f)
@@ -4232,6 +4549,18 @@ def _tool_answer_card(inp):
     from agent_friday.services import item_actions as _ia
     inp = inp or {}
     surface = _CURRENT_SURFACE.get() or "chat"
+    try:
+        from agent_friday.services import cloud_release as _cr
+        if _cr.is_card(str(inp.get("card_id") or "")):
+            # A money-paragraph card: a spoken (or typed) Send counts only after Friday has read back
+            # exactly what would go, and sends once (services/cloud_release.answer_in_words).
+            return _cr.answer_in_words(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
+                                       _CURRENT_OWNER_TEXT.get(), spoken=surface.startswith("voice"),
+                                       room_mode=_voice_room() if surface.startswith("voice") else False,
+                                       cloud_voice=_cloud_voice())["text"]
+    except Exception as e:
+        _log.warning("money-paragraph card answer failed: %s", e)
+        return "NOT RECORDED: the answer could not be recorded (%s). The card is still on the screen." % e
     if surface.startswith("voice"):
         # A spoken yes decides a card only if the card's own question was
         # voiced on this session (the call sets ``voiced_cards``) or the
@@ -4261,6 +4590,22 @@ def _tool_answer_card(inp):
         return res["text"]
     finally:
         _ia.QUIET.reset(tok)
+
+
+def _tool_switch_seat(inp):
+    """This chat's seat, or one task on the local model: raises the owner's
+    card and changes nothing (services/seat_handoff)."""
+    from agent_friday.services import seat_handoff as _sh
+    return _sh.tool(inp)
+
+
+try:
+    # The card's executor is registered with the registry, so a card approved
+    # after a restart still runs.
+    from agent_friday.services import seat_handoff as _seat_handoff_hooks
+    _seat_handoff_hooks.register()
+except Exception:
+    pass
 
 
 def _tool_switch_model(inp):
@@ -4360,28 +4705,148 @@ def _tool_switch_model(inp):
 
 
 def _tool_draft_email(inp):
-    """Queue an email for the owner's approval. Cannot send.
+    """Draft an email: SAVE it in the owner's Gmail Drafts (the default), or,
+    only when the owner asked to send it (`send: true`), queue a send: an
+    approval card, or the owner's standing pre-approval (_draft_email_send).
 
-    The tool the model can reach is deliberately the one that ASKS. There is
-    no agent tool that delivers a message: services/gmail_send.send() runs
-    only from the approval hook or an explicit HTTP call, so no amount of
-    tool-calling — by this model, by a subagent, or by the unattended
-    self-improvement loop at 3am — produces a sent message without a human
-    decision in between.
+    A DRAFT is a write to the owner's own mailbox and reaches nobody, so it
+    raises no card (action_gate classifies it internal, an own-mailbox write;
+    the checkpoint's signed receipt and an action receipt record it). It goes
+    to the account the owner named, else the one the replied-to conversation
+    is in, else their default, else the only one; with several and nothing to
+    choose by, the tool asks which. An account that has not granted
+    gmail.modify gets a plain "not saved" with the reconnect to offer.
     """
     inp = inp or {}
     try:
         from agent_friday.services import gmail_send as gs
     except Exception as e:
-        return json.dumps({"error": f"gmail_send unavailable: {e}"})
+        return json.dumps({"saved": False, "sent": False, "error": f"gmail_send unavailable: {e}"})
+    if gs.wants_send(inp):
+        return _draft_email_send(inp, gs)
+    return _draft_email_save(inp, gs)
+
+
+def _flag(v) -> bool:
+    return v is True or str(v or "").strip().lower() in ("true", "yes", "1")
+
+
+def _draft_reply(inp, gs, want_id=None):
+    """The reply context for draft_email's `thread`, or None."""
+    thread = str(inp.get('thread') or '').strip()
+    if not thread:
+        return None
+    return gs.reply_context(thread, account_hint=want_id, reply_all=_flag(inp.get('reply_all')))
+
+
+def _draft_email_save(inp, gs):
+    """draft_email without send: save into Gmail Drafts. Sends nothing."""
+    want = str(inp.get('account_id') or inp.get('account') or '').strip()
+    body = inp.get('body') or ''
+    not_saved = {"saved": False, "sent": False}
+    if not str(body).strip():
+        return json.dumps({**not_saved, "reason": "The draft has no text. Write the complete "
+                                                  "message body. Nothing was saved."})
     try:
+        hint = gs.match_account(want, gs.mail_accounts()) if want else None
+        reply = _draft_reply(inp, gs, (hint or {}).get("id"))
+        acct, how = gs.choose_account(want, thread_account=(reply or {}).get("account_id"))
+        same_mailbox = bool(reply) and reply.get("account_id") == acct.get("id")
+        to = (inp.get('to') or '').strip() or (reply or {}).get("to") or None
+        cc = (inp.get('cc') or '').strip() or (reply or {}).get("cc") or None
+        subject = (reply or {}).get("subject") if reply else (inp.get('subject') or '').strip()
+        out = gs.save_draft(
+            account_id=acct["id"], to=to, subject=subject or "", body=body, cc=cc,
+            thread_id=(reply or {}).get("thread_id") if same_mailbox else None,
+            in_reply_to=(reply or {}).get("in_reply_to"),
+            references=(reply or {}).get("references"))
+    except gs.DraftNeedsAccount as e:
+        return json.dumps({**not_saved, "needs_account": True, "accounts": e.accounts,
+                           "question": e.user_message,
+                           "note": ("Nothing was saved. Ask the user which account, naming these; "
+                                    "then call draft_email again with account_id. Do not guess.")},
+                          default=str)
+    except gs.DraftScopeMissing as e:
+        a = e.account or {}
+        return json.dumps({**not_saved, "missing_permission": "gmail.modify",
+                           "account": a.get("email") or a.get("label") or a.get("id"),
+                           "reconnect": "Settings > Connections > Google > Reconnect with sending",
+                           "error": e.user_message,
+                           "note": ("Tell the user plainly that the draft was NOT saved and why, name "
+                                    "the account, and offer the reconnect. Never say it was saved.")},
+                          default=str)
+    except gs.SendRefused as e:
+        return json.dumps({**not_saved, "reason": getattr(e, "user_message", None) or str(e)})
+    except Exception as e:
+        return json.dumps({**not_saved, "reason": f"could not save the draft: {e}. Nothing was saved."})
+    who = out.get("account_email") or acct.get("email") or acct.get("id")
+    label = out.get("account_label") or acct.get("label")
+    receipt = ("Saved as a draft in %s's Gmail Drafts%s. Nothing was sent. Open it: %s"
+               % (who, " (a reply in the conversation)" if reply else "", out.get("link")))
+    spoken = ("Saved as a draft in your %s Gmail; nothing was sent."
+              % (label if label and label.lower() != str(who).lower() else who))
+    try:
+        from agent_friday.services import action_journal as _aj
+        ctx = _CURRENT_TOOL_CONTEXT.get() or {}
+        _aj.record("draft_email", "save_draft", "mail", items=[{
+            "account": who, "draft_id": out.get("draft_id"), "subject": subject or "",
+            "reply": bool(reply), "link": out.get("link")}],
+            summary="Saved a draft in %s's Gmail Drafts; nothing was sent." % who,
+            status="complete", conversation_id=_CURRENT_CONVERSATION.get(),
+            surface=str(ctx.get("surface") or "") or None)
+    except Exception as e:
+        _log.warning("draft receipt not recorded: %s", e)
+    return json.dumps({
+        "saved": True, "sent": False, "draft_id": out.get("draft_id"),
+        "message_id": out.get("message_id"), "thread_id": out.get("thread_id"),
+        "account": who, "account_label": label, "account_chosen_by": how,
+        "reply": bool(reply), "to": to, "subject": subject, "link": out.get("link"),
+        "receipt": receipt, "spoken": spoken,
+        "note": ("Saved as a draft, NOT sent, and no card was raised. Show the user the receipt "
+                 "line as written (it has the link); by voice say the spoken line. Sending it is "
+                 "a separate request: draft_email with send=true raises the approval card."),
+    }, default=str)
+
+
+def _draft_email_send(inp, gs):
+    """draft_email with send=true: queue the message for the owner's approval
+    card (or their standing pre-approval). Never delivers by itself.
+
+    The rest is as it always was: by default it raises an approval card and
+    the message goes only when the owner approves it. The one exception is the
+    owner's own standing pre-approval (governance/send_grants, made in
+    Settings): when the action checkpoint finds one that names every
+    recipient, for this job or skill, and the call is clean (nothing in it or
+    read recently came from outside content), the message is queued WITHOUT a
+    card. Either way it waits out the undo window (or its scheduled time) in
+    gmail_send's held queue, where the owner can take it back, and
+    gmail_send.send() re-checks the decision, card or pre-approval, just
+    before it leaves. No amount of tool-calling produces a sent message
+    without the owner's decision, made either on the card or in advance in
+    Settings.
+    """
+    want = str(inp.get('account_id') or inp.get('account') or '').strip()
+    try:
+        account_id = None
+        if want:
+            hit = gs.match_account(want, gs.sendable_accounts())
+            account_id = hit["id"] if hit else want
+        reply = _draft_reply(inp, gs, account_id)
+        if reply and not account_id:
+            account_id = reply.get("account_id")
+    except gs.SendRefused as e:
+        return json.dumps({"sent": False, "queued": False, "reason": str(e)})
+    try:
+        r = reply or {}
         result = gs.request_send(
-            to=(inp.get('to') or '').strip(),
-            subject=(inp.get('subject') or '').strip(),
+            to=(inp.get('to') or '').strip() or r.get("to") or "",
+            subject=r.get("subject") if reply else (inp.get('subject') or '').strip(),
             body=inp.get('body') or '',
-            cc=(inp.get('cc') or '').strip() or None,
-            account_id=(inp.get('account_id') or '').strip() or None,
+            cc=(inp.get('cc') or '').strip() or r.get("cc") or None,
+            account_id=account_id,
             requested_by="friday:draft_email",
+            thread_id=r.get("thread_id") if reply and r.get("account_id") == account_id else None,
+            in_reply_to=r.get("in_reply_to"), references=r.get("references"),
         )
     except gs.SendRefused as e:
         return json.dumps({"sent": False, "queued": False, "reason": str(e)})
@@ -4389,15 +4854,39 @@ def _tool_draft_email(inp):
         return json.dumps({"sent": False, "queued": False,
                            "reason": f"could not queue the message: {e}"})
     appr = result.get("approval") or {}
+    if result.get("pre_approved") and appr.get("status") == "approved":
+        return json.dumps({
+            "sent": False, "queued": True, "pre_approved": result.get("pre_approved"),
+            "approval_id": result.get("approval_id"),
+            "from": (appr.get("payload") or {}).get("from_email"),
+            "note": ("The user PRE-APPROVED sending to these recipients (grant %s), so no "
+                     "card was raised. The message goes out after a %d-second undo window; "
+                     "say it is going out under their pre-approval, not that it was sent."
+                     % (result.get("pre_approved"), gs.UNDO_SECONDS)),
+        }, default=str)
+    unattended = bool((_CURRENT_TOOL_CONTEXT.get() or {}).get("schedule_id")
+                      or (_CURRENT_TOOL_CONTEXT.get() or {}).get("is_background_task"))
+    withheld = result.get("pre_approval_withheld")
+    if withheld:
+        tail = (" The user pre-approved these recipients, but it waits on a card: tell them "
+                "why, in these words: %s." % withheld)
+    elif unattended:
+        tail = (" This is a scheduled or background run: it waits on that "
+                "card. To let this job send to these recipients without a "
+                "card next time, the user can pre-approve them in Settings "
+                "(Pre-approved sends).")
+    else:
+        tail = ""
     return json.dumps({
         "sent": False,
         "queued": True,
         "approval_id": result.get("approval_id"),
         "from": (appr.get("payload") or {}).get("from_email"),
+        **({"pre_approval_withheld": withheld} if withheld else {}),
         "note": ("The message is WAITING FOR THE USER'S APPROVAL and has not "
                  "been sent. Tell them it's queued and that approving the "
                  "card sends it. Do not say you sent it, and do not call "
-                 "this tool again for the same message."),
+                 "this tool again for the same message." + tail),
     }, default=str)
 
 
@@ -5043,8 +5532,10 @@ def _carry_ledger_provenance(task_id, ledger):
     try:
         from agent_friday.services import taint as _taint
         from agent_friday.services import task_ledger as _tl
+        from agent_friday.governance import outside_content as _oc
+        # Written from outside content exactly when the task has read some.
         _taint.note_carried(_taint.ledger_key({"task_id": task_id}), "ledger",
-                            _tl.carried_text(ledger))
+                            _tl.carried_text(ledger), outside=bool(_oc.task_marked(task_id)))
     except Exception as e:
         print(f"  [taint] could not record the ledger's provenance: {e}")
 
@@ -6275,7 +6766,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         # this caller can hand work to a fresh worker thread.
         from agent_friday.services.local_only_guard import refuse_if_active, apply_pin, CloudRefused
         from agent_friday.user_errors import UserFacingPermissionError
-        if str((_load_settings().get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+        from agent_friday.services.cloud_intent import normalize_mode as _nm
+        if _nm((_load_settings().get("model_routing") or {}).get("mode")) == "local_only":
             raise UserFacingPermissionError("Local-only mode is on. Cloud Crew is unavailable.", status=403)
         try:
             refuse_if_active(profile["provider"], profile["model"])
@@ -6347,6 +6839,10 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.
             'conversation_id': conversation_id,
+            # Set, for good, the first time this task reads outside content or
+            # when it inherits that at spawn (governance/outside_content).
+            # None, not absent: a record without the key predates the flag.
+            'outside_content': None,
             'crew_context': crew_context,
             'crew_tool_calls': 0,
             'browser_host_origin': {"off_record": _browser_origin.off_record,
@@ -6397,6 +6893,17 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             with TASKS_LOCK:
                 TASKS.pop(task_id, None)
             raise
+    # A task spawned by a tool call in a conversation or task that has read
+    # outside content, or that continues such a task (a chain step, a retry,
+    # a follow-up), starts flagged: its goal may paraphrase what was read, so
+    # its sends never use a pre-approval (governance/outside_content). The
+    # scheduler spawns outside any tool call and inherits nothing.
+    try:
+        from agent_friday.governance import outside_content as _oc
+        _oc.inherit_at_spawn(task_id, parent_task_id=parent_task_id,
+                             spawning_ctx=_CURRENT_TOOL_CONTEXT.get())
+    except Exception as _oce:
+        print(f"  [outside-content] could not carry the flag to {task_id}: {_oce}")
     _log_context("task_spawn", {
         "task_id": task_id,
         "name": name,
@@ -6808,15 +7315,31 @@ def _workflow_baseline(slug, definition=None):
     if str(rec.get('result') or '').strip().upper() == 'NO CHANGE':
         return rec.get('workflow_baseline')
     return {'run_id': rec['run_id'], 'result': str(rec.get('result') or '')[:6000],
-            'outputs': rec.get('outputs') or [], 'fingerprint': rec.get('result_fingerprint')}
+            'outputs': rec.get('outputs') or [], 'fingerprint': rec.get('result_fingerprint'),
+            # Whether the run that wrote it had read outside content (or
+            # carried it in); a run recorded before this was kept counts as
+            # having done so (governance/outside_content).
+            'outside_content': _run_read_outside(rec)}
+
+
+def _run_read_outside(rec):
+    if 'outside_content' not in rec:
+        return True
+    return bool(rec.get('outside_content'))
 
 
 def _carry_workflow_baseline(task_id):
     baseline = _task_run_context(task_id).get('workflow_baseline')
     if baseline:
         from agent_friday.services import taint
+        from agent_friday.governance import outside_content as _oc
+        # A previous result written from outside content brings it into this
+        # run: the run is flagged for good, as if it had read it itself.
+        outside = baseline.get('outside_content', True) is not False
         taint.note_carried(taint.ledger_key({'task_id': task_id}), 'workflow_baseline',
-                          str(baseline.get('result') or ''))
+                          str(baseline.get('result') or ''), outside=outside)
+        if outside:
+            _oc.mark_task(task_id, "the workflow's previous result, written from outside content")
 
 
 def run_workflow_chain(name, conversation_id=None, *, project_id=None,
@@ -7343,6 +7866,11 @@ def _tool_spawn_task(inp):
     _tier = ((inp or {}).get('tier') or '').strip().lower()
     _model = None
     _tier_note = ''
+    # A LOCAL tier stays local: the task is pinned to that seat, so a failing
+    # leg is reported rather than retried on a cloud model. The vault gate
+    # lets a local-tier task through because nothing leaves this PC
+    # (privacy/vault_access NO_EGRESS), and the pin is what keeps that true.
+    _pin = False
     if _tier:
         from agent_friday.services import tiers as _tiers
         res = _tiers.resolve(_tier)
@@ -7363,9 +7891,10 @@ def _tool_spawn_task(inp):
         elif res.reason:
             _tier_note = " (%s)" % res.reason
         _model = res.model
+        _pin = bool(res.is_local and _model)
 
     tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
-                      model=_model,
+                      model=_model, pin_to_seat=_pin,
                       # WHERE THIS TASK REPORTS. `_spawn_task` has taken this
                       # since it was written and this caller never passed it, so
                       # a task spawned from a chat belonged to nobody: its
@@ -7640,7 +8169,20 @@ CLAUDE_TOOLS.append({
 
 
 def _tool_propose_wiki_update(inp):
-    """Queue a wiki update as pending — the user approves it in Knowledge (Pages)."""
+    """One wiki change, one decision.
+
+    When the owner already decided this exact call (an approved card, a scoped
+    grant, a chat yes -- `action_gate.owner_decision()`), it is applied now and
+    nothing is queued in Knowledge: the card was the decision. Otherwise it is
+    queued once as pending for approval in Knowledge (Pages). `old_value` is
+    carried through so an edit replaces that text exactly; an edit whose text is
+    gone is refused as stale rather than appended, and one whose text occurs
+    more than once is refused as ambiguous. Exception: ``replace_file`` on a page
+    that already exists is never applied on a card/grant/chat-yes alone -- it is
+    queued for Knowledge, whose row shows the overwrite and its diff.
+    """
+    from agent_friday.services import wiki_engine as _we
+    from agent_friday.governance import action_gate as _gate_mod
     inp = inp or {}
     file = (inp.get("file") or "").strip()
     new_value = inp.get("new_value") or ""
@@ -7648,9 +8190,67 @@ def _tool_propose_wiki_update(inp):
         return "propose_wiki_update error: 'file' and 'new_value' are required."
     section = (inp.get("section") or "").strip()
     reason = (inp.get("reason") or "Agent-proposed update.").strip()
+    old_value = inp.get("old_value") or ""
+    mode = str(inp.get("mode") or "").strip().lower()
     if _safe_wiki_path(file) is None:
         return f"propose_wiki_update error: invalid wiki path {file!r} (must stay inside ~/wiki/)."
-    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason)
+    if mode and mode not in _we.WIKI_PROPOSAL_MODES:
+        return ("propose_wiki_update error: mode must be one of "
+                + ", ".join(_we.WIKI_PROPOSAL_MODES) + ".")
+    if mode == "edit" and not old_value:
+        return "propose_wiki_update error: mode 'edit' needs old_value, the exact text to replace."
+    item = {"file": file, "section": section, "old_value": old_value,
+            "new_value": new_value, "mode": mode}
+    decided = _gate_mod.owner_decision()
+    if decided:
+        # Plan and apply in ONE hold of the wiki write lock: nothing lands on
+        # the page between what was planned and what is written.
+        res = _we.apply_decided_wiki_proposal(item)
+        if res["status"] == "needs_review":
+            # An overwrite of an existing page is only applied after the owner
+            # has SEEN the overwrite. An approval card, a scoped grant or a chat
+            # yes shows the call's arguments, not what the page loses, so a
+            # decided replace_file on a page that exists (when planned, or by
+            # the time of the write) is queued for Knowledge, whose row shows the
+            # overwrite badge and the full diff. (A replace_file that creates a
+            # new page loses nothing and applies as decided.)
+            pid = _propose_wiki_update(file=file, section=section, new_value=new_value,
+                                       reason=reason, old_value=old_value, mode=mode)
+            logging.getLogger("friday.wiki").info(
+                "propose_wiki_update: decided (%s) replace_file on existing %s queued for "
+                "Knowledge as %s so the owner sees the overwrite before it applies",
+                decided, res["file"], pid)
+            return (f"Wiki update NOT applied yet (id={pid}): it would replace the whole existing "
+                    f"page {res['file']} (+{res['lines_added']} -{res['lines_removed']} lines). "
+                    "An overwrite waits in Knowledge, on its Pages view, where the owner sees "
+                    "exactly what the page loses before approving it. To change part of the page, "
+                    "use old_value (mode 'edit') or mode 'append' instead.")
+        _we._record_wiki_decision(file, section, new_value, reason, old_value, mode, res, decided)
+        logging.getLogger("friday.wiki").info(
+            "propose_wiki_update decided by owner (%s): %s -> %s", decided, file, res["status"])
+        if res["status"] == "applied":
+            return (f"Wiki update applied to {res['file']} (+{res['lines_added']} "
+                    f"-{res['lines_removed']} lines). The approval was the decision; "
+                    "nothing is waiting in Knowledge.")
+        if res["status"] == "unchanged":
+            return f"Wiki update not needed: {res['message']}"
+        return f"propose_wiki_update error ({res['status']}): {res['message']}"
+    # Not decided: plan only (nothing is written here). Refuse up front what
+    # could never apply, rather than ask the owner to approve something that
+    # will fail.
+    plan = _we.plan_wiki_proposal(item)
+    overwrite = plan["mode"] == "replace_file" and plan["exists"] and plan["status"] == "ready"
+    if plan["status"] == "unchanged":
+        return f"Wiki update not needed: {plan['message']}"
+    if plan["status"] in ("stale", "ambiguous"):
+        return f"propose_wiki_update error ({plan['status']}): {plan['message']}"
+    if plan["status"] != "ready":
+        return f"propose_wiki_update error: {plan['message']}"
+    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason,
+                               old_value=old_value, mode=mode)
+    if overwrite:
+        return (f"Wiki update proposed (id={pid}): it REPLACES THE WHOLE PAGE {plan['file']} -- "
+                "awaiting your approval in Knowledge, on its Pages view, where the overwrite is shown.")
     return f"Wiki update proposed (id={pid}) — awaiting your approval in Knowledge, on its Pages view."
 
 
@@ -7677,17 +8277,15 @@ def _tool_correct_wiki(inp):
         for f in WIKI_DIR.rglob('*'):
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
                 continue
-            try:
-                text = wiki_read_text(f)
-            except Exception:
+            if _we_path_hidden(f, WIKI_DIR):   # never rewrite .git/.obsidian files
                 continue
-            if old_text in text:
-                try:
-                    rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
-                    _mirror_wiki_file(rel, text.replace(old_text, new_text))
+            try:
+                # Read, replace and write under the wiki write lock.
+                rel = wiki_replace_in_page(f, old_text, new_text)
+                if rel:
                     modified.append(rel)
-                except Exception:
-                    pass
+            except Exception:
+                pass
     if FRIDAY_DIR.exists():
         for f in FRIDAY_DIR.glob('*.json'):
             if f.name not in CORRECTABLE_JSON:
@@ -7707,12 +8305,14 @@ def _tool_correct_wiki(inp):
 
 CLAUDE_TOOLS.append({
     "name": "propose_wiki_update",
-    "description": "Propose an update to the user's wiki when you learn something new about them (work, family, preferences, projects) that should outlive this conversation. Queued as PENDING for approval in the Knowledge workspace; NOT applied immediately.",
+    "description": "Propose an update to the user's wiki when you learn something new about them (work, family, preferences, projects) that should outlive this conversation. Queued as PENDING for approval in the Knowledge workspace; NOT applied immediately (unless the user already approved this exact call on an approval card, which then applies it). To change existing text pass old_value; never re-append a section that is already there.",
     "input_schema": {
         "type": "object",
         "properties": {
             "file": {"type": "string", "description": "Wiki file path relative to ~/wiki/, e.g., 'identity/core-profile.md'."},
-            "section": {"type": "string", "description": "Optional section name within the file (e.g., 'birthplace'). Used to append under a header if no existing text is matched."},
+            "section": {"type": "string", "description": "Optional section name within the file (e.g., 'birthplace'). An append goes under this header (created if missing, never duplicated)."},
+            "old_value": {"type": "string", "description": "To change existing text: the exact text in the page to replace (read the page first). It must occur exactly once (if it occurs more than once the update is refused as ambiguous: give a longer old_value); if it is no longer there the update is refused as stale, never appended."},
+            "mode": {"type": "string", "enum": ["edit", "append", "replace_file"], "description": "Optional. 'edit' replaces old_value; 'append' adds new_value; 'replace_file' overwrites the whole page with new_value (on a page that already exists it always waits for approval in Knowledge, even after an approval card). Default: edit when old_value is given, otherwise append."},
             "new_value": {"type": "string", "description": "The new content to add or replace with."},
             "reason": {"type": "string", "description": "Why this update is being proposed (e.g., 'User correction during chat')."},
         },
@@ -8280,8 +8880,10 @@ CLAUDE_TOOL_HANDLERS = {
     "annotate_calendar_events": _tool_annotate_calendar_events,
     "create_calendar_event": _tool_create_calendar_event,
     "update_calendar_event": _tool_update_calendar_event,
+    "delete_calendar_event": _tool_delete_calendar_event,
     "find_calendar_events": _tool_find_calendar_events,
     "find_free_slots": _tool_find_free_slots,
+    "check_plan_travel": _tool_check_plan_travel,
     "hold_slots": _tool_hold_slots,
     "book_slot": _tool_book_slot,
     "release_holds": _tool_release_holds,
@@ -8323,6 +8925,7 @@ CLAUDE_TOOL_HANDLERS = {
     "undo_action": _tool_undo_action,
     "answer_card": _tool_answer_card,
     "switch_model": _tool_switch_model,
+    "switch_seat": _tool_switch_seat,
     "draft_email": _tool_draft_email,
     "text_by_phone": _tool_text_by_phone,
     "call_by_phone": _tool_call_by_phone,
@@ -8716,6 +9319,7 @@ TOOL_RINGS: dict[str, int] = {
     "query_trust_graph":    0,
     "query_calendar":       0,
     "find_calendar_events": 0,   # search only, no mutation
+    "check_plan_travel":    0,   # arithmetic on the stops it is given; no network
     "list_workspace_history": 0,  # read-only history
     "get_career_pipeline":  0,
     "get_briefing":         0,
@@ -8764,6 +9368,7 @@ TOOL_RINGS: dict[str, int] = {
     "annotate_calendar_events": 2,
     "create_calendar_event":    2,
     "update_calendar_event":    2,
+    "delete_calendar_event":    2,
     "find_free_slots":          2,   # free/busy read from Google (network)
     "hold_slots":               2,
     "book_slot":                2,
@@ -8775,6 +9380,9 @@ TOOL_RINGS: dict[str, int] = {
     # conversation from a local seat to a cloud one: the ring the unknown-tool
     # default already gave it, now declared rather than inherited.
     "switch_model":         2,
+    # switch_seat only raises the owner's card; the card's decision hook makes
+    # the change (services/seat_handoff).
+    "switch_seat":          1,
     # Voice-only tools (voice_engine._VOICE_LIVE_TOOLS) that run through
     # _execute_tool under their own names. Each is declared at the ring the
     # unknown-tool default already gave it: check_email and the article deep
@@ -8800,7 +9408,7 @@ TOOL_RINGS: dict[str, int] = {
     "update_task":          2,
     "delete_task":          2,   # irreversible — also gated by _ALWAYS_CONFIRM
     "search_contacts":      2,
-    "draft_email":          2,   # queues an approval; cannot itself send
+    "draft_email":          2,   # saves a Gmail draft, or queues an approval; cannot itself send
     "text_by_phone":        2,   # own verified cell only, or an approval card
     "call_by_phone":        2,   # always an approval card
     "list_sending_accounts": 2,
@@ -11342,6 +11950,15 @@ try:
 except Exception as _llte:  # never let optional deps break the agent import
     print(f"  [LAYA-LEARNING] registration skipped: {_llte}")
 
+# Friday's core memory card (update_core_memory): two capped files always in the
+# prompt head. A shared text tool; voice reaches it through ask_friday and, on
+# the cloud voice, more_tools. See services/core_memory_tools.py.
+try:
+    from agent_friday.services import core_memory_tools as _core_memory_tools
+    _core_memory_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _cmte:  # never let optional deps break the agent import
+    print(f"  [CORE-MEMORY] registration skipped: {_cmte}")
+
 # Can voice run locally, measure it, and the cloud voice choice (local_voice_readiness):
 # status, measure, ask "just this call, or always?" and take the answers (just this call,
 # always, switch back, keep cloud) on the owner's own words; the spoken side of
@@ -11979,6 +12596,17 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     # Every turn gets an id. The gate uses it to tell "the user did not answer
     # me" from "the model called the same tool twice in one breath".
     ctx["confirm_turn"] = uuid.uuid4().hex[:12]
+    # Household basics the owner states here ("I am 52, my husband is 50")
+    # are read by fixed patterns from this message alone and saved to the
+    # memory card under its own-words rule, so they never depend on a model
+    # choosing to call update_core_memory (services/core_memory_tools).
+    try:
+        from agent_friday.services import core_memory_tools as _cmt
+        _hh = _cmt.capture_household(message, ctx)
+        if _hh.get("note"):
+            ctx["household_capture"] = _hh
+    except Exception as e:
+        _log.debug("household capture skipped: %s", e)
 
     with _PENDING_LOCK:
         bucket = dict(_PENDING_CONFIRMATIONS.get(session_id) or {})
@@ -12352,6 +12980,37 @@ def _learn_facts(session_ctx) -> dict:
 from agent_friday.services import live_laya as _live_laya
 
 
+def _job_send_args(name, args, session_ctx):
+    """draft_email from a scheduled job or workflow made to SEND its emails (services/email_jobs:
+    kept sending by the one-time mark, or switched to send on its Workflows card) is a send, as it
+    was before draft_email saved drafts by default. Applied before any gate (the agent loop's vault
+    check and _execute_tool's hooks), so each judges a send; the card, or the owner's pre-approval
+    for the job, still decides whether anything leaves. Any other call is returned as it came."""
+    if name != "draft_email" or not isinstance(args, dict):
+        return args
+    try:
+        from agent_friday.services import email_jobs as _ej
+        from agent_friday.services.gmail_send import wants_send as _ws
+        if not _ws(args) and _ej.sends_for(session_ctx):
+            return dict(args, send=True)
+    except Exception as e:
+        _log.warning("a job's email mode was not read, so this call saves a draft: %s", e)
+    return args
+
+
+def _cloud_send_ctx(session_ctx, detail):
+    """The session context for a call the vault gate let through to a card: an email send written
+    on a cloud seat with private details (privacy/vault_access: cloud_send_card_<tier>). The mark
+    tells gmail_send.request_send to raise the card even when a pre-approval names the recipients."""
+    try:
+        from agent_friday.privacy.vault_access import is_cloud_send_card
+        if is_cloud_send_card(detail):
+            return dict(session_ctx or {}, sensitive_cloud_send=True)
+    except Exception:
+        pass
+    return session_ctx
+
+
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
@@ -12414,6 +13073,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _call_verifier.receipt(name, _checked, "verifier_fixit", "invalid arguments", session_ctx)
         return _arg_error
     tool_input = _restore_placeholders(_checked or {}, pii_lookup)
+    # A scheduled job or workflow made to SEND its emails (kept sending by the one-time mark in
+    # services/email_jobs, or switched to send on its Workflows card) sends, as it did before
+    # draft_email saved drafts by default. Set here, before any gate, so every gate judges a send:
+    # the card, or the owner's pre-approval for this job, still decides whether anything leaves.
+    tool_input = _job_send_args(name, tool_input, session_ctx)
     # The pre-execution verifier (services/call_verifier): a call that cannot
     # work comes back as a fix-it message, a repeat of a read this turn comes
     # back as the earlier result, and anything that should make the owner
@@ -12511,6 +13175,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # whose action needs one checks it again before acting.
         from agent_friday.governance import action_gate as _gate_mod
         _dtok = _gate_mod.DECIDED.set(ctx.meta.get("owner_decided"))
+        # Why a pre-approval naming these recipients was not used (the card says so).
+        from agent_friday.governance import send_grants as _sg_mod
+        _wtok = _sg_mod.WITHHELD.set(ctx.meta.get("grant_withheld"))
         _sc = session_ctx or {}
         _ctx_tok = _CURRENT_TOOL_CONTEXT.set(dict(_sc))
         _owner_tok = _CURRENT_OWNER_TEXT.set(
@@ -12564,6 +13231,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
                 except ValueError:
                     pass
             _gate_mod.DECIDED.reset(_dtok)
+            _sg_mod.WITHHELD.reset(_wtok)
             _taint_mod.CURRENT_KEY.reset(_ktok)
             _taint_mod.CURRENT.reset(_ttok)
             _CURRENT_CONVERSATION.reset(_tok)
@@ -12717,11 +13385,26 @@ def _hook_confirmation_gate(ctx):
             _q = f"{_q} ({_meta['verifier_note']})"
 
         if _asks == 1:
+            # EVERY CONFIRMATION IS A CARD. The question in chat is one way to
+            # answer; the card is the other, and it exists from the first ask.
+            # A model that paraphrases the question, or a reply the yes-parser
+            # cannot read, still leaves the owner a button to press: the
+            # action is never waiting on something nobody can see.
+            _card = _raise_confirmation_card(_sid, name, ctx.input, _fp, _q,
+                                             session_ctx=session_ctx)
+            _decided = _confirmation_card_outcome(_card, _sid, name, _fp)
+            if _decided:
+                return _hooks.DENY(_decided)
+            _where = ("An approval card for it is already waiting for the user "
+                      "(in this chat and in the Approvals list); they can "
+                      "decide it there or answer you here. "
+                      if _card else "")
             return _hooks.DENY(
                 f"[CONFIRMATION REQUIRED] The '{name}' action needs the user's "
-                f"approval before it runs, so it was NOT executed. Do NOT call "
-                f"this tool again on this turn. Instead, ask the user this exact "
-                f"yes/no question and then stop and wait for their reply: \"{_q}\""
+                f"approval before it runs, so it was NOT executed. {_where}"
+                f"Do NOT call this tool again on this turn. Instead, ask the "
+                f"user this exact yes/no question and then stop and wait for "
+                f"their reply: \"{_q}\""
             )
 
         # ASKED ONCE, ANSWERED, STILL NOT GRANTED. Repeating the identical
@@ -12823,6 +13506,111 @@ def _verifier_card(ctx, why_text):
         f"tell the user what you were about to do and why it needs their yes.")
 
 
+def _public_query_hold(provider, model, name, tool_input, *, pii_lookup=None,
+                       request=None, session_ctx=None):
+    """Ask the owner before a cloud seat's search shares private text.
+
+    SENSITIVE (privacy/public_query, "ASK WITH PREVIEW"). Called by both
+    agent loops after check_action has passed a tool call and before it runs.
+    Returns None when the call may run, else the text the model gets instead:
+
+      * a query that shares private text from the conversation (a long run
+        copied from non-public context, or a [PII:...] tag that would be
+        filled in) raises a `tool_confirm` approval card showing exactly the
+        text that would go out and the search engine it goes to. Nothing runs
+        until the owner chooses Send; services/approval_executor then runs
+        exactly the card's input inside public_query.approved_scope;
+      * Don't send on that card is a plain [DECLINED] note for the same call;
+      * text that meets the never-send floor once filled in is refused, with
+        no card: an approval cannot override the floor.
+
+    Fails closed: if the check cannot run, the call does not run.
+    """
+    try:
+        from agent_friday.privacy import public_query as _pq
+        if str(name or "") not in _pq.CARD_TOOLS:
+            return None
+        sent = tool_input if isinstance(tool_input, dict) else {}
+        outgoing = _restore_placeholders(dict(sent), pii_lookup)
+        verdict = _pq.needs_approval(provider, model, name, sent, outgoing, request)
+    except Exception as e:
+        _log.warning("public query check unavailable for %s: %s", name, type(e).__name__)
+        return (f"[NOT RUN] '{name}' was NOT executed and nothing was sent: the "
+                f"privacy check for search text could not run. Tell the user the "
+                f"search did not happen.")
+    if verdict is None:
+        return None
+    if isinstance(verdict, _pq.Refusal):
+        from agent_friday.privacy.vault_access import refusal_text as _zt_text
+        return _zt_text(name, f"public_query_refused:{verdict.reason}")
+    return _public_query_card(verdict, session_ctx)
+
+
+def _public_query_card(share, session_ctx):
+    """Raise (or read back) the Send / Don't send card for one shared query.
+    One card per exact outgoing call in this conversation; a call the owner
+    already sent once asks again (each send is its own yes)."""
+    name = str(getattr(share, "tool", "") or "search")
+    _blocked = (f"[NOT RUN] '{name}' was NOT executed and nothing was sent: "
+                f"policy blocked its approval card. Tell the user.")
+    try:
+        from agent_friday.privacy import public_query as _pq
+        inp = dict(share.args)
+        # A card shows all of what Send would send, faithfully, or it is not
+        # raised: nothing longer than the card holds, no invisible characters.
+        _problem = _pq.card_problem(share)
+        if _problem:
+            return (f"[NOT RUN] '{name}' was NOT executed and nothing was sent: "
+                    f"{_problem}. Tell the user.")
+        subject = (f"public_query:{_taint_mod.ledger_key(session_ctx)}:"
+                   f"{_taint_mod.fingerprint(name, inp)}")
+        from agent_friday.services import approvals as _appr
+        # The newest card for this exact call: the first one, or a later ask
+        # raised after an earlier card was sent or expired (subject + suffix).
+        _mine = [r for r in _appr.list_approvals(subject_type="tool_action",
+                                                 kind="tool_confirm")
+                 if str(r.get("subject_id") or "") == subject
+                 or str(r.get("subject_id") or "").startswith(subject + ":")]
+        rec = _mine[0] if _mine else None
+        status = (rec or {}).get("status")
+        if status == "denied":
+            return _pq.declined_note(name)
+        if status == "blocked":
+            return _blocked
+        if status == "approved" and not rec.get("consumed"):
+            return (f"[NOT RUN] '{name}' did not run from this call: it was "
+                    f"approved on its card and runs from there, and its result "
+                    f"is posted into this conversation. Do not retry it or claim "
+                    f"an outcome without that result.")
+        if rec is None or status == "expired" or rec.get("consumed"):
+            if rec is not None:
+                subject = f"{subject}:{uuid.uuid4().hex[:6]}"
+            payload = _approval_tool_payload(name, inp, session_ctx)
+            payload["public_query"] = {
+                "provider": share.provider, "model": share.model,
+                "engine": share.engine, "texts": list(share.texts),
+                "reasons": list(share.reasons)}
+            # The query is the action text only: the title and description
+            # are what a pending-card notification carries off the card, and
+            # neither holds it.
+            rec = _appr.create_approval(
+                kind="tool_confirm", subject_type="tool_action", subject_id=subject,
+                title=_pq.card_title(share),
+                action_description=_pq.card_text(share),
+                description=_pq.card_why(share),
+                force_gate=True, payload=payload,
+                action_class=_gate_policy_class(name, inp),
+                requested_by="public_query")
+            if (rec or {}).get("status") == "blocked":
+                return _blocked
+    except Exception as e:
+        _log.warning("public query card unavailable: %s", type(e).__name__)
+        return (f"[NOT RUN] '{name}' was NOT executed and nothing was sent: its "
+                f"query shares text from this conversation and the approval card "
+                f"could not be created. Tell the user the search did not happen.")
+    return _pq.card_note(share)
+
+
 def _hook_verifier_record(ctx, result):
     """Tell the verifier what a tool returned (cache, failure streak, ids seen,
     instructions in the text). Post, priority 99: after the PII scrub, so the
@@ -12832,57 +13620,76 @@ def _hook_verifier_record(ctx, result):
 
 
 def _resolve_escalated_card(approval_id, name, tool_input):
-    """Claim an escalated card for this chat execution, never a second one."""
+    """Claim the confirmation card for this chat execution, never a second one.
+
+    The card answers the same question the chat did, and the gate decides
+    "same question" by fingerprint (``x.md`` and ``./x.md`` are one file). So
+    a call that matches the card's stored action by fingerprint claims it
+    with the card's own arguments; the claim itself is the store's
+    compare-and-set, so a card already decided elsewhere still refuses.
+    """
     if not approval_id:
         return True
     try:
         from agent_friday.services import approvals as _appr
-        return _appr.claim_chat_confirmation(approval_id, name, tool_input)
+        if _appr.claim_chat_confirmation(approval_id, name, tool_input):
+            return True
+        stored = ((_appr.get_approval(approval_id) or {}).get("payload") or {})
+        if (stored.get("tool") == name and isinstance(stored.get("input"), dict)
+                and stored.get("input") != tool_input
+                and _action_fingerprint(name, stored["input"])
+                == _action_fingerprint(name, tool_input)):
+            return _appr.claim_chat_confirmation(approval_id, name, stored["input"])
+        return False
     except Exception as e:
         _log.warning("could not claim escalated approval %s: %s", approval_id, e)
         return False
 
 
-def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
-                          *, session_ctx=None):
-    """Hand a twice-asked question to the durable approval queue.
+def _raise_confirmation_card(session_id, name, tool_input, fingerprint, question,
+                             *, session_ctx=None, escalated=False):
+    """Publish the durable approval card for one pending question, or return
+    the one already linked to it. None when there is no live pending entry or
+    the card could not be created.
 
-    Returns the text the model is given INSTEAD of asking again. Never raises
-    and never allows: if the card cannot be created, the action still does not
-    run - it just says so plainly rather than looping.
+    One pending request has exactly one card: the subject carries the entry's
+    request id, so the first ask, a retry in the same turn and the second ask
+    all resolve to the same record (``create_approval`` is idempotent per
+    subject). The card is published and linked under ``_PENDING_LOCK`` as one
+    handoff; otherwise a chat yes could consume the entry before its card id
+    is attached, leaving two independent ways to execute the same action.
     """
     try:
         from agent_friday.services import approvals as _appr
-        # Publish and link the card as one handoff. Otherwise a chat approval
-        # can consume the entry before its card id is attached, leaving two
-        # independent ways to execute the same action.
         with _PENDING_LOCK:
             _e = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
             if _e is None or _e.get("replay_claim"):
-                return (f"[CONFIRMATION ALREADY DECIDED] '{name}' is already "
-                        "being handled. Do not retry it.")
+                return None
             request_id = _e.setdefault("request_id", uuid.uuid4().hex[:12])
             rec = _appr.create_approval(
                 kind="tool_confirm", subject_type="tool_action",
                 subject_id=f"{session_id}:{fingerprint}:{request_id}",
                 title=question,
                 action_description=f"{name} {tool_input!r}",
-                description=("Raised because the chat confirmation for this exact "
-                             "action was asked and not resolved. Decide it here."),
+                description=("Friday asked for your yes before doing this. "
+                             "Decide it here, or answer the question in chat."),
                 force_gate=True, payload=_approval_tool_payload(name, tool_input, session_ctx),
                 requested_by="confirmation_gate",
             )
+            if rec.get("status") == "blocked" and not escalated:
+                # The harm floor decides on the escalation, as it always has;
+                # the first ask stays a plain question.
+                return None
             _e["approval_id"] = rec.get("approval_id")
-        status = rec.get("status")
+        return rec
     except Exception as e:
-        _log.warning("confirmation escalation unavailable: %s", e)
-        return (f"[CONFIRMATION UNRESOLVED] '{name}' was NOT executed. You have "
-                f"already asked the user this question once and did not get an "
-                f"answer you could act on. Do NOT ask it again. Tell the user "
-                f"plainly that the confirmation did not go through, say what "
-                f"you were trying to do, and ask them to reply with a single "
-                f"word: yes or no.")
+        _log.warning("confirmation card unavailable: %s", e)
+        return None
 
+
+def _confirmation_card_outcome(rec, session_id, name, fingerprint):
+    """The model-facing text for a card that is already decided, else None."""
+    status = (rec or {}).get("status")
     if status == "approved":
         clear_confirmation_card(rec.get("approval_id"))
         return (f"[CONFIRMATION ALREADY DECIDED] The approval card for '{name}' "
@@ -12895,6 +13702,37 @@ def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
                "blocked": "Policy blocked the approval"}[status]
         return (f"[CONFIRMATION DENIED] {why}, so '{name}' was NOT executed "
                 "and must not be retried. Tell them it was not done.")
+    return None
+
+
+def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
+                          *, session_ctx=None):
+    """The second ask: point at the durable approval card instead of asking.
+
+    Returns the text the model is given INSTEAD of asking again. The card is
+    normally the one the first ask raised; this never creates a second card
+    for the same request. Never raises and never allows: if the card cannot
+    be created, the action still does not run - it just says so plainly
+    rather than looping.
+    """
+    with _PENDING_LOCK:
+        _e = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
+        _claimed = bool(_e is None or _e.get("replay_claim"))
+    if _claimed:
+        return (f"[CONFIRMATION ALREADY DECIDED] '{name}' is already "
+                "being handled. Do not retry it.")
+    rec = _raise_confirmation_card(session_id, name, tool_input, fingerprint,
+                                   question, session_ctx=session_ctx, escalated=True)
+    if rec is None:
+        return (f"[CONFIRMATION UNRESOLVED] '{name}' was NOT executed. You have "
+                f"already asked the user this question once and did not get an "
+                f"answer you could act on. Do NOT ask it again. Tell the user "
+                f"plainly that the confirmation did not go through, say what "
+                f"you were trying to do, and ask them to reply with a single "
+                f"word: yes or no.")
+    decided = _confirmation_card_outcome(rec, session_id, name, fingerprint)
+    if decided:
+        return decided
     return (f"[CONFIRMATION ESCALATED] '{name}' was NOT executed. You already "
             f"asked this question once, so it has been raised as an approval "
             f"card instead of being asked again. Do NOT ask it again and do NOT "
@@ -13012,6 +13850,40 @@ def _hook_crew_access(ctx):
     return _hooks.ALLOW if allowed else _hooks.DENY("[CREW DENY] " + reason)
 
 
+def _taint_clean(d, key, session_ctx=None) -> bool:
+    """True only when nothing in this call came from outside content and
+    nothing the work behind it read did. What a pre-approved send needs
+    (governance/send_grants); never raises. All of:
+
+      * the provenance check found nothing in the call beyond the owner's own
+        data, or text from a skill procedure the owner pre-approved,
+        unchanged (`_approved_skill_read`);
+      * nothing from outside content is in this conversation's or task's
+        ledger, including carried text written from it (a task's working
+        notes, a workflow's previous result), whatever its age;
+      * this conversation or task has never read outside content, and was not
+        spawned from one that had (governance/outside_content: a lasting flag
+        on its record, not the ledger, which is capped, expires and is lost
+        on a restart while the history still holds what was read);
+      * this turn's prompt carried no recalled memory or conversation recall,
+        and nothing the model can have written (Friday's notes, contacts,
+        task results) was read in this turn.
+    """
+    try:
+        if d is None or d.action == "deny":
+            return False
+        approved = _taint_mod.approved_labels(key)
+        for f in (d.flags or []):
+            if getattr(f, "origin", "") != "own" and getattr(f, "source", "") not in approved:
+                return False
+        if _taint_mod.recent_content(key, window=_taint_mod.TTL_SECONDS, for_grants=True):
+            return False
+        from agent_friday.governance import outside_content as _oc
+        return not (_oc.is_marked(session_ctx) or _oc.turn_outside(session_ctx))
+    except Exception:
+        return False
+
+
 def _hook_governance(ctx):
     """THE per-action governance check. Pre, priority 1, critical.
 
@@ -13073,9 +13945,18 @@ def _hook_governance(ctx):
             f"[BLOCKED — FROM OUTSIDE CONTENT] '{ctx.tool_name}' was NOT "
             f"executed: {why}. Do not retry it. Tell the user what you were "
             f"about to do and where that detail came from.")
+    # For a pre-approved send only: a flag that came from a skill procedure
+    # the owner pre-approved does not stop the grant (`_taint_clean` checks
+    # every other flag); everywhere else the flag stands as it is.
+    _clean = _taint_clean(d, key, ctx.session_ctx)
     v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
-                        tainted=(d.action == "ask"))
+                        tainted=(d.action == "ask"), clean=_clean,
+                        grant_tainted=(d.action == "ask" and not _clean))
     ctx.meta["governance"] = v
+    if (v.detail or {}).get("grant_withheld"):
+        # A pre-approval names these recipients but the call drew on outside
+        # content: the send gets its card, and the card says why.
+        ctx.meta["grant_withheld"] = v.detail.get("withheld_why")
     if v.action == "allow":
         if v.grant:
             # A scoped, expiring grant the owner created is their decision.
@@ -13248,10 +14129,19 @@ def _taint_card(ctx, decision, key):
 def _taint_title(name, inp):
     """A plain one-line title for a flagged action's card."""
     inp = inp or {}
-    if name == "create_calendar_event":
-        return f"Create calendar event “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
-    if name == "book_slot":
-        return f"Book “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
+    if name in ("create_calendar_event", "book_slot"):
+        verb = "Create calendar event" if name == "create_calendar_event" else "Book"
+        head = f"{verb} “{_short_txt(inp.get('title'))}”"
+        guests = inp.get("attendees")
+        if isinstance(guests, str):
+            guests = [g for g in (x.strip() for x in guests.split(",")) if g]
+        elif isinstance(guests, (list, tuple)):
+            guests = [g for g in guests if g and (not isinstance(g, str) or g.strip())]
+        # An event with nobody to invite says so by saying nothing about it.
+        return f"{head} and invite {_short_txt(guests)}" if guests else head
+    if name == "delete_calendar_event":
+        # Named from the calendar itself, never from the model's words: the yes is for this event.
+        return f"Delete the calendar event {_calendar_event_words(inp)}"
     if name == "hold_slots":
         return f"Hold {len(inp.get('slots') or [])} time(s) on your calendar for “{_short_txt(inp.get('title'))}”"
     if name in ("browse_web", "open_url"):
@@ -13272,7 +14162,7 @@ def _taint_title(name, inp):
         return f"Make {what} with a cloud service"
     if name == "run_command":
         return f"Run a command: {_short_txt(inp.get('command'))}"
-    if name in ("learn_skill", "correct_wiki", "propose_wiki_update"):
+    if name in ("learn_skill", "correct_wiki", "propose_wiki_update", "update_core_memory"):
         return "Save something into Friday's memory"
     if name == "spawn_task":
         return f"Start a background task: {_short_txt(inp.get('name') or inp.get('description'))}"
@@ -13294,15 +14184,57 @@ def _short_txt(v, n=70):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _approved_skill_read(ctx, result):
+    """(grant id, label) when this read_skill result is the unchanged
+    procedure of a skill the owner pre-approved sends for, else ("", "").
+    The fingerprint is taken from what was READ (name, procedure, declared
+    permissions), so it is the text the model saw (governance/send_grants)."""
+    if ctx.tool_name != "read_skill":
+        return "", ""
+    try:
+        data = json.loads(result) if isinstance(result, str) else dict(result or {})
+        if not data.get("found"):
+            return "", ""
+        from agent_friday import skill_registry as _sr
+        from agent_friday.governance import send_grants as _sg
+        fp = _sr.fingerprint_parts(data.get("name"), data.get("procedure"),
+                                   data.get("permissions_needed"))
+        g = _sg.approved_skill_grant(str(data.get("name") or ""), fp)
+        if g:
+            return g, "the skill %s, as you pre-approved it" % data.get("name")
+    except Exception as e:
+        _log.debug("approved-skill check failed: %s", e)
+    return "", ""
+
+
 def _hook_taint_record(ctx, result):
     """Record what a tool returned as content Friday READ. Post, priority 85:
     before the PII scrub, so the ledger holds the values tools will be called
-    with."""
+    with.
+
+    For a pre-approved send it also records, for good, that this
+    conversation or task has read outside content (governance/outside_content),
+    and, for this turn only, a read of Friday's own notes, contacts or task
+    results, which the model can have written. A skill procedure the owner
+    pre-approved, unchanged since, is neither (for that check only)."""
     try:
+        approved, label = _approved_skill_read(ctx, result)
         _taint_mod.note_tool_output(_taint_mod.ledger_key(ctx.session_ctx),
-                                    ctx.tool_name, ctx.input, result)
+                                    ctx.tool_name, ctx.input, result,
+                                    approved=approved, approved_label=label)
     except Exception as e:
+        approved = ""
         _log.debug("taint record failed: %s", e)
+    try:
+        from agent_friday.governance import outside_content as _oc
+        if ctx.tool_name in _oc.TURN_SCOPED_TOOLS:
+            _oc.note_turn(ctx.session_ctx, _oc.TURN_SCOPED_TOOLS[ctx.tool_name])
+        elif (not approved and ctx.tool_name not in _taint_mod.ECHO_TOOLS
+              and ctx.tool_name not in _taint_mod.OWN_DATA_TOOLS
+              and (result if isinstance(result, str) else json.dumps(result, default=str))):
+            _oc.mark(ctx.session_ctx, _taint_mod.describe_source(ctx.tool_name, ctx.input))
+    except Exception as e:
+        _log.debug("outside-content flag not recorded: %s", e)
     return result
 
 
@@ -14473,7 +15405,8 @@ def _crew_model_authority(session_ctx):
         crew_runtime.require_public_host_origin(sc.get("_crew_host_origin"))
     for aid, revision in (sc.get("crew_context_sources") or {}).items():
         crew_access.validate_dispatch(aid, binding["project_id"], revision)
-    if str((_load_settings().get("model_routing") or {}).get("mode") or "").lower() == "local_only":
+    from agent_friday.services.cloud_intent import normalize_mode as _nm
+    if _nm((_load_settings().get("model_routing") or {}).get("mode")) == "local_only":
         raise crew_runtime.CrewRoomError("Local-only mode is on. This Crew model request was stopped.")
     refuse_if_active(profile["provider"], profile["model"])
     if apply_pin(profile["provider"], profile["model"]) != profile["model"]:
@@ -15053,6 +15986,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 except Exception:
                     pass
                 _final_text = "".join(text_parts).strip()
+                _final_text = _guard_final_reply(
+                    _final_text, model=model or ANTHROPIC_MODEL_DEFAULT, seat="cloud",
+                    provider="anthropic", tool_trace=tool_trace,
+                    tools_offered=True, session_ctx=session_ctx)
                 if not _final_text:
                     _pilot_outcome(session_ctx, "error")
                     # A declined request comes back as stop_reason "refusal"
@@ -15158,21 +16095,33 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _sent_tools = list(_sent_tools) + list(_late)
                         _tools_grew = True
 
+                # The tool the call will actually run (_execute_tool resolves a near-miss
+                # name the same way): the vault check and the search card judge that tool.
+                _pq_name = (tu.name if tu.name in CLAUDE_TOOL_HANDLERS
+                            else (_resolve_tool_name(tu.name)[0] or tu.name))
                 # ── Zero-trust continuous vault authorization ──────────
                 # Gate every tool call through vault check_action before
                 # execution. If the provider can't see the data, deny.
                 _vault_ctl = _get_vault_control() if VaultAccessControl else None
+                _zt_ctx = session_ctx
                 if _vault_ctl is not None:
                     _zt_provider = (session_ctx or {}).get("provider", "cloud")
-                    _zt_data = json.dumps(tu.input or {}, default=str)
+                    _zt_data = json.dumps(_job_send_args(tu.name, tu.input or {}, session_ctx), default=str)
+                    from agent_friday.services import seat_handoff as _sh
                     _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
-                        _zt_provider, tu.name, _zt_data, model=model or "",
+                        _zt_provider, _pq_name, _zt_data, model=model or "",
                         access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                        # A local handoff's target, from the owner's bindings.
+                        handoff_model=_sh.local_target_for(tu.name, tu.input),
                         # The provenance ledger for this turn, so the gate can
                         # tell a restaurant's published address from the owner's
                         # own (privacy/public_provenance). Without a key there
                         # is no exemption and the gate behaves as it always did.
                         taint_key=_taint_mod.ledger_key(session_ctx),
+                        # The seat history replays to (provider and model), for
+                        # the public-query provenance record (privacy/public_query).
+                        author_provider=_LOOP_PROVIDER.get() or _zt_provider,
+                        author_model=str(kwargs.get("model") or model or ""),
                     )
                     _crew_denial = _host_action_denial(tu.name, session_ctx)
                     if _crew_denial:
@@ -15184,13 +16133,34 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _tool_ms = int((_time.time() - _t_tool) * 1000)
                         _orb_tool_trace(orb_id, tu.name, tu.input, _zt_result, _tool_ms)
                         _ledger_tool_call(tu.name, _zt_result, _tool_ms, orb_id, session_ctx)
+                        from agent_friday.privacy.vault_access import refusal_text as _zt_text
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tu.id,
-                            "content": f"[VAULT ACCESS DENIED] This tool call references {_zt_detail} data. "
-                                       f"Switch to a local model to access sensitive content.",
+                            # The gate's refusal text, then ONE card offering the
+                            # local model (services/seat_handoff).
+                            "content": _sh.denial_result(tu.name, tu.input, _zt_detail, session_ctx,
+                                                         head=_zt_text(tu.name, _zt_detail)),
                         })
                         continue
+                    _zt_ctx = _cloud_send_ctx(session_ctx, _zt_detail)
+
+                # A cloud seat's search that shares private text from this
+                # conversation waits on the owner's Send / Don't send card
+                # (privacy/public_query, "ASK WITH PREVIEW"). `kwargs` is the
+                # request this seat is answering, as it was sent.
+                _pq_held = _public_query_hold(
+                    _LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
+                    str(kwargs.get("model") or model or ""), _pq_name, tu.input,
+                    pii_lookup=pii_lookup, request=kwargs, session_ctx=session_ctx)
+                if _pq_held:
+                    tool_trace.append({"name": tu.name, "input": tu.input, "result": _pq_held})
+                    _tool_ms = int((_time.time() - _t_tool) * 1000)
+                    _orb_tool_trace(orb_id, tu.name, tu.input, _pq_held, _tool_ms)
+                    _ledger_tool_call(tu.name, _pq_held, _tool_ms, orb_id, session_ctx)
+                    tool_results.append({"type": "tool_result", "tool_use_id": tu.id,
+                                         "content": _pq_held})
+                    continue
 
                 _crew_denial = _host_action_denial(tu.name, session_ctx)
                 if _crew_denial:
@@ -15207,7 +16177,14 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 # through: a held action is not work that is happening.
                 _mtok = _CURRENT_MODEL.set(str(kwargs.get("model") or model or ""))
                 try:
-                    result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                    # A cloud seat's search query is its own text (owner decision
+                    # (a), privacy/public_query). The mark records tu.input AS
+                    # SENT, before _execute_tool restores [PII:...] tags: only
+                    # those exact strings are floor-only at the search gates.
+                    from agent_friday.privacy.public_query import for_tool_call as _pq_call
+                    with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
+                                  str(kwargs.get("model") or model or ""), _pq_name, tu.input):
+                        result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
                 # Cleared on the SUCCESS path only, deliberately not in a
@@ -15306,6 +16283,32 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
 # The wrapper above only sets the loop-provider ContextVar; its signature is
 # the real one's (inspect.signature follows __wrapped__).
 _call_claude_agent.__wrapped__ = _call_claude_agent_run
+
+
+def _guard_final_reply(text, *, model, seat, provider, tool_trace, tools_offered,
+                       session_ctx=None):
+    """services/text_toolcalls.guard_final, logged where a person can find it.
+
+    Every change it makes is printed to friday.log and written to the task
+    journal, so a reply Friday rewrote is never a mystery afterwards."""
+    try:
+        from agent_friday.services import text_toolcalls as _txt
+        out, ev = _txt.guard_final(text, model=model, seat=seat, provider=provider,
+                                   tool_trace=tool_trace, tools_offered=tools_offered)
+    except Exception as _ge:
+        print(f"  [reply-guard] skipped: {_ge}")
+        return text
+    if ev:
+        print(f"  [reply-guard] {ev['kind']}: model={model} seat={seat} "
+              f"provider={provider} tools={','.join(ev.get('names') or []) or '-'}")
+        try:
+            _journal().decision("reply_guard", ev["kind"],
+                                reason=f"model={model} seat={seat} tools="
+                                       f"{','.join(ev.get('names') or []) or '-'}",
+                                session_ctx=session_ctx)
+        except Exception:
+            pass
+    return out
 
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
@@ -15633,6 +16636,26 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     msg = dict(msg, content=_rest, tool_calls=_found)
             except Exception:
                 pass
+        # A call written as TEXT (<invoke name=...>, <tool_call>{json}) is
+        # routed like a native one when it names a tool offered this turn;
+        # anything else stays in the words for the final guard to report.
+        if oai_tools and not tool_calls and _chan_text:
+            try:
+                from agent_friday.services import text_toolcalls as _txt
+                # Routed only on a seat Friday serves here: cloud seats speak
+                # native tool calls, so markup in their text is quoted, not meant.
+                _found, _rest, _refused = _txt.extract(_chan_text, oai_tools,
+                                                       route=(_led_seat == "local"))
+                if _found:
+                    if _refused:
+                        print(f"  [oai-loop] {model}: text tool call(s) not offered "
+                              f"this turn, not run: {', '.join(_refused)}")
+                        _rest = (_rest + "\n(Not run, not available on this turn: "
+                                 + ", ".join(_refused) + ")").strip()
+                    tool_calls = _found
+                    msg = dict(msg, content=_rest, tool_calls=_found)
+            except Exception:
+                pass
         for _crew_call in tool_calls:
             _crew_denial = _host_action_denial((_crew_call.get("function") or {}).get("name"), session_ctx)
             if _crew_denial:
@@ -15767,6 +16790,13 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     _c, text = _chan.extract(text, oai_tools)
                 except Exception:
                     pass
+            # Tool-call markup that never ran is replaced by a notice naming
+            # the model and the seat, and "I'm loading it" with no tool behind
+            # it gets an honest line. Never silence.
+            text = _guard_final_reply(text, model=model, seat=_led_seat,
+                                      provider=_meter_as, tool_trace=tool_trace,
+                                      tools_offered=bool(oai_tools),
+                                      session_ctx=session_ctx)
             # Keep the DESCRIPTION. Overwriting it with f'Done ({model})'
             # makes every finished orb in the holographic desktop read the
             # same thing — and read the model twice, since the scene already
@@ -15920,6 +16950,10 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                               "content": _arg_error})
                 continue
 
+            # The tool the call will actually run (_execute_tool resolves a near-miss
+            # name the same way): the vault check and the search card judge that tool.
+            _pq_name = (tname if tname in CLAUDE_TOOL_HANDLERS
+                        else (_resolve_tool_name(tname)[0] or tname))
             # ── Zero-trust continuous vault authorization. ──
             # ONLY vault-tier (TIER_2/TIER_3) data is gated here; the provider
             # determines whether sensitive content may flow (local = allowed,
@@ -15927,15 +16961,20 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             # navigation / file ops / app launch / task spawn are available to
             # every model. _execute_tool then applies the cLaw governance rings.
             _vault_ctl = _get_vault_control() if VaultAccessControl else None
+            _zt_ctx = session_ctx
             if _vault_ctl is not None:
                 _zt_provider = (session_ctx or {}).get("provider", provider)
+                from agent_friday.services import seat_handoff as _sh
                 _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
-                    _zt_provider, tname, json.dumps(targs, default=str),
+                    _zt_provider, _pq_name, json.dumps(_job_send_args(tname, targs, session_ctx), default=str),
                     model=model or "",
                     access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                    handoff_model=_sh.local_target_for(tname, targs),
                     # See the other call site: the provenance ledger lets the
                     # gate exempt a business's published contact details.
                     taint_key=_taint_mod.ledger_key(session_ctx),
+                    author_provider=_LOOP_PROVIDER.get() or _zt_provider,
+                    author_model=model or "",
                 )
                 _crew_denial = _host_action_denial(tname, session_ctx)
                 if _crew_denial:
@@ -15947,10 +16986,27 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     _tool_ms = int((_time.time() - _t_tool) * 1000)
                     _orb_tool_trace(orb_id, tname, targs, _zt_result, _tool_ms)
                     _ledger_tool_call(tname, _zt_result, _tool_ms, orb_id, session_ctx)
+                    from agent_friday.privacy.vault_access import refusal_text as _zt_text
                     convo.append({"role": "tool", "tool_call_id": tcid,
-                                  "content": f"[VAULT ACCESS DENIED] references {_zt_detail} "
-                                             f"data — switch to a local model to access it."})
+                                  "content": _sh.denial_result(tname, targs, _zt_detail,
+                                                               session_ctx,
+                                                               head=_zt_text(tname, _zt_detail))})
                     continue
+                _zt_ctx = _cloud_send_ctx(session_ctx, _zt_detail)
+
+            # See the other call site: a cloud seat's search that shares
+            # private text waits on the owner's Send / Don't send card.
+            _pq_held = _public_query_hold(
+                _LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
+                model or "", _pq_name, targs,
+                pii_lookup=pii_lookup, request=convo, session_ctx=session_ctx)
+            if _pq_held:
+                tool_trace.append({"name": tname, "input": targs, "result": _pq_held})
+                _tool_ms = int((_time.time() - _t_tool) * 1000)
+                _orb_tool_trace(orb_id, tname, targs, _pq_held, _tool_ms)
+                _ledger_tool_call(tname, _pq_held, _tool_ms, orb_id, session_ctx)
+                convo.append({"role": "tool", "tool_call_id": tcid, "content": _pq_held})
+                continue
 
             # A TOOL CALLED WITHOUT ITS SCHEMA STILL RUNS - and now arrives
             # for the next round.
@@ -16004,10 +17060,17 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 # returns what it has by then, marked partial. The budget is read,
                 # never enforced by interruption, so no action is cut off.
                 from agent_friday.services import tool_deadline as _td
+                # A cloud seat's search query is its own text (owner decision
+                # (a), privacy/public_query). The mark records targs AS SENT,
+                # before _execute_tool restores [PII:...] tags: only those
+                # exact strings are floor-only at the search gates.
+                from agent_friday.privacy.public_query import for_tool_call as _pq_call
                 with (_td.budget(_td.LOCAL_TOOL_BUDGET_S) if _compact_seat == "local"
-                      else _ctxlib.nullcontext()):
+                      else _ctxlib.nullcontext()), \
+                        _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
+                                 model or "", _pq_name, targs):
                     result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
-                                           session_ctx=session_ctx)
+                                           session_ctx=_zt_ctx)
             finally:
                 _CURRENT_MODEL.reset(_mtok)
             _crew_denial = _host_action_denial(tname, session_ctx)
@@ -16158,6 +17221,11 @@ from agent_friday.services.workflow_tools import TOOL_SCHEMAS as _WORKFLOW_TOOLS
 WORKSPACE_TOOLS.setdefault("on_demand", []).extend(_WORKFLOW_TOOLS)
 CLAUDE_TOOL_HANDLERS.update(_WORKFLOW_HANDLERS)
 TOOL_RINGS.update({"workflow_action": 1, "discover_capabilities": 0, "read_skill": 0, "voice_preferences": 1})
+# Recurring schedules for saved jobs (services/schedule_tools.py): the same tool in chat and voice.
+from agent_friday.services.schedule_tools import TOOL_SCHEMAS as _SCHEDULE_TOOLS, TOOL_HANDLERS as _SCHEDULE_HANDLERS
+WORKSPACE_TOOLS.setdefault("on_demand", []).extend(_SCHEDULE_TOOLS)
+CLAUDE_TOOL_HANDLERS.update(_SCHEDULE_HANDLERS)
+TOOL_RINGS.update({"schedule_job": 1})
 
 # Sites and domains use the same owned operations in every interface.
 from agent_friday.services.sites_tools import TOOL_SCHEMAS as _SITES_TOOLS, TOOL_HANDLERS as _SITES_HANDLERS

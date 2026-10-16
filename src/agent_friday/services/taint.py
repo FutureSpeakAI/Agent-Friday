@@ -100,6 +100,17 @@ class _Entry:
     norm: str
     ts: float
     segments: list = field(default_factory=list)   # [(norm, label, kind)]
+    #: For a pre-approved send only (governance/send_grants): the grant whose
+    #: owner-approved skill procedure this is. Argument provenance still treats
+    #: it as content; only the "nothing from outside" check skips it.
+    approved: str = ""
+    #: Carried text: whether it was written from outside content. A summary of
+    #: a conversation that never read any is not; a task ledger or a workflow's
+    #: previous result is whenever the work it came from read some.
+    outside: bool = True
+    #: Read from the owner's own file on this computer (see owner_local_path).
+    #: Still outside content for every role except a local write's path.
+    local: bool = False
 
 
 class Ledger:
@@ -127,15 +138,21 @@ def ledger_key(session_ctx: Optional[dict]) -> str:
     """Which conversation a tool call belongs to.
 
     Interactive chat stamps `taint_key` (see agent.prepare_confirmation_ctx).
+    A background task keys on its own id even when it reports to a
+    conversation: the task's carried ledger and workflow baseline are noted
+    under "task:<id>" (agent._carry_ledger_provenance), and its calls must be
+    judged against that same ledger, not the conversation's bare id that every
+    other task of that conversation also wrote into.
     Anything else falls back to a shared ledger. Sharing can only ADD sources,
     so the fallback errs toward flagging, never toward trusting.
     """
     sc = session_ctx or {}
-    key = sc.get("taint_key") or sc.get("session_id") or sc.get("conversation_id")
+    key = sc.get("taint_key") or sc.get("session_id")
     if not key and sc.get("task_id"):
         # A background task reads, compacts and resumes on its own; one shared
         # ledger let every other task's results push its sources out.
         key = "task:%s" % sc["task_id"]
+    key = key or sc.get("conversation_id")
     return str(key or "default")
 
 
@@ -175,18 +192,32 @@ CARRIED_LABELS = {
 }
 
 
-def note_carried(key: str, carrier: str, text: str):
+#: Carriers whose text is written from outside content only when the work
+#: it summarises read some, which that work's own lasting flag already says
+#: (governance/outside_content). Every other carrier counts as outside content
+#: for a pre-approved send unless its caller says otherwise.
+_CARRIED_CLEAN_BY_DEFAULT = {"summary"}
+
+
+def note_carried(key: str, carrier: str, text: str, outside: Optional[bool] = None):
     """Record text Friday carries forward -- a task ledger, a compaction
     summary -- as something Friday READ. It is written from tool output, so a
     value in it keeps that provenance; unregistered, it would count as the
-    model's own. Re-registering the same carrier replaces the previous text."""
+    model's own. Re-registering the same carrier replaces the previous text.
+
+    `outside`: whether the text was written from outside content, for the
+    pre-approved send check (`recent_content(for_grants=True)`); None takes
+    the carrier's default (True except a conversation summary)."""
     if not text or not str(text).strip():
         return
     raw = str(text)
     label = CARRIED_LABELS.get(carrier, carrier)
+    if outside is None:
+        outside = carrier not in _CARRIED_CLEAN_BY_DEFAULT
     led = _ledger(key)
     with _LOCK:
-        led.carried[carrier] = _Entry("content", label, raw, normalize(raw), time.time())
+        led.carried[carrier] = _Entry("content", label, raw, normalize(raw), time.time(),
+                                      outside=bool(outside))
 
 
 # Tools whose output is the user's own data rather than something written by
@@ -335,7 +366,7 @@ def _segments(tool_name: str, raw: str, base_label: str) -> list:
 ECHO_TOOLS = {"draft_email", "create_calendar_event", "update_calendar_event",
               "annotate_calendar_events", "write_file", "write_clipboard",
               "create_task", "update_task", "complete_task", "delete_task",
-              "learn_skill", "correct_wiki", "propose_wiki_update", "navigate",
+              "learn_skill", "correct_wiki", "propose_wiki_update", "update_core_memory", "navigate",
               "switch_model", "spawn_task", "open_url", "open_path",
               "revert_workspace", "create_workflow",
               "hold_slots", "book_slot", "release_holds",
@@ -343,9 +374,104 @@ ECHO_TOOLS = {"draft_email", "create_calendar_event", "update_calendar_event",
               "browser_type", "browser_select", "browser_close"}
 
 
-def note_tool_output(key: str, tool_name: str, tool_input: Optional[dict], result: Any):
+# ── The owner's own files ───────────────────────────────────────────────────
+
+#: Tools that read files on this computer. What they return is recorded as
+#: outside content like anything else; it is marked local when every file it
+#: came from is one of the owner's own (see owner_local_path).
+LOCAL_READ_TOOLS = {"read_file", "search_files"}
+#: Writes that stay on this computer. A path for one of these that is named
+#: only in the owner's own files is not outside content: "add this to my bug
+#: log" reads the log and writes it back.
+LOCAL_WRITE_TOOLS = {"write_file"}
+#: Folder names whose files arrived from elsewhere (downloads, mail
+#: attachments, browser and system caches, temp space). A file under one of
+#: these is somebody else's text, wherever the folder sits.
+_FOREIGN_DIRS = {"downloads", "download", "attachments", "temp", "tmp", "cache",
+                 "caches", "inetcache", "content.outlook", "temporary internet files",
+                 "appdata", ".cache", "library"}
+
+
+def _state_dir():
+    from agent_friday.paths import friday_home
+    return friday_home()
+
+
+def owner_local_path(path: Any) -> bool:
+    """True for an absolute path to the owner's own file on this computer.
+
+    Conservative by construction: the path must sit in the owner's home
+    folder, outside Friday's own state (tool output, attachments and saved
+    pages live there), outside any downloads, attachment, cache or temp
+    folder, and, on Windows, carry no mark of the web. A network share, a
+    URL, a relative path or anything that cannot be resolved is not local.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return False
+    raw = path.strip()
+    if raw.startswith(("\\\\", "//")) or "://" in raw:
+        return False
+    import os
+    import tempfile
+    from pathlib import Path
+    try:
+        p = Path(os.path.expanduser(raw))
+        if not p.is_absolute():
+            return False
+        p = p.resolve()
+        home = Path.home().resolve()
+        rel = p.relative_to(home)
+    except Exception:
+        return False
+    if any(part.lower() in _FOREIGN_DIRS for part in rel.parts[:-1]):
+        return False
+    for foreign in (tempfile.gettempdir(),):
+        try:
+            p.relative_to(Path(foreign).resolve())
+            return False
+        except Exception:
+            pass
+    try:
+        p.relative_to(Path(_state_dir()).resolve())
+        return False
+    except ValueError:
+        pass
+    except Exception:
+        return False
+    if os.name == "nt":
+        try:
+            if os.path.exists(str(p) + ":Zone.Identifier"):
+                return False            # downloaded: the mark of the web
+        except Exception:
+            return False
+    return True
+
+
+def _read_was_local(tool_name: str, tool_input: Optional[dict], raw: str) -> bool:
+    """Whether every file this read came from is the owner's own."""
+    inp = tool_input or {}
+    if tool_name == "read_file":
+        return owner_local_path(inp.get("path") or inp.get("file_path"))
+    if tool_name == "search_files":
+        try:
+            rows = (json.loads(raw) or {}).get("results")
+        except Exception:
+            return False
+        if not isinstance(rows, list):
+            return False
+        return all(isinstance(r, dict) and owner_local_path(r.get("path")) for r in rows)
+    return False
+
+
+def note_tool_output(key: str, tool_name: str, tool_input: Optional[dict], result: Any,
+                     *, approved: str = "", approved_label: str = ""):
     """Record what a tool returned as something Friday READ, not something the
-    user said."""
+    user said.
+
+    `approved`: the id of the owner's skill pre-approval whose unchanged
+    procedure this output is (read_skill). It is still content for every
+    argument check; only a pre-approved send's "nothing from outside" check
+    skips it (`recent_content(for_grants=True)`, `approved_labels`)."""
     if tool_name in ECHO_TOOLS:
         return
     raw = result if isinstance(result, str) else json.dumps(result, default=str)
@@ -353,8 +479,21 @@ def note_tool_output(key: str, tool_name: str, tool_input: Optional[dict], resul
         return
     kind = "own" if tool_name in OWN_DATA_TOOLS else "content"
     label = describe_source(tool_name, tool_input)
+    if approved:
+        label = approved_label or ("a skill procedure you pre-approved (%s)" % approved)
+    local = (kind == "content" and not approved and tool_name in LOCAL_READ_TOOLS
+             and _read_was_local(tool_name, tool_input, raw))
     _ledger(key).add(_Entry(kind, label, raw, normalize(raw), time.time(),
-                            _segments(tool_name, raw, label) if kind == "content" else []))
+                            _segments(tool_name, raw, label) if kind == "content" and not approved else [],
+                            approved=str(approved or ""), local=local))
+
+
+def approved_labels(key: str) -> set:
+    """Labels of the owner-approved procedures in this ledger (see
+    `note_tool_output(approved=...)`), for the pre-approved send check."""
+    led = _ledger(key)
+    with _LOCK:
+        return {e.label for e in led.entries if e.approved}
 
 
 # ── Looking a value up ──────────────────────────────────────────────────────
@@ -372,15 +511,37 @@ def _shingles(text: str, n: int = 5) -> set:
     return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
 
 
-def origin_of(key: str, value: Any, *, free_text: bool = False) -> Origin:
+def origin_of(key: str, value: Any, *, free_text: bool = False,
+              local_is_own: bool = False) -> Origin:
     """Where `value` came from. The user wins: a value the user typed is
-    theirs even if an email also contains it."""
+    theirs even if an email also contains it.
+
+    ``local_is_own`` treats text read from the owner's own files as the
+    owner's data, and only when nothing else Friday read contains the value:
+    a path named in a web page is that page's, even if a local note names it
+    too."""
     s = str(value or "")
     n = normalize(s)
     led = _ledger(key)
     with _LOCK:
         # Carried text first, so a real source read later names itself.
         entries = list(led.carried.values()) + list(led.entries)
+    if local_is_own:
+        local = [e for e in entries if e.local]
+        if local:
+            o = _origin_in(n, s, [e for e in entries if not e.local], free_text)
+            if o.kind != "model":
+                return o
+            if not free_text and len(n) >= MIN_ATOM and any(n in e.norm for e in reversed(local)):
+                hit = next(e for e in reversed(local) if n in e.norm)
+                return Origin("own", "your own " + hit.label[2:]
+                              if hit.label.startswith("a ") else hit.label)
+            return o
+    return _origin_in(n, s, entries, free_text)
+
+
+def _origin_in(n: str, s: str, entries: list, free_text: bool) -> Origin:
+    """`origin_of` over an explicit list of ledger entries."""
     if free_text:
         sh = _shingles(s)
         if not sh:
@@ -417,14 +578,28 @@ def origin_of(key: str, value: Any, *, free_text: bool = False) -> Origin:
     return Origin("model")
 
 
-def recent_content(key: str, window: float = MEMORY_WINDOW_SECONDS) -> List[str]:
-    """Labels of third-party content read in this conversation recently."""
+def recent_content(key: str, window: float = MEMORY_WINDOW_SECONDS, *,
+                   for_grants: bool = False) -> List[str]:
+    """Labels of third-party content read in this conversation recently.
+
+    `for_grants`: the pre-approved send check. It also counts carried text
+    written from outside content (a task's working notes, a workflow's
+    previous result), whatever its age, and skips an owner-approved skill
+    procedure (`note_tool_output(approved=...)`)."""
     cut = time.time() - window
     led = _ledger(key)
     with _LOCK:
         entries = list(led.entries)
+        carried = list(led.carried.values())
     seen, out = set(), []
+    if for_grants:
+        for e in carried:
+            if e.outside and e.label not in seen:
+                seen.add(e.label)
+                out.append(e.label)
     for e in reversed(entries):
+        if for_grants and e.approved:
+            continue
         if e.kind == "content" and e.ts >= cut and e.label not in seen:
             seen.add(e.label)
             out.append(e.label)
@@ -500,6 +675,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "answer_card": {},
     "release_holds": {},
     "find_free_slots": {},
+    "check_plan_travel": {},
     "text_by_phone": {"to": "recipient", "body": "message_body"},
     "call_by_phone": {"to": "recipient", "message": "message_body"},
     "browse_web": {"url": "fetch_url"},
@@ -525,6 +701,8 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "learn_skill": {"content": "memory_write", "name": "memory_write"},
     "correct_wiki": {"new_text": "memory_write"},
     "propose_wiki_update": {"new_value": "memory_write"},
+    # The core memory card: what is saved, and which line a change targets.
+    "update_core_memory": {"text": "memory_write", "old": "memory_write"},
     "content_create_post": {"body": "publish_body"},
     "content_repurpose": {"body": "publish_body"},
     # The tracker card shows every field; flags on these go onto it.
@@ -813,8 +991,14 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
                 d.action = _stricter(d.action, act)
             continue
         free = role in FREE_TEXT_ROLES
+        # Reading the owner's own file and writing back to the owner's own
+        # file keeps the text on this computer. Only that pairing is relaxed:
+        # anything going out, any path named in content from elsewhere, and
+        # any file Friday reads back as instructions keep the flag.
+        own_ok = (role == "write_path" and tool_name in LOCAL_WRITE_TOOLS
+                  and owner_local_path(value) and not _shapes_behaviour(value))
         for atom in (_atoms(role, value) if not free else [value if isinstance(value, str) else json.dumps(value, default=str)]):
-            o = origin_of(key, atom, free_text=free)
+            o = origin_of(key, atom, free_text=free, local_is_own=own_ok)
             if o.kind in ("user", "model"):
                 continue
             sev = "warn" if o.kind == "content" else "info"

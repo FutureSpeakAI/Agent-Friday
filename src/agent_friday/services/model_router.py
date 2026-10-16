@@ -3126,9 +3126,19 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
     2. If still violating and `redispatch_no_tools(note)` is given, retry
        once with tools stripped so the model answers plainly. Its output is
        validated too.
-    3. Only then substitute the honest failure message (which invites a
+    3. If what is left is only completed-write claims with no receipt
+       behind them (no syntax leak), and the reply has real content besides
+       them, those sentences are REWRITTEN to say plainly the thing was not
+       done (completion_receipts.enforce_write_claims) and the rest of the
+       reply stands: a weekend plan with one false "added to your calendar"
+       keeps the plan.
+    4. Only then substitute the honest failure message (which invites a
        rephrase) and clear the tool_trace — never rendered, never spoken,
        never treated as real tool output.
+
+    Every attempt's tool_trace is kept in ``meta["turn_trace"]``: they all ran
+    in this turn, so they all back (or fail to back) its claims, and the
+    turn's receipts are recorded from them even when the reply is replaced.
 
     Every retry output is scrubbed of correction-referencing artifacts (B5,
     the "[user correction]" leak) before it can be returned or persisted.
@@ -3137,6 +3147,7 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
     """
     from agent_friday.services.tool_integrity import scrub_retry_artifacts
 
+    turn_trace = list(tool_trace or [])
     leaks, claims = _integrity_violations(reply, tool_trace, tool_names)
     blocked = bool(leaks or claims)
     tries = 0
@@ -3147,8 +3158,9 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
         except Exception as e:
             _integrity_logger.warning("corrective redispatch failed: %s", e)
             break
+        turn_trace += list(tool_trace or [])
         reply = scrub_retry_artifacts(reply)
-        leaks, claims = _integrity_violations(reply, tool_trace, tool_names)
+        leaks, claims = _integrity_violations(reply, turn_trace, tool_names)
 
     tools_stripped_retry = False
     if (leaks or claims) and blocked and redispatch_no_tools is not None:
@@ -3156,11 +3168,28 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
         try:
             reply, tool_trace = redispatch_no_tools(
                 _corrective_note(leaks, claims))
+            turn_trace += list(tool_trace or [])
             reply = scrub_retry_artifacts(reply)
-            leaks, claims = _integrity_violations(reply, tool_trace,
+            leaks, claims = _integrity_violations(reply, turn_trace,
                                                   tool_names)
         except Exception as e:
             _integrity_logger.warning("tools-stripped redispatch failed: %s", e)
+
+    rewritten = []
+    if claims and not leaks:
+        from agent_friday.services.completion_receipts import (
+            enforce_write_claims, rewrite_leaves_substance)
+        fixed, findings = enforce_write_claims(reply, turn_trace)
+        if findings:
+            l2, c2 = _integrity_violations(fixed, turn_trace, tool_names)
+            if not l2 and not c2 and rewrite_leaves_substance(fixed, findings):
+                _integrity_logger.warning(
+                    "unreceipted write claims rewritten in place: %s",
+                    [f["quote"] for f in findings])
+                reply, rewritten, leaks, claims = fixed, findings, l2, c2
+
+    from agent_friday.services.completion_receipts import strip_receipt_lines
+    reply = strip_receipt_lines(reply)
 
     if leaks or claims:
         _integrity_logger.warning(
@@ -3172,7 +3201,9 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
 
     return reply, tool_trace, {"blocked": blocked, "retries": tries,
                                "final_leaks": leaks, "final_claims": claims,
-                               "tools_stripped_retry": tools_stripped_retry}
+                               "tools_stripped_retry": tools_stripped_retry,
+                               "rewritten_claims": rewritten,
+                               "turn_trace": turn_trace}
 
 
 # A refusal is a choice, and it is stated as one. Each item below guards
@@ -3229,7 +3260,11 @@ REFUSAL_HONESTY_DIRECTIVE = (
     "5. Never claim a capability you do not have, and never deny one you do. "
     "The list below is probed at the time this prompt is built, not remembered. "
     "If something is marked NO, do not offer it; if you are unsure, say you are "
-    "unsure rather than picking the confident-sounding answer.\n\n"
+    "unsure rather than picking the confident-sounding answer. When the user "
+    "asks for an action and none of your tools does it, say so plainly in one "
+    "sentence: 'I can't do that yet', and name the nearest thing you can do if "
+    "there is one. Do not attempt it with a tool made for something else, and "
+    "do not say it is done or under way.\n\n"
     "6. VERIFY THE PREMISE, NOT JUST THE QUESTION. When the user asserts that "
     "you did something — sent an email, saved a file, made a change — and asks "
     "a follow-up about it, check the assertion itself before answering the "
@@ -3291,7 +3326,8 @@ def _log_policy_failure():
         pass
 
 
-def memory_head_blocks(workspace='', freeze_key=None) -> str:
+def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
+                       vault_control=None, vault_fallback='redact', model='') -> str:
     """The USER MODEL and LEARNED HEURISTICS blocks for the prompt head.
 
     Both are TIER_1 behavioural text (never raw PII), best-effort, and empty
@@ -3301,13 +3337,45 @@ def memory_head_blocks(workspace='', freeze_key=None) -> str:
     the head stays the same bytes for the seat's cache. An owner's own edit
     or delete applies at once (services/prompt_freeze). /api/chat and every
     `_get_friday_system_prompt` caller share this one renderer.
+
+    The CORE MEMORY lines about the user are personal data: with a
+    `vault_control` and a provider it may not see raw, they are gated as
+    TIER_2 (redacted for the cloud), whatever a keyword scan would say.
     """
     from agent_friday.services import prompt_freeze as _pf
     out = ''
 
+    gate_fn, gate_key = None, "ungated"
+    if vault_control is not None:
+        try:
+            if not vault_control.can_access(provider, model):
+                from agent_friday.privacy.vault_access import Tier as _Tier
+
+                def gate_fn(text):
+                    # Personal by default (fail closed, like the wiki).
+                    return vault_control.gate_content(
+                        text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
+                        detail="core-memory", model=model)
+                gate_key = "cloud-gated"
+        except Exception:
+            def gate_fn(text):
+                return ""
+            gate_key = "cloud-gated"
+
+    def _core():
+        from agent_friday.services import core_memory
+        return core_memory.render_prompt(gate=gate_fn)
+
+    # The core memory card first: the facts about the owner and Friday's own
+    # lessons, capped and owner-editable (services/core_memory). It replaces
+    # the USER MODEL's old auto-ranked fact list, which is no longer rendered.
+    core = _pf.frozen(freeze_key, "core_memory:" + gate_key, _core)
+    if core:
+        out += "\n\n== CORE MEMORY ==\n" + _strip_overrides(core, "core-memory") + "\n"
+
     def _um():
         from agent_friday.services.user_model import render_user_model_prompt
-        return render_user_model_prompt()
+        return render_user_model_prompt(max_facts=0)
 
     def _heur():
         from agent_friday.services.learning_loop import render_heuristics_prompt
@@ -3328,7 +3396,7 @@ def memory_head_blocks(workspace='', freeze_key=None) -> str:
 
 def _get_friday_system_prompt(keywords='', workspace='', *, provider,
                               vault_control, vault_fallback='redact', tools_block=True,
-                              freeze_key=None):
+                              freeze_key=None, model=''):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
@@ -3357,6 +3425,8 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
         VaultAccessControl.gate_content.
     freeze_key: the conversation this prompt serves, if any. Its memory
         blocks are frozen for that conversation (`memory_head_blocks`).
+    model: the model the prompt is for, when the caller knows it; a
+        cloud-tagged model is gated as cloud in the memory blocks.
     """
     settings = _load_settings()
     personality = _load_agent_personality()
@@ -3430,7 +3500,11 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
 
     # v5 personalization — the LOCAL user model + learned heuristics, frozen
     # for the conversation `freeze_key` names (services/prompt_freeze).
-    prefix += memory_head_blocks(workspace, freeze_key)
+    # `model` too: a cloud-tagged model served through the local daemon
+    # ("glm-4.6:cloud") is a cloud reader whatever the provider name says.
+    prefix += memory_head_blocks(workspace, freeze_key, provider=provider,
+                                 vault_control=vault_control, vault_fallback=vault_fallback,
+                                 model=str(model or ''))
 
     try:
         system_prompt, _ = _build_context_prompt(
@@ -4036,6 +4110,18 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     _tools_text = _tools_prompt_block() if tools_block else ""
     if _tools_text:
         add(_tools_text, _T1)
+
+    # The privacy policy in force, read from the live settings on every turn
+    # (services/privacy_policy_summary): a model that knows the rules can tell
+    # a refusal that follows them from one that is a bug. Public text: it
+    # names no person and lists nothing from the never-send list. It changes
+    # only when the settings do, so it belongs to the stable head.
+    try:
+        from agent_friday.services.privacy_policy_summary import summary as _privacy_summary
+        add("\n" + _privacy_summary(), _T1)
+        sources_consulted.append('privacy_policy')
+    except Exception as _pe:
+        print(f"  [context] privacy policy summary unavailable: {_pe}")
 
     # The head ends here: the persona and the generated tool text are the
     # same for every turn of every day. Today's context changes daily (a
