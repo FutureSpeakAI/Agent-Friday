@@ -112,8 +112,10 @@ def _models_list_verdict(prov: dict) -> str:
         url = base + "/models"
         headers = auth_headers(prov, key)
         if prov.get("type") == "google":
-            url = base + "/v1beta/models?key=" + (key or "")
-            headers = {}
+            # The key travels in Google's header, never in the URL: a URL is
+            # what an exception, a proxy log or an error page quotes back.
+            url = base + "/v1beta/models"
+            headers = {"x-goog-api-key": key or ""}
         r = requests.get(url, headers=headers, timeout=20)
         return kv.verdict_for(r.status_code, r.text)
     except Exception:
