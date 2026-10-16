@@ -404,7 +404,7 @@ def _trust_rating(domain, banned=None, boosted=None):
                 get_source_trust_graph(friday_dir=FRIDAY_DIR).score_for(domain))
         except Exception:
             pass
-    if domain in _TRUSTED_DOMAINS or domain in _local_sources():
+    if domain in _TRUSTED_DOMAINS or domain in _local_sources() or domain in _trusted_outlets():
         return "green"
     if domain in _LOW_TRUST_DOMAINS:
         return "red"
@@ -430,15 +430,55 @@ def _source_trust_meta(domain, banned=None, boosted=None):
     numeric badge with a 6-dimension breakdown tooltip."""
     domain = _extract_domain(domain)
     color = _trust_rating(domain, banned, boosted)
-    score, dims = None, None
+    score, dims, owner = None, None, None
     if _HAS_TRUST_GRAPHS:
         try:
             g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
             score = round(g.score_for(domain), 3)
-            dims = {k: round(v, 3) for k, v in g.dimensions_for(domain).items()}
+            rec = g.get(domain) or {}
+            owner = (rec.get("owner_preference") or {}).get("state")
+            # A dimension this install does not measure stays None ("not
+            # measured"); it is never shown as a number.
+            dims = {k: (round(float(v), 3) if v is not None else None)
+                    for k, v in g.dimensions_for(domain).items()}
         except Exception:
             pass
-    return {"trust": color, "trust_score": score, "trust_dims": dims}
+    return {"trust": color, "trust_score": score, "trust_dims": dims, "trust_owner": owner}
+
+
+def _live_trust_overlay(records, banned=None, boosted=None):
+    """Archive records with their trust fields read from the LIVE graph.
+
+    An archived article carries the trust snapshot taken when it was first
+    archived, and the archiver archives a tick's articles BEFORE that tick's
+    analysis runs: an outlet's first articles were frozen at its starting
+    prior (0.50 for an unknown outlet) and stayed there, however its score
+    moved afterwards. The Feed is archive-backed, so it showed those frozen
+    numbers. Overlay the current score, dimensions and owner preference on
+    the page being served; the stored snapshot is left as it was. One lookup
+    per outlet; on any failure the record keeps its snapshot.
+    """
+    if not _HAS_TRUST_GRAPHS or not records:
+        return records
+    banned = set(banned if banned is not None else _load_banned_sources())
+    boosted = set(boosted if boosted is not None else _load_boosted_sources())
+    cache, out = {}, []
+    for a in records:
+        domain = (a.get("source") or _extract_domain(a.get("url", ""))) if isinstance(a, dict) else ""
+        if not domain:
+            out.append(a)
+            continue
+        if domain not in cache:
+            try:
+                cache[domain] = _source_trust_meta(domain, banned, boosted)
+            except Exception:
+                cache[domain] = None
+        meta = cache[domain]
+        if meta and meta.get("trust_score") is not None:
+            a = dict(a)
+            a.update(meta)
+        out.append(a)
+    return out
 
 
 # In-process cache for parsed feeds so the /api/news/feed endpoint and the
@@ -1473,6 +1513,16 @@ def _local_sources() -> tuple:
         return ()
 
 
+def _trusted_outlets() -> tuple:
+    """The outlets the owner trusts without making them Local
+    (`news_trusted_outlets`), or () when none are set."""
+    try:
+        from agent_friday.source_trust_graph import trusted_outlets
+        return trusted_outlets()
+    except Exception:
+        return ()
+
+
 def category_meta(cat):
     """A category's feeds and query. Local is built from the owner's
     settings: a Google News search for their area plus one feed per outlet
@@ -1791,7 +1841,10 @@ def _news_archiver_tick():
         try:
             g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
             clusters = _cluster_articles(pool, min_sources=2)
-            summary = g.analyze_fetch(pool, clusters)
+            # The owner's Boost/Ban lists ride along so the score applies them
+            # even where the fail-soft mirror into the graph was missed.
+            summary = g.analyze_fetch(pool, clusters, owner={
+                "banned": _load_banned_sources(), "boosted": _load_boosted_sources()})
             # One batch per cycle: each call loads and rewrites the whole file.
             g.record_articles_seen(
                 [it.get("source") or _extract_domain(it.get("url", "")) for it in pool])

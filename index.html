@@ -35207,7 +35207,10 @@ function SentimentDot({
   });
 }
 // Source Trust Graph dimension labels + ordering (matches source_trust_graph.py).
-const TRUST_DIMS = [['factual_accuracy', 'Factual accuracy'], ['correction_behavior', 'Corrections'], ['source_attribution', 'Attribution'], ['prediction_accuracy', 'Predictions'], ['opinion_separation', 'Opinion labeling'], ['narrative_independence', 'Independence']];
+// Labels say what each dimension MEASURES (source_trust_graph.DIMENSION_INFO);
+// a dimension with no score (null) is "not measured", never a number.
+const TRUST_DIMS = [['factual_accuracy', 'Primary-source corroboration'], ['correction_behavior', 'Corrections issued'], ['source_attribution', 'Attribution (writing style)'], ['prediction_accuracy', 'Predictions'], ['opinion_separation', 'Opinion labelling (writing style)'], ['narrative_independence', 'Independence']];
+const TRUST_NOT_MEASURED = 'not measured';
 function trustColor(score) {
   const s = Number(score);
   if (isNaN(s)) return 'yellow';
@@ -35233,7 +35236,12 @@ function TrustBadge({
     className: "trust-tip"
   }, /*#__PURE__*/React.createElement("div", {
     className: "trust-tip-head"
-  }, "Source trust", score != null ? ' · ' + score.toFixed(2) : ''), dims ? TRUST_DIMS.map(([k, lbl]) => {
+  }, "Source trust", score != null ? ' · ' + score.toFixed(2) : ''), it && it.trust_owner && /*#__PURE__*/React.createElement("div", {
+    className: "trust-tip-row trust-owner-pref",
+    style: {
+      color: '#c4cad6'
+    }
+  }, 'Your preference: ' + (it.trust_owner === 'banned' ? 'banned (score held low)' : 'boosted (score raised)')), dims ? TRUST_DIMS.map(([k, lbl]) => {
     const v = dims[k];
     return /*#__PURE__*/React.createElement("div", {
       key: k,
@@ -35248,8 +35256,12 @@ function TrustBadge({
         width: Math.round((Number(v) || 0) * 100) + '%'
       }
     })), /*#__PURE__*/React.createElement("span", {
-      className: "trust-tip-val"
-    }, v != null ? Number(v).toFixed(2) : '—'));
+      className: "trust-tip-val",
+      style: v == null ? {
+        width: 'auto',
+        color: '#888'
+      } : undefined
+    }, v != null ? Number(v).toFixed(2) : TRUST_NOT_MEASURED));
   }) : /*#__PURE__*/React.createElement("div", {
     className: "trust-tip-row",
     style: {
@@ -35302,7 +35314,7 @@ function TrustRadar({
       y: y,
       className: "radar-lbl",
       textAnchor: x < cx - 5 ? 'end' : x > cx + 5 ? 'start' : 'middle'
-    }, lbl.split(' ')[0]);
+    }, lbl.split(' ')[0] + (sc[k] == null ? ' (n/m)' : ''));
   }));
 }
 // Record a per-source engagement event for the "Your Media Diet" panel. Fire-
@@ -35565,11 +35577,13 @@ function NewsLocalBeatSettings() {
   const h = React.createElement;
   const [area, setArea] = useState(null);
   const [sources, setSources] = useState('');
+  const [trusted, setTrusted] = useState('');
   const [note, setNote] = useState('');
   useEffect(() => {
     apiFetch('/api/settings').then(r => r.json()).then(d => {
       const s = (d && d.settings) || {};
       setSources((Array.isArray(s.news_local_sources) ? s.news_local_sources : []).join('\n'));
+      setTrusted((Array.isArray(s.news_trusted_outlets) ? s.news_trusted_outlets : []).join('\n'));
       setArea(String(s.news_local_area || ''));
     }).catch(() => {
       setArea('');
@@ -35588,11 +35602,19 @@ function NewsLocalBeatSettings() {
     news_local_area: (area || '').trim(),
     news_local_sources: sources.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
   });
+  // Trusted outlets start at high trust like the built-in list, without being
+  // fetched or tagged as Local news (source_trust_graph.trusted_outlets).
+  const commitTrusted = () => save({
+    news_trusted_outlets: trusted.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
+  });
   if (area === null) return null;
   return h(React.Fragment, null,
     h('div', { className: 'card-title', style: { marginTop: 14 } }, 'Local beat'),
     h('input', { className: 'input', 'aria-label': 'City or area for Local news', style: { width: '100%', fontSize: 11 }, value: area, placeholder: 'City or area (empty: no Local news)', onChange: e => setArea(e.target.value), onBlur: commit }),
     h('textarea', { className: 'input', 'aria-label': 'Local news outlets', rows: 3, style: { width: '100%', fontSize: 11, marginTop: 6, resize: 'vertical' }, value: sources, placeholder: 'Local outlets, one domain per line or comma-separated', onChange: e => setSources(e.target.value), onBlur: commit }),
+    h('div', { className: 'card-title', style: { marginTop: 14 } }, 'Trusted outlets'),
+    h('div', { style: { fontSize: 10, color: '#777', marginBottom: 4 } }, 'Start these at high trust, like the built-in trusted list. They are not added to Local news.'),
+    h('textarea', { className: 'input', 'aria-label': 'Trusted outlets', rows: 3, style: { width: '100%', fontSize: 11, resize: 'vertical' }, value: trusted, placeholder: 'Trusted outlets, one domain per line or comma-separated', onChange: e => setTrusted(e.target.value), onBlur: commitTrusted }),
     note && h('div', { role: 'status', style: { fontSize: 10, color: '#777', marginTop: 4 } }, note));
 }
 function NewsWS() {
@@ -35922,7 +35944,9 @@ function NewsWS() {
   const openTrustSource = domain => {
     setTrustSel(domain);
     setTrustDetail(null);
-    fetch('/api/source-trust/' + encodeURIComponent(domain)).then(r => r.json()).then(d => setTrustDetail(d.status === 'ok' ? d.source : null)).catch(() => setTrustDetail(null));
+    fetch('/api/source-trust/' + encodeURIComponent(domain)).then(r => r.json()).then(d => setTrustDetail(d.status === 'ok' ? Object.assign({}, d.source, {
+      breakdown: d.breakdown || null
+    }) : null)).catch(() => setTrustDetail(null));
   };
   useEffect(() => {
     fetch('/api/briefing/status').then(r => r.json()).then(d => setStatus(d.connectors || [])).catch(() => {});
@@ -37873,7 +37897,7 @@ function NewsWS() {
     className: "trust-row-score"
   }, Number(s.trust_score).toFixed(2)), /*#__PURE__*/React.createElement("span", {
     className: "trust-row-meta"
-  }, s.article_count || 0, " art \xB7 ", s.observation_count || 0, " obs")))), /*#__PURE__*/React.createElement("div", {
+  }, s.owner_preference ? (s.owner_preference === 'banned' ? 'banned \xB7 ' : 'boosted \xB7 ') : '', s.article_count || 0, " art \xB7 ", s.observation_count || 0, " obs")))), /*#__PURE__*/React.createElement("div", {
     className: "trust-detail"
   }, !trustSel ? /*#__PURE__*/React.createElement("div", {
     style: {
@@ -37894,7 +37918,9 @@ function NewsWS() {
     className: "trust-detail-name"
   }, trustDetail.name || trustDetail.domain), /*#__PURE__*/React.createElement("div", {
     className: "trust-detail-sub"
-  }, trustDetail.domain, " \xB7 ", trustDetail.article_count || 0, " articles \xB7 first seen ", trustDetail.first_seen || '—')), /*#__PURE__*/React.createElement("div", {
+  }, trustDetail.domain, " \xB7 ", trustDetail.article_count || 0, " articles \xB7 first seen ", trustDetail.first_seen || '—'), trustDetail.breakdown && /*#__PURE__*/React.createElement("div", {
+    className: "trust-detail-sub trust-score-basis"
+  }, 'Evidence score ', Number(trustDetail.breakdown.evidence_score).toFixed(2), trustDetail.breakdown.owner_preference ? ' \xB7 Your preference: ' + trustDetail.breakdown.owner_preference.effect : ' \xB7 No owner preference')), /*#__PURE__*/React.createElement("div", {
     className: 'trust-detail-score ' + trustColor(trustDetail.trust_score)
   }, Number(trustDetail.trust_score).toFixed(2))), /*#__PURE__*/React.createElement("div", {
     className: "trust-detail-grid"
@@ -37904,9 +37930,11 @@ function NewsWS() {
     className: "trust-dimbars"
   }, TRUST_DIMS.map(([k, lbl]) => {
     const v = (trustDetail.scores || {})[k];
+    const bd = trustDetail.breakdown && trustDetail.breakdown.dimensions && trustDetail.breakdown.dimensions[k];
     return /*#__PURE__*/React.createElement("div", {
       key: k,
-      className: "trust-dimbar"
+      className: "trust-dimbar",
+      title: bd ? bd.based_on + ' (' + bd.evidence_count + ' observation' + (bd.evidence_count === 1 ? '' : 's') + '; ' + bd.status + ')' : undefined
     }, /*#__PURE__*/React.createElement("span", {
       className: "trust-dimbar-lbl"
     }, lbl), /*#__PURE__*/React.createElement("span", {
@@ -37917,8 +37945,12 @@ function NewsWS() {
         width: Math.round((Number(v) || 0) * 100) + '%'
       }
     })), /*#__PURE__*/React.createElement("span", {
-      className: "trust-dimbar-val"
-    }, v != null ? Number(v).toFixed(2) : '—'));
+      className: "trust-dimbar-val",
+      style: v == null ? {
+        width: 'auto',
+        color: '#888'
+      } : undefined
+    }, v != null ? Number(v).toFixed(2) : TRUST_NOT_MEASURED));
   }))), /*#__PURE__*/React.createElement("div", {
     className: "trust-obs-head"
   }, "Observation history (", (trustDetail.observations || []).length, ")"), /*#__PURE__*/React.createElement("div", {
