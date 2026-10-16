@@ -1851,13 +1851,13 @@ def seal_outbound(
     except Exception:
         _cr, _lk_tok = None, None
     try:
-        return _seal_steps(sealed, provider, log_path, _lk, _unrestricted)
+        return _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=model)
     finally:
         if _lk_tok is not None:
             _cr.LOOKUP.reset(_lk_tok)
 
 
-def _seal_steps(sealed, provider, log_path, _lk, _unrestricted):
+def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
     """seal_outbound's scrub and gate steps (§5.5), on its copy of the payload."""
     try:
         for key in ("system", "messages", "prompt", "context"):
@@ -1900,7 +1900,7 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted):
         # model, else the model named in the payload itself.
         sealed["messages"] = _gate_messages(
             sealed["messages"], provider, log_path,
-            model=str(model or payload.get("model") or ""),
+            model=str(model or sealed.get("model") or ""),
         )
 
     # Tool definitions
