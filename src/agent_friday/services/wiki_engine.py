@@ -193,6 +193,15 @@ def _safe_wiki_path(rel):
             return None
         if not p.suffix:
             p = p.with_suffix('.md')
+        # The same check on the RESOLVED path (after the suffix is added, so
+        # "notes/DRAFT~1" + ".md" is checked as the file it names): on Windows
+        # an 8.3 short name ("TRASH~1" for ".trash", "GIT~1" for ".git") has no
+        # dot of its own but resolves to the hidden one; so does a link.
+        root = os.path.realpath(os.fspath(WIKI_DIR))
+        resolved = os.path.realpath(os.fspath(p))
+        if wiki_path_hidden(resolved, root) or wiki_path_hidden(p, root):
+            _wlog.info("wiki path %r refused: it resolves to a hidden path (%s)", rel, resolved)
+            return None
         return p
     except Exception:
         return None
@@ -427,33 +436,222 @@ def _contains_block(text, block):
     return any(have[i:i + n] == want for i in range(len(have) - n + 1))
 
 
-def _append_under_section(existing, section, new_val):
-    """Add ``new_val`` at the end of an existing ``## section``, or a new
-    section at the end of the page when it has none. Never a second header."""
-    lines = existing.rstrip("\n").split("\n")
-    header = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-    start = None
-    level = 0
+#: An ATX heading line: up to 3 spaces, 1-6 ``#``, a space, the text, and an
+#: optional closing run of ``#`` (only after a space, so "C#" keeps its ``#``).
+_HEADING_LINE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]([^\n]*))?$")
+
+
+def _strip_closing_hashes(text):
+    """"Notes ##" -> "Notes"; "C#" keeps its ``#`` (a closing run needs a space
+    before it). String operations, not a backtracking pattern."""
+    s = str(text or "").rstrip()
+    j = len(s.rstrip("#"))
+    if j < len(s) and (j == 0 or s[j - 1] in " \t"):
+        s = s[:j].rstrip()
+    return s
+
+
+class _Heading:
+    __slots__ = ("_g",)
+
+    def __init__(self, hashes, text):
+        self._g = (None, hashes, text)
+
+    def group(self, i):
+        return self._g[i]
+
+
+class _HeadingMatcher:
+    """``_HEADING_RE.match(line)``: ``group(1)`` the ``#`` run, ``group(2)`` the
+    text without a closing ``#`` run, or None for a line that is no heading."""
+
+    @staticmethod
+    def match(line):
+        m = _HEADING_LINE.match(line or "")
+        if not m:
+            return None
+        text = m.group(2)
+        return _Heading(m.group(1), None if text is None else _strip_closing_hashes(text))
+
+
+_HEADING_RE = _HeadingMatcher()
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _heading_key(text):
+    """How a section name is compared with a heading: any leading ``#`` run,
+    surrounding and repeated whitespace, a closing ``#`` run and one trailing
+    colon are ignored, and case does not matter. "## Preferences ",
+    "preferences" and "### PREFERENCES:" name the same section."""
+    t = str(text or "").strip()
+    t = re.sub(r"^#{1,6}(?=\s|$)", "", t).strip()
+    t = _strip_closing_hashes(t).strip()
+    t = re.sub(r"\s+", " ", t)
+    if t.endswith(":"):
+        t = t[:-1].rstrip()
+    return t.casefold()
+
+
+def _section_name(section):
+    """``(text, level)`` of a requested section: "## Notes" is ("Notes", 2);
+    a bare "Notes" has no level of its own (None)."""
+    s = str(section or "").strip()
+    m = re.match(r"^(#{1,6})(?=\s|$)", s)
+    level = len(m.group(1)) if m else None
+    text = s[m.end():].strip() if m else s
+    text = _strip_closing_hashes(text).strip()
+    return text, level
+
+
+def _page_headings(lines):
+    """``[(index, level, text)]`` for the ATX headings of ``lines``, skipping
+    fenced code blocks (a ``# comment`` in a shell sample is not a heading)."""
+    out, fence = [], None
     for i, ln in enumerate(lines):
-        m = header.match(ln)
-        if m and m.group(2).strip().lower() == section.strip().lower():
-            start, level = i, len(m.group(1))
-            break
-    if start is None:
-        return existing.rstrip() + f"\n\n## {section}\n" + new_val.rstrip("\n") + "\n"
+        f = _FENCE_RE.match(ln)
+        if fence is not None:
+            if f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) \
+                    and not ln.strip()[len(f.group(1)):].strip():
+                fence = None
+            continue
+        if f:
+            fence = f.group(1)
+            continue
+        m = _HEADING_RE.match(ln)
+        if m and (m.group(2) or "").strip():
+            out.append((i, len(m.group(1)), m.group(2).strip()))
+    return out
+
+
+def _lift_leading_heading(new_val, key=None):
+    """When ``new_val`` opens with a heading (first non-blank line) and the rest
+    of it has no heading at that level or above, return ``(heading_text,
+    level, body)``; else None. With ``key`` the heading must name that section.
+    A model often sends "## Preferences\\n- tea" for the section Preferences;
+    the heading is the section, not a second copy of it."""
+    lines = (new_val or "").strip("\n").split("\n")
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines):
+        return None
+    m = _HEADING_RE.match(lines[i])
+    if not m or not (m.group(2) or "").strip():
+        return None
+    level, text = len(m.group(1)), m.group(2).strip()
+    if key is not None and _heading_key(text) != key:
+        return None
+    rest = lines[i + 1:]
+    if any(lv <= level for _, lv, _ in _page_headings(rest)):
+        return None
+    while rest and not rest[0].strip():
+        rest = rest[1:]
+    body = "\n".join(rest).rstrip()
+    return (text, level, body) if body.strip() else None
+
+
+def _find_section(lines, section):
+    """``(index, level)`` of the heading that names ``section`` in ``lines``,
+    or None. A heading at the requested level wins ("## Notes" over an
+    earlier "### Notes"); otherwise the first match at any level."""
+    text, want = _section_name(section)
+    key = _heading_key(text)
+    if not key:
+        return None
+    hits = [(i, lv) for i, lv, t in _page_headings(lines) if _heading_key(t) == key]
+    if not hits:
+        return None
+    if want is not None:
+        for i, lv in hits:
+            if lv == want:
+                return i, lv
+    return hits[0]
+
+
+def _append_under_section(existing, section, new_val):
+    """Add ``new_val`` at the END of the existing section named ``section``
+    (any heading level, with or without its ``#``, case and spacing aside):
+    after its last line and its subsections, before the next heading of the
+    same or a higher level. Only when the page has no such heading is one
+    added, at the end of the page. Never a second copy of the heading."""
+    return _section_append(existing, section, new_val)[0]
+
+
+def _section_append(existing, section, new_val):
+    """``(after, matched)``: the page with ``new_val`` appended under
+    ``section`` (see ``_append_under_section``) and the existing heading line
+    it went under, or None when a new heading was added."""
+    lines = existing.rstrip("\n").split("\n")
+    text, want = _section_name(section)
+    lifted = _lift_leading_heading(new_val, _heading_key(text))
+    if lifted is not None:
+        new_val = lifted[2]
+    found = _find_section(lines, section)
+    if found is None:
+        heading = "#" * (want or 2) + " " + text
+        return existing.rstrip() + f"\n\n{heading}\n" + new_val.rstrip("\n") + "\n", None
+    start, level = found
     end = len(lines)
-    for j in range(start + 1, len(lines)):
-        m = header.match(lines[j])
-        if m and len(m.group(1)) <= level:
-            end = j
+    for j, lv, _t in _page_headings(lines[start + 1:]):
+        if lv <= level:
+            end = start + 1 + j
             break
     body_end = end
     while body_end > start + 1 and not lines[body_end - 1].strip():
         body_end -= 1
-    out = lines[:body_end] + new_val.rstrip("\n").split("\n")
+    out = lines[:body_end] + new_val.strip("\n").split("\n")
     if end < len(lines):
         out += [""] + lines[end:]
-    return "\n".join(out) + "\n"
+    return "\n".join(out) + "\n", lines[start].strip()
+
+
+def _first_h1(text):
+    """The text of ``text``'s first non-blank line when that line is an H1."""
+    for ln in (text or "").split("\n"):
+        if not ln.strip():
+            continue
+        m = _HEADING_RE.match(ln)
+        if m and len(m.group(1)) == 1 and (m.group(2) or "").strip():
+            return m.group(2).strip()
+        return None
+    return None
+
+
+def _new_page_text(path, rel, section, new_val):
+    """The text of a page an append creates. Its title is the page name
+    ("notes/tea-list.md" is "# Tea List") unless ``new_val`` already opens
+    with an H1: then that H1 is the title and no second one is added. When
+    the two differ the content's own H1 wins (it was written on purpose; the
+    file name is a slug) and that is logged. A ``section`` is added as a
+    heading only when ``new_val`` has no heading of that name already."""
+    title = path.stem.replace('-', ' ').replace('_', ' ').title()
+    sec_text, sec_level = _section_name(section)
+    sec_key = _heading_key(sec_text)
+    h1 = _first_h1(new_val)
+    if h1 is None:
+        lifted = _lift_leading_heading(new_val, sec_key) if sec_key else None
+        if lifted is not None:
+            new_val = lifted[2]
+        header = f"# {title}\n\n"
+        if sec_text:
+            header += "#" * (sec_level or 2) + f" {sec_text}\n"
+        return header + new_val.strip("\n") + "\n"
+    if _heading_key(h1) != _heading_key(title):
+        _wlog.info("new wiki page %s: the content's own title %r is kept instead of %r "
+                   "from the page name", rel, h1, title)
+    body_lines = new_val.strip("\n").split("\n")
+    heads = _page_headings(body_lines)
+    names = {_heading_key(t) for _, _, t in heads}
+    # A section heading goes under the H1 only when the content has no other
+    # heading: a page with its own structure is written as it was given.
+    if sec_key and sec_key not in names and len(heads) == 1:
+        i = next(k for k, ln in enumerate(body_lines) if ln.strip())
+        rest = body_lines[i + 1:]
+        while rest and not rest[0].strip():
+            rest = rest[1:]
+        body_lines = (body_lines[:i + 1] + [""] + ["#" * (sec_level or 2) + f" {sec_text}"]
+                      + rest)
+    return "\n".join(body_lines).rstrip("\n") + "\n"
 
 
 def plan_wiki_proposal(item):
@@ -527,14 +725,26 @@ def plan_wiki_proposal(item):
                         message=f"{rel} already contains this text; nothing was appended.")
             return plan
         if existing.strip():
-            plan["after"] = (_append_under_section(existing, section, new_val) if section
-                             else existing.rstrip() + "\n\n" + new_val.rstrip("\n") + "\n")
+            if not _heading_key(section):
+                # No section named, but the text opens with a heading the page
+                # already has ("## Preferences\n- tea"): that is the section.
+                lifted = _lift_leading_heading(new_val)
+                if lifted is not None and _find_section(
+                        existing.rstrip("\n").split("\n"), "#" * lifted[1] + " " + lifted[0]):
+                    section = "#" * lifted[1] + " " + lifted[0]
+            if _heading_key(section):
+                lifted = _lift_leading_heading(new_val, _heading_key(_section_name(section)[0]))
+                if lifted is not None and _contains_block(existing, lifted[2]):
+                    plan.update(status="unchanged", after=existing,
+                                message=f"{rel} already contains this text; nothing was appended.")
+                    return plan
+                plan["after"], matched = _section_append(existing, section, new_val)
+                plan["section_heading"] = matched
+                plan["section_new"] = matched is None
+            else:
+                plan["after"] = existing.rstrip() + "\n\n" + new_val.rstrip("\n") + "\n"
         else:
-            title = path.stem.replace('-', ' ').title()
-            header = f"# {title}\n\n"
-            if section:
-                header += f"## {section}\n"
-            plan["after"] = header + new_val.rstrip("\n") + "\n"
+            plan["after"] = _new_page_text(path, rel, section, new_val)
     if plan["after"] == existing:
         plan.update(status="unchanged", message=f"{rel} already reads this way; nothing was written.")
         return plan
@@ -542,14 +752,16 @@ def plan_wiki_proposal(item):
     return plan
 
 
-def apply_wiki_proposal_result(item, before_sha256=None):
+def apply_wiki_proposal_result(item, before_sha256=None, require_preview=False):
     """Apply a proposal and say exactly what happened.
 
     Returns ``{"ok", "status", "message", "file", "mode", "lines_added",
     "lines_removed"}`` with status ``applied`` (written and read back),
     ``unchanged`` (already so, nothing written), ``stale``, ``ambiguous`` or
     ``failed``. With ``before_sha256`` (from a preview) a page that no longer
-    hashes to it is ``stale`` and nothing is written.
+    hashes to it is ``stale`` and nothing is written. With
+    ``require_preview`` an overwrite or append of a page that exists is also
+    ``stale`` when no ``before_sha256`` is given (as on a Knowledge approve).
 
     Plan and write happen in one hold of ``_PENDING_LOCK``, so the
     owner-decided tool path, ``/api/wiki/update`` and a Knowledge approve
@@ -557,7 +769,7 @@ def apply_wiki_proposal_result(item, before_sha256=None):
     """
     with _PENDING_LOCK:
         plan = plan_wiki_proposal(item)
-        refused = _hash_refusal(plan, before_sha256, require=False)
+        refused = _hash_refusal(plan, before_sha256, require=bool(require_preview))
         if refused is not None:
             return refused
         return _apply_wiki_proposal_locked(item, plan=plan)
@@ -792,6 +1004,10 @@ def wiki_proposal_preview(item):
                                       fromfile=rel, tofile=rel, lineterm=""))
     added, removed = _diff_counts(plan["before"], after)
     sec = f" under '{item.get('section')}'" if item.get("section") else ""
+    if plan.get("section_heading"):
+        sec = f" at the end of its existing section '{plan['section_heading']}'"
+    elif plan.get("section_new"):
+        sec = f" under a new heading '{_section_name(item.get('section'))[0]}'"
     headline = {
         "new": f"Create the page {rel}",
         "edit": f"Change text in {rel}",
