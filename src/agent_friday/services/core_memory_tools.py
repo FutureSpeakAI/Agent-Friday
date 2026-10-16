@@ -30,21 +30,17 @@ from agent_friday.services import core_memory
 TOOLS = [
     {"name": "update_core_memory",
      "description": (
-         "Keep your core memory card: two short files always loaded at the top of your instructions. "
-         "target=user holds durable facts about the user (preferences, people, projects, how they like "
-         "things); target=friday holds your own lessons about working with them (what worked, what to "
-         "avoid). action=add saves one short line; action=replace rewrites the entry that contains old; "
-         "action=remove drops it; action=show lists both files with how full they are. Save things that "
-         "will matter in later conversations, not passing details; never secrets. Each file has a hard "
-         "character cap: when an add is refused as full, merge related entries with replace or drop stale "
-         "ones with remove, then add again. Only what the user said in their own words saves at once; "
-         "anything else waits for their OK on the card. A change takes effect from the next conversation; the user "
-         "sees every line and can edit or delete it in Settings > Privacy & Data > Memory card."),
+         "Your core memory card, always loaded: target=user holds durable facts about the user; "
+         "target=friday your lessons about working with them. add saves one short line; replace "
+         "rewrites the entry containing old; remove drops it; show lists both with how full they are. "
+         "Save what will matter later, never secrets. If an add is refused as full, merge (replace) or "
+         "drop (remove) first. Only the user's own words save at once; anything else waits for their OK "
+         "on the card. Changes apply from the next conversation."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["add", "replace", "remove", "show"]},
          "target": {"type": "string", "enum": ["user", "friday"]},
-         "text": {"type": "string", "description": "The entry to save (add) or the new wording (replace). One line."},
-         "old": {"type": "string", "description": "Part of the existing entry's text (replace, remove)."}},
+         "text": {"type": "string", "description": "One line: the entry (add) or new wording (replace)."},
+         "old": {"type": "string", "description": "Text of the entry to change (replace, remove)."}},
          "required": ["action"]}},
 ]
 RINGS = {"update_core_memory": 1}

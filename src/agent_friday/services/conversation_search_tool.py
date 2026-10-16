@@ -17,13 +17,13 @@ from __future__ import annotations
 TOOLS = [
     {"name": "search_past_conversations",
      "description": (
-         "Search every earlier conversation (typed and spoken) for what you and the user said: full-text "
-         "search, real excerpts with dates, best match first. Use it when they refer to something from before "
-         "('what did we decide about...', 'when did I mention...'). since/until: inclusive YYYY-MM-DD."),
+         "Full-text search of every earlier conversation (typed and spoken): real excerpts with dates, "
+         "best match first. Use it when the user refers to something from before ('what did we decide "
+         "about...')."),
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "What to look for, in a few words."},
-         "since": {"type": "string", "description": "Only on or after this date, YYYY-MM-DD."},
-         "until": {"type": "string", "description": "Only on or before this date, YYYY-MM-DD."}},
+         "since": {"type": "string", "description": "On or after, YYYY-MM-DD."},
+         "until": {"type": "string", "description": "On or before, YYYY-MM-DD."}},
          "required": ["query"]}},
 ]
 RINGS = {"search_past_conversations": 2}
