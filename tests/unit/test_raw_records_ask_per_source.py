@@ -896,3 +896,40 @@ def test_the_address_line_check_is_linear():
     assert time.monotonic() - t0 < 0.5
     assert jg._skip("to: sam doe <~pii~>", False) and jg._skip("~pii~", False)
     assert not jg._skip("~pii~ diagnosed: melanoma, stage two, see the attached", False)
+
+
+# ── critic re-read of the slice fixes (nested quotes, deep-walk flags) ──────
+
+def _records(tmp_path):
+    dl = tmp_path / "Downloads"
+    dl.mkdir()
+    stmt = dl / "Chase_statement.csv"
+    stmt.write_text("x", encoding="utf-8")
+    mail = tmp_path / "Mail"
+    mail.mkdir()
+    inbox = mail / "inbox.mbox"
+    inbox.write_text(ARCHIVE, encoding="utf-8")
+    return stmt, inbox
+
+
+def test_a_path_inside_a_quoted_program_is_seen(cards, tmp_path):
+    from agent_friday.services import raw_records as rr
+    stmt, inbox = _records(tmp_path)
+    probes = {
+        "python -c \"print(open(r'%s').read())\"" % stmt: stmt,
+        "python -c \"print(open(r'%s').read())\"" % stmt.as_posix(): stmt,
+        "python -c \"import pathlib;print(pathlib.Path(r'%s').read_text())\"" % inbox: inbox,
+    }
+    for cmd, f in probes.items():
+        assert [k for _l, k, _p in rr.named_in(cmd)], cmd
+        out = fg.raw_refusal_for_command(cmd)
+        assert out and f.name in out, cmd
+
+
+def test_a_folder_inside_a_quoted_program_is_walked(cards, tmp_path):
+    stmt, _inbox = _records(tmp_path)
+    cmd = "python -c \"import os;[print(open(os.path.join(r'%s',f)).read()) for f in os.listdir(r'%s')]\"" % (
+        stmt.parent, stmt.parent)
+    out = fg.raw_refusal_for_command(cmd)
+    assert out and stmt.name in out
+

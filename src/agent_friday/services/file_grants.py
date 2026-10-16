@@ -1183,10 +1183,13 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
     reader_deep = bool(_CONTENT_READERS.search(t) and (_ALWAYS_RECURSIVE.search(t) or recursive))
     deep = deep_walk or reader_deep or (shell_walk and recursive)
     from agent_friday.services import raw_records
-    out = []
-    quoted = [a or b for a, b in raw_records._QUOTED.findall(t)]
-    for tok in quoted + raw_records._QUOTED.sub(" ", t).split():
+    out, seen = [], set()
+    pieces, _quoted = raw_records.tokens(t)
+    for tok in pieces:
         tok = tok.strip(raw_records._TOKEN_EDGES).strip()
+        if tok in seen:
+            continue
+        seen.add(tok)
         if not tok or "://" in tok or tok.replace("/", "\\").startswith("\\\\") or len(tok) > 400:
             continue
         try:
@@ -1198,7 +1201,7 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
             if not p.is_dir():
                 # findstr /s x "dir\\*" searches dir; Get-Content "dir\\*.csv" reads dir's files
                 p = Path(_TRAILING_PATTERN.sub("", str(p)) or str(p))
-            if p.is_dir():
+            if p.is_dir() and not any(_same_path(str(q), p) for q, _d in out):
                 out.append((p, deep))
         except (OSError, ValueError):
             continue

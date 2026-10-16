@@ -62,6 +62,36 @@ _TOKEN_EDGES = "()[]{},;`|<>&"
 _ATTR = re.compile(r"^[A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)+$")     # e.msg, self.msg, record.msg
 
 
+# A path spelled out anywhere in a command or program, whatever surrounds it
+# ("print(open(r'C:\\x\\a.csv').read())"): a drive path, a WSL mount, a home path.
+_PATHISH = re.compile(r"(?<![\w$%])(?:[A-Za-z]:[\\/]|/mnt/[A-Za-z]/|~[\\/])[^'\"\s;|()<>`,]{1,400}")
+#: How deep quoted strings inside quoted strings are opened.
+QUOTE_DEPTH = 4
+
+
+def tokens(text: str) -> tuple:
+    """([piece], {quoted pieces}): every piece of a command or program that
+    may name a file or folder. A quoted string is a piece, and is opened
+    again for the strings and words inside it (a single-quoted path inside
+    a double-quoted python -c program), so a path is seen at any depth of
+    quoting; every path-shaped run of the raw text is a piece too."""
+    out, quoted = [], set()
+
+    def walk(t: str, depth: int) -> None:
+        inner = [a or b for a, b in _QUOTED.findall(t)]
+        quoted.update(inner)
+        out.extend(inner)
+        if depth < QUOTE_DEPTH:
+            for q in inner:
+                walk(q, depth + 1)
+        out.extend(w.strip(_TOKEN_EDGES) for w in _QUOTED.sub(" ", t).split())
+
+    t = str(text or "")
+    walk(t, 0)
+    out.extend(m.rstrip(".") for m in _PATHISH.findall(t))
+    return out, quoted
+
+
 #: How many files one pattern ("~/Downloads/*.csv") is expanded to, to judge it.
 GLOB_LIMIT = 500
 _PS_ENV = re.compile(r"\$env:([A-Za-z_][A-Za-z0-9_]{0,60})", re.I)
@@ -84,12 +114,9 @@ def named_in(text: str, cwd=None) -> list:
     command runs in). A file is opened to look only when it exists and its
     name says nothing."""
     import glob as _glob
-    t = str(text or "")
-    quoted = [a or b for a, b in _QUOTED.findall(t)]
-    tokens = quoted + [w.strip(_TOKEN_EDGES) for w in _QUOTED.sub(" ", t).split()]
-    quoted = set(quoted)
+    pieces, quoted = tokens(text)
     out, seen = [], set()
-    for tok in tokens:
+    for tok in pieces:
         tok = tok.strip()
         if not tok or tok in seen or len(tok) > 400:
             continue
