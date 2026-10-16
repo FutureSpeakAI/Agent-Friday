@@ -513,10 +513,11 @@ def lift_declared_ctx(model_id: str, declared: int, *, prompt: Optional[int] = N
         # The floor's numbers come from the size of the assembled prompt, so
         # they stay out of the log line (CodeQL py/clear-text-logging); the
         # residency status (/api/residency, the seat's "sizing" block) shows them.
-        _log.warning("local sizing: %s is overridden below Friday's prompt floor; "
-                     "keeping the override (numbers: /api/residency)", model_id)
+        # The model is named on /api/residency too, so the line carries fixed words only.
+        _log.warning("local sizing: a local model is overridden below Friday's prompt floor; "
+                     "keeping the override (model and numbers: /api/residency)")
         return int(declared)
-    _log.info("local sizing: %s declares less context than Friday's prompt needs; "
-              "serving at the prompt floor instead (component=arbiter; numbers: "
-              "/api/residency)", model_id)
+    _log.info("local sizing: a local model declares less context than Friday's prompt needs; "
+              "serving at the prompt floor instead (component=arbiter; model and numbers: "
+              "/api/residency)")
     return int(floor["num_ctx"])

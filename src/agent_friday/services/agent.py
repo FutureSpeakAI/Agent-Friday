@@ -16124,8 +16124,9 @@ def _guard_final_reply(text, *, model, seat, provider, tool_trace, tools_offered
         print(f"  [reply-guard] skipped: {_ge}")
         return text
     if ev:
-        print(f"  [reply-guard] {ev['kind']}: model={model} seat={seat} "
-              f"provider={provider} tools={','.join(ev.get('names') or []) or '-'}")
+        # Fixed words and a count on the console; the model, seat and tool names
+        # go to the decision journal below.
+        print(f"  [reply-guard] acted on a reply: {len(ev.get('names') or [])} tool name(s)")
         try:
             _journal().decision("reply_guard", ev["kind"],
                                 reason=f"model={model} seat={seat} tools="
@@ -16473,8 +16474,8 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                                                        route=(_led_seat == "local"))
                 if _found:
                     if _refused:
-                        print(f"  [oai-loop] {model}: text tool call(s) not offered "
-                              f"this turn, not run: {', '.join(_refused)}")
+                        print(f"  [oai-loop] {len(_refused)} text tool call(s) not offered "
+                              "this turn, not run (named in the reply)")
                         _rest = (_rest + "\n(Not run, not available on this turn: "
                                  + ", ".join(_refused) + ")").strip()
                     tool_calls = _found
