@@ -466,9 +466,12 @@ def custom_endpoints() -> list:
 # ── MCP servers ──────────────────────────────────────────────────────────────
 
 _MCP_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-#: Servers that are first-class connectors with their own card.
+#: Servers that are first-class connectors with their own card: the
+#: `mcp_server` of every MCP connector in services/connectors.CONNECTOR_DEFS.
+#: Their names belong to the connector, so this screen neither adds, lists
+#: nor removes a server under one of them.
 _CONNECTOR_SERVERS = frozenset({"github", "slack", "discord", "linear", "notion",
-                                "higgsfield"})
+                                "higgsfield", "windows_desktop"})
 
 
 def _split_command(command: str) -> tuple[str, list]:
@@ -484,11 +487,15 @@ def _split_command(command: str) -> tuple[str, list]:
 
 def add_mcp(name: str, url: str = "", command: str = "") -> dict:
     """Add an MCP server by address (Streamable HTTP) or command (runs here).
-    Refuses a name already in use; writes through the agent's own config
-    writer (which encrypts any env values) and reloads the servers."""
+    Refuses a name already in use or owned by a connector card; writes
+    through the agent's own config writer (which encrypts any env values) and
+    reloads the servers."""
     name = str(name or "").strip().lower()
     if not _MCP_NAME_RE.match(name):
         raise Refused("Give it a short name: lowercase letters, numbers, - or _.")
+    if name in _CONNECTOR_SERVERS:
+        raise Refused("%s has its own card; connect it there, or pick another "
+                      "name." % name)
     if bool(url) == bool(command):
         raise Refused("Paste either an address or a command, not both.")
     from agent_friday.services import agent

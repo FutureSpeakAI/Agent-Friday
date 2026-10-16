@@ -49,7 +49,7 @@ def test_a_busy_read_is_retried_not_read_as_empty(monkeypatch):
 
 def test_a_card_written_after_a_busy_read_keeps_the_others(monkeypatch):
     first = _card(1)
-    _busy_reads(monkeypatch, 1)
+    _busy_reads(monkeypatch, 5)
     second = _card(2)
     ids = {r["approval_id"] for r in approvals.list_approvals()}
     assert {first["approval_id"], second["approval_id"]} <= ids

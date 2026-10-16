@@ -210,6 +210,31 @@ def test_a_connector_server_is_removed_from_its_own_card_only(client, home):
     assert r.status_code == 422 and "its own card" in r.get_json()["message"]
 
 
+def _mcp_file(home):
+    p = home["path"] / "mcp_servers.json"
+    return p.read_bytes() if p.exists() else None
+
+
+@pytest.mark.parametrize("name", ["higgsfield", "windows_desktop", "github"])
+@pytest.mark.parametrize("how", [{"command": "npx -y some-server"},
+                                 {"url": "https://mcp.example.com/mcp"}])
+def test_a_connector_name_is_refused_and_nothing_is_written(client, home, name, how):
+    """A server added here under a connector's name would be hidden from this
+    list, unremovable from it, and taken for the real connector."""
+    before = _mcp_file(home)
+    r = client.post("/api/setup/connections/mcp", json={"name": name, **how})
+    assert r.status_code == 422 and "its own card" in r.get_json()["message"], r.get_json()
+    assert _mcp_file(home) == before
+
+
+def test_every_mcp_connector_name_is_reserved():
+    from agent_friday.services import connections_setup as cx
+    from agent_friday.services.connectors import CONNECTOR_DEFS
+    owned = {d.get("mcp_server") or k for k, d in CONNECTOR_DEFS.items()
+             if d.get("kind") == "mcp"}
+    assert owned <= cx._CONNECTOR_SERVERS, sorted(owned - cx._CONNECTOR_SERVERS)
+
+
 # ── Local and custom endpoints ───────────────────────────────────────────────
 
 def test_a_custom_endpoint_is_added_without_a_key_and_gets_its_own_card(client, home):
