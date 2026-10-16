@@ -35,6 +35,7 @@
   "messages": [
    {"id": "messages.read_inbox", "group": "read", "label": "read inbox / unread", "audit_status": "L"},
    {"id": "messages.search_mail", "group": "read", "label": "search mail", "audit_status": "L"},
+   {"id": "messages.research_thread", "group": "read", "label": "thread view (every message of one conversation)", "audit_status": "new"},
    {"id": "messages.refresh", "group": "read", "label": "refresh", "audit_status": "L"},
    {"id": "messages.open_thread", "group": "navigate", "label": "open thread", "audit_status": "M"},
    {"id": "messages.filter_lanes", "group": "navigate", "label": "folders / lanes / accounts", "audit_status": "M"},

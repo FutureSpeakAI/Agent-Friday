@@ -1001,7 +1001,8 @@ class FrontSeat:
         # Free text: ``brief_tokens`` caps a quick look-up's first answer; a
         # reply cut by its budget continues once to finish its sentence, and
         # the whole turn stays under FREE_TEXT_CEILING.
-        if brief_tokens and tool in BRIEF_LOOKUPS:
+        if brief_tokens and tool in BRIEF_LOOKUPS and not (args or {}).get("thread"):
+            # (A whole email thread is not a quick look-up: its summary may take more than a line.)
             max_tokens = min(int(max_tokens), int(brief_tokens))
         max_tokens = min(int(max_tokens), FREE_TEXT_CEILING)
         answer = self.run_turn(system, convo, {"tools": []}, on_delta=on_delta,

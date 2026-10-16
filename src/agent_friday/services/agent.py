@@ -800,8 +800,12 @@ CLAUDE_TOOLS = [
     {"name": "query_calendar", "description": "Read today's and tomorrow's Google Calendar events. Built-in integration: 'not connected' needs one-time OAuth; offer setup, never claim calendar access is unavailable.",
      "input_schema": {"type": "object", "properties": {
          "day": {"type": "string", "format": "date", "description": "Only this day (YYYY-MM-DD); omit for both."}}}},
-    {"name": "search_email", "description": "Search/read recent Gmail across connected accounts (read-only). Gmail operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes, OR. Empty query returns recent unread. Not connected means OAuth setup is needed: offer it, without claiming Gmail is unavailable. search_failed/error means the search failed, never zero results.",
-     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:alex after:2026-09-01'. Empty means recent unread."}}, "required": ["query"]}},
+    {"name": "search_email", "description": "Search/read Gmail across connected accounts (read-only). Gmail operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes, OR. Empty query returns recent unread. Hits are snippets: to read a conversation pass thread=<hit ref> (every message in full, quoted replies removed, attachments); 'this' = open on screen, 'top' = best match of query. Never summarise a thread from snippets. Not connected means OAuth setup is needed: offer it, without claiming Gmail is unavailable. search_failed/error means the search failed, never zero results.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:alex after:2026-09-01'. Empty means recent unread."},
+         "thread": {"type": "string", "description": "A hit's ref or thread id, 'this' or 'top'."},
+         "offset": {"type": "integer", "description": "First message to read (0-based), after a shortened read."}},
+      "required": ["query"]}},
     {"name": "search_drive", "description": "Read-only: search file/folder names across all connected Google accounts. Returns id, name, mime_type and account; pass id + mime_type to read_doc for Docs/Sheets. Report missing Drive permission per account, not as 'not connected'.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Name substring to search for; omit for the most recently modified files."}}}},
     {"name": "read_doc", "description": "Read a Google Doc's text or Sheet's first-tab values by id from search_drive. Omit account_id to try connected accounts until one has access.",
@@ -2092,6 +2096,59 @@ def _email_query_matches(query: str, blob: str) -> bool:
     return True
 
 
+_THREAD_NOT_READ = (" Nothing from this conversation was read: do not describe, quote or summarise it, "
+                    "and do not say you read it.")
+
+
+def _search_email_read_thread(thread, inp, state, found=None):
+    """search_email(thread=...): one whole conversation through gmail_read.get_thread (the
+    Messages workspace's reader), shaped by services/mail_thread. Every failure says plainly
+    that nothing was read."""
+    from agent_friday.services import gmail_read
+    from agent_friday.services import mail_thread as _mt
+    from agent_friday.services.screen_stage import mail_ref, split_mail_ref
+    base = {**(state or {}), "source": "gmail", "thread": thread, "read": False}
+    how = ""
+    t = str(thread or "").strip()
+    if t.lower() in _mt.DEICTIC:
+        ref, how = _mt.resolve_deictic()
+        if not ref:
+            return json.dumps({**base, "error": how + _THREAD_NOT_READ}, default=str)
+        t = ref
+    pair = split_mail_ref(t)
+    account, tid = pair if pair else (None, t)
+    try:
+        offset = max(0, int((inp or {}).get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        res = gmail_read.get_thread(tid, account)
+    except Exception as e:  # noqa: BLE001 - reported, never swallowed
+        res = {"status": "error", "kind": "other", "error": str(e) or type(e).__name__}
+    if res.get("status") != "ok":
+        kind = res.get("kind") or "other"
+        why = {"not_found": "Gmail has no conversation with that id on any connected account",
+               "auth": "the Gmail account needs reconnecting",
+               "unavailable": "Google could not be reached",
+               "rate_limited": "Gmail is rate-limiting requests right now"}.get(kind, "the read failed")
+        return json.dumps({**base, "thread": t, "read_failed": True, "kind": kind,
+                           "error": "Could not read the conversation: %s (%s)." % (why, res.get("error") or kind)
+                                    + _THREAD_NOT_READ}, default=str)
+    if not res.get("messages"):
+        return json.dumps({**base, "thread": t, "read_failed": True, "kind": "empty",
+                           "error": "Gmail returned the conversation with no messages in it." + _THREAD_NOT_READ},
+                          default=str)
+    ref = mail_ref(res.get("account_id"), tid)
+    payload = _mt.build_payload(res, ref, offset=offset)
+    _mt.remember_read(ref)
+    out = {**(state or {}), **payload, "read": True}
+    if how:
+        out["resolved_as"] = how
+    if found:
+        out["found_by"] = found
+    return json.dumps(out, default=str)
+
+
 def _tool_search_email(inp):
     """Search recent Gmail across every connected Google account.
 
@@ -2103,6 +2160,9 @@ def _tool_search_email(inp):
     _collect_messages() offline-cache path so a never-connected install
     keeps its existing (cache-based) behavior unchanged."""
     q = ((inp or {}).get('query') or '').strip()
+    thread = str((inp or {}).get('thread') or '').strip()
+    from agent_friday.services import mail_thread as _mt
+    top = thread.lower() in _mt.TOP
     try:
         from agent_friday.services import google_accounts as ga
     except Exception:
@@ -2120,11 +2180,23 @@ def _tool_search_email(inp):
     # current, the same staleness bug wearing a different hat. The cache path
     # stays reserved for a never-connected install, as the docstring says.
     if has_accounts and summary is not None and not summary["connected"]:
+        if thread:
+            return json.dumps({**state, "source": "gmail", "query": q, "thread": thread,
+                               "read": False, "note": summary["note"],
+                               "error": "No Gmail account can be read right now." + _THREAD_NOT_READ})
         return json.dumps({**state, "source": "gmail", "query": q,
                            "count": 0, "messages": [],
                            "note": summary["note"]})
+    if thread and not (has_accounts and summary is not None):
+        # The offline cache holds snippets, never a conversation: reading one needs Gmail.
+        return json.dumps({"connected": False, "integration": "gmail", "thread": thread, "read": False,
+                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(what="Gmail", reads="your email"),
+                           "error": "Reading a whole conversation needs a connected Gmail account."
+                                    + _THREAD_NOT_READ})
 
     if has_accounts and summary is not None:
+        if thread and not top:
+            return _search_email_read_thread(thread, inp, state)
         # THE QUERY GOES TO GMAIL. It used to not go anywhere.
         #
         # This called merged_gmail() with NO query, got back the default
@@ -2194,6 +2266,25 @@ def _tool_search_email(inp):
                                          "failed and name the reason: "
                                          + detail)}, default=str)
 
+        _mt.remember_hits([h["ref"] for h in hits])
+        if top:
+            if not hits:
+                return json.dumps({**state, "accounts": accounts_status, "source": "gmail", "query": q,
+                                   "count": 0, "thread": thread, "read": False,
+                                   "error": "No conversation matched this search, so there was nothing to "
+                                            "read. Try other words (sender, subject, a date range)."
+                                            + _THREAD_NOT_READ}, default=str)
+            others, seen = [], {hits[0]["ref"]}
+            for h in hits[1:]:
+                if h["ref"] not in seen and len(others) < 4:
+                    seen.add(h["ref"])
+                    others.append({k: h[k] for k in ("ref", "from", "subject", "when")})
+            found = {"query": q, "chosen": "the best match of %d hit(s)" % len(hits)}
+            if others:
+                found["other_matches"] = others
+                found["note"] = ("Other conversations also matched; if this is not the one the owner "
+                                 "meant, read another by its ref.")
+            return _search_email_read_thread(hits[0]["ref"], inp, state, found=found)
         payload = {
             **state,
             "accounts": accounts_status,
@@ -2202,6 +2293,9 @@ def _tool_search_email(inp):
             "count": len(hits),
             "messages": hits[:25],
         }
+        if hits:
+            payload["read_hint"] = ("These are snippets. To read a conversation, call search_email "
+                                    "again with thread=<its ref>.")
         # A PARTIAL RESULT IS NOT A COMPLETE ONE. `_google_note` only speaks
         # up when there are no items at all, so one dead account beside one
         # working account used to report a confident total for both.

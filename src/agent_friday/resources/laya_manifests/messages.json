@@ -68,6 +68,22 @@
    "eval": ["laya_router_eval.json#Search my email for the invoice from Acme."]
   },
   {
+   "id": "messages.research_thread",
+   "action": "messages.research_thread",
+   "group": "read",
+   "ui": {"control": "thread view (every message of one conversation)"},
+   "tool": "search_email",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 2, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["research this email thread", "summarise the thread with Robin Vale about the venue", "what did everyone say in that thread"],
+   "deictic": ["this"],
+   "undo": null,
+   "voice": {"live": false, "shared": true},
+   "quiet_result": null,
+   "eval": ["laya_router_eval.json#research this email thread", "laya_router_eval.json#summarise the thread with Robin Vale about the venue", "laya_router_eval.json#what did everyone say in that thread", "tests/unit/test_email_thread_research.py::test_text_research_this_email_thread_routes_to_a_thread_read", "tests/unit/test_email_thread_research.py::test_voice_research_this_email_thread_reaches_search_email"]
+  },
+  {
    "id": "messages.refresh",
    "action": "messages.refresh",
    "group": "read",

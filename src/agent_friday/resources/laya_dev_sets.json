@@ -314,6 +314,36 @@
    {
     "text": "turn off the notifications",
     "decision": "defer"
+   },
+   {
+    "text": "research this email thread",
+    "decision": "tool",
+    "tool": "search_email",
+    "args_equal": {
+     "thread": "this"
+    }
+   },
+   {
+    "text": "summarise the thread with Robin Vale about the venue",
+    "decision": "tool",
+    "tool": "search_email",
+    "args_equal": {
+     "thread": "top"
+    },
+    "args_contains": {
+     "query": [
+      "Robin",
+      "venue"
+     ]
+    }
+   },
+   {
+    "text": "what did everyone say in that thread",
+    "decision": "tool",
+    "tool": "search_email",
+    "args_equal": {
+     "thread": "this"
+    }
    }
   ],
   "laya_router_holdout2.json": [
