@@ -50,7 +50,7 @@ RINGS = {"update_core_memory": 1}
 #: for it to save without asking (see `_rests_on_owner_words`).
 OWNER_WORDS_COVERAGE = 0.6
 #: How much of the WHOLE line a replace or remove changes must appear in the
-#: owner's own words ("from Austin to Denver" names "Lives in Austin.").
+#: owner's own words ("from Springfield to Denver" names "Lives in Springfield.").
 OWNER_LINE_COVERAGE = 0.5
 #: Spoken owner words older than this no longer back a save.
 VOICE_WORDS_MAX_AGE_S = 300.0

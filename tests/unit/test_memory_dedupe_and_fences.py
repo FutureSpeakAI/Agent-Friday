@@ -29,7 +29,7 @@ def _iso(tmp_path, monkeypatch):
 
 def test_a_reworded_fact_is_a_near_duplicate_and_a_different_one_is_not():
     assert dd.near_duplicate("Prefers tea over coffee.", ["Prefers tea to coffee."])
-    assert dd.near_duplicate("Lives in Boston.", ["Lives in Austin."]) is None
+    assert dd.near_duplicate("Lives in Boston.", ["Lives in Springfield."]) is None
     assert dd.near_duplicate("Prefers coffee.", ["Prefers tea."]) is None
 
 

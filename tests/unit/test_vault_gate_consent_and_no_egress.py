@@ -1,7 +1,7 @@
 """The vault gate on a cloud seat: the owner's consent decides, and tools that
 send nothing off this PC are not cloud-seat rules' business.
 
-A cloud-only chat had create_calendar_event (a location in the owner's town)
+A cloud-only chat had create_calendar_event (a local park)
 and spawn_task(tier=large_local) refused as "cloud_denied_tier_TIER_2",
 because check_action tiers the tool INPUT and never consulted consent.
 
@@ -20,7 +20,7 @@ from agent_friday.privacy import vault_access as va
 from agent_friday.privacy.vault_access import Tier, VaultAccessControl
 
 EVENT = {"summary": "Family doctor appointment, bring the diabetes log",
-         "location": "Pfluger Park, Pflugerville TX",
+         "location": "Riverside Park, Springfield",
          "start": "2026-10-20T15:00:00", "end": "2026-10-20T16:00:00"}
 TASK_PROMPT = ("Review my memory and todo items about the family doctor visit "
                "and draft a reminder for each contact I promised to call.")
