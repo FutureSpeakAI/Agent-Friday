@@ -233,3 +233,25 @@ def test_losing_the_cache_does_not_reopen_an_older_list(lists):
     publish("broker_registries", 3)
     out = pl.refresh("broker_registries")
     assert not out["ok"] and "older" in out["message"]
+
+
+def test_a_cache_swapped_for_an_older_signed_list_is_not_used(lists):
+    pl, publish, tmp = lists
+    publish("broker_registries", 3)
+    url = "https://lists.example.test/v1/broker_registries.json"
+    old_body, old_sig = pl.FETCH(url, 0), pl.FETCH(url + ".minisig", 0)
+    publish("broker_registries", 9)
+    assert pl.refresh("broker_registries")["ok"]
+    body_p, sig_p = pl._paths("broker_registries")
+    body_p.write_bytes(old_body)
+    sig_p.write_bytes(old_sig)
+    assert pl.cached("broker_registries") is None, "validly signed, but older than version 9"
+
+
+def test_an_unreadable_version_record_refuses_the_cache(lists):
+    pl, publish, tmp = lists
+    publish("broker_registries", 4)
+    assert pl.refresh("broker_registries")["ok"]
+    assert pl.cached("broker_registries")["version"] == 4
+    pl._versions_path().write_text("{not json", encoding="utf-8")
+    assert pl.cached("broker_registries") is None
