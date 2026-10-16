@@ -1074,3 +1074,29 @@ def test_decoy_encoded_commands_do_not_hide_the_real_one(cards, tmp_path):
     assert "finance" in [k for _l, k, _p in rr.named_in(cmd)]
     out = fg.raw_refusal_for_command(cmd)
     assert out and stmt.name in out
+
+
+def _nested(inner: str, layers: int) -> str:
+    cmd = inner
+    for _ in range(layers):
+        cmd = "powershell -NoProfile -enc %s" % _encoded(cmd)
+    return cmd
+
+
+def test_an_encoded_command_inside_an_encoded_command_is_checked(cards, tmp_path):
+    from agent_friday.services import raw_records as rr
+    stmt, _inbox = _records(tmp_path)
+    for layers in (2, 3):
+        cmd = _nested("Get-Content '%s'" % stmt, layers)
+        assert "finance" in [k for _l, k, _p in rr.named_in(cmd)], layers
+        out = fg.raw_refusal_for_command(cmd)
+        assert out and stmt.name in out, layers
+    assert fg.raw_refusal_for_command(_nested("Get-Date", 3)) is None, "three layers of nothing are let through"
+
+
+def test_encoding_past_the_last_layer_is_not_run(cards, tmp_path):
+    stmt, _inbox = _records(tmp_path)
+    out = fg.raw_refusal_for_command(_nested("Get-Content '%s'" % stmt, 4))
+    assert out and "layers of encoding" in out
+    out = fg.raw_refusal_for_command(_nested("powershell -enc !!notbase64!!", 2))
+    assert out and "encoded command" in out, "an undecodable command one layer down"

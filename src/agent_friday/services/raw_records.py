@@ -87,11 +87,47 @@ def tokens(text: str) -> tuple:
         out.extend(w.strip(_TOKEN_EDGES) for w in _QUOTED.sub(" ", t).split())
 
     t = str(text or "")
-    texts = [t] + decoded_texts(t)
-    for one in texts:
+    texts, _problem = decoded_layers(t)
+    for one in [t] + texts:
         walk(one, 0)
         out.extend(m.rstrip(".") for m in _PATHISH.findall(one))
     return out, quoted
+
+
+#: How many layers of encoding inside encoding are decoded (credential_paths' _MAX_DEPTH).
+DECODE_DEPTH = 3
+#: Decoded text allowed in all, per character of the command, plus a floor.
+DECODE_RATIO, DECODE_FLOOR = 4, 4096
+
+
+def decoded_layers(text: str) -> tuple:
+    """([decoded text], problem): every command hidden in base64 inside
+    `text`, decoded again inside each decoded text up to DECODE_DEPTH
+    layers. `problem` is None, ("undecodable", blob) for an encoded command
+    at any layer that does not decode, or ("too_deep", "") when encoded text
+    is still present at the last layer or the decoded text outgrows its cap:
+    what such a command runs cannot be checked."""
+    t = str(text or "")
+    cap = DECODE_RATIO * len(t) + DECODE_FLOOR
+    found, frontier, total = [], [t], 0
+    for _layer in range(DECODE_DEPTH + 1):
+        nxt = []
+        for one in frontier:
+            blob = undecodable_encoded(one)
+            if blob:
+                return found, ("undecodable", blob)
+            for d in decoded_texts(one):
+                total += len(d)
+                if total > cap:
+                    return found, ("too_deep", "")
+                nxt.append(d)
+        if not nxt:
+            return found, None
+        if _layer == DECODE_DEPTH:
+            return found, ("too_deep", "")       # still encoded past the last layer decoded
+        found.extend(nxt)
+        frontier = nxt
+    return found, None
 
 
 def decoded_texts(text: str) -> list:
@@ -208,9 +244,9 @@ def named_in(text: str, cwd=None) -> list:
     import glob as _glob
     pieces, quoted = tokens(text)
     out, seen = [], set()
-    blob = undecodable_encoded(text)
-    if blob:
-        out.append(("-EncodedCommand " + blob, "undecodable", None))
+    _texts, problem = decoded_layers(str(text or ""))
+    if problem:
+        out.append(("-EncodedCommand " + problem[1], problem[0], None))
     for tok in pieces:
         tok = tok.strip()
         if not tok or tok in seen or len(tok) > 400:
