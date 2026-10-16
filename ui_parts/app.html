@@ -2400,6 +2400,7 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
           </div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">{fridayName()} is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
+        <ChatApprovalCards convId={convId}/>
         <div ref={chatEnd}/>
       </div>
       <div className="fx-chat-footer" style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
@@ -25621,6 +25622,24 @@ function useFridayConversationDrafts(initialId) {
     window.location.assign(url.href);
   }, []);
   return {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts};
+}
+// The cards this conversation raised, in the conversation itself. The chat's
+// yes/no question and the card are two ways to answer one request; the card
+// is shown here too so a question the model paraphrased, or an answer the
+// chat could not read, still leaves a button in front of the owner. Same feed
+// and same body as the System list and the popup, so one decision wins.
+function ChatApprovalCards({ convId }) {
+  const items = useApprovalFeed();
+  const [busy, setBusy] = useState('');
+  const mine = convId ? items.filter(a => ((a && a.payload) || {}).conversation_id === convId) : [];
+  if (!mine.length) return null;
+  const decide = (id, decision) => {
+    if (busy) return;
+    setBusy(id);
+    fridayDecideApproval(id, decision).finally(() => setBusy(''));
+  };
+  return React.createElement('div', {className:'fx-chat-approvals', 'data-testid':'chat-approval-cards', role:'group', 'aria-label':'Waiting for your decision', style:{margin:'8px 0'}},
+    mine.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
 }
 function ExperienceApprovals() {
   const items = useApprovalFeed();

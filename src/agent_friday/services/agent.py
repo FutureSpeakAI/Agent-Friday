@@ -13359,11 +13359,26 @@ def _hook_confirmation_gate(ctx):
             _q = f"{_q} ({_meta['verifier_note']})"
 
         if _asks == 1:
+            # EVERY CONFIRMATION IS A CARD. The question in chat is one way to
+            # answer; the card is the other, and it exists from the first ask.
+            # A model that paraphrases the question, or a reply the yes-parser
+            # cannot read, still leaves the owner a button to press: the
+            # action is never waiting on something nobody can see.
+            _card = _raise_confirmation_card(_sid, name, ctx.input, _fp, _q,
+                                             session_ctx=session_ctx)
+            _decided = _confirmation_card_outcome(_card, _sid, name, _fp)
+            if _decided:
+                return _hooks.DENY(_decided)
+            _where = ("An approval card for it is already waiting for the user "
+                      "(in this chat and in the Approvals list); they can "
+                      "decide it there or answer you here. "
+                      if _card else "")
             return _hooks.DENY(
                 f"[CONFIRMATION REQUIRED] The '{name}' action needs the user's "
-                f"approval before it runs, so it was NOT executed. Do NOT call "
-                f"this tool again on this turn. Instead, ask the user this exact "
-                f"yes/no question and then stop and wait for their reply: \"{_q}\""
+                f"approval before it runs, so it was NOT executed. {_where}"
+                f"Do NOT call this tool again on this turn. Instead, ask the "
+                f"user this exact yes/no question and then stop and wait for "
+                f"their reply: \"{_q}\""
             )
 
         # ASKED ONCE, ANSWERED, STILL NOT GRANTED. Repeating the identical
@@ -13579,57 +13594,76 @@ def _hook_verifier_record(ctx, result):
 
 
 def _resolve_escalated_card(approval_id, name, tool_input):
-    """Claim an escalated card for this chat execution, never a second one."""
+    """Claim the confirmation card for this chat execution, never a second one.
+
+    The card answers the same question the chat did, and the gate decides
+    "same question" by fingerprint (``x.md`` and ``./x.md`` are one file). So
+    a call that matches the card's stored action by fingerprint claims it
+    with the card's own arguments; the claim itself is the store's
+    compare-and-set, so a card already decided elsewhere still refuses.
+    """
     if not approval_id:
         return True
     try:
         from agent_friday.services import approvals as _appr
-        return _appr.claim_chat_confirmation(approval_id, name, tool_input)
+        if _appr.claim_chat_confirmation(approval_id, name, tool_input):
+            return True
+        stored = ((_appr.get_approval(approval_id) or {}).get("payload") or {})
+        if (stored.get("tool") == name and isinstance(stored.get("input"), dict)
+                and stored.get("input") != tool_input
+                and _action_fingerprint(name, stored["input"])
+                == _action_fingerprint(name, tool_input)):
+            return _appr.claim_chat_confirmation(approval_id, name, stored["input"])
+        return False
     except Exception as e:
         _log.warning("could not claim escalated approval %s: %s", approval_id, e)
         return False
 
 
-def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
-                          *, session_ctx=None):
-    """Hand a twice-asked question to the durable approval queue.
+def _raise_confirmation_card(session_id, name, tool_input, fingerprint, question,
+                             *, session_ctx=None, escalated=False):
+    """Publish the durable approval card for one pending question, or return
+    the one already linked to it. None when there is no live pending entry or
+    the card could not be created.
 
-    Returns the text the model is given INSTEAD of asking again. Never raises
-    and never allows: if the card cannot be created, the action still does not
-    run - it just says so plainly rather than looping.
+    One pending request has exactly one card: the subject carries the entry's
+    request id, so the first ask, a retry in the same turn and the second ask
+    all resolve to the same record (``create_approval`` is idempotent per
+    subject). The card is published and linked under ``_PENDING_LOCK`` as one
+    handoff; otherwise a chat yes could consume the entry before its card id
+    is attached, leaving two independent ways to execute the same action.
     """
     try:
         from agent_friday.services import approvals as _appr
-        # Publish and link the card as one handoff. Otherwise a chat approval
-        # can consume the entry before its card id is attached, leaving two
-        # independent ways to execute the same action.
         with _PENDING_LOCK:
             _e = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
             if _e is None or _e.get("replay_claim"):
-                return (f"[CONFIRMATION ALREADY DECIDED] '{name}' is already "
-                        "being handled. Do not retry it.")
+                return None
             request_id = _e.setdefault("request_id", uuid.uuid4().hex[:12])
             rec = _appr.create_approval(
                 kind="tool_confirm", subject_type="tool_action",
                 subject_id=f"{session_id}:{fingerprint}:{request_id}",
                 title=question,
                 action_description=f"{name} {tool_input!r}",
-                description=("Raised because the chat confirmation for this exact "
-                             "action was asked and not resolved. Decide it here."),
+                description=("Friday asked for your yes before doing this. "
+                             "Decide it here, or answer the question in chat."),
                 force_gate=True, payload=_approval_tool_payload(name, tool_input, session_ctx),
                 requested_by="confirmation_gate",
             )
+            if rec.get("status") == "blocked" and not escalated:
+                # The harm floor decides on the escalation, as it always has;
+                # the first ask stays a plain question.
+                return None
             _e["approval_id"] = rec.get("approval_id")
-        status = rec.get("status")
+        return rec
     except Exception as e:
-        _log.warning("confirmation escalation unavailable: %s", e)
-        return (f"[CONFIRMATION UNRESOLVED] '{name}' was NOT executed. You have "
-                f"already asked the user this question once and did not get an "
-                f"answer you could act on. Do NOT ask it again. Tell the user "
-                f"plainly that the confirmation did not go through, say what "
-                f"you were trying to do, and ask them to reply with a single "
-                f"word: yes or no.")
+        _log.warning("confirmation card unavailable: %s", e)
+        return None
 
+
+def _confirmation_card_outcome(rec, session_id, name, fingerprint):
+    """The model-facing text for a card that is already decided, else None."""
+    status = (rec or {}).get("status")
     if status == "approved":
         clear_confirmation_card(rec.get("approval_id"))
         return (f"[CONFIRMATION ALREADY DECIDED] The approval card for '{name}' "
@@ -13642,6 +13676,37 @@ def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
                "blocked": "Policy blocked the approval"}[status]
         return (f"[CONFIRMATION DENIED] {why}, so '{name}' was NOT executed "
                 "and must not be retried. Tell them it was not done.")
+    return None
+
+
+def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
+                          *, session_ctx=None):
+    """The second ask: point at the durable approval card instead of asking.
+
+    Returns the text the model is given INSTEAD of asking again. The card is
+    normally the one the first ask raised; this never creates a second card
+    for the same request. Never raises and never allows: if the card cannot
+    be created, the action still does not run - it just says so plainly
+    rather than looping.
+    """
+    with _PENDING_LOCK:
+        _e = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
+        _claimed = bool(_e is None or _e.get("replay_claim"))
+    if _claimed:
+        return (f"[CONFIRMATION ALREADY DECIDED] '{name}' is already "
+                "being handled. Do not retry it.")
+    rec = _raise_confirmation_card(session_id, name, tool_input, fingerprint,
+                                   question, session_ctx=session_ctx, escalated=True)
+    if rec is None:
+        return (f"[CONFIRMATION UNRESOLVED] '{name}' was NOT executed. You have "
+                f"already asked the user this question once and did not get an "
+                f"answer you could act on. Do NOT ask it again. Tell the user "
+                f"plainly that the confirmation did not go through, say what "
+                f"you were trying to do, and ask them to reply with a single "
+                f"word: yes or no.")
+    decided = _confirmation_card_outcome(rec, session_id, name, fingerprint)
+    if decided:
+        return decided
     return (f"[CONFIRMATION ESCALATED] '{name}' was NOT executed. You already "
             f"asked this question once, so it has been raised as an approval "
             f"card instead of being asked again. Do NOT ask it again and do NOT "
@@ -14038,10 +14103,16 @@ def _taint_card(ctx, decision, key):
 def _taint_title(name, inp):
     """A plain one-line title for a flagged action's card."""
     inp = inp or {}
-    if name == "create_calendar_event":
-        return f"Create calendar event “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
-    if name == "book_slot":
-        return f"Book “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
+    if name in ("create_calendar_event", "book_slot"):
+        verb = "Create calendar event" if name == "create_calendar_event" else "Book"
+        head = f"{verb} “{_short_txt(inp.get('title'))}”"
+        guests = inp.get("attendees")
+        if isinstance(guests, str):
+            guests = [g for g in (x.strip() for x in guests.split(",")) if g]
+        elif isinstance(guests, (list, tuple)):
+            guests = [g for g in guests if g and (not isinstance(g, str) or g.strip())]
+        # An event with nobody to invite says so by saying nothing about it.
+        return f"{head} and invite {_short_txt(guests)}" if guests else head
     if name == "delete_calendar_event":
         # Named from the calendar itself, never from the model's words: the yes is for this event.
         return f"Delete the calendar event {_calendar_event_words(inp)}"
