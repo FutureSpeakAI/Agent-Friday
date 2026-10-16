@@ -182,6 +182,10 @@ _LAST_MEETING = re.compile(r"^(?:last|latest|most recent|previous|newest)\s+(?:m
 
 
 def _nav_args(text: str, m=None) -> dict:
+    if m is not None and "svc" in m.re.groupindex and m.group("svc"):
+        # A service to connect: Settings > Connections, its card, secure field.
+        return {"kind": "settings",
+                "query": "connect " + re.sub(r"\s+", " ", m.group("svc").strip().lower())}
     q = re.sub(r"\s+", " ", (m.group("q") if m is not None else "").strip().lower()).replace("e-mail", "email")
     if not q:
         return {}
@@ -417,6 +421,16 @@ def _workspace_words() -> List[str]:
 
 _WORKSPACES = "|".join(re.escape(w) for w in _workspace_words())
 
+
+def _connect_names() -> str:
+    from agent_friday.services.connections_guide import SPOKEN_NAMES
+    names = sorted((n for n in SPOKEN_NAMES if not n.startswith(("a ", "an "))),
+                   key=len, reverse=True)       # longest first: "brave search" before "brave"
+    return "|".join(re.escape(n).replace(r"\ ", r"\s+") for n in names)
+
+
+_CONNECT_NAMES = _connect_names()
+
 #: Friday's own screen, player and background work. Checked FIRST and
 #: anchored at the start, so "don't play music" or "stop checking" never
 #: match: a negation is not an imperative.
@@ -441,6 +455,12 @@ _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p
     ("set_chat_tray",
      _POLITE + r"bring\s+(?:the\s+|my\s+)?cards?\s+back" + _END),
     ("media_play", _POLITE + r"play\s+(?:me\s+)?(?:some\s+|the\s+|my\s+)?" + _Q + _END),
+    # "Connect OpenRouter": opens that service's card on Settings > Connections
+    # with its secure field focused. Only a known service name matches, so
+    # "set up a meeting" or "add milk" never land here.
+    ("navigate_to",
+     _POLITE + r"(?:connect|hook up|link|set up|add|sign in to|log in to)\s+(?:to\s+)?(?:my\s+|the\s+|an?\s+)?"
+     r"(?P<svc>" + _CONNECT_NAMES + r")(?:\s+(?:api key|key|account|token|connection))?" + _END),
     ("navigate_to",
      _POLITE + r"(?:open|show(?: me)?|go to|switch to|bring up|take me to|pull up)\s+(?:up\s+)?(?:my\s+|the\s+)?"
      r"(?P<q>" + _WORKSPACES + r")(?:\s+(?:workspace|page|tab|screen|app))?" + _END),

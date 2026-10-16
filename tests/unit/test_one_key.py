@@ -53,7 +53,7 @@ def test_status_names_the_key_in_use_and_says_it_is_enough(monkeypatch):
     assert s["in_use"] == "openrouter" and s["sufficient"] is True
     assert "OpenRouter" in s["line"] and "enough" in s["line"]
     assert [lnk["url"] for lnk in s["links"]] == [
-        "https://console.anthropic.com/settings/keys", "https://openrouter.ai/keys"]
+        "https://platform.claude.com/settings/keys", "https://openrouter.ai/settings/keys"]
 
 
 def test_status_with_no_key_says_one_is_enough_and_what_is_missing(monkeypatch):

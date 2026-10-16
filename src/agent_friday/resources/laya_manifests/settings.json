@@ -5,7 +5,7 @@
  "group": "system",
  "held": null,
  "spoken_words": {"router_extra": []},
- "nav": {"key": "tab", "keys": ["tab", "section", "row"], "sections": null},
+ "nav": {"key": "tab", "keys": ["tab", "section", "row", "connect"], "sections": null},
  "objects": [],
  "verbs": [
   {
@@ -87,6 +87,22 @@
    "voice": {"live": true, "shared": false},
    "quiet_result": null,
    "eval": ["tests/unit/test_simple_cards.py::test_the_router_hides_and_shows_the_cards_through_the_chat_tray_tool"]
+  },
+  {
+   "id": "settings.connect_service",
+   "action": "settings.connect_service",
+   "group": "navigate",
+   "ui": {"control": "Connect your services: open one service's card, its secure field focused"},
+   "tool": "navigate_to",
+   "also_tools": [],
+   "gate": {"class": "internal", "ring": 1, "card": "none"},
+   "laya_tier": "router_rule",
+   "phrasings": ["connect openrouter", "set up my notion account"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": true, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_connect_your_services.py::test_connect_openrouter_by_voice_opens_its_secure_card"]
   }
  ],
  "jobs": [
@@ -149,6 +165,9 @@
  ],
  "not_for_laya": [
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
+  {"action": "settings.connections_local_only", "kind": "by_design", "reason": "Choosing local AI only is the owner's press on Connect your services; by voice, \"connect local AI\" opens that card."},
+  {"action": "settings.connection_test", "kind": "by_design", "reason": "A test sends the stored key to its provider, so it is the owner's press on the card the voice opened."},
+  {"action": "settings.mcp_add", "kind": "by_design", "reason": "Adding an MCP server runs a program or reaches a new address as the owner; owner-only, on the screen."},
   {
    "action": "settings.local_voice_measure",
    "kind": "by_design",

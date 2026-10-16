@@ -129,6 +129,7 @@ def _sched(monkeypatch):
     from agent_friday.services import scheduler as s
     from agent_friday.services import voice_engine as ve
     monkeypatch.setattr(ve, "_notif_engine", ne, raising=False)
+    monkeypatch.setattr(s, "_setup_finished", lambda: True)   # an established install
     return s
 
 
