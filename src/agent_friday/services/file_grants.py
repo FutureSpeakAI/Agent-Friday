@@ -1205,6 +1205,7 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
     from agent_friday.services import raw_records
     looks = deep or shallow_walk or shell_walk or bool(_CONTENT_READERS.search(t))
     out, seen, remote = [], set(), []
+    homed = False                        # a folder named through ~ or the environment
     pieces, _quoted = raw_records.tokens(t)
     for tok in pieces:
         tok = tok.strip(raw_records._TOKEN_EDGES).strip()
@@ -1222,7 +1223,8 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
                     remote.append(tok)           # another computer's folder
                 continue
         try:
-            p = Path(raw_records.expand(src))
+            expanded = raw_records.expand(src)
+            p = Path(expanded)
             if not p.is_absolute():
                 if not cwd:
                     continue
@@ -1232,12 +1234,18 @@ def _recursive_dirs(text: str, cwd=None) -> tuple:
                 p = Path(_TRAILING_PATTERN.sub("", str(p)) or str(p))
             if p.is_dir() and not any(_same_path(str(q), p) for q, _d in out):
                 out.append((p.resolve(), deep))
+                homed = homed or expanded != src
         except (OSError, ValueError):
             continue
     if cwd and not out and (_ALWAYS_RECURSIVE.search(t) or shell_walk):
         # rg / git grep / Get-ChildItem with no folder: they look where they run
         out.append((Path(cwd), bool(_ALWAYS_RECURSIVE.search(t)) or deep))
-    unnamed = bool((deep_walk or shallow_walk) and not out and _HOMEISH.search(t))
+    # A program that walks a folder named from the home folder or the environment
+    # (os.walk(expanduser('~/AppData'))) is refused whether or not the checker's
+    # own expansion finds that folder: a walk of a folder it does find would be
+    # judged by how much of it fits the walk budget on this PC.
+    unnamed = bool((deep_walk or shallow_walk)
+                   and ((not out and _HOMEISH.search(t)) or homed))
     return out, unnamed, remote
 
 

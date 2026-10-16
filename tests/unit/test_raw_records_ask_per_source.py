@@ -735,6 +735,20 @@ def test_a_walk_from_the_home_folder_is_not_run_until_the_folder_is_named(cards,
     assert fg.raw_refusal_for_command("for p in Path(r'%s').rglob('*'): print(p)" % docs) is None
 
 
+def test_a_walk_of_a_home_named_folder_is_refused_however_fast_it_walks(cards, tmp_path, monkeypatch):
+    # A small, clean folder under a stand-in home: the checker's own walk would
+    # finish inside its budget and find nothing, and the command is still not run.
+    home = tmp_path / "standin_home"
+    (home / "Notes").mkdir(parents=True)
+    (home / "Notes" / "a.md").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    for code in ('python -c "import os; print(list(os.walk(os.path.expanduser(\'~/Notes\'))))"',
+                 "import os\nprint(os.listdir(os.path.expandvars('$HOME/Notes')))"):
+        assert fg.raw_refusal_for_command(code), code
+    assert fg.raw_refusal_for_command("import os\nprint(list(os.walk(r'%s')))" % (home / "Notes")) is None
+
+
 def test_listing_a_folder_checks_only_its_own_files(cards, tmp_path):
     dl = tmp_path / "Downloads"
     (dl / "old" / "deep").mkdir(parents=True)
