@@ -13,7 +13,25 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+### Added
+
+- **A memory card you can read and edit** (Settings > Privacy & Data > Memory
+  card). Friday keeps two short notes that she reads at the start of every
+  conversation: what she knows about you, and what she has learned about
+  working with you. Each has a size limit, so when one is full she merges or
+  drops lines before adding another. You can see, edit and delete every line,
+  undo any change she made, and keep or discard suggestions waiting for your
+  review. She saves on her own when you tell her something; anything she
+  picked up from a page, a mail or a file asks you first. Nothing she notes
+  overnight is used until you keep it. The notes are plain files on this PC
+  (`.friday/core_memory`). The older list of facts Friday kept about you moves
+  over once: the ones you entered or approved go onto the card, and the ones
+  she noted without asking wait for your review.
+
 ### Changed
+
+- **Nightly dreaming no longer writes into what Friday knows.** What it finds
+  in the day's conversations waits on the memory card for your Keep.
 
 - **What Friday remembers about you is fixed for the length of a
   conversation.** Her instructions open with what she has learned about you

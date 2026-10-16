@@ -803,6 +803,10 @@ def _ask_friday_local(question: str, session: dict) -> str:
                              # The caller's last spoken words, for the one tool that must hear
                              # the owner's own answer (local_voice_readiness); not `owner_text`.
                              "voice_owner_words": str((session or {}).get("owner_text") or "")[:600],
+                             # The CALLER'S taint ledger: what the voice session read (a page, a
+                             # mail, a tool result) stays visible to the brain's tools, so a
+                             # memory write from the relay is judged as the voice turn would be.
+                             "taint_key": _voice_ctx(session).get("taint_key"),
                              "voice_owner_at": (session or {}).get("owner_text_at"),
                              "voice_owner_local": bool((session or {}).get("owner_local")),
                              "_crew_host_origin": (session or {}).get("_crew_host_origin"),
@@ -870,6 +874,10 @@ def _tool_ask_friday(inp, session=None):
                 session_ctx={"authenticated": True, "provider": "local",
                              "is_voice": True, "surface": "voice-live-relay",
                              "voice_owner_words": str((session or {}).get("owner_text") or "")[:600],
+                             # The CALLER'S taint ledger: what the voice session read (a page, a
+                             # mail, a tool result) stays visible to the brain's tools, so a
+                             # memory write from the relay is judged as the voice turn would be.
+                             "taint_key": _voice_ctx(session).get("taint_key"),
                              "voice_owner_at": (session or {}).get("owner_text_at"),
                              "voice_owner_local": bool((session or {}).get("owner_local")),
                              "_crew_host_origin": (session or {}).get("_crew_host_origin"),

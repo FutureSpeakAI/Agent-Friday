@@ -306,7 +306,11 @@
    {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"},
    {"id": "settings.preapproved_sends", "group": "settings", "label": "pre-approve sends to named recipients, approve exactly the needs a skill declares (refused if it changed), approve a changed job or skill again, let voice use pre-approvals, revoke", "audit_status": "new"},
    {"id": "settings.owner_choices", "group": "settings", "label": "the owner's standing choices: money paragraphs in email (and Forget), missed and held runs, unattended undo window, trust scoring, co-host name, dock by asking, notify guests", "audit_status": "new"},
-   {"id": "settings.mail_default_account", "group": "settings", "label": "Connections > Google accounts: default account for drafts (Ask me, or a connected Gmail account)", "audit_status": "new"}
+   {"id": "settings.mail_default_account", "group": "settings", "label": "Connections > Google accounts: default account for drafts (Ask me, or a connected Gmail account)", "audit_status": "new"},
+   {"id": "settings.core_memory_card", "group": "read", "label": "memory card: the lines Friday keeps about you and about working with you", "audit_status": "new"},
+   {"id": "settings.core_memory_line", "group": "settings", "label": "memory card: add, edit or delete one line", "audit_status": "new"},
+   {"id": "settings.core_memory_review", "group": "settings", "label": "memory card: keep or discard a suggestion waiting for review", "audit_status": "new"},
+   {"id": "settings.core_memory_undo", "group": "settings", "label": "memory card: undo a change Friday made", "audit_status": "new"}
   ]
  }
 }

@@ -363,7 +363,7 @@ def _segments(tool_name: str, raw: str, base_label: str) -> list:
 ECHO_TOOLS = {"draft_email", "create_calendar_event", "update_calendar_event",
               "annotate_calendar_events", "write_file", "write_clipboard",
               "create_task", "update_task", "complete_task", "delete_task",
-              "learn_skill", "correct_wiki", "propose_wiki_update", "navigate",
+              "learn_skill", "correct_wiki", "propose_wiki_update", "update_core_memory", "navigate",
               "switch_model", "spawn_task", "open_url", "open_path",
               "revert_workspace", "create_workflow",
               "hold_slots", "book_slot", "release_holds",
@@ -584,6 +584,8 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "learn_skill": {"content": "memory_write", "name": "memory_write"},
     "correct_wiki": {"new_text": "memory_write"},
     "propose_wiki_update": {"new_value": "memory_write"},
+    # The core memory card: what is saved, and which line a change targets.
+    "update_core_memory": {"text": "memory_write", "old": "memory_write"},
     "content_create_post": {"body": "publish_body"},
     "content_repurpose": {"body": "publish_body"},
     # The tracker card shows every field; flags on these go onto it.

@@ -178,6 +178,26 @@
    "reason": "The interruption limit, quiet-hour times and Focus Assist are the owner's to loosen; by voice Laya can only quiet things (quiet until morning)."
   },
   {
+   "action": "settings.core_memory_card",
+   "kind": "by_design",
+   "reason": "The memory card is the owner's view of what Friday keeps; Friday reads it in every prompt and lists it with update_core_memory show."
+  },
+  {
+   "action": "settings.core_memory_line",
+   "kind": "by_design",
+   "reason": "Adding, editing and deleting a line is the owner's control over their own data; Friday's own path is update_core_memory, carded when tainted."
+  },
+  {
+   "action": "settings.core_memory_review",
+   "kind": "by_design",
+   "reason": "Only the owner keeps or discards a suggestion from dreaming or the background review; no model approves its own suggestion."
+  },
+  {
+   "action": "settings.core_memory_undo",
+   "kind": "by_design",
+   "reason": "Undoing a change Friday made to her memory is the owner's correction; Laya never runs it."
+  },
+  {
    "action": "settings.laya_report",
    "kind": "by_design",
    "reason": "The report card shows the owner's own words and is served to the owner only; by voice, 'what have you learned?' is the laya_learning summary."
