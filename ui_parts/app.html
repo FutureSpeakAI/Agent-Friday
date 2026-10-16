@@ -12229,7 +12229,7 @@ const CAL_START_HOUR=6, CAL_END_HOUR=24, CAL_HOUR_PX=52;
 function calY(iso){const d=new Date(iso);if(isNaN(d))return 0;const h=d.getHours()+d.getMinutes()/60;return Math.max(0,(h-CAL_START_HOUR)*CAL_HOUR_PX);}
 function calFmtTime(iso){const d=new Date(iso);if(isNaN(d))return'';return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
 
-fridayDeclareNav('calendar',{keys:['date','view','meeting_id','event','start'],sections:[{id:'meetings',label:'Meetings',key:'view'},{id:'day',label:'Day',key:'view'},{id:'week',label:'Week',key:'view'},{id:'month',label:'Month',key:'view'}]});
+fridayDeclareNav('calendar',{keys:['date','view','meeting_id','event','start','prep'],sections:[{id:'meetings',label:'Meetings',key:'view'},{id:'day',label:'Day',key:'view'},{id:'week',label:'Week',key:'view'},{id:'month',label:'Month',key:'view'}]});
 // The Calendar's views (static/calendar_views.js): Day is the timeline below; Week and Month come from that file.
 const CAL_VIEW_IDS=['day','week','month'];
 function calStoredView(){try{const v=localStorage.getItem('friday_cal_view');return CAL_VIEW_IDS.includes(v)?v:'day';}catch(_){return 'day';}}
@@ -12247,6 +12247,8 @@ function CalendarWS(){
   const tlRef=useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   const [shownEvent,setShownEvent]=useState('');
+  // A reminder's "open its prep" (notification target prep: '1') opens that event's prep card once it is on screen.
+  const[prepWanted,setPrepWanted]=useState('');
   const[view,setViewRaw]=useState(calStoredView);
   const[anchor,setAnchor]=useState(()=>window.CalendarViews?window.CalendarViews.iso(new Date()):'');
   const[rangeTick,setRangeTick]=useState(0);
@@ -12257,6 +12259,8 @@ function CalendarWS(){
     if(t.view&&CAL_VIEW_IDS.includes(t.view)){setView(t.view);if(t.date)setAnchor(t.date);if(t.view!=='day'&&!t.event)return;}
     if (t.event) {
       // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
+      if (view !== 'day') setView('day');
+      if (t.prep) setPrepWanted(String(t.event));
       if (t.date) { setSel(t.date); loadDay(t.date); }
       const ref = 'event:' + encodeURIComponent(String(t.event));
       [400, 900, 1800].forEach(ms => setTimeout(() => {
@@ -12305,6 +12309,7 @@ function CalendarWS(){
 
   const active=sel?dayData:today;
   const events=(active?.events)||[];
+  useEffect(()=>{if(!prepWanted)return;const ev=events.find(x=>String(x.id)===prepWanted);if(!ev)return;setPrepWanted('');if(ev.prep_available&&prepFor!==ev.id)genPrep(ev);},[prepWanted,active]);
   // Free time is never drawn from a read that failed.
   const gaps=active?.read_failed?[]:((active?.gaps)||[]);
   const allDay=events.filter(e=>e.all_day);
@@ -12385,6 +12390,7 @@ function CalendarWS(){
             {e.location&&<span>📍 {e.location}</span>}
             {e.attendees&&e.attendees.length>0&&<span>👥 {e.attendees.length}</span>}
             {e.countdown&&<span className="cal-countdown">⏳ {e.title.split(' ')[0]} in {e.countdown}</span>}
+            {window.CalendarViews&&window.CalendarViews.reminderText(e)&&<span className="cal-ev-remind">{window.CalendarViews.reminderText(e)}</span>}
             {e.prep_available&&<span className="cal-prep-badge">Prep available</span>}
             {e.related_emails&&e.related_emails.length>0&&<span style={{color:'#00d4ff'}}>✉ {e.related_emails.length} related</span>}
           </div>

@@ -103,9 +103,17 @@
     });
   }
   const colorStyle = ev => (ev.color ? { '--ev': ev.color } : {});
+  // Google's own reminders for an event (the event's, else its calendar's), in words; '' when it has none.
+  function reminderText(ev) {
+    const pops = (ev.reminders || []).filter(r => (r.method || 'popup') === 'popup').map(r => r.minutes).sort((a, b) => a - b);
+    if (!pops.length) return '';
+    const w = m => m === 0 ? 'at the start' : m % 1440 === 0 ? (m / 1440) + (m === 1440 ? ' day' : ' days') : m % 60 === 0 ? (m / 60) + (m === 60 ? ' hour' : ' hours') : m + ' min';
+    return 'Reminder ' + pops.map(w).join(', ') + (pops[0] === 0 && pops.length === 1 ? '' : ' before');
+  }
   function eventLabel(ev) {
     const t = ev.all_day ? 'all day' : timeOf(ev.start_time) + (ev.end_time ? ' to ' + timeOf(ev.end_time) : '');
-    return ev.title + ', ' + t + (ev.calendar_name ? ', ' + ev.calendar_name : '');
+    const rem = reminderText(ev);
+    return ev.title + ', ' + t + (ev.calendar_name ? ', ' + ev.calendar_name : '') + (rem ? '. ' + rem : '');
   }
 
   function ViewSwitch(props) {
@@ -548,6 +556,7 @@
 .calv-grant{display:flex;gap:8px;align-items:center;margin:0 0 8px;padding:6px 10px;border-radius:var(--fr-radius,10px);border:1px solid var(--fr-cyan);font-size:var(--fr-text-sm,12px);color:var(--fr-text)}
 .calv-grant span{flex:1}
 .calv-undo span{flex:1}
+.cal-ev-remind{color:var(--fr-dim)}
 @container (max-width:719px){.calv-cell{min-height:64px}.calv-chip-time{display:none}}
 `;
   function injectStyle() {
@@ -559,5 +568,5 @@
   }
   if (document.head) injectStyle(); else document.addEventListener('DOMContentLoaded', injectStyle);
 
-  window.CalendarViews = { VIEWS, ViewSwitch, Nav, WeekView, MonthView, State, Errors, useRange, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
+  window.CalendarViews = { VIEWS, ViewSwitch, Nav, WeekView, MonthView, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
 })();
