@@ -12670,6 +12670,11 @@ def _hook_confirmation_gate(ctx):
         # The user already decided this exact call on a card that showed
         # where its details came from. Asking again in chat adds nothing.
         return _hooks.ALLOW
+    if (getattr(ctx, "meta", None) or {}).get("memory_window"):
+        # The owner opened a memory-write window for this kind of save in this
+        # conversation, on a card that said so (governance/memory_window); the
+        # gate checked it and receipted this use.
+        return _hooks.ALLOW
     if _creations_write_preapproved(name, ctx.input):
         return _hooks.ALLOW
     _meta = getattr(ctx, "meta", None) or {}
@@ -13074,12 +13079,16 @@ def _hook_governance(ctx):
             f"executed: {why}. Do not retry it. Tell the user what you were "
             f"about to do and where that detail came from.")
     v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
-                        tainted=(d.action == "ask"))
+                        tainted=(d.action == "ask"),
+                        taint_roles=frozenset(f.role for f in d.flags))
     ctx.meta["governance"] = v
     if v.action == "allow":
         if v.grant:
             # A scoped, expiring grant the owner created is their decision.
             ctx.meta["owner_decided"] = v.grant.get("grant_id")
+            from agent_friday.governance import memory_window as _mw
+            if _mw.is_window(v.grant):
+                ctx.meta["memory_window"] = v.grant.get("grant_id")
         return _hooks.ALLOW
     if v.action == "deny":
         return _hooks.DENY(
@@ -13176,7 +13185,8 @@ def _taint_card(ctx, decision, key):
     """Raise (or read back) the approval card for a flagged call.
 
     One decision, one action: an approved card lets exactly this call through
-    once, and is then marked used.
+    once, and is then marked used. (A memory write inside an open memory-write
+    window never reaches here: the gate allows it, governance/memory_window.)
     """
     name, inp = ctx.tool_name, ctx.input or {}
     fp = _taint_mod.fingerprint(name, inp)
@@ -13200,6 +13210,11 @@ def _taint_card(ctx, decision, key):
             why_text = (flags[0].text if flags else
                         "This acts outside the conversation, and nobody could be "
                         "asked about it in chat.")
+            # When approving opens a memory-write window, the card says so.
+            from agent_friday.governance import memory_window as _mw
+            _covers = _mw.card_note(name, inp, ctx.session_ctx)
+            if _covers:
+                why_text = why_text + " " + _covers
             _ptok = _taint_mod.CURRENT.set(decision)
             try:
                 rec = _appr.create_approval(

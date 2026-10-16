@@ -610,6 +610,9 @@ def roles_for(tool_name: str, tool_input: dict) -> List[Tuple[str, str, Any]]:
     out: List[Tuple[str, str, Any]] = []
     table = TOOL_ROLES.get(tool_name)
     inp = tool_input or {}
+    if tool_name == "learn_skill" and str(inp.get("action") or "").strip().lower() in ("read", "list"):
+        # A lookup writes nothing: a skill name it was handed shapes nothing.
+        return out
     if tool_name == "write_file" and inp.get("content") and _shapes_behaviour(inp.get("path")):
         # A file Friday reads back as instructions is memory, whatever tool
         # writes it.

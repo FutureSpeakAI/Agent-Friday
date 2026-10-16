@@ -129,6 +129,38 @@ content was read in the last 30 minutes of the same conversation, because
 paraphrase defeats matching and a planted rule is exactly what gets
 paraphrased.
 
+### The memory-write window (governance/memory_window.py)
+
+The owner's standing "No Pestering" rule is to decide once per conversation or
+task, not once per save. So the owner's approval of one memory-write card opens
+a window. Until it expires (2 hours) or is used up (25 writes), later calls of
+the same tool in the same conversation (or the same background task) are
+allowed without a new card. The card says this before the owner decides.
+
+Batching a write whose detail came from outside content (a "warn" flag) is an
+**owner product decision**. The provenance card stays the decision point, and
+the window extends that one decision.
+
+The limits are enforced in the gate (`action_gate._decide`), never in the
+model's reach:
+
+* **Where:** only Friday's memory folders (`wiki`, `skills`, `notes`). Never
+  governance state, the approvals file, the decision receipts, settings,
+  credentials or keys, a rule file, or a protected name inside a memory folder.
+* **What:**
+  * Never a delete, an empty write, or a lookup.
+  * Never a call carrying any flag other than a memory-write flag.
+  * Only the approved tool: a `learn_skill` window does not cover `write_file`.
+* **Scope:** a server-set conversation id or background task id. A chat
+  session with no conversation id (date-keyed, shared across conversations)
+  gets no window.
+* **Who opens one:** only a verified click on Friday's page (`owner:ui`) or the
+  server's voice path (`owner:/voice/`); a request body cannot claim either.
+* **Receipts:** a signed receipt when the window opens (`window_opened`) and at
+  every use (`allow`). Both name the window's grant and the card that opened it.
+* **Revoking:** the window is an ordinary scoped grant, listed in Settings
+  ("Scheduled jobs: what they may do on their own") and revocable there.
+
 ## Measured
 
 AgentDojo v1.1.2, the 629 attack cases buried-injections used, plus the 97
@@ -233,6 +265,7 @@ tuned to the text it has seen.
 * Short identifiers (a Slack user "Fred") and re-encoded or paraphrased values
   are not traceable.
 * The ledger lives in memory; a restart forgets what was read.
-* Grants have an API and no UI.
+* Grants are listed, created and revoked in Settings ("Scheduled jobs: what
+  they may do on their own"), and through `/api/governance/grants`.
 * `send_to_session` (typing into an already-open shell) is outward, so each
   message asks; relaxing it would reopen a path around per-command review.
