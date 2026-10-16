@@ -78,6 +78,13 @@ def describe_when(when) -> str:
         if len(days) == 7:
             return f"Every day at {hm}"
         return f"Every {_join(DAY_NAMES[d] for d in days)} at {hm}"
+    if trig == "monthly":
+        day = int(spec.get("day", 1))
+        if day <= 0:
+            return f"On the last day of every month at {hm}"
+        suffix = "th" if 10 <= day % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+        note = " (or the month's last day)" if day > 28 else ""
+        return f"On the {day}{suffix} of every month{note} at {hm}"
     if trig == "interval":
         mins = max(1, int(spec.get("every_minutes", 60)))
         if mins % 60 == 0:
@@ -162,9 +169,10 @@ def parse_when(text, now=None):
     def take(span):
         spans.append(span)
 
-    if re.search(r"\b(every month|monthly|each month|once a month|first of the month)\b", t):
-        note = ("Friday can't repeat things monthly yet. Pick a day of the week, "
-                "or run it yourself when you need it.")
+    monthly = re.search(r"\b(?:every month|monthly|each month|once a month"
+                        r"|(?:on )?the (?:first|1st|last day) of (?:the|every|each) month)\b", t)
+    if monthly:
+        take(monthly.span())
 
     tm = _find_time(t)
     if tm:
@@ -184,6 +192,18 @@ def parse_when(text, now=None):
 
     def result(trigger, spec):
         return ({"trigger": trigger, "spec": spec}, _strip(raw, spans), note)
+
+    # Monthly: "every month", "on the 15th of every month", "the last day of the month".
+    if monthly:
+        day = 1
+        if "last day" in monthly.group(0):
+            day = -1
+        else:
+            md = re.search(r"\b(?:on )?the (\d{1,2})(?:st|nd|rd|th)\b", t)
+            if md and 1 <= int(md.group(1)) <= 31:
+                day = int(md.group(1))
+                take(md.span())
+        return result("monthly", {"day": day, "hour": hour, "minute": minute})
 
     # Every N minutes / hours.
     m = re.search(r"\b(?:every|each)\s+(?:(\d+|[a-z]+)\s*)?(minute|min|hour|hr)s?\b", t)
@@ -472,6 +492,20 @@ def _newest(*runs):
     return best
 
 
+def _job_view(rec, slug=None):
+    """The model, schedule status and missed-run rule a row shows
+    (services/scheduler.schedule_view). An unscheduled workflow still says
+    which model it is pinned to."""
+    from agent_friday.services import scheduler as _sched
+    if not rec:
+        v = _sched.schedule_view({"source": "user", "enabled": True,
+                                  "task": {"kind": "workflow", "ref": slug}})
+        return {"model": v["model"], "model_pinned": v["model_pinned"]}
+    return {"schedule_status": rec.get("status"), "status_reason": rec.get("status_reason") or "",
+            "model": rec.get("model") or "", "model_pinned": bool(rec.get("model_pinned")),
+            "missed_text": rec.get("missed_text") or ""}
+
+
 def _pending_approvals():
     try:
         from agent_friday.services import approvals as _ap
@@ -521,6 +555,7 @@ def overview() -> dict:
             "inputs": full.get("inputs") or [], "success_criteria": full.get("success_criteria") or "",
             "output": full.get("output") or {"kind": "reply"},
             "notify": (rec or {}).get("notify") or full.get("notify") or "on_complete",
+            **_job_view(rec, slug),
         })
     for r in schedules:
         task = r.get("task") or {}
@@ -537,6 +572,8 @@ def overview() -> dict:
                 # and the owner's per-job choice (services/scheduler.finish_notice_on).
                 "announces_finish": r.get("notify", "on_complete") not in ("silent", "never"),
                 "finish_notice": r.get("finish_notice", True) is not False,
+                "schedule_status": r.get("status"), "status_reason": r.get("status_reason") or "",
+                "model": r.get("model") or "",
             })
             continue
         prompt = task.get("prompt") or ""
@@ -548,6 +585,7 @@ def overview() -> dict:
             "enabled": bool(r.get("enabled", True)), "running": bool(r.get("running")),
             "next_run": r.get("next_run"), "last_run": _sched_last(r),
             "asks_first": asks_first([prompt]), "updated": r.get("updated"),
+            **_job_view(r),
         })
     workflows.sort(key=lambda w: (not w["running"], -(w["last_run"] or {}).get("at", 0),
                                   (w["name"] or "").lower()))

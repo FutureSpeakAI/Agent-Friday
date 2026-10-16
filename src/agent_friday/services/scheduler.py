@@ -39,6 +39,7 @@ import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_register, process_update
 from agent_friday.services.visible_jobs import visible_job
 from agent_friday.services.job_prompt import Job as _JobPromptJob
+from agent_friday.services import schedule_math as _sm
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
@@ -309,7 +310,99 @@ def list_schedules() -> list:
     for r in recs:
         r["next_run"] = _next_run_ts(r, now)
         r["running"] = r.get("id") in _RUNNING
+        r.update(schedule_view(r))
     return recs
+
+
+#: Run statuses that mean "held on purpose, with a reason" (pinned model
+#: unavailable; the heartbeat's own holds, services/heartbeat.py).
+HELD_STATUSES = ("held", "connector_unavailable", "blocked", "budget_cap")
+
+
+def schedule_state(rec) -> tuple:
+    """(status, reason) as the desktop shows a schedule: scheduled, running,
+    held, failed or paused. `reason` is the last run's own words for held and
+    failed, else ""."""
+    rec = rec or {}
+    if rec.get("running") or rec.get("id") in _RUNNING:
+        return "running", ""
+    last = str(rec.get("last_status") or "")
+    if not rec.get("enabled", True):
+        if rec.get("trigger") == "once" and rec.get("last_run_ts"):
+            return "finished", ""
+        return "paused", ""
+    if last in HELD_STATUSES:
+        return "held", str(rec.get("last_summary") or "")
+    if last == "failed":
+        return "failed", str(rec.get("last_summary") or "")
+    return "scheduled", ""
+
+
+def pinned_models(rec) -> list:
+    """The models the owner pinned this saved job to: the scheduled prompt's
+    `task.model`, or a workflow's own and its steps' seats. Empty when the job
+    follows the ordinary routing (and for Friday's built-in routines, which
+    `cloud_intent.background_route` places)."""
+    task = (rec or {}).get("task") or {}
+    kind = task.get("kind", "builtin")
+    if kind == "builtin" or task.get("local_only"):
+        return []
+    out = []
+
+    def add(m):
+        m = str(m or "").strip()
+        if m and m not in out:
+            out.append(m)
+    add(task.get("model"))
+    if kind == "workflow" and task.get("ref"):
+        try:
+            from agent_friday.services import agent as _agent
+            chain = _agent.load_workflow_chain(task["ref"]) or {}
+        except Exception:
+            chain = {}
+        add(chain.get("seat"))
+        for st in chain.get("steps") or []:
+            add((st or {}).get("seat"))
+    return out
+
+
+def _pin_routes(rec) -> list:
+    """[(model, BackgroundRoute)] for each model this saved job is pinned to.
+    Raises HeldRun (status "held") when any of them cannot answer now."""
+    out = []
+    for m in pinned_models(rec):
+        from agent_friday.services import cloud_intent as _ci
+        r = _ci.pinned_job_route(m)
+        if r.route not in ("local", "cloud"):
+            raise HeldRun("held", "%s is held: %s. It runs again at its next scheduled time, "
+                          "and Run now works once the model is back." % (
+                              rec.get("name") or "This job", r.reason))
+        out.append((m, r))
+    return out
+
+
+def schedule_view(rec) -> dict:
+    """What every schedule list shows beside its timing: the model it runs on
+    (pinned, or what it follows), its status with the reason, and what happens
+    to a run missed while Friday is closed."""
+    status, reason = schedule_state(rec)
+    pins = pinned_models(rec)
+    task = (rec or {}).get("task") or {}
+    if pins:
+        model = ", ".join(pins)
+    elif task.get("local_only"):
+        model = "this computer's local model"
+    else:
+        try:
+            model = _orb_model_for(rec)
+        except Exception:
+            model = ""
+    out = {"status": status, "status_reason": reason, "model": model,
+           "model_pinned": bool(pins)}
+    if (rec or {}).get("source") != "builtin":
+        policy = _missed_policy(rec)
+        out.update(missed=policy, missed_text=MISSED_TEXT[policy])
+    return out
 
 
 def get_schedule(sid):
@@ -380,10 +473,12 @@ def _normalize_record(rec, *, source="user"):
         "created": rec.get("created", now),
         "updated": now,
     }
+    if out["source"] != "builtin":
+        out["missed"] = rec.get("missed") if rec.get("missed") in MISSED_POLICIES else DEFAULT_MISSED
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
               "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
-              "finish_notice"):
+              "finish_notice", "slots_from", "missed_through"):
         if k in rec:
             out[k] = rec[k]
     return out
@@ -420,13 +515,19 @@ def update_schedule(sid, patch) -> dict | None:
         if not cur:
             return None
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
-                   "retry", "timeout_seconds", "finish_notice"}
+                   "retry", "timeout_seconds", "finish_notice", "missed"}
         before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
+                if k == "missed" and v not in MISSED_POLICIES:
+                    continue
                 cur[k] = v
         changed_run_fields = before != _run_basis(cur)
         cur["updated"] = _time.time()
+        if changed_run_fields:
+            # A changed timetable, or a job switched back on, counts its slots
+            # from now: a slot that passed before the change is not "missed".
+            cur["slots_from"] = cur["updated"]
         # Re-enabling or rescheduling clears any pending retry backoff.
         if patch and ("enabled" in patch or "trigger" in patch or "spec" in patch):
             cur["retry_pending"] = False
@@ -607,6 +708,96 @@ def _spec_weekdays(spec):
         if out:
             return out
     return [int(spec.get("weekday", 6))]
+
+
+# ── The owner's calendar-timed jobs: slots, and a slot missed while closed ───
+#
+# A saved job the owner scheduled (daily / weekly / monthly at a time) is due
+# when its latest slot (`schedule_math.prev_fire`) is newer than the last time
+# it ran, was skipped, or had its timetable changed. That one rule covers the
+# normal tick and a restart: the store survives in schedules.json, so a slot
+# that passed while Friday was closed is still visible at the next start.
+#
+# A slot is MISSED when Friday first sees it more than MISSED_GRACE_S after
+# its time (closed, asleep, or busy). The owner's per-job choice (`missed`):
+#   run_once (default) - it runs ONCE at the next start, however many slots
+#                        passed, and its run says it ran late and why;
+#   skip               - the slot is recorded as missed in its history and the
+#                        job waits for its next slot.
+# Built-in routines keep their own same-day rules (catch-up, quiet hours).
+MISSED_POLICIES = ("run_once", "skip")
+DEFAULT_MISSED = "run_once"
+MISSED_GRACE_S = 600
+MISSED_TEXT = {
+    "run_once": "If a run is missed while Friday is closed, it runs once when Friday starts.",
+    "skip": "If a run is missed while Friday is closed, it is skipped until its next time.",
+}
+
+
+def _calendar_rule(rec) -> bool:
+    """Does this schedule use the slot rule above? Monthly always does (it is
+    new, nothing older relies on another rule); daily and weekly when the
+    owner made the job."""
+    trig = (rec or {}).get("trigger")
+    if trig == "monthly":
+        return True
+    kind = ((rec or {}).get("task") or {}).get("kind", "builtin")
+    return (trig in _sm.CALENDAR_TRIGGERS and (rec or {}).get("source") == "user"
+            and kind in ("agent_prompt", "workflow"))
+
+
+def _missed_policy(rec) -> str:
+    p = (rec or {}).get("missed")
+    return p if p in MISSED_POLICIES else DEFAULT_MISSED
+
+
+def _slot_basis(rec) -> float:
+    """Slots at or before this instant are spent: the last run, the last
+    skipped slot, or the moment the timetable was made or changed."""
+    def f(k):
+        try:
+            return float((rec or {}).get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    return max(f("last_run_ts"), f("missed_through"), f("slots_from") or f("created"))
+
+
+def _slot_words(ts) -> str:
+    try:
+        d = datetime.fromtimestamp(float(ts))
+        return d.strftime("%a %b %d at %H:%M").replace(" 0", " ")
+    except Exception:
+        return "its time"
+
+
+def _record_missed_skip(rec, slot_ts) -> None:
+    """The owner chose `skip`: the missed slot is written to the job's history
+    with the reason, and the job waits for its next slot."""
+    sid = rec.get("id")
+    summary = ("Missed its run on %s: Friday was not running then (or was busy), and "
+               "this job is set to skip a missed run." % _slot_words(slot_ts))
+    now = _time.time()
+    _patch_record(sid, missed_through=float(slot_ts), last_status="missed", last_summary=summary)
+    rec["missed_through"] = float(slot_ts)
+    _append_run({"id": sid, "run_id": f"run_{uuid.uuid4().hex[:10]}", "name": rec.get("name"),
+                 "started": now, "ended": now, "duration_ms": 0, "status": "missed",
+                 "summary": summary, "error": None, "manual": False})
+
+
+def _calendar_due(rec, now) -> bool:
+    prev = _sm.prev_fire(rec.get("trigger"), rec.get("spec") or {}, now)
+    if prev is None:
+        return False
+    slot = prev.timestamp()
+    if slot <= _slot_basis(rec):
+        return False
+    if now.timestamp() - slot <= MISSED_GRACE_S:
+        return True
+    if _missed_policy(rec) == "skip":
+        _record_missed_skip(rec, slot)
+        return False
+    rec["_missed_slot"] = slot        # dispatch says the run is late, and why
+    return True
 
 
 #: How long the user must be away before idle work starts, and the default
@@ -963,6 +1154,9 @@ def _is_due_on_schedule(rec, now) -> bool:
     trig = rec.get("trigger")
     spec = rec.get("spec") or {}
 
+    if _calendar_rule(rec):
+        return _calendar_due(rec, now)
+
     if trig == "interval":
         every = max(1, int(spec.get("every_minutes", 60)))
         last = rec.get("last_run_ts") or 0
@@ -1011,6 +1205,14 @@ def _next_run_ts(rec, now):
     trig = rec.get("trigger")
     spec = rec.get("spec") or {}
     try:
+        if _calendar_rule(rec):
+            prev = _sm.prev_fire(trig, spec, now)
+            if (prev is not None and prev.timestamp() > _slot_basis(rec)
+                    and (now.timestamp() - prev.timestamp() <= MISSED_GRACE_S
+                         or _missed_policy(rec) == "run_once")):
+                return prev.timestamp()        # due now: it runs on this tick
+            nxt = _sm.next_fire(trig, spec, now)
+            return nxt.timestamp() if nxt is not None else None
         if trig == "interval":
             every = max(1, int(spec.get("every_minutes", 60)))
             base = rec.get("last_run_ts") or now.timestamp()
@@ -1235,8 +1437,16 @@ def _notify_run(rec, status, summary):
                      source="scheduler", kind="schedule_retired", emitter="E06",
                      dedupe_key=f"sched-retired:{sid}")
             return
+        if status == "held":
+            _ne.push(title=f"⏸ {name} is held", body=(summary or "")[:900],
+                     priority="medium", source="scheduler", kind="scheduled_task",
+                     actions=[{"label": "View workflows", "workspace": "workflows"}],
+                     emitter="SJ1", dedupe_key=f"sched-held:{sid}",
+                     resolve_key=f"sched-held:{sid}")
+            return
         _ne.resolve(f"sched-fail:{sid}")
         _ne.resolve(f"sched-wait:{sid}")
+        _ne.resolve(f"sched-held:{sid}")
         if not finish_notice_on(rec):
             return
         _ne.push(title=f"\u2713 {name} ran",
@@ -1449,7 +1659,16 @@ def _run_task_inner(rec):
                 return meta["fn"]()
         except _bg.JobCancelled as exc:
             raise PausedNoLocalModel(str(exc)) from exc
+    # A saved job the owner pinned to a model runs on that model or not at
+    # all: `cloud_intent.pinned_job_route` decides, and a pin that cannot
+    # answer holds the run with its reason instead of moving it elsewhere.
+    pin_routes = _pin_routes(rec)
     if kind == "workflow":
+        cloud = {r.model for _, r in pin_routes if r.route == "cloud"}
+        if len(cloud) == 1 and all(r.route == "cloud" for _, r in pin_routes):
+            from agent_friday.services import local_only_guard as _log_guard
+            with _log_guard.cloud_pinned(next(iter(cloud)), rec.get("name") or "this workflow"):
+                return _run_workflow(rec, task)
         return _run_workflow(rec, task)
     # The heartbeat: a deterministic pre-check, and one slim model call only
     # when something changed (services/heartbeat.py). `heartbeat.precheck:
@@ -1504,6 +1723,13 @@ def _run_task_inner(rec):
                     "the cloud")
         if _cloud:
             _model = _cloud
+    _pin_local = False
+    if pin_routes and not task.get("local_only"):
+        _pr = pin_routes[0][1]
+        if _pr.route == "cloud":
+            _cloud = _model = _pr.model
+        else:
+            _model, _pin_local = pin_routes[0][0], True
     # Pinning the model at spawn is not the same as forbidding cloud for the
     # whole run: `_generate_agent`'s fallback ladder can retry a failed leg on
     # another provider, which is how a pinned-local heartbeat run can still
@@ -1533,7 +1759,9 @@ def _run_task_inner(rec):
         tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                           description=f"scheduled:{rec.get('id')}", orb_icon="⏰",
                           tools=task.get("tools"), model=_model,
-                          schedule_id=rec.get("id"), job=_sched_job)
+                          schedule_id=rec.get("id"), job=_sched_job,
+                          # A job pinned to a local model runs every leg there.
+                          **({"pin_to_seat": True} if _pin_local else {}))
     # Link the scheduler's process orb to the spawned task so the notification
     # detail panel can stream the task's live log.
     orb_id = rec.get("_orb_id")
@@ -1770,6 +1998,9 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             summary = _summarize(result)
             if _late_slot_day(rec):
                 summary = "Ran late: it came due in %s. " % _cause_words(_late_cause(rec)) + summary
+            if rec.get("_missed_slot"):
+                summary = ("Ran late: its run on %s was missed while Friday was not running, and "
+                           "this job runs a missed run once. " % _slot_words(rec["_missed_slot"])) + summary
             if catch_up:
                 summary = _late_note(catch_up, started) + (
                     " " + summary if summary else "")
@@ -1809,6 +2040,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                 if _ne_ok:
                     _ne_ok.resolve(f"sched-fail:{sid}")
                     _ne_ok.resolve(f"sched-wait:{sid}")
+                    _ne_ok.resolve(f"sched-held:{sid}")
             except Exception:
                 pass
             if isinstance(result, WorkflowRunResult) or _mode in ("silent", "never"):
@@ -1866,6 +2098,10 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                           retry_pending=False, retry_count=0, not_before=0)
             if rec.get("notify") == "status":
                 _notify_status(rec, "Held (%s): %s" % (status, summary))
+            elif status == "held":
+                # A saved job held by its pinned model: one card per job,
+                # closed by its next run that goes.
+                _notify_run(rec, "held", summary)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"
             # print_exc() writes to stderr, which the packaged app has none

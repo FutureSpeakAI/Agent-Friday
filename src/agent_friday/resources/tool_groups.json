@@ -541,6 +541,9 @@
    "files",
    "creative"
   ],
+  "schedule_job": [
+   "workflows"
+  ],
   "screen_select": [
    "workspace"
   ],

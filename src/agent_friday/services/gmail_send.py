@@ -24,6 +24,13 @@ message to a real person they know. So the gate is not a setting. It is structur
     send is refused. Approving a draft is not approving whatever the drafter
     later felt like sending.
   * A used approval is burned. One decision, one message.
+  * The one exception to "a card per message" is the owner's own standing
+    pre-approval (governance/send_grants.py, made in Settings): named
+    recipients, optionally one scheduled job or skill. The action checkpoint
+    finds it, this module re-checks it for the exact recipients, and the
+    approval record is created already approved BY THAT GRANT (never
+    `auto_approved`). Everything else here still applies, and every use is
+    logged. Recipients the grant does not name still get a card.
 
 SENDING NEEDS gmail.send, ALWAYS. The owner may also grant gmail.modify
 ("Reconnect with sending"), which Google would let send mail too; this module
@@ -260,6 +267,42 @@ def _live_card(fingerprint: str) -> dict | None:
     return None
 
 
+def _tool_context() -> dict:
+    """The running tool call's session context (task, schedule), if any."""
+    try:
+        from agent_friday.services import agent as _agent
+        return dict(_agent._CURRENT_TOOL_CONTEXT.get() or {})
+    except Exception:
+        return {}
+
+
+def _pre_approval(recipients):
+    """The owner's standing pre-approval behind THIS call, re-checked for
+    these exact recipients, or None. Only the action checkpoint can name it:
+    it is the owner's decision (`action_gate.owner_decision`) the checkpoint
+    set from a send grant, never anything a caller passes in."""
+    try:
+        from agent_friday.governance import action_gate as _gate
+        from agent_friday.governance import send_grants as _sg
+        decided = str(_gate.owner_decision() or "")
+        if not decided.startswith("sgr_"):
+            return None
+        return _sg.verify(decided, "send_email", recipients)
+    except Exception as e:
+        _log.warning("pre-approval check failed, so the send asks: %s", e)
+        return None
+
+
+def _withheld_reason() -> str:
+    """Why the checkpoint did not use a pre-approval that names these
+    recipients (the call drew on outside content), or ""."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return str(_sg.WITHHELD.get() or "")
+    except Exception:
+        return ""
+
+
 def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  account_id: str | None = None,
                  requested_by: str = "friday", html: str | None = None,
@@ -341,8 +384,11 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
         notes += _ss.fill_note(body)
     except Exception:
         pass
+    withheld = _withheld_reason()
+    if withheld:
+        notes.append("You pre-approved these recipients, but %s." % withheld)
     note_text = ("\n" + "\n".join(notes)) if notes else ""
-    appr = _ap.create_approval(
+    card = dict(
         kind=APPROVAL_KIND,
         subject_type=SUBJECT_TYPE,
         subject_id="%s:%s" % (fp, uuid.uuid4().hex[:8]),
@@ -355,10 +401,6 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                subject or "(no subject)", note_text, str(body or ""))),
         description="This leaves your machine and arrives as a message from "
                     "you. It cannot be unsent.",
-        # ALWAYS gate, whatever the policy table has been set to. The default
-        # classifies external_message as gated; force_gate means a local
-        # override cannot turn mail into an auto-approve.
-        force_gate=True,
         payload={# The decision hook fires for EVERY external_message card,
                  # including ones other subsystems create. This marker is how
                  # it knows a card is one of ours; without it, approving an
@@ -372,10 +414,40 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  **({"extras": extras} if extras else {})},
         requested_by=requested_by,
     )
-    _log.info("send requested to %d recipient(s); approval %s (%s)",
-              len(tos), appr.get("approval_id"), appr.get("status"))
+    # PRE-APPROVED: the owner's standing yes for these recipients (Settings),
+    # which the action checkpoint used for this very call. Re-verified here
+    # for the exact message, so a grant revoked a moment ago is not used. The
+    # record is created approved by that grant: no card, but the same undo
+    # window, burn-once send, outbox and a logged use.
+    grant = _pre_approval(tos + ccs + _addresses(bcc or []))
+    if grant is not None:
+        appr = _ap.record_pre_approved(grant_id=grant["grant_id"], **card)
+        if appr.get("status") == "approved" and not appr.get("consumed"):
+            from agent_friday.governance import send_grants as _sg
+            ctx = _tool_context()
+            _sg.record_use(grant, "send_email", tos + ccs + _addresses(bcc or []),
+                           approval_id=appr.get("approval_id"), ctx=ctx)
+            row = hold(appr)
+            # EVERY covered send tells the owner at once, from chat, voice or
+            # a background run alike: no card was raised, so this notice,
+            # with its Undo, is how they see it while it can be taken back.
+            _notify_pre_approved_hold(appr, row, grant["grant_id"], ctx)
+        # The grant id and recipients are in the grant log (send_grants); this
+        # line says only that a pre-approval was used.
+        _log.info("send to %d recipient(s) went ahead under a pre-approval", len(tos))
+        return {"status": appr.get("status"), "approval": appr,
+                "approval_id": appr.get("approval_id"), "pre_approved": grant["grant_id"]}
+    appr = _ap.create_approval(
+        # ALWAYS gate, whatever the policy table has been set to. The default
+        # classifies external_message as gated; force_gate means a local
+        # override cannot turn mail into an auto-approve.
+        force_gate=True, **card)
+    _log.info("send requested to %d recipient(s); approval %s (%s)%s",
+              len(tos), appr.get("approval_id"), appr.get("status"),
+              "; pre-approval not used: " + withheld if withheld else "")
     return {"status": appr.get("status"), "approval": appr,
-            "approval_id": appr.get("approval_id")}
+            "approval_id": appr.get("approval_id"),
+            **({"pre_approval_withheld": withheld} if withheld else {})}
 
 
 def send(approval_id: str) -> dict:
@@ -405,6 +477,24 @@ def send(approval_id: str) -> dict:
                           % appr.get("kind"))
 
     payload = appr.get("payload") or {}
+    # A message approved by the owner's standing pre-approval, not by a card:
+    # the pre-approval must still hold NOW, for every recipient. It may have
+    # been revoked during the undo window or before a scheduled time days
+    # away; then this message does not go, and its approval is burned.
+    if appr.get("pre_approved"):
+        from agent_friday.governance import send_grants as _sg
+        rcpts = [a for k in ("to", "cc", "bcc") for a in (payload.get(k) or [])]
+        if _sg.verify(appr["pre_approved"], "send_email", rcpts) is None:
+            _burn(approval_id, "gmail_send_grant_revoked", {"reason": _sg.REVOKED_WHY})
+            try:
+                _sg._log("refused", grant_id=appr["pre_approved"], by="friday",
+                         approval_id=approval_id, reason=_sg.REVOKED_WHY)
+            except Exception:
+                pass
+            _log.info("refused %s: its pre-approval %s no longer holds",
+                      approval_id, appr["pre_approved"])
+            raise SendRefused(_sg.REVOKED_WHY[:1].upper() + _sg.REVOKED_WHY[1:] + ".")
+
     expected = payload.get("fingerprint")
     extras = payload.get("extras") or {}
     actual = message_fingerprint(payload.get("to"), payload.get("subject"),
@@ -635,7 +725,10 @@ def hold(record: dict, now: float | None = None) -> dict:
     row = {"approval_id": record.get("approval_id"), "due": due, "held_at": now,
            "scheduled": bool(extras.get("send_at")),
            "to": payload.get("to"), "subject": payload.get("subject"),
-           "from": payload.get("from_email")}
+           "from": payload.get("from_email"),
+           # Which standing pre-approval let it go without a card, if any:
+           # revoking that grant takes this message back (cancel_for_grant).
+           "pre_approved": record.get("pre_approved") or None}
     with _HELD_LOCK:
         rows = [r for r in _load_held() if r.get("approval_id") != row["approval_id"]]
         rows.append(row)
@@ -676,10 +769,75 @@ def cancel(approval_id: str) -> dict:
     return {"ok": True, "approval_id": approval_id, "sent": False}
 
 
+def _pre_approved_who(ctx) -> str:
+    sc = ctx or {}
+    if sc.get("schedule_id"):
+        return "A scheduled job"
+    if sc.get("is_background_task") or sc.get("task_id"):
+        return "A background task"
+    if sc.get("is_voice") or str(sc.get("surface") or "").startswith("voice"):
+        return "Friday, from your voice conversation,"
+    return "Friday, from your chat,"
+
+
+def _notify_pre_approved_hold(appr: dict, row: dict, grant_id: str, ctx=None) -> None:
+    """A message was queued under the owner's pre-approval (from any surface):
+    no card was raised, so tell them now, while it can still be taken back.
+    The Undo opens the Approvals card, where the waiting message has its Undo
+    (POST /api/mail/held/<id>/cancel)."""
+    from datetime import datetime
+    payload = appr.get("payload") or {}
+    aid = appr.get("approval_id")
+    when = datetime.fromtimestamp(row.get("due") or _time.time()).strftime("%a %H:%M")
+    _notify("Email going out under your pre-approval",
+            "%s is sending your message to %s (\"%s\") at %s. No card was "
+            "needed: you pre-approved these recipients (%s). Undo it from the Approvals "
+            "card before then, or revoke the pre-approval in Settings."
+            % (_pre_approved_who(ctx),
+               ", ".join(payload.get("to") or []), payload.get("subject") or "", when, grant_id),
+            priority="medium", kind="info", key="preapproved:%s" % aid,
+            target={"workspace": "system", "tab": "approvals"},
+            actions=[{"label": "Undo", "workspace": "system", "tab": "approvals",
+                      "method": "POST", "url": "/api/mail/held/%s/cancel" % aid}])
+
+
+def cancel_for_grant(grant_id: str) -> list:
+    """The owner revoked a pre-approval: take back every message still waiting
+    under it. Each one's approval is burned and recorded in the outbox as not
+    sent, and the owner is told. Returns the approval ids taken back."""
+    from agent_friday.services import approvals as _ap
+    from agent_friday.governance import send_grants as _sg
+    gid = str(grant_id or "")
+    if not gid:
+        return []
+    with _HELD_LOCK:
+        rows = _load_held()
+        mine = [r for r in rows
+                if (r.get("pre_approved") or
+                    (_ap.get_approval(r.get("approval_id") or "") or {}).get("pre_approved")) == gid]
+        if not mine:
+            return []
+        ids = {r.get("approval_id") for r in mine}
+        _save_held([r for r in rows if r.get("approval_id") not in ids])
+    for r in mine:
+        _burn(r["approval_id"], "gmail_send_grant_revoked", {"reason": _sg.REVOKED_WHY})
+        _notify("Email NOT sent",
+                "Your message to %s (\"%s\") was taken back: %s."
+                % (", ".join(r.get("to") or []), r.get("subject") or "", _sg.REVOKED_WHY),
+                priority="high", kind="warning")
+    return [r["approval_id"] for r in mine]
+
+
 def _deliver(approval_id: str, to) -> None:
     try:
         result = send(approval_id)
-        _notify("Email sent", "Your message to %s is on its way." % ", ".join(to or []),
+        from agent_friday.services import approvals as _ap
+        grant = ((_ap.get_approval(approval_id) or {}).get("pre_approved") or "")
+        _notify("Email sent" + (" under your pre-approval" if grant else ""),
+                "Your message to %s is on its way.%s" % (
+                    ", ".join(to or []),
+                    (" No card was needed: you pre-approved these recipients (%s). "
+                     "Revoke it in Settings or on the Approvals card." % grant) if grant else ""),
                 priority="low", kind="info")
         _log.info("held message sent %s", result.get("message_id"))
     except SendRefused as e:
@@ -832,12 +990,12 @@ def _on_decision(record: dict) -> None:
 
 
 def _notify(title: str, body: str, *, priority: str = "medium",
-            kind: str = "info") -> None:
+            kind: str = "info", actions=None, target=None, key: str = "") -> None:
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=title, body=body, priority=priority, kind=kind,
-                source="gmail_send", emitter="E43",
-                dedupe_key="gmail_send:%s:%s" % (kind, priority))
+                source="gmail_send", emitter="E43", actions=actions, target=target,
+                dedupe_key="gmail_send:%s" % key if key else "gmail_send:%s:%s" % (kind, priority))
     except Exception as e:
         _log.warning("could not notify (%s): %s", title, e)
 

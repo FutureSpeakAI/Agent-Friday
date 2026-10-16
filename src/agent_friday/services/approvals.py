@@ -482,6 +482,42 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     return record
 
 
+def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title: str,
+                        grant_id: str, description: str = "", action_description: str = "",
+                        payload: Optional[dict] = None, requested_by: str = "system") -> Dict[str, Any]:
+    """An action the owner approved IN ADVANCE: a standing pre-approval they
+    made in Settings (governance/send_grants), already checked by the action
+    checkpoint for this exact call. The record is created approved, decided by
+    that grant, so everything downstream of a decision still holds (one
+    decision, one action: `_consume`, `mark_used`, the outbox), and no card is
+    raised or announced. A Law-1 (harm) hit still blocks it, as on any card.
+    Idempotent per (subject_type, subject_id, kind), like `create_approval`."""
+    existing = find_for_subject(subject_type, subject_id, kind)
+    if existing is not None:
+        return existing
+    action_text = action_description or title
+    dissent = _safe_check_dissent(action_text, None)
+    law1_blocked = bool(dissent.get("law1_blocked"))
+    now = time.time()
+    record: Dict[str, Any] = {
+        "approval_id": f"appr_{uuid.uuid4().hex[:10]}",
+        "kind": kind, "subject_type": subject_type, "subject_id": subject_id,
+        "title": (title or "")[:200], "description": (description or "")[:2000],
+        "action_description": action_text[:1000],
+        "policy_class": "law1_block" if law1_blocked else classify(action_text)["policy_class"],
+        "gated": True, "cost_estimate_mψ": 0, "payload": payload or {},
+        "requested_by": requested_by, "dissent": dissent, "provenance": _current_provenance(),
+        "status": "blocked" if law1_blocked else "approved", "consumed": False,
+        "created_at": now, "expires_at": None, "expiry_paused": False,
+        "decided_at": None if law1_blocked else now,
+        "decided_by": None if law1_blocked else "grant:" + str(grant_id),
+        "decision_note": "" if law1_blocked else "pre-approved by you in Settings",
+        "pre_approved": str(grant_id),
+    }
+    _upsert(record)
+    return record
+
+
 def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
               ) -> Optional[dict]:
     """Burn an approval after the thing it authorised actually happened.

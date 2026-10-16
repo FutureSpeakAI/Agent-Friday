@@ -908,6 +908,10 @@ def _tool_ask_friday(inp, session=None):
 _VOICE_SHARED_TOOLS = (
     "site_action", "domain_action",
     "workflow_action",
+    # schedule_job is NOT declared to voice: the spoken contract has no room
+    # for a second scheduler (VOICE_CONTRACT_MAX_TOKENS with 300 spare), and
+    # workflow_action's `when` already schedules a saved workflow by voice,
+    # daily / weekly / monthly / interval, through the same scheduler.
     "discover_capabilities",
     "read_skill",
     "voice_preferences",

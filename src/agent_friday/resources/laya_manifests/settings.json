@@ -148,6 +148,7 @@
   }
  ],
  "not_for_laya": [
+  {"action": "settings.preapproved_sends", "kind": "by_design", "reason": "A pre-approval is the owner's own decision: no tool may make, widen, re-approve or revoke one, or let voice use them; a skill's needs are approved as seen."},
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
   {
    "action": "settings.local_voice_measure",

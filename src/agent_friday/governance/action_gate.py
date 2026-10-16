@@ -16,7 +16,9 @@ Per call it:
      has decided it: a chat yes in an interactive conversation (the existing
      confirmation flow), an approval card, or -- for scheduled and background
      work -- a pre-approved grant that names the tool, is scoped to that job
-     and expires;
+     and expires; and, for a send, the owner's standing pre-approval of its
+     recipients (governance/send_grants.py: named recipients, optionally
+     one job or one skill, logged, revocable);
   4. writes a signed receipt of the decision to ~/.friday/decision-bom.jsonl.
 
 It fails closed. If the cLaws check fails, the classifier errors, the
@@ -423,7 +425,11 @@ BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
                          # undoable step; changing a folder the user pointed at
                          # is judged as any write outside Friday's output is;
                          # with no codebase in scope, outward.
-                         "codebase_edit", "codebase_undo", "codebase_read", "codebase_understand"})
+                         "codebase_edit", "codebase_undo", "codebase_read", "codebase_understand",
+                         # By what the scheduled job will do when it fires: creating
+                         # or resuming a schedule for a job that sends, posts, buys or
+                         # deletes is outward; the rest is a timetable (services/schedule_tools).
+                         "schedule_job"})
 
 #: Tools whose outward case is decided on a card even in an interactive chat,
 #: never by a yes/no question. generate_video and generate_music are outward
@@ -692,6 +698,17 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
     owner named in this conversation is theirs to send.
     """
     a = args or {}
+    if tool_name in ("workflow_action", "create_workflow", "schedule_job"):
+        # Changing a job the owner pre-approved sends for is the owner's
+        # decision, not the model's: a card (governance/send_grants). Any
+        # other workflow or schedule change is judged below as before.
+        try:
+            from agent_friday.governance import send_grants as _sg
+            touched = _sg.edit_touches_granted_job(tool_name, a)
+        except Exception as e:
+            touched = "the pre-approved job check could not run (%s)" % e
+        if touched:
+            return OUTWARD, touched
     if tool_name == "open_path":
         # An allow-list, not a deny-list: documents, pictures, recordings and
         # folders open; anything that could run code waits for a decision.
@@ -799,6 +816,12 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
             return _ia.classify_undo(a, (ctx or {}).get("conversation_id"))
         except Exception as e:
             return OUTWARD, f"the change could not be classified ({e})"
+    if tool_name == "schedule_job":
+        try:
+            from agent_friday.services import schedule_tools as _st
+            return _st.classify(a)
+        except Exception as e:
+            return OUTWARD, f"the schedule could not be classified ({e})"
     if tool_name == "content_create_post":
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"
@@ -1116,8 +1139,18 @@ def _interactive(ctx: dict) -> bool:
 
 
 def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] = None,
-              *, tainted: bool = False) -> Verdict:
+              *, tainted: bool = False, clean: bool = False,
+              grant_tainted: Optional[bool] = None) -> Verdict:
     """Decide whether this action may run now. Never raises.
+
+    `tainted`: a detail came from outside content badly enough to need a card.
+    `clean`: the provenance check found nothing at all from outside content in
+    the call, and nothing was read from outside recently in the turn or task.
+    Only a clean call may use a pre-approved send (governance/send_grants);
+    it defaults to False, so a caller that does not know never unlocks one.
+    `grant_tainted`: `tainted`, for the pre-approved send only; the checkpoint
+    clears it when every flag came from a skill procedure the owner
+    pre-approved, unchanged. None means `tainted`.
 
     allow    run it
     confirm  outward, in an interactive chat, nothing from outside content:
@@ -1136,13 +1169,14 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         # A check that could not run holds the action; not even a grant
         # overrides that, because nobody knows what the action is.
         v = (Verdict("deny", klass, f"held: {failed}") if failed
-             else _decide(tool_name, klass, why, ctx, tainted))
+             else _decide(tool_name, klass, why, ctx, tainted, args, clean,
+                          tainted if grant_tainted is None else grant_tainted))
     except Exception as e:
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
         _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
-                  "reason": v.reason, "tainted": tainted,
+                  "reason": v.reason, "tainted": tainted, "clean": clean,
                   "args_hash": hashlib.sha256(json.dumps(args or {}, sort_keys=True,
                                                          default=str).encode()).hexdigest(),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
@@ -1199,7 +1233,19 @@ def _turn_id():
         return None
 
 
-def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
+def _send_grant(tool_name, args, ctx) -> Optional[dict]:
+    """The owner's standing pre-approval covering this send (every recipient,
+    this job or skill), or None (governance/send_grants.py). Never raises."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return _sg.covering_tool(tool_name, args or {}, ctx)
+    except Exception as e:
+        _log.warning("send-grant check failed, so the send asks: %s", e)
+        return None
+
+
+def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
+            grant_tainted=None) -> Verdict:
     if klass == "forbidden":
         return Verdict("deny", klass, f"not allowed: {why}")
     if klass == INTERNAL:
@@ -1212,10 +1258,39 @@ def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
     ok, integrity = verify_claws()
     if not ok:
         return Verdict("deny", klass, f"held: cLaws integrity check failed -- {integrity}")
+    # A send the owner pre-approved (named recipients; a job's or skill's
+    # sends to them). Its id becomes the owner's decision behind the call
+    # (DECIDED), which the sending handler re-verifies for the exact message
+    # before it skips the card. Only for a CLEAN call: nothing in it came from
+    # outside content and nothing from outside content was read recently in
+    # this turn or task. "Not tainted" is not enough: a body or subject
+    # written from an email only ever reaches "note", never "ask".
+    # Then two more conditions on the send itself (send_grants.use_refusal):
+    # a spoken request uses no pre-approval unless the owner turned that on,
+    # and the subject and body must screen as TIER_1 (nothing personal or
+    # sensitive) by the sensitivity classifier the egress gate uses.
+    withheld = {}
+    sg = _send_grant(tool_name, args, ctx)
+    if sg is not None:
+        try:
+            from agent_friday.governance import send_grants as _sg
+            if not (clean and not (tainted if grant_tainted is None else grant_tainted)):
+                refusal = _sg.OUTSIDE_CONTENT_WHY
+            else:
+                refusal = _sg.use_refusal(tool_name, args or {}, ctx)
+            if not refusal:
+                return Verdict("allow", klass, f"pre-approved send {sg['grant_id']}", grant=sg)
+            _sg.note_withheld(sg, tool_name, ctx, why=refusal)
+            withheld = {"grant_withheld": sg["grant_id"], "withheld_why": refusal}
+        except Exception as e:
+            _log.warning("could not record a withheld pre-approval: %s", e)
+            withheld = {"grant_withheld": sg.get("grant_id"),
+                        "withheld_why": "the pre-approval check could not finish (%s)" % e}
     if tool_name in SELF_GATED and not tainted:
-        return Verdict("allow", klass, "its own approval card is the gate")
+        return Verdict("allow", klass, "its own approval card is the gate", detail=withheld)
     if tool_name in SELF_GATED:
-        return Verdict("allow", klass, "its own approval card is the gate (with provenance)")
+        return Verdict("allow", klass, "its own approval card is the gate (with provenance)",
+                       detail=withheld)
     if not tainted and not _interactive(ctx):
         g = _use_grant(tool_name, ctx)
         if g is not None:

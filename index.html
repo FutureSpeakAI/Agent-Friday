@@ -31326,6 +31326,12 @@ function wfDescribe(w) {
     if (d.length === 7) return 'Every day at ' + hm;
     return 'Every ' + wfJoin(d.map(i => WF_DAY_NAMES[i])) + ' at ' + hm;
   }
+  if (w.trigger === 'monthly') {
+    const day = Number(sp.day === undefined ? 1 : sp.day);
+    if (day <= 0) return 'On the last day of every month at ' + hm;
+    const sfx = day % 100 >= 10 && day % 100 <= 20 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[day % 10] || 'th';
+    return 'On the ' + day + sfx + ' of every month' + (day > 28 ? " (or the month's last day)" : '') + ' at ' + hm;
+  }
   if (w.trigger === 'interval') {
     const mins = Math.max(1, Number(sp.every_minutes) || 60);
     if (mins % 60 === 0) return mins === 60 ? 'Every hour' : 'Every ' + mins / 60 + ' hours';
@@ -31340,6 +31346,35 @@ function wfDescribe(w) {
     }) + ' at ' + wfClock(d.getHours(), d.getMinutes());
   }
   return w.trigger;
+}
+// What a scheduled job runs on and how it stands (services/scheduler.schedule_view): the
+// model (pinned, or what it follows), scheduled / running / held / failed / paused with the
+// last run's reason, and what happens to a run missed while Friday is closed.
+const WF_SCHED_STATUS = {
+  scheduled: { color: 'var(--fr-cyan)', label: 'Scheduled' },
+  running: { color: '#00d4ff', label: 'Running' },
+  held: { color: 'var(--fr-warn)', label: 'Held' },
+  failed: { color: '#ff5f7a', label: 'Failed' },
+  paused: { color: '#a8a8b4', label: 'Paused' },
+  finished: { color: '#a8a8b4', label: 'Done' }
+};
+function WfScheduleFacts({ w }) {
+  const E = React.createElement;
+  const s = w.when ? WF_SCHED_STATUS[w.schedule_status] : null;
+  if (!s && !w.model) return null;
+  return E('div', { className: 'wfx-meta', 'data-testid': 'wf-schedule-facts' },
+    s ? E('span', { 'data-testid': 'wf-schedule-status', 'data-status': w.schedule_status },
+      E('span', { className: 'wfx-dot', style: { background: s.color } }), 'Schedule: ' + s.label) : null,
+    w.model ? E('span', { 'data-testid': 'wf-model', title: w.model_pinned ? 'Pinned: every run uses this model, and is held if it is unavailable' : 'Not pinned: it follows your routing' },
+      (w.model_pinned ? 'Model: ' : 'Model (not pinned): ') + w.model) : null,
+    s && w.missed_text ? E('span', { 'data-testid': 'wf-missed' }, w.missed_text) : null,
+    s && (w.schedule_status === 'held' || w.schedule_status === 'failed') && w.status_reason ?
+      E('div', { className: 'wfx-shield', 'data-testid': 'wf-schedule-reason', style: { flexBasis: '100%' } }, w.status_reason) : null);
+}
+function wfRoutineLine(r) {
+  const s = WF_SCHED_STATUS[r.schedule_status];
+  const why = s && (r.schedule_status === 'held' || r.schedule_status === 'failed') && r.status_reason ? ': ' + r.status_reason : '';
+  return [r.when_text, s ? s.label + why : '', r.enabled && r.next_run && r.schedule_status !== 'running' ? 'Next: ' + wfNext(r.next_run) : '', r.model ? 'Model: ' + r.model : ''].filter(Boolean).join(' \xB7 ');
 }
 function wfAgo(ts) {
   if (!ts) return '';
@@ -31401,6 +31436,7 @@ function wfWhenToUi(w) {
       days: d
     });
   }
+  if (w.trigger === 'monthly') return Object.assign(base, { repeat: 'monthly', time, monthDay: sp.day === undefined ? 1 : Number(sp.day) });
   if (w.trigger === 'interval') return Object.assign(base, {
     repeat: 'hours',
     hours: Math.max(1, Math.round((sp.every_minutes || 60) / 60))
@@ -31441,6 +31477,7 @@ function wfUiToWhen(u) {
       minute: m
     }
   };
+  if (u.repeat === 'monthly') return { trigger: 'monthly', spec: { day: Number(u.monthDay) || 1, hour: h, minute: m } };
   if (u.repeat === 'hours') return {
     trigger: 'interval',
     spec: {
@@ -31891,6 +31928,8 @@ function WfEditor({
   }, "On certain days"), /*#__PURE__*/React.createElement("option", {
     value: "hours"
   }, "Every few hours"), /*#__PURE__*/React.createElement("option", {
+    value: "monthly"
+  }, "Every month"), /*#__PURE__*/React.createElement("option", {
     value: "once"
   }, "Once")), ui.repeat === 'once' && /*#__PURE__*/React.createElement("input", {
     "aria-label": "Date",
@@ -31898,13 +31937,24 @@ function WfEditor({
     className: "wfx-in wfx-timing",
     value: ui.date,
     onChange: e => setU('date', e.target.value)
-  }), ['daily', 'weekdays', 'days', 'once'].includes(ui.repeat) && /*#__PURE__*/React.createElement("input", {
+  }), ['daily', 'weekdays', 'days', 'monthly', 'once'].includes(ui.repeat) && /*#__PURE__*/React.createElement("input", {
     "aria-label": "Time",
     type: "time",
     className: "wfx-in wfx-timing",
     value: ui.time,
     onChange: e => setU('time', e.target.value)
-  }), ui.repeat === 'hours' && /*#__PURE__*/React.createElement("label", {
+  }), ui.repeat === 'monthly' && /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Day of the month",
+    className: "wfx-in wfx-timing",
+    value: ui.monthDay || 1,
+    onChange: e => setU('monthDay', Number(e.target.value))
+  }, Array.from({ length: 31 }, (_, i) => /*#__PURE__*/React.createElement("option", {
+    key: i + 1,
+    value: i + 1
+  }, 'Day ' + (i + 1))).concat([/*#__PURE__*/React.createElement("option", {
+    key: "last",
+    value: -1
+  }, "Last day")])), ui.repeat === 'hours' && /*#__PURE__*/React.createElement("label", {
     className: "wfx-row"
   }, "Every ", /*#__PURE__*/React.createElement("input", {
     "aria-label": "Hours between runs",
@@ -32009,7 +32059,9 @@ function WfCard({
     style: {
       background: st ? st.color : 'var(--fr-dim)'
     }
-  }), st ? st.label : String(state).replaceAll('_', ' '), !w.running && last.at ? ' ' + wfAgo(last.at) : '') : "Hasn't run yet"), w.when && w.enabled && w.next_run && !w.running && /*#__PURE__*/React.createElement("span", null, "Next: ", wfNext(w.next_run)), w.project_name && /*#__PURE__*/React.createElement("span", null, w.project_name)), w.asks_first && w.asks_first.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }), st ? st.label : String(state).replaceAll('_', ' '), !w.running && last.at ? ' ' + wfAgo(last.at) : '') : "Hasn't run yet"), w.when && w.enabled && w.next_run && !w.running && /*#__PURE__*/React.createElement("span", null, "Next: ", wfNext(w.next_run)), w.project_name && /*#__PURE__*/React.createElement("span", null, w.project_name)), /*#__PURE__*/React.createElement(WfScheduleFacts, {
+    w: w
+  }), w.asks_first && w.asks_first.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "wfx-shield"
   }, "Asks you before it can ", wfJoin(w.asks_first)), /*#__PURE__*/React.createElement("div", {
     className: "wfx-actions wfx-card-actions"
@@ -32482,8 +32534,9 @@ function WorkflowsWS() {
   }, /*#__PURE__*/React.createElement("div", {
     className: "wfx-grow"
   }, /*#__PURE__*/React.createElement("strong", null, r.name), /*#__PURE__*/React.createElement("div", {
-    className: "wfx-quiet"
-  }, r.when_text)), r.announces_finish && /*#__PURE__*/React.createElement("span", {
+    className: "wfx-quiet",
+    "data-testid": "wf-routine-line"
+  }, wfRoutineLine(r))), r.announces_finish && /*#__PURE__*/React.createElement("span", {
     className: "wfx-quiet",
     "aria-hidden": "true"
   }, "Tell me when it finishes"), r.announces_finish && /*#__PURE__*/React.createElement(WfSwitch, {
@@ -33473,7 +33526,7 @@ function SystemWS() {
     a: a,
     busy: apBusy,
     onDecide: decideApproval
-  }))), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement(FridayChangesCard, null), /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement(PreApprovedSendsList, null)), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement(FridayChangesCard, null), /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Disk Space"), disks.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -58051,6 +58104,8 @@ function SettingsTabPrivacy({
   }, /*#__PURE__*/React.createElement(LayaSafeWritesPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Scheduled jobs: what they may do on their own"
   }, /*#__PURE__*/React.createElement(GovernanceGrantsPanel, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Pre-approved sends"
+  }, /*#__PURE__*/React.createElement(SendGrantsPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: (fridayName() + "’s rules on this PC")
   }, /*#__PURE__*/React.createElement(ClawsRepinPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Stored keys"
@@ -58520,11 +58575,119 @@ function FileGrantRequestCard({ a, busy, onDecide }) {
         items.length === 1 ? 'Allow it' : 'Allow all ' + items.length),
       E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px', color: '#ff0080' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'deny') }, 'Decline')));
 }
+// Pre-approved sends (governance/send_grants.py): the owner's standing yes for named
+// recipients, for any job, one scheduled job, or one skill. Sends ask by default; a send to
+// anyone a grant does not name still gets its card. A skill's declared needs are shown so
+// they can be approved in one press; the declaration alone grants nothing. Every grant made,
+// used and revoked is in the log. Data: /api/governance/send-grants.
+function sendGrantWords(g, jobName) {
+  const who = (g.recipients || []).join(', ');
+  const where = g.scope === 'job' ? 'only for the scheduled job ' + jobName(g.schedule_id) : g.scope === 'skill' ? 'only while the skill ' + g.skill + ' is in use' : 'for any job or chat';
+  return 'Email to ' + who + ' \xB7 ' + where;
+}
+function SendGrantsPanel() {
+  const E = React.createElement;
+  const [d, setD] = useState({ grants: [], log: [], skills: [], options: {} });
+  const [jobs, setJobs] = useState([]);
+  const [scope, setScope] = useState('recipients');
+  const [job, setJob] = useState('');
+  const [who, setWho] = useState('');
+  const [msg, setMsg] = useState('');
+  const load = () => apiFetch('/api/governance/send-grants').then(r => r.json()).then(x => setD({ grants: x.grants || [], log: x.log || [], skills: x.skills || [], options: x.options || {} })).catch(() => {});
+  useEffect(() => {
+    load();
+    apiFetch('/api/schedules').then(r => r.json()).then(x => setJobs(Array.isArray(x && x.schedules) ? x.schedules.filter(j => j.source !== 'builtin') : [])).catch(() => {});
+  }, []);
+  const jobName = id => (jobs.find(j => j.id === id) || {}).name || id;
+  const post = body => apiFetch('/api/governance/send-grants', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(r => r.json().then(x => ({ ok: r.ok, status: r.status, x }))).then(({ ok, status, x }) => {
+      setMsg(ok ? 'Pre-approved: ' + sendGrantWords(x.grant, jobName) + '.' : x && x.error || 'Nothing was pre-approved.');
+      // 409: the skill's declared recipients changed since this page loaded. Show the new list; approve nothing unseen.
+      if (ok) { setWho(''); load(); } else if (status === 409) load();
+    }).catch(() => setMsg('Nothing was pre-approved.'));
+  const skillRecipients = sk => Object.keys(sk.needs || {}).reduce((acc, a) => acc.concat(sk.needs[a]), []).filter((r, i, all) => all.indexOf(r) === i).sort();
+  const create = () => {
+    if (!who.trim()) return setMsg('Name at least one address, or @domain.');
+    if (scope === 'job' && !job) return setMsg('Choose the scheduled job.');
+    post({ scope, recipients: who, schedule_id: scope === 'job' ? job : '', actions: ['send_email'] });
+  };
+  const revoke = id => apiFetch('/api/governance/send-grants/' + encodeURIComponent(id), { method: 'DELETE' }).then(() => { setMsg('Revoked. Those sends ask again.'); load(); }).catch(() => {});
+  // A job or skill edited after it was pre-approved: one press approves it again as it is now
+  // (for a skill, the list shown here). The old pre-approval is revoked.
+  const reapprove = (g, recipients) => apiFetch('/api/governance/send-grants/' + encodeURIComponent(g.grant_id) + '/reapprove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(recipients ? { recipients } : {}) })
+    .then(r => r.json().then(x => ({ ok: r.ok, x }))).then(({ ok, x }) => { setMsg(ok ? 'Approved again: ' + sendGrantWords(x.grant, jobName) + '.' : x && x.error || 'Nothing was approved.'); load(); }).catch(() => setMsg('Nothing was approved.'));
+  const setVoice = on => apiFetch('/api/governance/send-grants/options', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voice_may_use: on }) })
+    .then(r => r.json()).then(() => { setMsg(on ? 'Voice requests may now use your pre-approvals.' : 'Voice requests ask, every time.'); load(); }).catch(() => setMsg('Not changed.'));
+  const skillFor = name => d.skills.find(sk => sk.name === name);
+  const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
+  return E('div', { 'data-testid': 'send-grants' },
+    E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) },
+      'Sending email asks you first, every time. Here you can pre-approve sending to people you name (or everyone at one @domain), for any job, for one scheduled job, or for a skill, so a weekly email does not wait for a click. A send to anyone not named still asks, and so does a send from work that read outside content (an email, a web page, recalled memory), or whose message looks personal or sensitive. Each send under a pre-approval tells you at once, with an Undo. Every use is logged below, and you can revoke a pre-approval at any time.'),
+    d.grants.length === 0 ? E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, 'No pre-approvals. Every send asks you.') :
+      d.grants.map(g => E('div', { key: g.grant_id, className: 'card', 'data-testid': 'send-grant-row', style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
+        E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } }, sendGrantWords(g, jobName),
+          E('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.45)' } },
+            'since ' + new Date(g.created_at * 1000).toLocaleString() + ' \xB7 used ' + (g.uses || 0) + ' time(s)' + (g.last_used_at ? ', last ' + new Date(g.last_used_at * 1000).toLocaleString() : '')),
+          g.changed ? E('div', { 'data-testid': 'send-grant-changed', style: { fontSize: 11, color: '#ffb080' } }, 'Not in use: ' + g.changed + '. Sends ask until you approve it again.') : null),
+        E('div', { style: { display: 'flex', gap: 6 } },
+          g.changed && g.in_force !== false && (g.scope === 'job' || skillFor(g.skill)) ? E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => reapprove(g, g.scope === 'skill' ? skillRecipients(skillFor(g.skill)) : null) }, 'Approve again as it is now') : null,
+          E('button', { className: 'settings-btn', style: { fontSize: 11, color: '#ff8080' }, onClick: () => revoke(g.grant_id) }, 'Revoke')))),
+    d.skills.length > 0 && E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'Skills that need to send'),
+    d.skills.map(sk => E('div', { key: sk.name, 'data-testid': 'send-grant-skill', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 11, color: '#bbb' } },
+      E('span', null, E('b', null, sk.name), ' needs: ', Object.keys(sk.needs).map(a => (a === 'send_email' ? 'send email to ' : a + ' to ') + sk.needs[a].join(', ')).join('; '), '. Declaring it grants nothing.',
+        (sk.refused || []).length ? E('span', { 'data-testid': 'send-grant-refused', style: { display: 'block', color: '#ff8080' } }, 'Cannot be pre-approved: ' + sk.refused.map(x => x.recipient + ' (' + x.why + ')').join('; ') + '.') : null),
+      (sk.granted || []).length ? E('span', { style: { color: '#9fd' } }, 'Approved') : (sk.changed || []).length ? E('span', { style: { color: '#ffb080' } }, 'Changed after you approved it') : !Object.keys(sk.needs || {}).length ? null :
+        E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => post({ scope: 'skill', skill: sk.name, recipients: skillRecipients(sk) }) }, 'Approve what it needs'))),
+    E('label', { 'data-testid': 'send-grant-voice', style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 10, fontSize: 11, color: '#bbb' } },
+      E('input', { type: 'checkbox', checked: !!(d.options || {}).voice_may_use, onChange: e => setVoice(e.target.checked) }),
+      'Voice may use pre-approvals (off: a send asked for by voice always gets its card)'),
+    E('div', { style: { marginTop: 10, fontSize: 12, color: '#ccc' } }, 'New pre-approval'),
+    E('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap', fontSize: 11, color: '#bbb' } },
+      E('input', { 'aria-label': 'Recipients to pre-approve', placeholder: 'name@example.com, @example.org', value: who, onChange: e => setWho(e.target.value), style: { flex: '1 1 220px', fontSize: 12 } }),
+      E('select', { 'aria-label': 'For which work', value: scope, onChange: e => setScope(e.target.value), style: { fontSize: 11 } },
+        E('option', { value: 'recipients' }, 'For any job or chat'), E('option', { value: 'job' }, 'Only for one scheduled job')),
+      scope === 'job' && E('select', { 'aria-label': 'Scheduled job', value: job, onChange: e => setJob(e.target.value), style: { fontSize: 11 } },
+        E('option', { value: '' }, 'Choose a scheduled job…'), jobs.map(j => E('option', { key: j.id, value: j.id }, j.name || j.id))),
+      E('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: create }, 'Pre-approve')),
+    msg && E('div', { role: 'status', style: Object.assign({}, muted, { marginTop: 6, color: '#9fd' }) }, msg),
+    d.log.length > 0 && E('details', { style: { marginTop: 10 } }, E('summary', { style: { fontSize: 11, color: '#bbb' } }, 'Log \xB7 ' + d.log.length),
+      E('ul', { 'data-testid': 'send-grant-log', style: Object.assign({}, muted, { margin: '4px 0 0', paddingLeft: 16 }) },
+        d.log.map((l, i) => E('li', { key: i }, new Date(l.at * 1000).toLocaleString() + ' \xB7 ' + l.event + ' by ' + (l.by || '?') + ' \xB7 ' + l.grant_id + (l.recipients ? ' \xB7 ' + l.recipients.join(', ') : ''))))));
+}
+// The pre-approvals, on the Approvals card: what may go WITHOUT a card, with Revoke, and the
+// messages waiting to go under one (undo window or scheduled time), each with Undo. The notice an
+// unattended pre-approved send raises opens this card (gmail_send._notify_pre_approved_hold).
+function PreApprovedSendsList() {
+  const E = React.createElement;
+  const [grants, setGrants] = useState([]);
+  const [held, setHeld] = useState([]);
+  const [msg, setMsg] = useState('');
+  const load = () => {
+    apiFetch('/api/governance/send-grants').then(r => r.json()).then(x => setGrants(x.grants || [])).catch(() => {});
+    apiFetch('/api/mail/held').then(r => r.json()).then(x => setHeld((x.held || []).filter(h => h.pre_approved))).catch(() => {});
+  };
+  useEffect(() => { load(); const iv = setInterval(load, 5000); return () => clearInterval(iv); }, []);
+  if (!grants.length && !held.length) return null;
+  const revoke = id => apiFetch('/api/governance/send-grants/' + encodeURIComponent(id), { method: 'DELETE' }).then(load).catch(() => {});
+  const undo = id => apiFetch('/api/mail/held/' + encodeURIComponent(id) + '/cancel', { method: 'POST' })
+    .then(r => r.json().then(x => setMsg(r.ok ? 'Taken back. Nothing was sent.' : x && x.message || 'Too late to take it back.'))).then(load).catch(() => setMsg('Could not take it back.'));
+  return E('div', { 'data-testid': 'preapproved-sends', style: { marginTop: 8, fontSize: 11, color: '#bbb' } },
+    held.length > 0 && E('div', { 'data-testid': 'preapproved-held', style: { marginBottom: 6 } },
+      E('div', { style: { color: '#ccc', marginBottom: 4 } }, 'Going out under a pre-approval'),
+      held.map(h => E('div', { key: h.approval_id, style: { display: 'flex', justifyContent: 'space-between', gap: 8, padding: '2px 0' } },
+        E('span', null, 'To ' + (h.to || []).join(', ') + ' \xB7 \u201C' + (h.subject || '') + '\u201D \xB7 ' + (h.scheduled ? 'at ' + new Date(h.due * 1000).toLocaleString() : 'in ' + h.seconds_left + ' s')),
+        E('button', { className: 'btn', style: { fontSize: 10, padding: '1px 8px', color: '#ff8080' }, onClick: () => undo(h.approval_id) }, 'Undo')))),
+    msg && E('div', { role: 'status', style: { color: '#9fd', marginBottom: 4 } }, msg),
+    grants.length > 0 && E('div', { style: { color: '#ccc', marginBottom: 4 } }, 'Pre-approved sends (go without a card; change them in Settings)'),
+    grants.map(g => E('div', { key: g.grant_id, style: { display: 'flex', justifyContent: 'space-between', gap: 8, padding: '2px 0' } },
+      E('span', null, sendGrantWords(g, id => id) + ' \xB7 used ' + (g.uses || 0) + 'x'),
+      E('button', { className: 'btn', style: { fontSize: 10, padding: '1px 8px', color: '#ff8080' }, onClick: () => revoke(g.grant_id) }, 'Revoke'))));
+}
 // Scheduled jobs: what they may do on their own. A scheduled or background job
 // can take an outward action (change a calendar, schedule a post, run a
 // non-read command, a connector's send) only with a grant made here: named
 // actions, one job, an expiry and a use count. Anything else it tries waits on
-// an approval card. Email is never covered: every message has its own card.
+// an approval card. Email is covered only by Pre-approved sends (SendGrantsPanel).
 // Enforced in governance/action_gate.py; this screen only lists, creates and
 // revokes grants through /api/governance/grants.
 function GovernanceGrantsPanel() {
@@ -58566,7 +58729,7 @@ function GovernanceGrantsPanel() {
   const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
   return /*#__PURE__*/React.createElement("div", { "data-testid": "governance-grants" },
     /*#__PURE__*/React.createElement("div", { style: Object.assign({}, muted, { marginBottom: 10 }) },
-      "A scheduled job can't send, post, change your calendar or run a command on its own: with nobody watching, each of those waits on an approval card. To let a job do one of them unattended, give it a grant here. A grant names the job, the actions, how long it lasts and how many times it can be used. Email is never covered: every message still gets its own card."),
+      "A scheduled job can't send, post, change your calendar or run a command on its own: with nobody watching, each of those waits on an approval card. To let a job do one of them unattended, give it a grant here. A grant names the job, the actions, how long it lasts and how many times it can be used. Email is not covered here: it has its own Pre-approved sends section below, for named recipients only."),
     grants.length === 0 ? /*#__PURE__*/React.createElement("div", { style: Object.assign({}, muted, { marginBottom: 10 }) }, "No grants. Every outward action by a scheduled job waits for you.") :
       grants.map(g => /*#__PURE__*/React.createElement("div", { key: g.grant_id, className: "card", style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } },
