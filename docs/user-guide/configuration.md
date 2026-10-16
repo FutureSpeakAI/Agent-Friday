@@ -170,6 +170,7 @@ Laya plans, picks tools, runs quick actions (open, select, play, timers, reads) 
 | `honour_focus_assist` | off | Follow Windows Focus Assist (Do Not Disturb). Off until you choose it. When on and Windows reports it is on, only safety-critical items interrupt. |
 | `news_local_area` | `""` | The place the Local news beat covers, as free text (a city or region). Friday searches Google News for it. Set it in News → Customize Briefing → Local beat. |
 | `news_local_sources` | `[]` | Outlet domains for the Local beat, for example `["springfield-local.example"]`. Each is fetched as a Local feed and trusted like the built-in high-trust outlets. With this and `news_local_area` both empty there is no Local beat; nothing ships with a city. |
+| `news_trusted_outlets` | `[]` | Outlet domains that start at high trust, like the built-in trusted list, without being fetched or labelled as Local news. Set in News › Customize › Trusted outlets. |
 | `memory_recall_enabled` | `true` | Recall from past conversations. |
 | `compaction` | on; trigger at 70% of a 200,000-token window; keep 3 head and 10 tail messages | Summarises the middle of a long transcript. |
 | `context_pruning` | on; over 50 turns keep the 4 most recent and the 10 most relevant | Keeps relevant past turns by meaning (MiniLM embeddings). |

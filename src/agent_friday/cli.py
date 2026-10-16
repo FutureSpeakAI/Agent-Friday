@@ -516,7 +516,7 @@ TOOL_RINGS = {
         ("read_file",          "Read any local file (up to 500KB)"),
         ("read_wiki",          "Read a personal wiki file"),
         ("search_wiki",        "Full-text wiki search"),
-        ("query_trust_graph",  "Look up a person in trust graph"),
+        ("query_trust_graph",  "Look up a person, organisation or news source in the trust graph"),
         ("query_calendar",     "Check upcoming calendar events"),
         ("get_career_pipeline","Read job search status"),
         ("get_briefing",       "Fetch latest daily briefing"),

@@ -488,7 +488,8 @@
    "calendar"
   ],
   "query_trust_graph": [
-   "people_trust"
+   "people_trust",
+   "news"
   ],
   "queue_status": [
    "settings"

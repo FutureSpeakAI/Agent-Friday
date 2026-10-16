@@ -2396,6 +2396,10 @@ DEFAULT_SETTINGS = {
     # Hours a story stays eligible for each routine's edition (news_seen).
     "news_edition_window_hours": {"front_page": 36, "briefing": 36},
     "news_local_sources": [],
+    # news_trusted_outlets: outlet domains that start at high trust (like the
+    # built-in high-trust list) WITHOUT being fetched or tagged as Local news
+    # (source_trust_graph.trusted_outlets). Empty by default.
+    "news_trusted_outlets": [],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
     "tts_voice": "Aoede",                  # any of the 30 Gemini-TTS voices

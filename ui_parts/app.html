@@ -10879,14 +10879,17 @@ function SentimentDot({it}){
   return <span className={'sentiment-dot '+s} title={tip}></span>;
 }
 // Source Trust Graph dimension labels + ordering (matches source_trust_graph.py).
+// Labels say what each dimension MEASURES (source_trust_graph.DIMENSION_INFO);
+// a dimension with no score (null) is "not measured", never a number.
 const TRUST_DIMS=[
-  ['factual_accuracy','Factual accuracy'],
-  ['correction_behavior','Corrections'],
-  ['source_attribution','Attribution'],
+  ['factual_accuracy','Primary-source corroboration'],
+  ['correction_behavior','Corrections issued'],
+  ['source_attribution','Attribution (writing style)'],
   ['prediction_accuracy','Predictions'],
-  ['opinion_separation','Opinion labeling'],
+  ['opinion_separation','Opinion labelling (writing style)'],
   ['narrative_independence','Independence'],
 ];
+const TRUST_NOT_MEASURED='not measured';
 function trustColor(score){const s=Number(score);if(isNaN(s))return'yellow';return s>=0.7?'green':s>=0.4?'yellow':'red';}
 // Inline trust badge for an article card: colored dot + numeric score, with a
 // hover tooltip breaking down the six Source Trust Graph dimensions.
@@ -10899,10 +10902,11 @@ function TrustBadge({it,compact}){
     {score!=null&&!compact&&<span className="trust-num">{score.toFixed(2)}</span>}
     <span className="trust-tip">
       <div className="trust-tip-head">Source trust{score!=null?(' · '+score.toFixed(2)):''}</div>
+      {it&&it.trust_owner&&<div className="trust-tip-row trust-owner-pref" style={{color:'#c4cad6'}}>{'Your preference: '+(it.trust_owner==='banned'?'banned (score held low)':'boosted (score raised)')}</div>}
       {dims?TRUST_DIMS.map(([k,lbl])=>{const v=dims[k];return <div key={k} className="trust-tip-row">
         <span className="trust-tip-lbl">{lbl}</span>
         <span className="trust-tip-bar"><span className={'trust-tip-fill '+trustColor(v)} style={{width:Math.round((Number(v)||0)*100)+'%'}}></span></span>
-        <span className="trust-tip-val">{v!=null?Number(v).toFixed(2):'—'}</span>
+        <span className="trust-tip-val" style={v==null?{width:'auto',color:'#888'}:undefined}>{v!=null?Number(v).toFixed(2):TRUST_NOT_MEASURED}</span>
       </div>}):<div className="trust-tip-row" style={{color:'#888'}}>No observations yet — score is a seed estimate.</div>}
     </span>
   </span>;
@@ -10917,7 +10921,7 @@ function TrustRadar({scores}){
     {[0.25,0.5,0.75,1].map((f,i)=><polygon key={i} points={ring(f)} className="radar-grid"/>)}
     {TRUST_DIMS.map((_,i)=>{const[x,y]=pt(i,R);return <line key={i} x1={cx} y1={cy} x2={x} y2={y} className="radar-spoke"/>})}
     <polygon points={data} className="radar-area"/>
-    {TRUST_DIMS.map(([k,lbl],i)=>{const[x,y]=pt(i,R+12);return <text key={k} x={x} y={y} className="radar-lbl" textAnchor={x<cx-5?'end':x>cx+5?'start':'middle'}>{lbl.split(' ')[0]}</text>})}
+    {TRUST_DIMS.map(([k,lbl],i)=>{const[x,y]=pt(i,R+12);return <text key={k} x={x} y={y} className="radar-lbl" textAnchor={x<cx-5?'end':x>cx+5?'start':'middle'}>{lbl.split(' ')[0]+(sc[k]==null?' (n/m)':'')}</text>})}
   </svg>;
 }
 // Record a per-source engagement event for the "Your Media Diet" panel. Fire-
@@ -11025,11 +11029,13 @@ function NewsLocalBeatSettings() {
   const h = React.createElement;
   const [area, setArea] = useState(null);
   const [sources, setSources] = useState('');
+  const [trusted, setTrusted] = useState('');
   const [note, setNote] = useState('');
   useEffect(() => {
     apiFetch('/api/settings').then(r => r.json()).then(d => {
       const s = (d && d.settings) || {};
       setSources((Array.isArray(s.news_local_sources) ? s.news_local_sources : []).join('\n'));
+      setTrusted((Array.isArray(s.news_trusted_outlets) ? s.news_trusted_outlets : []).join('\n'));
       setArea(String(s.news_local_area || ''));
     }).catch(() => {
       setArea('');
@@ -11048,11 +11054,19 @@ function NewsLocalBeatSettings() {
     news_local_area: (area || '').trim(),
     news_local_sources: sources.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
   });
+  // Trusted outlets start at high trust like the built-in list, without being
+  // fetched or tagged as Local news (source_trust_graph.trusted_outlets).
+  const commitTrusted = () => save({
+    news_trusted_outlets: trusted.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
+  });
   if (area === null) return null;
   return h(React.Fragment, null,
     h('div', { className: 'card-title', style: { marginTop: 14 } }, 'Local beat'),
     h('input', { className: 'input', 'aria-label': 'City or area for Local news', style: { width: '100%', fontSize: 11 }, value: area, placeholder: 'City or area (empty: no Local news)', onChange: e => setArea(e.target.value), onBlur: commit }),
     h('textarea', { className: 'input', 'aria-label': 'Local news outlets', rows: 3, style: { width: '100%', fontSize: 11, marginTop: 6, resize: 'vertical' }, value: sources, placeholder: 'Local outlets, one domain per line or comma-separated', onChange: e => setSources(e.target.value), onBlur: commit }),
+    h('div', { className: 'card-title', style: { marginTop: 14 } }, 'Trusted outlets'),
+    h('div', { style: { fontSize: 10, color: '#777', marginBottom: 4 } }, 'Start these at high trust, like the built-in trusted list. They are not added to Local news.'),
+    h('textarea', { className: 'input', 'aria-label': 'Trusted outlets', rows: 3, style: { width: '100%', fontSize: 11, resize: 'vertical' }, value: trusted, placeholder: 'Trusted outlets, one domain per line or comma-separated', onChange: e => setTrusted(e.target.value), onBlur: commitTrusted }),
     note && h('div', { role: 'status', style: { fontSize: 10, color: '#777', marginTop: 4 } }, note));
 }
 function NewsWS(){
@@ -11196,7 +11210,7 @@ function NewsWS(){
     fetch('/api/federation/attestations').then(r=>r.json()).then(d=>setFedStatus(d)).catch(()=>setFedStatus(null));
   };
   const openTrustSource=(domain)=>{setTrustSel(domain);setTrustDetail(null);
-    fetch('/api/source-trust/'+encodeURIComponent(domain)).then(r=>r.json()).then(d=>setTrustDetail(d.status==='ok'?d.source:null)).catch(()=>setTrustDetail(null));};
+    fetch('/api/source-trust/'+encodeURIComponent(domain)).then(r=>r.json()).then(d=>setTrustDetail(d.status==='ok'?Object.assign({},d.source,{breakdown:d.breakdown||null}):null)).catch(()=>setTrustDetail(null));};
   useEffect(()=>{
     fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
     fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
@@ -11756,7 +11770,7 @@ function NewsWS(){
              <span className={'trust-dot '+trustColor(s.trust_score)}></span>
              <span className="trust-row-name">{s.name||s.domain}</span>
              <span className="trust-row-score">{Number(s.trust_score).toFixed(2)}</span>
-             <span className="trust-row-meta">{s.article_count||0} art · {s.observation_count||0} obs</span>
+             <span className="trust-row-meta">{s.owner_preference?(s.owner_preference==='banned'?'banned · ':'boosted · '):''}{s.article_count||0} art · {s.observation_count||0} obs</span>
            </div>)}
          </div>
          {/* Detail */}
@@ -11768,16 +11782,17 @@ function NewsWS(){
                 <div>
                   <div className="trust-detail-name">{trustDetail.name||trustDetail.domain}</div>
                   <div className="trust-detail-sub">{trustDetail.domain} · {trustDetail.article_count||0} articles · first seen {trustDetail.first_seen||'—'}</div>
+                  {trustDetail.breakdown&&<div className="trust-detail-sub trust-score-basis">Evidence score {Number(trustDetail.breakdown.evidence_score).toFixed(2)}{trustDetail.breakdown.owner_preference?(' · Your preference: '+trustDetail.breakdown.owner_preference.effect):' · No owner preference'}</div>}
                 </div>
                 <div className={'trust-detail-score '+trustColor(trustDetail.trust_score)}>{Number(trustDetail.trust_score).toFixed(2)}</div>
               </div>
               <div className="trust-detail-grid">
                 <TrustRadar scores={trustDetail.scores}/>
                 <div className="trust-dimbars">
-                  {TRUST_DIMS.map(([k,lbl])=>{const v=(trustDetail.scores||{})[k];return <div key={k} className="trust-dimbar">
+                  {TRUST_DIMS.map(([k,lbl])=>{const v=(trustDetail.scores||{})[k];const bd=trustDetail.breakdown&&trustDetail.breakdown.dimensions&&trustDetail.breakdown.dimensions[k];return <div key={k} className="trust-dimbar" title={bd?(bd.based_on+' ('+bd.evidence_count+' observation'+(bd.evidence_count===1?'':'s')+'; '+bd.status+')'):undefined}>
                     <span className="trust-dimbar-lbl">{lbl}</span>
                     <span className="trust-dimbar-track"><span className={'trust-dimbar-fill '+trustColor(v)} style={{width:Math.round((Number(v)||0)*100)+'%'}}></span></span>
-                    <span className="trust-dimbar-val">{v!=null?Number(v).toFixed(2):'—'}</span>
+                    <span className="trust-dimbar-val" style={v==null?{width:'auto',color:'#888'}:undefined}>{v!=null?Number(v).toFixed(2):TRUST_NOT_MEASURED}</span>
                   </div>})}
                 </div>
               </div>

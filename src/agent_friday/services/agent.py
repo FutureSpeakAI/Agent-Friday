@@ -724,8 +724,12 @@ CLAUDE_TOOLS = [
      }, "required": ["path", "content"]}},
     {"name": "write_clipboard", "description": "Copy text to the user's Windows clipboard.",
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-    {"name": "query_trust_graph", "description": "Look up a person in the trust graph by name or alias and return their entry (scores, evidence count, last interaction).",
-     "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+    {"name": "query_trust_graph", "description": "Trust graph entry for a person, organisation or news source (domain, name or article URL): every dimension's score or 'not measured', its basis and evidence count, and the owner's Boost/Ban.",
+     "input_schema": {"type": "object", "properties": {
+         "name": {"type": "string", "description": "Name, alias, domain or article URL."},
+         "kind": {"type": "string", "enum": ["any", "person", "organisation", "source"],
+                  "description": "Default any: people, organisations, then sources."}},
+      "required": ["name"]}},
     {"name": "annotate_calendar_events", "description": "Append location, phone or note to EVERY matching calendar event, keeping existing values and returning prior values for undo. Edits the whole recurring series; dry_run previews. For a read-only token, explain Google needs reconnection for event editing and offer to start it. Never substitute a map, directions or another action for the edit.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "Text to match against event titles/descriptions, e.g. 'dentist'."},
@@ -1542,29 +1546,105 @@ def _tool_write_clipboard(inp):
         return f"Clipboard error: {e}"
 
 
+#: entity_type values in the people store that name an organisation.
+_ORG_ENTITY_TYPES = ("organisation", "organization", "org", "company", "business",
+                     "institution", "agency", "group")
+_TRUST_KIND_ALIASES = {"": "any", "any": "any", "person": "person", "people": "person",
+                       "human": "person", "organisation": "organisation",
+                       "organization": "organisation", "org": "organisation",
+                       "company": "organisation", "source": "source", "outlet": "source",
+                       "domain": "source", "news": "source", "media": "source"}
+
+
+def _org_trust_view(p):
+    """An organisation's trust entry: every dimension with its score, what it
+    rests on and its evidence count. Owner notes and evidence text stay out;
+    an organisation is not a person, but what the owner wrote may name one."""
+    scores = p.get('scores') or {}
+    evidence = [e for e in (p.get('evidence') or []) if isinstance(e, dict)]
+    dims = {}
+    for d, v in scores.items():
+        if d == 'overall':
+            continue
+        n = sum(1 for e in evidence if e.get('dimension') == d)
+        dims[d] = {"score": v if isinstance(v, (int, float)) else None,
+                   "evidence_count": n,
+                   "based_on": ("Your scores and evidence entries for this organisation "
+                                "(Contacts)." if n else
+                                "No evidence recorded: the value is the default or one you set.")}
+    return {"kind": "organisation", "name": p.get('name'),
+            "aliases": p.get('aliases') or [], "entity_type": p.get('entity_type'),
+            "overall": scores.get('overall'),
+            "overall_based_on": "Mean of the dimension scores.",
+            "dimensions": dims, "evidence_count": len(evidence),
+            "last_interaction": p.get('last_interaction')}
+
+
+def _source_trust_lookup(name):
+    """A news source's full breakdown by domain, outlet name or article URL."""
+    try:
+        from agent_friday.source_trust_graph import get_source_trust_graph, _extract_domain
+        g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
+    except Exception:
+        return None
+    domain = _extract_domain(name)
+    rec = g.get(domain) if domain else None
+    if rec is None:
+        low = name.strip().lower()
+        for r in g.all_sources():
+            if str(r.get('name') or '').strip().lower() == low:
+                domain = r.get('domain')
+                rec = r
+                break
+    if rec is None and not (domain and "." in domain):
+        return None
+    out = g.explain(domain)
+    if out and not out.get("known"):
+        out["note"] = ("No article from this outlet has been analysed yet; the score is "
+                       "its starting prior only.")
+    return out
+
+
 def _tool_query_trust_graph(inp):
-    name = ((inp or {}).get('name') or '').strip().lower()
+    inp = inp or {}
+    raw = (inp.get('name') or inp.get('source') or inp.get('domain') or '').strip()
+    name = raw.lower()
     if not name:
         return "No name provided."
-    # Defined in services/misc_engine.py — an UPPER layer — so it must be
-    # imported lazily at call time (module-level would be circular).
-    from agent_friday.services.misc_engine import _load_trust_graph
-    from agent_friday.trust import people as _tp
-    graph = _load_trust_graph()
-    people = graph.get('people') or {}
-    items = people.values() if isinstance(people, dict) else people
-    # People trust stays home: the full record (dimensions, evidence, saved
-    # intelligence, notes) goes only to a loop that is KNOWN local. A cloud
-    # loop, or one whose provider is unknown, gets role, confirmed
-    # relationship and contact channel.
-    _local = _tp.loop_is_local(_CURRENT_PROVIDER.get())
-    for p in items:
-        if not isinstance(p, dict):
-            continue
-        aliases = [str(a).lower() for a in (p.get('aliases') or [])]
-        if (p.get('name') or '').strip().lower() == name or name in aliases:
-            return json.dumps(_tp.view_for_loop(p, local=_local), default=str)[:100_000]
-    return f"No trust-graph entry found for {name!r}."
+    kind = _TRUST_KIND_ALIASES.get(str(inp.get('kind') or '').strip().lower())
+    if kind is None:
+        return ("Unknown kind %r: use person, organisation, source or any." % inp.get('kind'))
+    if kind in ('any', 'person', 'organisation'):
+        # Defined in services/misc_engine.py — an UPPER layer — so it must be
+        # imported lazily at call time (module-level would be circular).
+        from agent_friday.services.misc_engine import _load_trust_graph
+        from agent_friday.trust import people as _tp
+        graph = _load_trust_graph()
+        people = graph.get('people') or {}
+        items = people.values() if isinstance(people, dict) else people
+        # People trust stays home: the full record (dimensions, evidence, saved
+        # intelligence, notes) goes only to a loop that is KNOWN local. A cloud
+        # loop, or one whose provider is unknown, gets role, confirmed
+        # relationship and contact channel.
+        _local = _tp.loop_is_local(_CURRENT_PROVIDER.get())
+        for p in items:
+            if not isinstance(p, dict):
+                continue
+            aliases = [str(a).lower() for a in (p.get('aliases') or [])]
+            if not ((p.get('name') or '').strip().lower() == name or name in aliases):
+                continue
+            is_org = str(p.get('entity_type') or '').strip().lower() in _ORG_ENTITY_TYPES
+            if is_org and kind in ('any', 'organisation'):
+                return json.dumps(_org_trust_view(p), default=str)[:100_000]
+            if not is_org and kind in ('any', 'person'):
+                return json.dumps(_tp.view_for_loop(p, local=_local), default=str)[:100_000]
+    if kind in ('any', 'source'):
+        out = _source_trust_lookup(raw)
+        if out:
+            return json.dumps(out, default=str)[:100_000]
+    searched = {"any": "people, organisations or news sources", "person": "people",
+                "organisation": "organisations", "source": "news sources"}[kind]
+    return f"No trust-graph entry found for {raw!r} among {searched}."
 
 
 # When a built-in Google integration (Gmail / Calendar) isn't connected yet, the

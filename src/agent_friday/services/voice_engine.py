@@ -115,10 +115,17 @@ def _tool_get_source_trust(inp):
         rec = g.get(domain)
         if rec:
             out["name"] = rec.get("name")
-            out["observations"] = rec.get("observation_count") or rec.get("observations")
+            out["observations"] = len(rec.get("observations") or [])
         try:
-            out["dimensions"] = {k: round(float(v), 2)
-                                 for k, v in (g.dimensions_for(domain) or {}).items()}
+            # Each dimension by what it measures; one that is not measured
+            # says so and carries no number.
+            ex = g.explain(domain) or {}
+            out["dimensions"] = {
+                v["label"]: (round(v["score"], 2) if v["score"] is not None else v["status"])
+                for v in (ex.get("dimensions") or {}).values()}
+            for k in ("owner_preference", "evidence_score"):
+                if ex.get(k) is not None:
+                    out[k] = ex[k]
         except Exception:
             pass
         return json.dumps(out, default=str)
@@ -974,6 +981,9 @@ _VOICE_SHARED_TOOLS = (
     "customize_workspace",
     "revert_workspace",
     "list_workspace_history",
+    # query_trust_graph is reached by voice through get_source_trust (outlets, the same
+    # breakdown) and delegate_to_friday (people/organisations): the spoken contract
+    # stays 300 tokens under VOICE_CONTRACT_MAX_TOKENS.
 )
 
 
