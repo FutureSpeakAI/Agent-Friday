@@ -7,7 +7,11 @@
       "label": "PrismML llama.cpp fork (Bonsai 2's ternary kernels)",
       "repo": "PrismML-Eng/llama.cpp",
       "releases_api": "https://api.github.com/repos/PrismML-Eng/llama.cpp/releases/latest",
-      "minimum_build": 10658,
+      "release_by_tag_api": "https://api.github.com/repos/PrismML-Eng/llama.cpp/releases/tags/{tag}",
+      "pinned_tag": "prism-b10743-adfffbe",
+      "pinned_note": "Installs fetch this exact release, not whatever is newest: the launch runtime prism-b10687 shipped without server binaries (the first-run banner never cleared) and the publisher says prism-b10709 and later fix it. Change the pin on purpose, after checking the new release carries llama-server.",
+      "minimum_build": 10709,
+      "known_bad_builds": {"10687": "shipped without the server binaries"},
       "assets": {
         "windows": {
           "cpu": "bin-win-cpu-x64.zip",

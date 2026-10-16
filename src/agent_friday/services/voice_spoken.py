@@ -390,7 +390,9 @@ def _email(data: dict, tool: str) -> str | None:
             return None
         out = _check_email(data)
     else:
-        if not msgs:
+        if not msgs or "read" in data:
+            # A whole conversation (search_email thread=...) is for the speaker to answer from;
+            # listed as "I found 4 emails" it would never be read.
             return None
         shown = msgs[:SPOKEN_ITEMS]
         total = _total(data, len(msgs))

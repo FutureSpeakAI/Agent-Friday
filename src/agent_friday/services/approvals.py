@@ -106,6 +106,15 @@ DEFAULT_EXPIRES_SECONDS = 86400  # 24h — Q3 default gate expiry
 #: message, not a typed reply, not any other channel; declining is open to every channel.
 LAYA_CARD_APPROVERS = frozenset({"owner:ui", "owner:/voice/"})
 
+#: Who may APPROVE a search card (payload.public_query, privacy/public_query): only the Send button on the
+#: screen, where the owner sees the exact text that would go out. Not voice, not a text message, not a chat
+#: reply, not a batch; declining is open to every channel.
+PUBLIC_QUERY_CARD_APPROVERS = frozenset({"owner:ui"})
+
+
+def _is_public_query_card(rec: Dict[str, Any]) -> bool:
+    return isinstance((rec.get("payload") or {}).get("public_query"), dict)
+
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
@@ -482,6 +491,42 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     return record
 
 
+def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title: str,
+                        grant_id: str, description: str = "", action_description: str = "",
+                        payload: Optional[dict] = None, requested_by: str = "system") -> Dict[str, Any]:
+    """An action the owner approved IN ADVANCE: a standing pre-approval they
+    made in Settings (governance/send_grants), already checked by the action
+    checkpoint for this exact call. The record is created approved, decided by
+    that grant, so everything downstream of a decision still holds (one
+    decision, one action: `_consume`, `mark_used`, the outbox), and no card is
+    raised or announced. A Law-1 (harm) hit still blocks it, as on any card.
+    Idempotent per (subject_type, subject_id, kind), like `create_approval`."""
+    existing = find_for_subject(subject_type, subject_id, kind)
+    if existing is not None:
+        return existing
+    action_text = action_description or title
+    dissent = _safe_check_dissent(action_text, None)
+    law1_blocked = bool(dissent.get("law1_blocked"))
+    now = time.time()
+    record: Dict[str, Any] = {
+        "approval_id": f"appr_{uuid.uuid4().hex[:10]}",
+        "kind": kind, "subject_type": subject_type, "subject_id": subject_id,
+        "title": (title or "")[:200], "description": (description or "")[:2000],
+        "action_description": action_text[:1000],
+        "policy_class": "law1_block" if law1_blocked else classify(action_text)["policy_class"],
+        "gated": True, "cost_estimate_mψ": 0, "payload": payload or {},
+        "requested_by": requested_by, "dissent": dissent, "provenance": _current_provenance(),
+        "status": "blocked" if law1_blocked else "approved", "consumed": False,
+        "created_at": now, "expires_at": None, "expiry_paused": False,
+        "decided_at": None if law1_blocked else now,
+        "decided_by": None if law1_blocked else "grant:" + str(grant_id),
+        "decision_note": "" if law1_blocked else "pre-approved by you in Settings",
+        "pre_approved": str(grant_id),
+    }
+    _upsert(record)
+    return record
+
+
 def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
               ) -> Optional[dict]:
     """Burn an approval after the thing it authorised actually happened.
@@ -539,7 +584,7 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
     with _LOCK:
         recs = _read_store()
         rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
-        if (not rec or rec.get("kind") != "tool_confirm"
+        if (not rec or rec.get("kind") != "tool_confirm" or _is_public_query_card(rec)
                 or rec.get("status") not in {"pending", "approved"}
                 or rec.get("consumed") or rec.get("executing_at")):
             return False
@@ -658,6 +703,9 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if (decision == "approve" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
                 and decided_by not in LAYA_CARD_APPROVERS):
             return dict(rec), False
+        if (decision == "approve" and _is_public_query_card(rec)
+                and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
@@ -679,6 +727,10 @@ def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
             and decided_by not in LAYA_CARD_APPROVERS):
         return ("A card Laya raised is approved with its own Approve button in the app, where you see which "
                 "conversations. It cannot be approved from here.")
+    if (rec.get("status") == "pending" and _is_public_query_card(rec)
+            and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
+        return ("A search card is sent only with its own Send button in the app, where you see the exact "
+                "text that would go out. It cannot be approved from here.")
     return ""
 
 

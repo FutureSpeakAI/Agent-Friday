@@ -13,7 +13,8 @@ class TestPolicy:
     def test_get_policy_default(self):
         policy = be.get_policy(_ws("default-new"))
         assert "monthly_cap_mψ" in policy
-        assert policy["monthly_cap_mψ"] > 0
+        # Caps ship off (0 is no cap); the owner sets one (spending_caps).
+        assert policy["monthly_cap_mψ"] == 0
 
     def test_set_and_get_policy(self):
         ws = _ws("set-get")

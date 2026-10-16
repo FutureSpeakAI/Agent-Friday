@@ -172,7 +172,9 @@ def _ocr_image_file(path: Path) -> ExtractionResult | None:
     return ExtractionResult(OCR_HEADER + "\n" + text, None, ocr=True)
 
 
-def _extract_pdf(data: bytes) -> ExtractionResult:
+def _extract_pdf(data: bytes, ocr: bool = True) -> ExtractionResult:
+    """``ocr=False`` skips the OCR fallback for a scan (an email attachment excerpt must not hold a
+    turn for a minute of OCR); the honest "no text layer" message stands then."""
     try:
         import pdfplumber
     except ImportError:
@@ -190,7 +192,7 @@ def _extract_pdf(data: bytes) -> ExtractionResult:
     except Exception as e:
         return ExtractionResult(None, f"This is a PDF but I could not open it to extract text: {e}")
     if not text.strip():
-        ocr = _ocr_pdf(data)
+        ocr = _ocr_pdf(data) if ocr else None
         if ocr is not None:
             return ocr
         return ExtractionResult(

@@ -21,8 +21,15 @@ Frontmatter (all optional except name/description):
     success_criteria: ["briefing covers attendees and agenda"]
     license: MIT
     source: friday            # friday | imported | openclaw | bundled
+    permissions:              # what the skill NEEDS to do outside; grants nothing
+      send_email: ["team@example.com", "@example.org"]
     ---
     <markdown body = the procedure Friday should follow>
+
+``permissions`` states the outward actions (and their recipients) the skill
+needs. It never grants anything by itself: the owner approves it, once, in
+Settings (governance/send_grants.create_for_skill), and only that grant lets a
+send go without a card.
 
 Public API:
     load_skills(dirs=None)               -> list[Skill]
@@ -90,6 +97,8 @@ class Skill:
     source: str = "friday"
     path: str = ""
     meta: dict = field(default_factory=dict)
+    #: What the skill declares it NEEDS: {action: [recipients]}. Grants nothing.
+    permissions: dict = field(default_factory=dict)
 
     def summary(self) -> dict:
         return {
@@ -102,6 +111,7 @@ class Skill:
             "source": self.source,
             "path": self.path,
             "has_body": bool(self.body.strip()),
+            "permissions": self.permissions,
         }
 
 
@@ -151,6 +161,78 @@ def _as_list(v) -> list:
     return [str(v)]
 
 
+def _as_permissions(v) -> dict:
+    """{action: [recipients]} from a manifest's `permissions`: a mapping, or a
+    list of {"action": ..., "recipients": [...]}. Anything else is ignored."""
+    out = {}
+    items = []
+    if isinstance(v, dict):
+        items = [(k, val) for k, val in v.items()]
+    elif isinstance(v, list):
+        items = [((x or {}).get("action"), (x or {}).get("recipients"))
+                 for x in v if isinstance(x, dict)]
+    for action, rcpts in items:
+        action = str(action or "").strip()
+        if not action:
+            continue
+        lst = [str(r).strip() for r in (_as_list(rcpts) if not isinstance(rcpts, list) else rcpts)
+               if str(r).strip()]
+        out.setdefault(action, [])
+        out[action] += [r for r in lst if r not in out[action]]
+    return out
+
+
+def fingerprint_parts(name, body, permissions) -> str:
+    """A fingerprint of a skill's procedure and declared permissions, from
+    the parts read_skill returns (name, procedure, permissions_needed). A
+    skill send grant is bound to it (governance/send_grants): an edit to the
+    procedure or the permissions makes it a different skill."""
+    canonical = json.dumps({"name": str(name or ""), "body": str(body or ""),
+                            "permissions": permissions or {}},
+                           sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def fingerprint(skill) -> str:
+    """`fingerprint_parts` of an installed skill, as it is now."""
+    return fingerprint_parts(skill.name, skill.body, skill.permissions)
+
+
+def send_permissions(skill) -> dict:
+    """The send actions a skill declares, with recipients that are valid
+    addresses or @domains ({action: [recipients]}); declared needs only."""
+    from agent_friday.governance.send_grants import SEND_ACTIONS, normalize_recipients
+    out = {}
+    for action, rcpts in (getattr(skill, "permissions", None) or {}).items():
+        if action not in SEND_ACTIONS:
+            continue
+        good = []
+        for r in rcpts:
+            try:
+                good += normalize_recipients([r])
+            except ValueError:
+                continue
+        if good:
+            out[action] = sorted(set(good))
+    return out
+
+
+def refused_send_permissions(skill) -> list:
+    """What a skill declares that can never be pre-approved, each with the
+    plain reason ([{"action", "recipient", "why"}]), so Settings can say so
+    rather than drop it silently."""
+    from agent_friday.governance.send_grants import SEND_ACTIONS, recipient_refusal
+    out = []
+    for action, rcpts in (getattr(skill, "permissions", None) or {}).items():
+        if action not in SEND_ACTIONS:
+            continue
+        for r in rcpts:
+            why = recipient_refusal(r)
+            if why:
+                out.append({"action": action, "recipient": str(r), "why": why})
+    return out
+
+
 def _skill_from_manifest(folder: Path, text: str, default_source="friday") -> Skill:
     fm, body = _parse_frontmatter(text)
     name = str(fm.get("name") or folder.name)
@@ -167,7 +249,8 @@ def _skill_from_manifest(folder: Path, text: str, default_source="friday") -> Sk
         path=str(folder),
         meta={k: v for k, v in fm.items() if k not in (
             "name", "description", "triggers", "trigger_patterns", "tool_chain",
-            "success_criteria", "version", "license", "source")},
+            "success_criteria", "version", "license", "source", "permissions")},
+        permissions=_as_permissions(fm.get("permissions")),
     )
 
 
@@ -308,6 +391,8 @@ def _render_skill_md(skill: Skill) -> str:
         "license": skill.license,
         "source": skill.source,
     }
+    if skill.permissions:
+        fm["permissions"] = skill.permissions
     if _HAS_YAML:
         front = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True).strip()
     else:
@@ -332,7 +417,8 @@ def _atomic_skill_write(target, data):
 
 
 def save_skill(name, description="", body="", triggers=None, tool_chain=None,
-               success_criteria=None, source="friday", version=1, license="MIT") -> Path:
+               success_criteria=None, source="friday", version=1, license="MIT",
+               permissions=None) -> Path:
     """Create/overwrite a SKILL.md folder under ~/.friday/skills/."""
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     folder = SKILLS_DIR / _safe_name(name)
@@ -342,6 +428,7 @@ def save_skill(name, description="", body="", triggers=None, tool_chain=None,
         triggers=_as_list(triggers), tool_chain=_as_list(tool_chain),
         success_criteria=_as_list(success_criteria),
         version=int(version), license=license, source=source, path=str(folder),
+        permissions=_as_permissions(permissions),
     )
     target = folder / "SKILL.md"
     content = _render_skill_md(skill).encode("utf-8")

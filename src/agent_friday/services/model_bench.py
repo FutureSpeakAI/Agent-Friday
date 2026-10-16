@@ -166,7 +166,12 @@ def bench(model_id: str, *, profile: dict | None = None, runner=None, arbiter=No
         row = {"num_ctx": int(rec.get("serve_num_ctx") or 8192), "vram_mib": result.get("peak_vram_delta_mib"),
                "total_mib": result.get("peak_vram_delta_mib"), "pct_gpu": 100 if gpu else 0,
                "tok_s_median": decode, "prompt_tok_s": result.get("prompt_tok_s"),
-               "backend": "llama-server", "bench": "llama-bench p%d n%d" % (BENCH_PROMPT, BENCH_GEN)}
+               "backend": "llama-server", "bench": "llama-bench p%d n%d" % (BENCH_PROMPT, BENCH_GEN),
+               # The offload the peak was taken at. The planner treats a
+               # llama-server row as the WHOLE model's cost only when every
+               # layer was on the GPU (local_sizing.whole_model_row); a row
+               # that does not say is planned from the estimate instead.
+               "n_gpu_layers": ngl, "kv_type": kv_type}
         rc.record_measurement(model_id, rc.profile_fingerprint(prof), row)
         receipt["measurement"] = row
         if decode and est.get("tok_s") and est.get("basis") == "about":

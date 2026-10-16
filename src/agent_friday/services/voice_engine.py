@@ -115,10 +115,17 @@ def _tool_get_source_trust(inp):
         rec = g.get(domain)
         if rec:
             out["name"] = rec.get("name")
-            out["observations"] = rec.get("observation_count") or rec.get("observations")
+            out["observations"] = len(rec.get("observations") or [])
         try:
-            out["dimensions"] = {k: round(float(v), 2)
-                                 for k, v in (g.dimensions_for(domain) or {}).items()}
+            # Each dimension by what it measures; one that is not measured
+            # says so and carries no number.
+            ex = g.explain(domain) or {}
+            out["dimensions"] = {
+                v["label"]: (round(v["score"], 2) if v["score"] is not None else v["status"])
+                for v in (ex.get("dimensions") or {}).values()}
+            for k in ("owner_preference", "evidence_score"):
+                if ex.get(k) is not None:
+                    out[k] = ex[k]
         except Exception:
             pass
         return json.dumps(out, default=str)
@@ -901,6 +908,10 @@ def _tool_ask_friday(inp, session=None):
 _VOICE_SHARED_TOOLS = (
     "site_action", "domain_action",
     "workflow_action",
+    # schedule_job is NOT declared to voice: the spoken contract has no room
+    # for a second scheduler (VOICE_CONTRACT_MAX_TOKENS with 300 spare), and
+    # workflow_action's `when` already schedules a saved workflow by voice,
+    # daily / weekly / monthly / interval, through the same scheduler.
     "discover_capabilities",
     "read_skill",
     "voice_preferences",
@@ -974,6 +985,9 @@ _VOICE_SHARED_TOOLS = (
     "customize_workspace",
     "revert_workspace",
     "list_workspace_history",
+    # query_trust_graph is reached by voice through get_source_trust (outlets, the same
+    # breakdown) and delegate_to_friday (people/organisations): the spoken contract
+    # stays 300 tokens under VOICE_CONTRACT_MAX_TOKENS.
 )
 
 
@@ -1093,8 +1107,8 @@ _COMPACT_TOOL_DESCRIPTIONS = {
     "home_cards": "List before replacing a Simple Home card; actions only navigate; saved is not shown.",
     "customize_workspace": "Reversibly change presentation, not code; null clears a field; check history before an ambiguous revert.",
     "navigate_to": "Open an exact item; only NAV_OK confirms display. kind=workspace|email|mail_search|file|wiki_page|graph_node|news_article|creation|settings|calendar|contact|content_post. id=existing ID; workspace for kind=workspace; section=named tab; query=Gmail syntax for mail_search; new_tab=Chrome; max=maximize.",
-    "make_podcast": "Make a two-host podcast with sourced claims/computed numbers. sources: {kind:file|wiki|dataset,path}, {kind:kg_node|conversation,id}, {kind:creation,filename}, {kind:url,url}, {kind:text,text}, {kind:news_run,routine,run_id}. topic=wiki notes; length short≈2m|standard≈5m|long≈10m. voice=local; cloud only if owner asks and cloud voices are enabled.",
-    "media_show": "Show media by view/kind/project/status/date. view=today|in progress|needs me|published|everything; board=Pipeline; calendar=Calendar.",
+    "make_podcast": "Make a solo/duo podcast with sourced claims/computed numbers. sources: {kind:file|wiki|dataset,path}, {kind:kg_node|conversation,id}, {kind:creation,filename}, {kind:url,url}, {kind:text,text}, {kind:news_run,routine,run_id}. topic=wiki notes; length short≈2m|standard≈5m|long≈10m. voice=local; cloud only if owner asks and cloud voices are enabled.",
+    "media_show": "Show media by view/kind/project/status/date. view=today|in progress|needs me|published|everything; board=Pipeline.",
     "organize_email": "Gmail approval cards: action=archive|inbox|read|unread|star|unstar|label|unlabel|move|trash|restore|spam|not_spam; query, search_email thread_ids or selection=screen(ticked); label for label/unlabel/move; replaces=prior card.",
     "spawn_task": "Start background work from full prompt. on_complete_* starts follow-up on success; await real results.",
     "organize_wiki": "Organize wiki pages via approval. action=move|rename|tag|untag|archive|trash; pages=title/path/#n from listed choices; to=folder; moves=['page => folder']; replaces=prior card.",
@@ -1126,7 +1140,7 @@ _COMPACT_TOOL_DESCRIPTIONS = {
     "read_file": "Read local files; absolute/home-relative path. offset=1-based(default 1); limit≤2000(default 2000).",
     "write_file": "Write local path/content; mode=write(overwrite, default)|append. Paths absolute/home-relative.",
     "open_path": "Open a local file/folder/app path or friendly name; in_browser=browser tab.",
-    "search_email": "Read/search connected Gmail; query uses Gmail syntax.",
+    "search_email": "Search Gmail; thread=hit ref|this|top reads it whole.",
     "podcast_play": "Control screen podcast; omit episode_id for newest finished. routine only when user names a show; news=any News show.",
     "podcast_source": "Read current podcast citations/computed fact; seconds selects another position. If none, say hosts' own talk.",
     "media_diet_note": "Propose the user's exact stated outlet preference; nothing changes until approved. outlet=name/site.",
@@ -1144,7 +1158,7 @@ _COMPACT_TOOL_DESCRIPTIONS = {
     "podcast_list": "List newest episodes: title/status/length/chapters/privacy.",
     "screenshot": "Capture screen PNG.",
     "screen_select": "Show on the open list: op select/add/remove/clear ticks rows; point outlines up to 12; filter sets key/value (empty clears); fill writes field/text. Shows only; act via organize_email selection=screen.",
-    "set_setting": "Change one Settings row by path; op=undo says where the row's own Undo is (30 days).",
+    "set_setting": "Change one Settings row by path; op=undo says where the row's own Undo is (30 days). Dock: settings.display.dock.<ws> show/hide, op=list.",
     "organize_calendar": "Shift calendar events by whole days and minutes, keeping their length.",
     "task_control": "Stop or steer Friday's background work.",
     "media_cards": "List Media cards (status, where each went) without moving the screen.",
@@ -1184,7 +1198,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
     "workflow_status": {"name": None},
     "navigate_to": {"query": None, "id": None, "workspace": None, "section": None, "new_tab": None, "max": None, "kind": None},
     "media_show": {"board": None, "calendar": None, "view": None,
-                   "query": "Searches titles, prompts, slides, pages, documents, transcripts.",
+                   "query": "Words in titles or content.",
                    "when": "today, this week, last month, September, 2026-09"},
     "spawn_task": {"name": None, "prompt": None, "description": None, "on_complete_spawn": None, "on_complete_prompt": None},
     "search_news": {"query": None, "limit": None},
@@ -1206,8 +1220,8 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
     "search_files": {"query": None, "root": None, "content_query": None, "newest_first": None, "limit": None},
     "write_file": {"path": None, "content": None, "mode": None},
     "open_path": {"path": None, "in_browser": None},
-    "search_email": {"query": None},
-    "make_podcast": {"sources": None, "topic": None, "length": None, "instructions": None, "voice": None},
+    "search_email": {"query": None, "thread": None, "offset": None},
+    "make_podcast": {"sources": None, "topic": None, "length": None, "instructions": None, "voice": None, "hosts": None},
     "media_play": {"kind": None},
     "media_turn": {"query": None, "into": None},
     "podcast_play": {"routine": None},
@@ -1230,6 +1244,31 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
 def _lead_sentence(text) -> str:
     """The first sentence of a declaration's description."""
     return _LEAD_SENTENCE.split(str(text or "").strip(), maxsplit=1)[0]
+
+
+#: Optional properties the SPOKEN contract leaves out, because voice reaches the
+#: same thing another way and the contract has a fixed budget
+#: (VOICE_CONTRACT_MAX_TOKENS less 300). Host names by voice go through
+#: set_setting ("settings.podcasts.hosts.<a|b>"), which asks for the owner's yes.
+_VOICE_DROPPED_PROPERTIES = {
+    "podcast_format": ("host", "name"),
+    "make_podcast": ("host_names",),
+}
+
+
+def _voice_declaration(tool: dict) -> dict:
+    """The spoken contract's copy of a declaration: optional properties in
+    _VOICE_DROPPED_PROPERTIES left out (the shared registry is never edited)."""
+    drop = _VOICE_DROPPED_PROPERTIES.get(tool["function"]["name"])
+    if not drop:
+        return tool
+    t = copy.deepcopy(tool)
+    params = t["function"].get("parameters") or {}
+    props = params.get("properties")
+    for name in drop:
+        if isinstance(props, dict) and name not in (params.get("required") or []):
+            props.pop(name, None)
+    return t
 
 
 def _compact_declaration(tool: dict) -> dict:
@@ -1290,7 +1329,7 @@ def build_voice_tool_contract(full: bool = False, compact: bool = True) -> dict:
                     or {"type": "object", "properties": {}}}})
         except Exception as e:  # pragma: no cover - import-time failure
             _log.error("full voice toolkit unavailable (registry import failed): %s", e)
-    tools = [t for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED
+    tools = [_voice_declaration(t) for t in tools if t["function"]["name"] not in VOICE_NEVER_DECLARED
              and t["function"]["name"] not in CLOUD_LIVE_ONLY]
     if compact:
         tools = [_compact_declaration(t) for t in tools]
@@ -1607,6 +1646,33 @@ def _voice_ctx(session=None) -> dict:
         if session.get("turn_id"):
             ctx["turn_id"] = str(session["turn_id"])
     return ctx
+
+
+def _voice_request(session=None) -> list:
+    """The conversation a voice seat is answering, as an OpenAI-shape message
+    list, for the search card's shared-text check (privacy/public_query): the
+    call's conversation transcript (Friday's own turns as "assistant") and
+    the owner's latest spoken words. Empty when none is known."""
+    out: list = []
+    if not isinstance(session, dict):
+        return out
+    try:
+        cid = session.get("conversation_id")
+        if cid:
+            from agent_friday.services import conversations as _convs
+            for m in _convs.messages(cid, limit=200) or []:
+                if not isinstance(m, dict):
+                    continue
+                role = str(m.get("role") or "")
+                text = m.get("text") if isinstance(m.get("text"), str) else m.get("content")
+                if isinstance(text, str) and text.strip():
+                    out.append({"role": "assistant" if role in ("friday", "assistant") else "user",
+                                "content": text})
+    except Exception as e:
+        _log.debug("voice transcript unavailable for the search card check: %s", e)
+    if isinstance(session.get("owner_text"), str) and session["owner_text"].strip():
+        out.append({"role": "user", "content": session["owner_text"]})
+    return out
 
 
 def _voice_local_only() -> bool:
@@ -1951,7 +2017,28 @@ def _voice_tool_run(name, args, send_client, session=None, owner_utterance=False
     from agent_friday.services.agent import _execute_tool
 
     def _governed(tool, fn, a):
-        return _execute_tool(tool, a, handler=fn, session_ctx=_ctx())
+        c = _ctx()
+        if owner_utterance:
+            # The rule layer's call on the owner's own words: not text a cloud
+            # seat authored, so the search gates keep their ordinary policy.
+            return _execute_tool(tool, a, handler=fn, session_ctx=c)
+        # Voice parity with the chat loops: a cloud voice seat's search query
+        # is its own text (owner decision (a), privacy/public_query). The
+        # mark records `a` as the seat sent it; only those exact strings are
+        # floor-only at the search gates.
+        from agent_friday.privacy.public_query import for_tool_call as _pq_call
+        if not _local_session(session):
+            # A cloud voice seat's search that shares private text from the
+            # conversation waits on the owner's Send card on screen, as in
+            # chat (privacy/public_query, "ASK WITH PREVIEW"); the model is
+            # told to say so. A local voice seat never asks.
+            from agent_friday.services.agent import _public_query_hold
+            held = _public_query_hold(c.get("provider", "cloud"), "", tool, a,
+                                      request=_voice_request(session), session_ctx=c)
+            if held:
+                return held
+        with _pq_call(c.get("provider", "cloud"), "", tool, a):
+            return _execute_tool(tool, a, handler=fn, session_ctx=c)
 
     try:
         from agent_friday.services import live_session_plan as _lsp

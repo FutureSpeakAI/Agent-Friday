@@ -123,6 +123,23 @@
    "quiet_result": null,
    "eval": [],
    "safe_write": null
+  },
+  {
+   "id": "calendar.delete_event",
+   "action": "calendar.delete_event",
+   "group": "organize",
+   "ui": {"control": "delete event / meeting (Delete... on an opened event asks, with notify guests unticked by default)"},
+   "tool": "delete_calendar_event",
+   "also_tools": ["find_calendar_events"],
+   "gate": {"class": "outward", "ring": 2, "card": "required"},
+   "laya_tier": "model_only",
+   "phrasings": ["delete my dentist appointment on Friday", "cancel the team lunch tomorrow"],
+   "deictic": [],
+   "undo": null,
+   "voice": {"live": false, "shared": false},
+   "quiet_result": null,
+   "eval": ["tests/unit/test_calendar_event_delete.py::test_the_tool_asks_first_and_the_question_names_the_event"],
+   "safe_write": null
   }
  ],
  "jobs": [
@@ -154,14 +171,7 @@
    "entry": "agent_friday.routes.calendar:api_calendar_quick_add"
   }
  ],
- "not_for_laya": [
-  {
-   "action": "calendar.delete_event",
-   "kind": "gap",
-   "reason": "No delete-event tool; a write, so it waits for the safe-writes review.",
-   "wave": "WS-2"
-  }
- ],
+ "not_for_laya": [],
  "resolver_sources": [],
  "workspace_tools": {"key": null, "pools": []}
 }

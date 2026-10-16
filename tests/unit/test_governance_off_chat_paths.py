@@ -524,6 +524,9 @@ REVIEWED_SINKS = {
         "the update_calendar_event tool, which is outward",
     ("services/calendar_write.py", "annotate_events"):
         "the annotate_calendar_events tool, which is outward",
+    ("services/calendar_write.py", "delete_event"):
+        "the delete_calendar_event tool, which is outward (asked by the event's title and time), or the "
+        "owner's click in Calendar (routes/calendar.py, after action_gate.record_external)",
     ("services/scheduling.py", "hold_slots"):
         "the hold_slots tool, which is outward; own calendar, no attendees",
     ("services/scheduling.py", "book_slot"):

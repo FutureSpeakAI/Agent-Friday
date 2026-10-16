@@ -131,7 +131,7 @@ def get_thread(thread_id: str, account_id: str | None = None) -> dict:
     for rec in accounts:
         creds = ga.credentials_for(rec['id'])
         if not creds:
-            last = {'kind': 'auth', 'error': '%s needs reconnecting.' % (rec.get('label') or 'This account')}
+            last = _no_creds(rec['id'], rec.get('label'))
             continue
         try:
             t = gmail_api.execute(_service(creds).users().threads().get(userId='me', id=thread_id, format='full'))
@@ -148,12 +148,26 @@ def get_thread(thread_id: str, account_id: str | None = None) -> dict:
     return {'status': 'error', **last}
 
 
+def _no_creds(account_id: str, label: str | None = None) -> dict:
+    """{kind, error} for an account whose credential did not load. "Needs
+    reconnecting" only when Google refused the grant: right after a restart
+    the first refresh can fail just because the network is not up yet, and
+    that is "could not check yet", not a broken account."""
+    from agent_friday.services import google_accounts as ga
+    who = label or 'That account'
+    if ga.last_problem(account_id) == 'unreachable':
+        return {'kind': 'unavailable',
+                'error': 'Could not reach Google to check %s yet; try again in a moment.' % who}
+    return {'kind': 'auth', 'error': '%s needs reconnecting.' % who}
+
+
 def get_raw(account_id: str, message_id: str) -> bytes:
     """The whole message as Gmail holds it (RFC 822 source)."""
     from agent_friday.services import google_accounts as ga
     creds = ga.credentials_for(account_id)
     if not creds:
-        raise gmail_api.GmailError('auth', 'That account needs reconnecting.')
+        p = _no_creds(account_id)
+        raise gmail_api.GmailError(p['kind'], p['error'])
     r = gmail_api.execute(_service(creds).users().messages().get(userId='me', id=message_id, format='raw'))
     return _b64(r.get('raw') or '')
 
@@ -162,7 +176,8 @@ def get_attachment(account_id: str, message_id: str, attachment_id: str) -> byte
     from agent_friday.services import google_accounts as ga
     creds = ga.credentials_for(account_id)
     if not creds:
-        raise gmail_api.GmailError('auth', 'That account needs reconnecting.')
+        p = _no_creds(account_id)
+        raise gmail_api.GmailError(p['kind'], p['error'])
     r = gmail_api.execute(_service(creds).users().messages().attachments().get(
         userId='me', messageId=message_id, id=attachment_id))
     return _b64(r.get('data') or '')

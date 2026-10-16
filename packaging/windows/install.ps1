@@ -98,6 +98,7 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $Here 'lib\Ollama.ps1')
 . (Join-Path $Here 'lib\Shortcuts.ps1')
 . (Join-Path $Here 'lib\Upgrade.ps1')
+. (Join-Path $Here 'lib\AppFiles.ps1')
 . (Join-Path $Here 'lib\Heal.ps1')
 . (Join-Path $Here 'lib\OfficeCli.ps1')
 
@@ -620,9 +621,44 @@ $null = Invoke-Step -Id 'app.copy' -Title 'Copying Friday onto this laptop' `
             $was = Get-InstalledAppVersion $AppDir
             if ($was) { Write-Log "Upgrading app files from $was to $Version" }
             else      { Write-Log "Replacing app files of unknown version with $Version" }
+            # UPDATE GUARD (lib\AppFiles.ps1). Every installed file is about to
+            # be deleted. Any that a person or a helper changed (against the
+            # app-files.sha256 the release shipped with) are copied to
+            # ~\.friday\overrides\replaced-<version>\ FIRST and named here. A
+            # copy that fails stops the step before anything is deleted, and
+            # says which files, why, and how to go on.
+            $changed = Get-ChangedAppFiles -AppDir $AppDir
+            foreach ($r in @($changed.Reparse)) { Write-Log "Update guard: not followed (junction or symlink): $r" }
+            foreach ($r in @($changed.Unlisted)) { Write-Log "Update guard: folder could not be read: $r" 'WARN' }
+            if ($changed.Total -gt 0 -or @($changed.Unlisted).Count -gt 0) {
+                $label = $was; if (-not $label) { $label = 'unknown-version' }
+                try {
+                    $saved = Backup-ChangedAppFiles -AppDir $AppDir -Version $label -Found $changed
+                } catch {
+                    $why = $_.Exception.Message
+                    Write-Log "Update guard: BACKUP INCOMPLETE, stopping before anything is deleted.`n$why" 'FAIL'
+                    Write-Host ''
+                    foreach ($ln in ($why -split "`r?`n")) { Say-Detail $ln }
+                    Say-Problem -What 'Some files you or a helper changed could not be backed up, so setup stopped before replacing anything (the list is just above).' `
+                                -WhatToDo 'Close Agent Friday and anything else that may have those files open, free some disk space if it is full, and run setup again. Or copy those files somewhere yourself, delete them from the install folder, and run setup again.'
+                    throw
+                }
+                Write-Log ("Update guard: {0} changed file(s) (compared by {1}) copied to {2} before replacing" -f `
+                           $saved.Files.Count, $changed.Basis, $saved.Dest) 'WARN'
+                foreach ($r in $saved.Files) { Write-Log "  changed, backed up, replaced: $r" }
+                Say-Detail ("{0} file(s) you or a helper changed will be replaced. They are backed up to {1}" -f $saved.Files.Count, $saved.Dest)
+                Add-InstallWarning ("{0} installed file(s) had been changed and were replaced by this update. Copies are in {1} (see REPLACED.txt there)." -f $saved.Files.Count, $saved.Dest)
+            } else {
+                Write-Log "Update guard: no installed file differs from what was shipped (compared by $($changed.Basis))."
+            }
             # BEFORE the delete. start.bat holds the vault passphrase and it
             # exists nowhere else - see the note above Save-AppUserFiles.
             [void](Save-AppUserFiles -AppDir $AppDir -KeepDir $keepDir)
+            # Unlink junctions/symlinks first, so the recursive delete below
+            # removes the links and never walks into what they point at.
+            foreach ($r in @(Remove-AppReparsePoints -AppDir $AppDir -Found $changed)) {
+                Write-Log "Update guard: unlinked (target untouched): $r"
+            }
             Remove-Item -LiteralPath $AppDir -Recurse -Force -ErrorAction SilentlyContinue
         }
         try {

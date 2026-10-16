@@ -58,37 +58,45 @@ def test_a_worker_start_records_spawn_startup_and_total(tmp_path, monkeypatch):
     assert rec["startup_s"] == 4.5 and rec["total_s"] == 20.0 and rec["import_s"] == 5.0
 
 
-def test_the_whisper_ear_asks_the_local_cache_before_the_hub(tmp_path, monkeypatch):
+def test_a_whisper_ear_whose_model_is_missing_refuses_by_name_and_never_fetches(tmp_path, monkeypatch):
+    """No hidden first-run download: the model is the consented, pinned
+    install in Settings > Voice; a load without it says which model is
+    missing instead of reaching the hub."""
+    from agent_friday.services import feature_models as fm
     calls = []
 
     class WhisperModel:
         def __init__(self, size, **kw):
             calls.append(dict(kw))
-            if kw.get("local_files_only"):
-                raise RuntimeError("not in the cache")
 
     monkeypatch.setitem(sys.modules, "faster_whisper",
                         types.SimpleNamespace(WhisperModel=WhisperModel))
+    monkeypatch.setattr(fm, "whisper_model_dir", lambda size, first_root=None: None)
     ear = lv.WhisperASR("base", force_cpu=True)
     monkeypatch.setattr(ear, "_download_root", lambda: tmp_path)
-    ear.load()
-    assert calls[0].get("local_files_only") is True, "the hub is not asked first"
-    assert not calls[1].get("local_files_only"), "first run: the explicit fetch follows"
+    with pytest.raises(fm.FeatureModelMissing) as e:
+        ear.load()
+    assert "whisper base" in str(e.value) and "not installed" in str(e.value)
+    assert calls == [], "no WhisperModel was constructed, so nothing could download"
 
 
 def test_the_whisper_ear_that_is_cached_never_calls_the_hub(tmp_path, monkeypatch):
+    from agent_friday.services import feature_models as fm
     calls = []
 
     class WhisperModel:
         def __init__(self, size, **kw):
-            calls.append(dict(kw))
+            calls.append(dict(kw, size=size))
 
     monkeypatch.setitem(sys.modules, "faster_whisper",
                         types.SimpleNamespace(WhisperModel=WhisperModel))
+    snap = tmp_path / "snap"
+    monkeypatch.setattr(fm, "whisper_model_dir", lambda size, first_root=None: snap)
     ear = lv.WhisperASR("base", force_cpu=True)
     monkeypatch.setattr(ear, "_download_root", lambda: tmp_path)
     ear.load()
     assert len(calls) == 1 and calls[0]["local_files_only"] is True
+    assert calls[0]["size"] == str(snap), "loaded by path from this computer"
 
 
 def test_the_gpu_worker_loads_whisper_from_the_local_cache_only():

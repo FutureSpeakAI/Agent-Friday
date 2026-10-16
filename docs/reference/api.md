@@ -111,8 +111,16 @@ Returns the full wiki directory tree.
 ### `POST /api/wiki/update`
 Change a page, or with `"auto": true` queue the change for approval (it then
 appears under pending, below). When `old_value` is found in the page it is
-replaced in place; otherwise `new_value` is appended under `## {section}`.
-A page that does not exist yet is created.
+replaced in place; otherwise `new_value` is appended at the end of the
+page's existing `{section}` heading (matched with or without `#`, at any
+level, ignoring case and spacing), or under a new `## {section}` when the
+page has none. A page that does not exist yet is created.
+
+Applied directly (no `auto`), an append or `replace_file` on a page that
+exists needs `before_sha256`: the SHA-256 of the page text (LF line endings)
+the caller showed. Without it, or when the page has changed since, the answer
+is 409 `stale` with the page's current `before_sha256`, and nothing is
+written. The owner's editor saves through `PUT /api/wiki/edit` instead.
 
 **Request:**
 ```json

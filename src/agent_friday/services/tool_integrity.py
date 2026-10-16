@@ -51,22 +51,38 @@ def build_leak_pattern(tool_names):
         names='|'.join(re.escape(n) for n in names)))
 
 
+# Tool-call MARKUP is a leak whatever name it carries: `<invoke name="x">`
+# (with or without a namespace prefix or a function_calls wrapper) and
+# `<tool_call>{"name": "x", ...}`. A local seat wrote the first into a chat
+# four times in a field report; the bracket/paren template above never saw it,
+# because the name sits in quotes. Routing lives in services/text_toolcalls.py.
+_MARKUP_RE = re.compile(
+    r'<(?:[A-Za-z_][\w.-]*:)?invoke\s+name\s*=\s*["\']([^"\']+)["\']'
+    r'|<tool_call>\s*\{\s*"name"\s*:\s*"([^"]+)"', re.IGNORECASE)
+
+
 def find_pseudo_toolcalls(text: str, tool_names) -> list[str]:
     """Return every registry tool name that appears as prose/pseudo-syntax in
-    `text` (outside code fences), instead of as a real structured tool call.
+    `text` (outside code fences), instead of as a real structured tool call,
+    plus every tool-call MARKUP block whatever its name.
 
-    An empty/None text or empty tool_names always returns [].
+    An empty/None text returns []; markup is found even with no tool_names.
     """
-    if not text or not tool_names:
+    if not text:
         return []
+    # Quoted lines ("> ...", an email or page being shown) are not the model's call.
+    unquoted = re.sub(r'(?m)^[ \t]{0,3}>[^\n]*$', ' ', _strip_code(text))
+    markup = [m.group(0).strip() for m in _MARKUP_RE.finditer(unquoted)]
+    if not tool_names:
+        return markup
     pattern = build_leak_pattern(tool_names)
     if pattern is None:
-        return []
+        return markup
     scanned = _strip_code(text)
     hits = []
     for m in pattern.finditer(scanned):
         hits.append(m.group(0).strip())
-    return hits
+    return markup + hits
 
 
 # ── B5: retry-scope isolation ──

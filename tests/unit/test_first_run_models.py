@@ -133,7 +133,9 @@ def test_both_models_download_verified_and_seat_after_they_install(fake_shortlis
     assert fake_shortlist["seated"] == [("fast_responder", "qwen3-1.7b"),
                                         ("deep_thinker", "bonsai2:27b")], "fast first, each only once installed"
     # the front, the speech ear and its runtime come through the voice installer's pinned path
-    assert fake_shortlist["fetched"] == ["voice-front-1.7b", "voice-ear-streaming", "sherpa-onnx"]
+    # ... and the whisper recognisers Alt+T and media transcripts load by path
+    assert fake_shortlist["fetched"] == ["voice-front-1.7b", "voice-ear-streaming", "sherpa-onnx",
+                                         "whisper-base", "whisper-base.en"]
     rec = model_store.get("bonsai2:27b")
     assert rec and Path(rec["path"]).exists() and rec["source"] == model_store.SOURCE_DOWNLOAD
     assert not req.exists() and req.with_name("first-run.done.json").exists(), "the request retires when everything is in"
@@ -215,7 +217,19 @@ def test_the_first_run_size_includes_the_speech_ear():
     row = frm._entry("fast_responder", "qwen3-1.7b", None)
     from agent_friday.services import voice_artifacts as va
     assert row["bytes_total"] == sum(va.size_bytes(a) for a in
-                                     ("voice-front-1.7b", "voice-ear-streaming", "sherpa-onnx"))
+                                     ("voice-front-1.7b", "voice-ear-streaming", "sherpa-onnx",
+                                      "whisper-base", "whisper-base.en"))
+
+
+def test_a_fresh_install_that_agreed_to_local_voice_gets_the_whisper_models():
+    """Before: the first-run download fetched the streaming ear only, so a fresh
+    install's push-to-transcribe and media transcripts refused until whisper
+    was installed by hand from Settings. The whisper models are part of what
+    the installer page sized and the person agreed to."""
+    assert {"whisper-base", "whisper-base.en"} <= set(frm.front_artifacts("ternary-bonsai:1.7b"))
+    doc = json.loads((Path(frm.__file__).resolve().parents[1] / "resources" /
+                      "voice_front_options.json").read_text(encoding="utf-8-sig"))
+    assert {"whisper-base", "whisper-base.en"} <= {c["artifact"] for c in doc["companions"]}
 
 
 def test_the_first_run_download_is_reported_on_the_models_route(tmp_path, monkeypatch):

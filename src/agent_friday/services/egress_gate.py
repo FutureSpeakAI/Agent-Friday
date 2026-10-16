@@ -49,6 +49,7 @@ only as a fallback for non-registry provider strings.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -113,6 +114,12 @@ def is_local_provider(name: str) -> bool:
 
 _LOG_LOCK = threading.Lock()
 _DEFAULT_LOG = friday_home() / "vault" / "egress-log.jsonl"
+
+#: Provider names friday.log may carry; any other provider is logged as "other"
+#: (the egress record keeps the exact name).
+_LOG_PROVIDERS = ("anthropic", "openai", "gemini", "google", "openrouter", "xai", "grok",
+                  "mistral", "groq", "deepseek", "perplexity", "together", "cloud",
+                  "ollama", "local", "brave", "firecrawl", "duckduckgo")
 
 # Structured logger for the single most security-sensitive line in the codebase —
 # every cloud egress allow/block decision. Using `print()` here (the prior state)
@@ -575,10 +582,22 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
     verdict = "ALLOW" if action == "allow" else "BLOCK"
     # Structured log (survives pythonw / no-console launches). INFO for allow,
     # WARNING for a block so a withheld leak is visible even at a raised log level.
+    # Each logged word is SELECTED from a constant table by comparison, never
+    # copied from the call (CodeQL py/clear-text-logging): the reason can quote
+    # the judgment model on the text, and the field path and tier were derived
+    # from it. All of them go to the egress record below, never to friday.log.
+    tier_word = "TIER_?"
+    for _num, _name in Tier.NAMES.items():
+        if tier == _num:
+            tier_word = _name
+    provider_word = "other"
+    for _p in _LOG_PROVIDERS:
+        if str(provider or "").lower() == _p:
+            provider_word = _p
     _dlog.log(
         logging.INFO if action == "allow" else logging.WARNING,
-        "%s provider=%s field=%s tier=%s (%s)",
-        verdict, provider, field, Tier.NAMES.get(tier, tier), reason,
+        "%s provider=%s tier=%s (field and reason: the egress record)",
+        verdict, provider_word, tier_word,
     )
     dest = log_path or _DEFAULT_LOG
     try:
@@ -799,6 +818,33 @@ def _gate_text(text: str, provider: str, field: str,
     rules the whole value would have been, a field that cannot be salvaged is
     still withheld, and non-JSON text keeps its previous behaviour exactly.
     """
+    # An email result under the cautious cloud consent: the money paragraphs the owner let go (a Send on
+    # their card, or a remembered thread or sender: services/cloud_release.py) pass as trusted here; the
+    # gate's every other rule still runs on them and on everything else.
+    mail = None
+    rel_tok = None
+    try:
+        from agent_friday.services import cloud_release as _cr
+        if _cr.looks_like_mail(text):
+            mail = _try_json(text)
+            rel = _cr.released(mail) if mail is not None else set()
+            if rel:
+                rel_tok = _RELEASED.set(frozenset(rel))
+    except Exception as e:
+        _dlog.debug("cloud release lookup skipped: %s", e)
+        mail = None
+    try:
+        return _gate_text_inner(text, provider, field, log_path, mail)
+    finally:
+        if rel_tok is not None:
+            _RELEASED.reset(rel_tok)
+
+
+#: Paragraphs the owner released to the cloud for the email result being gated (services/cloud_release).
+_RELEASED: contextvars.ContextVar = contextvars.ContextVar("egress_released", default=frozenset())
+
+
+def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> str:
     whole = _gate_text_span(text, provider, field, log_path)
     if whole == text:
         return whole                      # nothing withheld — no need to descend
@@ -806,6 +852,27 @@ def _gate_text(text: str, provider: str, field: str,
     if parsed is None:
         return whole                      # not JSON; the span pass already ran
     gated = _gate_json_value(parsed, provider, field, log_path)
+    if isinstance(gated, dict):
+        # Say WHAT was withheld and WHY at the top of the result, not only as a marker inside a
+        # field the model may skim past: a part of an email thread missing without a word reads as
+        # "that message said nothing" (owner rule: never a silent drop).
+        changed = _changed_paths(parsed, gated)
+        if changed:
+            shown = ", ".join(changed[:8]) + (" and %d more" % (len(changed) - 8) if len(changed) > 8 else "")
+            gated["privacy_gate"] = (
+                "The privacy gate withheld %d part(s) of this result because they were classified "
+                "sensitive; they stayed on this device: %s. Tell the owner which items (which message "
+                "or field) were withheld and why; they can be read on a local seat. Do not guess what "
+                "the withheld parts said." % (len(changed), shown))
+            if mail is not None:
+                # Money paragraphs: the owner is shown exactly that text and asked (no silent hold).
+                try:
+                    from agent_friday.services import cloud_release as _cr
+                    line = _cr.offer(parsed, gated, provider)
+                except Exception:
+                    line = ""
+                if line:
+                    gated["privacy_gate"] += " " + line
     try:
         return json.dumps(gated, default=str)
     except (TypeError, ValueError):
@@ -887,6 +954,10 @@ def _gate_text_span(text: str, provider: str, field: str,
             _log(provider, field, Tier.PUBLIC, "allow",
                  _origin_reason(f"provider-echo:{provider}"), log_path)
             return text
+    _released = _RELEASED.get()
+    if _released and _t_stripped in _released:
+        _log(provider, field, Tier.PUBLIC, "allow", "owner-released: you said Send on its card", log_path)
+        return text
     tier = _classify_cloud(text)
     if tier == Tier.PUBLIC:
         _log(provider, field, tier, "allow", "public-content", log_path)
@@ -910,6 +981,9 @@ def _gate_text_span(text: str, provider: str, field: str,
                 _p_origin = _PUBLIC_ORIGINS.get(_ps, "")
                 _p_echo = provider in _PROVIDER_ECHO.get(_ps, ())
                 _p_trusted = _ps in _TRUSTED_PARAS or _ps in _PUBLIC_PARAS or _p_echo
+            if not _p_trusted and _released and _ps in _released:
+                _p_trusted = True
+                _log(provider, field, Tier.PUBLIC, "allow", "owner-released: you said Send on its card", log_path)
             if _p_trusted:
                 gated.append(p)
                 trusted += 1
@@ -968,8 +1042,11 @@ def _gate_text_span(text: str, provider: str, field: str,
 
 
 def _gate_messages(messages: list, provider: str,
-                   log_path: Path | None = None) -> list:
-    """Gate a list of message dicts. Returns a new list; never mutates input."""
+                   log_path: Path | None = None, model: str = "") -> list:
+    """Gate a list of message dicts. Returns a new list; never mutates input.
+
+    `model` is the model the messages go to; a replayed public query is the
+    seat's own text only for that same (provider, model) (_gate_tool_args)."""
     gated = []
     for i, msg in enumerate(messages):
         if not isinstance(msg, dict):
@@ -1003,7 +1080,8 @@ def _gate_messages(messages: list, provider: str,
                             part, provider, f"message[{i}].content[{j}]", log_path))
                     elif isinstance(part, dict) and part.get("type") == "tool_use":
                         new_parts.append(_gate_tool_use(
-                            part, provider, f"message[{i}].content[{j}]", log_path))
+                            part, provider, f"message[{i}].content[{j}]", log_path,
+                            model=model))
                     else:
                         new_parts.append(part)
                 out = {**out, "content": new_parts}
@@ -1016,7 +1094,8 @@ def _gate_messages(messages: list, provider: str,
         # costs nothing and the same shape is a known leak vector).
         if isinstance(msg.get("tool_calls"), list):
             out = {**out, "tool_calls": _gate_tool_calls(
-                msg["tool_calls"], provider, f"message[{i}].tool_calls", log_path)}
+                msg["tool_calls"], provider, f"message[{i}].tool_calls", log_path,
+                model=model)}
         gated.append(out)
     return gated
 
@@ -1092,6 +1171,21 @@ def _gate_json_value(node, provider: str, field: str,
         return [_gate_json_value(v, provider, f"{field}[{i}]", log_path)
                 for i, v in enumerate(node)]
     return node
+
+
+def _changed_paths(old, new, prefix: str = "") -> list:
+    """The paths (``messages[2].text``) whose string value the JSON gate changed."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        out = []
+        for k, v in old.items():
+            out += _changed_paths(v, new.get(k), "%s.%s" % (prefix, k) if prefix else str(k))
+        return out
+    if isinstance(old, list) and isinstance(new, list):
+        out = []
+        for i, (a, b) in enumerate(zip(old, new)):
+            out += _changed_paths(a, b, "%s[%d]" % (prefix, i))
+        return out
+    return [prefix or "(whole result)"] if isinstance(old, str) and old != new else []
 
 
 def _gate_tool_result(part: dict, provider: str, field: str,
@@ -1283,7 +1377,7 @@ def _gate_arg_values(node, provider: str, field: str,
 
 
 def _gate_tool_use(part: dict, provider: str, field: str,
-                   log_path: Path | None = None) -> dict:
+                   log_path: Path | None = None, model: str = "") -> dict:
     """Gate the arguments of an assistant tool_use block replayed in history.
 
     The agent loop echoes each assistant tool_use back into the conversation
@@ -1303,12 +1397,88 @@ def _gate_tool_use(part: dict, provider: str, field: str,
     inp = part.get("input")
     if not isinstance(inp, (dict, list, str)):
         return part
-    return {**part, "input": _gate_arg_values(
-        inp, provider, f"{field}.tool_use.input", log_path)}
+    return {**part, "input": _gate_tool_args(
+        part.get("name"), inp, provider, f"{field}.tool_use.input", log_path,
+        model=model)}
+
+
+def _gate_tool_args(tool_name, args, provider: str, field: str,
+                    log_path: Path | None = None, model: str = ""):
+    """Gate a replayed tool call's arguments: a public query field the
+    receiving provider itself wrote by the public-query floor, everything
+    else by _gate_arg_values.
+
+    Owner decision (a), 2026-10-15 (privacy/public_query.py): the query text
+    of search_web / search_news / deep_research is not private because of its
+    topic. Without this, the vault gate let a cloud seat's Medicaid search
+    run and then this replay withheld the same query from the same seat on
+    the next turn.
+
+    PROVENANCE, NOT TOOL NAME. History can hold a search_web call a LOCAL
+    seat wrote from private context, one a different provider wrote, or one
+    check_action refused. Those were never this provider's text. So a public
+    field's value is floor-only here ONLY when public_query.is_cloud_query
+    (provider, value, model): the seat this history is being sent to (that
+    provider AND that model) wrote exactly that string and check_action
+    passed it. Any other value,
+    every other argument and every other tool is gated by _gate_arg_values,
+    exactly as before. A floor refusal withholds the value (and names
+    privacy.public_query in friday.log and the egress log).
+    """
+    try:
+        from agent_friday.privacy import public_query as _pq
+        fields = _pq.public_fields(str(tool_name or ""))
+    except Exception:
+        fields = frozenset()
+    if not fields or not isinstance(args, dict):
+        return _gate_arg_values(args, provider, field, log_path)
+
+    def _one(text: str, sub: str):
+        try:
+            mine = _pq.is_cloud_query(provider, text, model)
+        except Exception:
+            mine = False                 # unknown provenance: ordinary gate
+        if mine:
+            return _gate_public_query_value(text, tool_name, provider, sub, log_path)
+        return _gate_arg_values(text, provider, sub, log_path)
+
+    out = {}
+    for k, v in args.items():
+        sub = f"{field}.{k}"
+        if k in fields and isinstance(v, str):
+            out[k] = _one(v, sub)
+        elif k in fields and isinstance(v, list) and all(isinstance(x, str) for x in v):
+            out[k] = [_one(x, f"{sub}[{i}]") for i, x in enumerate(v)]
+        else:
+            out[k] = _gate_arg_values(v, provider, sub, log_path)
+    return out
+
+
+def _gate_public_query_value(text: str, tool_name, provider: str, field: str,
+                             log_path: Path | None = None) -> str:
+    """One public query string `provider` itself wrote (see _gate_tool_args):
+    the floor decides, topic is not consulted."""
+    if not text:
+        return text
+    try:
+        from agent_friday.privacy import public_query as _pq
+        refusal = _pq.check(text, action=str(tool_name or ""),
+                            provider=provider, surface=field)
+        why = None if refusal is None else f"{refusal.component} refused: {refusal.reason}"
+    except Exception as e:           # fail closed
+        why = f"privacy.public_query unavailable ({type(e).__name__})"
+    if why is None:
+        _log(provider, field, Tier.PUBLIC, "allow",
+             "public query text: never-send floor and owner identifiers "
+             "checked, topic not classified (owner decision 2026-10-15)",
+             log_path)
+        return text
+    _log(provider, field, Tier.SENSITIVE, "redact", why, log_path)
+    return _ARG_WITHHELD
 
 
 def _gate_tool_calls(tool_calls: list, provider: str, field: str,
-                     log_path: Path | None = None) -> list:
+                     log_path: Path | None = None, model: str = "") -> list:
     """Gate the arguments of OpenAI-shape tool_calls replayed in history.
 
     The OpenAI-compatible equivalent of _gate_tool_use, above, for the wire
@@ -1339,15 +1509,17 @@ def _gate_tool_calls(tool_calls: list, provider: str, field: str,
         if isinstance(args, str):
             parsed = _try_json(args)
             if parsed is not None:
-                gated_args = json.dumps(_gate_arg_values(
-                    parsed, provider, f"{field}.function.arguments", log_path))
+                gated_args = json.dumps(_gate_tool_args(
+                    fn.get("name"), parsed, provider,
+                    f"{field}.function.arguments", log_path, model=model))
             else:
                 g = _gate_text(args, provider,
                                f"{field}.function.arguments", log_path)
                 gated_args = g if (not args or g) else _ARG_WITHHELD
         elif isinstance(args, (dict, list)):
-            gated_args = _gate_arg_values(
-                args, provider, f"{field}.function.arguments", log_path)
+            gated_args = _gate_tool_args(
+                fn.get("name"), args, provider,
+                f"{field}.function.arguments", log_path, model=model)
         else:
             gated.append(tc)
             continue
@@ -1689,6 +1861,22 @@ def seal_outbound(
 
     # ── §5.5 step 1: deterministic identifier scrub, unconditional ──
     _lk = pii_lookup if isinstance(pii_lookup, dict) else {}
+    # The scrub's own lookup, so a held email's sender can be named for "remember for this sender"
+    # (services/cloud_release.py); it never leaves this process.
+    try:
+        from agent_friday.services import cloud_release as _cr
+        _lk_tok = _cr.LOOKUP.set(_lk)
+    except Exception:
+        _cr, _lk_tok = None, None
+    try:
+        return _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=model)
+    finally:
+        if _lk_tok is not None:
+            _cr.LOOKUP.reset(_lk_tok)
+
+
+def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
+    """seal_outbound's scrub and gate steps (§5.5), on its copy of the payload."""
     try:
         for key in ("system", "messages", "prompt", "context"):
             if key in sealed and not _unrestricted:
@@ -1726,8 +1914,11 @@ def seal_outbound(
 
     # Message history (Anthropic format: list of dicts)
     if "messages" in sealed and isinstance(sealed["messages"], list):
+        # The seat a replayed public query is checked against: the caller's
+        # model, else the model named in the payload itself.
         sealed["messages"] = _gate_messages(
-            sealed["messages"], provider, log_path
+            sealed["messages"], provider, log_path,
+            model=str(model or sealed.get("model") or ""),
         )
 
     # Tool definitions

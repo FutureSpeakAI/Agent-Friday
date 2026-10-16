@@ -157,6 +157,75 @@ def api_calendar_event(event_id):
     return jsonify({"status": "not_found", "event_id": event_id}), 404
 
 
+@calendar_bp.route('/api/calendar/events/<event_id>/delete', methods=['POST'])
+def api_calendar_event_delete(event_id):
+    """Delete one event: the owner's own click in Calendar (the page asks before it posts).
+    Body: {calendar_id, account_id, notify_guests}, all optional. Returns {status, ok, id, title, before,
+    guests_notified, guests_told} or an error that
+    says why nothing was deleted. A Quick Add event kept on this PC (id local-...) is removed from the local
+    list; every other id is a Google event (calendar_write.delete_event)."""
+    from agent_friday.governance import action_gate as _gate
+    from agent_friday.services import calendar_write as cw
+    from agent_friday.services import screen_click
+    # The owner's click on this server's own page (same-origin browser headers and the page's
+    # rotating token). A loopback caller without them, such as a command a model ran, deletes nothing.
+    if not screen_click.screen_session(request):
+        return jsonify({"status": "error", "ok": False, "id": str(event_id or ""),
+                        "message": "Nothing was deleted: events are deleted from the Calendar page."}), 403
+    data = request.get_json(silent=True) or {}
+    eid = str(event_id or "").strip()
+    if eid.startswith("local-"):
+        with _CALENDAR_LOCK:
+            events = _load_local_events()
+            gone = [e for e in events if str(e.get("id")) == eid]
+            if not gone:
+                return jsonify({"status": "error", "ok": False, "id": eid,
+                                "message": "That event was not found, so nothing was deleted."}), 404
+            _save_local_events([e for e in events if str(e.get("id")) != eid])
+        _drop_calendar_cache()
+        ev = gone[0]
+        before = {"title": ev.get("title") or "(no title)", "start": ev.get("start_time") or "",
+                  "end": ev.get("end_time") or "", "location": ev.get("location") or "", "calendar_id": "local"}
+        return jsonify({"status": "ok", "ok": True, "id": eid, "title": before["title"], "before": before})
+    try:
+        _gate.record_external("calendar:delete_event", surface="calendar_workspace", target=eid)
+    except _gate.Held as e:
+        print(f"  [calendar] delete of {eid} held by the action gate: {type(e).__name__}")
+        return jsonify({"status": "error", "ok": False, "id": eid,
+                        "message": "Nothing was deleted: the action gate held this delete. "
+                                   "Approve it from the card, or try again."}), 403
+    # The page's "notify guests" box: ticked sends Google's cancellation (sendUpdates=all); left out, the
+    # owner's default (Settings: calendar_delete_notify_guests, off).
+    ng = data.get("notify_guests")
+    res = cw.delete_event(eid, calendar_id=str(data.get("calendar_id") or "").strip() or "primary",
+                          account_id=str(data.get("account_id") or "").strip() or None,
+                          notify_guests=ng if isinstance(ng, bool) else None)
+    if not res.get("ok"):
+        # Friday's own sentences pass through; anything carrying a Google or library error is logged and
+        # shown as an error id (exception text never reaches the browser).
+        # Fixed sentences only: whatever Google or a library said goes to
+        # friday.log under an error id, never to the browser.
+        if res.get("gone") or res.get("not_found"):
+            why = "that event was already deleted or cannot be found."
+        elif res.get("needs_account"):
+            why = "no connected Google account can change that calendar."
+        elif res.get("needs_reconnect"):
+            why = ("Google Calendar is not connected with event editing. Reconnect it from "
+                   "Settings -> Connections.")
+        else:
+            _eid = uuid.uuid4().hex[:8]
+            print(f"  [calendar] delete of {eid} failed (error id {_eid}): {res.get('error')}")
+            why = "Google did not accept the delete (error id %s; details in friday.log)." % _eid
+        code = 404 if res.get("gone") or res.get("not_found") else 400
+        return jsonify({"status": "error", "ok": False, "id": eid, "message": "Nothing was deleted: " + why,
+                        "needs_reconnect": bool(res.get("needs_reconnect")),
+                        "needs_account": bool(res.get("needs_account"))}), code
+    return jsonify({"status": "ok", "ok": True, "id": res.get("id"), "title": res.get("title"),
+                    "before": res.get("before"), "account_id": res.get("account_id"),
+                    "calendar_id": res.get("calendar_id"), "guests_notified": bool(res.get("guests_notified")),
+                    "guests_told": res.get("guests_told") or ""})
+
+
 @calendar_bp.route('/api/calendar/prep/<event_id>', methods=['POST'])
 @visible_job('Meeting prep', kind='meeting_prep', workspace='calendar')
 def api_calendar_prep(event_id):

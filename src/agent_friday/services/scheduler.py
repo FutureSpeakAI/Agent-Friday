@@ -38,6 +38,8 @@ _log = logging.getLogger("friday.scheduler")
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_register, process_update
 from agent_friday.services.visible_jobs import visible_job
+from agent_friday.services.job_prompt import Job as _JobPromptJob
+from agent_friday.services import schedule_math as _sm
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
@@ -87,26 +89,56 @@ class RetiredSchedule(SkippedRun):
     visibly, rather than failing every day."""
 
 
-def _cloud_model_for(rec):
-    """The cloud model this local-only run may use instead, or None.
+class HeldRun(SkippedRun):
+    """A run held on purpose, with a named status and its reason
+    (services/heartbeat.py: connector_unavailable, blocked, budget_cap).
+    Recorded under that status in the run log; not a failure, not retried."""
 
-    Only for the built-in jobs the owner's `scheduled_cloud` answer covers, and
-    only when that answer is yes. The caller has already established that no
-    local seat is serving; a serving local seat always wins.
-    """
+    def __init__(self, status, reason):
+        self.status = str(status)
+        super().__init__(reason)
+
+
+def _cloud_model_for(rec):
+    """The cloud model the owner's `scheduled_cloud` answer allows this
+    local-only built-in onto in a LOCAL routing mode when no seat serves, or
+    None. Only the jobs the owner was shown when answering are covered. A
+    reading of `cloud_intent.background_route`, which decides; kept for the
+    callers that ask this one question."""
     try:
-        from agent_friday.services import scheduled_cloud as _sc
-        # Only the jobs the owner was shown when answering: a job added to
-        # LOCAL_ONLY_BY_DEFAULT later is not silently covered by that answer.
-        if (rec or {}).get("id") not in {sid for sid, _ in _sc.JOBS}:
-            return None
-        cfg = _sc.settings()
-        if not cfg.get("allow"):
-            return None
-        return _sc.model_for(rec.get("id"), cfg) or None
+        from agent_friday.services import cloud_intent as _ci
+        r = _ci.background_route((rec or {}).get("id"), local_serving=False,
+                                 mode="local_preferred")
+        return (r.model or None) if r.route == "cloud" else None
     except Exception as e:
         _log.debug("scheduled_cloud unavailable: %s", e)
         return None
+
+
+def _routine_route(rec):
+    """`cloud_intent.background_route` for a built-in routine job, or None for
+    any other schedule (an owner's own local-only job is local in every mode).
+    The local seat is probed only when the answer depends on it."""
+    sid = (rec or {}).get("id")
+    if sid not in LOCAL_ONLY_BY_DEFAULT:
+        return None
+    try:
+        from agent_friday.services import cloud_intent as _ci
+        return _ci.background_route(sid, local_serving=_resolve_local_seat)
+    except Exception as e:
+        _log.debug("background route unavailable for %s: %s", sid, e)
+        return None
+
+
+def _catch_up_ready(rec):
+    """May a run that waited for the local seat go now? Under a cloud routing
+    mode a routine job does not need the seat, so it goes."""
+    r = _routine_route(rec)
+    if r is None:
+        return _parked_reason() is None and bool(_resolve_local_seat())
+    if r.route == "cloud":
+        return True
+    return r.route == "local" and _parked_reason() is None
 
 
 def _paused(rec, reason, *, no_local_model=True):
@@ -278,7 +310,123 @@ def list_schedules() -> list:
     for r in recs:
         r["next_run"] = _next_run_ts(r, now)
         r["running"] = r.get("id") in _RUNNING
+        r.update(schedule_view(r))
     return recs
+
+
+#: Run statuses that mean "held on purpose, with a reason" (pinned model
+#: unavailable; the heartbeat's own holds, services/heartbeat.py).
+HELD_STATUSES = ("held", "connector_unavailable", "blocked", "budget_cap")
+
+
+def schedule_state(rec) -> tuple:
+    """(status, reason) as the desktop shows a schedule: scheduled, running,
+    held, failed or paused. `reason` is the last run's own words for held and
+    failed, else ""."""
+    rec = rec or {}
+    if rec.get("running") or rec.get("id") in _RUNNING:
+        return "running", ""
+    last = str(rec.get("last_status") or "")
+    if not rec.get("enabled", True):
+        if rec.get("trigger") == "once" and rec.get("last_run_ts"):
+            return "finished", ""
+        return "paused", ""
+    if last in HELD_STATUSES:
+        return "held", str(rec.get("last_summary") or "")
+    if last == "failed":
+        return "failed", str(rec.get("last_summary") or "")
+    return "scheduled", ""
+
+
+def pinned_models(rec) -> list:
+    """The models the owner pinned this saved job to: the scheduled prompt's
+    `task.model`, or a workflow's own and its steps' seats. Empty when the job
+    follows the ordinary routing (and for Friday's built-in routines, which
+    `cloud_intent.background_route` places)."""
+    task = (rec or {}).get("task") or {}
+    kind = task.get("kind", "builtin")
+    if kind == "builtin" or task.get("local_only"):
+        return []
+    out = []
+
+    def add(m):
+        m = str(m or "").strip()
+        if m and m not in out:
+            out.append(m)
+    add(task.get("model"))
+    if kind == "workflow" and task.get("ref"):
+        try:
+            from agent_friday.services import agent as _agent
+            chain = _agent.load_workflow_chain(task["ref"]) or {}
+        except Exception:
+            chain = {}
+        add(chain.get("seat"))
+        for st in chain.get("steps") or []:
+            add((st or {}).get("seat"))
+    return out
+
+
+def _pin_routes(rec) -> list:
+    """[(model, BackgroundRoute)] for each model this saved job is pinned to.
+    Raises HeldRun (status "held") when any of them cannot answer now."""
+    out = []
+    for m in pinned_models(rec):
+        from agent_friday.services import cloud_intent as _ci
+        r = _ci.pinned_job_route(m)
+        if r.route not in ("local", "cloud"):
+            raise HeldRun("held", "%s is held: %s. %s" % (
+                rec.get("name") or "This job", r.reason, HELD_TEXT[_held_policy(rec)]))
+        out.append((m, r))
+    return out
+
+
+def _pins_ready(rec) -> bool:
+    """Can every model this job is pinned to answer now? Asked by the tick for a held run waiting to
+    retry; never moves the job to another model."""
+    pins = pinned_models(rec)
+    if not pins:
+        return False
+    try:
+        from agent_friday.services import cloud_intent as _ci
+        return all(_ci.pinned_job_route(m).route in ("local", "cloud") for m in pins)
+    except Exception as e:
+        _log.debug("pinned model check failed for %s: %s", (rec or {}).get("id"), e)
+        return False
+
+
+def schedule_view(rec) -> dict:
+    """What every schedule list shows beside its timing: the model it runs on
+    (pinned, or what it follows), its status with the reason, and what happens
+    to a run missed while Friday is closed."""
+    status, reason = schedule_state(rec)
+    pins = pinned_models(rec)
+    task = (rec or {}).get("task") or {}
+    if pins:
+        model = ", ".join(pins)
+    elif task.get("local_only"):
+        model = "this computer's local model"
+    else:
+        try:
+            model = _orb_model_for(rec)
+        except Exception:
+            model = ""
+    out = {"status": status, "status_reason": reason, "model": model,
+           "model_pinned": bool(pins)}
+    if (rec or {}).get("source") != "builtin":
+        policy = _missed_policy(rec)
+        # The owner's default as it is now (Settings > General > Scheduled jobs), so a job card can
+        # offer "Follow my default" and say what that default currently is.
+        md, hd = _missed_policy({}), _held_policy({})
+        out.update(missed=policy, missed_text=MISSED_TEXT[policy],
+                   missed_own=(rec or {}).get("missed") in MISSED_POLICIES,
+                   missed_default=md, missed_default_text=MISSED_TEXT[md])
+        hp = _held_policy(rec)
+        out.update(on_held=hp, held_text=HELD_TEXT[hp],
+                   on_held_own=(rec or {}).get("on_held") in HELD_POLICIES,
+                   held_default=hd, held_default_text=HELD_TEXT[hd],
+                   held_retry_pending=bool((rec or {}).get("held_retry")) and hp == "retry",
+                   email_send=(rec or {}).get("email_send") is True)
+    return out
 
 
 def get_schedule(sid):
@@ -349,10 +497,18 @@ def _normalize_record(rec, *, source="user"):
         "created": rec.get("created", now),
         "updated": now,
     }
+    if out["source"] != "builtin":
+        # A new job takes the owner's default (Settings > General > Scheduled jobs:
+        # schedules.missed_default / held_default) as its own choice, changeable on its card.
+        out["missed"] = rec["missed"] if rec.get("missed") in MISSED_POLICIES else _missed_policy({})
+        out["on_held"] = rec["on_held"] if rec.get("on_held") in HELD_POLICIES else _held_policy({})
+        # A new job's emails are saved as drafts unless it is made to send (services/email_jobs).
+        if isinstance(rec.get("email_send"), bool):
+            out["email_send"] = rec["email_send"]
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
               "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
-              "finish_notice"):
+              "finish_notice", "slots_from", "missed_through", "held_retry"):
         if k in rec:
             out[k] = rec[k]
     return out
@@ -389,13 +545,34 @@ def update_schedule(sid, patch) -> dict | None:
         if not cur:
             return None
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
-                   "retry", "timeout_seconds", "finish_notice"}
+                   "retry", "timeout_seconds", "finish_notice", "missed", "on_held", "email_send"}
         before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
+                if k in ("missed", "on_held"):
+                    # "default" (or null) puts the job back on the owner's default choice.
+                    if v in (None, "default"):
+                        cur.pop(k, None)
+                        if k == "on_held":
+                            cur.pop("held_retry", None)
+                        continue
+                    if v not in (MISSED_POLICIES if k == "missed" else HELD_POLICIES):
+                        continue
+                    if k == "on_held" and v == "wait":
+                        cur.pop("held_retry", None)
+                if k == "email_send":
+                    # The owner's choice on the job's card: its emails are sent (each asks, unless
+                    # pre-approved) or saved as drafts. Kept outside `task`, so a pre-approval for
+                    # the job is not voided by it.
+                    if not isinstance(v, bool):
+                        continue
                 cur[k] = v
         changed_run_fields = before != _run_basis(cur)
         cur["updated"] = _time.time()
+        if changed_run_fields:
+            # A changed timetable, or a job switched back on, counts its slots
+            # from now: a slot that passed before the change is not "missed".
+            cur["slots_from"] = cur["updated"]
         # Re-enabling or rescheduling clears any pending retry backoff.
         if patch and ("enabled" in patch or "trigger" in patch or "spec" in patch):
             cur["retry_pending"] = False
@@ -467,7 +644,10 @@ def delete_schedule(sid) -> bool:
 #:
 #: local-only means STRICTLY local: if no local seat is serving, the run is
 #: SKIPPED with a reason rather than quietly sent to a paid provider. Cloud is
-#: only ever used when a job is explicitly opted in.
+#: only ever used when a job is explicitly opted in -- and the owner CHOOSING
+#: cloud_only IS that opt-in for the News routines and the heartbeat (not daily
+#: creation): they then run on their pinned cloud model. `cloud_intent.background_route`
+#: is the one place that decides (`_routine_route`).
 #:
 #: For scale: a cloud heartbeat cost $438.76 over 2,357 runs; pinned local, 46 of
 #: 47 runs cost $0.00. The one that escaped went through `_generate_agent`'s
@@ -573,6 +753,129 @@ def _spec_weekdays(spec):
         if out:
             return out
     return [int(spec.get("weekday", 6))]
+
+
+# ── The owner's calendar-timed jobs: slots, and a slot missed while closed ───
+#
+# A saved job the owner scheduled (daily / weekly / monthly at a time) is due
+# when its latest slot (`schedule_math.prev_fire`) is newer than the last time
+# it ran, was skipped, or had its timetable changed. That one rule covers the
+# normal tick and a restart: the store survives in schedules.json, so a slot
+# that passed while Friday was closed is still visible at the next start.
+#
+# A slot is MISSED when Friday first sees it more than MISSED_GRACE_S after
+# its time (closed, asleep, or busy). The owner's per-job choice (`missed`),
+# else their default (Settings: schedules.missed_default):
+#   run_once (default) - it runs ONCE at the next start, however many slots
+#                        passed, and its run says it ran late and why;
+#   skip               - the slot is recorded as missed in its history and the
+#                        job waits for its next slot.
+# Built-in routines keep their own same-day rules (catch-up, quiet hours).
+MISSED_POLICIES = ("run_once", "skip")
+DEFAULT_MISSED = "run_once"
+MISSED_GRACE_S = 600
+MISSED_TEXT = {
+    "run_once": "If a run is missed while Friday is closed, it runs once when Friday starts.",
+    "skip": "If a run is missed while Friday is closed, it is skipped until its next time.",
+}
+
+
+def _calendar_rule(rec) -> bool:
+    """Does this schedule use the slot rule above? Monthly always does (it is
+    new, nothing older relies on another rule); daily and weekly when the
+    owner made the job."""
+    trig = (rec or {}).get("trigger")
+    if trig == "monthly":
+        return True
+    kind = ((rec or {}).get("task") or {}).get("kind", "builtin")
+    return (trig in _sm.CALENDAR_TRIGGERS and (rec or {}).get("source") == "user"
+            and kind in ("agent_prompt", "workflow"))
+
+
+#: A run held because the model the owner pinned the job to cannot answer
+#: (`_pin_routes`). The owner's per-job choice (`on_held`), else their default
+#: (Settings: schedules.held_default):
+#:   retry (default) - the tick checks the pinned model each minute and runs the
+#:                     held run ONCE as soon as it answers, visibly, recorded;
+#:   wait            - the run waits for the job's next scheduled time.
+#: Either way a pinned job never moves to another model.
+HELD_POLICIES = ("retry", "wait")
+DEFAULT_HELD = "retry"
+HELD_TEXT = {
+    "retry": "It runs once as soon as the model is back (and otherwise at its next scheduled time).",
+    "wait": "It runs again at its next scheduled time, and Run now works once the model is back.",
+}
+
+
+def _missed_policy(rec) -> str:
+    p = (rec or {}).get("missed")
+    if p in MISSED_POLICIES:
+        return p
+    try:
+        from agent_friday.services import owner_choices as _oc
+        return _oc.missed_default()
+    except Exception:
+        return DEFAULT_MISSED
+
+
+def _held_policy(rec) -> str:
+    p = (rec or {}).get("on_held")
+    if p in HELD_POLICIES:
+        return p
+    try:
+        from agent_friday.services import owner_choices as _oc
+        return _oc.held_default()
+    except Exception:
+        return DEFAULT_HELD
+
+
+def _slot_basis(rec) -> float:
+    """Slots at or before this instant are spent: the last run, the last
+    skipped slot, or the moment the timetable was made or changed."""
+    def f(k):
+        try:
+            return float((rec or {}).get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    return max(f("last_run_ts"), f("missed_through"), f("slots_from") or f("created"))
+
+
+def _slot_words(ts) -> str:
+    try:
+        d = datetime.fromtimestamp(float(ts))
+        return d.strftime("%a %b %d at %H:%M").replace(" 0", " ")
+    except Exception:
+        return "its time"
+
+
+def _record_missed_skip(rec, slot_ts) -> None:
+    """The owner chose `skip`: the missed slot is written to the job's history
+    with the reason, and the job waits for its next slot."""
+    sid = rec.get("id")
+    summary = ("Missed its run on %s: Friday was not running then (or was busy), and "
+               "this job is set to skip a missed run." % _slot_words(slot_ts))
+    now = _time.time()
+    _patch_record(sid, missed_through=float(slot_ts), last_status="missed", last_summary=summary)
+    rec["missed_through"] = float(slot_ts)
+    _append_run({"id": sid, "run_id": f"run_{uuid.uuid4().hex[:10]}", "name": rec.get("name"),
+                 "started": now, "ended": now, "duration_ms": 0, "status": "missed",
+                 "summary": summary, "error": None, "manual": False})
+
+
+def _calendar_due(rec, now) -> bool:
+    prev = _sm.prev_fire(rec.get("trigger"), rec.get("spec") or {}, now)
+    if prev is None:
+        return False
+    slot = prev.timestamp()
+    if slot <= _slot_basis(rec):
+        return False
+    if now.timestamp() - slot <= MISSED_GRACE_S:
+        return True
+    if _missed_policy(rec) == "skip":
+        _record_missed_skip(rec, slot)
+        return False
+    rec["_missed_slot"] = slot        # dispatch says the run is late, and why
+    return True
 
 
 #: How long the user must be away before idle work starts, and the default
@@ -715,9 +1018,12 @@ def _cloud_cadence_holds(rec, now) -> bool:
     """
     if not (rec.get("task") or {}).get("local_only"):
         return False
-    if rec.get("id") != "sch_heartbeat" or not _cloud_model_for(rec):
+    if rec.get("id") != "sch_heartbeat":
         return False
-    if _resolve_local_seat():
+    # The heartbeat runs in the cloud under a chosen cloud_only, or by the
+    # owner's opt-in with no seat serving: either way, at the cloud cadence.
+    _r = _routine_route(rec)
+    if _r is None or _r.route != "cloud":
         return False
     try:
         from agent_friday.services import scheduled_cloud as _sc
@@ -792,7 +1098,7 @@ def _late_run_due(rec, now) -> bool:
     if cu:
         if cu.get("date") != now.strftime("%Y-%m-%d"):
             return False
-        return _parked_reason() is None and bool(_resolve_local_seat())
+        return _catch_up_ready(rec)
     if rec.get("trigger") == "interval" and _cloud_cadence_holds(rec, now):
         return False
     return True
@@ -910,6 +1216,13 @@ def _is_due_on_schedule(rec, now) -> bool:
     if rec.get("retry_pending"):
         return now.timestamp() >= (rec.get("not_before") or 0)
 
+    # A run held because its pinned model was unavailable runs ONCE as soon as
+    # that model answers again (the owner's `on_held` choice, default retry).
+    # Checked every tick; never moved to another model.
+    if rec.get("held_retry") and _held_policy(rec) == "retry" and _pins_ready(rec):
+        rec["_held_retry"] = dict(rec.get("held_retry") or {})
+        return True
+
     # A run that waited for the local seat is due again, the same day, as soon
     # as the seat is back. Polled at most once a minute (`not_before`).
     cu = rec.get("catch_up")
@@ -918,13 +1231,16 @@ def _is_due_on_schedule(rec, now) -> bool:
             return False          # the tick records it missed
         if (rec.get("not_before") or 0) > now.timestamp():
             return False
-        return _parked_reason() is None and bool(_resolve_local_seat())
+        return _catch_up_ready(rec)
 
     if (rec.get("not_before") or 0) > now.timestamp():
         return False
 
     trig = rec.get("trigger")
     spec = rec.get("spec") or {}
+
+    if _calendar_rule(rec):
+        return _calendar_due(rec, now)
 
     if trig == "interval":
         every = max(1, int(spec.get("every_minutes", 60)))
@@ -974,6 +1290,14 @@ def _next_run_ts(rec, now):
     trig = rec.get("trigger")
     spec = rec.get("spec") or {}
     try:
+        if _calendar_rule(rec):
+            prev = _sm.prev_fire(trig, spec, now)
+            if (prev is not None and prev.timestamp() > _slot_basis(rec)
+                    and (now.timestamp() - prev.timestamp() <= MISSED_GRACE_S
+                         or _missed_policy(rec) == "run_once")):
+                return prev.timestamp()        # due now: it runs on this tick
+            nxt = _sm.next_fire(trig, spec, now)
+            return nxt.timestamp() if nxt is not None else None
         if trig == "interval":
             every = max(1, int(spec.get("every_minutes", 60)))
             base = rec.get("last_run_ts") or now.timestamp()
@@ -1198,8 +1522,16 @@ def _notify_run(rec, status, summary):
                      source="scheduler", kind="schedule_retired", emitter="E06",
                      dedupe_key=f"sched-retired:{sid}")
             return
+        if status == "held":
+            _ne.push(title=f"⏸ {name} is held", body=(summary or "")[:900],
+                     priority="medium", source="scheduler", kind="scheduled_task",
+                     actions=[{"label": "View workflows", "workspace": "workflows"}],
+                     emitter="SJ1", dedupe_key=f"sched-held:{sid}",
+                     resolve_key=f"sched-held:{sid}")
+            return
         _ne.resolve(f"sched-fail:{sid}")
         _ne.resolve(f"sched-wait:{sid}")
+        _ne.resolve(f"sched-held:{sid}")
         if not finish_notice_on(rec):
             return
         _ne.push(title=f"\u2713 {name} ran",
@@ -1368,14 +1700,19 @@ def _run_task_inner(rec):
                 # the cloud transports refuse inside.
                 if task.get("local_only"):
                     from agent_friday.services import local_only_guard as _log_guard
-                    # The owner allowed these jobs onto a cloud model when no local
-                    # one serves: run on exactly that model, and NOT inside the
-                    # local-only guard, which would refuse it.
-                    # News routines never take the cloud pin: News is local-only
-                    # and waits for the seat instead (`local_news_run`).
-                    _cm = None if rec.get("id") in NEWS_ROUTINES else _cloud_model_for(rec)
-                    if _cm and not _resolve_local_seat():
-                        with _log_guard.cloud_pinned(_cm, meta.get("label") or ref):
+                    # Where a built-in routine runs is `cloud_intent.background_route`:
+                    # under a cloud_only the owner chose, the mode is the consent; otherwise
+                    # mode the owner may have allowed daily creation and the heartbeat
+                    # onto a cloud model when no local one serves (News is not covered
+                    # and waits for the seat, `local_news_run`). Either way the run is
+                    # pinned to exactly that model, and NOT inside the local-only
+                    # guard, which would refuse it.
+                    _route = _routine_route(rec)
+                    if _route is not None and _route.route == "cloud":
+                        _log.info("scheduled %s runs on the cloud model %s: %s",
+                                  rec.get("id"), _route.model or "(configured)",
+                                  _route.reason)
+                        with _log_guard.cloud_pinned(_route.model, meta.get("label") or ref):
                             return meta["fn"]()
                     _label = meta.get("label") or ref
                     with _log_guard.local_only(_label):
@@ -1407,13 +1744,32 @@ def _run_task_inner(rec):
                 return meta["fn"]()
         except _bg.JobCancelled as exc:
             raise PausedNoLocalModel(str(exc)) from exc
+    # A saved job the owner pinned to a model runs on that model or not at
+    # all: `cloud_intent.pinned_job_route` decides, and a pin that cannot
+    # answer holds the run with its reason instead of moving it elsewhere.
+    pin_routes = _pin_routes(rec)
     if kind == "workflow":
+        cloud = {r.model for _, r in pin_routes if r.route == "cloud"}
+        if len(cloud) == 1 and all(r.route == "cloud" for _, r in pin_routes):
+            from agent_friday.services import local_only_guard as _log_guard
+            with _log_guard.cloud_pinned(next(iter(cloud)), rec.get("name") or "this workflow"):
+                return _run_workflow(rec, task)
         return _run_workflow(rec, task)
+    # The heartbeat: a deterministic pre-check, and one slim model call only
+    # when something changed (services/heartbeat.py). `heartbeat.precheck:
+    # false` sends it down the agent_prompt path below, as before.
+    from agent_friday.services import heartbeat as _hb
+    if _hb.applies(rec):
+        return _hb.run(rec)
     # agent_prompt — run through the existing background-task machinery so the
     # scheduled run gets its own fresh vault context, orbs, and verification.
     prompt = task.get("prompt") or ""
     if not prompt.strip():
         raise RuntimeError("agent_prompt schedule has no prompt")
+    if rec.get("email_send") is True:
+        # services/email_jobs: this job was made to send its emails; draft_email is a send here.
+        prompt += ("\n\n(This job sends the emails it writes: call draft_email with send=true. "
+                   "Each send waits on the owner's card unless they pre-approved the recipients.)")
     from agent_friday.services.agent import _spawn_task, _task_snapshot
     run_id = rec.get("_active_run_id")
     # A scheduled agent_prompt is represented by the spawned agent's OWN orb
@@ -1437,17 +1793,32 @@ def _run_task_inner(rec):
     _model = task.get("model")
     _cloud = None
     if task.get("local_only"):
-        _model = _resolve_local_seat()
-        if not _model:
-            # No local seat. The owner may have allowed this job onto one
-            # cloud model; otherwise it is skipped, as before.
-            _cloud = _cloud_model_for(rec)
-            if not _cloud:
-                _paused(rec,
-                        "local_only schedule skipped: no local seat is serving "
-                        "right now, and this job is not permitted to run in "
-                        "the cloud")
+        # A built-in routine (the heartbeat) asks `cloud_intent.background_route`:
+        # under a cloud_only the owner chose it runs on its cloud model (the mode is
+        # the consent); otherwise on the serving seat, or on the cloud model the
+        # owner allowed when none serves, or it is skipped. An owner's own
+        # local-only schedule is local in every mode.
+        _route = _routine_route(rec)
+        if _route is not None and _route.route == "cloud":
+            _cloud = _route.model or None
+            _log.info("scheduled %s runs on the cloud model %s: %s",
+                      rec.get("id"), _cloud or "(none configured)", _route.reason)
+        else:
+            _model = _route.local_model if _route is not None else _resolve_local_seat()
+        if not _cloud and not _model:
+            _paused(rec,
+                    "local_only schedule skipped: no local seat is serving "
+                    "right now, and this job is not permitted to run in "
+                    "the cloud")
+        if _cloud:
             _model = _cloud
+    _pin_local = False
+    if pin_routes and not task.get("local_only"):
+        _pr = pin_routes[0][1]
+        if _pr.route == "cloud":
+            _cloud = _model = _pr.model
+        else:
+            _model, _pin_local = pin_routes[0][0], True
     # Pinning the model at spawn is not the same as forbidding cloud for the
     # whole run: `_generate_agent`'s fallback ladder can retry a failed leg on
     # another provider, which is how a pinned-local heartbeat run can still
@@ -1477,7 +1848,9 @@ def _run_task_inner(rec):
         tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                           description=f"scheduled:{rec.get('id')}", orb_icon="⏰",
                           tools=task.get("tools"), model=_model,
-                          schedule_id=rec.get("id"), job=_sched_job)
+                          schedule_id=rec.get("id"), job=_sched_job,
+                          # A job pinned to a local model runs every leg there.
+                          **({"pin_to_seat": True} if _pin_local else {}))
     # Link the scheduler's process orb to the spawned task so the notification
     # detail panel can stream the task's live log.
     orb_id = rec.get("_orb_id")
@@ -1698,6 +2071,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
 
     def _body():
         status, summary, err = "complete", "", None
+        outcome = None              # a job's own outcome word (the heartbeat's)
         rec_live = dict(rec, _active_run_id=run_id, _orb_id=orb_id, _manual=bool(manual))
         if orb_id:
             try:
@@ -1708,9 +2082,18 @@ def dispatch(rec, *, manual=False, require_enabled=False):
         try:
             result = _run_task(rec_live)
             status = result.status if isinstance(result, WorkflowRunResult) else "complete"
+            if isinstance(result, dict) and result.get("outcome"):
+                outcome = str(result["outcome"])
             summary = _summarize(result)
             if _late_slot_day(rec):
                 summary = "Ran late: it came due in %s. " % _cause_words(_late_cause(rec)) + summary
+            if rec.get("_missed_slot"):
+                summary = ("Ran late: its run on %s was missed while Friday was not running, and "
+                           "this job runs a missed run once. " % _slot_words(rec["_missed_slot"])) + summary
+            if rec.get("_held_retry"):
+                summary = ("Ran when its pinned model was back: the run held on %s waited for it, and "
+                           "this job runs a held run once its model returns. "
+                           % _slot_words((rec["_held_retry"] or {}).get("since"))) + summary
             if catch_up:
                 summary = _late_note(catch_up, started) + (
                     " " + summary if summary else "")
@@ -1728,7 +2111,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                 err = summary
                 _patch_record(sid, last_status="failed", last_summary=summary,
                               retry_pending=False, retry_count=0, not_before=0,
-                              catch_up=None)
+                              catch_up=None, held_retry=None)
                 return
             if orb_id:
                 try:
@@ -1744,12 +2127,13 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             _mode = rec.get("notify", "on_complete")
             _patch_record(sid, last_status=status, last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0,
-                          catch_up=None)
+                          catch_up=None, held_retry=None)
             try:
                 from agent_friday.services.voice_engine import _notif_engine as _ne_ok
                 if _ne_ok:
                     _ne_ok.resolve(f"sched-fail:{sid}")
                     _ne_ok.resolve(f"sched-wait:{sid}")
+                    _ne_ok.resolve(f"sched-held:{sid}")
             except Exception:
                 pass
             if isinstance(result, WorkflowRunResult) or _mode in ("silent", "never"):
@@ -1795,6 +2179,29 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             status, summary = "skipped", str(e)
             _patch_record(sid, last_status="skipped", last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0)
+        except HeldRun as e:
+            # Held on purpose under a named status (the heartbeat's
+            # connector_unavailable / blocked / budget_cap): recorded as that
+            # status with its reason, not retried, no failure card. A
+            # status-mode schedule's one panel entry says why.
+            status, summary = e.status, str(e)
+            outcome = e.status
+            _log.info("schedule %s held (%s): %s", sid, status, summary)
+            # Held by its pinned model: with `retry` the tick runs it once when the model answers
+            # again (`_is_due_on_schedule`); the first hold's time is kept for the run's own words.
+            held_retry = None
+            if status == "held" and _held_policy(rec) == "retry" and pinned_models(rec):
+                held_retry = dict(rec.get("held_retry") or rec.get("_held_retry") or {}) or {
+                    "since": started, "reason": summary}
+            _patch_record(sid, last_status=status, last_summary=summary,
+                          retry_pending=False, retry_count=0, not_before=0,
+                          held_retry=held_retry)
+            if rec.get("notify") == "status":
+                _notify_status(rec, "Held (%s): %s" % (status, summary))
+            elif status == "held":
+                # A saved job held by its pinned model: one card per job,
+                # closed by its next run that goes.
+                _notify_run(rec, "held", summary)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"
             # print_exc() writes to stderr, which the packaged app has none
@@ -1823,7 +2230,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                 summary = err
                 _patch_record(sid, last_status="failed", last_summary=err,
                               retry_pending=False, retry_count=0, not_before=0,
-                              catch_up=None)
+                              catch_up=None, held_retry=None)
                 _notify_run(rec, "failed", err)
         finally:
             ended = _time.time()
@@ -1833,6 +2240,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                 "duration_ms": int((ended - started) * 1000),
                 "status": status, "summary": summary, "error": err,
                 "manual": manual,
+                **({"outcome": outcome} if outcome else {}),
             })
             if orb_id:
                 try:
@@ -2184,6 +2592,13 @@ def _register_default_builtin_tasks():
         print(f"  [scheduler] laya_personal_refit unavailable: {e}")
 
 
+#: The afternoon briefing on the slim job prompt (services/job_prompt.py).
+_AFTERNOON_BRIEFING_JOB = _JobPromptJob(
+    name="Afternoon briefing",
+    instructions="You write the owner's afternoon briefing from the live data "
+                 "you are given.")
+
+
 @visible_job('Afternoon briefing', kind='briefing', workspace='news')
 def _afternoon_briefing_job():
     """Synthesize the afternoon briefing markdown and persist it (so the
@@ -2206,13 +2621,18 @@ def _afternoon_briefing_job():
         + f"{live_context}"
     )
     # UNATTENDED: this runs daily at 16:00 with nobody watching —
-    # a gating gap here leaks silently, every day, not once. Gate exactly like
-    # every other briefing call site rather than trusting the egress
-    # classifier alone.
-    system = _get_friday_system_prompt(
-        keywords=prompt, workspace="briefing",
-        provider=_predict_route_provider(keywords=prompt, workspace="briefing"),
-        vault_control=_gated_vault_control())
+    # a gating gap here leaks silently, every day, not once. A routine job, so
+    # it gets the slim job prompt (services/job_prompt.py): no vault, persona or
+    # tool catalogue in the system prompt at all, only the live data above.
+    # The owner's `job_prompts.slim: false` brings back the full prompt, gated
+    # exactly like every other briefing call site.
+    from agent_friday.services import job_prompt
+    system = job_prompt.build(
+        _AFTERNOON_BRIEFING_JOB, prompt,
+        full_system=lambda: _get_friday_system_prompt(
+            keywords=prompt, workspace="briefing",
+            provider=_predict_route_provider(keywords=prompt, workspace="briefing"),
+            vault_control=_gated_vault_control())).system
     from agent_friday.services.news_engine import local_news_run
     with local_news_run("Afternoon Briefing"):
         content = _generate_text([{"role": "user", "content": prompt}], system=system,
@@ -2553,6 +2973,18 @@ def start_scheduler():
     _register_default_builtin_tasks()
     _seed_and_reconcile()
     _seed_default_agent_schedules()
+    try:
+        # Once: jobs made to send email before draft_email saved drafts keep sending.
+        from agent_friday.services import email_jobs as _ej
+        _ej.migrate()
+    except Exception as e:
+        _log.warning("email jobs were not checked for sending: %s", e)
+    try:
+        # Once ever: a weekly podcast that is two voices is offered one voice (Switch / Keep).
+        from agent_friday.services import podcast_engine as _pe
+        _pe.maybe_offer_weekly_one_voice()
+    except Exception as e:
+        _log.debug("weekly one-voice offer not checked: %s", e)
     if core._TESTING:
         return
     threading.Thread(target=_loop, daemon=True).start()

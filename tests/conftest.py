@@ -448,6 +448,23 @@ def _fresh_health_cache(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_gpu(request, monkeypatch):
+    """The ear's GPU probe (services/gpu_probe) asks CTranslate2 and nvidia-smi,
+    not torch, so a test that reaches the device choice unstubbed would ask the
+    real card. CUDA is hidden and the probe's caches start empty; a test that
+    means to look past this says so with ``@pytest.mark.real_gpu``."""
+    if request.node.get_closest_marker("real_gpu") is None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
+    gp = sys.modules.get("agent_friday.services.gpu_probe")
+    if gp is not None:
+        gp.reset()
+    yield
+    gp = sys.modules.get("agent_friday.services.gpu_probe")
+    if gp is not None:
+        gp.reset()
+
+
+@pytest.fixture(autouse=True)
 def _no_local_seat_is_serving(monkeypatch):
     """By default, no local seat is serving.
 
@@ -742,7 +759,7 @@ def _put_back(path: Path, before: bytes | None) -> None:
             err = e
     raise RuntimeError(
         "could not restore %s after this test file (%s); every later file in "
-        "this process would inherit the settings it left" % (path, err))
+        "this process would inherit the state it left" % (path, err))
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -776,6 +793,58 @@ def _settings_do_not_outlive_their_file():
         core = sys.modules.get("agent_friday.core")
         if core is not None:
             core._invalidate_settings_cache()
+
+
+#: The stores the top bar's Activity chip counts from (services/activity_lane:
+#: needs-you = pending approvals + needs-you notices, updates = today's FYIs).
+_TOP_BAR_STORES = ("notifications.json", "notif_trigger_state.json", "approvals.json")
+
+
+def _top_bar_store_paths() -> list[Path]:
+    """The shared-home copies of those stores: the loaded modules' own paths
+    (what the app actually writes) plus the home default (for a module the
+    test file imports later)."""
+    from agent_friday.paths import friday_home
+    paths = {friday_home() / name for name in _TOP_BAR_STORES}
+    ne = sys.modules.get("agent_friday.notifications_engine")
+    if ne is not None:
+        paths.update(Path(p) for p in (getattr(ne, "NOTIF_FILE", None),
+                                       getattr(ne, "TRIGGER_STATE_FILE", None)) if p)
+    ap = sys.modules.get("agent_friday.services.approvals")
+    if ap is not None and getattr(ap, "APPROVALS_FILE", None):
+        paths.add(Path(ap.APPROVALS_FILE))
+    return sorted(paths)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _notices_and_approvals_do_not_outlive_their_file():
+    """Each test file leaves the notice and approval stores as it found them.
+
+    Same leak as settings.json above, other stores: every test in a process
+    shares one temp home, so a seat change (a "seat_change" needs-you notice),
+    an approval card a test raises and never decides, or an FYI stays in
+    notifications.json / approvals.json for every later file on that worker.
+    The top bar counts them: after 61 ordinary API files the Activity chip read
+    "9 need you" on a CI runner (34 on the release PC), grew to its 300 px
+    cap, and the Windows top bar folded it into its hidden overflow pull-out,
+    so tests/api/test_workspace_job_card_ui.py timed out clicking a chip that
+    was drawn but not visible (sky gate, 2026-10-15). Which files share a
+    worker is up to --dist loadfile, so it came and went with the file count
+    (tests/unit/test_notices_do_not_leak_between_files.py runs leakers and a
+    clean-top-bar probe in one process).
+
+    The bytes, or the files' absence, are put back when the test file ends.
+    """
+    paths = _top_bar_store_paths()
+    before = {}
+    for p in paths:
+        try:
+            before[p] = p.read_bytes()
+        except FileNotFoundError:
+            before[p] = None
+    yield
+    for p in set(paths) | set(_top_bar_store_paths()):
+        _put_back(p, before.get(p))
 
 
 @pytest.fixture(autouse=True)

@@ -7,6 +7,7 @@ Records live in [`docs/decisions/`](decisions/); this file is the index.
 
 | Date | Decision | Status |
 |---|---|---|
+| 2026-10-15 | [Public query text is not private because of its topic](decisions/2026-10-15-public-query-policy.md) — a cloud seat's search/news/research queries are checked only against the never-send floor and the owner's identifiers (URLs keep the topic gate); amended 2026-10-16: a search that shares private conversation text asks the owner on a Send / Don't send card | implemented |
 | 2026-09-09 | [Recall can be poisoned by a broken display](decisions/2026-09-09-recall-poisoned-by-broken-display.md) — live state is never answerable from memory | implemented |
 | 2026-09-04 | [Five dead settings](decisions/2026-09-04-five-dead-settings.md) — a control ships only with its enforcement and a test that fails if the enforcement is removed | implemented |
 | 2026-08-24 | [Pending classifier calls](decisions/2026-08-24-pending-classifier-calls.md) | implemented |
