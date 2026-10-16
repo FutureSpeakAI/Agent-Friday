@@ -113,21 +113,21 @@ def test_local_ai_changes_no_privacy_or_routing_setting(client, home, monkeypatc
 def test_test_connection_says_not_connected_then_fail_then_pass(client, home, monkeypatch):
     from agent_friday.services import credential_store as cs
     import requests
-    r = client.post("/api/setup/connections/provider:groq/test").get_json()
+    r = client.post("/api/setup/connections/provider:groq/test", json={}).get_json()
     assert r["state"] == "not_connected" and r["fix"], r
     try:
         assert client.post("/api/providers/groq/key", json={"key": FAKE_GROQ}).status_code == 200
         monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(401, {"error": "invalid"}))
-        r = client.post("/api/setup/connections/provider:groq/test")
+        r = client.post("/api/setup/connections/provider:groq/test", json={})
         body = r.get_data(as_text=True)
         r = r.get_json()
         assert r["state"] == "fail" and "refused" in r["text"] and r["fix"], r
         assert FAKE_GROQ not in body and FAKE_GROQ[-8:] not in body
         monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(200, {"data": [{"id": "m"}]}))
-        r = client.post("/api/setup/connections/provider:groq/test").get_json()
+        r = client.post("/api/setup/connections/provider:groq/test", json={}).get_json()
         assert r["state"] == "pass", r
         monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(429, {"error": {"message": "insufficient_quota"}}))
-        r = client.post("/api/setup/connections/provider:groq/test").get_json()
+        r = client.post("/api/setup/connections/provider:groq/test", json={}).get_json()
         assert r["state"] == "fail" and "credit" in r["text"], r
         listing = client.get("/api/setup/connections").get_data(as_text=True)
         assert FAKE_GROQ not in listing and FAKE_GROQ[-8:] not in listing
@@ -145,7 +145,7 @@ def test_an_unreachable_provider_is_unknown_not_failed(client, home, monkeypatch
     try:
         client.post("/api/providers/groq/key", json={"key": FAKE_GROQ})
         monkeypatch.setattr(requests, "get", boom)
-        r = client.post("/api/setup/connections/provider:groq/test").get_json()
+        r = client.post("/api/setup/connections/provider:groq/test", json={}).get_json()
         assert r["state"] == "unknown" and "isn't a verdict" in r["text"], r
     finally:
         cs.delete_provider_key("groq")
@@ -162,7 +162,7 @@ def test_a_local_runtime_that_is_not_running_says_how_to_start_it(client, home, 
         def is_available(self):
             return False
     monkeypatch.setattr(om, "get_manager", lambda *a, **k: _Off())
-    r = client.post("/api/setup/connections/local:ollama/test").get_json()
+    r = client.post("/api/setup/connections/local:ollama/test", json={}).get_json()
     assert r["state"] == "fail" and "ollama.com/download" in r["fix"], r
 
 
@@ -256,3 +256,12 @@ def test_the_actions_are_refused_from_another_origin(client, home):
     r = client.post("/api/setup/connections/local-only", json={"on": True},
                     headers={"Origin": "https://evil.example"})
     assert r.status_code == 403
+
+
+def test_each_card_says_what_it_can_reach_once(client, home):
+    for it in client.get("/api/setup/connections").get_json()["items"]:
+        lines = [p["text"] for p in it["permissions"]] + it["access"]
+        assert len(lines) == len(set(lines)), (it["id"], lines)
+    kie = next(i for i in client.get("/api/setup/connections").get_json()["items"]
+               if i["id"] == "provider:kie")
+    assert kie["category"] == "creative" and "generation" in kie["unlocks"]

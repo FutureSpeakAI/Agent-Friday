@@ -195,6 +195,7 @@ GUIDE: dict = {
     # Creative and media
     "provider:kie": {
         "signup": "https://kie.ai/api-key",
+        "unlocks": "Image, video and audio generation from kie.ai's model marketplace.",
         "cost": "Paid per generation.",
     },
     "provider:elevenlabs": {
