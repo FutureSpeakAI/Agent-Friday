@@ -2182,6 +2182,10 @@ def chat():
             except Exception:
                 return None
 
+        # What the household capture did with this message (set once the turn's
+        # context exists, below); its note rides in this turn's tail.
+        _household_note = {"text": ""}
+
         def _prep_for(provider, model=None):
             """The system prompt for `provider`, in two parts.
 
@@ -2290,6 +2294,8 @@ def chat():
                     _conversation_id, exclude_id=_accepted_id)
             except Exception:
                 pass
+            if _household_note["text"]:
+                tail = tail + "\n\n" + _household_note["text"] + "\n"
             if voice_mode:
                 # Constant while voice mode is on, so it belongs to the head;
                 # at its end, not its start, so it never moves the prefix.
@@ -2410,6 +2416,15 @@ def chat():
         _confirmed_response = _confirmed_action_response(message, _sess_ctx)
         if _confirmed_response is not None:
             return _confirmed_response
+        # The owner stated household basics: say what happened to them in this
+        # turn's context, so the reply neither claims nor repeats the save.
+        _hh_note = str((_sess_ctx.get("household_capture") or {}).get("note") or "")
+        if _hh_note:
+            _household_note["text"] = _hh_note
+            try:
+                system_prompt, sources, pii_lookup = _prep_for(_provider)
+            except Exception:
+                pass
 
         # ── Safety net: local-first, no Anthropic key. ──
         # The router classifies every tool-enabled chat as TOOL_USE → cloud (and

@@ -2600,6 +2600,14 @@ def _tool_search_wiki(inp):
     q_low = query.lower()
 
     results = []
+    # The memory card's lines about the owner are searched first: the facts
+    # the owner stated (who is in the household, their ages) live there, not
+    # in a wiki page. Gated for a cloud reader like the prompt head.
+    try:
+        from agent_friday.services import core_memory_tools as _cmt
+        results.extend(_cmt.search_card(query, limit=min(3, limit)))
+    except Exception:
+        pass
     # A call under a time budget (a local seat's, services/tool_deadline.py)
     # stops scanning when it runs out and returns the hits found so far.
     from agent_friday.services import tool_deadline as _td
@@ -12608,6 +12616,17 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     # Every turn gets an id. The gate uses it to tell "the user did not answer
     # me" from "the model called the same tool twice in one breath".
     ctx["confirm_turn"] = uuid.uuid4().hex[:12]
+    # Household basics the owner states here ("I am 52, my husband is 50")
+    # are read by fixed patterns from this message alone and saved to the
+    # memory card under its own-words rule, so they never depend on a model
+    # choosing to call update_core_memory (services/core_memory_tools).
+    try:
+        from agent_friday.services import core_memory_tools as _cmt
+        _hh = _cmt.capture_household(message, ctx)
+        if _hh.get("note"):
+            ctx["household_capture"] = _hh
+    except Exception as e:
+        _log.debug("household capture skipped: %s", e)
 
     with _PENDING_LOCK:
         bucket = dict(_PENDING_CONFIRMATIONS.get(session_id) or {})
