@@ -63,6 +63,41 @@ LOCAL_PROVIDERS = {"ollama", "local"}
 LOCAL_SINK_TOOLS = frozenset({"learn_skill", "write_file"})
 
 
+# ── Local handoff: data moving TO an on-device model ────────────────────────
+# `switch_seat` (services/seat_handoff) raises ONE approval card that, once
+# the owner approves it, hands a task to the local model or moves the chat to
+# it. Its arguments are authored by the provider (it has already seen them),
+# they are stored on this machine in the card, and the tool returns only the
+# card id and the local model's name. A cloud-seat input-tier deny there would
+# refuse the one route by which private work reaches a model allowed to see
+# it, so the call is exempt -- but only when the caller has resolved the
+# handoff's target model and that model really runs on this machine. A
+# cloud-tagged Ollama model (`glm-4.6:cloud`) is relayed to ollama.com and is
+# cloud for this purpose whatever its provider says; with no verified target
+# the deny stands. Every exemption is logged with the target model.
+#
+# Growing this set is a security decision: a member must hand its input only
+# to an on-device model, behind the owner's own approval, and return nothing
+# from the vault to the provider.
+LOCAL_HANDOFF_TOOLS = frozenset({"switch_seat"})
+
+
+def is_on_device(model) -> bool:
+    """True only for a model id that runs on this machine.
+
+    Conservative: an empty name, a cloud-tagged Ollama model, an id the router
+    does not class as local, or any failure to tell is NOT on-device.
+    """
+    name = str(model or "").strip()
+    if not name or is_cloud_model_tag(name):
+        return False
+    try:
+        from agent_friday.services import local_seats
+        return bool(local_seats._is_local_name(name))
+    except Exception:
+        return False
+
+
 # ── Keyword lists exposed for legacy callers ────────────────────────────────
 # The authoritative definitions live in services/sensitivity_classifier.py.
 # These are imported from there so both modules agree by construction.
@@ -283,12 +318,16 @@ class VaultAccessControl:
     # ── Continuous Authorization (zero-trust per-action gate) ─────
 
     def check_action(self, provider, action, data, access_log_path=None,
-                     *, taint_key=None, model=""):
+                     *, taint_key=None, model="", handoff_model=""):
         """Zero-trust per-action authorization check.
 
         Called before every tool call in the agent loop. Classifies the
         tool input data, gates access by provider, and appends every
         decision to access-log.jsonl for auditability.
+
+        `handoff_model` is the model a LOCAL_HANDOFF_TOOLS call would hand its
+        input to, resolved by the caller from the owner's seat bindings (never
+        from the tool's own arguments). It is consulted only for those tools.
 
         Returns (allowed: bool, detail: str, tier: int).
         """
@@ -302,6 +341,12 @@ class VaultAccessControl:
                 # Provider-authored content flowing device-ward only — see
                 # the LOCAL_SINK_TOOLS note. Allowed, but logged as such.
                 detail = f"local_sink_exempt_{Tier.NAMES.get(tier, tier)}"
+            elif (str(action or "") in LOCAL_HANDOFF_TOOLS
+                  and is_on_device(handoff_model)):
+                # Bound for an on-device model, behind the owner's card -- see
+                # the LOCAL_HANDOFF_TOOLS note. Allowed, logged with the target.
+                detail = (f"local_handoff_exempt_{Tier.NAMES.get(tier, tier)}: "
+                          f"to {str(handoff_model).strip()}")
             else:
                 allowed = False
                 detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"

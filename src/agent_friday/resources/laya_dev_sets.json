@@ -314,6 +314,10 @@
    {
     "text": "turn off the notifications",
     "decision": "defer"
+   },
+   {
+    "text": "plan a weekend for my family and add it to my calendar",
+    "decision": "defer"
    }
   ],
   "laya_router_holdout2.json": [

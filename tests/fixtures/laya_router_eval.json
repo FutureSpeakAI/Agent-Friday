@@ -77,6 +77,7 @@
     {"text": "cancel my three o'clock", "decision": "defer"},
     {"text": "archive all the newsletters in my inbox", "decision": "defer"},
     {"text": "move the tax spreadsheet into the finance folder", "decision": "defer"},
-    {"text": "turn off the notifications", "decision": "defer"}
+    {"text": "turn off the notifications", "decision": "defer"},
+    {"text": "plan a weekend for my family and add it to my calendar", "decision": "defer"}
   ]
 }

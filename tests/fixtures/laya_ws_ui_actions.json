@@ -295,7 +295,11 @@
    {"id": "settings.laya_confirm", "group": "settings", "label": "what Laya learned: confirm or drop a choice the deeper mind made", "audit_status": "new"},
    {"id": "settings.laya_refit", "group": "settings", "label": "what Laya learned: Learn now (a visible Local AI queue job)", "audit_status": "new"},
    {"id": "settings.laya_loosen", "group": "settings", "label": "what Laya learned: let her act on a lower score (a card; owner only)", "audit_status": "new"},
-   {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"}
+   {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"},
+   {"id": "settings.core_memory_card", "group": "read", "label": "memory card: the lines Friday keeps about you and about working with you", "audit_status": "new"},
+   {"id": "settings.core_memory_line", "group": "settings", "label": "memory card: add, edit or delete one line", "audit_status": "new"},
+   {"id": "settings.core_memory_review", "group": "settings", "label": "memory card: keep or discard a suggestion waiting for review", "audit_status": "new"},
+   {"id": "settings.core_memory_undo", "group": "settings", "label": "memory card: undo a change Friday made", "audit_status": "new"}
   ]
  }
 }
