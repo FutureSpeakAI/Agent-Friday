@@ -190,3 +190,44 @@ def test_an_address_from_my_file_used_outward_still_stops_at_a_card(calls, home)
 def test_owner_local_path(home, tmp_path, path, local):
     p = path.format(home=home, tmp=tmp_path)
     assert taint.owner_local_path(p) is local
+
+
+# ── what is never "the owner's own file" for this relaxation ─────────────────
+
+def test_synced_shared_generated_and_fridays_own_files_are_not_owner_local(home, tmp_path, monkeypatch):
+    """A synced folder can be written by other devices and people, a git work tree and node_modules
+    by whatever was cloned or installed, and a creations folder by Friday itself: none is the owner's
+    own text, so none earns the exemption."""
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "CREATIONS_DIR", home / "Desktop" / "friday-creations", raising=False)
+    (home / "code" / "proj" / ".git").mkdir(parents=True)
+    for rel in ("OneDrive/Documents/bug-log.md",
+                "OneDrive - Example Org/notes.md",
+                "Dropbox/notes.md",
+                "Google Drive/notes.md",
+                "iCloudDrive/notes.md",
+                "code/proj/README.md",
+                "code/proj/docs/notes.md",
+                "code/app/node_modules/pkg/README.md",
+                "Desktop/friday-creations/poem.md"):
+        assert taint.owner_local_path(str(home / rel)) is False, rel
+    assert taint.owner_local_path(str(home / "Documents" / "bug-log.md")) is True
+
+
+def test_files_that_run_or_steer_the_computer_are_never_owner_local(home):
+    for rel in (".ssh/config", ".ssh/authorized_keys", ".bashrc", ".bash_profile", ".profile",
+                ".zshrc", ".gitconfig",
+                "Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1",
+                "Documents/PowerShell/profile.ps1",
+                "Start Menu/Programs/Startup/run.cmd"):
+        assert taint.owner_local_path(str(home / rel)) is False, rel
+
+
+def test_reading_a_shell_profile_and_writing_it_back_still_stops_at_a_card(calls, home, monkeypatch):
+    rc = str(home / ".bashrc")
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "read_file",
+                        lambda inp: f"{rc}\n1: export PATH=$PATH:~/bin")
+    ctx = _turn("tidy my bashrc")
+    _run("read_file", {"path": rc}, ctx)
+    d = taint.evaluate(taint.ledger_key(ctx), "write_file", {"path": rc, "content": "x"})
+    assert d.action == "ask", "a write to a shell profile was treated as the owner's own round trip"

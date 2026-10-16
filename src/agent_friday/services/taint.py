@@ -390,6 +390,70 @@ LOCAL_WRITE_TOOLS = {"write_file"}
 _FOREIGN_DIRS = {"downloads", "download", "attachments", "temp", "tmp", "cache",
                  "caches", "inetcache", "content.outlook", "temporary internet files",
                  "appdata", ".cache", "library"}
+#: Folders whose files are not the owner's own text even inside the home folder: a sync root is
+#: written by other devices and the people it is shared with, node_modules by whatever was installed,
+#: a creations folder by Friday itself, ~/.ssh holds keys and trust, and a Startup folder runs what it
+#: holds at sign-in.
+_SHARED_DIRS = {"dropbox", "google drive", "googledrive", "my drive", "icloud drive", "iclouddrive",
+                "node_modules", "friday-creations", "startup", ".ssh"}
+#: A sync root that carries a suffix ("OneDrive - Example Org").
+_SHARED_DIR_PREFIXES = ("onedrive",)
+#: Files that run or steer the computer when the owner signs in, opens a shell or uses git: a write
+#: to one is never the owner's own round trip, whoever named it.
+_SENSITIVE_FILES = {".bashrc", ".bash_profile", ".bash_login", ".profile", ".zshrc", ".zprofile",
+                    ".zshenv", ".zlogin", ".gitconfig"}
+#: PowerShell profiles live in these Documents folders (any *profile.ps1 in them).
+_POWERSHELL_DIRS = {"windowspowershell", "powershell"}
+
+
+def _sensitive_or_shared(rel) -> bool:
+    """True for a home-relative path the round-trip relaxation never covers (see owner_local_path)."""
+    parts = [p.lower() for p in rel.parts]
+    folders = parts[:-1]
+    if any(f in _SHARED_DIRS or f.startswith(_SHARED_DIR_PREFIXES) for f in folders):
+        return True
+    name = parts[-1] if parts else ""
+    if name in _SENSITIVE_FILES:
+        return True
+    if name.endswith("profile.ps1") and any(f in _POWERSHELL_DIRS for f in folders):
+        return True
+    return False
+
+
+def _in_git_work_tree(p, home) -> bool:
+    """True when a folder from `p` up to the home folder holds a .git: a cloned tree's text is its
+    authors', not the owner's. A check that cannot run says yes."""
+    d = p.parent
+    while True:
+        try:
+            if (d / ".git").exists():
+                return True
+        except Exception:
+            return True
+        if d == home or d.parent == d:
+            return False
+        d = d.parent
+
+
+def _in_creations(p) -> bool:
+    """True for a file under a folder Friday saves its own creations to. Cannot tell: True."""
+    from pathlib import Path
+    try:
+        import agent_friday.core as _core
+        roots = [getattr(_core, "CREATIONS_DIR", None), getattr(_core, "DAILY_CREATIONS_DIR", None)]
+    except Exception:
+        return True
+    for root in roots:
+        if not root:
+            continue
+        try:
+            p.relative_to(Path(root).resolve())
+            return True
+        except ValueError:
+            continue
+        except Exception:
+            return True
+    return False
 
 
 def _state_dir():
@@ -424,6 +488,8 @@ def owner_local_path(path: Any) -> bool:
     except Exception:
         return False
     if any(part.lower() in _FOREIGN_DIRS for part in rel.parts[:-1]):
+        return False
+    if _sensitive_or_shared(rel) or _in_git_work_tree(p, home) or _in_creations(p):
         return False
     for foreign in (tempfile.gettempdir(),):
         try:
