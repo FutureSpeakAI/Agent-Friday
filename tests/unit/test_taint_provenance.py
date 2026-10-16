@@ -74,7 +74,7 @@ def _isolate(tmp_path, monkeypatch):
 
 
 def _turn(message, extra=None):
-    base = {"authenticated": True}
+    base = {"authenticated": True, "owner_surface": True}
     base.update(extra or {})
     return agent.prepare_confirmation_ctx(SID, message, base)
 

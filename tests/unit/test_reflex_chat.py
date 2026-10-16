@@ -46,7 +46,7 @@ def isolated(tmp_path, monkeypatch):
 
 def _ask(command="Write-Output first"):
     ctx = agent.prepare_confirmation_ctx(
-        SID, "run this", {"authenticated": True, "conversation_id": CONV})
+        SID, "run this", {"authenticated": True, "conversation_id": CONV, "owner_surface": True})
     result = agent._execute_tool("run_command", {"command": command}, session_ctx=ctx)
     assert "CONFIRMATION REQUIRED" in result
     return ctx
@@ -79,7 +79,7 @@ def test_a_whole_yes_runs_the_stored_action_with_the_same_outcome(monkeypatch):
     # The question is spent; a second yes runs nothing.
     assert agent.resume_confirmed_action(
         agent.prepare_confirmation_ctx(SID, "yes", {"authenticated": True,
-                                                    "conversation_id": CONV})) is None
+                                                    "conversation_id": CONV, "owner_surface": True})) is None
     assert len(calls) == 1
 
 
@@ -91,7 +91,7 @@ def test_the_reflex_outcome_equals_the_ordinary_claim_path(monkeypatch):
     agent._PENDING_CONFIRMATIONS.clear()
     _ask()
     ordinary = agent.resume_confirmed_action(agent.prepare_confirmation_ctx(
-        SID, "go ahead", {"authenticated": True, "conversation_id": CONV}))
+        SID, "go ahead", {"authenticated": True, "conversation_id": CONV, "owner_surface": True}))
     assert via_rule["name"] == ordinary["name"]
     assert via_rule["input"] == ordinary["input"]
     assert via_rule["result"] == ordinary["result"]
@@ -112,7 +112,7 @@ def test_an_escalated_card_is_resolved_once_by_the_reflex(monkeypatch):
     calls = _handler(monkeypatch)
     _ask()
     ctx2 = agent.prepare_confirmation_ctx(
-        SID, "what does that do?", {"authenticated": True, "conversation_id": CONV})
+        SID, "what does that do?", {"authenticated": True, "conversation_id": CONV, "owner_surface": True})
     assert "CONFIRMATION ESCALATED" in agent._execute_tool(
         "run_command", {"command": "Write-Output first"}, session_ctx=ctx2)
     card = approvals.list_approvals(status="pending")[0]
@@ -138,7 +138,7 @@ def test_yes_but_is_a_change_request_never_an_approval(monkeypatch, reply):
     assert plan["route_proposal"] is None
     # Today's path: the model reads the words and raises a REVISED question.
     ctx = agent.prepare_confirmation_ctx(
-        SID, reply, {"authenticated": True, "conversation_id": CONV})
+        SID, reply, {"authenticated": True, "conversation_id": CONV, "owner_surface": True})
     assert not ctx.get("confirm_granted_fp")
     revised = agent._execute_tool("run_command", {"command": "Write-Output elsewhere"},
                                   session_ctx=ctx)

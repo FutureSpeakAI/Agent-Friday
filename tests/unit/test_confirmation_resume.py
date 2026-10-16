@@ -19,7 +19,7 @@ def isolated(tmp_path, monkeypatch):
 
 def ask(command="Write-Output first", conversation="one"):
     ctx = agent.prepare_confirmation_ctx(
-        "same-day", "run this", {"authenticated": True, "conversation_id": conversation})
+        "same-day", "run this", {"authenticated": True, "conversation_id": conversation, "owner_surface": True})
     result = agent._execute_tool("run_command", {"command": command}, session_ctx=ctx)
     assert "CONFIRMATION REQUIRED" in result
     return ctx
@@ -27,7 +27,7 @@ def ask(command="Write-Output first", conversation="one"):
 
 def answer(text="go ahead", conversation="one"):
     return agent.prepare_confirmation_ctx(
-        "same-day", text, {"authenticated": True, "conversation_id": conversation})
+        "same-day", text, {"authenticated": True, "conversation_id": conversation, "owner_surface": True})
 
 
 def test_yes_resumes_exact_stored_command_without_a_model(monkeypatch):
@@ -132,7 +132,7 @@ def test_old_card_does_not_clear_newer_pending_action(monkeypatch):
 def test_pending_arguments_are_an_immutable_snapshot(monkeypatch):
     inp = {"command": "Write-Output original"}
     ctx = agent.prepare_confirmation_ctx("same-day", "run this", {
-        "authenticated": True, "conversation_id": "one"})
+        "authenticated": True, "conversation_id": "one", "owner_surface": True})
     agent._execute_tool("run_command", inp, session_ctx=ctx)
     inp["command"] = "Write-Output replacement"
     calls = []
