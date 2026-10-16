@@ -598,8 +598,8 @@ def _add_guide(it: dict) -> None:
     if c.get("signup_url"):
         c["signup_label"] = g["signup_label"] or "Get a key"
     # MCP cards already list these lines as their permissions.
-    it["access"] = ([] if it["category"] == "mcp"
-                    else list(cg.access_for(iid, it["category"])))
+    said = {p.get("text") for p in it["permissions"]}
+    it["access"] = [t for t in cg.access_for(iid, it["category"]) if t not in said]
     if cg.GUIDE.get(iid, {}).get("unlocks"):
         it["unlocks"] = cg.GUIDE[iid]["unlocks"]
     it["test"] = ("/api/setup/connections/%s/test" % iid
