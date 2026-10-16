@@ -140,6 +140,12 @@ def migrate() -> dict:
     with _LOCK:
         st = state()
         if st.get("done"):
+            # Installs marked before the flag lived on the workflow record:
+            # write it there once; the list stays as the migration record.
+            if not st.get("flags_written"):
+                _write_workflow_flags(st)
+                st["flags_written"] = True
+                _write_state(st)
             return st
         from agent_friday.services import scheduler as _sched
         jobs, workflows, seen_refs = [], [], set()
@@ -170,11 +176,29 @@ def migrate() -> dict:
                                   "why": "its steps ask it to send email", "scheduled": False})
         st = {"done": True, "at": _time.time(), "jobs": jobs,
               "send_workflows": sorted({w["slug"] for w in workflows}), "workflows": workflows}
+        _write_workflow_flags(st)
+        st["flags_written"] = True
         _write_state(st)
         _log.info("email jobs: %d scheduled job(s) and %d workflow(s) keep sending their emails",
                   len(jobs), len([w for w in workflows if not w["scheduled"]]))
         _notify(st)
         return st
+
+
+def _write_workflow_flags(st: dict) -> None:
+    """The one source of truth is the workflow record's own `email_send`: every
+    workflow the mark kept sending gets `email_send: true` written onto it,
+    unless the owner already chose for it. `send_workflows` in the state file
+    is only the record of what this migration did."""
+    for slug in st.get("send_workflows") or []:
+        try:
+            from agent_friday.services import agent as _agent
+            chain = _agent.load_workflow_chain(slug) or {}
+            if not chain or isinstance(chain.get(FLAG), bool):
+                continue
+            set_workflow_email_send(slug, True)
+        except Exception as e:
+            _log.warning("email jobs: could not mark workflow %s as sending: %s", slug, type(e).__name__)
 
 
 def _notify(st: dict) -> None:
@@ -201,8 +225,9 @@ def workflow_sends(slug: str) -> bool:
 
     The owner's choice on its Workflows card is the workflow record's own `email_send` (kept outside
     the fields a job pre-approval fingerprints: send_grants._WORKFLOW_CONTENT). A workflow with no
-    choice of its own follows the one-time mark (this module's state file): made to send before
-    draft_email saved drafts means it still sends; anything else saves drafts."""
+    choice of its own saves drafts: the one-time mark writes `email_send: true` onto every workflow
+    it kept sending, so the record is the one source of truth (the state file only records what
+    the migration did)."""
     slug = str(slug or "")
     if not slug:
         return False
@@ -211,9 +236,7 @@ def workflow_sends(slug: str) -> bool:
         chain = _agent.load_workflow_chain(slug) or {}
     except Exception:
         chain = {}
-    if isinstance(chain.get(FLAG), bool):
-        return chain[FLAG]
-    return slug in (state().get("send_workflows") or [])
+    return chain.get(FLAG) is True
 
 
 def set_workflow_email_send(slug: str, send: bool) -> dict | None:
