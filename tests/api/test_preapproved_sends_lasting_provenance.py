@@ -72,7 +72,14 @@ def _isolated(tmp_path, monkeypatch, friday_dir):
         pass
     taint.reset()
     turn_plan.begin_turn(None)
+    before = set(agent.TASKS)
     yield
+    # The tasks these tests spawn never run (no-op thread above); left in
+    # agent.TASKS they read as "running" to every later test that lists the
+    # Activity lane or the Local AI queue.
+    for tid in set(agent.TASKS) - before:
+        agent.TASKS.pop(tid, None)
+        getattr(agent, "TASK_THREADS", {}).pop(tid, None)
     taint.reset()
     turn_plan.begin_turn(None)
 
@@ -80,7 +87,7 @@ def _isolated(tmp_path, monkeypatch, friday_dir):
 def _send(to, *, ctx, subject=None, body="Synthetic weekly status."):
     from agent_friday.services import agent
     subject = subject or "Status " + uuid.uuid4().hex[:6]
-    out = agent._execute_tool("draft_email", {"to": to, "subject": subject, "body": body},
+    out = agent._execute_tool("draft_email", {"to": to, "subject": subject, "body": body, "send": True},
                               session_ctx=dict(ctx))
     return json.loads(out)
 

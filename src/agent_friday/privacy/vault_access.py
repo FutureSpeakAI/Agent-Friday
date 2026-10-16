@@ -72,6 +72,30 @@ LOCAL_PROVIDERS = {"ollama", "local"}
 LOCAL_SINK_TOOLS = frozenset({"learn_skill", "write_file"})
 
 
+# ── An email draft saved in the owner's own mailbox ─────────────────────────
+# draft_email WITHOUT send=true saves a draft into the owner's own Gmail
+# Drafts. Its arguments are the cloud provider's own words (it has already
+# seen them), the draft reaches nobody (a recipient on a draft receives
+# nothing), and the result carries ids and a link, not vault data. So the
+# input-tier deny is the same category error it is for LOCAL_SINK_TOOLS: a
+# draft about a doctor's appointment was refused on a cloud seat, and nothing
+# was saved, for a write that leaves no one else's hands. Allowed and logged
+# as "own_mailbox_draft_<tier>". draft_email with send=true reaches other
+# people and keeps the ordinary input-tier deny.
+OWN_MAILBOX_DRAFT_TOOLS = frozenset({"draft_email"})
+
+
+def _own_mailbox_draft(action, data_str) -> bool:
+    if str(action or "") not in OWN_MAILBOX_DRAFT_TOOLS:
+        return False
+    try:
+        args = json.loads(data_str) if isinstance(data_str, str) else (data_str or {})
+        from agent_friday.services.gmail_send import wants_send
+        return isinstance(args, dict) and not wants_send(args)
+    except Exception:
+        return False                  # unreadable -> the ordinary deny applies
+
+
 # ── Keyword lists exposed for legacy callers ────────────────────────────────
 # The authoritative definitions live in services/sensitivity_classifier.py.
 # These are imported from there so both modules agree by construction.
@@ -360,6 +384,9 @@ class VaultAccessControl:
                 # Provider-authored content flowing device-ward only — see
                 # the LOCAL_SINK_TOOLS note. Allowed, but logged as such.
                 detail = f"local_sink_exempt_{Tier.NAMES.get(tier, tier)}"
+            elif _own_mailbox_draft(action, data_str):
+                # A draft in the owner's own mailbox; see the note above.
+                detail = f"own_mailbox_draft_{Tier.NAMES.get(tier, tier)}"
             else:
                 allowed = False
                 detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"
@@ -519,6 +546,9 @@ def refusal_text(action, detail):
     else:
         why = f"the input classifies as {reason.replace('cloud_denied_tier_', '')} private data"
         remedy = "Switch to a local model to work with this content."
+        if str(action or "") in OWN_MAILBOX_DRAFT_TOOLS:
+            remedy += (" Saving it as a draft (draft_email without send) is not blocked: "
+                       "a draft stays in the owner's own Gmail and reaches nobody.")
     return (f"[VAULT ACCESS DENIED] component={comp} reason={reason} "
             f"tool={action}: {why}. {remedy} This step was skipped: tell the "
             f"user which part you could not do and why (name {comp} and the "

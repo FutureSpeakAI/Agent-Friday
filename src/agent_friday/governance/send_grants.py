@@ -246,6 +246,26 @@ def _log(event: str, **fields) -> None:
         fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
 
 
+def recipient_refusal(r) -> Optional[str]:
+    """Why one recipient can never be pre-approved, in plain words, or None.
+    A plain function (no exception), so a caller that shows the reason does
+    not carry an exception's text to a page."""
+    r = str(r or "").strip()
+    if not r:
+        return None
+    if not r.isascii():
+        # Case folding is not identity outside ASCII ("K".lower() is "k"),
+        # so such an address always gets a card and is never pre-approved.
+        return ("%s has characters outside plain ASCII; such an address "
+                "always gets a card, so it cannot be pre-approved" % r)
+    low = r.lower()
+    if not (_ADDR.match(low) or _DOMAIN.match(low)):
+        return "not an email address or @domain: %s" % low
+    if low.startswith("@"):
+        return domain_refusal(low) or None
+    return None
+
+
 def normalize_recipients(raw) -> list:
     """Lower-cased addresses and "@domain" patterns; refuses anything else,
     and an "@domain" that names no one organisation (`domain_refusal`)."""
@@ -256,18 +276,10 @@ def normalize_recipients(raw) -> list:
         r = str(r or "").strip()
         if not r:
             continue
-        if not r.isascii():
-            # Case folding is not identity outside ASCII ("K".lower() is "k"),
-            # so such an address always gets a card and is never pre-approved.
-            raise _Refused("%s has characters outside plain ASCII; such an address "
-                           "always gets a card, so it cannot be pre-approved" % r)
+        why = recipient_refusal(r)
+        if why:
+            raise _Refused(why)
         r = r.lower()
-        if not (_ADDR.match(r) or _DOMAIN.match(r)):
-            raise _Refused("not an email address or @domain: %s" % r)
-        if r.startswith("@"):
-            why = domain_refusal(r)
-            if why:
-                raise _Refused(why)
         if r not in out:
             out.append(r)
     return out
@@ -466,7 +478,8 @@ def revoke(grant_id: str, by: str = "owner") -> bool:
             if taken:
                 _log("held_cancelled", grant_id=grant_id, by=by, approval_ids=taken)
         except Exception as e:
-            _log_py.warning("could not take back messages held under %s: %s", grant_id, e)
+            _log_py.warning("could not take back messages held under a revoked pre-approval (%s)",
+                            type(e).__name__)
     return hit
 
 

@@ -51,7 +51,8 @@ def mail(tmp_path, monkeypatch, friday_dir):
 def _send(to, ctx):
     from agent_friday.services import agent
     out = agent._execute_tool("draft_email", {"to": to, "subject": "Weekly status " + uuid.uuid4().hex[:6],
-                                              "body": "Synthetic weekly status."}, session_ctx=dict(ctx))
+                                              "body": "Synthetic weekly status.", "send": True},
+                              session_ctx=dict(ctx))
     return json.loads(out)
 
 

@@ -181,7 +181,8 @@ def _declined() -> set:
 
 # ── reading an email-shaped tool result ─────────────────────────────────────
 
-_ADDR = re.compile(r"[^\s<>\"',;]+@[^\s<>\"',;]+")
+# Bounded, and neither side may contain "@", so matching is linear.
+_ADDR = re.compile(r"[^\s<>\"',;@]{1,64}@[^\s<>\"',;@]{1,255}")
 
 
 def looks_like_mail(text) -> bool:

@@ -415,8 +415,9 @@ def list_send_grants():
                                "changed": [g["grant_id"] for g in mine if g.get("changed")]})
     except Exception:
         skills = []
-    return jsonify({"grants": live, "log": send_grants.log(30), "skills": skills,
-                    "actions": send_grants.SEND_ACTIONS, "options": send_grants.options()})
+    return jsonify(public_result({"grants": live, "log": send_grants.log(30), "skills": skills,
+                                  "actions": send_grants.SEND_ACTIONS, "options": send_grants.options()},
+                                 "Couldn't list the pre-approved sends"))
 
 
 @goals_bp.route("/api/governance/send-grants", methods=["POST"])

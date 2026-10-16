@@ -66,7 +66,7 @@ def _isolated(tmp_path, monkeypatch, friday_dir):
 def _send(to, *, ctx=None, subject=None, body="Synthetic weekly status."):
     from agent_friday.services import agent
     subject = subject or "Digest " + uuid.uuid4().hex[:6]
-    out = agent._execute_tool("draft_email", {"to": to, "subject": subject, "body": body},
+    out = agent._execute_tool("draft_email", {"to": to, "subject": subject, "body": body, "send": True},
                               session_ctx=dict(ctx or SCHEDULED))
     return json.loads(out)
 
@@ -112,8 +112,8 @@ def test_a_clean_send_in_the_same_job_still_goes_without_a_card(client):
 
 def test_the_checkpoint_uses_a_send_grant_only_for_a_clean_call(client):
     g = _grant(client, scope="recipients", recipients=[TEAM])
-    assert action_gate.authorize("draft_email", {"to": TEAM}, dict(SCHEDULED)).grant is None
-    v = action_gate.authorize("draft_email", {"to": TEAM}, dict(SCHEDULED), clean=True)
+    assert action_gate.authorize("draft_email", {"to": TEAM, "send": True}, dict(SCHEDULED)).grant is None
+    v = action_gate.authorize("draft_email", {"to": TEAM, "send": True}, dict(SCHEDULED), clean=True)
     assert v.grant and v.grant["grant_id"] == g["grant_id"]
 
 
@@ -275,7 +275,7 @@ def test_a_non_ascii_address_is_never_covered_even_if_it_folds_to_a_granted_one(
     finally:
         action_gate.DECIDED.reset(tok)
     assert not out.get("pre_approved") and out["approval"]["status"] == "pending"
-    assert action_gate.authorize("draft_email", {"to": lookalike}, dict(SCHEDULED), clean=True).grant is None
+    assert action_gate.authorize("draft_email", {"to": lookalike, "send": True}, dict(SCHEDULED), clean=True).grant is None
 
 
 def test_a_non_ascii_address_cannot_be_pre_approved(client):
