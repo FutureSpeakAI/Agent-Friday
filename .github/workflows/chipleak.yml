@@ -1,0 +1,54 @@
+name: chipleak
+
+# CI-only (draft PR, never merged): reproduce and bisect the order-dependent
+# failure of tests/api/test_workspace_job_card_ui.py. The PC has < 4 GB free.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    name: ${{ matrix.mode }} (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 300
+    env:
+      # The suite's conftest points HOME at a scratch dir, so Playwright's
+      # default browser cache would be looked up there and the test skips.
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, python: "3.13", mode: unitleak }
+          - { os: ubuntu-latest,  python: "3.12", mode: unitleak }
+          - { os: windows-latest, python: "3.13", mode: chain }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install agent-friday + the lane's test plugins
+        run: pip install -e ".[dev,google,federation,podcast,compose]" "playwright==1.60.0" "pytest-timeout==2.4.0"
+      - name: Install Windows-only dependencies
+        if: runner.os == 'Windows'
+        run: pip install -e ".[windows]"
+      - name: Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+      - name: ${{ matrix.mode }}
+        run: python .ci/chipleak/chipbisect.py ${{ matrix.mode }} out .ci/chipleak/pre.txt
+      - name: Keep logs, junit, desk payloads and shots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
+        with:
+          name: chipleak-${{ matrix.mode }}-${{ matrix.os }}
+          path: out
+          if-no-files-found: ignore

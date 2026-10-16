@@ -72,6 +72,8 @@ def desk(client, tmp_path, monkeypatch):
     with core.PROCESSES_LOCK:
         saved_procs = dict(core.PROCESSES)
         core.PROCESSES.clear()
+    from tests.api.conftest import assert_top_bar_clean
+    assert_top_bar_clean(client)
 
     seen: dict = {}
 
@@ -186,7 +188,29 @@ def test_the_briefing_task_is_on_the_desktop_with_its_model_and_an_openable_trac
             assert pg.locator("button[aria-label*='running, open notifications']").count() == 0
 
             # 3. Its row in Activity says who is working and what it is doing.
-            pg.locator("[data-testid=local-ai-queue-chip]").click()
+            # CI-ONLY DIAGNOSTICS (ci/chipleak-repro; never merged)
+            SHOT_DIR.mkdir(parents=True, exist_ok=True)
+            (SHOT_DIR / "desk.json").write_text(json.dumps(desk, indent=1, default=str), encoding="utf-8")
+            try:
+                pg.locator("[data-testid=local-ai-queue-chip]").click()
+            except Exception:
+                diag = pg.evaluate("""() => {
+                  const el = document.querySelector('[data-testid=local-ai-queue-chip]');
+                  const chain = [];
+                  for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+                    const cs = getComputedStyle(n), r = n.getBoundingClientRect();
+                    chain.push({tag: n.tagName, id: n.id, cls: String(n.className).slice(0, 120),
+                      testid: n.getAttribute('data-testid'), display: cs.display, visibility: cs.visibility,
+                      opacity: cs.opacity, overflow: cs.overflow, position: cs.position,
+                      w: r.width, h: r.height, x: r.x, y: r.y, style: (n.getAttribute('style') || '').slice(0, 200)});
+                  }
+                  return {chain, chipHTML: el ? el.outerHTML.slice(0, 600) : null,
+                          ls: Object.assign({}, localStorage), url: location.href,
+                          text: document.body.innerText.slice(0, 3000)};
+                }""")
+                (SHOT_DIR / "chip_diag.json").write_text(json.dumps(diag, indent=1), encoding="utf-8")
+                pg.screenshot(path=str(SHOT_DIR / "chip_fail.png"))
+                raise
             # The chip opens on "Needs you" when anything waits on the owner
             # (approvals other tests left behind count); Activity is one click.
             pg.locator("[data-testid=lane-tab-activity]").click()

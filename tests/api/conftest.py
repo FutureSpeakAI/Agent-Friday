@@ -257,6 +257,50 @@ def creations_dir(server_module):
     return d
 
 
+def top_bar_leftovers(client) -> list[str]:
+    """What the top bar's Activity chip would show that no test in this file
+    put there: pending approvals, needs-you notices, today's updates, tasks in
+    Activity, local-queue jobs. Empty means a clean bar."""
+    out = []
+    s = client.get("/api/lanes/summary").get_json() or {}
+    if s.get("needs_you") or s.get("approvals"):
+        n = client.get("/api/lanes/needs-you").get_json() or {}
+        kinds = sorted({x.get("kind") or "?" for x in n.get("singles", [])}
+                       | {"batch:" + (b.get("kind") or "?") for b in n.get("batches", [])})
+        others = sorted({x.get("kind") or "?" for x in n.get("others", [])})
+        out.append("%s need you (approvals %s: %s; notices: %s)" % (
+            s.get("needs_you"), s.get("approvals"), ", ".join(kinds) or "-", ", ".join(others) or "-"))
+    if s.get("updates"):
+        u = client.get("/api/lanes/updates?today=1").get_json() or {}
+        out.append("%s updates (%s)" % (s["updates"], ", ".join(
+            "%s x%s" % (g.get("kind"), g.get("count")) for g in u.get("groups", []))))
+    if s.get("activity"):
+        out.append("%s task(s) in Activity" % s["activity"])
+    q = client.get("/api/local-queue").get_json() or {}
+    if q.get("jobs"):
+        out.append("%s local-queue job(s)" % len(q["jobs"]))
+    return out
+
+
+def assert_top_bar_clean(client) -> None:
+    """Guard for tests that look at the top bar: fail at once, naming the
+    leftovers, when an earlier test in this process left cards, notices, tasks
+    or queue jobs behind. Without it the symptom is a 45 s Playwright timeout on
+    a chip that the crowded bar folded into its hidden overflow pull-out."""
+    left = top_bar_leftovers(client)
+    assert not left, (
+        "the top bar is not clean at the start of this test; an earlier test in "
+        "this process left: %s. Isolate that store per test file (tests/conftest.py "
+        "_notices_and_approvals_do_not_outlive_their_file shows how)." % "; ".join(left))
+
+
+@pytest.fixture
+def top_bar_is_clean(client):
+    """assert_top_bar_clean as a fixture, for tests that clear nothing first."""
+    assert_top_bar_clean(client)
+    return client
+
+
 @pytest.fixture
 def mock_gemini(monkeypatch):
     """Patch `google.genai.Client` so Gemini-direct routes (create/*, voice/tts,
