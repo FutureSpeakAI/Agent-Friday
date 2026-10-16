@@ -16,7 +16,7 @@ from agent_friday.services.model_catalog import _tts_engines
 
 @pytest.mark.parametrize("key, default", [
     ("local_voice_tts_engine", "piper"),    # what the CPU tier installs
-    ("local_voice_kokoro_voice", "af_heart"),
+    ("local_voice_kokoro_voice", ""),        # blank: not chosen; she speaks af_heart or her cloud voice's twin
     ("local_voice_kokoro_allow_cpu", True),
     # clean-sheet §8.1 B: per-stage GPU policy + idle unload
     ("voice_ear_gpu", "if_free"),

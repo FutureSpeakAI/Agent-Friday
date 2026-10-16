@@ -448,6 +448,23 @@ def _fresh_health_cache(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_gpu(request, monkeypatch):
+    """The ear's GPU probe (services/gpu_probe) asks CTranslate2 and nvidia-smi,
+    not torch, so a test that reaches the device choice unstubbed would ask the
+    real card. CUDA is hidden and the probe's caches start empty; a test that
+    means to look past this says so with ``@pytest.mark.real_gpu``."""
+    if request.node.get_closest_marker("real_gpu") is None:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
+    gp = sys.modules.get("agent_friday.services.gpu_probe")
+    if gp is not None:
+        gp.reset()
+    yield
+    gp = sys.modules.get("agent_friday.services.gpu_probe")
+    if gp is not None:
+        gp.reset()
+
+
+@pytest.fixture(autouse=True)
 def _no_local_seat_is_serving(monkeypatch):
     """By default, no local seat is serving.
 

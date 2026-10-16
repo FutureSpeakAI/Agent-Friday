@@ -512,7 +512,32 @@ def _gate_search_query(query: str, provider: str) -> tuple[str, str]:
     proceed unchanged; when it is non-empty the query was withheld (in whole
     or in part) and the caller must refuse rather than send a redaction
     placeholder to a search engine as if it were a real query.
+
+    Owner decision (a), 2026-10-15: a query a CLOUD seat authored is public
+    query text. It is NOT topic-classified (a health or civil-rights query is
+    not private because of its topic); it is checked only against the
+    never-send floor and the owner's personal identifiers, with or without
+    cloud consent. See privacy/public_query.py.
+
+    `provider` here is the search BACKEND, not the author, so it cannot decide
+    that. The author is read from public_query.cloud_author_of(query): the
+    agent loops and the voice dispatcher record the exact public strings a
+    cloud seat sent (before [PII:...] tags are put back as real values), and
+    only a query that is EXACTLY one of them is floor-only. Every other query
+    -- a rehydrated one, a local seat's, the research harness's, setup
+    research's -- keeps the egress gate's ordinary topic-classifying path
+    below, unchanged.
     """
+    try:
+        from agent_friday.privacy import public_query as _pq
+        _cloud_author = _pq.cloud_author_of(query)
+    except Exception:
+        _cloud_author = ""          # not provably cloud-authored: ordinary path
+    if _cloud_author:
+        try:
+            return _pq.gate_outbound(query, provider, "web_search.query")
+        except Exception as e:
+            return "", ExceptionText(f"the privacy gate failed ({e}) — search not sent")
     try:
         from agent_friday.services import egress_gate as _eg
     except Exception as e:

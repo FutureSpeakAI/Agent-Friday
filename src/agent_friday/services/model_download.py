@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tarfile
@@ -39,6 +40,8 @@ import requests
 
 from agent_friday.core import runtime_dir
 from agent_friday.services import model_shortlist as sl
+
+_log = logging.getLogger("friday.model_download")
 
 CHUNK = 1 << 20
 CONNECT_TIMEOUT_S = 20
@@ -530,10 +533,12 @@ def _install_runtime(ctrl: dict) -> Path:
     release = _release_json(spec["releases_api"])
     assets = sl.pick_release_assets(release, backend)
     if not assets:
-        raise DownloadError("no runtime build for this OS and %s backend" % backend)
+        raise DownloadError("no runtime server archive for this OS and %s backend in the "
+                            "release (see friday.log for the assets considered)" % backend)
     into = runtime_dir_for()
     for a in assets:
         dest = destination("runtime", a["name"])
+        _log.info("runtime: fetching %s (%s) into %s", a["name"], a.get("role") or "asset", into)
         out = fetch_file(a["url"], dest, expected_bytes=a.get("size"),
                          expected_sha256=a.get("sha256"), ctrl=ctrl)
         if out["status"] != "done":
@@ -541,7 +546,12 @@ def _install_runtime(ctrl: dict) -> Path:
         _unpack(dest, into)
     binary = runtime_binary()
     if binary is None:
-        raise DownloadError("the runtime unpacked but no server binary was found")
+        wanted = (spec.get("server_binary") or {}).get(sl.os_family(), "llama-server")
+        names = ", ".join(a["name"] for a in assets)
+        _log.warning("runtime: unpacked %s into %s but %s is not there", names, into, wanted)
+        raise DownloadError("the runtime unpacked (%s) but the server binary %s was not found in %s"
+                            % (names, wanted, into))
+    _log.info("runtime: server binary %s is installed", binary)
     return binary
 
 

@@ -48,6 +48,12 @@ window.addEventListener('error',function(e){
 <!-- The one door for sandboxed frames (docs/development/frame-broker.md).
      Loaded before the app so iframes can register on mount. -->
 <script src="/static/js/friday_frame_broker.js"></script>
+<!-- Stale tabs: offers a reload (never forces one) when the server's build_id
+     differs from window.__FRIDAY_BUILD_ID__, the build this page came from. -->
+<script src="/static/js/friday_build_watch.js" defer></script>
+<!-- The top-bar plugin slot's registry (documented in the file). Not deferred:
+     add-ons may register before the desktop mounts. -->
+<script src="/static/js/friday_topbar_slot.js"></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -5247,7 +5253,16 @@ window.addEventListener('DOMContentLoaded',function(){
             };
             const KIND_IDS = Object.keys(KINDS);
             const DONE_VISIBLE_MS = 300000;
-            const isFinished = p => !!(p && p.ended) || /^(completed|error|failed|cancelled|timeout|interrupted)$/.test((p && p.status) || '');
+            // One spelling of a task's status for everything that reads it. The
+            // server's tasks say "complete" (agent.py, item_actions, scheduler);
+            // the orb code was written against "completed", so a finished task
+            // never earned its success star. Every reader goes through this.
+            const DONE_WORDS = { complete: 1, completed: 1, done: 1, finished: 1, success: 1, succeeded: 1 };
+            const statusOf = p => {
+                const s = String((p && typeof p === 'object' ? p.status : p) || '').trim().toLowerCase();
+                return DONE_WORDS[s] ? 'completed' : s;
+            };
+            const isFinished = p => !!(p && p.ended) || /^(completed|error|failed|cancelled|timeout|interrupted)$/.test(statusOf(p));
             const clamp01 = v => Math.max(0, Math.min(1, v));
             const num = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
             function fnv(s) {
@@ -5502,7 +5517,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 }
             }
 
-            return { HUES, KINDS, KIND_IDS, DONE_VISIBLE_MS, isFinished, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
+            return { HUES, KINDS, KIND_IDS, DONE_VISIBLE_MS, statusOf, isFinished, kindOf, pickHue, hueWord, speakable, resolve, gestures, undoQueue,
                      progressOf, orbitRadius, receipt, starAt, keepOut, inKeepOut, liftFor, sparkGate, tint,
                      approvalTask, orbForFrame, formParams };
         })();
@@ -5655,8 +5670,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 for (const t of tasks || []) {
                     const id = t && (t.task_id || t.id);
                     if (!id || t.process || stars.has(id)) continue;
-                    const st = String(t.status || '');
-                    if (!/^(completed|done|failed|error|timeout|cancelled)$/.test(st)) continue;
+                    const st = FridayOrbLife.statusOf(t);
+                    if (!/^(completed|failed|error|timeout|cancelled)$/.test(st)) continue;
                     if (!(Number(t.ended) >= t0)) continue;
                     const failed = /^(failed|error|timeout)$/.test(st);
                     const el = document.createElement('div');
@@ -5865,7 +5880,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
             // ---- one line on where a helper is, from what the server says ----
             function statusLine(o, now) {
-                const s = String(o.status || 'running');
+                const s = FridayOrbLife.statusOf(o) || 'running';
                 const who = Name(o), what = String(now || o.label || '').replace(/\s+/g, ' ').trim().slice(0, 120);
                 if (o.approval_id) return who + ' needs your OK.';
                 if (/^(failed|error|timeout)$/.test(s)) return who + ' failed' + (what ? ': ' + what : '.');
@@ -6152,7 +6167,7 @@ window.addEventListener('DOMContentLoaded',function(){
             function finish(o, s) {
                 // Every finished outcome keeps its orbit and stops the form's spin.
                 s.finished = true;
-                if (o.status === 'completed') receipt(o, s);
+                if (FridayOrbLife.statusOf(o) === 'completed') receipt(o, s);
             }
             async function receipt(o, s) {
                 const id = s.row.task_id;
@@ -6888,7 +6903,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     } else o.finishedAt = null;
                 }
                 if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
-                if (upd.status === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
+                if (FridayOrbLife.statusOf(upd) === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
                 else if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
             }
             removeOrb(id) {
@@ -12062,9 +12077,18 @@ function fridayResolveTarget(t) {
     view: t.view || a.view
   });
 }
+// THE ONE NAVIGATION HELPER. window.fridayOpenWorkspace is a thin alias of
+// this, installed by the desktop while it is mounted (callers test for it to
+// know whether a desktop is here). They used to diverge: fridayNavigate only
+// deep-linked a workspace that was ALREADY open, so a click on a closed one
+// silently did nothing. Now the desktop registers its window opener
+// (window.__fridayOpenWsWindow) and every navigation opens the window first.
 function fridayNavigate(target) {
   if (!target || !target.workspace) return;
   target = fridayResolveTarget(target);
+  if (typeof window.__fridayOpenWsWindow === 'function') {
+    try { window.__fridayOpenWsWindow(target.workspace); } catch (_) {}
+  }
   // A workspace tab shows one workspace: a target in another opens that
   // workspace's own page, carrying the same deep-link keys.
   const here = window.__FRIDAY_STANDALONE__;
@@ -13083,18 +13107,51 @@ function fridaySceneKey(e) {
 function fridayName() {
   return fridayNameInText(window.__FRIDAY_AGENT_NAME);
 }
-function fridaySetName(name) {
+// True when the owner gave her a name of her own (not her default name) AND
+// asked for it on the wordmark and titles (identity.name_in_lockup, off by
+// default: the wordmark is the product's, BRAND.md). Spoken and written lines
+// use her name whatever this says (fridayName).
+function fridayHasOwnName() {
+  if (!window.__FRIDAY_NAME_IN_LOCKUP) return false;
+  const n = String(window.__FRIDAY_AGENT_NAME || '').trim().toUpperCase().replace(/^AGENT\s+/, '');
+  return !!n && n !== 'FRIDAY';
+}
+// The wordmark's name: her own, in capitals and with no mark (it is not the
+// product's), when the owner named her; '' for the default, so the lockup
+// shows the product with its mark.
+function fridayLockupName() {
+  return fridayHasOwnName() ? String(window.__FRIDAY_AGENT_NAME).trim().toUpperCase() : '';
+}
+// What the window's and a tab's title end with: her own name, or the product.
+function fridayTitleName() {
+  return fridayHasOwnName() ? fridayName() : ((window.FRIDAY_BRAND || {}).name || '');
+}
+// A title that ends with `before` ends with the current title name instead.
+function fridayRetitle(before) {
+  if (typeof document === 'undefined' || !before) return;
+  const t = String(document.title || ''), after = fridayTitleName();
+  if (after && after !== before && t.slice(-before.length) === before) {
+    document.title = t.slice(0, t.length - before.length) + after;
+  }
+}
+function fridaySetName(name, inLockup) {
   const n = String(name || '').trim();
-  if (!n || n === window.__FRIDAY_AGENT_NAME) return;
+  const lock = !!inLockup;
+  if (!n || (n === window.__FRIDAY_AGENT_NAME && lock === !!window.__FRIDAY_NAME_IN_LOCKUP)) return;
+  const before = fridayTitleName();
+  window.__FRIDAY_NAME_IN_LOCKUP = lock;
   window.__FRIDAY_AGENT_NAME = n;
   try {
     localStorage.setItem('friday_agent_name', n);
   } catch (_) {}
+  fridayRetitle(before);
 }
 try {
   window.__FRIDAY_AGENT_NAME = window.__FRIDAY_AGENT_NAME || localStorage.getItem('friday_agent_name') || '';
 } catch (_) {}
+fridayRetitle((window.FRIDAY_BRAND || {}).name || '');
 window.fridayName = fridayName;
+window.fridayTitleName = fridayTitleName;
 /* fridayHerName:end */
 // The start screen's countdowns: each one's label, when, and why it is there.
 // The words for when move on each minute; the list comes every five.
@@ -13140,7 +13197,9 @@ function FridayLockup({
   title
 }) {
   const b = window.FRIDAY_BRAND;
-  const name = [b.product.toUpperCase(), /*#__PURE__*/React.createElement("span", {
+  // Her own name when the owner gave her one, with no mark; the product otherwise.
+  const own = fridayLockupName();
+  const name = own ? [own] : [b.product.toUpperCase(), /*#__PURE__*/React.createElement("span", {
     key: "tm",
     className: "fr-lockup-tm"
   }, b.mark)];
@@ -13347,10 +13406,15 @@ function fridayFirstRunModelsCard(st) {
       var line = document.createElement('div');
       var pct = r.bytes_total ? Math.min(100, Math.round(100 * (r.bytes_done || 0) / r.bytes_total)) : 0;
       var gb = r.bytes_total ? ' (' + (r.bytes_total / 1073741824).toFixed(1) + ' GB)' : '';
-      var what = r.state === 'installed' ? 'ready'
-        : r.state === 'failed' ? 'stopped' + (r.error ? ': ' + r.error : '')
-        : r.state === 'waiting' ? 'waiting'
-        : (r.phase === 'verifying' ? 'checking the download' : pct + '%');
+      // A seat a working model already serves (perhaps the same model under
+      // another id) is ready; the card names which model that is. A seat the
+      // owner's own model serves while the chosen download continues says so.
+      var by = r.served_by && r.served_by !== r.model_id ? ' (served by ' + r.served_by + ')' : '';
+      var what = r.state === 'installed'
+          ? 'ready' + by
+        : r.state === 'failed' ? 'stopped' + (r.error ? ': ' + r.error : '') + by
+        : r.state === 'waiting' ? 'waiting' + by
+        : (r.phase === 'verifying' ? 'checking the download' : pct + '%') + by;
       line.textContent = r.label + ' — ' + (r.model_label || r.model_id) + gb + ': ' + what;
       card.appendChild(line);
     });
@@ -15406,6 +15470,31 @@ class Safe extends React.Component {
     }, "Retry"));
     return this.props.children;
   }
+}
+
+// ═══ TOP-BAR PLUGIN SLOT ═══
+// The mount point for add-on controls registered through
+// window.fridayTopBarSlot (static/js/friday_topbar_slot.js, which documents
+// the contract). Each control gets its own Safe boundary.
+function FridayTopBarPlugins() {
+  const slot = window.fridayTopBarSlot;
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const on = () => setTick(n => n + 1);
+    window.addEventListener('friday:topbar-slot', on);
+    return () => window.removeEventListener('friday:topbar-slot', on);
+  }, []);
+  const items = slot ? slot.list() : [];
+  return /*#__PURE__*/React.createElement("div", {
+    id: "friday-topbar-slot",
+    "data-friday-slot": "topbar",
+    role: "group",
+    "aria-label": "Add-ons",
+    style: { display: 'flex', alignItems: 'center', gap: 6 }
+  }, items.map(it => /*#__PURE__*/React.createElement(Safe, {
+    key: it.id,
+    name: 'Add-on ' + it.id
+  }, /*#__PURE__*/React.createElement(it.component, { slot: 'topbar', id: it.id }))));
 }
 
 // ═══ CHAT KEYS ═══
@@ -23499,25 +23588,43 @@ function KnowledgePages({
     }
     setSaving(false);
   };
+  // The toast says what the server did, never "Approved" on an answer that
+  // was not a success: applied, already applied, stale (page changed), failed.
+  // The approve carries the hash of the page the row's preview was computed
+  // against; if the page changed since, the server answers 409 stale and
+  // writes nothing (the refreshed row then shows the page as it is now).
   const approvePending = async id => {
     try {
-      await apiFetch('/api/wiki/pending/' + id + '/approve', {
-        method: 'POST'
+      const row = pending.find(x => x.id === id);
+      const before = row && row.preview && row.preview.before_sha256 || '';
+      const r = await apiFetch('/api/wiki/pending/' + id + '/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(before ? {
+          before_sha256: before
+        } : {})
       });
-      showToast('Approved');
+      const d = await r.json().catch(() => ({}));
+      const st = d.status || 'error';
+      if (r.ok && st === 'applied') {
+        showToast(d.already ? 'Already applied \xB7 nothing written' : 'Applied' + (d.file ? ' \xB7 ' + d.file : ''));
+        refreshStructure();
+        onChanged && onChanged(null, 'approved');
+      } else if (st === 'stale') showToast('Not applied (stale): ' + (d.message || 'the page changed since this was proposed'));else if (st === 'rejected') showToast('Not applied: this proposal was rejected');else showToast('Not applied: ' + (d.message || st));
       refreshPending();
-      refreshStructure();
-      onChanged && onChanged(null, 'approved');
     } catch (e) {
       showToast('Approve failed');
     }
   };
   const rejectPending = async id => {
     try {
-      await apiFetch('/api/wiki/pending/' + id + '/reject', {
+      const r = await apiFetch('/api/wiki/pending/' + id + '/reject', {
         method: 'POST'
       });
-      showToast('Rejected');
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.status === 'rejected') showToast(d.already ? 'Already rejected' : 'Rejected');else showToast('Not rejected: ' + (d.message || d.status || 'error'));
       refreshPending();
     } catch (e) {
       showToast('Reject failed');
@@ -23607,13 +23714,29 @@ function KnowledgePages({
       showToast('Create failed');
     }
   };
-  const renderDiff = p => h('div', {
-    className: 'kw-diff'
-  }, h('div', {
-    className: 'kw-diff-old'
-  }, p.old_value || h('em', null, '(empty — will append)')), h('div', {
-    className: 'kw-diff-new'
-  }, p.new_value || ''));
+  // What approving does, from the server's preview: a badge (new / edit /
+  // append / overwrite), the headline with line counts, and the unified diff.
+  // Without a preview the row still says it by mode: a replace_file proposal
+  // reads "Replaces the whole page", never "will append".
+  const renderDiff = p => {
+    const pv = p.preview || null;
+    const mode = pv && pv.mode || p.mode || (p.old_value ? 'edit' : 'append');
+    const badge = pv && pv.badge || (mode === 'replace_file' ? 'overwrite' : mode);
+    const head = h('div', {
+      className: 'kw-small kw-pending-badge',
+      'data-badge': badge
+    }, h('strong', null, badge.toUpperCase()), ' \xB7 ', pv && pv.headline ? pv.headline : mode === 'replace_file' ? 'Replaces the whole page ' + (p.file || '') : mode === 'edit' ? 'Change text in ' + (p.file || '') : 'Add to ' + (p.file || ''));
+    if (pv && pv.diff) return h('div', null, head, h('div', {
+      className: 'kw-diff-new kw-diff-unified'
+    }, pv.diff));
+    return h('div', null, head, h('div', {
+      className: 'kw-diff'
+    }, h('div', {
+      className: 'kw-diff-old'
+    }, mode === 'replace_file' ? h('em', null, 'Replaces the whole page') : mode === 'append' ? h('em', null, '(nothing removed \u2014 will append)') : p.old_value || ''), h('div', {
+      className: 'kw-diff-new'
+    }, p.new_value || '')));
+  };
   // Links inside a page open the page they point at, here.
   const onReaderClick = e => {
     const a = e.target && e.target.closest ? e.target.closest('a') : null;
@@ -29477,8 +29600,8 @@ function OrchestratorBudgetPanel() {
   const [budgets, setBudgets] = useState([]);
   const [editing, setEditing] = useState(null);
   const [editForm, setEditForm] = useState({
-    monthly_cap_mψ: 1000000,
-    per_task_cap_mψ: 100000,
+    monthly_cap_mψ: 0,
+    per_task_cap_mψ: 0,
     warn_pct: 80
   });
   const [loading, setLoading] = useState(true);
@@ -29522,6 +29645,9 @@ function OrchestratorBudgetPanel() {
     const v = n || 0;
     return v >= 1000000 ? (v / 1000000).toFixed(1) + 'M' : (v >= 1000 ? (v / 1000).toFixed(0) + 'K' : String(v)) + 'mψ';
   };
+  // A cap of 0 is no cap (services/budget_enforcer.py): caps ship off and are asked about during setup.
+  const NO_CAP = 'No cap (ask me during setup)';
+  const capTxt = n => n > 0 ? fmtMψ(n) : NO_CAP;
   if (loading) return /*#__PURE__*/React.createElement("div", {
     style: {
       color: '#999',
@@ -29547,7 +29673,7 @@ function OrchestratorBudgetPanel() {
       marginBottom: 10
     }
   }, "No budget policies configured yet."), budgets.map(b => {
-    const p = pct(b.spent_mψ, b.monthly_cap_mψ || 1000000);
+    const p = pct(b.spent_mψ, b.monthly_cap_mψ || 0);
     const bc = barColor(p);
     return /*#__PURE__*/React.createElement("div", {
       key: b.workspace,
@@ -29583,7 +29709,7 @@ function OrchestratorBudgetPanel() {
         color: 'rgba(255,255,255,0.45)',
         fontFamily: 'JetBrains Mono'
       }
-    }, fmtMψ(b.spent_mψ), " / ", fmtMψ(b.monthly_cap_mψ || 1000000)), /*#__PURE__*/React.createElement("button", {
+    }, fmtMψ(b.spent_mψ), " / ", capTxt(b.monthly_cap_mψ)), /*#__PURE__*/React.createElement("button", {
       className: "settings-btn",
       style: {
         fontSize: 9,
@@ -29592,8 +29718,8 @@ function OrchestratorBudgetPanel() {
       onClick: () => {
         setEditing(b.workspace);
         setEditForm({
-          monthly_cap_mψ: b.monthly_cap_mψ || 1000000,
-          per_task_cap_mψ: b.per_task_cap_mψ || 100000,
+          monthly_cap_mψ: b.monthly_cap_mψ || 0,
+          per_task_cap_mψ: b.per_task_cap_mψ || 0,
           warn_pct: b.warn_pct || 80
         });
       }
@@ -29618,7 +29744,7 @@ function OrchestratorBudgetPanel() {
         marginTop: 3,
         fontFamily: 'JetBrains Mono'
       }
-    }, p, "% \xB7 ", fmtMψ((b.monthly_cap_mψ || 1000000) - (b.spent_mψ || 0)), " remaining \xB7 task cap ", fmtMψ(b.per_task_cap_mψ || 100000)));
+    }, b.monthly_cap_mψ > 0 ? p + '% \xB7 ' + fmtMψ(b.monthly_cap_mψ - (b.spent_mψ || 0)) + ' remaining' : 'Monthly: ' + NO_CAP, " \xB7 task cap ", capTxt(b.per_task_cap_mψ)));
   }), editing && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
@@ -29652,7 +29778,7 @@ function OrchestratorBudgetPanel() {
       marginBottom: 3,
       fontFamily: 'JetBrains Mono'
     }
-  }, "Monthly cap (m\u03C8)"), /*#__PURE__*/React.createElement("input", {
+  }, "Monthly cap (m\u03C8, 0 = no cap)"), /*#__PURE__*/React.createElement("input", {
     type: "number",
     className: "input",
     style: {
@@ -29662,9 +29788,9 @@ function OrchestratorBudgetPanel() {
     value: editForm.monthly_cap_mψ,
     onChange: e => setEditForm(f => ({
       ...f,
-      monthly_cap_mψ: parseInt(e.target.value) || 1000000
+      monthly_cap_mψ: parseInt(e.target.value) || 0
     })),
-    min: "10000",
+    min: "0",
     step: "100000"
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -29677,7 +29803,7 @@ function OrchestratorBudgetPanel() {
       marginBottom: 3,
       fontFamily: 'JetBrains Mono'
     }
-  }, "Per-task cap (m\u03C8)"), /*#__PURE__*/React.createElement("input", {
+  }, "Per-task cap (m\u03C8, 0 = no cap)"), /*#__PURE__*/React.createElement("input", {
     type: "number",
     className: "input",
     style: {
@@ -29687,9 +29813,9 @@ function OrchestratorBudgetPanel() {
     value: editForm.per_task_cap_mψ,
     onChange: e => setEditForm(f => ({
       ...f,
-      per_task_cap_mψ: parseInt(e.target.value) || 100000
+      per_task_cap_mψ: parseInt(e.target.value) || 0
     })),
-    min: "1000",
+    min: "0",
     step: "10000"
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -29738,8 +29864,8 @@ function OrchestratorBudgetPanel() {
     onClick: () => {
       setEditing('default');
       setEditForm({
-        monthly_cap_mψ: 1000000,
-        per_task_cap_mψ: 100000,
+        monthly_cap_mψ: 0,
+        per_task_cap_mψ: 0,
         warn_pct: 80
       });
     }
@@ -55891,6 +56017,9 @@ function VoiceSetupWizard({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [job, setJob] = useState(null);
+  // The models step's confirm box: which models, their sizes and licences,
+  // shown before anything downloads (feature_models.first_run_offer).
+  const [askStep, setAskStep] = useState(null);
   const jobPollRef = useRef(null);
   const refresh = () => apiFetch('/api/voice/setup/status').then(r => r.json()).then(setStatus).catch(e => setStatus({
     error: String(e)
@@ -55923,14 +56052,18 @@ function VoiceSetupWizard({
       } catch (e) {}
     }, 2000);
   };
-  const startInstall = async target => {
+  const startInstall = async (target, consent) => {
+    setAskStep(null);
     try {
       const r = await apiFetch('/api/voice/setup/install', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
+        body: JSON.stringify(consent ? {
+          target,
+          consent: true
+        } : {
           target
         })
       });
@@ -55998,9 +56131,10 @@ function VoiceSetupWizard({
       target: 'voice-local-lite',
       label: 'Install'
     };
-    if (step.id === 'models' && step.status === 'needs_download') return {
-      target: 'tier1-models',
-      label: 'Download'
+    if (step.id === 'models' && step.download) return {
+      target: step.download.target,
+      label: step.download.size_mb ? 'Download ' + step.download.size_mb + ' MB' : 'Download',
+      offer: step.download
     };
     if (step.id === 'gpu' && step.status !== 'ok') return {
       target: 'voice-local-gpu',
@@ -56085,13 +56219,41 @@ function VoiceSetupWizard({
         color: '#888',
         marginTop: 2
       }
-    }, step.detail)), act && /*#__PURE__*/React.createElement("button", {
+    }, step.detail), act && act.offer && askStep === step.id && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 8,
+        padding: 10,
+        border: '1px solid rgba(255,179,71,0.5)',
+        borderRadius: 6,
+        fontSize: 12,
+        lineHeight: 1.5,
+        color: '#ddd'
+      }
+    }, /*#__PURE__*/React.createElement("div", null, act.offer.consent_text), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        marginTop: 8
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 11
+      },
+      onClick: () => startInstall(act.target, true)
+    }, act.label), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 11
+      },
+      onClick: () => setAskStep(null)
+    }, "Not now")))), act && /*#__PURE__*/React.createElement("button", {
       className: "btn",
       style: {
         fontSize: 11,
         whiteSpace: 'nowrap'
       },
-      onClick: () => startInstall(act.target)
+      onClick: () => act.offer ? setAskStep(step.id) : startInstall(act.target)
     }, "\u2B07 ", act.label));
   })), job && job.state !== 'idle' && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -56551,6 +56713,71 @@ function voiceArtifactPinCopy(group) {
 function voiceArtifactSize(mb) {
   return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
 }
+// ── Settings → Voice → Features that need a download ─────────────────────
+// services/feature_models: a feature whose model is missing says so here, by
+// name and size ("Transcription needs whisper base.en (141 MB)"), before
+// anything is fetched. The same words are what the feature says (and writes
+// to friday.log) when it is used. One confirmed click installs that feature's
+// missing pinned models as one job, with the same checksum and progress as a
+// row below. Nothing is shown when every feature has what it needs.
+function FeatureModelsNeeded() {
+  const [d, setD] = useState(null);
+  const [ask, setAsk] = useState(null);
+  const [err, setErr] = useState('');
+  const load = useCallback(() => apiFetch('/api/voice/feature-models').then(r => r.json()).then(x => {
+    setD(x || {});
+    setErr('');
+  }).catch(() => setErr('Could not read which features need a download.')), []);
+  useEffect(() => { load(); }, [load]);
+  const job = (d && d.job) || {};
+  const running = job.state === 'running';
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(load, 1500);
+    return () => clearInterval(t);
+  }, [running, load]);
+  const start = f => {
+    setAsk(null);
+    setErr('');
+    apiFetch('/api/voice/setup/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: f.install_target, consent: true })
+    }).then(r => r.json()).then(j => {
+      if (j && j.state === 'error') setErr(j.error || 'The download did not start.');
+      load();
+    }).catch(() => setErr('Could not reach the server to start the download.'));
+  };
+  if (d === null) return err ? React.createElement('div', { role: 'alert', style: { fontSize: 11.5, color: '#ef4444', marginBottom: 8 } }, err) : null;
+  // A feature that cannot run, or one that runs on an older package than the
+  // tested pin ("upgrade available": it keeps working until then).
+  const need = (d.features || []).filter(f => !f.ready || (f.upgrades || []).length);
+  if (!need.length) return null;
+  return React.createElement('div', { 'data-feature-models': '1', style: { marginBottom: 10 } },
+    err && React.createElement('div', { role: 'alert', style: { fontSize: 11.5, color: '#ef4444', marginBottom: 8 } }, err),
+    need.map(f => {
+      const mine = job.target === f.install_target;
+      const p = mine && running ? job.progress : null;
+      const items = f.missing.concat(f.upgrades || []);
+      const mb = f.size_mb + (f.upgrade_mb || 0);
+      const what = f.ready ? f.name + ': upgrade available, ' + (f.upgrades || []).map(m => m.short).join(', ')
+        : f.name + ' needs ' + f.missing.map(m => m.short).join(', ') + ' (' + voiceArtifactSize(f.size_mb) + ')';
+      const desc = f.ready ? f.label + '. It works now with the installed version; the upgrade installs the tested one.'
+        : f.label + '. Until then it says so when used, and nothing downloads by itself.';
+      return React.createElement(StRow, { key: f.id, label: what, desc },
+        React.createElement('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 } },
+          mine && running && React.createElement('span', { role: 'status', style: { color: '#38bdf8' } }, 'downloading' + (p && p.total ? ' ' + Math.floor(100 * p.done / p.total) + '%' : '…')),
+          mine && job.state === 'error' && React.createElement('span', { role: 'status', style: { color: '#ef4444' } }, 'failed: ' + (job.error || 'no reason given')),
+          !running && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: () => setAsk(f.id) }, (f.ready ? 'Upgrade ' : 'Download ') + voiceArtifactSize(mb))),
+        ask === f.id && React.createElement('div', { style: { marginTop: 8, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
+          React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Download ' + (items.some(m => m.deps_mb) ? 'about ' : '') + voiceArtifactSize(mb) + '?'),
+          // Each package with what pip adds for it (spaCy and its helpers for
+          // misaki[en]): the size confirmed is the size downloaded.
+          React.createElement('div', null, items.map(m => m.label + ' (' + voiceArtifactSize(m.size_mb) + ', ' + m.licence + ')' + (m.deps_note ? ', ' + m.deps_note : '')).join(' and ') + ' will be saved on this computer' + voiceArtifactPinCopy(items) + ' If the download stops, Download again picks up where it left off.'),
+          React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
+            React.createElement('button', { className: 'settings-btn active', style: { fontSize: 11 }, onClick: () => start(f) }, 'Download ' + voiceArtifactSize(mb)),
+            React.createElement('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => setAsk(null) }, 'Not now'))));
+    }));
+}
 function LocalVoiceModels() {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
@@ -56580,14 +56807,22 @@ function LocalVoiceModels() {
   const stop = () => apiFetch('/api/voice/setup/install/cancel', { method: 'POST' }).then(() => load()).catch(() => {});
   const byId = {};
   (rows || []).forEach(r => { byId[r.id] = r; });
-  // What a click downloads: the row plus any not-yet-installed piece it needs.
-  const needs = r => [r].concat((r.requires || []).map(i => byId[i]).filter(x => x && !x.installed));
+  // What a click downloads: the row plus any not-yet-installed piece it needs,
+  // and what those need in turn (Kokoro's voices -> kokoro -> misaki -> ...).
+  const needs = r => {
+    const out = [r], seen = { [r.id]: true };
+    for (let i = 0; i < out.length; i++) {
+      (out[i].requires || []).forEach(id => { const x = byId[id]; if (x && !x.installed && !seen[id]) { seen[id] = true; out.push(x); } });
+    }
+    return out;
+  };
   const stateOf = r => {
     const j = r.job;
     if (j && j.state === 'running') {
       const p = j.progress;
       return ['downloading' + (p && p.total ? ' ' + Math.floor(100 * p.done / p.total) + '%' : '…'), '#38bdf8'];
     }
+    if (r.installed && r.upgrade) return ['installed (' + r.upgrade.have + '); ' + r.upgrade.pin + ' available, see the upgrade above', '#00ff80'];
     if (r.installed) return ['installed', '#00ff80'];
     if (j && j.state === 'error') return ['failed: ' + (j.error || 'no reason given'), '#ef4444'];
     if (j && j.state === 'cancelled') return ['stopped; Download continues where it stopped', 'var(--st-dim)'];
@@ -56602,7 +56837,8 @@ function LocalVoiceModels() {
       const isRunning = !!(r.job && r.job.state === 'running');
       const can = !r.installed && r.installable && !isRunning;
       const group = needs(r);
-      const mb = group.reduce((n, x) => n + (x.size_mb || 0), 0);
+      // With what pip adds for the packages (deps_mb, approximate).
+      const mb = group.reduce((n, x) => n + (x.size_mb || 0) + (x.deps_mb || 0), 0);
       const redo = r.job && (r.job.state === 'error' || r.job.state === 'cancelled');
       return React.createElement(StRow, { key: r.id, label: r.label + (r.optional ? ' (optional)' : ''), desc: r.purpose },
         React.createElement('div', { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 } },
@@ -56612,7 +56848,7 @@ function LocalVoiceModels() {
           isRunning && React.createElement('button', { className: 'settings-btn', style: { fontSize: 11, padding: '4px 10px' }, onClick: stop }, 'Stop')),
         ask === r.id && React.createElement('div', { style: { marginTop: 8, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
           React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, 'Download ' + voiceArtifactSize(mb) + '?'),
-          React.createElement('div', null, group.map(x => x.label + ' (' + voiceArtifactSize(x.size_mb) + ')').join(' and ') + ' will be saved on this computer. It comes from ' + (r.source || 'its publisher') + ' under the ' + r.licence + ' licence' + voiceArtifactPinCopy(group) + ' If the download stops, Continue download picks up where it left off.'),
+          React.createElement('div', null, group.map(x => x.label + ' (' + voiceArtifactSize(x.size_mb) + (x.deps_note ? ', ' + x.deps_note : '') + ')').join(' and ') + ' will be saved on this computer. It comes from ' + (r.source || 'its publisher') + ' under the ' + r.licence + ' licence' + voiceArtifactPinCopy(group) + ' If the download stops, Continue download picks up where it left off.'),
           React.createElement('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
             React.createElement('button', { className: 'settings-btn active', style: { fontSize: 11 }, onClick: () => start(r) }, 'Download ' + voiceArtifactSize(mb)),
             React.createElement('button', { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => setAsk(null) }, 'Not now'))));
@@ -56809,7 +57045,7 @@ function SettingsTabVoice({
   }, l))))), /*#__PURE__*/React.createElement(StSection, {
   title: "Local voice models",
   desc: "The pieces of on-device voice, whichever mode is selected now. Nothing downloads until you confirm its size."
-}, /*#__PURE__*/React.createElement(VoiceFrontPicker, { s: s, save: save }), /*#__PURE__*/React.createElement(LocalVoiceModels, null)), /*#__PURE__*/React.createElement(StSection, {
+}, /*#__PURE__*/React.createElement(FeatureModelsNeeded, null), /*#__PURE__*/React.createElement(VoiceFrontPicker, { s: s, save: save }), /*#__PURE__*/React.createElement(LocalVoiceModels, null)), /*#__PURE__*/React.createElement(StSection, {
   title: "Conversation style",
   desc: "These preferences apply to your next voice session."
 }, /*#__PURE__*/React.createElement(StRow, {
@@ -61611,7 +61847,7 @@ function ScheduledCloudSection() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, "The daily creation and heartbeat run on a model on this PC when it has one, at no cost. News (the front pages and briefings) always runs on this PC and waits for it; it never uses a cloud model. ", d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
+  }, d.cloud_by_mode ? "You chose Cloud only, and that choice is your consent: the heartbeat, the News routines and podcast scripts run on the cloud models below, whether or not this PC has a local model. Daily creation still follows your answer below. Private podcasts stay on this PC." : "The daily creation and heartbeat run on a model on this PC when it has one, at no cost. In a local routing mode News (the front pages and briefings) always runs on this PC and waits for it; it never uses a cloud model. ", d.cloud_by_mode ? '' : d.local_model ? 'This PC has one (' + d.local_model + '), so that is where they run.' : 'This PC has no local model.'), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -61639,7 +61875,7 @@ function ScheduledCloudSection() {
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap'
     }
-  }, j.name, " \xB7 ", j.model_label, j.enabled ? '' : ' · switched off'), /*#__PURE__*/React.createElement("span", {
+  }, j.name, " \xB7 ", j.model_label, j.basis === 'measured' ? ' · estimate from ' + j.runs_measured + ' recent runs' : ' · estimate', j.enabled ? '' : ' · switched off'), /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#fff',
       flexShrink: 0,
@@ -64854,7 +65090,7 @@ function StandaloneShell({ ws, histOpen, onCloseHistory, children }) {
       const q = new URLSearchParams(window.location.search);
       item = q.get('subject') || q.get('title') || q.get('creation') || q.get('file') || '';
     } catch (e) {}
-    document.title = (item ? item.slice(0, 80) + ' \u00B7 ' : '') + ws.label + ' \u00B7 ' + window.FRIDAY_BRAND.name;
+    document.title = (item ? item.slice(0, 80) + ' \u00B7 ' : '') + ws.label + ' \u00B7 ' + fridayTitleName();
   }, [ws.id]);
   const maxedTab = (() => {
     try {
@@ -65544,6 +65780,9 @@ function App() {
         setConnHealth(r.ok ? 'ok' : 'degraded');
         try {
           const d = await r.json();
+          // Stale tabs: a different build_id than this page loaded with
+          // offers a reload (static/js/friday_build_watch.js); never forces one.
+          if (window.fridayBuildWatch) window.fridayBuildWatch.check(d && d.build_id);
           const m = {};
           (d.inference && d.inference.providers || []).forEach(p => {
             if (p && p.provider) m[p.provider] = p;
@@ -65669,7 +65908,7 @@ function App() {
   // Her name for every line that speaks of her, before anything below
   // renders, once settings have come from the server (workspace_layouts is
   // only in theirs); until then the name this browser last saw stands.
-  if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name);
+  if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name, ((agentSettings.identity || {}).name_in_lockup));
   useEffect(() => { fridaySetOffRecord(fridayOffRecordFrom(agentSettings)); },
     [agentSettings.off_record, agentSettings.off_record_stops_storage]);
   // Mic / Speaker test state (used by the Audio & Voice section).
@@ -68423,15 +68662,14 @@ function App() {
   }, [cameraOn, cameraSource, cameraIntervalSec]);
   // Global workspace opener — lets any child component (e.g. NewsWS "Share to
   // Draft") open + deep-link a workspace without prop-drilling openWs.
+  // fridayNavigate is the one implementation; this registers the desktop's
+  // window opener with it and keeps fridayOpenWorkspace as its alias.
   useEffect(() => {
-    window.fridayOpenWorkspace = t => {
-      if (!t || !t.workspace) return;
-      t = fridayResolveTarget(t);
-      openWs(t.workspace);
-      fridayNavigate(t);
-    };
+    window.__fridayOpenWsWindow = openWs;
+    window.fridayOpenWorkspace = t => fridayNavigate(t);
     return () => {
       if (window.fridayOpenWorkspace) delete window.fridayOpenWorkspace;
+      if (window.__fridayOpenWsWindow) delete window.__fridayOpenWsWindow;
     };
   }, []);
   /* THE PAGE'S HALF OF navigate_to AND check_situation (routes/desktop.py).
@@ -69937,6 +70175,8 @@ function App() {
   }, "|"),
   shellWorkspaceSwitcher,
   window.FridayDisplayStyleControl && React.createElement(window.FridayDisplayStyleControl),
+  // The top-bar plugin slot (static/js/friday_topbar_slot.js): absent until an add-on registers.
+  window.fridayTopBarSlot && window.fridayTopBarSlot.size() > 0 && React.createElement(FridayTopBarPlugins),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry', onClick:() => shellDesktopView('projects')}, 'Projects'),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry fx-shell-activity', onClick:() => shellDesktopView('activity')}, 'Activity'),
   shellExperienceAvailable && React.createElement('button', {className:'fx-shell-entry fx-shell-depth', 'aria-label':'Scene and workspace depth', onClick:() => window.FridayHolographicWorkspace && window.FridayHolographicWorkspace.open()}, '◈ Depth'),

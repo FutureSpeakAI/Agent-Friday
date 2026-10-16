@@ -57,8 +57,9 @@ def set_policy():
     try:
         policy = be.set_policy(
             workspace=workspace,
-            monthly_cap_mψ=int(data.get("monthly_cap_mψ", 1_000_000)),
-            per_task_cap_mψ=int(data.get("per_task_cap_mψ", 100_000)),
+            # A figure left out, or 0, is no cap (budget_enforcer).
+            monthly_cap_mψ=int(data.get("monthly_cap_mψ") or 0),
+            per_task_cap_mψ=int(data.get("per_task_cap_mψ") or 0),
             warn_pct=int(data.get("warn_pct", 80)),
         )
         return jsonify({"ok": True, "policy": policy})

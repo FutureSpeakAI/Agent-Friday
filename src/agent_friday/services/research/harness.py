@@ -391,7 +391,10 @@ def grind(c: Commission) -> None:
                     sq_search_ok = True
                     results.extend(out["results"])
                 else:
-                    c.log(f"search returned nothing for {query!r}",
+                    # Status and reason only, never the query: a query the
+                    # privacy gate refused must not be written to the
+                    # commission log it was kept out of the web for.
+                    c.log("search returned nothing for one query",
                           status=out.get("status"),
                           note=web_search.status_note(out))
             c.log(f"searched {len(queries)} quer{'ies' if len(queries)!=1 else 'y'}, "

@@ -1,5 +1,5 @@
 {
-  "_note": "Read by the installer's model page (lib/ModelPicker.ps1). Held equal to services/voice_artifacts.py and voice_front.FRONT_MODELS by tests/unit/test_installer_model_picker.py.",
+  "_note": "Read by the installer's model page (lib/ModelPicker.ps1). Held equal to services/voice_artifacts.py, voice_front.FRONT_MODELS and first_run_models.FRONT_COMPANIONS by tests/unit/test_installer_model_picker.py. The companions are the streaming ear, its runtime, and the whisper speech recognisers push-to-transcribe (Alt+T) and media transcripts need; their size is in the size the page shows.",
   "fronts": [
     {
       "id": "ternary-bonsai:1.7b",
@@ -37,6 +37,14 @@
     {
       "artifact": "sherpa-onnx",
       "bytes": 3145728
+    },
+    {
+      "artifact": "whisper-base",
+      "bytes": 147882941
+    },
+    {
+      "artifact": "whisper-base.en",
+      "bytes": 147769510
     }
   ]
 }
