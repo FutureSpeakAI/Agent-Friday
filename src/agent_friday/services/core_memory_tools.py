@@ -268,6 +268,8 @@ def search_card(query: str, limit: int = 3) -> list:
     if not words:
         return []
     asks_family = bool(words & hf.FAMILY_QUERY_WORDS)
+    if not _owner_reader():
+        return []
     hits = []
     for line in core_memory.entries("user"):
         if words & core_memory.content_words(line) or (asks_family and hf.is_household_line(line)):
@@ -281,11 +283,34 @@ def search_card(query: str, limit: int = 3) -> list:
     return [{"root": "memory_card", "path": CARD_HIT_PATH, "excerpt": h} for h in hits[:limit]]
 
 
-def _minor_profile() -> bool:
+def _owner_reader() -> bool:
+    """May the lines about the owner go into this call's result? Not when the call answers a remote
+    origin (a text message, a channel: agent._CURRENT_ORIGIN), and not when the speaker is not the
+    owner (laya_personal.current_profile is None). Cannot tell: no."""
+    try:
+        from agent_friday.services import agent as _ag
+        if str(_ag._CURRENT_ORIGIN.get() or ""):
+            return False
+        from agent_friday.services import laya_personal
+        return laya_personal.current_profile() is not None
+    except Exception:
+        return False
+
+
+def _active_profile():
+    """The profile this turn speaks for, or None when it cannot be resolved."""
+    try:
+        from agent_friday.services import laya_personal
+        return laya_personal.current_profile()
+    except Exception:
+        return None
+
+
+def _minor_profile(profile_id) -> bool:
     """A family / minor profile keeps no words (services/laya_personal); unknown is minor."""
     try:
         from agent_friday.services import laya_personal
-        return bool(laya_personal.is_minor(None))
+        return bool(laya_personal.is_minor(profile_id))
     except Exception:
         return True
 
@@ -296,13 +321,19 @@ def capture_household(message: str, ctx: dict) -> dict:
     Called once per typed chat turn (agent.prepare_confirmation_ctx) with the
     owner's own message, before any model sees it. services/household_facts
     reads exactly what the message states; nothing a tool returned is read.
-    The line saves silently when the owner typed it on this PC (not a phone,
-    a channel, a relay, a background task or voice). Outside content Friday
-    read earlier in the conversation does not hold it back: unlike a model's
-    update_core_memory call, the extractor's only input is the typed message,
-    so nothing a tool returned can reach the line. An existing household line
-    is never rewritten silently: a different statement is queued as a replace
-    for the owner to keep.
+
+    It saves silently only when all of these hold; otherwise it is queued for
+    the owner's OK on the card:
+      * the turn is the owner's own line typed in the app's page on this PC
+        (ctx["owner_surface"], from reflex_chat.trusted_surface over the live
+        request: not a phone, a channel, a relay, a script or voice);
+      * the active profile resolves (laya_personal.current_profile);
+      * no sentence it was read from appears in earlier tool output in this
+        conversation (taint.read_source_of): text pasted from a page or a
+        mail is not the owner's own statement;
+      * no household line is on the card yet: a different statement is
+        queued as a replace, never rewritten silently.
+    A phone, channel or background origin, or a minor profile, keeps nothing.
 
     Returns {"status": "saved"|"queued"|"unchanged"|"none"|"skipped", "text", "note"};
     `note` is one paragraph for the model's turn context, empty when nothing changed.
@@ -317,8 +348,9 @@ def capture_household(message: str, ctx: dict) -> dict:
     if not facts:
         return out
     surface = str(ctx.get("surface") or "")
+    profile = _active_profile()
     if (ctx.get("origin") or ctx.get("is_background_task") or ctx.get("task_id")
-            or surface.startswith("voice") or _minor_profile()):
+            or surface.startswith("voice") or _minor_profile(profile)):
         return {**out, "status": "skipped"}
     import time as _t
     text = hf.entry_text(facts, _t.strftime("%b %Y"))
@@ -326,8 +358,22 @@ def capture_household(message: str, ctx: dict) -> dict:
     old = existing[-1] if existing else ""
     if old and hf.facts_of(text) <= hf.facts_of(old):
         return {**out, "status": "unchanged", "text": old}
-    why = ""
-    if old:
+    why, own_words = "", True
+    if ctx.get("owner_surface") is not True:
+        why, own_words = "It did not come from the owner typing in the app on this PC.", False
+    elif profile is None:
+        why, own_words = "Friday could not tell whose profile this turn speaks for.", False
+    else:
+        try:
+            from agent_friday.services import taint as _taint
+            key = _taint.ledger_key(ctx)
+            seen = next((src for src in (_taint.read_source_of(key, sent)
+                                         for sent in facts.get("sentences") or []) if src), "")
+        except Exception:
+            seen = "something Friday could not check"
+        if seen:
+            why, own_words = "The same words appear in %s earlier in this conversation." % seen[:120], False
+    if not why and old:
         why = "It would rewrite the household line already on the card."
     if not why:
         r = core_memory.add("user", text, actor="friday")
@@ -338,7 +384,8 @@ def capture_household(message: str, ctx: dict) -> dict:
     if why:
         q = core_memory.queue("user", "replace" if old else "add", text=text, old=old,
                               source="friday",
-                              reason="The user stated their household in their own words. " + why)
+                              reason=(("The user stated their household in their own words. "
+                                       if own_words else "A household statement in a chat turn. ") + why))
         if not q.get("ok"):
             return out
         return {"status": "queued", "text": text,

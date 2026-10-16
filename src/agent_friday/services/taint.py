@@ -606,6 +606,25 @@ def origin_of(key: str, value: Any, *, free_text: bool = False,
     return _origin_in(n, s, entries, free_text)
 
 
+def read_source_of(key: str, text: Any) -> str:
+    """Plain words for the earlier tool output in this conversation that contains `text`
+    (as free text), or "" when none does.
+
+    Unlike `origin_of`, the owner's own typing does not win here: this asks
+    whether words the owner just SENT were pasted from something Friday read,
+    so the owner's message itself is not a source."""
+    s = str(text or "")
+    if not s.strip():
+        return ""
+    led = _ledger(key)
+    with _LOCK:
+        entries = [e for e in list(led.carried.values()) + list(led.entries) if e.kind != "user"]
+    if not entries:
+        return ""
+    o = _origin_in(normalize(s), s, entries, True)
+    return (o.source or "something Friday read") if o.kind not in ("user", "model") else ""
+
+
 def _origin_in(n: str, s: str, entries: list, free_text: bool) -> Origin:
     """`origin_of` over an explicit list of ledger entries."""
     if free_text:

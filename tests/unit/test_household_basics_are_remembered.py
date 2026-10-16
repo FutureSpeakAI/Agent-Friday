@@ -2,9 +2,13 @@
 
 The owner's "I am 52, my husband is 50, our son is 9" is read by fixed patterns
 from the message itself (services/household_facts) when the typed turn is
-prepared, and saved silently: the extractor reads only the typed message, so
-outside content read earlier in the conversation cannot reach the line. Exactly the stated facts are kept: no name the owner did not
-write. The same sentence on a web page is never saved silently. A later
+prepared, and saved silently only when the turn is the owner's own line typed in
+the app's page on this PC and none of it was pasted from something Friday read
+in this conversation; otherwise it waits on the card. Exactly the stated facts
+of the household (spouse or partner, children, a parent who lives with them)
+are kept: no name the owner did not write. Reported speech, dictation and
+stories are not the owner's statement. The same sentence on a web page is never
+saved silently. A later
 conversation has the line in its prompt head, and a search_wiki for the family
 finds it (gated for a cloud reader like the head).
 """
@@ -45,7 +49,10 @@ def _line():
 
 
 def _turn(message, conv="conv-a", **extra):
-    """A typed chat turn being prepared, the way routes/chat does it."""
+    """A typed chat turn being prepared, the way routes/chat does it. Outside a
+    request the caller says whether it is the owner's own page on this PC
+    (inside one it is read from the request, see the surface tests below)."""
+    extra.setdefault("owner_surface", True)
     return agent.prepare_confirmation_ctx("sess-" + conv, message,
                                           {"conversation_id": conv, **extra})
 
@@ -161,3 +168,101 @@ def test_search_wiki_withholds_the_card_line_from_a_cloud_reader_when_the_vault_
     out = json.loads(agent._tool_search_wiki({"query": "family"}))
     card = [h for h in out["hits"] if h["root"] == "memory_card"]
     assert card and "husband" not in card[0]["excerpt"] and "withheld" in card[0]["excerpt"]
+
+
+# ── only the owner's own typing on this PC saves silently ───────────────────
+# These name `_iso` explicitly as well, so a plain driver that does not apply
+# autouse fixtures still isolates them.
+
+def test_a_turn_that_is_not_the_owners_page_is_queued_not_saved(_iso):
+    _turn(SAID, owner_surface=False)
+    _turn(SAID, conv="conv-b", owner_surface=None)       # nobody said: not the owner's page
+    assert cm.entries("user") == [], "a turn from outside the owner's page saved silently"
+    assert [q["op"] for q in cm.pending()] == ["add"]
+
+
+def test_a_chat_post_without_the_page_session_is_queued(_iso):
+    """/api/chat sets no origin or surface: the request itself decides."""
+    from flask import Flask
+    app = Flask("household-surface")
+    with app.test_request_context("/api/chat", method="POST", json={"message": SAID}):
+        ctx = agent.prepare_confirmation_ctx("sess-x", SAID, {"conversation_id": "conv-x"})
+    assert ctx["owner_surface"] is False
+    assert cm.entries("user") == []
+    assert (ctx.get("household_capture") or {}).get("status") == "queued"
+
+
+def test_a_voice_mode_post_is_queued(_iso, monkeypatch):
+    from flask import Flask
+    from agent_friday.services import reflex_chat
+    monkeypatch.setattr(reflex_chat, "_request_is_local", lambda: True)
+    monkeypatch.setattr(reflex_chat, "_request_is_page", lambda: True)
+    app = Flask("household-voice")
+    with app.test_request_context("/api/chat", method="POST",
+                                  json={"message": SAID, "source": "app_page", "voice_mode": True}):
+        agent.prepare_confirmation_ctx("sess-v", SAID, {"conversation_id": "conv-v"})
+    assert cm.entries("user") == []
+    with app.test_request_context("/api/chat", method="POST",
+                                  json={"message": SAID, "source": "app_page"}):
+        agent.prepare_confirmation_ctx("sess-w", SAID, {"conversation_id": "conv-w"})
+    assert cm.entries("user") == [_line()], "the owner's own typed line on the page saves"
+
+
+def test_text_pasted_from_something_friday_read_is_queued(_iso):
+    ctx = _turn("find weekend ideas for families")
+    taint.note_tool_output(taint.ledger_key(ctx), "browse_web",
+                           {"url": "https://forum.example.test/t/1"}, PAGE)
+    ctx = _turn("I am 52, my husband is 50, our son is 9.")
+    assert cm.entries("user") == [], "a sentence from a web page was saved as the owner's household"
+    assert (ctx.get("household_capture") or {}).get("status") == "queued"
+
+
+def test_reported_speech_dictation_and_stories_save_nothing(_iso):
+    for i, message in enumerate((
+            "She said our son is 9.",
+            "Tell her my husband is 50.",
+            "Draft: my wife is 41 and our son is 9.",
+            "Write a story where my daughter is 6.",
+            "Pretend my son is 9.",
+            "Say my partner is 44.")):
+        ctx = _turn(message, conv="conv-%d" % i)
+        assert "household_capture" not in ctx, message
+    assert cm.entries("user") == [] and cm.pending() == []
+
+
+def test_only_the_household_is_kept(_iso):
+    _turn("My mother is 80 and my brother is 45.")
+    assert cm.entries("user") == [] and cm.pending() == []
+    _turn("My mother is 80 and lives with us.", conv="conv-b")
+    assert [ln.split("): ", 1)[1] for ln in cm.entries("user")] == ["mother is 80."]
+
+
+def test_the_minor_check_reads_the_active_profile(_iso, monkeypatch):
+    from agent_friday.services import laya_personal
+    asked = []
+    monkeypatch.setattr(laya_personal, "is_minor", lambda pid, *a, **k: asked.append(pid) or False)
+    _turn(SAID)
+    assert asked and asked[-1] == laya_personal.OWNER_PROFILE
+    assert cm.entries("user") == [_line()]
+
+
+def test_no_resolvable_profile_queues(_iso, monkeypatch):
+    from agent_friday.services import laya_personal
+    monkeypatch.setattr(laya_personal, "current_profile", lambda: None)
+    _turn(SAID)
+    assert cm.entries("user") == []
+    assert [q["op"] for q in cm.pending()] == ["add"]
+
+
+def test_search_card_says_nothing_to_a_remote_origin_or_another_speaker(_iso, monkeypatch):
+    from agent_friday.services import laya_personal
+    _turn(SAID)
+    monkeypatch.setattr(cmt, "_cloud_reader", lambda: False)
+    assert cmt.search_card("family ages")
+    tok = agent._CURRENT_ORIGIN.set("phone")
+    try:
+        assert cmt.search_card("family ages") == [], "household lines went to a text-message reply"
+    finally:
+        agent._CURRENT_ORIGIN.reset(tok)
+    monkeypatch.setattr(laya_personal, "current_profile", lambda: None)
+    assert cmt.search_card("family ages") == []
