@@ -191,8 +191,9 @@ def _run_and_wait(rec):
     before = len(s.run_history(rec["id"], limit=100))
     s.dispatch(rec, manual=True)
     # A run is a thread; a loaded Windows CI runner has taken over 5 s to
-    # finish one, so the bound is generous and only a run that never ends fails.
-    for _ in range(600):
+    # finish one, and a full local suite over 30 s, so the bound is generous
+    # and only a run that never ends fails.
+    for _ in range(1200):
         if len(s.run_history(rec["id"], limit=100)) > before:
             return s.run_history(rec["id"], limit=1)[0]
         time.sleep(0.05)

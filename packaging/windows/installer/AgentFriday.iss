@@ -53,7 +53,7 @@
 #endif
 
 #define AppName "Agent Friday"
-#define ReleaseName "Agent Friday Beta 1.2"
+#define ReleaseName "Agent Friday Beta 1.2 (update 2)"
 #define AppPublisher "FutureSpeak.AI"
 #define AppGuid "BE782F40-3D1C-4F12-8635-4F7561938F75"
 #define UninstKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{" + AppGuid + "}_is1"

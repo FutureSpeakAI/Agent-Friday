@@ -13,6 +13,17 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+## [1.2.0-beta.2] - Agent Friday Beta 1.2 (update 2) (2026-10-17)
+
+### Security
+
+- **Calendar and Connect your services answer a failed action with a fixed
+  sentence.** When Google or a connected service refuses, the screen says
+  what failed in plain words and the error's detail is kept in Friday's
+  local log. An exception's text is never shown on screen.
+
+---
+
 ## [1.2.0-beta.1] - Agent Friday Beta 1.2 (2026-10-16)
 
 ### Added

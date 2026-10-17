@@ -3,9 +3,9 @@
 ## Versioning
 
 Agent Friday's version is defined once, in `pyproject.toml`
-(`project.version`, PEP 440: `1.2.0b1`); `package.json` mirrors it for the
-Playwright tooling in npm's spelling (`1.2.0-beta.1`). Tags are the same
-version in tag spelling, `v1.2.0-beta.1`, on `main`; the workflow normalises
+(`project.version`, PEP 440: `1.2.0b2`); `package.json` mirrors it for the
+Playwright tooling in npm's spelling (`1.2.0-beta.2`). Tags are the same
+version in tag spelling, `v1.2.0-beta.2`, on `main`; the workflow normalises
 one to the other and refuses a mismatch.
 
 Releases are **ordered by build sequence, not by version number**: Beta 1.x is
@@ -63,7 +63,7 @@ The full matrix, with what each path can and cannot do, is in
 7. The tag runs the same workflow. When both verification jobs pass, the
    release job (the only job with write permission) publishes the **latest
    release** (not a pre-release, so the README's download link lands on it)
-   titled "Agent Friday Beta 1.2" carrying the exe, its SHA-256 and
+   titled "Agent Friday Beta 1.2 (update 2)" carrying the exe, its SHA-256 and
    `RELEASE_NOTES.md`. It is public the moment it is created. Pushing the tag
    is the release decision.
 

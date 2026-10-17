@@ -424,6 +424,24 @@ def _fresh_off_record_memory():
 
 
 @pytest.fixture(autouse=True)
+def _fresh_memory_review():
+    """The memory card's review counts turns per process, so turns from many
+    tests added up to a review that started in the background and called
+    whatever model a later test had patched. Each test counts from zero, and
+    a review a test did start is finished before the next test runs."""
+    mr = sys.modules.get("agent_friday.services.memory_review")
+    if mr is not None:
+        mr._reset_for_tests()
+    yield
+    for t in threading.enumerate():
+        if t.name == "memory-review" and t is not threading.current_thread():
+            t.join(timeout=10)
+    mr = sys.modules.get("agent_friday.services.memory_review")
+    if mr is not None:
+        mr._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_warm_cache():
     """A warm value (the model catalog above all) is built from the inputs of
     whichever test built it first; each test gets one built from its own."""

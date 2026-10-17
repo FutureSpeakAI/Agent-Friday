@@ -1,6 +1,6 @@
 # Architecture
 
-This page describes how Agent Friday™ Beta 1.2 (version `1.2.0b1`) is put
+This page describes how Agent Friday™ Beta 1.2 (update 2, version `1.2.0b2`) is put
 together, for people who work on the code. Paths are relative to
 `src/agent_friday/` unless they start at the repository root. When this page
 and the code disagree, the code is right; please fix the page.

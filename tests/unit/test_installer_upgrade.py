@@ -109,7 +109,7 @@ def test_an_older_setup_never_replaces_a_newer_install(tmp_path):
 @needs_powershell
 def test_the_same_release_may_be_reinstalled(tmp_path):
     root, home = tmp_path / "AgentFriday", tmp_path / "home"
-    _install(root, "1.2.0b1")
+    _install(root, "1.2.0b2")
     _data_home(home)
     out = run_ps(HEAD + "try { Invoke-UpgradePreflight -InstallRoot '%s' -NewSequence %d | Out-Null; 'proceeded' } catch { 'refused' }\n" % (root, release.BUILD_SEQUENCE),
                  tmp_path, env={"FRIDAY_HOME": str(home), "FRIDAY_BACKUP_ROOT": str(tmp_path / "b")})
