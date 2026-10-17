@@ -1,9 +1,9 @@
-"""Choosing cloud only is consent; the factory default never is (owner ruling, 2026-10-17).
+"""Choosing cloud only is consent; the factory default never is.
 
 The privacy summary every prompt starts with, the egress gate and Settings must give ONE answer:
 
-* the owner's explicit choice of "Cloud only" (Settings > Models clicked on Friday's own page, or a
-  setup answer) counts the same as the recorded "Cloud for everything" answer;
+* the owner's explicit choice of "Cloud only" (Settings > Models clicked on Friday's own page, or the
+  terminal setup's routing question) counts the same as the recorded "Cloud for everything" answer;
 * the factory default `cloud_only` never counts, and neither does a mode change that was not a click
   on the page, nor the mode the cautious privacy answer implies;
 * of the recorded answer and the cloud-only choice, the later one wins;
@@ -277,5 +277,7 @@ def test_the_privacy_panel_names_a_cloud_only_choice_in_both_ui_sources():
     for name in ("index.html", "ui_parts/app.html"):
         src = (repo / name).read_text(encoding="utf-8")
         assert "c.source === 'cloud_only_choice' ? 'unrestricted (you chose Cloud only)'" in src, name
-        assert "Choosing Cloud only in Settings > Models, or in setup, counts as unrestricted" in src, name
+        assert ("Choosing Cloud only in Settings > Models, or at the routing question of the terminal setup, "
+                "counts as unrestricted") in src, name
+        assert "or in setup, counts as unrestricted" not in src, name
         assert "Unrestricted sends content without privacy redaction" not in src, name

@@ -14,9 +14,9 @@ WHAT IT SAYS. The effective behaviour first (what a cloud seat may receive), the
 
   * public web and news query text is not private because of its topic; only the never-send floor and
     personal identifiers apply to it;
-  * the owner's explicit choice of cloud only (Settings > Models, or setup) is consent to use cloud
-    models for all but the never-send floor, the same as the "Cloud for everything" answer; the
-    factory default is not, and neither is the cautious answer. The block states what the consent
+  * the owner's explicit choice of cloud only (Settings > Models, or the terminal setup's routing
+    question) is consent to use cloud models for all but the never-send floor, the same as
+    the "Cloud for everything" answer; the factory default is not, and neither is the cautious answer. The block states what the consent
     resolver decides (`cloud_consent.resolve`), the same answer the egress gate acts on, never a
     second reading of the mode;
   * the owner decides once informed: no lectures, no asking again ("Inform once; owner decides");

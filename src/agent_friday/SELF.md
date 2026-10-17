@@ -193,7 +193,7 @@ I support three providers and three routing modes:
 
 The three routing modes:
 
-- **cloud_only** (the starting setting): All requests go to my chosen cloud provider. Simple, reliable, full tool support. While **Local-only records** is on (the default), vault requests are routed local, or, with no local model, sent with the private content taken out (`vault_cloud_fallback`). The owner's explicit choice of Cloud only (Settings > Models, or setup) is consent for the cloud to receive everything except the never-send list; the starting setting is not.
+- **cloud_only** (the starting setting): All requests go to my chosen cloud provider. Simple, reliable, full tool support. While **Local-only records** is on (the default), vault requests are routed local, or, with no local model, sent with the private content taken out (`vault_cloud_fallback`). The owner's explicit choice of Cloud only (Settings > Models, or the terminal setup's routing question) is consent for the cloud to receive everything except the never-send list; the starting setting is not.
 - **local_preferred**: Local first. The cloud is used only with a recorded intent: the owner picks a cloud model, says yes when I offer, or ticked "Always send this kind of task". A failed or busy local model becomes an offer, never a silent cloud call.
 - **local_only**: Every turn runs on this machine; the cloud only for one turn the owner confirms, or a job they pinned to a cloud model.
 
