@@ -1484,19 +1484,6 @@ function fridayKeyLabel(k) {
 // What the voice button is about to start, named by engine. Local listens and speaks on this
 // computer; a cloud voice speaks the reply through its provider; Gemini Live sends speech to Google.
 // None says "nothing leaves": deeper requests go to the chat model, which may be the cloud.
-// Settings > Voice > Spoken approvals in a room. Loosening it ("Anyone in the room") is
-// accepted only with this owner_action on a click on Friday's own page (routes/core_routes.py);
-// the Settings view reloads on friday:settings-changed and shows what was kept.
-function fridaySetRoomApprovals(requireName) {
-  return apiFetch('/api/settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ owner_action: 'room_approvals', settings: { voice_room_approvals_require_name: !!requireName } })
-  }).then(r => r.json()).then(d => {
-    try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {}
-    return d;
-  }).catch(() => null);
-}
 function fridayVoiceStartLabel(engine) {
   const e = String(engine || 'local').toLowerCase();
   if (e === 'gemini') return 'Start voice mode — Gemini Live (cloud; your speech is sent to Google)';
@@ -1546,6 +1533,19 @@ function fridaySceneKey(e) {
   return !!e && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
 }
 /* fridayShortcuts:end */
+// Settings > Voice > Spoken approvals in a room. Loosening it ("Anyone in the room") is
+// accepted only with this owner_action on a click on Friday's own page (routes/core_routes.py);
+// the Settings view reloads on friday:settings-changed and shows what was kept.
+function fridaySetRoomApprovals(requireName) {
+  return apiFetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ owner_action: 'room_approvals', settings: { voice_room_approvals_require_name: !!requireName } })
+  }).then(r => r.json()).then(d => {
+    try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {}
+    return d;
+  }).catch(() => null);
+}
 /* fridayHerName:begin */
 // ═══ HER NAME ═══
 // Every line of the page that speaks of her reads her name as the owner gave
