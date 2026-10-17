@@ -132,27 +132,9 @@ PROVIDERS = [
         "desc": "Claude — best reasoning, cLaws certified",
         "tag": "RECOMMENDED",
         "key_hint": "sk-ant-...",
-        "key_url": "console.anthropic.com",
+        "key_url": "platform.claude.com/settings/keys",
         # Resolved lazily at pick time (dynamic catalog, spec A2).
         "models": _anthropic_models,
-    },
-    {
-        "id": "openai",
-        "name": "OpenAI",
-        "desc": "GPT-4o and o-series models (coming in v5)",
-        "tag": "COMING SOON",
-        "key_hint": "sk-...",
-        "key_url": "platform.openai.com",
-        "models": [],
-    },
-    {
-        "id": "ollama",
-        "name": "Ollama (local)",
-        "desc": "Llama 3, Mistral and other local models (coming in v5)",
-        "tag": "COMING SOON",
-        "key_hint": "(no key needed)",
-        "key_url": "ollama.ai",
-        "models": [],
     },
 ]
 
@@ -186,8 +168,8 @@ EVOLUTION_STRUCTURES = [
 CONNECTORS = [
     ("gmail",    "Gmail",          "Search inbox, draft emails"),
     ("calendar", "Google Calendar","Read upcoming events, schedule"),
-    ("slack",    "Slack",          "Read channels, send messages (v5)"),
-    ("notion",   "Notion",         "Read/write pages (v5)"),
+    ("slack",    "Slack",          "Connect it in Friday: Settings > Connections"),
+    ("notion",   "Notion",         "Connect it in Friday: Settings > Connections"),
 ]
 
 ASCII_BANNER = r"""
@@ -759,18 +741,12 @@ def step_welcome(quick: bool):
         mode_note = "[dim]Full setup — about 2 minutes.[/dim]"
 
     console.print(Panel(
-        "[cyan]Welcome to Agent Friday — your personal sovereign AI.[/cyan]\n\n"
-        "This wizard configures your agent on your machine.\n"
-        "You'll need an [bold]Anthropic[/bold] API key to get started.\n\n"
-        "[bold]Privacy posture[/bold]\n"
-        "  • [bold]With Ollama (local):[/bold] Sensitive conversations are\n"
-        "    processed entirely on your device — nothing leaves your machine.\n"
-        "  • [bold]Without Ollama:[/bold] An egress gate redacts sensitive data\n"
-        "    before sending to cloud providers. Your private information never\n"
-        "    leaves your device, but redacted conversations may lose context.\n\n"
-        "  You can install Ollama later in Settings to upgrade to full local\n"
-        "  privacy. One-command install: [bold]winget install Ollama.Ollama[/bold]\n"
-        "  (Windows) or [bold]brew install ollama[/bold] (macOS).\n\n"
+        "[cyan]Welcome to Agent Friday.[/cyan]\n\n"
+        "This sets her up on this computer. She can think with a model on\n"
+        "this PC, a cloud provider key (Anthropic, OpenRouter and others), or\n"
+        "both. You choose where she thinks in a moment, and you can change it\n"
+        "later in Settings > Models.\n\n"
+        "  A model on this PC needs Ollama: [bold]winget install Ollama.Ollama[/bold]\n\n"
         f"{mode_note}",
         title="[bold]FIRST RUN SETUP[/bold]",
         border_style="cyan",
@@ -917,7 +893,7 @@ def connect_choices(capable: bool) -> list:
     (key, text, recommended_reason). Nothing is preselected: the prompt has no
     default, so the person types their own answer."""
     return [
-        ("1", "I'll just use local AI: nothing to connect, nothing leaves this computer",
+        ("1", "I'll just use local AI: nothing to connect now (where she thinks is set by the routing question)",
          "most private" if capable else ""),
         ("2", "Connect an AI model provider now (the key is hidden as you type)", ""),
         ("3", "Later: Friday's Connect your services screen has every service, "
@@ -1417,7 +1393,7 @@ def step_voice_engine(total: int, existing_engine: str) -> str:
     console.print(
         "  How should Friday listen and speak?\n\n"
         "  [bold cyan]1[/bold cyan].  [bold white]Local[/bold white]  "
-        "[dim](recommended — on-device, private, works offline; faster-whisper + Piper)[/dim]\n"
+        "[dim](recommended — listening and speaking on this computer; deeper requests use the model you chose for chat)[/dim]\n"
         "  [bold cyan]2[/bold cyan].  [bold white]Cloud[/bold white]  "
         "[dim](Gemini Live — most expressive; needs a Gemini key + network)[/dim]\n"
     )
@@ -1562,7 +1538,7 @@ def step_connectors(total: int, existing: dict) -> dict:
 
     connected = {}
     for cid, cname, cdesc in CONNECTORS:
-        if "(v5)" in cdesc:
+        if cdesc.startswith("Connect it in Friday"):
             console.print(f"  [dim]○  {cname}  — {cdesc}[/dim]")
             continue
         # The dot reflects the account store, not a preference file. An
