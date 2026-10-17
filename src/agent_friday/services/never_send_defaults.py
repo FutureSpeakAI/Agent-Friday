@@ -41,10 +41,12 @@ NOTICE_KEY = "never-send-defaults-numbers"
 #: A card number as people write one: 13-19 digits in a row, or grouped the way cards print
 #: (4-4-4-4 with an optional 1-3 digit tail, 4-6-5 or 4-6-4). Not any run of spaced numbers, so a
 #: table of small numbers or a list of years is not read as a card.
+#: Card numbers start with 2-6 (Mastercard 2/5, Amex 3, Visa 4, Discover 6), which also keeps
+#: millisecond timestamps and long platform ids (which start with 1) from reading as cards.
 _CARD_RE = re.compile(
-    r"\b(?:\d{13,19}"
-    r"|\d{4}([ -])\d{4}\1\d{4}\1\d{4}(?:\1\d{1,3})?"
-    r"|\d{4}([ -])\d{6}\2\d{4,5})\b")
+    r"\b(?:[2-6]\d{12,18}"
+    r"|[2-6]\d{3}([ -])\d{4}\1\d{4}\1\d{4}(?:\1\d{1,3})?"
+    r"|[2-6]\d{3}([ -])\d{6}\2\d{4,5})\b")
 _IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b")
 _LABELLED_RE = re.compile(
     r"(?i)\b(?:(?:bank\s+)?account\s*(?:number|no\.?|num\.?|#)|acct\.?\s*(?:number|no\.?|#)?|a/c\s*(?:no\.?|number)?"

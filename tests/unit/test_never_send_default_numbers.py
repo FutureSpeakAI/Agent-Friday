@@ -121,6 +121,8 @@ def test_the_floor_finds_each_kind(home, text, hit):
     "Scores: 1 2 3 4 5 6 7 8 9 0 1 2 3 4",
     "routing 2026-10-17 to the new queue",
     "ABA 021000021 is a format example",
+    # millisecond timestamps and long platform ids start with 1 (critic re-review)
+    "Logged at 1760692800000 by id 1234567890123456789",
 ])
 def test_the_floor_lets_ordinary_text_through(home, text):
     nsd.migrate()
