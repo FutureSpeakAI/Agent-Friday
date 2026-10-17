@@ -224,7 +224,7 @@ def test_the_contract_does_not_present_the_unbuilt_spec_as_built():
     """Owner rules are specified, not implemented. Saying otherwise would
     have the next session rely on a rule nothing enforces."""
     text = _contract_text()
-    assert "not yet built" in text
+    assert "not built" in text      # "is **not built**" since the 2026-10-17 docs audit
 
 
 # ── Tonight's desktop work, reachable by voice ─────────────────────────────

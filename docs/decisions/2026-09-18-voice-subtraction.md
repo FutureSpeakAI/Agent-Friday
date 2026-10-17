@@ -1,8 +1,10 @@
 # Voice subtraction — survey, measurements and the deletion proposal
 
+> **Status (2026-10-17):** partly in force: `gemini-3.8-live` is the default (core/__init__.py:2909) and `POST /api/voice/transcribe` exists (routes/voice.py:3777), but the deletion list was not carried out: `nemo_voice`, `kokoro_voice`, `cloud_voice`, `voice_workers`, `voice_personality` and the rest are still in the tree, the v1alpha chain remains (routes/voice.py:5439-5461), `voice_affective` is still a default (core/__init__.py:2425), and §11's distill still runs per session (routes/voice.py:7026; no `services/voice_distill.py`).
+
 > **Status:** PROPOSED — awaiting the owner's go on the deletion list
 > **Written:** 2026-09-18 (Fable 5.1, high effort)
-> **Supersedes when accepted:** `docs/design/active/voice-system-clean-sheet.md`,
+> **Supersedes when accepted** (design paths now in the internal design repository): `docs/design/active/voice-system-clean-sheet.md`,
 > `voice-system-spec.md`, `voice-mode-diagnosis-and-repair.md`,
 > `local-voice-repair-and-native-audio.md`, `cloud-voice-providers.md`,
 > `elevenlabs-voice.md` (all six move to `docs/design/historical/`)

@@ -89,6 +89,15 @@ drops whole records older than the threshold. The file is rewritten to open
 with a signed anchor naming the hash and sequence number the surviving chain
 resumes after, and how many records have been pruned, so the chain still
 verifies. Retention refuses to prune a chain that already fails verification.
+`POST /api/traces/retention` (`{retention_days, apply}`) sets the threshold;
+`GET /api/traces/status` reports the archive's location, size, pending
+records and retention.
+
+When a Library document is forgotten, its words are taken out of live and
+archived traces too (`reasoning_trace.redact`, called from
+`services/library/sweep.py`). Changed records are re-encrypted, later lines are
+re-linked and re-signed so the chain still verifies, and one signed
+`redaction` line records how many records changed (never what was removed).
 
 `GET /api/traces/export` downloads every archived trace, decrypted, as NDJSON;
 the first line is the verification report.

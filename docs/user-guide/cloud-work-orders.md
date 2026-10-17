@@ -1,6 +1,6 @@
 # Cloud work orders (off by default)
 
-This page is the work-order section of the routing modes guide. The guide itself is not on this branch, so the section stands alone here and moves back into it when the routing-modes docs land. Links to other pages are unchanged.
+This page explains one part of how Friday chooses between cloud and local models: a cloud model plans the work, and this PC does it.
 
 ## Cloud plans, this PC does the work
 
@@ -20,13 +20,14 @@ carries no path, no id and no title. It stops working after a day, and it works
 only in the conversation it was made for.
 
 Friday's own models do the work on this PC. Simple steps (search, filter,
-count, sort, dates) are plain code. A Laya head makes the small choices. A local
+count, sort, dates) are plain code. A small built-in classifier makes the small
+choices, such as whether an item fits the request. A local
 model reads and summarises, and only one that is already running: Friday never
 starts a model for an order. If none is up, the order waits and says so.
 
 When an order starts you get a notice and a task card, and you get a notice if
-it does not finish. Once the local scheduler is present (it is not on this
-branch), queued orders also show in Activity and can be cancelled there. An order
+it does not finish. An order waits its turn in the Local AI queue, and you can
+cancel it in Activity. An order
 keeps a checkpoint after each step, so a stop or a restart resumes where it left
 off. A checkpoint holds
 handles and small counts, never the text of your documents: a resumed step reads
@@ -101,6 +102,6 @@ the mode, and why it was allowed (you picked the model, you chose Send to
 Claude, a job you pinned to a cloud model, or the mode itself). The file is
 append-only. The reply's own record names the same reason.
 
-## On this branch
+## Not yet available
 
-Running an order needs the Local AI queue (the local scheduler), which is not on this branch yet. Until it lands, an order that starts fails closed: no step runs, you get a task card that ends failed and a notice, and the cloud hears only that the order finished. The switch stays off. Saying "have Claude plan it, do it locally" by voice does not start anything; voice support for work orders is still to do.
+The switch stays off and there is no Settings control for it. Saying "have Claude plan it, do it locally" by voice does not start a work order.

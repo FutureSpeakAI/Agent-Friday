@@ -1,9 +1,12 @@
 # Agent Friday™ Human Interface Guidelines
 
-> **Status:** proposed. The audit that motivates it and the migration that applies it
-> are maintainers' working notes (see [`../README.md`](../README.md)).
-> **Last verified:** 2026-09-30 against BRAND.md on `piece/P-BRAND-0` and
-> `unified-shell.md` on `feat/unified-shell`.
+> **Status (2026-10-17):** partly shipped. The guidelines are the target; some parts are in
+> the product (the hand cursor, the stages and §11's manifests and their test), others are not
+> (for example the structural tokens in §2 and the Backdrop option). The audit that motivates
+> it and the migration that applies it are maintainers' working notes and are not in this
+> repository (see [`../README.md`](../README.md)); the same is true of the other specs this
+> page names (`unified-shell.md`, the avatar spec, the onboarding spec, the voice tool contract).
+> **Last verified:** 2026-10-17 against `docs/brand/BRAND.md` and the code on this branch.
 > **Relationship to BRAND.md:** BRAND.md owns the look (palette, type, glass, the mark, the
 > hologram, the voice). This document owns the structure: how surfaces are laid out, how
 > they behave, what every workspace and every settings row must have, and what the critic
@@ -43,7 +46,9 @@ Three layers, one system:
 
 Only the generated `--fr-*` block (BRAND.md; `brand.css_root_block()`) names a colour, a
 face or a size. The HIG adds no colour. It adds a small set of structural tokens that a
-template reads:
+template reads. *Not built yet:* none of these is declared in the UI today except `--fr-reveal`
+(in the generated brand block) and `--fr-gap`, which only big mode sets (`body.fr-big { --fr-gap: 16px; }`
+in `index.html` and `ui_parts/head.html`).
 
 | Token | Value | Use |
 |---|---|---|
@@ -67,7 +72,7 @@ words "needs you" or a count.
 ## 3. Layer 1: the holographic desktop
 
 1. **The scene is the ground, and it stays.** The holographic desktop, the cube of cubes and
-   every one of the thirteen 3D structures (BRAND.md, "Holographic language") are Friday's
+   every one of the fifteen 3D structures (BRAND.md, "Holographic language") are Friday's
    identity. No piece of this system removes, flattens or replaces them; chrome is drawn over
    the scene, never instead of it. Nothing opaque covers it by default. Panels are glass
    (`--fr-glass`, `--fr-glass-blur`, `--fr-glass-edge`). One option exists, **Backdrop**
@@ -209,8 +214,8 @@ confirmation that names the thing.
   (waiting, doing, done, needs you, skipped, stopped, failed), never colour alone, one change at a time. `--fr-warn`
   marks only "needs you". Stop (also Esc, except while typing or over a dialog) ends the step that is running after
   its step and starts no other; a finished list goes away after nine seconds.
-- **Every list has a stage.** Calendar events, Workflows, People, Career, Trust, Sites, System approvals and the
-  Chat Hub's conversations carry `data-fr-ref="<kind>:<id>"` on each row (`fridayRow` in the page; the ref's id is
+- **Every list has a stage.** Calendar events, Workflows, People, Career, Trust, Sites (the legacy portfolio
+  view only; the default Sites view has no stage yet), System approvals and the Chat Hub's conversations carry `data-fr-ref="<kind>:<id>"` on each row (`fridayRow` in the page; the ref's id is
   URL-encoded), so Friday can see the list, point at rows (the numbered Locked outline) and, in the Calendar and the
   chat list, tick them (Ctrl/Cmd-click, a pinch, or Friday); ticks show, they never act. Health, Finance and Family
   are counts-only: a row is a kind and a position, with no title, name, figure or date, whatever the page sends
@@ -250,8 +255,9 @@ No workspace sets its own breakpoints.
 ### 4.7 Pop-out and tabs
 
 Every workspace opens in a tab (the shell: `/w/<id>`, one bar everywhere). A tab's header is
-the same frame header; the bar's context slot shows the workspace. Settings opens in a tab
-too (today it refuses: `index.html:8641`). The palette's "Open <workspace> in a tab" and
+the same frame header; the bar's context slot shows the workspace. Settings is the exception
+today: the dock and the tab switcher open it on the desktop (`/?workspace=settings`), and `/w/settings`
+redirects there (`src/agent_friday/routes/core_routes.py`). The palette's "Open <workspace> in a tab" and
 Ctrl-click on the dock do the same thing.
 
 ## 5. States
@@ -412,25 +418,70 @@ Friday acts in every workspace, not only the ones with the most buttons. A surfa
 finished until she can see it, point at it and act in it, by voice as well as by click. So a
 new or changed surface designs its voice and its Laya verbs together with its buttons.
 
-- **One contract per workspace.** `src/agent_friday/resources/laya_manifests/<id>.json` lists
-  the rows the workspace publishes (kind, id, facets, whether they tick, how one opens), every
-  verb (tool, argument template, gate class, phrasings, undo, eval cases), the jobs it can
-  launch, and a `not_for_laya` entry, with a one-line reason, for every UI action that has no
-  verb.
-- **Rows are shown, not described.** A list publishes its rows to the screen stage (§7) so
-  "select these" and "the ones from Mara" resolve to exact rows. A private list (health, money,
-  family) publishes kinds and positions only.
+- **One contract per workspace.** Every workspace in the registry
+  (`static/workspace_registry.js`) has exactly one manifest,
+  `src/agent_friday/resources/laya_manifests/<id>.json`, and there are no others. Today there are
+  20: `calendar`, `career`, `code`, `contacts`, `crew`, `family`, `finance`, `futurespeak` (the
+  Sites workspace), `health`, `knowledge`, `library`, `marketplace`, `media`, `meetings`,
+  `messages`, `news`, `settings`, `system`, `trust`, `workflows`. They are read by
+  `src/agent_friday/services/laya_manifests.py` (`MANIFEST_DIR`, `all_manifests()`, `verbs()`,
+  `objects()`, `jobs()`, `not_for_laya()`, `coverage()`, `gate_class()`); a missing file is a
+  finding for the test, not a crash.
+- **What a manifest holds** (`"schema": 1`):
+  - identity: `id`, `label`, `group`, `held`, which must equal the registry entry's;
+    `spoken_words.router_extra` (extra words the router takes for it); `nav` (`key`, `keys`,
+    `sections`);
+  - `objects`: the rows the workspace publishes: `kind`, `stage_workspace`, `noun`,
+    `ref_template` (`<kind>:{…}`), `see_touch` (`publisher`, `facets`, `filters`, `fields`,
+    `selectable`, `privacy`: `titles` or `counts_only`), `open` (either `navigate_to` with a
+    `kind`, an `args` template and `row_level: true`, or `tool: null` with `none_because` and,
+    for a gap, `gap` and `wave`), and `resolver`;
+  - `verbs`: `id` (equal to `action`, prefixed with the workspace id), `group` (`read`,
+    `navigate`, `select`, `organize`, `create`, `settings`), `ui.control`, `tool`,
+    `also_tools`, `gate` (`class`, `ring`, `card`), `laya_tier` (`router_rule`, `router_seed`,
+    `point_act_tool`, `point_act_defer`, `resolver`, or `model_only`), `phrasings`, `deictic`,
+    `undo` (`fn`, `via`) or null, `voice` (`live`, `shared`), `quiet_result`, `eval`, and
+    `point_verb` for the point-and-act tiers;
+  - `jobs`: `id`, `trigger`, `also`, `model_class`, `helper` (`visible_job` or `task`),
+    `activity_label`, `entry` (`agent_friday.<module>:<function>`), and `task_kind` /
+    `schedule_ref` where they apply;
+  - `not_for_laya`: one entry per UI action with no verb: `action`, `kind` (`by_design` or
+    `gap`), a one-line `reason` of at most 160 characters, and, for a gap, the `wave` (package
+    id) that closes it;
+  - `resolver_sources` and `workspace_tools` (`key`, `pools`).
+- **Rows are shown, not described.** A list publishes its rows to the screen stage (§4.4) so
+  "select these" and "the ones from Dana" resolve to exact rows. A private list (health, money,
+  family) publishes kinds and positions only (`privacy: counts_only`). Crew, Knowledge,
+  Marketplace and Settings publish no rows of their own, and eight row kinds (`lib`, `wf`,
+  `job`, `trust`, `site`, `health`, `fin`, `fam`) have no row-level open yet: "open the second
+  one" defers and says so instead of opening the workspace.
 - **Every control has a voice route or a reason.** If a button changes something, its verb
   names the gate class and the undo. If it must stay a click (money, publishing, accounts,
-  keys), say so in the manifest: "money stays with the owner".
+  keys), say so in the manifest with a `by_design` `not_for_laya` entry.
 - **Every job is visible.** A button that starts model work shows a task in Activity with the
   model, status, reasoning and queue place. The manifest's `jobs` names each one, with the
-  task kind and label `visible_job` gives it.
+  `task_kind` and `activity_label` its `visible_job` call gives it (or `helper: "task"` for a
+  task record that is its own visible task).
 - **Say what was done.** Spoken results come from what the page confirmed, never from the
   intent; a workspace-level open says the workspace ("opening Career"), not the row.
-- **The manifest describes; the gate decides.** The gate class in a manifest must equal
-  `action_gate`'s, and can never loosen it.
-- **Checked in CI.** `tests/test_laya_workspace_contracts.py` fails when a workspace has no
-  manifest, a UI action is neither a verb nor justified, a verb lacks a phrasing or an eval
-  case, a job is not a real `visible_job`, or a code table drifts from the manifests. Coverage
-  per workspace may only go up.
+- **The manifest describes; the gate decides.** A verb's `gate.class` must equal what
+  `laya_manifests.gate_class()` reads from `governance/action_gate`, and its `gate.ring` must
+  equal the tool's ring in `agent.TOOL_RINGS`; a manifest can never loosen the gate.
+- **Checked by a test.** `tests/test_laya_workspace_contracts.py` fails when:
+  - a registry workspace has no manifest, or a manifest has no registry workspace, or its
+    `id`, `label`, `group` or `held` differs from the registry;
+  - a UI action in `tests/fixtures/laya_ws_ui_actions.json` is neither a verb nor a
+    `not_for_laya` entry (or is both), or a `not_for_laya` entry lacks a valid `kind`, a
+    one-line reason or, for a gap, a known `wave`;
+  - a verb names a tool that does not exist, a `voice` flag that differs from the voice
+    engine's, no phrasing although it is reachable by voice, no eval case although it sits at a
+    Laya tier, an eval case that does not exist, or a tier whose path does not exist;
+  - a router phrasing does not route to its tool, or a point-and-act phrasing does not parse to
+    its `point_verb`;
+  - a code table drifts from the manifests: the stage tables in `services/screen_stage.py`, the
+    row markers in `static/workspace_stages.js`, `agent._TICKABLE`, `desktop_targets.KINDS`,
+    the resolver's sources, the router's workspace words and `agent.WORKSPACE_TOOLS`;
+  - a declared job is not a real `visible_job` call with that kind and label, or a
+    `visible_job` kind in the source belongs to no workspace;
+  - Laya coverage for a workspace or overall falls below `tests/fixtures/laya_coverage_floor.json`.
+    Coverage may only go up.
