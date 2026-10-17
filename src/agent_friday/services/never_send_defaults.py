@@ -1,10 +1,12 @@
-"""Card numbers and bank or account numbers: on every never-send list by default (owner ruling, 2026-10-17).
+"""Card numbers and bank or account numbers: on every never-send list by default.
 
 Two entries join the owner's never-send list on every install, new and existing:
 
-* ``[card numbers]``             -- any payment-card number: 13 to 19 digits in a row or in card
-                                    groups (4-4-4-4, 4-6-5) that pass the card checksum, so order
-                                    numbers and spaced lists of numbers do not trip it;
+* ``[card numbers]``             -- a payment-card number: digits in a row or in card groups
+                                    (4-4-4-4, 4-6-5, 4-6-4) that start with a card network's
+                                    prefix, have that network's length and pass the card
+                                    checksum, so order and tracking numbers, phone numbers,
+                                    timestamps and spaced lists of numbers do not trip it;
 * ``[bank and account numbers]`` -- an IBAN (its own checksum), and a number written as a bank or
                                     account number: after "account number", "acct", "a/c",
                                     "routing number", "ABA number" or "sort code".
@@ -40,13 +42,43 @@ NOTICE_KEY = "never-send-defaults-numbers"
 
 #: A card number as people write one: 13-19 digits in a row, or grouped the way cards print
 #: (4-4-4-4 with an optional 1-3 digit tail, 4-6-5 or 4-6-4). Not any run of spaced numbers, so a
-#: table of small numbers or a list of years is not read as a card.
-#: Card numbers start with 2-6 (Mastercard 2/5, Amex 3, Visa 4, Discover 6), which also keeps
-#: millisecond timestamps and long platform ids (which start with 1) from reading as cards.
+#: table of small numbers or a list of years is not read as a card. A run after "+" is a phone
+#: number in international form, never a card. The match is only a candidate: ``_card_iin_ok``
+#: and the checksum decide.
 _CARD_RE = re.compile(
-    r"\b(?:[2-6]\d{12,18}"
-    r"|[2-6]\d{3}([ -])\d{4}\1\d{4}\1\d{4}(?:\1\d{1,3})?"
-    r"|[2-6]\d{3}([ -])\d{6}\2\d{4,5})\b")
+    r"(?<!\+)\b(?:\d{13,19}"
+    r"|\d{4}([ -])\d{4}\1\d{4}\1\d{4}(?:\1\d{1,3})?"
+    r"|\d{4}([ -])\d{6}\2\d{4,5})\b")
+
+#: Card networks by issuer prefix (IIN) and the lengths each network issues. About one random
+#: digit run in ten passes the checksum, so the prefix and length carry most of the weight:
+#: an order number, a byte count or a millisecond timestamp rarely has both.
+#: (low, high) are inclusive prefix ranges compared on the first len(str(low)) digits.
+_CARD_NETWORKS = (
+    ((4, 4), (13, 16, 19)),                      # Visa
+    ((51, 55), (16,)),                           # Mastercard
+    ((2221, 2720), (16,)),                       # Mastercard 2-series
+    ((34, 34), (15,)), ((37, 37), (15,)),        # American Express
+    ((6011, 6011), (16, 17, 18, 19)),            # Discover
+    ((644, 649), (16, 17, 18, 19)),              # Discover
+    ((65, 65), (16, 17, 18, 19)),                # Discover
+    ((622126, 622925), (16, 17, 18, 19)),        # Discover (co-branded UnionPay range)
+    ((300, 305), (14,)), ((36, 36), (14,)),      # Diners Club International
+    ((38, 39), (14,)),                           # Diners Club
+    ((3528, 3589), (16, 17, 18, 19)),            # JCB
+)
+
+
+def _card_iin_ok(digits: str) -> bool:
+    """True when `digits` starts with a card network's prefix and has a length it issues."""
+    n = len(digits)
+    for (low, high), lengths in _CARD_NETWORKS:
+        width = len(str(low))
+        if n in lengths and low <= int(digits[:width]) <= high:
+            return True
+    return False
+
+
 _IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b")
 _LABELLED_RE = re.compile(
     r"(?i)\b(?:(?:bank\s+)?account\s*(?:number|no\.?|num\.?|#)|acct\.?\s*(?:number|no\.?|#)?|a/c\s*(?:no\.?|number)?"
@@ -81,7 +113,7 @@ def _iban_ok(raw: str) -> bool:
 def has_card_number(text: str) -> bool:
     for m in _CARD_RE.finditer(text or ""):
         digits = re.sub(r"\D", "", m.group(0))
-        if 13 <= len(digits) <= 19 and _luhn(digits):
+        if 13 <= len(digits) <= 19 and _card_iin_ok(digits) and _luhn(digits):
             return True
     return False
 
