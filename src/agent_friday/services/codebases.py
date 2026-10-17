@@ -518,6 +518,13 @@ def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S, _site_snapsho
     from agent_friday.governance.action_gate import classify_command
     if classify_command(command)[0] == "forbidden":
         return {"status": "refused", "say": "Blocked: that command addresses Friday's own local API, which trusts this machine as the owner. It was not run."}
+    # A mail archive or statement is read only with the owner's yes for that
+    # file (decision O7): a command that names one is not run, and the owner
+    # is asked about it on screen.
+    from agent_friday.services import file_grants as _fg_raw
+    raw_why = _fg_raw.raw_refusal_for_command(command, cwd=repo)
+    if raw_why:
+        return {"status": "refused", "say": raw_why}
     t0 = time.time()
     try:
         if _site_snapshot is not None:
@@ -549,6 +556,12 @@ def run(cid: str, command: str, *, timeout_s: int = RUN_TIMEOUT_S, _site_snapsho
         out = _cred.redact_secrets(out)
     except Exception:
         pass
+    try:
+        held = _fg_raw.raw_output_notice(out)
+    except Exception:
+        held = None
+    if held:
+        out = held
     if len(out) > RUN_OUTPUT_MAX_CHARS:
         out = out[:RUN_OUTPUT_MAX_CHARS] + "\n[truncated: %d chars in all]" % len(out)
     out = keep_mark((launched,), out)   # a failed launch stays marked for the HTTP boundary

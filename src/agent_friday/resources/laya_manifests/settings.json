@@ -161,6 +161,7 @@
   {"action": "settings.mail_default_account", "kind": "by_design", "reason": "The account a new draft goes to when none is named is the owner's choice (Connections > Google accounts); Friday asks when it is unset."},
   {"action": "settings.preapproved_sends", "kind": "by_design", "reason": "A pre-approval is the owner's own decision: no tool may make, widen, re-approve or revoke one, or let voice use them; a skill's needs are approved as seen."},
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
+  {"action": "settings.locks_windows_page", "kind": "by_design", "reason": "Opens a Windows settings page on the owner's own press; the Locks lines themselves are read by opening the section."},
   {
    "action": "settings.local_voice_measure",
    "kind": "by_design",

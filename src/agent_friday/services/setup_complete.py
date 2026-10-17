@@ -140,3 +140,11 @@ def complete_setup(data: dict) -> dict:
     except Exception:
         pass
     return {"status": "ok"}
+
+
+def save_routing_answer(mode: str) -> None:
+    """The routing mode the owner chose in the setup conversation (where may
+    she think). The setup answer is one of the owner's own mode controls, so
+    the change is accepted and logged here, in one place."""
+    from agent_friday.core import _save_settings
+    _save_settings({"model_routing": {"mode": str(mode)}}, owner_routing_change=True)

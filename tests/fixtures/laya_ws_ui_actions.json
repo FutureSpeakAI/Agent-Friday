@@ -61,6 +61,9 @@
     "audit_status": "M"
    },
    {"id": "messages.send_later", "group": "create", "label": "send later / attachments", "audit_status": "N"},
+   {"id": "messages.cleanup_open", "group": "navigate", "label": "open the inbox clean-up board", "audit_status": "new"},
+   {"id": "messages.cleanup_read", "group": "read", "label": "read a Gmail account or a Takeout file for the clean-up", "audit_status": "new"},
+   {"id": "messages.cleanup_unsubscribe", "group": "organize", "label": "unsubscribe from ticked senders", "audit_status": "new"},
    {
     "id": "messages.accounts",
     "group": "settings",
@@ -318,7 +321,8 @@
    {"id": "settings.core_memory_undo", "group": "settings", "label": "memory card: undo a change Friday made", "audit_status": "new"},
    {"id": "settings.memory_review", "group": "settings", "label": "memory card: review our conversations every few turns (local model only)", "audit_status": "new"},
    {"id": "settings.conversation_search", "group": "read", "label": "search your conversations (full text, every conversation)", "audit_status": "new"},
-   {"id": "settings.conversation_delete_message", "group": "settings", "label": "search your conversations: delete one message everywhere", "audit_status": "new"}
+   {"id": "settings.conversation_delete_message", "group": "settings", "label": "search your conversations: delete one message everywhere", "audit_status": "new"},
+   {"id": "settings.locks_windows_page", "group": "settings", "label": "Locks: open Windows' own disk-encryption settings", "audit_status": "new"}
   ]
  }
 }

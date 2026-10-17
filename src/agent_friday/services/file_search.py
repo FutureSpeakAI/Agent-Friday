@@ -204,6 +204,20 @@ def search_files(query: str = "", root: str | None = None,
     }
 
 
+def _held_raw_record(path) -> bool:
+    try:
+        from agent_friday.services import file_grants
+        if not file_grants.raw_record_kind(path):
+            return False
+        sha = file_grants.file_sha256(path)
+        if sha is None:
+            return True
+        c = file_grants.check_grant(path, sha256_hex=sha)
+        return not (c.state == "active" and c.grant_kind == "file")
+    except Exception:
+        return True
+
+
 def _search_content(roots, query, content_query, newest_first, limit, deadline, budget):
     from agent_friday.services.file_extraction import extract_text
     cq = content_query.lower()
@@ -238,6 +252,11 @@ def _search_content(roots, query, content_query, newest_first, limit, deadline, 
         # file's full read passes; its content-search snippet still gates
         # normally. Safe (fails toward gating, not toward leaking) but
         # incomplete — do not remove this comment when closing the gap.
+        if _held_raw_record(path):
+            # A mail archive or statement is not searched inside without the
+            # owner's yes for that file (owner decision O7): even "it contains
+            # this word" says what is in it.
+            continue
         idx = text.lower().find(cq)
         if idx == -1:
             continue

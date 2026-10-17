@@ -147,15 +147,21 @@ def _recent_pending() -> list:
     ap = _approvals()
     cutoff = time.time() - TURN_WINDOW_S
     return [r for r in ap.list_approvals(status="pending", kind=KIND)
-            if (r.get("created_at") or 0) >= cutoff]
+            if (r.get("created_at") or 0) >= cutoff and not (r.get("payload") or {}).get("no_merge")]
 
 
 def request_access(items, *, reason: str = "", requested_by: str = "friday",
-                   replaces: list | None = None) -> dict:
+                   replaces: list | None = None, merge: bool = True,
+                   notes: dict | None = None) -> dict:
     """Raise ONE pending card listing every requested path. Grants nothing.
 
     `replaces` names notice ids (file_grants.notices) the new grants answer, so
-    approving the card also closes those questions."""
+    approving the card also closes those questions. `merge=False` raises a
+    card of its own that no later request folds into its card (a raw record's
+    card keeps its own words). `notes` (path -> words) is Friday's own note
+    for an item, shown after the classifier's findings, never in their
+    place. It is a keyword only: a "note" inside an item (which a model's
+    request could carry) is ignored, so a model cannot write on the card."""
     ensure_hook()
     rows = items if isinstance(items, list) else [items]
     rows = rows[:MAX_ITEMS]
@@ -165,6 +171,18 @@ def request_access(items, *, reason: str = "", requested_by: str = "friday",
         if not it.get("ok"):
             bad.append({"path": it.get("path"), "error": it.get("error")})
             continue
+        note = ""
+        if notes and isinstance(raw, dict):
+            note = str(notes.get(str(raw.get("path") or "")) or "")[:200]
+        if not note and it.get("type") == "file":
+            # A mail archive or statement says so on any card that lists it,
+            # whoever asked: the card, not the asker, names what it is.
+            try:
+                note = _fg().raw_card_note(it["path"]) or ""
+            except Exception:
+                note = ""
+        if note:
+            it["summary"] = (it.get("summary") + "; " if it.get("summary") else "") + note
         key = (it["type"], _norm(it["path"]))
         if key in seen:
             continue
@@ -177,7 +195,7 @@ def request_access(items, *, reason: str = "", requested_by: str = "friday",
 
     ap = _approvals()
     superseded = []
-    for old in _recent_pending():
+    for old in (_recent_pending() if merge else []):
         payload = old.get("payload") or {}
         for it in payload.get("items") or []:
             key = (it.get("type"), _norm(it.get("path")))
@@ -205,8 +223,8 @@ def request_access(items, *, reason: str = "", requested_by: str = "friday",
                      "applies. Remove any of them in Settings › Privacy › File access."),
         action_description="; ".join(lines)[:1000],
         payload={"handler": HANDLER, "items": good, "lines": lines,
-                 "reason": str(reason or "")[:300], "replaces": replaces,
-                 "skipped": bad},
+                 "reason": str(reason or "")[:500], "replaces": replaces,
+                 "skipped": bad, "no_merge": not merge},
         # Content leaving for a cloud model is outward: always gated, and the
         # card lapses after the outward expiry rather than waiting forever.
         requested_by=requested_by, action_class="outward", force_gate=True)
