@@ -232,7 +232,7 @@
    "helper": "visible_job",
    "task_kind": "library_stage",
    "activity_label": "Drafting notes from a folder",
-   "entry": "agent_friday.services.library.staging:Stager._one"
+   "entry": "agent_friday.services.library.staging:Stager._draft_once"
   },
   {
    "id": "library.work_order",

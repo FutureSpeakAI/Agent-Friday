@@ -204,6 +204,10 @@ def _is_cloud(provider: str, model: str = "") -> bool:
 def is_unrestricted_cloud() -> bool:
     """True when every privacy safeguard is off. Default False.
 
+    An explicit owner choice of cloud only (Settings > Models clicked on
+    Friday's own page, or setup) IS consent, the same as the recorded answer;
+    `cloud_consent.resolve()` decides that from the record of the choice.
+
     `model_routing.mode == "cloud_only"` is NOT sufficient on its own, even
     though selecting cloud-only looks like the acceptance a separate
     `unrestricted_cloud` flag would double-check: `cloud_only` is this

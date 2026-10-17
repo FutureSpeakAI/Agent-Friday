@@ -134,6 +134,25 @@ def remove(kind: str, token: str) -> bool:
         return True
 
 
+def default_applied(mark: str) -> bool:
+    """Has the one-time default `mark` already been applied to this install's lists?
+    (``defaults_applied`` {mark: when}; no reader of the lists consults it.)"""
+    with _LOCK:
+        applied = _read().get("defaults_applied")
+        return isinstance(applied, dict) and mark in applied
+
+
+def mark_default_applied(mark: str, at: str) -> None:
+    """Record that `mark` was applied, so it is never applied again (a removal sticks)."""
+    with _LOCK:
+        data = _read()
+        applied = data.get("defaults_applied")
+        applied = dict(applied) if isinstance(applied, dict) else {}
+        applied[str(mark)] = str(at)
+        data["defaults_applied"] = applied
+        _write(data)
+
+
 def from_source(kind: str, source: str) -> list:
     """The entries of `kind` that `source` added and are still present."""
     with _LOCK:

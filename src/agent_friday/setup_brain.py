@@ -49,7 +49,7 @@ KEYS = [
         "provider": "anthropic",
         "label": "Anthropic (Claude)",
         "hint": "sk-ant-...",
-        "url": "console.anthropic.com/settings/keys",
+        "url": "platform.claude.com/settings/keys",
         "what": "Sharper conversation, and the tools — reading files, "
                 "searching, working with your calendar.",
         "without": "Friday uses this machine's local model to talk.",

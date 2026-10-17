@@ -1518,8 +1518,11 @@ def api_setup_complete():
     """
     data = request.get_json(silent=True) or {}
     from agent_friday.services.setup_complete import complete_setup
+    from agent_friday.services import screen_click as _screen_click_sc
+    # A routing answer counts as the owner's setup choice only from a click on this page.
+    _via = 'setup' if _screen_click_sc.screen_session(request) else 'unverified'
     try:
-        return jsonify(complete_setup(data))
+        return jsonify(complete_setup(data, routing_via=_via))
     except Exception as e:
         return api_error(e, "Couldn't finish setup")
 
@@ -1954,10 +1957,25 @@ def api_settings():
         # the non-persistent offline routing overlay (mode=local_only).
         # Only the owner's own mode controls say so; anything else that
         # carries a mode keeps the current one (core._save_settings).
+        # The mode control's own click on this page records HOW the mode was chosen: only a
+        # verified click (same-origin, the page's session token) is "settings", and only that
+        # makes a choice of cloud only count as consent (privacy/cloud_consent.py). A body that
+        # merely says owner_action still moves the mode, as before, but is "unverified".
+        # Only the Settings > Models control says routing_surface 'settings_models'; other mode
+        # buttons (the chat's offer after a local-only refusal) move the mode but are not the
+        # Settings choice the owner ruled is consent.
+        _routing_owner = data.get('owner_action') == 'routing_mode'
+        _routing_via = ''
+        if _routing_owner:
+            from agent_friday.services import screen_click as _screen_click_rm
+            _routing_via = ('settings' if (data.get('routing_surface') == 'settings_models'
+                                           and _screen_click_rm.screen_session(request))
+                            else 'unverified')
         merged = _save_settings(
             new_settings,
-            owner_routing_change=(data.get('owner_action') == 'routing_mode'),
-            owner_safe_writes_change=_sw_owner)
+            owner_routing_change=_routing_owner,
+            owner_safe_writes_change=_sw_owner,
+            routing_change_via=_routing_via)
         if isinstance(new_settings, dict) and 'voice_engine' in new_settings:
             try:
                 from agent_friday.services import local_voice_readiness as _lvr_w

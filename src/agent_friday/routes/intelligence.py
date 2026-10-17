@@ -1582,14 +1582,22 @@ def _intelligence_payload() -> dict:
                      "cannot answer, Friday says so and offers the cloud for "
                      "that turn. Nothing leaves without that click.",
              "covers": _MODE_SCOPE_NOTE},
+            # Local preferred: the cloud is called only with a recorded intent
+            # (services/cloud_intent.py): a failed or busy local model becomes
+            # an offer, never a cloud call.
             {"id": "local_preferred", "label": "Local preferred",
-             "help": "Local first. When the local model fails or is busy, the "
-                     "turn goes to the cloud model on the card and the reply "
-                     "is marked cloud. Vault content still stays local.",
+             "help": "Local first. A turn goes to the cloud only when you ask: "
+                     "you pick a cloud model, say yes when I offer, or ticked "
+                     "\"Always send this kind of task\". Vault content still "
+                     "stays local.",
              "covers": _MODE_SCOPE_NOTE},
+            # Choosing cloud only here is consent (privacy/cloud_consent.py).
             {"id": "cloud_only", "label": "Cloud only",
              "help": "Every chat, voice and background turn goes to the cloud "
-                     "model. Embeddings still run here.",
+                     "model. Embeddings still run here. Choosing this is your "
+                     "consent: the cloud may receive everything except your "
+                     "never-send list and, while Local-only records is on, "
+                     "your vault records.",
              "covers": _MODE_SCOPE_NOTE},
         ],
         "soup": soup,

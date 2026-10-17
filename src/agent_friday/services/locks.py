@@ -9,7 +9,9 @@ What is not built yet says so ("comes with the encryption update") rather
 than being left off: a page about locks that is silent about a missing lock
 reads as a lock that exists.
 
-Reads only; nothing here changes a setting, and nothing leaves the PC.
+Reads only, with one exception: the owner can remove an entry from the
+never-send list here (`remove_never_send`, a click on this page only).
+Nothing leaves the PC.
 """
 from __future__ import annotations
 
@@ -120,18 +122,23 @@ def _where() -> dict:
     except Exception:
         posture = ""
     try:
+        from agent_friday.services import never_send_defaults as nsd
         from agent_friday.services import privacy_shield_store as ps
-        never = len(ps.entries("never_send"))
+        never_list = nsd.listing()
+        never = len(never_list)
         shielded = len(ps.entries("watchlist"))
     except Exception:
-        never = shielded = 0
+        never_list, never, shielded = [], 0, 0
     today = _today_egress()
     sent = sum(r["sent"] for r in today.values())
     words = ("%s. " % posture if posture else "Not chosen yet, so every cloud call keeps all the safeguards on. ")
-    words += ("Your never-send list has %d item%s of your own, plus passwords, keys, ID and account "
-              "numbers and your vault's private records, always. %d of your own identifiers are kept "
-              "out of anything sent to a cloud model." % (never, "" if never == 1 else "s", shielded))
+    words += ("Your never-send list has %d item%s (below); nothing on it goes to any cloud model, "
+              "whatever you chose. Your vault's finance, legal and family records never go either, "
+              "and a key or password you paste is withheld before anything keeps it. %d of your own "
+              "identifiers are kept out of anything sent to a cloud model."
+              % (never, "" if never == 1 else "s", shielded))
     return _line("where", "Where I think", posture and "chosen" or "unanswered", words,
+                 never_send=never_list,
                  today=[{"destination": k, **v} for k, v in sorted(today.items())],
                  today_words=("Nothing left this PC today." if not sent else
                               "%d request%s left this PC today." % (sent, "" if sent == 1 else "s")))
@@ -232,6 +239,30 @@ def view() -> dict:
             lines.append(_line(fn.__name__.strip("_"), fn.__name__.strip("_").title(), "unknown",
                                "I couldn't read this one."))
     return {"lines": lines, "honest_limit": HONEST_LIMIT, "at": time.time()}
+
+
+def remove_never_send(entry: str) -> dict:
+    """Take one entry off the never-send list: the owner's own act, from this page.
+
+    The route admits only a click on Friday's own page (`screen_click.screen_session`). A default
+    entry removed here is not added back (never_send_defaults.MARK)."""
+    from agent_friday.services import never_send_defaults as nsd
+    from agent_friday.services import privacy_shield_store as ps
+    entry = str(entry or "").strip()
+    if not entry:
+        return {"ok": False, "message": "Say which entry to remove."}
+    try:
+        removed = ps.remove("never_send", entry)
+    except RuntimeError as e:
+        return {"ok": False, "message": str(e)}
+    if not removed:
+        return {"ok": False, "message": "That entry is not on your never-send list."}
+    label = nsd.LABELS.get(next((c for c in nsd.ENTRIES if c.casefold() == entry.casefold()), ""), entry)
+    _log.warning("never-send list: the owner removed one %s entry on the Locks page",
+                 "default" if nsd.is_category(entry) else "own")
+    return {"ok": True, "message": "Removed %s from your never-send list. It can now reach a cloud model "
+                                   "when your other settings allow it." % (
+                                       label.lower() if nsd.is_category(entry) else "that entry")}
 
 
 RESET_KIND = "raw_holds_reset"

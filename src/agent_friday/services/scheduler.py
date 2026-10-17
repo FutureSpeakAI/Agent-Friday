@@ -3028,6 +3028,15 @@ def start_scheduler():
         _ej.migrate()
     except Exception as e:
         _log.warning("email jobs were not checked for sending: %s", e)
+    if not core._TESTING:
+        # Once per install: card numbers and bank or account numbers join the never-send list.
+        # (Tests drive never_send_defaults.migrate() themselves, so a shared scratch home keeps
+        # the list each test writes.)
+        try:
+            from agent_friday.services import never_send_defaults as _nsd
+            _nsd.migrate()
+        except Exception as e:
+            _log.warning("default never-send entries were not checked: %s", e)
     try:
         # Once ever: a weekly podcast that is two voices is offered one voice (Switch / Keep).
         from agent_friday.services import podcast_engine as _pe

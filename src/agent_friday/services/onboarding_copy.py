@@ -155,13 +155,16 @@ On this computer, where nothing leaves. That needs a graphics card with about
 4.3 GB free for the smallest model that can still use her tools, and more for a
 better one.
 
-Or in the cloud, at Anthropic or Google, where your messages are sent over an
-encrypted connection and answered on their servers."""
+Or in the cloud, at the provider you connect (Anthropic, OpenRouter and
+others), where your messages are sent over an encrypted connection and
+answered on their servers."""
 
 ROUTING_CHOICES = (
     ("cloud_only",
      "Cloud",
-     "Friday thinks at Anthropic. Fastest to set up, and the sharpest answers."),
+     "Friday thinks at the cloud provider you connect. Fastest to set up, and"
+     " the sharpest answers. Choosing this is your consent: everything except"
+     " your never-send list may go to that provider."),
     ("local_only",
      "On this computer only",
      "This computer for everything. If no local model is running, she"
@@ -169,14 +172,15 @@ ROUTING_CHOICES = (
      " instead. Nothing goes to the cloud unless you say yes."),
     ("local_preferred",
      "Both",
-     "This computer by default, the cloud when it would clearly help."),
+     "This computer by default. The cloud only when you ask, or say yes when"
+     " I offer."),
 )
 
 
 CLOUD_ACK_TITLE = "What cloud mode changes"
 
 CLOUD_ACK_INTRO = """\
-You have chosen to have Friday think at Anthropic. This is a normal choice and
+You have chosen to have Friday think in the cloud. This is a normal choice and
 most people will make it - it is the same arrangement you already have with any
 assistant you use in a browser. Here is what actually differs, so none of it is
 a surprise later."""
@@ -209,13 +213,15 @@ files either way. Cloud mode changes where the thinking happens, not where the
 memory lives."""
 
 CLOUD_ACK_REFUSE = """\
-What she will refuse to do. Friday will not send certain things to
-Anthropic. When she recognises money, health, legal or identity details in what
-you have written, she holds the whole message back and tells you she has. On a
-computer that cannot run a local model, that means those questions do not get
-answered at all. Ask her about a bank balance and she will decline rather than
-reply. That is the boundary working, not a fault, but it is a real limit and
-you should know about it before you meet it."""
+What she will refuse to send. Choosing the cloud here is your consent for
+everything except your never-send list: anything on that list, and your vault's
+finance, legal and family records, never goes, and a key or password you paste
+is withheld before anything keeps it. Everything else you type goes to the
+provider you chose. If you would rather be asked first, give the cautious
+answer instead ("Cloud for public things" in the setup chat, "Cloud with
+safeguards on" in Settings > Privacy & Data): then money, health, legal or
+identity details are kept on this computer and you are told, and where a card
+is offered it shows exactly what would go before you choose to send it."""
 
 # FACT-FIX 1, continued -- the sentence the map needed and did not have.
 CLOUD_ACK_MAP = """\

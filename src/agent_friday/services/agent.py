@@ -698,7 +698,7 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "task_id": {"type": "string"}, "message": {"type": "string"}},
          "required": ["task_id", "message"]}},
-    {"name": "search_web", "description": "Search current facts and task-related gaps; returns ranked snippets with URLs. Look up findable details instead of asking the user or inventing them. Before saving a fact, confirm it on the primary site or a second source and cite it. Backends: Firecrawl (FIRECRAWL_API_KEY), Brave (BRAVE_API_KEY), then DuckDuckGo (often anti-bot blocked). Firecrawl is wired in: never say it is not wired up. Report backend errors and how to enable it.",
+    {"name": "search_web", "description": "Search current facts and task-related gaps; returns ranked snippets with URLs. Look up findable details instead of asking the user or inventing them. Before saving a fact, confirm it on the primary site or a second source and cite it. Backends: Firecrawl (FIRECRAWL_API_KEY), Brave (saved key or BRAVE_SEARCH_API_KEY), then DuckDuckGo (often anti-bot blocked). Firecrawl is wired in: never say it is not wired up. Report backend errors and how to enable it.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL's full text, stripping HTML. After search_web, verify important facts on the primary page (e.g. the business's site, not a directory). Before saving facts, verify the page rather than its search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},

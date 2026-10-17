@@ -145,7 +145,7 @@ def test_the_six_promises_come_first_then_talk_or_type(home):
     v = sc.begin("cloud_only", "")
     first = v["transcript"][0]["text"]
     for line in ("Nothing about you goes to the people who made me. Ever.",
-                 "You decide where I think", "I ask before I send, spend or delete anything.",
+                 "You decide where I think", "I ask before I send or delete anything, unless you've pre-approved it.",
                  "change or delete it", "I'll remember where we were.",
                  "I'm not a lawyer or a financial adviser"):
         assert line in first
@@ -286,7 +286,9 @@ def test_one_posture_answer_writes_consent_routing_and_scheduled_jobs(home, step
     assert got == ["cloud_guarded"]
     routing = [d for d in home["saved"] if "model_routing" in d]
     assert routing[-1]["model_routing"] == {"mode": "cloud_only"}
-    assert routing[-1]["_kw"] == {"owner_routing_change": True}
+    # The mode the posture implies is marked "posture": the recorded (cautious) consent decides,
+    # and this write is never read as a separate choice of Cloud only.
+    assert routing[-1]["_kw"] == {"owner_routing_change": True, "routing_change_via": "posture"}
     assert home["settings"]["scheduled_cloud"]["allow"] is True
     st = sc.load_state()
     assert st["posture"] == "public" and st["routing_mode"] == "cloud_only"

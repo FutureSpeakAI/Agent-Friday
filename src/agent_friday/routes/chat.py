@@ -2513,13 +2513,13 @@ def chat():
                     "this computer yet — so there's nothing for me to think "
                     "with. I haven't sent this anywhere.\n\n"
                     "Add one key in **Settings → Connections**: Anthropic "
-                    "(https://console.anthropic.com/settings/keys) or, instead, "
-                    "OpenRouter (https://openrouter.ai/keys). One is enough. "
-                    "The panel there takes the key straight from you and "
-                    "stores it encrypted — nothing to edit by hand.\n\n"
-                    "If you would rather I ran on this laptop instead, switch "
-                    "to **Smart** in Settings → Models and I will use a "
-                    "local model whenever there is no key."
+                    "(https://platform.claude.com/settings/keys) or, instead, "
+                    "OpenRouter (https://openrouter.ai/settings/keys). One is "
+                    "enough. The panel there takes the key straight from you "
+                    "and stores it encrypted — nothing to edit by hand.\n\n"
+                    "If you would rather I ran on this computer, choose "
+                    "**Local preferred** or **Local only** in **Settings → "
+                    "Models**; that needs a local model on this computer."
                 )
                 user_msg = {
                     'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),

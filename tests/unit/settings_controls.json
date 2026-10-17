@@ -2069,6 +2069,20 @@
  {
   "section": "Voice",
   "panel": "Voice & Tracking",
+  "label": "Spoken approvals in a room: Require my name / Anyone in the room",
+  "kind": "segmented-buttons",
+  "keys": [
+   "voice_room_approvals_require_name"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "src/agent_friday/services/local_context.py",
+  "reader_needle": "\"voice_room_approvals_require_name\", True) is not False",
+  "status": "ok",
+  "note": "The setup chat's room question points here (setup_chat_copy ROOM_VOICE_ASK)."
+ },
+ {
+  "section": "Voice",
+  "panel": "Voice & Tracking",
   "label": "Pause before <name> replies",
   "kind": "slider(saved)",
   "keys": [

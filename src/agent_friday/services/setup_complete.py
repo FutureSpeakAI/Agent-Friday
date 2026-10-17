@@ -68,8 +68,11 @@ def routing_delta(mode: str) -> dict:
     return {"model_routing": block}
 
 
-def complete_setup(data: dict) -> dict:
-    """Apply a completion payload and mark setup complete. Returns {status}."""
+def complete_setup(data: dict, *, routing_via: str = "unverified") -> dict:
+    """Apply a completion payload and mark setup complete. Returns {status}.
+
+    ``routing_via`` says how a ``routing_mode`` in the payload was chosen
+    ("setup" only for a click on Friday's own page; core.ROUTING_CHANGE_VIAS)."""
     from agent_friday.core import FRIDAY_DIR, _SETUP_MARKER, _save_settings
     from agent_friday.services import credential_store as cs
     data = data or {}
@@ -113,7 +116,8 @@ def complete_setup(data: dict) -> dict:
             pass
 
     # The routing mode chosen during setup is the owner's own answer.
-    _save_settings(delta, owner_routing_change=bool(data.get('routing_mode')))
+    _save_settings(delta, owner_routing_change=bool(data.get('routing_mode')),
+                   routing_change_via=routing_via)
 
     # 5) personality.json -- only now.
     if 'preferred_scene_index' in data:
@@ -142,9 +146,14 @@ def complete_setup(data: dict) -> dict:
     return {"status": "ok"}
 
 
-def save_routing_answer(mode: str) -> None:
+def save_routing_answer(mode: str, *, via: str = "posture") -> None:
     """The routing mode the owner chose in the setup conversation (where may
     she think). The setup answer is one of the owner's own mode controls, so
-    the change is accepted and logged here, in one place."""
+    the change is accepted and logged here, in one place.
+
+    The privacy answer ("posture") records its own cloud consent, which
+    decides; the mode it implies is marked "posture" so it is never read as a
+    separate choice of cloud only (privacy/cloud_consent.ROUTING_CONSENT_VIAS)."""
     from agent_friday.core import _save_settings
-    _save_settings({"model_routing": {"mode": str(mode)}}, owner_routing_change=True)
+    _save_settings({"model_routing": {"mode": str(mode)}}, owner_routing_change=True,
+                   routing_change_via=via)

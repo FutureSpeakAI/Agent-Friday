@@ -57,3 +57,36 @@ test('the Locks section shows every line, one Windows button, and the honest lim
   assert.ok(text.includes("Setup record: changed (line 1 was changed after it was written)"));
   for (const l of VIEW.lines) assert.ok(text.includes(l.title), l.title);
 });
+
+test('the never-send list is shown by name, each entry with its own Remove button', () => {
+  const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
+  const view = { honest_limit: 'x', lines: [
+    { key: 'where', title: 'Where I think', state: 'chosen', words: 'Your never-send list has 3 items (below).',
+      never_send: [{ entry: '[card numbers]', label: 'Card numbers', kind: 'category' },
+                   { entry: '[bank and account numbers]', label: 'Bank and account numbers', kind: 'category' },
+                   { entry: 'Riverside Clinic', label: 'Riverside Clinic', kind: 'words' }] }] };
+  const createElement = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) });
+  let slot = 0;
+  const slots = [view, ''];
+  const posted = [];
+  const ctx = vm.createContext({
+    React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
+    useEffect: () => {}, useCallback: fn => fn,
+    apiFetch: (url, opts) => { posted.push([url, opts && opts.body]); return Promise.resolve({ json: async () => ({ ok: true }) }); },
+    StSection: ({ title, desc, children }) => createElement('section', { title, desc }, children),
+  });
+  vm.runInContext(slice(source, 'SettingsLocks'), ctx);
+  const tree = ctx.SettingsLocks();
+  const all = (n, f, o = []) => { if (n && typeof n === 'object') { if (f(n)) o.push(n); (n.children || []).forEach(c => all(c, f, o)); } return o; };
+  const list = all(tree, n => n.props && n.props['aria-label'] === 'Your never-send list');
+  assert.equal(list.length, 1, 'the never-send list is on the page');
+  const label = b => (b.children || []).filter(c => typeof c === 'string').join('');
+  const removes = all(tree, n => n.type === 'button' && label(n) === 'Remove');
+  assert.deepEqual(removes.map(b => b.props['aria-label']), [
+    'Remove Card numbers from the never-send list',
+    'Remove Bank and account numbers from the never-send list',
+    'Remove Riverside Clinic from the never-send list']);
+  removes[0].props.onClick();
+  assert.equal(posted.at(-1)[0], '/api/locks/never-send/remove');
+  assert.deepEqual(JSON.parse(posted.at(-1)[1]), { entry: '[card numbers]' });
+});

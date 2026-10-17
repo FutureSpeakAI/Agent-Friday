@@ -4,6 +4,7 @@
     POST /api/locks/open-windows       {page: device_encryption | other_users}: open that Windows page
     POST /api/locks/raw-holds/ask      {path}: raise the file-access card for one held raw record
     POST /api/locks/raw-holds/reset    raise the card that starts the held list fresh (approved on screen only)
+    POST /api/locks/never-send/remove  {entry}: take one entry off the never-send list (a click on this page only)
 """
 from __future__ import annotations
 
@@ -53,6 +54,16 @@ def locks_open_windows():
 @locks_bp.route("/api/locks/raw-holds/ask", methods=["POST"])
 def locks_raw_ask():
     out = locks.ask_for_held(str((request.get_json(silent=True) or {}).get("path") or ""))
+    return jsonify(out), (200 if out.get("ok") else 400)
+
+
+@locks_bp.route("/api/locks/never-send/remove", methods=["POST"])
+def locks_never_send_remove():
+    # Loosening the floor is the owner's click on this page, never a program that names itself owner.
+    from agent_friday.services import screen_click
+    if not screen_click.screen_session(request):
+        return jsonify({"ok": False, "message": "This changes only from the Locks page."}), 403
+    out = locks.remove_never_send(str((request.get_json(silent=True) or {}).get("entry") or ""))
     return jsonify(out), (200 if out.get("ok") else 400)
 
 

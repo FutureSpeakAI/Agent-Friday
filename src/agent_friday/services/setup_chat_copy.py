@@ -62,9 +62,10 @@ SKIP_WORDS = ("skip", "pass", "next", "rather not say", "rather not",
 
 #: Said first, before any question (first-run spec A14).
 CONTRACT = (
-    "1. I run on this PC. Nothing about you goes to the people who made me. Ever.\n"
-    "2. You decide where I think: only here, or the cloud for some things.\n"
-    "3. I ask before I send, spend or delete anything.\n"
+    "1. I'm a program on this PC. Nothing about you goes to the people who made me. Ever.\n"
+    "2. You decide where I think: only here, or the cloud for some things. I'll ask in a minute.\n"
+    "3. I ask before I send or delete anything, unless you've pre-approved it. "
+    "Cloud models cost money as I use them; you can set a monthly ceiling.\n"
     "4. You can see everything I remember, and change or delete it.\n"
     "5. You can stop setup any time; I'll remember where we were.\n"
     "6. I'm not a lawyer or a financial adviser. When I help with your rights "
@@ -196,23 +197,29 @@ POSTURE_LABELS = {"local": "Only on this PC",
                   "everything": "Cloud for everything"}
 
 POSTURE_MEANS = {
-    "local": ("Every model runs here. Nothing about you leaves this PC. News "
-              "and podcasts are written by the model on this PC."),
+    "local": ("Every model runs here, so nothing you say goes to an AI company. "
+              "Services you connect, like Gmail or web search, still talk to "
+              "their own servers. News and podcasts are written by the model on "
+              "this PC."),
     "public": ("Your own words, files and mail stay on this PC. When I use the "
                "cloud for something public, like news or a web search, the "
-               "safeguards hold back anything personal."),
-    "everything": ("Chat and routines may use the cloud. Your never-send list "
-                   "still applies, every call is still checked and logged, and "
-                   "your raw records (mail archives, bank statements) only go "
-                   "if you say yes for that source."),
+               "safeguards stay on: personal details are not sent quietly."),
+    "everything": ("Chat and routines may use the cloud, and choosing this is "
+                   "your consent: everything except your never-send list may "
+                   "go. Every call is still checked against that list and "
+                   "logged, and your raw records (mail archives, bank "
+                   "statements) only go if you say yes for that source."),
 }
 #: "Cloud for public things" on a PC that cannot think on its own: what it
 #: really means there, said before the person chooses it.
 POSTURE_MEANS_PUBLIC_NO_LOCAL = (
     "This PC can't run my thinking model, so our conversations go to the "
-    "cloud with the safeguards on: money, health, legal and identity details "
-    "and your never-send list are held back. Public things (news, web "
-    "searches, briefings) use the cloud too.")
+    "cloud with the safeguards on. Money, health, legal or identity details "
+    "are not sent quietly: I keep them on this PC and tell you, and where a "
+    "card is offered (mail, your private records) it shows exactly what "
+    "would go, so you choose Send or keep it here. Your never-send list is "
+    "never sent. Public things (news, web searches, briefings) use the "
+    "cloud too.")
 POSTURE_COSTS = {
     "local": "No cost. Needs a capable PC, and it's slower.",
     "public": "Your own cloud bill, for what uses the cloud.",
@@ -225,7 +232,7 @@ POSTURE_LOCAL_CANT = "This computer can't run {what} well enough on its own"
 POSTURE_SET = {
     "local": "Done: I think only on this PC.",
     "public": "Done: your own words stay here; public things may use the cloud, with the safeguards on.",
-    "everything": "Done: I may use the cloud for chat and routines. Your never-send list still applies.",
+    "everything": "Done: I may use the cloud for chat and routines. Only your never-send list is refused.",
 }
 POSTURE_UNAVAILABLE = "That one isn't available on this computer: {why}. Pick another, or skip."
 POSTURE_SKIPPED = (
@@ -236,9 +243,10 @@ NEVER_SEND_ASK = (
     "Is there anything that must never leave this PC, whatever you chose? "
     "Names, topics, a client, a project. One per line, or separated by "
     "commas.\n\n"
-    "Already covered, always: passwords and keys, ID and account numbers, "
-    "your own name and contact details, and the private records in your "
-    "vault.")
+    "Already on it: card numbers and bank or account numbers (you can "
+    "remove them in Settings > Privacy & Data > Locks). Always kept back "
+    "too: a key or password you paste, and your vault's finance, legal and "
+    "family records.")
 NEVER_SEND_SET = (
     "Added {n} to your never-send list. If a message to a cloud model "
     "contains one, I stop it rather than send it.")
@@ -299,10 +307,10 @@ CONNECT_ONE_KEY = (
     "enough, and either of these works on its own:\n\n"
     "Anthropic (recommended): Claude, from the company that makes it. You "
     "pay Anthropic only for what you use. Get a key at "
-    "https://console.anthropic.com/settings/keys\n\n"
+    "https://platform.claude.com/settings/keys\n\n"
     "OpenRouter (the alternative): one account that reaches Claude and many "
     "other models. You buy credit up front and pay per use. Get a key at "
-    "https://openrouter.ai/keys\n\n"
+    "https://openrouter.ai/settings/keys\n\n"
     "Paste the key into the API key field on the Anthropic or OpenRouter "
     "card, not into this chat. I'll check it works as soon as you save it.")
 
@@ -331,6 +339,9 @@ ONE_KEY_IN_USE = ("Thinking with your {label} key. One key is enough; you "
 ONE_KEY_NONE = ("One key is enough to think with: Anthropic, or OpenRouter "
                 "instead. Nothing that needs a model will work until one is "
                 "added.")
+#: No cloud key, but a local mode with a model on this PC: chat works without one.
+ONE_KEY_NONE_LOCAL = ("You don't need a key: I'm thinking on this computer. Add "
+                      "Anthropic or OpenRouter only if you want the cloud.")
 ONE_KEY_LINK_LABELS = {"anthropic": "Get an Anthropic key",
                        "openrouter": "Get an OpenRouter key"}
 
@@ -693,8 +704,8 @@ MEMORY_SAVE_WITHOUT_ASKING = (
     "My own working notes about how we work together",
 )
 MEMORY_ALWAYS_ASK = (
-    "Anything I'd send: emails, messages, posts, requests, forms",
-    "Anything that spends money",
+    "Anything I'd send: emails, messages, posts, requests, forms (unless you pre-approve a recipient)",
+    "Anything that spends money, beyond the cloud models you chose (they stay under your monthly ceiling)",
     "Anything that deletes or overwrites your files or data",
     "Any memory change after I've read outside content, like an email or a web page",
     "Changing a setting, a permission or a rule",
