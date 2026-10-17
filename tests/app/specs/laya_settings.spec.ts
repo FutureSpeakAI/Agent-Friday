@@ -102,13 +102,17 @@ test('the replay test runs on this PC and says what it found on a home with no h
   const res = await replay;
   const body = await res.json();
   // A scratch home has no unlocked vault and no corrections: either answer is honest; nothing is invented.
+  // The outcome shows beside the button that caused it.
+  const note = root.locator('[data-laya-note="replay"]');
   if (res.status() === 200) {
     expect(body.plain.of).toBe(0);
+    await expect(note).toHaveText('Replay finished.', { timeout: 20000 });
     await expect(root.locator('[data-laya-replay="result"]')).toContainText('Nothing to replay yet', { timeout: 20000 });
   } else {
     expect(res.status()).toBe(409);
-    await expect(root.getByRole('status')).toContainText(/locked|already running/, { timeout: 20000 });
+    await expect(note).toContainText(/locked|already running/, { timeout: 20000 });
   }
+  await expect(note).toBeInViewport();
   await shot(page, info, '04-laya-replay-fresh-home');
 });
 
@@ -134,6 +138,7 @@ test('bars: reads go lower with a labelled recommendation, changes only stricter
   await read.selectOption('0.45');
   expect((await saved).status()).toBe(200);
   await expect(read).toHaveValue('0.45');
+  await expect(root.locator('[data-laya-note="bars"]')).toHaveText('Saved.');
   await expect(root.locator('[data-laya-preview="1"]')).toContainText('would have acted instead of asking');
   await expect(root.locator('[data-laya-capability="bars"] [data-laya-mode]')).toHaveAttribute('data-laya-mode', 'shadow');
   await shot(page, info, '06-laya-bar-set-shadow-preview');

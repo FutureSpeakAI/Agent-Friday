@@ -60378,6 +60378,7 @@ function SettingsTabLaya() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
+  const [msgAt, setMsgAt] = useState('');
   const load = useCallback(() => {
     apiFetch('/api/laya/settings').then(r => r.json())
       .then(x => { if (!x || x.status !== 'ok') throw new Error((x && x.message) || 'Could not read Laya’s settings.'); setD(x); setErr(''); })
@@ -60385,7 +60386,7 @@ function SettingsTabLaya() {
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key) => {
-    setBusy(key || path); setMsg('');
+    setBusy(key || path); setMsg(''); setMsgAt(path === 'replay' ? 'replay' : 'bars');
     return apiFetch('/api/laya/settings/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
       .then(x => { setMsg(x && x.status === 'ok' ? (path === 'replay' ? 'Replay finished.' : 'Saved.') : ((x && x.message) || 'That did not work.')); load(); })
@@ -60402,6 +60403,8 @@ function SettingsTabLaya() {
   const pct = v => (v === null || v === undefined) ? 'not yet' : (Math.round(v * 10) / 10) + '%';
   const num = v => (v === null || v === undefined) ? 'not yet' : String(v);
   const two = v => Number(v).toFixed(2);
+  // The outcome of a press sits beside the control that caused it, not at the top of a long tab.
+  const note = where => msg && msgAt === where ? E('div', {role:'status', 'data-laya-note': where, style:{fontSize:11, color:'#f59e0b', marginTop:6}}, msg) : null;
   if (err && !d) return E('div', {role:'status', style:dim}, err);
   if (!d) return E('div', {style:dim}, 'Checking.');
   const w = d.what_runs || {};
@@ -60430,7 +60433,6 @@ function SettingsTabLaya() {
     return out;
   };
   return E('div', {'data-laya-settings': 'ready'},
-    msg ? E('div', {role:'status', style:{fontSize:11, color:'#f59e0b', marginBottom:8}}, msg) : null,
     React.createElement(StSection, { title: "What Laya does", desc: 'Laya is the quick, on-device part of ' + fridayName() + ' that decides small things fast: which screen to open, whether a request needs a tool, and whether to ask you first. She runs on this PC in a few milliseconds and never uses the internet. When she is not sure, she hands the request to the main model (the brain). She can add a check before an action; she can never approve one.' },
       E('div', {style:card, 'data-laya-card':'series'},
         E('div', {style:{fontSize:12.5, fontWeight:600}}, (w.series || 'Series One') + ': sealed rules and a phrase matcher'),
@@ -60462,13 +60464,15 @@ function SettingsTabLaya() {
         : E('div', {style:dim}, 'Not run yet. Use the replay test below.')),
     React.createElement(StSection, { title: "Replay test", desc: 'Replays the requests you corrected or confirmed through Laya as she is now, then again reworded so phrasings she memorised stop helping. It stays on this PC, reads only what is sealed in your vault, and saves counts, never your words.' },
       E('button', {type:'button', className:'settings-btn', 'data-laya-action':'replay', disabled: !!busy, onClick: () => post('replay', {}, 'replay')},
-        busy === 'replay' ? 'Replaying…' : 'Run the replay test on my history')),
+        busy === 'replay' ? 'Replaying…' : 'Run the replay test on my history'),
+      note('replay')),
     React.createElement(StSection, { title: "Confidence bars", desc: 'How sure she must be before she acts, per action. Reads that change nothing may be set lower; actions that change something can only be made stricter here. Recommended values are labelled, never chosen for you. Your bars change nothing until you set them to act.' },
       E('div', {style:{display:'flex', alignItems:'center', gap:8, marginBottom:8}},
         E('label', {htmlFor:'laya-bars-mode', style:{fontSize:12}}, 'Use my bars'),
         E('select', {id:'laya-bars-mode', 'aria-label':'Use my bars', value: bars.mode, disabled: !!busy,
           onChange: e => post('bars', {mode: e.target.value}, 'mode')},
           E('option', {value:'shadow'}, 'Shadow: measure only'), E('option', {value:'act'}, 'Act: she uses them'))),
+      note('bars'),
       prev ? E('div', {style:dim, 'data-laya-preview':'1'}, 'Last ' + prev.days + ' days with your bars: ' + prev.would_act_more + ' turns would have acted instead of asking, ' + prev.would_ask_more + ' would have asked instead of acting.') : null,
       tableOf(['Action', 'Kind', 'Your bar', ''], (bars.rows || []).map(r => E('tr', {key:r.tool, 'data-laya-bar': r.tool},
         E('td', {style:td}, r.tool.replace(/_/g, ' ')),

@@ -372,6 +372,9 @@ def bars_view() -> dict:
                      "why": {"read": "A wrong read is cheap and you can undo it, so it may be set lower.",
                              "change": "This changes something, so here she can only be made stricter.",
                              "outward": "A guess at an outward search always asks first, whatever the bar."}[cls]})
+    # Reads first: they are the bars a person can lower, and the ones a recommendation is offered for.
+    order = {"read": 0, "change": 1, "outward": 2}
+    rows.sort(key=lambda r: order[r["class"]])
     return {"mode": cur["mode"], "rows": rows, "step": BAR_STEP}
 
 

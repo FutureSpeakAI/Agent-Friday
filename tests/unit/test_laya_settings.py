@@ -116,6 +116,8 @@ def test_recommended_values_are_labelled_and_never_preselected(home):
     assert rows["set_chat_tray"]["recommended"] is None and rows["set_chat_tray"]["min"] == lr.ACT_THRESHOLD
     assert rows["search_web"]["class"] == "outward" and rows["search_web"]["min"] is None
     assert ls.bars_view()["mode"] == "shadow"
+    classes = [r["class"] for r in ls.bars_view()["rows"]]
+    assert classes == sorted(classes, key=["read", "change", "outward"].index), "reads come first"
 
 
 def test_live_bars_are_empty_in_shadow_and_present_in_act(home):
