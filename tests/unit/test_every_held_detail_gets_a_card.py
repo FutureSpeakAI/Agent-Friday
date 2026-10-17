@@ -137,6 +137,12 @@ def test_a_json_tool_result_puts_the_field_on_the_card_not_the_whole_result(gate
     assert len(cards) == 1 and cards[0]["payload"]["what"] == [PRIVATE]
 
 
+def test_a_pretty_printed_json_result_carries_only_the_field_too(gate):
+    result = json.dumps({"title": "Clinic notes", "body": PRIVATE, "other": "nothing private here"}, indent=2)
+    eg._gate_text(result, "anthropic", "message[1].content[0]")
+    assert [c["payload"]["what"] for c in _cards()] == [[PRIVATE]]
+
+
 def test_money_in_ordinary_chat_is_carded_even_when_email_money_is_kept_quietly(gate, monkeypatch):
     monkeypatch.setattr(cr, "_choice", lambda: "withhold")
     _seal("The PRIVATE-MARK bill from the plumber cost $40.")

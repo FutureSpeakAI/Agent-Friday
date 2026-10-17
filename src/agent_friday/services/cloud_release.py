@@ -165,9 +165,10 @@ def _once_hashes(now=None) -> set:
 
 
 def _key(h: str, provider: str = "") -> str:
-    """A release is for the destination the card named: "<hash>@<provider>". A key with no
-    provider is an older release (any provider), still honoured until it runs out."""
-    return "%s@%s" % (h, provider) if provider else h
+    """A release is for the destination the card named: "<hash>@<provider>". A card that named
+    no provider releases to none ("@?" matches no destination). A bare key in the store is an
+    older release (any provider), still honoured until it runs out."""
+    return "%s@%s" % (h, provider or "?")
 
 
 def _is_released_key(h: str, provider: str, keys: set) -> bool:
@@ -711,12 +712,18 @@ def note_held(text: str, field: str, provider: str) -> None:
         _log.debug("held span not noted: %s", e)
 
 
-def unnote_held(text: str) -> None:
-    """Take back a note for exactly this text (the gate is about to judge its parts instead)."""
+def held_mark() -> int:
+    """How many spans are noted so far in this scope (-1 outside one)."""
     held = _HELD.get()
-    if held:
-        h = _hash(str(text or "").strip())
-        held[:] = [it for it in held if it["hash"] != h]
+    return -1 if held is None else len(held)
+
+
+def held_back_to(mark: int) -> None:
+    """Take back every note made since `held_mark()` returned `mark` (the gate is about to judge a
+    value's parts instead of the whole value, or its lines)."""
+    held = _HELD.get()
+    if held is not None and 0 <= mark <= len(held):
+        del held[mark:]
 
 
 def offer_held(items: list, provider: str = "", model: str = "") -> dict | None:

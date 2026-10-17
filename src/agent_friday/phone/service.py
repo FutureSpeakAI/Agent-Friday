@@ -673,6 +673,12 @@ def handle_approval_reply(text: str, now: Optional[float] = None) -> Optional[st
             _save_state("sms_approvals.json", st)
             return ("A search card is sent only on screen, in the app, where you see the exact text. "
                     "Nothing was changed; reply NO %s to decline it." % code)
+        if decision == "approve" and (card.get("payload") or {}).get("handler") == "cloud_release":
+            # Private text goes to the cloud only from its card's own Send on screen, where the exact
+            # words and where they would go are shown. The code is kept so a NO still works.
+            _save_state("sms_approvals.json", st)
+            return ("Sending private text to the cloud is approved only on screen, in the app, where you "
+                    "see exactly the words. Nothing was changed; reply NO %s to keep it on the PC." % code)
         if decision == "approve" and card.get("kind") in ap.SCREEN_ONLY_KINDS:
             # Said plainly, and the code is kept so a NO still works: this kind
             # of card is approved only by a click on screen.

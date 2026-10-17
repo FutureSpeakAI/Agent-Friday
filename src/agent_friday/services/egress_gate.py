@@ -939,19 +939,24 @@ def destination_is_cloud(provider: str, model: str = "") -> bool:
 
 
 def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> str:
+    try:
+        from agent_friday.services import cloud_release as _cr
+        _mark = _cr.held_mark()
+    except Exception:
+        _cr, _mark = None, -1
     whole = _gate_text_span(text, provider, field, log_path)
     if whole == text:
         return whole                      # nothing withheld — no need to descend
     parsed = _try_json(text)
     if parsed is None:
         return whole                      # not JSON; the span pass already ran
-    # The whole-value pass above noted the entire JSON string as held; the field-wise walk below
-    # decides what is really held, field by field, so the card shows those fields, not the blob.
-    try:
-        from agent_friday.services import cloud_release as _cr
-        _cr.unnote_held(text)
-    except Exception:
-        pass
+    # The whole-value pass above noted the JSON string (or its lines) as held; the field-wise walk
+    # below decides what is really held, field by field, so the card shows those fields only.
+    if _cr is not None:
+        try:
+            _cr.held_back_to(_mark)
+        except Exception:
+            pass
     gated = _gate_json_value(parsed, provider, field, log_path)
     if isinstance(gated, dict):
         # Say WHAT was withheld and WHY at the top of the result, not only as a marker inside a
