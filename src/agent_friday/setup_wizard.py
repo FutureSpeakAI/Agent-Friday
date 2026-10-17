@@ -1805,8 +1805,12 @@ def main():
 
     # ── Screen 3: where your words go ──
     _routing_existing = (existing.get("model_routing") or {}).get("mode", "")
+    # Only an answer to the routing screen is the owner's choice (and, for cloud only, consent);
+    # quick mode and a skipped screen keep the mode but record no choice.
+    config["_routing_answered"] = False
     if not quick and _ask("routing"):
         config["routing_mode"] = step_routing(total_steps, 3, _routing_existing)
+        config["_routing_answered"] = True
     else:
         config["routing_mode"] = _routing_existing or "cloud_only"
 
@@ -1908,16 +1912,18 @@ def main():
     if _routing is not None:
         config["model_routing"] = _routing
     chosen_mode = config.pop("routing_mode", "") or ""
+    answered = bool(config.pop("_routing_answered", False))
     if chosen_mode:
         block = dict(config.get("model_routing") or existing.get("model_routing") or {})
         block["mode"] = chosen_mode
-        # The owner answered the routing screen: the record that this mode was
-        # chosen, not seeded (cloud_intent.mode_was_chosen).
+        # The record that this mode was chosen, not seeded (cloud_intent.mode_was_chosen).
         block["mode_chosen"] = str(chosen_mode).strip().lower()
-        block["mode_chosen_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        # Answered at the terminal by the owner: a setup choice. Choosing cloud
-        # only here is consent (privacy/cloud_consent.ROUTING_CONSENT_VIAS).
-        block["mode_chosen_via"] = "setup"
+        from datetime import datetime as _dt, timezone as _tz
+        block["mode_chosen_at"] = _dt.now(_tz.utc).isoformat(timespec="seconds")
+        # Answered at the terminal by the owner: a setup choice, and choosing cloud only
+        # there is consent (privacy/cloud_consent.ROUTING_CONSENT_VIAS). Quick mode or a
+        # skipped routing screen kept the mode without asking: not consent.
+        block["mode_chosen_via"] = "setup" if answered else "unverified"
         config["model_routing"] = block
 
     # Defaults that server expects

@@ -1961,11 +1961,16 @@ def api_settings():
         # verified click (same-origin, the page's session token) is "settings", and only that
         # makes a choice of cloud only count as consent (privacy/cloud_consent.py). A body that
         # merely says owner_action still moves the mode, as before, but is "unverified".
+        # Only the Settings > Models control says routing_surface 'settings_models'; other mode
+        # buttons (the chat's offer after a local-only refusal) move the mode but are not the
+        # Settings choice the owner ruled is consent.
         _routing_owner = data.get('owner_action') == 'routing_mode'
         _routing_via = ''
         if _routing_owner:
             from agent_friday.services import screen_click as _screen_click_rm
-            _routing_via = 'settings' if _screen_click_rm.screen_session(request) else 'unverified'
+            _routing_via = ('settings' if (data.get('routing_surface') == 'settings_models'
+                                           and _screen_click_rm.screen_session(request))
+                            else 'unverified')
         merged = _save_settings(
             new_settings,
             owner_routing_change=_routing_owner,

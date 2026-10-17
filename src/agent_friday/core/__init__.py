@@ -4045,11 +4045,16 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
         raise RuntimeError("refusing to save settings from %s: %s"
                            % (_who, _refuse))
     if not _internal_cloud_consent_write:
+        # `unrestricted_cloud` is the legacy form of the same decision (cloud_consent.resolve
+        # still honours a stored True), so a generic write may not turn it on. Turning it off
+        # narrows and stays allowed.
         mr = (data or {}).get("model_routing")
-        if isinstance(mr, dict) and "cloud_consent" in mr:
+        if isinstance(mr, dict) and ("cloud_consent" in mr or mr.get("unrestricted_cloud") not in (None, False)):
             data = dict(data)
             mr = dict(mr)
             mr.pop("cloud_consent", None)
+            if mr.get("unrestricted_cloud") is not False:
+                mr.pop("unrestricted_cloud", None)
             data["model_routing"] = mr
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     # Invalidate BEFORE and AFTER the write.
@@ -4158,8 +4163,11 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
         _via = routing_change_via if routing_change_via in ROUTING_CHANGE_VIAS else "unverified"
         if owner_routing_change and _new_mode:
             data = dict(data)
+            # Aware UTC: the consent resolver compares this time with the recorded answer's,
+            # and a naive local time would move if the PC's time zone changed.
+            from datetime import timezone as _tz
             _mr_in = dict(_mr_in, mode_chosen=_new_mode,
-                          mode_chosen_at=datetime.now().isoformat(timespec="seconds"),
+                          mode_chosen_at=datetime.now(_tz.utc).isoformat(timespec="seconds"),
                           mode_chosen_via=_via)
             data["model_routing"] = _mr_in
         elif any(k in _mr_in for k in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")):

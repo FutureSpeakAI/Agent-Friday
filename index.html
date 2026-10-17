@@ -57023,7 +57023,8 @@ function SettingsTabIntelligence({ s, save }) {
     setSavingMode(id);
     apiFetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ owner_action: 'routing_mode', settings: { model_routing: { mode: id } } }),
+      // routing_surface: this is the Settings > Models control, whose Cloud only says it is consent.
+      body: JSON.stringify({ owner_action: 'routing_mode', routing_surface: 'settings_models', settings: { model_routing: { mode: id } } }),
     }).then(r => r.json().then(d => ({ ok: r.ok, d })))
       .then(({ ok, d }) => {
         // The save answers with the settings it wrote; that is the truth, not

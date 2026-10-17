@@ -113,10 +113,15 @@ VALID_CHOICES = (CHOICE_LOCAL, CHOICE_CLOUD, CHOICE_GUARDED)
 #: on an owner routing change (`mode_chosen`, `mode_chosen_at`) plus HOW the
 #: change was made (`mode_chosen_via`), which a client can never send:
 #:
-#:   * "settings" -- the Settings > Models mode control, clicked on Friday's own
-#:     page (same-origin, with the page's session token: `screen_click`);
-#:   * "setup"    -- the terminal setup wizard's routing question, or setup
-#:     completion clicked on Friday's own page.
+#:   * "settings" -- the Settings > Models mode control (`routing_surface`
+#:     "settings_models"), clicked on Friday's own page (same-origin, with the
+#:     page's session token: `screen_click`); other mode buttons are not it;
+#:   * "setup"    -- the terminal setup wizard's routing question when it was
+#:     actually answered (not quick mode, not skipped), or setup completion
+#:     clicked on Friday's own page.
+#:
+#: Times are compared as aware datetimes; `mode_chosen_at` is written in UTC.
+#: A recorded answer whose time cannot be read wins (fails toward safeguards).
 #:
 #: Not consent: the setup chat's privacy answer writing the mode it implies
 #: ("posture": that answer records its own consent, which decides), a mode
@@ -222,8 +227,10 @@ def resolve(config: dict | None = None) -> ConsentStatus:
         # Choosing cloud only is consent; the later explicit decision wins.
         chose_at = cloud_only_choice(cfg)
         if chose_at is not None:
-            rec_at = _when(recorded.at) if recorded is not None and recorded.answered else None
-            if rec_at is None or _when(chose_at) > rec_at:
+            answered = recorded is not None and recorded.answered
+            rec_at = _when(recorded.at) if answered else None
+            # A recorded answer whose time cannot be read wins: it fails toward the safeguards.
+            if not answered or (rec_at is not None and _when(chose_at) > rec_at):
                 return ConsentStatus(
                     answered=True, choice=CHOICE_CLOUD, at=chose_at,
                     capability_snapshot=(recorded.capability_snapshot
