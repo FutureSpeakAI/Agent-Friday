@@ -69,7 +69,7 @@ GUARDED = {"answered": True, "choice": "cloud_guarded", "at": "2026-10-01T09:00:
     # what the gate does (tests/unit/test_cloud_only_choice_is_consent.py covers the explicit choice).
     (dict(mode="cloud_only", vault_local=False),
      ["Mode: cloud only.", "Consent: unanswered.",
-      "Private details stay on this computer unless the owner releases them on a card"]),
+      "Private details stay on this computer until the owner says Send on the card shown"]),
     # ... and the vault switch, when it is on, is stated as the exception it is.
     (dict(mode="cloud_only", vault_local=True, consent=UNRESTRICTED),
      ["Local-only records: on.", "all data except the never-send floor and private records."]),

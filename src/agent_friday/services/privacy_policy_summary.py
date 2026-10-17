@@ -119,7 +119,7 @@ def _summary(settings) -> str:
         effect = "Cloud models may use all data except the never-send floor%s." % vault_clause
     elif mode in ("cloud_only", "cloud_preferred"):
         # The starting setting, or the cautious answer: not consent. The gate holds private details.
-        effect = ("Private details stay on this computer unless the owner releases them on a card; "
+        effect = ("Private details stay on this computer until the owner says Send on the card shown; "
                   "cloud models get the rest.")
     else:
         effect = "Private data goes to the local model; cloud models get the rest."

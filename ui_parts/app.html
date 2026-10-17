@@ -1484,6 +1484,17 @@ function fridayKeyLabel(k) {
 // What the voice button is about to start, named by engine. Local listens and speaks on this
 // computer; a cloud voice speaks the reply through its provider; Gemini Live sends speech to Google.
 // None says "nothing leaves": deeper requests go to the chat model, which may be the cloud.
+// Settings > Voice > Spoken approvals in a room (see index.html): owner_action on a page click.
+function fridaySetRoomApprovals(requireName) {
+  return apiFetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ owner_action: 'room_approvals', settings: { voice_room_approvals_require_name: !!requireName } })
+  }).then(r => r.json()).then(d => {
+    try { window.dispatchEvent(new CustomEvent('friday:settings-changed')); } catch (_) {}
+    return d;
+  }).catch(() => null);
+}
 function fridayVoiceStartLabel(engine) {
   const e = String(engine || 'local').toLowerCase();
   if (e === 'gemini') return 'Start voice mode — Gemini Live (cloud; your speech is sent to Google)';
@@ -19590,7 +19601,7 @@ function SettingsTabVoice({s,save}){
       <StRow label="Spoken approvals in a room" desc={("When " + fridayName() + " can hear more than one person, whose spoken yes counts on an approval. The card on screen is the same either way. Setup asks this too.")}>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {[{k:true,l:'Require my name (default)'},{k:false,l:'Anyone in the room'}].map(o=>(
-            <button key={String(o.k)} className={`settings-btn ${(s.voice_room_approvals_require_name!==false)===o.k?'active':''}`} onClick={()=>save({voice_room_approvals_require_name:o.k})} style={{fontSize:11}}>{o.l}</button>
+            <button key={String(o.k)} className={`settings-btn ${(s.voice_room_approvals_require_name!==false)===o.k?'active':''}`} onClick={()=>fridaySetRoomApprovals(o.k)} style={{fontSize:11}}>{o.l}</button>
           ))}
         </div>
       </StRow>
@@ -20137,12 +20148,14 @@ function CloudReleaseCard({ a, busy }) {
   const scope = p.scope || {};
   const [thread, setThread] = useState(false);
   const [sender, setSender] = useState(false);
+  const [always, setAlways] = useState(false);
   const [sending, setSending] = useState(false);
+  const where = p.where || null;
   const decide = decision => {
     if (sending) return;
     setSending(true);
     apiFetch('/api/privacy/cloud-release/' + encodeURIComponent(a.approval_id) + '/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision, remember: { thread: thread && !!scope.thread, sender: sender && !!scope.sender } }) })
+      body: JSON.stringify({ decision, remember: { thread: thread && !!scope.thread, sender: sender && !!scope.sender, text: always && !!scope.text } }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok) fridayApprovalFeed.drop(a.approval_id);
         if (d && d.already_decided) fridayToast('Already decided elsewhere.');
@@ -20156,6 +20169,10 @@ function CloudReleaseCard({ a, busy }) {
     (p.what || []).map((t, i) => E('blockquote', { key: i, 'data-testid': 'cloud-release-text', style: { fontSize: 11.5, color: '#e8eef6', margin: '6px 0', padding: '4px 8px', borderLeft: '2px solid rgba(245,158,11,0.7)', whiteSpace: 'pre-wrap' } }, t)),
     scope.thread ? E('label', { style: { display: 'block', fontSize: 11, color: '#bbb' } }, E('input', { type: 'checkbox', checked: thread, onChange: e => setThread(e.target.checked) }), ' Remember for this thread') : null,
     scope.sender ? E('label', { style: { display: 'block', fontSize: 11, color: '#bbb' } }, E('input', { type: 'checkbox', checked: sender, onChange: e => setSender(e.target.checked) }), ' Remember for this sender (' + scope.sender + ')') : null,
+    where ? E('div', { 'data-testid': 'cloud-release-where', style: { fontSize: 11, color: '#bbb', marginTop: 2 } },
+      'Where it would go: ' + (where.provider || 'the cloud provider') + (where.model ? ' (' + where.model + ')' : '') +
+      ((where.parts || []).length ? ', from ' + where.parts.join('; ') : '')) : null,
+    scope.text ? E('label', { style: { display: 'block', fontSize: 11, color: '#bbb' } }, E('input', { type: 'checkbox', checked: always, onChange: e => setAlways(e.target.checked) }), ' Always send this exact text') : null,
     E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } }, btn('Send', 'approve', '#00ff80'), btn('Keep on this PC', 'deny', '#ff0080')));
 }
 // A scheduled job's own choices on its Workflows card: a missed run and a held run.
