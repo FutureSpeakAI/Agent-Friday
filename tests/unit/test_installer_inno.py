@@ -52,10 +52,10 @@ def test_the_app_id_is_a_fixed_guid():
 
 
 def test_the_name_the_version_and_the_output_file():
-    assert '#define ReleaseName "Agent Friday Beta 1.2"' in SCRIPT
+    assert '#define ReleaseName "Agent Friday Beta 1.2 (update 2)"' in SCRIPT
     assert setup_value("AppName") == "{#ReleaseName}"
     assert setup_value("OutputBaseFilename") == "AgentFriday-Setup-{#AppTag}"
-    assert release.RELEASE_NAME == "Agent Friday Beta 1.2"
+    assert release.RELEASE_NAME == "Agent Friday Beta 1.2 (update 2)"
 
 
 def test_the_rocket_icon_is_used_everywhere():
@@ -251,7 +251,7 @@ def test_the_old_zip_path_is_gone():
 def test_the_tag_check_accepts_the_beta_tag_against_the_pep440_version():
     assert "(a|b|rc)" in WORKFLOW and "-$word.$($m.Groups[3].Value)" in WORKFLOW
     # the same normalisation, run on the tree's version (app_version is the one reader of
-    # pyproject.toml): 1.2.0b1 -> v1.2.0-beta.1
+    # pyproject.toml): 1.2.0b2 -> v1.2.0-beta.2
     from agent_friday.services import app_version
     version = app_version.running_version(REPO)
     m = re.match(r"^(\d+\.\d+\.\d+)(?:(a|b|rc)(\d+))?$", version)
@@ -293,7 +293,7 @@ def test_the_release_job_publishes_the_latest_release_not_a_draft():
     assert "PLACEHOLDER" in rel and "a placeholder is left in the notes" in rel, \
         "the notes get the installer's real SHA-256, and a leftover placeholder stops the release"
     assert 'needs: [fresh-install, upgrade]' in rel
-    assert "--title \"Agent Friday Beta 1.2\"" in rel and "--notes-file" in rel
+    assert "--title \"Agent Friday Beta 1.2 (update 2)\"" in rel and "--notes-file" in rel
     assert ".exe.sha256" in rel and "AgentFriday-Setup-*.exe" in rel
     assert "Build sequence" in rel, "the notes carry the line the updater orders releases by"
 
