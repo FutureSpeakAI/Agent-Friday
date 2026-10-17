@@ -21,7 +21,7 @@ your disk free after the download and hides any model that would use more.
 ## 1. Download
 
 Open the [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest)
-and download `AgentFriday-Setup-1.2.0-beta.1.exe` (about 675 MB). The file
+and download `AgentFriday-Setup-1.2.0-beta.2.exe` (about 675 MB). The file
 carries its own copy of Python and every package Friday uses, so nothing else
 has to be installed first.
 
@@ -31,7 +31,7 @@ The release page publishes the file's SHA-256 checksum. In PowerShell, in the
 folder you downloaded to:
 
 ```powershell
-Get-FileHash .\AgentFriday-Setup-1.2.0-beta.1.exe -Algorithm SHA256
+Get-FileHash .\AgentFriday-Setup-1.2.0-beta.2.exe -Algorithm SHA256
 ```
 
 The `Hash` it prints must match the checksum on the release page, character for
