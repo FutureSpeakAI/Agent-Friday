@@ -52,13 +52,20 @@ document it is.
 | [API](reference/api.md) | Every HTTP endpoint with method, path, request and response. |
 | [Roles and model identity](reference/roles-and-model-identity.md) | The contract between the residency layer and anything that renders a model picker or binds a model to a conversation. |
 | [Task observation](reference/task-observation.md) | How an outside program (or you) reads a running task's journal: the read-only credential, the three reads, event kinds, gaps. |
+| [Long-running tasks](reference/long-running-tasks.md) | How background tasks run, checkpoint and resume. |
+| [Off the record](reference/off-the-record.md) | What off-the-record mode keeps and does not keep. |
+| [Reasoning traces](reference/reasoning-traces.md) | The traces a turn records and where to read them. |
+| [Restarting Friday](reference/restarting-friday.md) | What a restart does to running work. |
+| [Voice capability](reference/voice-capability.md) and [voice tool contract](reference/voice-tool-contract.md) | What voice can do, and the tool contract and budget voice runs under. |
+| [Agent workspaces](features/agent-workspaces.md), [Crew](features/crew.md), [Sites](features/sites.md) | Feature references for agent workspaces, the crew room and published sites. |
 
 ## Architecture and security
 
 | Document | Purpose |
 |---|---|
 | [Architecture](../ARCHITECTURE.md) | Processes, the request flow, tool dispatch and the governance hook chain. |
-| [Architecture overview](architecture/overview.md) | Diagrams: system, a chat turn, the checkpoint, vault tiers, voice. |
+| [Architecture overview](architecture/overview.md) | Each subsystem as it is on main: consent and routing, the gates, the never-send floor, approvals, scheduler, memory, search, vault keys, Laya, connections, first run, workspaces, task visibility, release. |
+| [Architecture diagrams](architecture/diagram.md) | Mermaid diagrams of the components and of a chat turn through the gates. |
 | [Threat model](security/threat-model.md) | What is defended against, what is not, and the guarantee each mechanism provides. |
 | [Security policy](../SECURITY.md) | Reporting, supported versions, where credentials live, what the runtime enforces. |
 

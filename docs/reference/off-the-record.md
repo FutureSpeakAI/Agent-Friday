@@ -29,6 +29,8 @@ deliberately.
 | Trajectories (`trajectories.jsonl`, SkillOpt metrics) | Nothing captured. |
 | Cognitive memory (`memory/*.json`, `memory_ledger.jsonl`) | Nothing written, not even the ledger line. |
 | Conversation index (ChromaDB) and emotional arc | Nothing indexed. |
+| Conversation search (`conversation_fts`) | Off-record messages are never indexed, so search never finds them. |
+| Memory card's quiet review (`memory_review`) | Off-record turns never reach the review, so nothing from them is suggested for the memory card. |
 | Behavioral monitor (`behavioral_monitor/*`) | Still scores and alerts. What it stores holds tool names, rings, outcome classes, scores and times; no request text, arguments or targets. |
 | Reasoning traces (`traces/ledger.jsonl`) | Shown live, never archived, even if the trace finishes after off-record ends. |
 | Task journal and task ledger (`tasks/*`) | A task started off the record writes nothing for its whole life. |

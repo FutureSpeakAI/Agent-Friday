@@ -58,15 +58,14 @@ Out of scope:
 
 ## Supported versions
 
-Agent Friday™ Beta 1.0.1 (version `1.0.1b1`) is the latest release and the only
-supported one. Beta 1.0.1, Beta 1.0 and the 5.x versions are not supported.
-Security fixes land on `main` and ship in the next tagged release. They are not
-back-ported.
+Agent Friday™ Beta 1.2 (version `1.2.0b1`) is the latest release and the only
+supported one. Security fixes land on `main` and ship in the next tagged
+release, including Beta 1.2 patch releases. They are not back-ported.
 
 | Version | Supported |
 |---|---|
-| Beta 1.0.1 (`1.0.1b1`) and later releases, the latest only | Yes |
-| Beta 1.0.1 (`1.0.1b1`), Beta 1.0 (`1.0.0b1`), 5.x and anything older | No. Upgrade by running the new installer; your data is kept. |
+| Beta 1.2 (`1.2.0b1`) and its patch releases, the latest only | Yes |
+| Beta 1.1, Beta 1.0.2, Beta 1.0.1, Beta 1.0, 5.x and anything older | No. Upgrade by running the new installer; your data is kept. |
 
 Watch the repository's releases for security notes.
 
@@ -89,12 +88,27 @@ your behalf. Its defences are aimed at the ways such an agent goes wrong.
   or unclassified tool is treated as outward.
 - **Exfiltration to cloud models.** An egress gate
   (`services/egress_gate.py`) inspects every payload bound for a cloud
-  provider and withholds private and sensitive content. If the gate fails,
-  the send is blocked.
+  provider. Unless you answered **Cloud for everything** in setup, it
+  withholds private and sensitive content and masks identifiers such as card
+  numbers. Under every answer, the never-send floor (your never-send list,
+  files you marked never-send, vault legal/finance/family paths and quoted
+  lines of held raw records) stops the whole call; if that check cannot run,
+  the call is held.
+  If the gate fails, the send is blocked.
+- **A default read as consent.** The factory routing mode is `cloud_only`,
+  but cloud consent starts unanswered and every safeguard stays on until you
+  answer the setup chat's privacy question (**Only on this PC**, **Cloud for
+  public things** or **Cloud for everything**). No model can record that
+  answer.
+- **Raw records and pasted keys.** Mail archives and bank or card statements
+  reach a cloud model only after a yes for that one file, under every
+  posture. A key or password pasted into chat is withheld before the model,
+  any store or any index sees it.
 - **Remote access through tunnels and proxies.** A request that arrives
   through a tunnel or a reverse proxy is never treated as the local user and
   must log in. Only direct loopback requests, and Friday's own local-address
-  proxy on loopback, count as local.
+  proxy on loopback, count as local. Setup, Connect your services and the
+  Locks page refuse remote requests even after login.
 - **Tampering with its own rules.** The behavioural constraints are
   HMAC-signed and checked against a pinned value before every outward action.
   If the check fails, outward actions stop and reads keep working.
@@ -110,8 +124,13 @@ your behalf. Its defences are aimed at the ways such an agent goes wrong.
   egress gate limits what is sent; it cannot recall what was.
 - **Sensitive content the classifier does not recognise.** The classifier is
   pattern-based. "She started sertraline last month" contains nothing that
-  looks like a medical record. In cloud mode, assume the provider may read
-  what you type. The first-run screens say this before you choose.
+  looks like a medical record. When a cloud model answers, assume the
+  provider may read what you type. The setup chat's privacy step says this
+  before you choose.
+- **A model that builds a file path from pieces.** The raw-record guard
+  checks the paths a tool call names. A model that deliberately assembles a
+  path at run time can read around it; the never-send floor still catches
+  quoted lines on the way out.
 - **Supply-chain compromise** of a Python dependency. Dependencies are
   declared with minimum versions, not exact pins.
 
@@ -133,17 +152,32 @@ jobs, background tasks and the phone. They are implemented in
   creating calendar events, installing, overwriting a file Friday did not
   make, or any command that is not on a read-only allowlist is outward.
 - **How you approve.**
-  - In a live conversation, Friday asks a yes/no question in chat. The yes
-    covers that exact action with those exact arguments and nothing else. If
-    the same question comes up again, it becomes an approval card instead of
-    a loop.
-  - Anywhere else, or when a detail came from content Friday read, the
-    action waits on an **approval card**. An approved card lets that one call
-    through once.
-  - A **scheduled job** can act on its own only under a **grant** you create
-    in Settings > Privacy & Data: it names the job, the actions, an
-    expiry and a number of uses. A grant never covers an action whose details
-    came from read content, and every email still gets its own card.
+  - Every confirmation is an **approval card** from the first ask. The same
+    card shows in the chat, the Activity panel's **Needs you** tab, the popup
+    on every page and **System > Approvals**; one decision wins everywhere.
+    An approved card lets that one call through once.
+  - In a live conversation on your own page, typing a whole "yes" approves
+    the one card it answers, for that exact action with those exact
+    arguments. A bare "no" declines only that card. When a detail came from
+    content Friday read, the card says where it came from.
+  - Some cards are **screen-only**: only a click on Friday's own page
+    approves them, never a spoken or typed yes (file grants, starting the
+    raw-record hold list fresh, Library changes, loosening or wiping what
+    Laya learned).
+  - A **scheduled job** can use an outward tool on its own only under a
+    **grant** you create in **Settings > Privacy & Data**: it names the job,
+    the actions, an expiry and a number of uses. A grant never covers an
+    action whose details came from read content.
+  - Email asks every time unless you made a **pre-approved send** in
+    **Settings > Privacy & Data > Pre-approved sends**: named addresses or
+    `@domain` (never "anyone", never a free-mail domain such as
+    `@gmail.com`), for any job or chat, one scheduled job, or one skill. A
+    send still gets its card if a recipient is not named, if anything came
+    from outside content, if it was asked by voice (unless **Voice may use
+    pre-approvals** is on; it is off by default), or if it looks personal or
+    was written on a cloud model with private details. Editing the job voids
+    it; **Revoke** takes back queued sends; every pre-approved send notifies
+    you with Undo.
 - **Signed receipts.** Each decision is appended to
   `~/.friday/decision-bom.jsonl`, HMAC-SHA256-signed with the governance key.
   If the receipt cannot be written, the outward action does not run.
@@ -179,7 +213,18 @@ encrypted store beats a key from a launch script; `FRIDAY_VAULT_PASSPHRASE` or
   vault content (TIER_2) becomes a placeholder; sensitive content (TIER_3) is
   withheld. A gate or scrub failure blocks the send. Unrestricted cloud access
   exists only as an explicit, recorded choice you make
-  (`privacy/cloud_consent.py`).
+  (`privacy/cloud_consent.py`); even then the never-send floor
+  (`services/judgment_gate.never_send_hits`) runs on every call and fails
+  closed.
+- **Vault gate.** With **local-only records** on (the default), vault content
+  is stripped from cloud prompts and vault questions go to a local model. A
+  refused step becomes one card offering to switch the chat's model or hand
+  that task to the local model. A tool that sends nothing off the PC is not
+  gated.
+- **Pasted secrets.** `services/pasted_secrets.py` replaces a pasted key with
+  `[credential withheld]` before the turn starts and again wherever text is
+  stored; it is never indexed in conversation search. Keys pasted before
+  Beta 1.2 may still be in old history.
 - **File grants.** Content-pinned, expiring grants that you create to let one
   specific document cross the gate. No model can create one. See
   [docs/user-guide/file-grants.md](docs/user-guide/file-grants.md).
@@ -225,8 +270,10 @@ is enabled on the repository as a second layer.
 
 ## Deliberately public values
 
-The Google OAuth client ID and secret in
-`src/agent_friday/services/google_oauth_client.py` are public by design:
+A Google OAuth client ID and secret placed in
+`src/agent_friday/services/google_oauth_client.py` would be public by design:
 Friday is a native application and cannot keep a client secret (RFC 8252).
-The [threat model](docs/security/threat-model.md) explains what that value does
+In the current release both values are empty, so no client is bundled and
+every Google connection uses your own client. The
+[threat model](docs/security/threat-model.md) explains what such a value does
 and does not grant.

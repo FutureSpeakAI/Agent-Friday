@@ -13,8 +13,10 @@ pythonw  friday_tray
           └ llama-server.exe        the pinned local seat
 ```
 
-The llama-server holding the local brain is a **grandchild** of the web
-server, so restarting the server takes it down with it.
+The llama-server holding the local brain is a **grandchild** of the tray, but
+it is a separate process: it does not die when the web server is stopped or
+restarted. A restart keeps the seats running; only **Quit** asks the server to
+release them first (`/api/residency/release-for-quit`).
 
 ## Do not stop llama-server by hand
 
@@ -41,7 +43,7 @@ pinned seat that cannot be loaded is logged at WARNING through
 `friday_tray._watchdog` polls every five seconds and notifies when the server
 dies, but deliberately does not resurrect it: whether Friday restarts herself
 is the user's decision, not the watchdog's. **Killing the server from a shell
-leaves Friday down.** Use the tray menu's **Restart** item.
+leaves Friday down.** Use the tray menu's **Restart Server** item.
 
 `start_server` tolerates a server started outside the tray — `_port_in_use`
 makes it treat the port as healthy — and `server.py` holds a single-instance
@@ -116,6 +118,6 @@ per task, inside the existing journal directory, and older code ignores it.
 A llama.cpp seat is started by the arbiter and by nothing else. A seat started
 by hand from an agent's or an editor's tool shell is a child of that shell's
 job object and dies when the session exits, taking the local brain with it.
-The arbiter's own spawn is detached from the caller; boot adopts a wanted seat
+The arbiter's seats are separate processes that outlive the server; boot adopts a wanted seat
 it finds already running, so a seat that survives is kept, and one that cannot
 be loaded appears under `seat_problems` in `/api/residency/status`.

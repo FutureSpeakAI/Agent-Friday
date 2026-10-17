@@ -1,6 +1,6 @@
 # Crew conversations
 
-Status: cloud-first implementation. Offline execution is not supported.
+> **Status (2026-10-17):** shipped (cloud providers only; offline execution is not supported).
 
 Crew gives a named specialist a persistent identity across conversations. Open
 **Workspaces → Crew** to manage saved agents across projects, or **Crew** in a
