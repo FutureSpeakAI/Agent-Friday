@@ -56,6 +56,7 @@ SEQUENCE_TABLE = {
     "1.0.2b1": 101_000_201, "v1.0.2-beta.1": 101_000_201,
     "1.1.0b1": 101_010_001, "v1.1.0-beta.1": 101_010_001,
     "1.2.0b1": 101_020_001, "v1.2.0-beta.1": 101_020_001,
+    "1.2.0b2": 101_020_002, "v1.2.0-beta.2": 101_020_002,
     "v1.0.0-rc.2": 101_000_051, "1.0.0": 101_000_099, "1.2.0": 101_020_099, "1.1.5": 101_010_599,
     "6.0.0": 106_000_099,
 }
@@ -153,8 +154,15 @@ def test_beta_1_1_is_after_beta_1_0_2_and_before_the_final_1_1():
 def test_beta_1_2_is_after_the_final_1_1_and_before_the_final_1_2():
     seq = release.sequence_for_version
     assert seq("1.2.0b1") == seq("v1.2.0-beta.1") == 101_020_001
-    assert release.BUILD_SEQUENCE == seq("1.2.0b1")
     assert seq("1.1.0b1") < seq("1.1.0") < seq("1.2.0b1") < seq("1.2.0")
+
+
+def test_beta_1_2_update_2_is_after_beta_1_2_and_before_the_final_1_2():
+    seq = release.sequence_for_version
+    assert seq("1.2.0b2") == seq("v1.2.0-beta.2") == 101_020_002
+    assert release.BUILD_SEQUENCE == seq("1.2.0b2")
+    assert release.RELEASE_TAG == "v1.2.0-beta.2"
+    assert seq("1.2.0b1") < seq("1.2.0b2") < seq("1.2.0")
 
 
 def test_published_notes_order_beta_1_0_2_above_beta_1_0_1():

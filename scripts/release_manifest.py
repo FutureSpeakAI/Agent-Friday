@@ -1,6 +1,6 @@
 """Build or check a release's manifest: the file the update check verifies.
 
-    python scripts/release_manifest.py build --version 1.2.0-beta.1 --out dist/release-manifest.json FILE...
+    python scripts/release_manifest.py build --version 1.2.0-beta.2 --out dist/release-manifest.json FILE...
     python scripts/release_manifest.py verify dist/release-manifest.json --key minisign.pub
 
 `build` writes the version, the build sequence (src/agent_friday/release.py),
