@@ -3737,7 +3737,7 @@ def _persist_smart_routing_migration():
     _SMART_MIGRATION_TRIED[0] = True
     try:
         _save_settings({"model_routing": {"mode": "local_preferred"}},
-                       owner_routing_change=True)
+                       owner_routing_change=True, routing_change_via="migration")
     except Exception:
         pass
 
@@ -3994,18 +3994,27 @@ def _routing_mode_caller() -> str:
 
 def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False,
-                   owner_safe_writes_change: bool = False):
+                   owner_safe_writes_change: bool = False,
+                   routing_change_via: str = ""):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
         return _save_settings_locked(data,
             _internal_cloud_consent_write=_internal_cloud_consent_write,
             owner_routing_change=owner_routing_change,
-            owner_safe_writes_change=owner_safe_writes_change)
+            owner_safe_writes_change=owner_safe_writes_change,
+            routing_change_via=routing_change_via)
+
+
+#: How an owner routing change was made, as `model_routing.mode_chosen_via`
+#: records it (privacy/cloud_consent.ROUTING_CONSENT_VIAS says which count as
+#: consent when the mode is cloud only). Anything else is stored as "unverified".
+ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified")
 
 
 def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False,
-                   owner_safe_writes_change: bool = False):
+                   owner_safe_writes_change: bool = False,
+                   routing_change_via: str = ""):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -4036,11 +4045,16 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
         raise RuntimeError("refusing to save settings from %s: %s"
                            % (_who, _refuse))
     if not _internal_cloud_consent_write:
+        # `unrestricted_cloud` is the legacy form of the same decision (cloud_consent.resolve
+        # still honours a stored True), so a generic write may not turn it on. Turning it off
+        # narrows and stays allowed.
         mr = (data or {}).get("model_routing")
-        if isinstance(mr, dict) and "cloud_consent" in mr:
+        if isinstance(mr, dict) and ("cloud_consent" in mr or mr.get("unrestricted_cloud") not in (None, False)):
             data = dict(data)
             mr = dict(mr)
             mr.pop("cloud_consent", None)
+            if mr.get("unrestricted_cloud") is not False:
+                mr.pop("unrestricted_cloud", None)
             data["model_routing"] = mr
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     # Invalidate BEFORE and AFTER the write.
@@ -4136,22 +4150,30 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     # cloud_only is also the factory default every fresh install seeds, so the
     # stored mode alone is not evidence of a choice. Choosing cloud_only is the
     # owner's consent for routine jobs to use the cloud
-    # (cloud_intent.background_route), and the consent needs this record to
+    # (cloud_intent.background_route) and, when it was made on Friday's own
+    # page or in setup (`mode_chosen_via`), consent for the cloud to receive
+    # all but the never-send floor (privacy/cloud_consent.resolve). The
+    # consent needs this record to
     # name the stored mode. It is written HERE, from the mode itself, only on an
     # owner routing change; every other write has it stripped (a client cannot
     # send it), and DEFAULT_SETTINGS never carries it.
     _mr_in = (data or {}).get("model_routing")
     if isinstance(_mr_in, dict):
         _new_mode = str(_mr_in.get("mode") or "").strip().lower()
+        _via = routing_change_via if routing_change_via in ROUTING_CHANGE_VIAS else "unverified"
         if owner_routing_change and _new_mode:
             data = dict(data)
+            # Aware UTC: the consent resolver compares this time with the recorded answer's,
+            # and a naive local time would move if the PC's time zone changed.
+            from datetime import timezone as _tz
             _mr_in = dict(_mr_in, mode_chosen=_new_mode,
-                          mode_chosen_at=datetime.now().isoformat(timespec="seconds"))
+                          mode_chosen_at=datetime.now(_tz.utc).isoformat(timespec="seconds"),
+                          mode_chosen_via=_via)
             data["model_routing"] = _mr_in
-        elif "mode_chosen" in _mr_in or "mode_chosen_at" in _mr_in:
+        elif any(k in _mr_in for k in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")):
             data = dict(data)
             _mr_in = {k: v for k, v in _mr_in.items()
-                      if k not in ("mode_chosen", "mode_chosen_at")}
+                      if k not in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")}
             data["model_routing"] = _mr_in
     # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
     #

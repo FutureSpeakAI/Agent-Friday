@@ -55,8 +55,9 @@ def test_cloud_mode_says_one_key_is_enough_with_both_links(home):
     text = copy.CONNECT_ONE_KEY
     assert "One key is enough" in text
     assert text.index("Anthropic") < text.index("OpenRouter")
-    assert "https://console.anthropic.com/settings/keys" in text
-    assert "https://openrouter.ai/keys" in text
+    from agent_friday.services import one_key
+    assert one_key.KEY_URLS["anthropic"] in text       # the same verified links the guide uses
+    assert one_key.KEY_URLS["openrouter"] in text
     assert "not into this chat" in text
 
 
