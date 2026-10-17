@@ -65,7 +65,8 @@ GUARDED = {"answered": True, "choice": "cloud_guarded", "at": "2026-10-01T09:00:
     (dict(mode="local_preferred", unrestricted=True, vault_local=False, consent=UNRESTRICTED),
      ["Mode: local preferred.", "Consent: unrestricted (2026-10-09).", "Local-only records: off.",
       "Cloud models may use all data except the never-send floor."]),
-    # Cloud only that was not an explicit choice on the page or in setup is not consent: the block says
+    # Cloud only that was not an explicit choice on the page or at the terminal setup's routing
+    # question is not consent: the block says
     # what the gate does (tests/unit/test_cloud_only_choice_is_consent.py covers the explicit choice).
     (dict(mode="cloud_only", vault_local=False),
      ["Mode: cloud only.", "Consent: unanswered.",

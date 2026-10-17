@@ -19785,7 +19785,7 @@ function CloudConsentRow({ consent, onChanged, compact }) {
         style: { fontSize: 10, padding: '3px 9px' },
       }, busy ? 'checking…' : 'Re-answer')),
     !compact && E('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.5 } },
-      'Local preferred chooses where work runs; cloud consent controls what a cloud model receives. Unrestricted sends everything except your never-send list. Choosing Cloud only in Settings > Models, or in setup, counts as unrestricted; the starting setting does not. Re-answer changes the recorded choice shown here.'),
+      'Local preferred chooses where work runs; cloud consent controls what a cloud model receives. Unrestricted sends everything except your never-send list. Choosing Cloud only in Settings > Models, or at the routing question of the terminal setup, counts as unrestricted; the starting setting does not. In the setup conversation, your answer to where Friday may think is the recorded choice. Re-answer changes the recorded choice shown here.'),
     assess && E('div', {
       style: { marginTop: 8, padding: 10, border: '1px solid rgba(0,212,255,0.25)', borderRadius: 8, background: 'rgba(0,212,255,0.05)' },
     },

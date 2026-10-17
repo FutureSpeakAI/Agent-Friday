@@ -43,9 +43,12 @@ vault records kept local). Friday tells you once what that means and then does
 what you chose; she does not ask again or lecture.
 
 **Choosing Cloud only yourself is consent too.** Picking **Cloud only** in
-**Settings > Models** (or the cloud answer in setup) counts the same as Cloud
-for everything, and Settings says so on the button. The starting setting is
-not consent: a fresh install starts on Cloud only without anyone choosing it,
+**Settings > Models** (or at the routing question of the terminal setup,
+`friday setup`) counts the same as Cloud for everything, and Settings says
+so on the button. In the setup conversation there is no Cloud only button:
+your answer to where Friday may think is recorded as your consent. The
+starting setting is not consent: a fresh install starts on Cloud only
+without anyone choosing it,
 so until you answer, the consent is "not answered" and every safeguard stays
 on. Of your answer here and a later choice of Cloud only, the later one counts.
 
