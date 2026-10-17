@@ -14,7 +14,11 @@ WHAT IT SAYS. The effective behaviour first (what a cloud seat may receive), the
 
   * public web and news query text is not private because of its topic; only the never-send floor and
     personal identifiers apply to it;
-  * choosing cloud-only mode is consent to use cloud models (except the never-send floor);
+  * the owner's explicit choice of cloud only (Settings > Models, or setup) is consent to use cloud
+    models for all but the never-send floor, the same as the "Cloud for everything" answer; the
+    factory default is not, and neither is the cautious answer. The block states what the consent
+    resolver decides (`cloud_consent.resolve`), the same answer the egress gate acts on, never a
+    second reading of the mode;
   * the owner decides once informed: no lectures, no asking again ("Inform once; owner decides");
   * a refusal that contradicts these settings is a bug: say so plainly and offer the local model.
 
@@ -95,6 +99,8 @@ def _summary(settings) -> str:
 
     if consent.answered and consent.choice:
         said = "Consent: %s" % _CHOICES.get(consent.choice, consent.choice)
+        if consent.source == cloud_consent.SOURCE_CLOUD_ONLY_CHOICE:
+            said += ", by choosing cloud only"
         if consent.at:
             said += " (%s)" % str(consent.at)[:10]
     else:
@@ -111,8 +117,10 @@ def _summary(settings) -> str:
         effect = "No cloud model is used; all work stays on this computer."
     elif consent.unrestricted:
         effect = "Cloud models may use all data except the never-send floor%s." % vault_clause
-    elif mode == "cloud_only":
-        effect = "Cloud-only mode = consent to cloud models for all but the never-send floor%s." % vault_clause
+    elif mode in ("cloud_only", "cloud_preferred"):
+        # The starting setting, or the cautious answer: not consent. The gate holds private details.
+        effect = ("Private details stay on this computer unless the owner releases them on a card; "
+                  "cloud models get the rest.")
     else:
         effect = "Private data goes to the local model; cloud models get the rest."
 

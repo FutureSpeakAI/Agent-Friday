@@ -286,7 +286,9 @@ def test_one_posture_answer_writes_consent_routing_and_scheduled_jobs(home, step
     assert got == ["cloud_guarded"]
     routing = [d for d in home["saved"] if "model_routing" in d]
     assert routing[-1]["model_routing"] == {"mode": "cloud_only"}
-    assert routing[-1]["_kw"] == {"owner_routing_change": True}
+    # The mode the posture implies is marked "posture": the recorded (cautious) consent decides,
+    # and this write is never read as a separate choice of Cloud only.
+    assert routing[-1]["_kw"] == {"owner_routing_change": True, "routing_change_via": "posture"}
     assert home["settings"]["scheduled_cloud"]["allow"] is True
     st = sc.load_state()
     assert st["posture"] == "public" and st["routing_mode"] == "cloud_only"
