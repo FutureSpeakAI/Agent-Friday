@@ -1,9 +1,10 @@
-"""Card numbers and bank or account numbers are on every never-send list by default (owner ruling, 2026-10-17).
+"""Card numbers and bank or account numbers are on every never-send list by default.
 
 * fresh and existing installs get both entries once, through a migration that says so once in Activity;
 * the owner's own entries are kept; a removed default is never added back;
 * the floor refuses a payload with a real card number or a bank/account number in every mode,
-  "Cloud for everything" included, and lets order numbers and plain digit runs through;
+  "Cloud for everything" included, and lets order numbers, phone numbers, timestamps and other
+  checksum-passing digit runs without a card network's prefix and length through;
 * the owner removes either entry on the Locks page, by a click on that page only.
 
 Synthetic numbers only (published test card and IBAN examples); no model, no network.
@@ -105,6 +106,10 @@ def test_the_server_start_runs_the_migration():
     ("routing number 021000021", nsd.BANK),
     ("Card: 4111-1111-1111-1111", nsd.CARD),
     ("Amex 3782 822463 10005", nsd.CARD),
+    ("Card 4111111111111111 on file", nsd.CARD),
+    ("Amex 378282246310005", nsd.CARD),
+    ("Mastercard 5555 5555 5555 4444", nsd.CARD),
+    ("Diners 3056 930902 5904", nsd.CARD),
 ])
 def test_the_floor_finds_each_kind(home, text, hit):
     nsd.migrate()
@@ -117,16 +122,41 @@ def test_the_floor_finds_each_kind(home, text, hit):
     "Tracking 123456789 arrives Tuesday.",
     "Where do I find my card numbers and account numbers in the app?",
     "Your Google account 2 is connected.",
-    # spaced small numbers and dates are not a card or a routing number (critic review)
+    # spaced small numbers and dates are not a card or a routing number
     "Scores: 1 2 3 4 5 6 7 8 9 0 1 2 3 4",
     "routing 2026-10-17 to the new queue",
     "ABA 021000021 is a format example",
-    # millisecond timestamps and long platform ids start with 1 (critic re-review)
+    # millisecond timestamps and long platform ids start with 1
     "Logged at 1760692800000 by id 1234567890123456789",
+    # each of these passes the card checksum but has no card network's prefix and length:
+    "Order 3111111111111113 is on its way",        # 16 digits from 31: no network issues it
+    "Event at 2000000000008 ms",                   # a millisecond timestamp from 2033
+    "Call +4479111234565 or +447911123456781",     # phone numbers in international form
+    "Sent 44791112345675 bytes",                   # 14 digits from 4: Visa never issues 14
 ])
 def test_the_floor_lets_ordinary_text_through(home, text):
     nsd.migrate()
     assert jg.never_send_hits(text) == []
+
+
+@pytest.mark.parametrize("text", ["3111111111111113", "2000000000008", "44791112345675",
+                                  "+4479111234565", "+447911123456781"])
+def test_a_checksum_alone_does_not_make_a_card(text):
+    # Each run passes the card checksum, so only the network prefix and length (and the "+"
+    # of a phone number) keep it off the floor.
+    assert nsd._luhn(text.lstrip("+"))
+    assert not nsd.has_card_number(text)
+
+
+@pytest.mark.parametrize("digits, ok", [
+    ("4111111111111", True), ("4111111111111111", True), ("4111111111111111110", True),
+    ("41111111111111", False), ("5105105105105100", True), ("2221000000000009", True),
+    ("2721000000000008", False), ("378282246310005", True), ("358282246310005", False),
+    ("30569309025904", True), ("6011111111111117", True), ("6445644564456445", True),
+    ("6431111111111111", False), ("3530111333300000", True), ("3111111111111113", False),
+])
+def test_each_network_has_its_prefix_and_length(digits, ok):
+    assert nsd._card_iin_ok(digits) is ok
 
 
 def test_cloud_for_everything_still_refuses_a_card_number(home, monkeypatch):
