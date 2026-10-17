@@ -192,8 +192,8 @@ Card numbers and bank or account numbers ARE part of the floor by default:
 `services/never_send_defaults.py` adds the entries `[card numbers]` and
 `[bank and account numbers]` to every never-send list once per install
 (migration from scheduler start, Activity notice NS1, a removed entry is
-never re-added), and `never_send_hits` matches them by pattern (card
-checksum, IBAN checksum, numbers written after an account, routing or
+never re-added), and `never_send_hits` matches them by pattern (a card network's prefix and
+length plus the card checksum, IBAN checksum, numbers written after an account, routing or
 sort-code label). The owner removes either on the Locks page
 (`POST /api/locks/never-send/remove`, screen click only). SSNs and
 credentials (`hard_identifier_hits`) are not part of the floor. In prose they

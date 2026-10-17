@@ -97,7 +97,9 @@ Two related protections work differently:
 - **Card numbers and bank or account numbers** are on your never-send list from
   the start, as two entries: **Card numbers** and **Bank and account numbers**.
   So they are refused under every choice, Cloud for everything included. Friday
-  recognises a card number by its checksum, an IBAN by its checksum, and a
+  recognises a card number by its network's prefix, its length and its
+  checksum (so order numbers, phone numbers and timestamps are not mistaken
+  for one), an IBAN by its checksum, and a
   number written as an account, routing or sort-code number. You can remove
   either entry on **Settings > Privacy & Data > Locks**; Friday told you once
   in Activity when they were added.
