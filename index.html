@@ -13094,6 +13094,15 @@ function fridayKeyLabel(k) {
     .map(p => p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)).join('+');
 }
 // Her name inside a sentence: the default "AGENT FRIDAY" reads "Agent Friday".
+// What the voice button is about to start, named by engine. Local listens and speaks on this
+// computer; a cloud voice speaks the reply through its provider; Gemini Live sends speech to Google.
+// None says "nothing leaves": deeper requests go to the chat model, which may be the cloud.
+function fridayVoiceStartLabel(engine) {
+  const e = String(engine || 'local').toLowerCase();
+  if (e === 'gemini') return 'Start voice mode — Gemini Live (cloud; your speech is sent to Google)';
+  if (e === 'local' || e === 'auto' || e === 'local-gpu') return 'Start voice mode — listening and speaking on this computer';
+  return 'Start voice mode — replies spoken by a cloud voice (the reply text goes to that provider)';
+}
 function fridayNameInText(name) {
   const n = String(name || '').trim();
   if (!n) return 'Friday';
@@ -16473,9 +16482,7 @@ function ChatSurface(props) {
     onSend: () => sendChat(),
     placeholder: voiceOn ? 'Voice mode active — just speak…' : ('Talk to ' + fridayName() + '...')
   }), /*#__PURE__*/React.createElement("button", { "aria-label": voiceOn ? 'Stop voice mode'
-      : ((agentSettings.voice_engine || 'local') === 'gemini'
-        ? 'Start voice mode — Gemini Live (cloud; your speech is sent to Google)'
-        : 'Start voice mode — on-device voice (nothing leaves this machine)'), 
+      : fridayVoiceStartLabel(agentSettings.voice_engine), 
     className: "btn",
     onClick: toggleVoice,
     // The condensed widget clicks THIS button rather than reimplementing voice,
@@ -16489,9 +16496,7 @@ function ChatSurface(props) {
     // distinction someone dictating a private sentence cares about.
     'data-voice-engine': (agentSettings.voice_engine || 'local'),
     title: voiceOn ? 'Stop voice mode'
-      : ((agentSettings.voice_engine || 'local') === 'gemini'
-        ? 'Start voice mode — Gemini Live (cloud; your speech is sent to Google)'
-        : 'Start voice mode — on-device voice (nothing leaves this machine)'),
+      : fridayVoiceStartLabel(agentSettings.voice_engine),
     style: {
       background: voiceOn ? 'rgba(255,0,128,0.18)' : 'rgba(0,212,255,0.08)',
       border: '1px solid ' + (voiceOn ? 'rgba(255,0,128,0.55)' : 'rgba(0,212,255,0.3)'),
@@ -50549,7 +50554,7 @@ function WizardGemmaPull({
       style: {
         color: '#00d4ff'
       }
-    }, "Ollama"), (" to run " + fridayName() + " fully offline with no cloud key. Then come back here, or to Settings > Models, to pull the bundled model."));
+    }, "Ollama"), (" so " + fridayName() + " can think on this computer with no cloud key. Then come back here, or to Settings > Models, to pull the bundled model, and choose Only on this PC when I ask where to think."));
   }
   if (has || state === 'done') {
     return /*#__PURE__*/React.createElement("div", {
@@ -50563,7 +50568,7 @@ function WizardGemmaPull({
         color: 'rgba(52,211,153,0.9)',
         fontFamily: 'JetBrains Mono'
       }
-    }, "\u2713 ", BUNDLED_MODEL, " ready \u2014 chat works offline, zero keys.");
+    }, "\u2713 ", BUNDLED_MODEL, " is ready. Chat can run on this computer if you choose Only on this PC or Local preferred.");
   }
   const startPull = () => {
     setState('pulling');
@@ -50615,7 +50620,7 @@ function WizardGemmaPull({
     style: {
       color: '#00d4ff'
     }
-  }, BUNDLED_MODEL), (" so " + fridayName() + " chats fully on-device with no API key.")), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
+  }, BUNDLED_MODEL), (" so " + fridayName() + " can chat on this computer with no API key.")), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: 'rgba(0,212,255,0.8)',
@@ -51735,8 +51740,13 @@ function SetupBasicsCard({
   onDone,
   busy
 }) {
-  const [minor, setMinor] = React.useState(!!(initial && initial.minor_mode));
+  // Nothing is picked for the person: on a first run "Who is this for?" starts unanswered and
+  // Continue waits for it; a re-run starts from the earlier answer. The starting profile is
+  // recorded as the person's only when they picked it (or it was their earlier answer).
+  const rerun = !!(initial && initial.rerun);
+  const [minor, setMinor] = React.useState(rerun ? !!(initial && initial.minor_mode) : null);
   const [dist, setDist] = React.useState(initial && initial.distribution || 'default');
+  const [distPicked, setDistPicked] = React.useState(rerun);
   const [distros, setDistros] = React.useState([]);
   const [hw, setHw] = React.useState(null);
   const [addr, setAddr] = React.useState(false);
@@ -51776,12 +51786,15 @@ function SetupBasicsCard({
   }, ("Who is this " + fridayName() + " for?")), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": ("Who is this " + fridayName() + " for?")
-  }, radio(!minor, 'For me', 'Full, unfiltered creative range', () => setMinor(false), 'me'), radio(minor, 'For my child', 'Family mode: age-appropriate filtering', () => setMinor(true), 'child')), /*#__PURE__*/React.createElement("div", {
+  }, radio(minor === false, 'For me', 'Full, unfiltered creative range', () => setMinor(false), 'me'), radio(minor === true, 'For my child', 'Family mode: age-appropriate filtering', () => setMinor(true), 'child')), /*#__PURE__*/React.createElement("div", {
     className: "sc-group"
   }, "Starting profile"), /*#__PURE__*/React.createElement("div", {
     role: "radiogroup",
     "aria-label": "Starting profile"
-  }, list.map(d => radio(dist === d.name, d.name.charAt(0).toUpperCase() + d.name.slice(1), d.description, () => setDist(d.name), d.name))), /*#__PURE__*/React.createElement("div", {
+  }, list.map(d => radio(dist === d.name, d.name.charAt(0).toUpperCase() + d.name.slice(1), d.description, () => {
+    setDist(d.name);
+    setDistPicked(true);
+  }, d.name))), /*#__PURE__*/React.createElement("div", {
     className: "sc-group"
   }, "What this computer can run"), !hw ? /*#__PURE__*/React.createElement("div", {
     className: "sc-sub"
@@ -51813,10 +51826,11 @@ function SetupBasicsCard({
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "sc-btn",
-    disabled: busy,
+    disabled: busy || minor === null,
     onClick: () => onDone({
-      minor_mode: minor,
-      distribution: dist
+      minor_mode: !!minor,
+      distribution: dist,
+      profile_picked: distPicked
     })
   }, "Continue")));
 }
@@ -57917,11 +57931,11 @@ function VoiceModePicker({ s, save, mc }) {
   const gem = eng('gemini');
   const gpu = eng('local-gpu');
   const rows = [
-    { id: 'local', label: 'Local', desc: 'Ears, reasoning and voice on this machine. Nothing leaves it.', off: false, reason: null },
+    { id: 'local', label: 'Local', desc: 'Listening and speaking stay on this machine. Bigger requests go to your chat model, which is the cloud if you chose the cloud.', off: false, reason: null },
     { id: 'gemini', label: 'Cloud (Gemini Live)', desc: ("Google's speech-to-speech model. Your microphone audio goes to Google. Questions about your own context go through " + fridayName() + "'s local model."), off: !!(gem && gem.available === false), reason: gem && gem.hint }
   ].concat(providers.map(pv => ({
     id: pv.name, label: 'Local listening, cloud voice (' + String(pv.label || pv.name).replace(/\s*\(cloud\)\s*$/i, '') + ')',
-    desc: (fridayName() + ' hears and thinks here; ') + pv.label + ' speaks. Only the reply text leaves.',
+    desc: (fridayName() + ' hears you here and thinks with your chat model; ') + pv.label + ' speaks. The reply text goes to ' + pv.label + '.',
     off: pv.selectable === false, reason: pv.reason, provider: pv.name
   }))).concat(gpu ? [{ id: 'local-gpu', label: 'Local GPU (NeMo, experimental)', desc: 'Nemotron ASR + FastPitch on CUDA. Off by default; kept behind the engine interface.', off: gpu.available === false, reason: gpu.hint }] : []);
   const choose = row => {
@@ -58405,6 +58419,30 @@ function SettingsTabVoice({
     className: `settings-btn ${(s.voice_room_mode === 'room' ? 'room' : 'one') === o.k ? 'active' : ''}`,
     onClick: () => save({
       voice_room_mode: o.k
+    }),
+    style: {
+      fontSize: 11
+    }
+  }, o.l)))), /*#__PURE__*/React.createElement(StRow, {
+    label: "Spoken approvals in a room",
+    desc: ("When " + fridayName() + " can hear more than one person, whose spoken yes counts on an approval. The card on screen is the same either way. Setup asks this too.")
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, [{
+    k: true,
+    l: 'Require my name (default)'
+  }, {
+    k: false,
+    l: 'Anyone in the room'
+  }].map(o => /*#__PURE__*/React.createElement("button", {
+    key: String(o.k),
+    className: `settings-btn ${(s.voice_room_approvals_require_name !== false) === o.k ? 'active' : ''}`,
+    onClick: () => save({
+      voice_room_approvals_require_name: o.k
     }),
     style: {
       fontSize: 11
@@ -59539,7 +59577,7 @@ function SettingsTabPrivacy({
     mode: "settings"
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "Library",
-    desc: "Documents you add to the Library are read and indexed on this PC, and nothing is sent anywhere. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key."
+    desc: "Documents you add to the Library are read and indexed on this PC. Nothing is sent anywhere unless you turn on cloud answers below. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key."
   }, /*#__PURE__*/React.createElement(LibraryTrackedToggle, null), /*#__PURE__*/React.createElement(StToggle, {
     label: "Library search",
     value: s.library_search !== false,
@@ -60131,7 +60169,7 @@ function SendGrantsPanel() {
   const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
   return E('div', { 'data-testid': 'send-grants' },
     E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) },
-      'Sending email asks you first, every time. Here you can pre-approve sending to people you name (or everyone at one @domain), for any job, for one scheduled job, or for a skill, so a weekly email does not wait for a click. A send to anyone not named still asks, and so does a send from work that read outside content (an email, a web page, recalled memory), or whose message looks personal or sensitive. Each send under a pre-approval tells you at once, with an Undo. Every use is logged below, and you can revoke a pre-approval at any time.'),
+      'Sending email asks you first unless you pre-approve it here. You can pre-approve sending to people you name (or everyone at one @domain), for any job, for one scheduled job, or for a skill, so a weekly email does not wait for a click. A send to anyone not named still asks, and so does a send from work that read outside content (an email, a web page, recalled memory), or whose message looks personal or sensitive. Each send under a pre-approval tells you at once, with an Undo. Every use is logged below, and you can revoke a pre-approval at any time.'),
     d.grants.length === 0 ? E('div', { style: Object.assign({}, muted, { marginBottom: 10 }) }, 'No pre-approvals. Every send asks you.') :
       d.grants.map(g => E('div', { key: g.grant_id, className: 'card', 'data-testid': 'send-grant-row', style: { padding: 8, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 } },
         E('div', { style: { fontSize: 12, color: '#ddd', lineHeight: 1.5 } }, sendGrantWords(g, jobName),
@@ -62385,7 +62423,7 @@ function AddProviderForm({
     placeholder: "sk-\u2026"
   })), /*#__PURE__*/React.createElement(StRow, {
     label: "Classification",
-    desc: localOk ? 'Local providers bypass the egress gate — data stays on this machine.' : 'Local requires a loopback/LAN base URL (localhost, 10.x, 192.168.x, *.local).'
+    desc: localOk ? 'Local providers bypass the egress gate: data stays on this computer or your local network.' : 'Local requires a loopback/LAN base URL (localhost, 10.x, 192.168.x, *.local).'
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',

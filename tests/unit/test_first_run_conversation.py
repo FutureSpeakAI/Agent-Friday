@@ -145,7 +145,7 @@ def test_the_six_promises_come_first_then_talk_or_type(home):
     v = sc.begin("cloud_only", "")
     first = v["transcript"][0]["text"]
     for line in ("Nothing about you goes to the people who made me. Ever.",
-                 "You decide where I think", "I ask before I send, spend or delete anything.",
+                 "You decide where I think", "I ask before I send or delete anything, unless you've pre-approved it.",
                  "change or delete it", "I'll remember where we were.",
                  "I'm not a lawyer or a financial adviser"):
         assert line in first
