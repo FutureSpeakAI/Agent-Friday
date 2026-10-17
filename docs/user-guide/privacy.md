@@ -23,25 +23,135 @@ Not all of it is encrypted:
   vault key and never enter the knowledge block sent with cloud prompts.
 
 Anyone who can sign in to your Windows account can read the plain files. Use
-Windows sign-in and BitLocker.
+Windows sign-in and BitLocker. **Settings > Privacy & Data > Locks** shows, line
+by line, what is locked and what is not; see [Locks](locks.md).
 
-## Where your words go
+## Where Friday thinks: your choice
 
-First-run setup asks, and you can change the choice later in **Settings >
-Models**, where you can also pick the model for each job.
+**Out of the box, Friday is set to think in the cloud.** The setup chat then
+asks you where she may think, with three cards and nothing picked for you:
 
-| Choice | What happens |
+| Your choice | What it means |
 |---|---|
-| **Cloud** (`cloud_only`) | Friday thinks at the cloud provider you chose. Your messages go there over an encrypted connection, after the egress gate. |
-| **On this computer only** (`local_only`) | A model on this PC answers. If no local model is running, Friday refuses the turn and offers to answer it in the cloud; nothing is sent until you choose, and the cloud choice covers that one turn after a confirm that names the mode. |
-| **Both** (`local_preferred`) | This PC by default. The cloud only when you ask for it: a chat you bound to a cloud model, or "Send to Claude" on one turn. When the local model cannot answer, Friday says so and offers the choice; nothing is sent until you pick. |
+| **Only on this PC** | Every model runs on this PC, so your conversations are answered here. Needs a PC that can run a local model, and it is slower. |
+| **Cloud for public things** | Your own words, files and mail stay on this PC; public things such as news and web searches may use the cloud, with the safeguards on. On a PC that cannot run a local model, your conversations also go to the cloud with the safeguards on: money, health, legal and identity details and your never-send list are held back. |
+| **Cloud for everything** | Chat and routines may use the cloud. The never-send floor (below) still applies, every call is still checked and logged, and raw records go only with your yes for each file. |
 
-Every reply says which model answered it.
+**Choosing Cloud for everything is your consent.** It lets cloud models be
+used for everything except the never-send floor (and, if you turned it on, the
+vault records kept local). Friday tells you once what that means and then does
+what you chose; she does not ask again or lecture.
 
-## The egress gate
+**Cloud for public things** keeps the safeguards on. So does switching to
+**Cloud only** in Settings > Models without answering the question: picking a
+mode is not the same as answering it. Until you answer, the consent is "not
+answered" and every safeguard stays on.
+You can change the answer later in **Settings > Privacy & Data > Cloud
+consent** (**Re-answer**), and the routing mode in **Settings > Models**.
+
+The routing modes in Settings > Models:
+
+| Mode | What happens |
+|---|---|
+| **Cloud only** | Friday thinks at the cloud provider you chose, over an encrypted connection, after the checks below. |
+| **Local only** | A model on this PC answers. If no local model is running, Friday refuses the turn and offers to answer it in the cloud; nothing is sent until you choose, and the cloud choice covers that one turn after a confirm that names the mode. |
+| **Local preferred** | This PC by default. The cloud only when you ask for it: a chat you bound to a cloud model, or "Send to Claude" on one turn. When the local model cannot answer, Friday says so and offers the choice; nothing is sent until you pick. |
+
+Every reply says which model answered it. Friday can run fully on this PC:
+choose **Only on this PC** and have a local model.
+
+## No blanket topic blocks
+
+A public web or news search is not treated as private because of its topic.
+Searching the news for a health story, a court case or a bank's results is a
+public search. Only the never-send floor and your personal identifiers (your
+name, contact details and the like) are taken out of the search text.
+
+A search that would share private text from your conversation is different:
+a card shows the exact query and the search engine, with **Send** and **Don't
+send**. Nothing is sent until you choose **Send**.
+
+## The never-send floor
+
+Some things are refused for **every** cloud model, in **every** mode, even
+**Cloud for everything**:
+
+- your never-send list (the names, topics, clients or projects you typed in
+  the setup chat, or added later);
+- files you marked never-send, and the finance, legal and family records in
+  your vault;
+- lines from a mail archive or statement you have not said yes to (see
+  [Locks](locks.md)).
+
+A message to a cloud model that contains one is stopped, not sent. If the
+check itself cannot run, nothing is sent.
+
+Two related protections work differently:
+
+- **Keys and passwords you paste into chat** are withheld before anything
+  keeps them (see [Keys you paste into chat are withheld](#keys-you-paste-into-chat-are-withheld)).
+- **Card and account numbers in ordinary text** are masked when the safeguards
+  are on (**Only on this PC** or **Cloud for public things**). Under **Cloud
+  for everything** they are not masked. If there is a number that must never
+  reach a cloud model, add it to your never-send list.
+
+## Cards that show what would leave
+
+- **An email written on a cloud model with private details in it.** Before it
+  is sent, the send card says "this is exactly what would be sent", with
+  **Send** or **Don't send**.
+- **Money paragraphs in email.** With **Cloud for public things**, when an
+  email paragraph about money (an invoice, a payment, a price) would go to a
+  cloud model, a card shows exactly that text first: **Send** or **Keep on
+  this PC**, with ticks to remember your answer for that thread or sender.
+  By voice, a "send" counts only after Friday has read the text back to you
+  (within 10 minutes). There is no card when the email stays on the local
+  model. Choose **Always keep them on this PC** instead in **Settings > Privacy
+  & Data > Money paragraphs in email**, where you can also forget what you
+  said yes to.
+- **Raw records.** A whole mail archive or a bank or card statement reaches a
+  cloud model only after your yes for that one file, under every choice. See
+  [Locks](locks.md#raw-records).
+- **Vault records.** The vault asks for your cloud consent. It never blocks a
+  tool that sends nothing off this PC. When a task needs a model that may read
+  vault records, Friday can offer a card to switch the chat's model, or to hand
+  that one task to the local model. A model marked as cloud is still refused.
+
+## Keys you paste into chat are withheld
+
+If you paste a key or a password into the chat, Friday withholds it before
+anything keeps it. It is replaced with `[credential withheld]`, and she says:
+"That looked like a … I withheld it: it isn't in this conversation, my memory
+or any log. Paste it in the secure field instead; it is stored encrypted on
+this computer." A form, **Store that key securely**, opens for it. The chat box
+may catch the key before you even send it.
+
+The same happens in topic keywords, schedule requests, task instructions,
+workflows and workspace chats, and a withheld key is never in conversation
+search. Keys pasted **before Beta 1.2** may still be in your old history; see
+[Updating and uninstalling](updating-and-uninstalling.md#after-you-upgrade-to-beta-12)
+for how to delete such a message.
+
+## What Friday reads about your settings
+
+Every prompt Friday sends to a model (chat, background jobs, agents and cloud
+voice) starts with a short summary of your privacy settings as they are right
+now: the mode, your consent, whether vault records are local-only, how many
+items your never-send list has (never the items), and whether spending caps
+are on. It is read fresh every turn, so a change in Settings shows on the next
+one.
+
+That summary also tells her the rule: **a refusal that goes against your
+settings is a bug.** If Friday refuses something your settings allow, she
+should say so plainly and offer the local model. If she does not, or refuses
+when she should not, please
+[tell us](https://github.com/FutureSpeakAI/Agent-Friday/issues).
+
+## The egress gate, and its honest limits
 
 Before anything goes to a cloud model, Friday's egress gate inspects the whole
-payload on this PC:
+payload on this PC. With the safeguards on (**Cloud for public things**, or
+no answer yet):
 
 - **Private** vault content (contacts, family, personal notes) becomes a
   placeholder.
@@ -59,12 +169,10 @@ medicine and law. It does not understand meaning. "She started sertraline last
 month" contains nothing that looks like a medical record and would be sent. In
 cloud mode, assume the provider can read what you type.
 
-**Unrestricted cloud.** After first-run setup, Friday asks how much the cloud
-should see. On a PC that can run local models, the answers are private
-(local), cloud with the safeguards on, or unrestricted cloud. On a PC that
-cannot, the answers are cloud with the safeguards on, or unrestricted cloud.
-Only a recorded "unrestricted" turns the gate's safeguards off; nothing else
-does. You can change the answer in **Settings > Privacy & Data > Cloud consent**.
+**Cloud for everything.** Only a recorded "Cloud for everything" (shown in
+Settings as "unrestricted") turns the gate's safeguards off; nothing else
+does. The never-send floor stays on even then. You can change the answer in
+**Settings > Privacy & Data > Cloud consent**.
 
 **File grants.** To send one specific document to a cloud model on purpose,
 create a file grant: it is pinned to that file's content and expires. See
@@ -75,8 +183,7 @@ create a file grant: it is pinned to that file's content and expires. See
 By default a cloud model gets the same context a local one does, after the
 egress gate has run. The first time a turn goes to a cloud model, Friday asks
 once, with nothing preselected: **Send only what each turn needs
-(Recommended)** or **Send everything as before**. You can change it any time in
-Settings > Privacy.
+(Recommended)** or **Send everything as before**.
 
 With the first choice, Friday reads each message on this PC and leaves out the
 parts of your personal context that the message does not need: notes, people,
@@ -87,7 +194,8 @@ part she sends a fixed one-line note saying some personal context was held back
 to your own computer, which answers, hides names and identifiers, and shows you
 the exact text on a card unless you already allowed sharing in that
 conversation. If the turn has read anything from the web or an email, you are
-always asked, even when you allowed it before.
+always asked, even when you allowed it before. The choice is in **Settings >
+Privacy & Data > What cloud models are sent**.
 
 What was kept and what was held back is on every turn's receipt, and you can
 ask "what did you send to the cloud for that?". Local models are never

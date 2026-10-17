@@ -66,7 +66,10 @@ show a card without a preview for a while. Nothing here leaves the PC.
 Press **/** to search titles, text, sources and transcripts. Friday transcribes
 every audio and video card on this PC, one file at a time, after the preview
 pass, using the speech recogniser (faster-whisper, English base model) on the CPU.
-This needs that model to be on disk already; it is never downloaded for this.
+This needs that model on disk. Friday never downloads it on its own: if it is
+missing, **Settings > Voice > Local voice models** shows "Transcription needs
+whisper base.en (141 MB)" with a **Download** button (see
+[Local voice models](local-voice-gpu-tier.md)).
 Files longer than three hours are skipped with a note, and transcription waits
 while the PC is short of memory. A search hit carries the time the words were
 said. Transcripts are stored on this PC and nothing is sent.
@@ -105,7 +108,7 @@ Friday's own, because the words of other people's songs are not reproduced.
 you approve it. The card names where it goes, what leaves (the file and its
 credential, and nothing else), the sources, and how to undo. **Unpublish...**
 puts it back. See [Approvals and receipts](approvals-and-receipts.md). Connected
-publishing accounts are managed under Settings, Connections.
+publishing accounts are managed under **Settings > Connections**.
 
 ## Tidy and the recoverable trash
 
@@ -117,7 +120,7 @@ suggested keeper is the favourite, then the larger file, then the newer one.
 
 Anything removed, by a tidy or by **Delete** on a card, moves to Friday's own trash
 in `media/trash` with a record of where it came from. Delete asks you to confirm
-first. Open **Housekeeping, Trash** to **Restore** an entry. Friday never empties
+first. Open **Housekeeping > Trash** to **Restore** an entry. Friday never empties
 this trash for you. Posts that went out are never touched: you take those down on
 the platform.
 

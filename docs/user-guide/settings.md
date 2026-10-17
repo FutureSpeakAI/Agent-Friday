@@ -23,12 +23,13 @@ Changes to some settings made by Friday on your behalf ask first on a card of
 their own; see [Approvals and receipts](approvals-and-receipts.md).
 
 Other pages link here: a banner at the top of every group appears when file
-permissions are paused, and sends you to **Privacy & Data, File access**.
+permissions are paused, and sends you to **Privacy & Data > File access**.
+Saying "connect OpenRouter" (or another service) opens **Connections** on that
+service's card.
 
 ## General
 
-- **Setup checklist.** Everything Friday can connect to, with what each one asks
-  for. Anything you skipped in the setup chat waits here.
+- **Setup checklist.** What you skipped in the setup chat, waiting for you.
 - **Identity.** The name Friday calls herself in chat and voice, and a
   free-text description of her personality. The personality saves when you click
   away.
@@ -36,11 +37,19 @@ permissions are paused, and sends you to **Privacy & Data, File access**.
   Off shows the everyday set. If you arrange the dock yourself in Appearance,
   your arrangement wins.
 - **Your profile.** What you told Friday during setup. You can edit it and
-  choose **Save and rebuild my style**, or run the setup chat again (see
-  [Setup chat](setup-chat.md)). A key pasted here is refused, with a pointer to
-  Connections. **Research on you** is optional, runs only on what you type, and
-  shows findings for line-by-line review before anything is kept.
+  choose **Save and rebuild my style**, **Run the setup chat again** (it keeps
+  your connections, what Friday has learned and your privacy choice), or
+  **Delete my profile**. See [The setup chat](setup-chat.md). A key pasted here
+  is refused, with a pointer to Connections.
+- **Research on you (optional).** Runs only on what you type, and shows
+  findings for line-by-line review before anything is kept.
 - **Interruptions.** How often something may interrupt you (6 an hour is the recommended choice), quiet hours (off until you turn them on; 22:00 to 07:00 is offered), and whether to follow Windows Focus Assist. See [Notifications](notifications.md).
+- **Scheduled jobs.** The defaults for new jobs. **A run missed while Friday
+  was closed**: **Run it once at the next start (recommended)** or **Skip it
+  until its next time**. **A run held because its pinned model was
+  unavailable**: **Run it once when the model is back (recommended)** or **Wait
+  for its next scheduled time**. Each job can choose its own on its card in
+  Workflows. See [Scheduled jobs](scheduled-jobs.md).
 - **Muted notifications.** The kinds of notice you have muted.
 
 ## Voice
@@ -89,20 +98,37 @@ permissions are paused, and sends you to **Privacy & Data, File access**.
 What cloud models have cost: **Spend**, then breakdowns by model, prompt cache,
 provider, kind, workspace, key and codebase, and scheduled jobs this month.
 
+Every spending cap ships switched off, so nothing is limited until you choose.
+
 - **Budget alerts** are off until you switch them on. They warn at 80 percent of
   a limit and alert at 100 percent.
 - **Hard stop** is also off by default. When on, and an enabled period's spend
   reaches its limit, Friday refuses every further cloud call until you raise the
   limit or switch it off. Local models keep working. Every halt is logged and
-  notified.
+  notified. The monthly ceiling you pick in the setup chat sets the monthly
+  hard stop.
+- **Scheduled jobs without a local model.** Whether the daily creation and the
+  heartbeat may use a cloud model while this PC has no local model, which
+  model, and roughly what it costs.
+- The stuck-model guard, which stops a model that repeats the same call without
+  the conversation moving on. It looks at the pattern, never at an amount.
 
 ## Privacy & Data
 
+- **Locks**, at the top. How your things are locked on this PC, in plain words,
+  what that cannot stop, and the raw records (mail archives and statements)
+  held from the cloud. See [Locks](locks.md).
 - **Vault.** **Keep vault content off the cloud** strips vault-tier notes from
   cloud prompts and runs questions that touch them on the local model. If no
   local model is serving, such questions are refused instead of leaking.
-- **Cloud consent**, **Wiki sections kept off the cloud** and **Privacy check**,
-  which shows which privacy layers are running now.
+- **Cloud consent**: your privacy choice from the setup chat. Here it is shown
+  as "local, private" (Only on this PC), "cloud, safeguards on" (Cloud for
+  public things) or "unrestricted" (Cloud for everything). **Re-answer**
+  checks this PC again and lets you change it; it changes the consent, not the
+  routing mode in Models. See [Privacy](privacy.md).
+- **Wiki sections kept off the cloud**, **What cloud models are sent**, and
+  **Privacy check**, which shows which privacy layers are running now.
+- **Meeting recordings.** See [Meetings](meetings.md).
 - **File access.** Which files and folders cloud models may read. See
   [File grants](file-grants.md).
 - **Your knowledge.** Start Friday on notes and documents you already have: pick
@@ -113,9 +139,40 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
 - **Library.** Library search, cloud answers (off by default) with a character
   cap, reading on battery, and whether the knowledge graph learns from your
   documents. See [Library](library.md).
-- **What needs your sign-off**, **Scheduled jobs: what they may do on their
-  own**, **Stored keys**, **Agent workspaces** and **Computer control**
-  (**Allow computer control**). See [Scheduled jobs](scheduled-jobs.md).
+- **Memory card.** The two short notes Friday reads at the start of every
+  conversation: **About you** and **Working with you**, each with how full it
+  is. **Edit**, **Delete** or **Add a line**; suggestions **Waiting for your
+  review** (**Keep** or **Discard**); and **What Friday changed**, each with
+  **Undo**. Your changes apply at once; hers from the next conversation. The
+  switch **Review our conversations for the card** (on) lets a model on this
+  PC, never a cloud model, suggest lines every 10 turns. See
+  [Memory](memory.md).
+- **Search your conversations.** Search everything you and Friday have said,
+  typed or spoken, on this PC. Keys and passwords you pasted are withheld, and
+  nothing said off the record is there. **Delete…** on a result, then **Yes,
+  delete it**, removes that message from its conversation and from every index
+  at once. It cannot be undone.
+- **What needs your sign-off**, the Laya sections (**Laya chat pilot**, **What
+  Laya learns about you**, **Instant answers (no model)**, **Safe writes (off
+  until you turn them on)**) and **Scheduled jobs: what they may do on their
+  own**. See [Scheduled jobs](scheduled-jobs.md).
+- **Pre-approved sends.** Emails that may go without a card: to named
+  addresses or an `@domain` (never "anyone", and never a free-mail domain such
+  as `@gmail.com`), **For any job or chat** or **Only for one scheduled job**.
+  **Voice may use pre-approvals** is off: a send asked for by voice always gets
+  its card. **Undo window for emails sent with nobody watching** (120 seconds
+  unless you change it, 10 to 600). **Revoke** takes a pre-approval back. See
+  [Mail](mail.md).
+- **Money paragraphs in email.** When an email paragraph about money would go
+  to a cloud model: **Ask me each time, showing the text (recommended)** or
+  **Always keep them on this PC**, with the threads and senders you said yes to
+  and a **Forget** for each.
+- **Deleting calendar events.** Whether **Notify guests** starts ticked when
+  you delete an event (off). See [Calendar](calendar.md).
+- **Friday's rules on this PC**, **Stored keys**, **Agent workspaces** and
+  **Computer control** (**Allow computer control**). See
+  [Backup and restore](backup-and-restore.md).
+- **Knowledge indexing.** See [Your knowledge](your-knowledge.md).
 - **Conversation logging.** **Log conversations and tool use**, **Go off the
   record** (nothing about your conversations is written to disk until you turn it
   off), the artifact panel beside the chat, and how long the log is kept.
@@ -125,11 +182,16 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
 
 ## Connections
 
+- **Connect your services**, at the top: AI models, creative tools, search,
+  your accounts and any MCP server, with **Test connection** on each card and
+  **I'll just use local AI**. The same screen setup shows. See
+  [Connect your services](connections.md).
 - **Publishing channels** for Media posts. See [Media](media.md).
 - **Model providers.** The keys for cloud models.
 - **Google accounts.** Mail, calendar and files. Tokens are encrypted on your PC
-  and never sent to a cloud model. See [Mail](mail.md) and
-  [Calendar](calendar.md).
+  and never sent to a cloud model. **Default account for drafts** chooses where
+  a new email draft goes when you name no account and it is not a reply. It
+  starts on **Ask me**: with more than one account, Friday asks which. See [Mail](mail.md) and [Calendar](calendar.md).
 - **Phone.** Twilio account, your cell number, who Friday may contact, behaviour
   and costs. See [Phone](phone.md).
 - **Signing PDFs**: a signature image and a signing certificate. See

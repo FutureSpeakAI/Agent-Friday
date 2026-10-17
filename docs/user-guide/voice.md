@@ -12,10 +12,13 @@ switch takes effect.
 
 | Mode | Where it runs | What leaves your PC |
 |---|---|---|
-| **Local** (default) | Your PC. Listening, thinking and speaking all happen here. | Nothing. |
+| **Local** (default) | Your PC listens and speaks. Quick replies come from the fast responder on your PC; anything bigger goes to Friday's main model. | No audio. The main model follows your privacy choice from the setup chat: with **Only on this PC** and a local model, nothing leaves; otherwise the text of a request may go to a cloud model, like typed chat. |
 | **Cloud (Gemini Live)** | Google's cloud. One speech-to-speech model hears, thinks and speaks. Needs a Gemini key. | Your microphone audio and the session context, after Friday's privacy gate. Questions about your own notes and memory are answered by Friday's local model, and only the answer is relayed. |
 | **Local listening, cloud voice** (ElevenLabs) | Friday hears and thinks on your PC, and the provider speaks. Needs that provider's key. | Only the reply text. |
 | **Local GPU (NeMo, experimental)** | An NVIDIA graphics card. | Nothing. See [Local voice models and the GPU option](local-voice-gpu-tier.md). |
+
+With a cloud voice, the cloud model is told your live privacy settings at the
+start of every session, the same short summary typed chat gets.
 
 A mode that cannot be used right now is greyed out, and the reason is shown.
 Inworld appears as a voice provider but cannot be selected, because its
@@ -83,6 +86,24 @@ acknowledgement first.
   the card's exact question; a yes only counts for the question she just read in
   full.
 - Text that Friday looks up is treated as data, never as instructions.
+
+#### Approvals by voice
+
+- Every approval is still a card on screen. By voice, Friday reads the card's
+  question aloud, and a plain "yes" or "no" answers it only if she just read
+  that card in full.
+- **In a room.** When **Who is talking** is set to **Several people**, a
+  spoken approval has to say Friday's name ("Friday, send it"), so a "yeah,
+  send it" from across the room does not count. The setup chat asks about this
+  (**Require my name** or **Anyone in the room may approve**); skipping keeps
+  the name required. Alone, "send it" is enough.
+- A send you ask for by voice always gets its card, even to someone you
+  pre-approved, unless you turned on **Voice may use pre-approvals** (off by
+  default). See [Mail](mail.md#pre-approved-sends).
+- Voice never types a key or password for you. Saying "connect OpenRouter"
+  opens that service's card in **Connect your services** with the key field
+  ready; you paste the key yourself. Adding an MCP server by command is also a
+  click on screen, never a voice request.
 
 On our test PC (a 12 GB NVIDIA card, with the Kokoro voice on the GPU), a
 conversational reply starts about 0.1 seconds after you stop speaking (median),

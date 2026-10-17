@@ -1,6 +1,6 @@
 # Known Issues
 
-**For Agent Friday™ Beta 1.1 (1.1.0b1).**
+**For Agent Friday™ Beta 1.2 (1.2.0b1).**
 
 This file lists what is broken, unverified, or deliberately limited in a way
 you may hit. Each entry was checked against the code on that date. Fixed
@@ -13,7 +13,18 @@ you hit something that is not here, please open an issue.
 
 - **Upgrading keeps your data.** The installer replaces only the program in
   `%LOCALAPPDATA%\AgentFriday`; `%USERPROFILE%\.friday` and the vault
-  passphrase in Windows Credential Manager are not touched.
+  passphrase in Windows Credential Manager are not touched. It first copies
+  the data folder to a dated folder under `%USERPROFILE%\.friday-backups`,
+  which it never deletes; remove old backups yourself.
+- **Keys pasted into chat before Beta 1.2 may still be in your history.** From
+  Beta 1.2 a pasted key is withheld before anything keeps it, but older
+  conversations, older logs and the installer's backups were written before
+  that. Delete such a message from Settings > Privacy & Data > Search your
+  conversations (**Delete…**), and replace the key at the provider. See
+  [Updating and uninstalling](docs/user-guide/updating-and-uninstalling.md#after-you-upgrade-to-beta-12).
+- **Scheduled email jobs made before Beta 1.2 keep sending.** New jobs save
+  drafts. One Activity notice lists the jobs that still send; change each on
+  its card in Workflows.
 - **Moving `.friday` to a new PC or Windows account holds outward actions**
   until you re-confirm Friday's rules. The governance signing key lives in
   Credential Manager, so the new account gets a new key and the pinned
@@ -25,9 +36,26 @@ you hit something that is not here, please open an issue.
 
 ## 2. Open defects
 
-- **The setup program is not code-signed.** Windows SmartScreen shows
-  "Unknown publisher". Check the SHA-256 published with the release, then
-  choose More info and Run anyway. Code signing is the next priority.
+- **The setup program is not code-signed**, by decision for this beta. Windows
+  SmartScreen shows "Windows protected your PC" and "Unknown publisher". Check
+  the SHA-256 published with the release, then choose More info and Run
+  anyway. There is no signed update channel either.
+- **The time zone you confirm in the setup chat is not used.** The setup chat
+  saves it under a top-level `timezone` key, which is not a declared setting,
+  so it is dropped on read (see below) and Friday keeps using this PC's own
+  time zone. Found in a code review of 1.2.0-beta.1; not yet confirmed on a
+  running copy.
+- **Two different "About you" lists.** The About you lines written during the
+  setup chat go to Friday's older list of facts about you (deletable from the
+  card beside the setup conversation), not to the About you note on the
+  Memory card (Settings > Privacy & Data > Memory card).
+- **The never-send list has no Settings screen.** You set it in the setup
+  chat; to add more, run the setup chat again.
+- **Settings > Privacy & Data > Cloud consent uses older labels** ("Keep it
+  local and private", "Cloud with safeguards on", "Allow unrestricted cloud")
+  for the same three answers the setup chat calls Only on this PC, Cloud for
+  public things and Cloud for everything. Re-answering there changes the
+  consent only, not the routing mode in Settings > Models.
 - **Some parts still download during setup.** The document engine (OfficeCLI)
   and the judgment model's checkpoint are fetched while setup runs. Model
   weights download on first start, after you consent.
@@ -47,9 +75,11 @@ you hit something that is not here, please open an issue.
   checkpoint's question; the checkpoint then asks once more for that exact
   action.
 - **Built-in scheduled jobs on a cloud-only install wait for your answer.**
-  With no local model serving they run on a cloud model only after you say yes
-  (in the setup chat, or the Spending view in Settings); until then they stay paused,
-  with one notice. The in-app activity indicator for such a run still names
+  With no local model serving they run on a cloud model only after you say yes:
+  a cloud answer to the setup chat's privacy question counts as yes, and if you
+  skipped that question the chat asks separately (or answer in Settings >
+  Spending > Scheduled jobs without a local model). Until then they stay
+  paused, with one notice. The in-app activity indicator for such a run still names
   the main model rather than the cloud model actually used. See
   [Scheduled jobs](docs/user-guide/scheduled-jobs.md).
 - **No receipt viewer.** Signed receipts are written to
@@ -67,12 +97,12 @@ you hit something that is not here, please open an issue.
   `owner_identities`, `music_models`, `creative_models`, `daily_creation_hour`,
   `daily_creation_minute`, `self_improvement_hour`, `task_timeout_seconds`,
   `timezone`, and others. Setting them in `settings.json` has no effect.
-- **A partial settings write replaces most blocks whole.** Only
-  `capability_routing`, `model_routing`, `content`, `turn_budget` and
-  `local_address` are merged field by field.
-- **Some declared settings are not read**: `setup`, `onboarding`,
-  `dock_layout`, `channels` (the bridges read `channels.json`) and
-  `model_routing.local_inference_slots`.
+- **A partial settings write replaces some blocks whole.** Nineteen blocks
+  (including `model_routing`, `podcasts`, `cost_budget`, `scheduling` and
+  `schedules`) are merged key by key; the rest are replaced whole. The list
+  is in [Configuration](docs/user-guide/configuration.md#how-settings-are-stored).
+- **Some declared settings are not read**: `dock_layout` and `channels` (the
+  bridges read `channels.json`).
 - **Local models without native tool calling cannot act.** The planner offers
   only models that call tools natively. The `function_manager` seat that would
   let a smaller model handle tool selection is declared but nothing consults it.
@@ -92,7 +122,7 @@ you hit something that is not here, please open an issue.
   so a second GPU seat or local image generation may fail to allocate. "I need
   my machine" in Settings > Models releases the GPU.
 
-## 2a. Open in Beta 1.1: safe writes and Ollama cloud models
+## 2a. Open since Beta 1.1: safe writes and Ollama cloud models
 
 - **Laya's safe writes (`laya_safe_writes`) are off and await review.** The
   feature lets Laya raise the approval card for a reversible mail change to rows
@@ -131,7 +161,7 @@ you hit something that is not here, please open an issue.
   read is not seen until the next one. Update Ollama, and give cloud
   models names that keep the `cloud` tag.
 
-## 2b. Open in Beta 1.1: local voice calls and the Local AI queue
+## 2b. Open since Beta 1.1: local voice calls and the Local AI queue
 
 - **The first local voice call after a while is slow to start.** The voice
   models load first. They now load at the same time rather than one after
@@ -141,7 +171,7 @@ you hit something that is not here, please open an issue.
   work.** Only local voice turns do. Work that can wait, such as wiki notes,
   still waits while you are active at the keyboard.
 
-## 2c. Open in Beta 1.1: voice routing
+## 2c. Open since Beta 1.1: voice routing
 
 - **Stop the music and volume by voice.** "Stop the music" and volume changes
   are not handled yet.
@@ -174,7 +204,15 @@ you hit something that is not here, please open an issue.
   Friday choosing a local model on its own; the model picker is authoritative.
 - **A conversation that arrives by phone is read-only.** Anything that comes in
   by text or call is untrusted input, including from your own cell.
-- **Every email needs its own card.** Grants for scheduled jobs never cover
+- **Drafts need no card; sends do, unless you pre-approved them.** An email
+  Friday writes is saved to your Gmail Drafts with no card, and nothing is
+  sent. A send raises a card unless a pre-approval you made in Settings >
+  Privacy & Data > Pre-approved sends covers it (named addresses or an
+  `@domain` only, never "anyone" or a free-mail domain). Even then a card
+  appears for a recipient not named, after the work read outside content, for
+  a voice request (unless you turned on **Voice may use pre-approvals**), for
+  anything that looks personal or sensitive, and for a message a cloud model
+  wrote with private details in it. Grants for scheduled jobs never cover
   email.
 - **One key per machine.** A provider key entered on a machine is used there
   until replaced; nothing records whose account it belongs to. If you set
@@ -188,8 +226,9 @@ you hit something that is not here, please open an issue.
 
 Listed separately from "broken". These are not claims that things work.
 
-- **Beta 1.1 has had little time on real computers.** Please report what you
-  find.
+- **Beta 1.2 has had little time on real computers.** Please report what you
+  find, and report any refusal that goes against your privacy settings: that
+  is a bug.
 - **The phone has not carried real traffic.** Texts, voicemail and approvals
   by text are unit-tested; live calls have run only against a simulated
   stream.
@@ -248,6 +287,15 @@ or Windows credential protection.
 - 16 GB of system RAM is the floor for a local model.
 
 ## 7. Security posture
+
+- **The raw-records check can be read around.** A mail archive or statement is
+  recognised by its file name and type when it is opened. A model that
+  deliberately builds a file's path from pieces can read one without the
+  per-file question; the never-send floor still stops what it read from
+  reaching a cloud model when it quotes the held file or matches your
+  never-send list. See [Locks](docs/user-guide/locks.md#raw-records).
+- **The egress gate matches patterns, not meaning.** Sensitive meaning in
+  ordinary words can reach a cloud model under a cloud choice.
 
 - **One key can live in `settings.json` in plain text** when set there:
   `model_routing.openai_api_key`. Prefer the environment or the encrypted
