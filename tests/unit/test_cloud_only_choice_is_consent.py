@@ -145,7 +145,7 @@ def test_the_cautious_setup_answer_is_not_turned_into_consent(online):
 
 # ── the Settings route: only the page's own click counts ──────────────────────
 
-def _post(monkeypatch, click):
+def _post(monkeypatch, click, surface=None):
     from flask import Flask
     from agent_friday.routes import core_routes as cr
     from agent_friday.services import screen_click
@@ -153,6 +153,8 @@ def _post(monkeypatch, click):
     monkeypatch.setattr(cr, "_save_settings", lambda data, **kw: saved.update(data=data, kw=kw) or dict(data))
     monkeypatch.setattr(screen_click, "screen_session", lambda req: click)
     body = {"owner_action": "routing_mode", "settings": {"model_routing": {"mode": "cloud_only"}}}
+    if surface:
+        body["routing_surface"] = surface
     with Flask(__name__).test_request_context("/api/settings", method="POST", json=body):
         resp = cr.api_settings()
     resp, status = (resp if isinstance(resp, tuple) else (resp, 200))
@@ -160,15 +162,59 @@ def _post(monkeypatch, click):
 
 
 def test_the_mode_control_clicked_on_the_page_is_a_settings_choice(monkeypatch):
-    status, saved = _post(monkeypatch, click=True)
+    status, saved = _post(monkeypatch, click=True, surface="settings_models")
     assert status == 200 and saved["kw"]["owner_routing_change"] is True
     assert saved["kw"]["routing_change_via"] == "settings"
 
 
 def test_a_body_that_only_says_owner_action_is_unverified(monkeypatch):
-    status, saved = _post(monkeypatch, click=False)
+    status, saved = _post(monkeypatch, click=False, surface="settings_models")
     assert status == 200 and saved["kw"]["owner_routing_change"] is True
     assert saved["kw"]["routing_change_via"] == "unverified"
+
+
+def test_a_mode_button_outside_settings_models_is_not_the_settings_choice(monkeypatch):
+    """The chat's 'switch to cloud only' offer after a local-only refusal moves the mode, but it is
+    not the Settings > Models control whose Cloud only says it is consent."""
+    status, saved = _post(monkeypatch, click=True)
+    assert status == 200 and saved["kw"]["routing_change_via"] == "unverified"
+    from pathlib import Path
+    src = (Path(core.__file__).resolve().parents[3] / "index.html").read_text(encoding="utf-8")
+    assert "owner_action: 'routing_mode', routing_surface: 'settings_models'" in src
+    assert src.count("routing_surface: 'settings_models'") == 1
+
+
+def test_a_generic_write_cannot_turn_on_the_legacy_unrestricted_flag(online):
+    _reset()
+    core._save_settings({"model_routing": {"unrestricted_cloud": True}})
+    assert core._load_settings_raw()["model_routing"].get("unrestricted_cloud") is not True
+    assert not cc.is_unrestricted_cloud()
+    # turning it off narrows and stays allowed
+    core._save_settings({"model_routing": {"unrestricted_cloud": True}}, _internal_cloud_consent_write=True)
+    core._save_settings({"model_routing": {"unrestricted_cloud": False}})
+    assert core._load_settings_raw()["model_routing"].get("unrestricted_cloud") is False
+
+
+def test_a_recorded_answer_without_a_readable_time_wins(online):
+    no_time = {"answered": True, "choice": "cloud_guarded", "at": None, "capability_snapshot": None}
+    assert not cc.resolve(_mr(cloud_consent=no_time, **CHOSE)).unrestricted
+    bad_time = dict(no_time, at="not a time")
+    assert not cc.resolve(_mr(cloud_consent=bad_time, **CHOSE)).unrestricted
+
+
+def test_the_choice_time_is_written_in_utc(online):
+    _reset()
+    core._save_settings({"model_routing": {"mode": "cloud_only"}},
+                        owner_routing_change=True, routing_change_via="settings")
+    at = core._load_settings_raw()["model_routing"]["mode_chosen_at"]
+    assert at.endswith("+00:00"), at
+
+
+def test_the_terminal_wizard_counts_only_an_answered_routing_screen():
+    from pathlib import Path
+    src = (Path(core.__file__).resolve().parents[1] / "setup_wizard.py").read_text(encoding="utf-8")
+    assert 'block["mode_chosen_via"] = "setup" if answered else "unverified"' in src
+    assert 'config["_routing_answered"] = True' in src
 
 
 # ── the summary says what the resolver decides ───────────────────────────────
