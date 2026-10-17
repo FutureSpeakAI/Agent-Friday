@@ -243,9 +243,10 @@ NEVER_SEND_ASK = (
     "Is there anything that must never leave this PC, whatever you chose? "
     "Names, topics, a client, a project. One per line, or separated by "
     "commas.\n\n"
-    "Already covered, always: passwords and keys, ID and account numbers, "
-    "your own name and contact details, and the private records in your "
-    "vault.")
+    "Already on it: card numbers and bank or account numbers (you can "
+    "remove them in Settings > Privacy & Data > Locks). Always kept back "
+    "too: a key or password you paste, and your vault's finance, legal and "
+    "family records.")
 NEVER_SEND_SET = (
     "Added {n} to your never-send list. If a message to a cloud model "
     "contains one, I stop it rather than send it.")
