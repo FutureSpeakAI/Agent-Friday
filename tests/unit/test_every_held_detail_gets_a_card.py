@@ -113,9 +113,40 @@ def test_a_send_that_is_not_the_owners_click_or_words_is_refused(gate):
     card = _cards()[0]
     out = cr.decide(card["approval_id"], "approve", decided_by="owner")
     assert not out["ok"] and ap.get_approval(card["approval_id"])["status"] == "pending"
-    # and an approval reached some other way releases nothing
-    ap.decide(card["approval_id"], "approve", decided_by="owner:sms")
+    # and an approval reached some other way releases nothing, even with a label a body can claim
+    ap.decide(card["approval_id"], "approve", decided_by="owner:chat")
+    assert ap.get_approval(card["approval_id"])["status"] == "pending", "another route approved it"
+    assert "cannot be approved from here" in ap.refusal_for(card["approval_id"], "approve", "owner:chat")
     assert MARK not in _seal(PRIVATE)["messages"][0]["content"]
+
+
+def test_a_send_is_for_the_provider_the_card_named(gate):
+    _seal(PRIVATE)
+    card = _cards()[0]
+    cr.decide(card["approval_id"], "approve", {"text": True}, decided_by="owner:ui")
+    assert PRIVATE in _seal(PRIVATE)["messages"][0]["content"]
+    other = _seal(PRIVATE, provider="openrouter", model="some/model")["messages"][0]["content"]
+    assert MARK not in other, "a Send to one provider let the text go to another"
+    assert [c["payload"]["where"]["provider"] for c in _cards()] == ["anthropic", "openrouter"]
+
+
+def test_a_json_tool_result_puts_the_field_on_the_card_not_the_whole_result(gate):
+    result = json.dumps({"title": "Clinic notes", "body": PRIVATE, "other": "nothing private here"})
+    eg._gate_text(result, "anthropic", "message[1].content[0]")
+    cards = _cards()
+    assert len(cards) == 1 and cards[0]["payload"]["what"] == [PRIVATE]
+
+
+def test_money_in_ordinary_chat_is_carded_even_when_email_money_is_kept_quietly(gate, monkeypatch):
+    monkeypatch.setattr(cr, "_choice", lambda: "withhold")
+    _seal("The PRIVATE-MARK bill from the plumber cost $40.")
+    assert len(_cards()) == 1
+
+
+def test_the_card_shows_every_character_send_would_release(gate):
+    long_text = "PRIVATE-MARK " + "x" * 6000
+    _seal(long_text)
+    assert _cards()[0]["payload"]["what"] == [long_text]
 
 
 def test_the_card_route_sends_only_for_a_click_on_the_page(gate, monkeypatch):
