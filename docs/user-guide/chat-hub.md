@@ -10,8 +10,8 @@ floating window, or a full browser tab with a sidebar of all your chats.
 | Place | How to open it | What it is for |
 |---|---|---|
 | **Panel** (the chat tray) | Always available at the edge of the screen | The conversation you are in while you use a workspace |
-| **Window** | **Window** in the chat header | A chat as a floating window in the workspace, so you can work in it beside another workspace |
-| **Tab** | **New tab** in the chat header | A chat in its own browser tab, with the sidebar of conversations and projects |
+| **Window** | **⧉ Window** in the chat header | A chat as a floating window in the workspace, so you can work in it beside another workspace |
+| **Tab** | **↗ New tab** in the chat header | A chat in its own browser tab, with the sidebar of conversations and projects |
 
 The panel's layout button (**Where the chat goes**) puts the chat on the left or
 right with the workspace in the rest of the screen, or hides it. Each window or
@@ -32,10 +32,10 @@ folders, each with its chats, and the chats that are not in any project under
 Chats are ordered with pinned chats first, then by when you last worked in
 them. Filing, pinning or renaming a chat does not reorder it by itself.
 
-Each chat has a **More** menu with these actions:
+Each chat has a **⋯** (More) button with these actions:
 
-- **Rename**, with a prompt for the new title.
-- **Pin**, which keeps it at the top of its list.
+- **Pin to top**, which keeps it at the top of its list (**Unpin** undoes it).
+- **Rename…**, with a prompt for the new title.
 - **Move to**, which files it in a project, or takes it out with **No project**.
   If you move a chat to a project that no longer exists, Friday leaves it where
   it was and says so.
@@ -71,8 +71,9 @@ kept apart, but Friday's memory, wiki and knowledge map are shared by all chats.
 
 ## The model chip
 
-The conversation menu in the chat header shows which model a chat uses. Choose
-**Model for this conversation** to pick one for this chat only. Your other chats
+The small model chip beside the conversation name in the chat header shows
+which model a chat uses. Point at it to read "This chat uses …" or "This chat
+follows your default model". Click it to pick a model for this chat only. Your other chats
 and your default stay as they are. Choose **Follow my default model instead** to
 remove the binding. Every reply also says which model answered it, and Settings
 shows which jobs run on this PC and which in the cloud (see

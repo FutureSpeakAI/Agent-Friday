@@ -31,18 +31,21 @@ By voice: "show me my calendar by month", "switch to the week view",
 "show my free busy time".
 
 An account connected before the full calendar permission existed shows only
-its main calendar and says so; **Settings > Connections > Reconnect** adds the
-others.
+its main calendar and says so: "This connection can read only its main
+calendar. Reconnect Google in Settings > Connections to see the others." The
+older single-token Google connection (from before **Google accounts**
+existed) also reads only the main calendar; connect the account again under
+**Settings > Connections > Google accounts** to see the rest.
 
 ## Which calendars, and free/busy
 
-**Calendars** in the toolbar lists every calendar of every connected account
-with its colour. Tick or untick one to show it in Friday or not; that changes
-Friday only, never Google. A calendar you have hidden in Google starts
-unticked and says so.
+**Calendars** in the toolbar opens "Calendars shown here", a list of every
+calendar of every connected account with its colour. Tick or untick one to
+show it in Friday or not; that changes Friday only, never Google. A calendar
+you have hidden in Google starts unticked and says "hidden in Google".
 
-By voice, "show only my family calendar" narrows the view without changing
-your ticks: a chip says "Only Family · by Friday", and its × (or "show all my
+By voice, "show only my work calendar" narrows the view without changing
+your ticks: a chip says "Only Work · by Friday", and its × (or "show all my
 calendars") brings the rest back. Friday never switches a calendar off by
 herself.
 
@@ -70,7 +73,8 @@ move, **Undo** puts the event back.
 
 **Replying to an invitation.** An event someone else invited you to shows
 your reply and three buttons: **Going**, **Maybe**, **Not going**. Friday
-asks "Reply ... ?" and says Google will let the organiser know; nothing is
+asks you to confirm and names who will hear it: "Google will let the
+organiser, Dana, know." (just "the organiser" when Google gives no name). Nothing is
 sent until you press **Send reply**. You can change a reply any time. Replies
 are a click, not something Friday sends by voice, because they reach another
 person.
@@ -116,10 +120,19 @@ Workflows workspace, under Friday's built-in routines
 | **Book a time** and send the invitation | Yes |
 | **Delete a task** | Yes |
 
-In a conversation, Friday asks you in chat before it creates or changes an
-event, and your yes covers that exact event. In a scheduled job it needs a
-grant, or it waits on an approval card. See
+In a conversation, Friday shows an approval card in the chat before it
+creates or changes an event, and your yes covers that exact event. In a
+scheduled job it needs a grant, or it waits on an approval card. See
 [Approvals and receipts](approvals-and-receipts.md).
+
+**A rough travel-time check.** When you plan several stops on one day ("the
+dentist at 10, lunch at 11:15"), Friday can check the gaps. She has no maps
+service, so this is rough: the straight-line distance times 1.3, at 30 mph,
+plus 15 minutes to park and get in, and she labels it a rough estimate with
+no live traffic. It only works when a stop has coordinates (for example a
+maps link in the event's location). Otherwise she says "I couldn't check
+travel time between ..." and never guesses a distance. She also runs the
+check on events she created in the same turn.
 
 Friday does not blank a field of an existing event unless you ask for that
 specifically.
@@ -138,8 +151,9 @@ and draft a reply that offers them.
    "Hold: ..." on one of your own calendars, up to ten at a time. A hold
    invites nobody and sends no notification. Colleagues who can see your
    free/busy may see the time as busy.
-3. **Offer them.** Friday drafts the reply through the usual email approval
-   card. Nothing is sent until you approve it.
+3. **Offer them.** Friday drafts the reply and saves it in your Gmail Drafts
+   (no card for a draft). Nothing is sent unless you ask her to send it, and
+   a send shows an approval card. See [Mail](mail.md).
 4. **Book.** Once a time is picked, Friday turns that hold into the real event
    with the invitation and releases the other holds. Booking asks for
    approval.
@@ -184,9 +198,10 @@ start card and waits for you.
   without touching the notes; deleting a meeting removes everything. Both are
   real deletions, and the activity ledger records only a count. The settings
   are `meeting_*` in [Configuration](configuration.md).
-- **Meeting content stays on this computer.** Notes are written by a local model
-  only, and a follow-up email is only ever an approval card. Friday sends
-  nothing from a meeting to a cloud service.
+- **Meeting content stays on this computer by default.** Notes are written by
+  a local model only, and Friday will not hand a transcript to a model whose
+  name marks it as cloud. There are a few ways meeting content can leave, all
+  listed under Privacy on the [Meetings](meetings.md#privacy) page.
 
 ## Dates and times
 

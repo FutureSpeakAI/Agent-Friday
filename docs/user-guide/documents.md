@@ -1,8 +1,8 @@
 # Documents
 
 Agent Friday™ can make real Word, Excel and PowerPoint files (`.docx`, `.xlsx`,
-`.pptx`) on your PC, with no Microsoft Office installed and nothing sent
-anywhere. Ask in chat: "make a one-page brief as a Word document", "turn this
+`.pptx`) on your PC, with no Microsoft Office installed. The engine runs on
+this PC (see the one network exception below). Ask in chat: "make a one-page brief as a Word document", "turn this
 table into a spreadsheet", "build a five-slide deck".
 
 For a presentation that opens in a browser, Friday can also build an HTML deck;
@@ -26,8 +26,9 @@ Friday uses [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI), an open-source
 |---|---|
 | Reading a document; creating a new one in the documents folder; editing one Friday made there | None |
 | Overwriting a file that already exists | Asks first |
-| Editing a document Friday did not make, or anything outside the documents folder | Asks first |
-| Low-level XML editing (`raw`) | Asks first |
+| Editing a document Friday did not make (one you put in the documents folder) | Asks first |
+| Anything outside the documents folder, or a web or network address | Refused |
+| Low-level XML editing (`raw`) | Refused |
 
 See [Approvals and receipts](approvals-and-receipts.md).
 
