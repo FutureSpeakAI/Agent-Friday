@@ -381,11 +381,14 @@ def bars_view() -> dict:
 def is_loosening(new_bars: Dict[str, Optional[float]], new_mode: Optional[str],
                  cur: Optional[dict] = None) -> bool:
     """True when the change would let her act more: a bar set below what is in force now (the owner's bar,
-    else the shipped one), or the mode turned to act."""
+    else the shipped one), the mode turned to act, or the mode turned from act to shadow while a stricter
+    bar is in force (in shadow every action falls back to the shipped score, so that bar stops binding)."""
     cur = cur if cur is not None else load_bars()
     if new_mode == "act" and cur["mode"] != "act":
         return True
     shipped = _router().ACT_THRESHOLD
+    if new_mode == "shadow" and cur["mode"] == "act" and any(v > shipped + 1e-9 for v in cur["bars"].values()):
+        return True
     for tool, v in (new_bars or {}).items():
         now = cur["bars"].get(tool, shipped)
         if v is None:

@@ -72,6 +72,17 @@ def test_turning_the_bars_to_act_needs_a_click_and_back_to_shadow_does_not(clien
     assert ls.load_bars()["mode"] == "shadow"
 
 
+def test_back_to_shadow_needs_a_click_while_a_stricter_bar_is_in_force(client):
+    """In shadow every action falls back to the shipped score, so turning act off takes a stricter bar out of force."""
+    client.screen[0] = True
+    assert client.post("/api/laya/settings/bars", json={"bars": {"check_email": 0.80}, "mode": "act"}).status_code == 200
+    client.screen[0] = False
+    assert client.post("/api/laya/settings/bars", json={"mode": "shadow"}).status_code == 403
+    assert ls.load_bars()["mode"] == "act"
+    client.screen[0] = True
+    assert client.post("/api/laya/settings/bars", json={"mode": "shadow"}).status_code == 200
+
+
 def test_a_click_still_cannot_lower_an_action_that_changes_something(client):
     client.screen[0] = True
     r = client.post("/api/laya/settings/bars", json={"bars": {"set_chat_tray": 0.40}})
