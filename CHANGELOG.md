@@ -13,6 +13,8 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+## [1.2.0-beta.1] - Agent Friday Beta 1.2 (2026-10-16)
+
 ### Added
 
 - **A memory card you can read and edit** (Settings > Privacy & Data > Memory
