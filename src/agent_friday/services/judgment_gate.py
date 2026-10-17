@@ -649,7 +649,12 @@ def never_send_hits(text: str) -> list[str]:
     """Which never-send tokens appear in `text`. Non-empty means BLOCK."""
     if not text:
         return []
-    hits = [t for t in never_send_tokens() if _token_pattern(t).search(text)]
+    # A bracketed category entry ("[card numbers]", "[bank and account numbers]",
+    # services/never_send_defaults) names a kind of number, matched by pattern; every
+    # other entry is the owner's own words, matched as written.
+    from agent_friday.services import never_send_defaults as _nsd
+    hits = [t for t in never_send_tokens()
+            if (_nsd.category_hit(t, text) if _nsd.is_category(t) else _token_pattern(t).search(text))]
     low = text.lower()
     hits += [m for m in _VAULT_DOC_MARKERS if m in low]
     with _DENY_LOCK:

@@ -300,6 +300,10 @@ _ALL = [
     # were made to send email and so keep sending (services/email_jobs).
     _e("MJ1", "services/email_jobs.py:_notify", "email_jobs_kept_sending", ACTIVITY,
        "email-send-migration", source="scheduler"),
+    # Once per install: card numbers and bank or account numbers joined the never-send list
+    # (services/never_send_defaults), removable on the Locks page.
+    _e("NS1", "services/never_send_defaults.py:_notify", "never_send_defaults", ACTIVITY,
+       "never-send-defaults-numbers", source="privacy"),
     # The one-time offer to an install whose weekly show is two voices: Switch or Keep, never
     # raised again after either answer or a dismissal (services/podcast_engine).
     _e("PO1", "services/podcast_engine.py:maybe_offer_weekly_one_voice", "podcast_one_voice_offer", ACTIVITY,
