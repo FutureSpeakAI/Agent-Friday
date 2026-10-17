@@ -91,7 +91,20 @@ def test_an_unreadable_choice_time_is_not_consent():
 
 @pytest.fixture
 def online(monkeypatch):
+    """Settings as written, and the settings file put back afterwards: a consent left on
+    "Cloud only, chosen" must not leak into the next test in this worker."""
     monkeypatch.setattr(core, "_apply_offline_routing_overlay", lambda s: s)
+    path = core.SETTINGS_FILE
+    before = path.read_bytes() if path.exists() else None
+    yield
+    if before is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    else:
+        path.write_bytes(before)
+    core._invalidate_settings_cache()
 
 
 def _reset():
