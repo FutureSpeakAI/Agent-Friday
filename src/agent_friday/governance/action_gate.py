@@ -258,6 +258,9 @@ INTERNAL_TOOLS = frozenset({
     "local_voice_readiness",
     # a setting change holds itself for the owner's Yes on its own card (services/setting_proposals)
     "set_setting",
+    # This chat's seat, or one task on the local model: raises the owner's card
+    # and changes nothing; the card's hook acts on the Yes (services/seat_handoff).
+    "switch_seat",
     # The Chat Hub by voice (chat-hub.md M3c): open a project's chat, show the
     # preview beside it, enter or leave build mode. The owner's own screen and
     # Friday's own records; nothing reaches anyone else.
@@ -381,6 +384,8 @@ INTERNAL_TOOLS = frozenset({
     # hold marker for that series and no attendees, and nobody is notified,
     # so it undoes Friday's own earlier work and reaches no one.
     "find_free_slots", "release_holds",
+    # check_plan_travel is arithmetic on the stops it is given: no network, no write.
+    "check_plan_travel",
     "list_pdf_fields",              # reads a form's fields
     # Relationship memory: reads of the local timeline, and a local reminder
     # that is never sent to the person it is about.

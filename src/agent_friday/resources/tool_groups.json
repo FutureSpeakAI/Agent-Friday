@@ -261,6 +261,9 @@
   "find_free_slots": [
    "calendar"
   ],
+  "check_plan_travel": [
+   "calendar"
+  ],
   "generate_image": [
    "creative"
   ],
@@ -642,6 +645,10 @@
   ],
   "switch_model": [
    "settings"
+  ],
+  "switch_seat": [
+   "settings",
+   "privacy"
   ],
   "talk_crew": [
    "crew"

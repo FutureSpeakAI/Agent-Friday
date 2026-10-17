@@ -109,7 +109,7 @@ class TestConfirmationGate:
 
     def test_first_call_asks_and_does_not_execute(self):
         ctx = agent.prepare_confirmation_ctx("s1", "show me the news",
-                                             {"authenticated": True})
+                                             {"authenticated": True, "owner_surface": True})
         res = agent._execute_tool("navigate", {"workspace": "news"}, session_ctx=ctx)
         assert res.startswith("[CONFIRMATION REQUIRED]")
         assert "s1" in agent._PENDING_CONFIRMATIONS
@@ -117,11 +117,11 @@ class TestConfirmationGate:
     def test_affirmative_next_turn_executes(self):
         # Turn 1: Friday asks.
         ctx1 = agent.prepare_confirmation_ctx("s2", "open the news",
-                                              {"authenticated": True})
+                                              {"authenticated": True, "owner_surface": True})
         agent._execute_tool("navigate", {"workspace": "news"}, session_ctx=ctx1)
         # Turn 2: user says yes → grant → tool runs (navigate has no side effect).
         ctx2 = agent.prepare_confirmation_ctx("s2", "yes please",
-                                              {"authenticated": True})
+                                              {"authenticated": True, "owner_surface": True})
         assert ctx2.get("confirm_granted") is True
         res = agent._execute_tool("navigate", {"workspace": "news"}, session_ctx=ctx2)
         assert not res.startswith("[CONFIRMATION REQUIRED]")
@@ -130,10 +130,10 @@ class TestConfirmationGate:
 
     def test_negative_clears_pending(self):
         ctx = agent.prepare_confirmation_ctx("s3", "open the news",
-                                             {"authenticated": True})
+                                             {"authenticated": True, "owner_surface": True})
         agent._execute_tool("navigate", {"workspace": "news"}, session_ctx=ctx)
         assert "s3" in agent._PENDING_CONFIRMATIONS
-        agent.prepare_confirmation_ctx("s3", "no nevermind", {"authenticated": True})
+        agent.prepare_confirmation_ctx("s3", "no nevermind", {"authenticated": True, "owner_surface": True})
         assert "s3" not in agent._PENDING_CONFIRMATIONS
 
     def test_background_task_bypasses_gate(self):
@@ -156,6 +156,6 @@ class TestConfirmationGate:
 
     def test_non_action_tool_never_gated(self):
         # A read-only tool is unaffected even in an interactive session.
-        ctx = agent.prepare_confirmation_ctx("s4", "anything", {"authenticated": True})
+        ctx = agent.prepare_confirmation_ctx("s4", "anything", {"authenticated": True, "owner_surface": True})
         res = agent._execute_tool("query_calendar", {}, session_ctx=ctx)
         assert not res.startswith("[CONFIRMATION REQUIRED]")

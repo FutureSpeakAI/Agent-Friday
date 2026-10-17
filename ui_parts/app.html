@@ -2213,6 +2213,46 @@ function FridayChatShell(props){
   if(Host&&!props.panelOff) return <Host convId={props.convId} mode={props.mode} traySide={props.traySide} trayFrac={props.trayFrac} onTrayPlace={props.onTrayPlace} onCodebaseAsk={props.onCodebaseAsk} chatBusy={props.chatBusy}>{props.children}</Host>;
   return <React.Fragment>{props.children}</React.Fragment>;
 }
+/* A chat send that fails says which kind of failure it was: 'not_received'
+   when the server never accepted the message (network error, 5xx),
+   'unfinished' when it accepted it and no reply came back. A send that was not
+   received is retried once, with the same turn_id, after a short wait and a
+   health probe; the server stores a message under that id, so a retry never
+   stores it twice. */
+function fridayTurnFailure(kind,message){
+  const err=new Error(message||(kind==='not_received'?'The message did not reach the server.':fridayName()+' did not finish replying.'));
+  err.turnFailure=kind;
+  return err;
+}
+async function fridayServerUp(){
+  try{const r=await apiFetch('/api/health');return !!(r&&r.ok);}catch(_){return false;}
+}
+async function fridayPostChatTurn(body){
+  const once=async()=>{
+    let r;
+    try{r=await apiFetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}
+    catch(e){throw fridayTurnFailure('not_received',e&&e.message);}
+    if(!r.ok&&r.status>=500)throw fridayTurnFailure('not_received','HTTP '+r.status);
+    try{return await r.json();}catch(e){throw fridayTurnFailure('not_received',e&&e.message);}
+  };
+  try{return await once();}
+  catch(e){
+    if(!e||e.turnFailure!=='not_received')throw e;
+    for(let i=0;i<2;i++){
+      await new Promise(res=>setTimeout(res,2500));
+      if(await fridayServerUp())return await once();
+    }
+    throw e;
+  }
+}
+/* Mark the owner's own bubble for a send that failed, instead of adding a
+   reply that is not one. The bubble keeps its turn id, so Resend / Retry
+   reuses it and the server does not store the message twice. */
+function fridayMarkFailedSend(msgs,text,kind,turnId){
+  const i=msgs.map(x=>x.role==='user'&&x.text===text).lastIndexOf(true);
+  if(i<0)return [...msgs,{role:'user',text,send_failed:kind,turn_id:turnId,time:new Date().toLocaleTimeString()}];
+  return msgs.map((x,j)=>j===i?{...x,send_failed:kind,turn_id:turnId}:x);
+}
 function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySide,trayFrac,onTrayPlace,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
   const trayMenu=useSnapMenuOpener();
   /* A local failure is an offer, never a cloud call: the three choices re-send
@@ -2226,6 +2266,13 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
     else if(msg.local_fallback&&msg.local_fallback.kind==='local_only_confirm')return;
     else if(id==='shorter')sendChat(src+'\n\n(Keep the answer short.)',{skipForecast:true,alreadyShown:true});
     else sendChat(src,{skipForecast:true,alreadyShown:true});
+  };
+  /* A failed send is retried from its own bubble with its own turn id: the
+     server recognises the id and keeps one copy of the message. */
+  const resendFailed=msg=>{
+    if(!msg||!msg.text)return;
+    setChatMsgs(p=>p.map(x=>x===msg?{...x,send_failed:null}:x));
+    sendChat(msg.text,{skipForecast:true,alreadyShown:true,turnId:msg.turn_id});
   };
   const newChatRequest = React.useRef(null);
   const newChatOwner = React.useRef({alive:true, id:convId, revision:0});
@@ -2339,6 +2386,10 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
             {(m.local_fallback.choices||[]).map(c=><button key={c.id} className="btn" style={{fontSize:10}} title={c.recommended?'Recommended':undefined}
               onClick={()=>chooseLocalFallback(m,c.id)}>{c.label}{c.recommended?' (recommended)':''}</button>)}
           </div>}
+          {m.role==='user'&&m.send_failed&&<div data-send-failed={m.send_failed} style={{marginTop:6,fontSize:10,color:'#f59e0b',display:'flex',gap:6,alignItems:'center',justifyContent:'flex-end',flexWrap:'wrap'}}>
+            {m.send_failed==='not_received'?'Not received':fridayName()+" didn't finish replying"}
+            <button className="btn" style={{fontSize:10}} onClick={()=>resendFailed(m)}>{m.send_failed==='not_received'?'Resend':'Retry'}</button>
+          </div>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {['crew_result','crew_speech','crew_dialogue'].includes(m.meta?.kind)&&window.FridayCrewByline?React.createElement(window.FridayCrewByline,{meta:m.meta}):(m.role==='user'?'You':fridayName())} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
@@ -2349,6 +2400,7 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
           </div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">{fridayName()} is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
+        <ChatApprovalCards convId={convId}/>
         <div ref={chatEnd}/>
       </div>
       <div className="fx-chat-footer" style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
@@ -25571,6 +25623,24 @@ function useFridayConversationDrafts(initialId) {
   }, []);
   return {convId,setConvId,chatIn,setChatIn,getConversationId,getConversationRevision,navigateWithDrafts};
 }
+// The cards this conversation raised, in the conversation itself. The chat's
+// yes/no question and the card are two ways to answer one request; the card
+// is shown here too so a question the model paraphrased, or an answer the
+// chat could not read, still leaves a button in front of the owner. Same feed
+// and same body as the System list and the popup, so one decision wins.
+function ChatApprovalCards({ convId }) {
+  const items = useApprovalFeed();
+  const [busy, setBusy] = useState('');
+  const mine = convId ? items.filter(a => ((a && a.payload) || {}).conversation_id === convId) : [];
+  if (!mine.length) return null;
+  const decide = (id, decision) => {
+    if (busy) return;
+    setBusy(id);
+    fridayDecideApproval(id, decision).finally(() => setBusy(''));
+  };
+  return React.createElement('div', {className:'fx-chat-approvals', 'data-testid':'chat-approval-cards', role:'group', 'aria-label':'Waiting for your decision', style:{margin:'8px 0'}},
+    mine.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
+}
 function ExperienceApprovals() {
   const items = useApprovalFeed();
   const [busy, setBusy] = useState('');
@@ -28167,16 +28237,18 @@ function App(){
     if (!ownsTurn()) { if (opts.expectedConversationId) throw new Error('The conversation changed. Send this request again from its codebase.'); return; }
     setTurnPause(null);
     setTurnBusy(true);
+    let sentTurn=opts.turnId||null;
     try{
-      const body={message:m,conversation_id:turnConversation||undefined,voice_mode:voiceOn,source:'app_page',cite_sources:!!agentSettings.cite_sources};
+      const body={message:m,conversation_id:turnConversation||undefined,voice_mode:voiceOn,source:'app_page',cite_sources:!!agentSettings.cite_sources,
+        turn_id:opts.turnId||('turn-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8))};
+      sentTurn=body.turn_id;
       if(opts.routeMode)body.route_mode=opts.routeMode;
       if(opts.confirmLocalOnly)body.confirm_local_only=true;
       if(opts.privacyOverride)body.privacy_layer3_override=true;
       if(focusWin)body.workspace=focusWin;
       const frame=cameraOn?cameraFrameRef.current?.primary:null;
       if(frame)body.image=frame;
-      const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const d=await r.json();
+      const d=await fridayPostChatTurn(body);
       if (!ownsTurn()) { if (opts.expectedConversationId) throw new Error('This request was sent to its original conversation. Open it to check the result before sending another request.'); return; }
       // B2: seat changes detected this turn render as system lines BEFORE the
       // reply — a routing flip is never silent again.
@@ -28200,7 +28272,7 @@ function App(){
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);
     }catch(e){
-      setTurnMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}]);
+      setTurnMsgs(p=>fridayMarkFailedSend(p,m,(e&&e.turnFailure)||'unfinished',sentTurn));
       if(opts.expectedConversationId)throw e;
     }finally{setTurnBusy(false)}
   };

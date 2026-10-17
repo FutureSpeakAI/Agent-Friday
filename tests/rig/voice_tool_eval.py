@@ -125,6 +125,8 @@ CASES = [
      DELEGATE, ("request",)),
     ("Read all my notes on the house project and write a summary page in the wiki.",
      DELEGATE, ("request",)),
+    ("Plan a weekend for my family and add it to my calendar.",
+     DELEGATE, ("request",)),
 ]
 
 SYSTEM = ("You are Agent Friday in a live voice conversation. Use a tool when the "

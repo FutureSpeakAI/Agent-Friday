@@ -320,8 +320,12 @@ def _ran_any():
     return bool(receipts())
 
 
-def _ran_like(*fragments):
-    names = [r["tool"].lower() for r in receipts()]
+def _ran_like(*fragments, succeeded=False):
+    """A tool whose name contains one of `fragments` ran this turn. With
+    `succeeded`, only a call that ran and was not denied counts: a refused
+    write did not perform the action a reply claims."""
+    names = [r["tool"].lower() for r in receipts()
+             if not succeeded or (r.get("ok") and not r.get("denied"))]
     return any(f in n for n in names for f in fragments)
 
 
@@ -377,14 +381,17 @@ def unsupported_actions(text):
                         "reason": "the reply states this was done or is being "
                                   "done now, but no tool ran at all this turn",
                     })
-            elif not _ran_like(*family):
-                ran = ", ".join(sorted({r["tool"] for r in receipts()}))
+            elif not _ran_like(*family, succeeded=True):
+                ran = ", ".join(sorted({
+                    r["tool"] + ("" if r.get("ok") and not r.get("denied")
+                                 else " (refused or failed)")
+                    for r in receipts()}))
                 out.append({
                     "kind": "action",
                     "quote": m.group(0).strip(),
                     "reason": ("the reply states this was done or is being "
                                "done now, but nothing that could have done it "
-                               "ran this turn" +
+                               "succeeded this turn" +
                                (" (what ran: %s)" % ran if ran else
                                 " — no tool ran at all")),
                 })

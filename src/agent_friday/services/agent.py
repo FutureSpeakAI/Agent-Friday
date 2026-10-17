@@ -767,6 +767,8 @@ CLAUDE_TOOLS = [
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "check_plan_travel", "description": "Rough drive-time check between same-day timed stops [{name,start,end,lat,lon}]; lat/lon only from a source, never guessed.",
+     "input_schema": {"type": "object", "properties": {"stops": {"type": "array"}}, "required": ["stops"]}},
     {"name": "find_free_slots", "description": "Read-only: find slots free on EVERY connected calendar/account within working hours, time zone, notice and buffers. Offer returned slots; for email put their labels in draft_email (card approval before sending). Disclose unreadable calendars as unchecked.",
      "input_schema": {"type": "object", "properties": {
          "duration_minutes": {"type": "integer"},
@@ -883,6 +885,10 @@ CLAUDE_TOOLS = [
                       "properties": {"model": {"type": "string",
                                                "description": "The model the user named, in their words."}},
                       "required": ["model"]}},
+    {"name": "switch_seat",
+     "description": "Owner card: to=local|cloud for this chat, or task= for the local model.",
+     "input_schema": {"type": "object", "properties": {
+         "to": {"type": "string"}, "task": {"type": "string"}}}},
     {"name": "navigate", "description": "Open a named built-in workspace on the user's desktop. Use for requests to open, show or switch workspaces; operate the interface rather than give directions. Workspaces: " + _ws_registry.tool_list() + ".",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "navigate_to", "description": "Open a workspace tab, mail thread/search, Studio file, creation, news story, Knowledge page/node, Settings section, calendar day/meeting, contact, post or Media card (kind=card). Pass the user's words as query or a known exact id. new_tab opens a maximized Chrome tab; max fills the desktop. No approval. NAV_OK confirms display; NAV_PARTIAL opened something else; NAV_FAIL gives the reason and closest matches.",
@@ -1755,7 +1761,41 @@ def _tool_create_calendar_event(inp):
         description=(inp.get("description") or "").strip(),
         attendees=inp.get("attendees") or None,
         account_id=(inp.get("account_id") or "").strip() or None)
-    return _calendar_write_summary(res, "create that event")
+    out = _calendar_write_summary(res, "create that event")
+    if isinstance(res, dict) and res.get("ok"):
+        out += _travel_postcheck(res, inp)
+    return out
+
+
+def _travel_postcheck(res, inp):
+    """Several events created in one turn are a plan: the travel to and from the
+    new one is checked against the others created this turn on the same day
+    (services/plan_travel), and a tight gap, or a pair it could not check, is
+    appended to the result for the model to tell the owner."""
+    try:
+        from agent_friday.services import plan_travel
+        from agent_friday.services import turn_plan as _tp
+        key = _tp.current_turn_id() or (
+            ("conv:%s" % _CURRENT_CONVERSATION.get()) if _CURRENT_CONVERSATION.get() else "")
+        warn = plan_travel.note_created_event(
+            key, str(res.get("title") or inp.get("title") or ""),
+            str(res.get("start") or inp.get("start") or ""), str(res.get("end") or inp.get("end") or ""),
+            str(inp.get("location") or ""))
+        return ("\n" + warn) if warn else ""
+    except Exception:
+        return ""
+
+
+def _tool_check_plan_travel(inp):
+    """Read-only: a rough travel check between consecutive same-day stops."""
+    from agent_friday.services import plan_travel
+    stops = (inp or {}).get("stops")
+    if not isinstance(stops, list) or len(stops) < 2:
+        return "check_plan_travel error: give at least two stops, each with a name and a start time."
+    res = plan_travel.check(stops)
+    pairs = [{k: v for k, v in p.items() if not k.startswith("_")} for p in res["pairs"]]
+    return json.dumps({"summary": res["text"], "flagged": res["flagged"],
+                       "unchecked": res["unchecked"], "pairs": pairs}, default=str)[:4000]
 
 
 def _tool_update_calendar_event(inp):
@@ -2593,6 +2633,14 @@ def _tool_search_wiki(inp):
     q_low = query.lower()
 
     results = []
+    # The memory card's lines about the owner are searched first: the facts
+    # the owner stated (who is in the household, their ages) live there, not
+    # in a wiki page. Gated for a cloud reader like the prompt head.
+    try:
+        from agent_friday.services import core_memory_tools as _cmt
+        results.extend(_cmt.search_card(query, limit=min(3, limit)))
+    except Exception:
+        pass
     # A call under a time budget (a local seat's, services/tool_deadline.py)
     # stops scanning when it runs out and returns the hits found so far.
     from agent_friday.services import tool_deadline as _td
@@ -4552,6 +4600,22 @@ def _tool_answer_card(inp):
         return res["text"]
     finally:
         _ia.QUIET.reset(tok)
+
+
+def _tool_switch_seat(inp):
+    """This chat's seat, or one task on the local model: raises the owner's
+    card and changes nothing (services/seat_handoff)."""
+    from agent_friday.services import seat_handoff as _sh
+    return _sh.tool(inp)
+
+
+try:
+    # The card's executor is registered with the registry, so a card approved
+    # after a restart still runs.
+    from agent_friday.services import seat_handoff as _seat_handoff_hooks
+    _seat_handoff_hooks.register()
+except Exception:
+    pass
 
 
 def _tool_switch_model(inp):
@@ -6604,15 +6668,26 @@ def _report_task_completion(task_id, name, status, result_text):
     def chat_line():
         from agent_friday.services import conversations as _cv
         from agent_friday.services import notice_registry as _nreg
+        meta = {"kind": "task_result", "task_id": task_id, "status": status}
+        if local_only:
+            meta["local_only"] = True
         _nreg.transcript_add('E77', _cv.resolve(cid), {"role": "friday", "text": text, "pinned": False,
-                                                       "meta": {"kind": "task_result", "task_id": task_id,
-                                                                "status": status}})
+                                                       "meta": meta})
 
+    # A seat-handoff task (services/seat_handoff) runs on the local model
+    # because the owner approved a card that says its result stays on this PC.
+    # Only that task carries the flag; pinning a task to its seat says where
+    # it runs, not who may read what it produced. The chat line is marked so a
+    # cloud seat replaying this chat is never sent it
+    # (services/egress_gate.LOCAL_ONLY_MARK), and it is not spoken into a live
+    # call, whose model may be a cloud one.
+    local_only = bool(rec.get('local_only_result'))
     try:
         # One delivery, chosen by where the owner is: in a call it is spoken, in an
         # open chat it is one line, otherwise it waits in the panel's Updates.
         from agent_friday.services import notice_registry as _nreg
-        _nreg.deliver_completion(cid, text=text, panel=card, chat=chat_line)
+        _nreg.deliver_completion(cid, text=text, panel=card, chat=chat_line,
+                                 spoken=not local_only)
     except Exception as ne:
         try:
             _task_log(task_id, f'Completion notice could not be sent: {ne}')
@@ -6631,7 +6706,7 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
                 runner=None, pin_to_seat=False, workflow_context=None,
                 chain_retry=0, parent_task_id=None, task_id=None, inherited_policy=None,
-                crew_context=None, job=None):
+                crew_context=None, job=None, local_only_result=False):
     """Spawn a background task.
 
     job: optional dict describing this task in the Local AI queue:
@@ -6646,6 +6721,12 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     pin_to_seat: run every leg on `model` (a local seat) and nowhere else; a
         failure is the task's failure, never a cloud leg answering for it.
         Private-voice handoffs set it (local voice spec P3).
+
+    local_only_result: the owner approved a card that promised this task's
+        result stays on this PC (services/seat_handoff). The result's chat line
+        carries meta.local_only, which every cloud model is denied, and it is
+        not spoken into a live call. Nothing else sets it: pin_to_seat alone
+        does not.
 
     runner: optional callable ``runner(task_id) -> {"status", "result"}`` that
         does the task's work INSTEAD of the agent loop, for structured work
@@ -6781,6 +6862,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             **{k: v for k, v in (workflow_context or {}).items() if k in _WORKFLOW_CONTEXT_FIELDS},
             'model': model,
             'pin_to_seat': bool(pin_to_seat and model),
+            # Set only by an approved seat handoff: its result stays on this PC.
+            'local_only_result': bool(local_only_result),
             # Who this task answers to. `reconcile` reads this to decide where
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.
@@ -8829,6 +8912,7 @@ CLAUDE_TOOL_HANDLERS = {
     "delete_calendar_event": _tool_delete_calendar_event,
     "find_calendar_events": _tool_find_calendar_events,
     "find_free_slots": _tool_find_free_slots,
+    "check_plan_travel": _tool_check_plan_travel,
     "hold_slots": _tool_hold_slots,
     "book_slot": _tool_book_slot,
     "release_holds": _tool_release_holds,
@@ -8870,6 +8954,7 @@ CLAUDE_TOOL_HANDLERS = {
     "undo_action": _tool_undo_action,
     "answer_card": _tool_answer_card,
     "switch_model": _tool_switch_model,
+    "switch_seat": _tool_switch_seat,
     "draft_email": _tool_draft_email,
     "text_by_phone": _tool_text_by_phone,
     "call_by_phone": _tool_call_by_phone,
@@ -9263,6 +9348,7 @@ TOOL_RINGS: dict[str, int] = {
     "query_trust_graph":    0,
     "query_calendar":       0,
     "find_calendar_events": 0,   # search only, no mutation
+    "check_plan_travel":    0,   # arithmetic on the stops it is given; no network
     "list_workspace_history": 0,  # read-only history
     "get_career_pipeline":  0,
     "get_briefing":         0,
@@ -9323,6 +9409,9 @@ TOOL_RINGS: dict[str, int] = {
     # conversation from a local seat to a cloud one: the ring the unknown-tool
     # default already gave it, now declared rather than inherited.
     "switch_model":         2,
+    # switch_seat only raises the owner's card; the card's decision hook makes
+    # the change (services/seat_handoff).
+    "switch_seat":          1,
     # Voice-only tools (voice_engine._VOICE_LIVE_TOOLS) that run through
     # _execute_tool under their own names. Each is declared at the ring the
     # unknown-tool default already gave it: check_email and the article deep
@@ -12386,6 +12475,21 @@ _NEGATIVE_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: A reply that is a refusal and nothing else: "no", "no thanks", "cancel",
+#: "stop", "don't". Only such a reply decides an approval card from chat. A
+#: refusal word that opens a correction or a new request ("No, I meant the
+#: other one", "Wait, which file?") answers the chat question but not the card.
+_REFUSE_WORDS = (
+    r"no(?: thanks| thank you| way)?|nope|nah|don'?t|do not|stop|cancel(?: it| that)?|"
+    r"never ?mind|not now|"
+    r"skip(?: it)?|leave it|hold off|forget it|deny|decline"
+)
+_REFUSE_WHOLE_RE = re.compile(
+    r"\s*(?:(?:um+|uh+|erm?|ah|well|so|actually)\b[\s,.!-]*)*(?:" + _REFUSE_WORDS
+    + r")(?:[\s,.!;]+(?:" + _REFUSE_WORDS + r"|thanks|thank you|please))*[\s,.!]*",
+    re.IGNORECASE)
+_REFUSE_MAX_CHARS = 40
+
 
 def _is_affirmative(message: str) -> bool:
     """True if `message` reads as the user approving a pending action.
@@ -12412,6 +12516,15 @@ def _is_negative(message: str) -> bool:
     if _is_ambiguous(m):
         return False
     return bool(_NEGATIVE_RE.match(m))
+
+
+def _is_bare_refusal(message: str) -> bool:
+    """True when the whole message is a refusal: one short line with no new
+    request in it. See `_REFUSE_WHOLE_RE`."""
+    m = message or ""
+    if "\n" in m.strip() or len(m.strip()) > _REFUSE_MAX_CHARS:
+        return False
+    return _is_negative(m) and bool(_REFUSE_WHOLE_RE.fullmatch(m))
 
 
 def _is_ambiguous(message: str) -> bool:
@@ -12534,6 +12647,54 @@ def _clear_pending(session_id, fingerprint=None):
             _PENDING_CONFIRMATIONS.pop(session_id, None)
 
 
+def _deny_awaiting_card(session_id):
+    """Deny the approval card of the question this reply answers, and no other.
+
+    A bare chat no and the card are answers to one request: the no decides
+    that card, so it cannot be approved later from the screen as if nobody had
+    answered. The question answered is the one most recently asked and still
+    awaiting a reply (the same one a yes would grant); cards of older
+    questions stay live on the screen. A card already decided elsewhere is
+    left as it is. Returns the denied card's id, or None."""
+    with _PENDING_LOCK:
+        awaiting = [e for e in (_PENDING_CONFIRMATIONS.get(session_id) or {}).values()
+                    if e.get("awaiting_reply")]
+        newest = max(awaiting, key=lambda e: e.get("seq") or 0) if awaiting else None
+        aid = (newest or {}).get("approval_id")
+    if not aid:
+        return None
+    try:
+        from agent_friday.services import approvals as _appr
+        _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat")
+    except Exception as e:
+        _log.warning("could not deny confirmation card %s: %s", aid, e)
+        return None
+    return aid
+
+
+def _owner_surface(message, given, ctx):
+    """Is this turn the owner's own line, typed in the app's page on this PC?
+
+    Inside a request it is judged from the request itself
+    (reflex_chat.trusted_surface: a local request, the page's verified
+    session, the page's source, not voice, no untrusted origin, no
+    attachment), and a caller's value can only lower it. Background work,
+    a task and a phone or channel origin are never it. Outside any request
+    (an internal caller) it is `given`, None when nobody said."""
+    if ctx.get("origin") or ctx.get("is_background_task") or ctx.get("task_id"):
+        return False
+    try:
+        from flask import has_request_context, request as _rq
+        if has_request_context():
+            from agent_friday.services import reflex_chat as _rc
+            data = _rq.get_json(silent=True)
+            ok = _rc.trusted_surface(data if isinstance(data, dict) else {}, message)
+            return bool(ok) and given is not False
+    except Exception:
+        return False
+    return given
+
+
 def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     """Wire one interactive chat turn into the action-confirmation flow.
 
@@ -12554,6 +12715,10 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     # other than the owner (services: phone) acts only on a number that
     # appears here, never on one the model found in something it read.
     ctx["owner_text"] = str(message or "")[:4000]
+    # Whether this is the owner's own line typed in the app's page on this PC:
+    # only such a yes may decide an approval card, and only such a message
+    # saves household basics silently (services/core_memory_tools).
+    ctx["owner_surface"] = _owner_surface(message, ctx.get("owner_surface"), ctx)
     try:                         # the typed learning controls work with the chat router off, too: but only for a
         from agent_friday.core import _is_local_request   # page on this PC (a relay, a phone, a channel or a task is not)
         from flask import request as _flask_request
@@ -12581,6 +12746,17 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     # Every turn gets an id. The gate uses it to tell "the user did not answer
     # me" from "the model called the same tool twice in one breath".
     ctx["confirm_turn"] = uuid.uuid4().hex[:12]
+    # Household basics the owner states here ("I am 52, my husband is 50")
+    # are read by fixed patterns from this message alone and saved to the
+    # memory card under its own-words rule, so they never depend on a model
+    # choosing to call update_core_memory (services/core_memory_tools).
+    try:
+        from agent_friday.services import core_memory_tools as _cmt
+        _hh = _cmt.capture_household(message, ctx)
+        if _hh.get("note"):
+            ctx["household_capture"] = _hh
+    except Exception as e:
+        _log.debug("household capture skipped: %s", e)
 
     with _PENDING_LOCK:
         bucket = dict(_PENDING_CONFIRMATIONS.get(session_id) or {})
@@ -12588,6 +12764,13 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
         return ctx
 
     if _is_negative(message):
+        # A bare no from the owner's own page answers the card of the question
+        # it replies to: the question in chat and its card are one request.
+        # A no that opens a correction or a new request ("No, I meant the
+        # other one"), or a no from any other surface, answers only the chat
+        # question; every card stays live on the screen.
+        if ctx.get("owner_surface") is True and _is_bare_refusal(message):
+            _deny_awaiting_card(session_id)
         _clear_pending(session_id)
         return ctx
 
@@ -12602,6 +12785,13 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
             return ctx
         newest = max(eligible, key=lambda kv: kv[1].get("seq") or 0)
         fp, entry = newest
+        if entry.get("approval_id") and ctx.get("owner_surface") is not True:
+            # The question has a card, and this yes did not come from the
+            # owner's own page on this PC (a phone, a relay, voice, a script,
+            # or a caller that never said): it decides nothing. The card
+            # waits for the screen.
+            ctx["confirm_on_card"] = entry.get("approval_id")
+            return ctx
         with _PENDING_LOCK:
             live = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fp)
             if live is not None:
@@ -13332,6 +13522,14 @@ def _hook_confirmation_gate(ctx):
             _claimed = (_entry or {}).get("replay_claim")
             _granted = bool(_entry and _entry.get("granted")
                             and (not _claimed or _claimed == _replay.get("claim")))
+            _off_page = bool(_granted and _entry.get("approval_id")
+                             and (session_ctx or {}).get("owner_surface") is not True)
+            if _off_page:
+                # Only the owner's own page on this PC decides a card from
+                # chat; any other surface, or none named, leaves it for the
+                # screen.
+                _entry["granted"] = False
+                _granted = False
             if _granted:
                 _bucket.pop(_fp, None)
                 if not _bucket:
@@ -13347,6 +13545,13 @@ def _hook_confirmation_gate(ctx):
                 ctx.meta["owner_decided"] = f"chat:{_fp}"
             return _hooks.ALLOW
 
+        if _off_page:
+            return _hooks.DENY(
+                f"[CONFIRMATION ON THE CARD] '{name}' was NOT executed. Its "
+                "approval card is waiting on the screen, and this reply did not "
+                "come from the owner's own page on this computer, so it cannot "
+                "decide it. Do not retry; tell the user to decide it on the card.")
+
         if _replay.get("fingerprint") == _fp or _claimed:
             return _hooks.DENY(
                 f"[CONFIRMATION ALREADY DECIDED] '{name}' was not run by "
@@ -13359,11 +13564,26 @@ def _hook_confirmation_gate(ctx):
             _q = f"{_q} ({_meta['verifier_note']})"
 
         if _asks == 1:
+            # EVERY CONFIRMATION IS A CARD. The question in chat is one way to
+            # answer; the card is the other, and it exists from the first ask.
+            # A model that paraphrases the question, or a reply the yes-parser
+            # cannot read, still leaves the owner a button to press: the
+            # action is never waiting on something nobody can see.
+            _card = _raise_confirmation_card(_sid, name, ctx.input, _fp, _q,
+                                             session_ctx=session_ctx)
+            _decided = _confirmation_card_outcome(_card, _sid, name, _fp)
+            if _decided:
+                return _hooks.DENY(_decided)
+            _where = ("An approval card for it is already waiting for the user "
+                      "(in this chat and in the Approvals list); they can "
+                      "decide it there or answer you here. "
+                      if _card else "")
             return _hooks.DENY(
                 f"[CONFIRMATION REQUIRED] The '{name}' action needs the user's "
-                f"approval before it runs, so it was NOT executed. Do NOT call "
-                f"this tool again on this turn. Instead, ask the user this exact "
-                f"yes/no question and then stop and wait for their reply: \"{_q}\""
+                f"approval before it runs, so it was NOT executed. {_where}"
+                f"Do NOT call this tool again on this turn. Instead, ask the "
+                f"user this exact yes/no question and then stop and wait for "
+                f"their reply: \"{_q}\""
             )
 
         # ASKED ONCE, ANSWERED, STILL NOT GRANTED. Repeating the identical
@@ -13579,57 +13799,76 @@ def _hook_verifier_record(ctx, result):
 
 
 def _resolve_escalated_card(approval_id, name, tool_input):
-    """Claim an escalated card for this chat execution, never a second one."""
+    """Claim the confirmation card for this chat execution, never a second one.
+
+    The card answers the same question the chat did, and the gate decides
+    "same question" by fingerprint (``x.md`` and ``./x.md`` are one file). So
+    a call that matches the card's stored action by fingerprint claims it
+    with the card's own arguments; the claim itself is the store's
+    compare-and-set, so a card already decided elsewhere still refuses.
+    """
     if not approval_id:
         return True
     try:
         from agent_friday.services import approvals as _appr
-        return _appr.claim_chat_confirmation(approval_id, name, tool_input)
+        if _appr.claim_chat_confirmation(approval_id, name, tool_input):
+            return True
+        stored = ((_appr.get_approval(approval_id) or {}).get("payload") or {})
+        if (stored.get("tool") == name and isinstance(stored.get("input"), dict)
+                and stored.get("input") != tool_input
+                and _action_fingerprint(name, stored["input"])
+                == _action_fingerprint(name, tool_input)):
+            return _appr.claim_chat_confirmation(approval_id, name, stored["input"])
+        return False
     except Exception as e:
         _log.warning("could not claim escalated approval %s: %s", approval_id, e)
         return False
 
 
-def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
-                          *, session_ctx=None):
-    """Hand a twice-asked question to the durable approval queue.
+def _raise_confirmation_card(session_id, name, tool_input, fingerprint, question,
+                             *, session_ctx=None, escalated=False):
+    """Publish the durable approval card for one pending question, or return
+    the one already linked to it. None when there is no live pending entry or
+    the card could not be created.
 
-    Returns the text the model is given INSTEAD of asking again. Never raises
-    and never allows: if the card cannot be created, the action still does not
-    run - it just says so plainly rather than looping.
+    One pending request has exactly one card: the subject carries the entry's
+    request id, so the first ask, a retry in the same turn and the second ask
+    all resolve to the same record (``create_approval`` is idempotent per
+    subject). The card is published and linked under ``_PENDING_LOCK`` as one
+    handoff; otherwise a chat yes could consume the entry before its card id
+    is attached, leaving two independent ways to execute the same action.
     """
     try:
         from agent_friday.services import approvals as _appr
-        # Publish and link the card as one handoff. Otherwise a chat approval
-        # can consume the entry before its card id is attached, leaving two
-        # independent ways to execute the same action.
         with _PENDING_LOCK:
             _e = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
             if _e is None or _e.get("replay_claim"):
-                return (f"[CONFIRMATION ALREADY DECIDED] '{name}' is already "
-                        "being handled. Do not retry it.")
+                return None
             request_id = _e.setdefault("request_id", uuid.uuid4().hex[:12])
             rec = _appr.create_approval(
                 kind="tool_confirm", subject_type="tool_action",
                 subject_id=f"{session_id}:{fingerprint}:{request_id}",
                 title=question,
                 action_description=f"{name} {tool_input!r}",
-                description=("Raised because the chat confirmation for this exact "
-                             "action was asked and not resolved. Decide it here."),
+                description=("Friday asked for your yes before doing this. "
+                             "Decide it here, or answer the question in chat."),
                 force_gate=True, payload=_approval_tool_payload(name, tool_input, session_ctx),
                 requested_by="confirmation_gate",
             )
+            if rec.get("status") == "blocked" and not escalated:
+                # The harm floor decides on the escalation, as it always has;
+                # the first ask stays a plain question.
+                return None
             _e["approval_id"] = rec.get("approval_id")
-        status = rec.get("status")
+        return rec
     except Exception as e:
-        _log.warning("confirmation escalation unavailable: %s", e)
-        return (f"[CONFIRMATION UNRESOLVED] '{name}' was NOT executed. You have "
-                f"already asked the user this question once and did not get an "
-                f"answer you could act on. Do NOT ask it again. Tell the user "
-                f"plainly that the confirmation did not go through, say what "
-                f"you were trying to do, and ask them to reply with a single "
-                f"word: yes or no.")
+        _log.warning("confirmation card unavailable: %s", e)
+        return None
 
+
+def _confirmation_card_outcome(rec, session_id, name, fingerprint):
+    """The model-facing text for a card that is already decided, else None."""
+    status = (rec or {}).get("status")
     if status == "approved":
         clear_confirmation_card(rec.get("approval_id"))
         return (f"[CONFIRMATION ALREADY DECIDED] The approval card for '{name}' "
@@ -13642,6 +13881,37 @@ def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
                "blocked": "Policy blocked the approval"}[status]
         return (f"[CONFIRMATION DENIED] {why}, so '{name}' was NOT executed "
                 "and must not be retried. Tell them it was not done.")
+    return None
+
+
+def _escalate_confirmation(session_id, name, tool_input, fingerprint, question,
+                          *, session_ctx=None):
+    """The second ask: point at the durable approval card instead of asking.
+
+    Returns the text the model is given INSTEAD of asking again. The card is
+    normally the one the first ask raised; this never creates a second card
+    for the same request. Never raises and never allows: if the card cannot
+    be created, the action still does not run - it just says so plainly
+    rather than looping.
+    """
+    with _PENDING_LOCK:
+        _e = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
+        _claimed = bool(_e is None or _e.get("replay_claim"))
+    if _claimed:
+        return (f"[CONFIRMATION ALREADY DECIDED] '{name}' is already "
+                "being handled. Do not retry it.")
+    rec = _raise_confirmation_card(session_id, name, tool_input, fingerprint,
+                                   question, session_ctx=session_ctx, escalated=True)
+    if rec is None:
+        return (f"[CONFIRMATION UNRESOLVED] '{name}' was NOT executed. You have "
+                f"already asked the user this question once and did not get an "
+                f"answer you could act on. Do NOT ask it again. Tell the user "
+                f"plainly that the confirmation did not go through, say what "
+                f"you were trying to do, and ask them to reply with a single "
+                f"word: yes or no.")
+    decided = _confirmation_card_outcome(rec, session_id, name, fingerprint)
+    if decided:
+        return decided
     return (f"[CONFIRMATION ESCALATED] '{name}' was NOT executed. You already "
             f"asked this question once, so it has been raised as an approval "
             f"card instead of being asked again. Do NOT ask it again and do NOT "
@@ -14038,10 +14308,16 @@ def _taint_card(ctx, decision, key):
 def _taint_title(name, inp):
     """A plain one-line title for a flagged action's card."""
     inp = inp or {}
-    if name == "create_calendar_event":
-        return f"Create calendar event “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
-    if name == "book_slot":
-        return f"Book “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
+    if name in ("create_calendar_event", "book_slot"):
+        verb = "Create calendar event" if name == "create_calendar_event" else "Book"
+        head = f"{verb} “{_short_txt(inp.get('title'))}”"
+        guests = inp.get("attendees")
+        if isinstance(guests, str):
+            guests = [g for g in (x.strip() for x in guests.split(",")) if g]
+        elif isinstance(guests, (list, tuple)):
+            guests = [g for g in guests if g and (not isinstance(g, str) or g.strip())]
+        # An event with nobody to invite says so by saying nothing about it.
+        return f"{head} and invite {_short_txt(guests)}" if guests else head
     if name == "delete_calendar_event":
         # Named from the calendar itself, never from the model's words: the yes is for this event.
         return f"Delete the calendar event {_calendar_event_words(inp)}"
@@ -16039,9 +16315,12 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 if _vault_ctl is not None:
                     _zt_provider = (session_ctx or {}).get("provider", "cloud")
                     _zt_data = json.dumps(_job_send_args(tu.name, tu.input or {}, session_ctx), default=str)
+                    from agent_friday.services import seat_handoff as _sh
                     _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
                         _zt_provider, _pq_name, _zt_data, model=model or "",
                         access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                        # A local handoff's target, from the owner's bindings.
+                        handoff_model=_sh.local_target_for(tu.name, tu.input),
                         # The provenance ledger for this turn, so the gate can
                         # tell a restaurant's published address from the owner's
                         # own (privacy/public_provenance). Without a key there
@@ -16066,7 +16345,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tu.id,
-                            "content": _zt_text(tu.name, _zt_detail),
+                            # The gate's refusal text, then ONE card offering the
+                            # local model (services/seat_handoff).
+                            "content": _sh.denial_result(tu.name, tu.input, _zt_detail, session_ctx,
+                                                         head=_zt_text(tu.name, _zt_detail)),
                         })
                         continue
                     _zt_ctx = _cloud_send_ctx(session_ctx, _zt_detail)
@@ -16891,10 +17173,12 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             _zt_ctx = session_ctx
             if _vault_ctl is not None:
                 _zt_provider = (session_ctx or {}).get("provider", provider)
+                from agent_friday.services import seat_handoff as _sh
                 _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
                     _zt_provider, _pq_name, json.dumps(_job_send_args(tname, targs, session_ctx), default=str),
                     model=model or "",
                     access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                    handoff_model=_sh.local_target_for(tname, targs),
                     # See the other call site: the provenance ledger lets the
                     # gate exempt a business's published contact details.
                     taint_key=_taint_mod.ledger_key(session_ctx),
@@ -16913,7 +17197,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     _ledger_tool_call(tname, _zt_result, _tool_ms, orb_id, session_ctx)
                     from agent_friday.privacy.vault_access import refusal_text as _zt_text
                     convo.append({"role": "tool", "tool_call_id": tcid,
-                                  "content": _zt_text(tname, _zt_detail)})
+                                  "content": _sh.denial_result(tname, targs, _zt_detail,
+                                                               session_ctx,
+                                                               head=_zt_text(tname, _zt_detail))})
                     continue
                 _zt_ctx = _cloud_send_ctx(session_ctx, _zt_detail)
 
