@@ -259,6 +259,7 @@
    },
    {"id": "workflows.schedule", "group": "settings", "label": "schedule / notifications", "audit_status": "M"},
    {"id": "workflows.job_choices", "group": "settings", "label": "a job's own choice (or Follow my default, which it names) for a run missed while closed and a run held by its pinned model, and whether its emails are sent or saved as drafts", "audit_status": "new"},
+   {"id": "workflows.email_choice", "group": "settings", "label": "a saved workflow run on request: whether its emails are sent (asks first unless pre-approved) or saved as drafts", "audit_status": "new"},
    {
     "id": "workflows.open_workflow",
     "group": "navigate",

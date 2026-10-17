@@ -168,7 +168,10 @@ def ping_detail(prov: dict, model: str | None, api_key: str | None = None,
         hdrs.update({"x-api-key": api_key or "",
                      "anthropic-version": "2023-06-01"})
     elif ptype == "google":
-        url = url + "?key=" + (api_key or "")
+        # The key travels in Google's header, never in the URL: a URL is what
+        # an exception, a proxy log or an error page quotes back.
+        hdrs.pop("Authorization", None)
+        hdrs["x-goog-api-key"] = api_key or ""
     try:
         import requests
         t1 = _t.time()
