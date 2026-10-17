@@ -47,7 +47,7 @@ withheld before anything keeps it.
 
 ## Install
 
-1. Download `AgentFriday-Setup-1.2.0-beta.1.exe` from the
+1. Download `AgentFriday-Setup-1.2.0-beta.2.exe` from the
    [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest).
 2. Double-click it. It installs for your Windows user only and needs no
    administrator rights. The setup program is not code-signed, so Windows

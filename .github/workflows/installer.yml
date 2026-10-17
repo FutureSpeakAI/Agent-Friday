@@ -10,9 +10,10 @@ name: installer
 #                    reinstall over it
 #                    (packaging/windows/tests/verify-clean-install.ps1)
 #   upgrade          a matrix over the previous releases, v5.14.3, v1.0.0-beta.1,
-#                    v1.0.1-beta.1 and v1.1.0-beta.1: install that release the way
-#                    it ships (a zip and Install Agent Friday.cmd for 5.x, the setup
-#                    program for Beta 1.0, 1.0.1 and 1.1), create a vault,
+#                    v1.0.1-beta.1, v1.1.0-beta.1 and v1.2.0-beta.1: install that
+#                    release the way it ships (a zip and Install Agent Friday.cmd
+#                    for 5.x, the setup program for Beta 1.0, 1.0.1, 1.1 and 1.2),
+#                    create a vault,
 #                    upgrade in place with the new exe, prove the passphrase and
 #                    the data survive, the data was backed up first, and the
 #                    shortcuts landed
@@ -30,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       previous:
-        description: "Published release to upgrade from (tag); leave empty to prove v5.14.3, v1.0.0-beta.1, v1.0.1-beta.1 and v1.1.0-beta.1"
+        description: "Published release to upgrade from (tag); leave empty to prove v5.14.3, v1.0.0-beta.1, v1.0.1-beta.1, v1.1.0-beta.1 and v1.2.0-beta.1"
         required: false
         default: ""
   push:
@@ -146,9 +147,9 @@ jobs:
       fail-fast: false
       matrix:
         # Every published base must upgrade in place: 5.14.3 (a zip) and Beta
-        # 1.0, 1.0.1 and 1.1 (setup programs). Beta 1.0.2 was never published,
+        # 1.0, 1.0.1, 1.1 and 1.2 (setup programs). Beta 1.0.2 was never published,
         # so it has no leg. A manual run may name a single base instead.
-        base: ${{ fromJSON(github.event.inputs.previous && format('["{0}"]', github.event.inputs.previous) || '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1","v1.1.0-beta.1"]') }}
+        base: ${{ fromJSON(github.event.inputs.previous && format('["{0}"]', github.event.inputs.previous) || '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1","v1.1.0-beta.1","v1.2.0-beta.1"]') }}
     env:
       PREVIOUS_RELEASE: ${{ matrix.base }}
     steps:
@@ -246,4 +247,4 @@ jobs:
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
             artifact/release-manifest.json \
             --repo "${{ github.repository }}" --verify-tag --latest \
-            --title "Agent Friday Beta 1.2" --notes-file "$RUNNER_TEMP/notes.md"
+            --title "Agent Friday Beta 1.2 (update 2)" --notes-file "$RUNNER_TEMP/notes.md"
