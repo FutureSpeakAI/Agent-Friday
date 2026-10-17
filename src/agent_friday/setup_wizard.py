@@ -1805,8 +1805,9 @@ def main():
 
     # ── Screen 3: where your words go ──
     _routing_existing = (existing.get("model_routing") or {}).get("mode", "")
-    # Only an answer to the routing screen is the owner's choice (and, for cloud only, consent);
-    # quick mode and a skipped screen keep the mode but record no choice.
+    # Only an answer to the routing screen is a setup choice that counts as consent for cloud
+    # only; quick mode and a skipped screen keep the mode and record it as "unverified" (the
+    # mode_chosen record itself is unchanged, for the background routes that read it).
     config["_routing_answered"] = False
     if not quick and _ask("routing"):
         config["routing_mode"] = step_routing(total_steps, 3, _routing_existing)

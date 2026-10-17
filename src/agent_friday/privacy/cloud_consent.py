@@ -165,8 +165,9 @@ def _now_iso() -> str:
 
 
 def _when(value) -> datetime | None:
-    """An ISO time as an aware datetime; a naive one is this PC's local time
-    (`mode_chosen_at` is written that way). None when absent or unreadable."""
+    """An ISO time as an aware datetime. `mode_chosen_at` is written in UTC; a naive
+    one (written before that) is read as this PC's local time. None when absent or
+    unreadable."""
     try:
         dt = datetime.fromisoformat(str(value).strip())
     except (TypeError, ValueError):
