@@ -214,3 +214,35 @@ def test_an_event_someone_else_organises_is_not_moved_unless_its_guests_may_chan
     r = client.post("/api/calendar/events/e2/move", json=body, headers=_page())
     assert r.status_code == 200, r.get_json()
     assert [x[2] for x in google["log"] if x[0] == "patch"] == ["e2"]
+
+
+MARKER = "SECRET-MARKER-123"
+
+
+def test_a_google_failure_to_add_is_answered_in_a_fixed_sentence_never_its_own_text(client, google, monkeypatch):
+    """create_event's failure carries a code; the route shows that code's sentence, and neither the
+    response nor the result the model reads holds the exception's text."""
+    def refuse(self, calendarId, body, **kw):
+        raise RuntimeError(MARKER)
+    monkeypatch.setattr(_Events, "insert", refuse)
+    body = {"title": "Lunch", "start_time": START.isoformat(), "calendar_key": "home|fam", "confirmed": True}
+    r = client.post("/api/calendar/events", json=body, headers=_page())
+    assert r.status_code == 409 and MARKER not in r.get_data(as_text=True)
+    assert r.get_json()["message"] == cw.ERROR_MESSAGES["create_failed"]
+    out = cw.create_event(title="Lunch", start=START.isoformat(), account_id="home", calendar_id="fam")
+    assert out["code"] == "create_failed" and MARKER not in repr(out)
+    assert google["local"] == []
+
+
+def test_a_failure_text_from_below_never_reaches_the_browser(client, google, monkeypatch):
+    # An account error can list accounts; the route answers with the fixed sentence for its code.
+    monkeypatch.setattr(cw, "resolve_write_account", lambda account_id=None: (None, MARKER))
+    body = {"title": "Lunch", "start_time": START.isoformat(), "calendar_key": "home|fam", "confirmed": True}
+    r = client.post("/api/calendar/events", json=body, headers=_page())
+    assert r.status_code == 409 and MARKER not in r.get_data(as_text=True)
+    assert r.get_json()["message"] == cw.ERROR_MESSAGES["needs_account"]
+
+
+def test_an_unknown_code_gets_the_generic_sentence():
+    assert cw.public_error({"error": MARKER}) == cw.GENERIC_ERROR
+    assert cw.public_error({"error": MARKER, "code": MARKER}) == cw.GENERIC_ERROR

@@ -107,3 +107,19 @@ def test_a_day_whose_read_failed_gets_no_free_gaps_and_no_note_written_from_noth
     monkeypatch.setattr(rc, "_day_annotation", no_note)
     d = client.get("/api/calendar/day/2026-10-20").get_json()
     assert d["read_failed"] is True and d["gaps"] == [] and d["annotation"].startswith("Couldn't read")
+
+
+MARKER = "SECRET-MARKER-123"
+
+
+def test_a_refused_switch_never_echoes_the_key_or_an_exceptions_text(client, views, monkeypatch, tmp_path):
+    from agent_friday.services import calendar_views as cv
+    r = client.post("/api/calendar/calendars/visible", json={"changes": {"home|" + MARKER: True}}, headers=_page())
+    assert r.status_code == 400 and MARKER not in r.get_data(as_text=True)
+    assert r.get_json()["message"] == cv.VISIBLE_REFUSALS["not_yours"]
+
+    def boom(changes):
+        raise ValueError(MARKER)
+    monkeypatch.setattr(cv, "set_visible", boom)
+    r = client.post("/api/calendar/calendars/visible", json={"changes": {"home|fam": False}}, headers=_page())
+    assert r.status_code == 400 and MARKER not in r.get_data(as_text=True)

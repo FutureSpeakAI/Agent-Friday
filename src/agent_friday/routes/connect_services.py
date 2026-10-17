@@ -15,9 +15,13 @@ route here accepts or returns a key; keys go through
 """
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, jsonify, request
 
 from agent_friday.services import connections_setup as cx
+
+_log = logging.getLogger("friday.connect_services")
 
 connect_services_bp = Blueprint("connect_services", __name__)
 
@@ -33,7 +37,10 @@ def _body() -> dict:
 
 
 def _refused(e: Exception):
-    return jsonify({"ok": False, "error": "refused", "message": str(e)}), 422
+    """422 with the screen's fixed sentence for the refusal's code; nothing of
+    the exception's own text."""
+    message = cx.refusal_text(getattr(e, "code", ""), getattr(e, "connector", ""))
+    return jsonify({"ok": False, "error": "refused", "message": message}), 422
 
 
 @connect_services_bp.route("/api/setup/connections/<path:item_id>/test", methods=["POST"])
@@ -65,8 +72,8 @@ def connection_endpoint():
     except cx.Refused as e:
         return _refused(e)
     except ValueError as e:      # the registry's own descriptor validation
-        return _refused(ValueError("That address was not accepted: %s"
-                                   % str(e)[:200]))
+        _log.debug("endpoint descriptor refused: %s", type(e).__name__)
+        return _refused(cx.Refused("endpoint_not_accepted"))
 
 
 @connect_services_bp.route("/api/setup/connections/mcp", methods=["POST"])

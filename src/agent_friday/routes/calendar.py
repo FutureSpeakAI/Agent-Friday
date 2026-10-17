@@ -210,7 +210,8 @@ def api_calendar_calendars_visible():
     try:
         chosen = cv.set_visible(data.get("changes") or {})
     except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+        message = cv.VISIBLE_REFUSALS.get(getattr(e, "code", ""), "that change could not be made")
+        return jsonify({"status": "error", "message": message}), 400
     return jsonify({"status": "ok", "visible": chosen})
 
 
@@ -601,7 +602,7 @@ def api_calendar_create_event():
                               end=edt.astimezone().isoformat(), location=location,
                               description="", attendees=attendees, account_id=aid, calendar_id=cid)
         if out.get("error"):
-            return jsonify({"status": "error", "message": str(out["error"])[:300]}), 409
+            return jsonify({"status": "error", "message": cw.public_error(out)}), 409
         _drop_calendar_cache()
         return jsonify({"status": "ok", "created_in_google": True,
                         "event": {"id": out.get("id"), "title": out.get("title") or title,
@@ -638,7 +639,7 @@ def api_calendar_rsvp(event_id):
         return jsonify({"status": "error", "message": "that calendar is not one Friday knows"}), 400
     out = cw.respond_to_event(event_id, str(data.get("response") or ""), account_id=aid, calendar_id=cid)
     if out.get("error"):
-        return jsonify({"status": "error", "message": str(out["error"])[:300]}), 409
+        return jsonify({"status": "error", "message": cw.public_error(out)}), 409
     _drop_calendar_cache()
     return jsonify({"status": "ok", "response": out.get("response"), "before": out.get("before"),
                     "unchanged": bool(out.get("unchanged"))})
