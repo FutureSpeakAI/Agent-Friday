@@ -208,7 +208,9 @@ try {
               'connector:github', 'channel:telegram', 'platform:youtube', 'connector:notion',
               'provider:brave', 'provider:elevenlabs', 'cloudflare')
     $missing = @($want | Where-Object { $ids -notcontains $_ })
-    $secretShaped = $raw -match '(sk-ant-|sk-or-|AIza[0-9A-Za-z_\-]{20}|ghp_[0-9A-Za-z]{20}|xox[baprs]-)'
+    # A key, not a how-to hint: every shape needs the key's own characters
+    # after its prefix (a card may say "Bot token (xoxb-...)").
+    $secretShaped = $raw -match '(sk-ant-[0-9A-Za-z_\-]{20}|sk-or-[0-9A-Za-z_\-]{20}|AIza[0-9A-Za-z_\-]{20}|ghp_[0-9A-Za-z]{20}|xox[baprs]-[0-9A-Za-z\-]{10})'
     Check 'connections' (($missing.Count -eq 0) -and ($ids.Count -ge 30) -and (-not $secretShaped)) `
           ("$($ids.Count) services; missing: " + ($missing -join ', ') + "; key-shaped text present: $secretShaped")
 
