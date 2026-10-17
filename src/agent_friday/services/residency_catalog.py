@@ -823,14 +823,20 @@ def seat_files() -> dict:
         # every plan and every /api/intelligence read.
         if now - _EMPTY_ANNOUNCED["at"] > 60:
             _EMPTY_ANNOUNCED["at"] = now
+            import logging
+            if not reasons:
+                # A fresh install, before any model is downloaded: nothing is
+                # wrong, so it is said once as a fact, not raised as an error.
+                msg = "[residency] No local model is downloaded yet."
+                print("  " + msg)
+                logging.getLogger("friday.residency").info(msg)
+                return out
             msg = ("[residency] NO LOCAL SEAT CAN BE SERVED: no GGUF is "
                    "mapped for any model. Every pinned seat will be "
                    "unenforced and every local turn will refuse or fall to "
-                   "the cloud. " + ("; ".join(reasons) if reasons
-                                     else "the store is empty"))
+                   "the cloud. " + "; ".join(reasons))
             print("  " + msg)
             try:
-                import logging
                 logging.getLogger("friday.residency").error(msg)
             except Exception:
                 pass
