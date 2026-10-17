@@ -365,6 +365,22 @@ def federation_on(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _held_detail_cards_off(request, monkeypatch):
+    """The gate raises a card for every private detail it holds back (services/cloud_release,
+    owner ruling 2026-10-17). Hundreds of tests seal private text through a shared scratch home;
+    a card each would leak approvals from one test into the next. Tests of the cards opt in with
+    the `held_cards` marker."""
+    try:
+        from agent_friday.services import cloud_release
+    except Exception:
+        yield
+        return
+    if request.node.get_closest_marker("held_cards") is None:
+        monkeypatch.setattr(cloud_release, "HELD_CARDS", False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _fresh_swr_cache():
     """Cached panel data must not carry from one test into the next."""
     try:
