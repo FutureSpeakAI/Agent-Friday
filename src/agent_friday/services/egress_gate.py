@@ -205,7 +205,9 @@ def is_unrestricted_cloud() -> bool:
     """True when every privacy safeguard is off. Default False.
 
     An explicit owner choice of cloud only (Settings > Models clicked on
-    Friday's own page, or setup) IS consent, the same as the recorded answer;
+    Friday's own page, or the terminal setup's routing question) IS consent,
+    the same as the recorded answer; the setup chat's privacy answer records
+    its own consent instead;
     `cloud_consent.resolve()` decides that from the record of the choice.
 
     `model_routing.mode == "cloud_only"` is NOT sufficient on its own, even

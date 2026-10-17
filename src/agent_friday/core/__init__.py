@@ -4151,7 +4151,9 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
     # stored mode alone is not evidence of a choice. Choosing cloud_only is the
     # owner's consent for routine jobs to use the cloud
     # (cloud_intent.background_route) and, when it was made on Friday's own
-    # page or in setup (`mode_chosen_via`), consent for the cloud to receive
+    # page or at the terminal setup's routing question (`mode_chosen_via`;
+    # the setup chat's privacy answer is "posture" and records its own
+    # consent), consent for the cloud to receive
     # all but the never-send floor (privacy/cloud_consent.resolve). The
     # consent needs this record to
     # name the stored mode. It is written HERE, from the mode itself, only on an

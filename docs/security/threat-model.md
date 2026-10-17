@@ -439,9 +439,10 @@ similar) are skipped (`egress_gate.py` `seal_outbound`, `_seal_steps`). Card
 numbers and bank or account numbers are on every never-send list by default
 (removable), so they are still refused; other identifiers reach the cloud
 unless they are on the list. The owner's explicit choice of Cloud only
-(Settings > Models clicked on the page, or setup) is the same consent as
-`cloud_unrestricted`; the factory default is not. Public web and news query text is not treated as
-private because of its topic; only the never-send floor and personal
+(Settings > Models clicked on the page, or the terminal setup's routing
+question) is the same consent as `cloud_unrestricted`; the factory default
+is not. The app's setup chat records consent from its own privacy answer.
+Public web and news query text is not treated as private because of its topic; only the never-send floor and personal
 identifiers apply to it (decision record 2026-10-15). Under `cloud_guarded`,
 email paragraphs the gate would hold are shown on a card first ("this is
 exactly what would be sent", **Send** / **Don't send**; `services/cloud_release.py`).

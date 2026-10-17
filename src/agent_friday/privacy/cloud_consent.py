@@ -45,10 +45,13 @@ What ``cloud_consent`` means
 "at": iso-str | None, "capability_snapshot": dict | None}``.
 ``is_unrestricted_cloud()`` (below) is True iff ``answered`` is True AND
 ``choice == "cloud_unrestricted"``, or the owner explicitly chose cloud only
-(Settings > Models, or setup) after their last recorded answer: choosing
-cloud only is consent; the factory default is not (see
-``ROUTING_CONSENT_VIAS``). Everything else — unanswered, answered
-"local_private" or "cloud_guarded", or any read failure — is gated. Choosing "local_private"
+(Settings > Models, or the terminal setup's routing question) after their
+last recorded answer: choosing cloud only is consent; the factory default
+is not (see ``ROUTING_CONSENT_VIAS``). The app's first run has no
+cloud-only choice: its setup conversation asks where Friday may think, and
+that answer records the consent itself (``setup_steps.apply_posture``).
+Everything else — unanswered, answered "local_private" or "cloud_guarded",
+or any read failure — is gated. Choosing "local_private"
 does not mean local-only routing is force-enabled elsewhere; it means the
 one flag capable of turning every safeguard off at once stays off.
 
@@ -106,8 +109,8 @@ CHOICE_CLOUD = "cloud_unrestricted"
 CHOICE_GUARDED = "cloud_guarded"
 VALID_CHOICES = (CHOICE_LOCAL, CHOICE_CLOUD, CHOICE_GUARDED)
 
-#: Choosing cloud only IS consent (the owner's ruling, 2026-10-17): an explicit
-#: choice of "Cloud only", made by the owner in Settings > Models or in setup,
+#: Choosing cloud only IS consent: an explicit choice of "Cloud only", made by
+#: the owner in Settings > Models or at the terminal setup's routing question,
 #: counts the same as the recorded "Cloud for everything" answer. The factory
 #: default never counts. The evidence is the record `core._save_settings` writes
 #: on an owner routing change (`mode_chosen`, `mode_chosen_at`) plus HOW the
@@ -117,8 +120,10 @@ VALID_CHOICES = (CHOICE_LOCAL, CHOICE_CLOUD, CHOICE_GUARDED)
 #:     "settings_models"), clicked on Friday's own page (same-origin, with the
 #:     page's session token: `screen_click`); other mode buttons are not it;
 #:   * "setup"    -- the terminal setup wizard's routing question when it was
-#:     actually answered (not quick mode, not skipped), or setup completion
-#:     clicked on Friday's own page.
+#:     actually answered (not quick mode, not skipped), or a POST to
+#:     /api/setup/complete clicked on Friday's own page. The app's first run
+#:     does not use that route: it completes through the setup chat, whose
+#:     mode write is "posture" (below).
 #:
 #: Times are compared as aware datetimes; `mode_chosen_at` is written in UTC.
 #: A recorded answer whose time cannot be read wins (fails toward safeguards).
