@@ -702,6 +702,10 @@ PROVIDER_TEMPLATES["custom"] = normalize_descriptor({
 })
 
 
+class ProviderExistsError(UserFacingValueError):
+    """add_provider(replace=False) found the name already registered."""
+
+
 class ProviderRegistry:
     def __init__(self):
         self._providers = {}
@@ -761,11 +765,14 @@ class ProviderRegistry:
     def get_provider(self, name: str):
         return self._providers.get(name)
 
-    def add_provider(self, data: dict, validate: bool = True) -> str:
+    def add_provider(self, data: dict, validate: bool = True,
+                     replace: bool = True) -> str:
         """Validate, normalize, register, and persist a descriptor.
 
         Raises ValueError with a joined error message on an invalid descriptor
-        so callers (routes) can 400 with actionable detail.
+        so callers (routes) can 400 with actionable detail. With
+        ``replace=False`` a name already registered is refused with
+        ProviderExistsError instead of being overwritten.
         """
         if validate:
             ok, errors, _warnings = validate_descriptor(data)
@@ -773,6 +780,8 @@ class ProviderRegistry:
                 raise UserFacingValueError("; ".join(errors))
         norm = normalize_descriptor(data)
         name = norm.get("name", "custom")
+        if not replace and name in self._providers:
+            raise ProviderExistsError("A provider named %s already exists." % name)
         self._providers[name] = norm
         self._origins[name] = "ui" if self._origins.get(name) != "file" else "file"
         path = PROVIDERS_DIR / f"{name}.json"
