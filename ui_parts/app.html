@@ -21088,11 +21088,11 @@ function SettingsTabLaya() {
         rp.with_your_bars ? E('div', {style:dim}, 'With your bars (shadow): ' + rp.with_your_bars.moved + ' decisions would change; ' + rp.with_your_bars.right_after + ' of them right, ' + rp.with_your_bars.wrong_after + ' wrong.') : null,
         E('div', {style:dim}, (rp.waiting_not_scored || 0) + ' choices waiting for your OK and ' + (rp.set_aside_not_scored || 0) + ' set aside were not scored.'))
         : E('div', {style:dim}, 'Not run yet. Use the replay test below.')),
-    React.createElement(StSection, { title: "Replay test", desc: 'Replays the requests you corrected or confirmed through Laya as she is now, then again reworded so phrasings she memorised stop helping. It stays on this PC, reads only what is sealed in your vault, and saves counts, never your words.' },
+    React.createElement(StSection, { title: "Replay test", desc: 'Replays the requests you corrected or confirmed through Laya as she is now, then again reworded so phrasings she memorised stop helping. It stays on this PC, reads only what is sealed in your vault, and saves counts, never your words. You can also say "run your replay test".' },
       E('button', {type:'button', className:'settings-btn', 'data-laya-action':'replay', disabled: !!busy, onClick: () => post('replay', {}, 'replay')},
         busy === 'replay' ? 'Replaying…' : 'Run the replay test on my history'),
       note('replay')),
-    React.createElement(StSection, { title: "Confidence bars", desc: 'How sure she must be before she acts, per action. Reads that change nothing may be set lower; actions that change something can only be made stricter here. Recommended values are labelled, never chosen for you. Your bars change nothing until you set them to act.' },
+    React.createElement(StSection, { title: "Confidence bars", desc: 'How sure she must be before she acts, per action. Reads that change nothing may be set lower; actions that change something can only be made stricter here. Recommended values are labelled, never chosen for you. Your bars change nothing until you set them to act. By voice you can make her stricter ("be stricter about the calendar") or say "stop using my bars"; lowering a bar or turning them to act is a click here.' },
       E('div', {style:{display:'flex', alignItems:'center', gap:8, marginBottom:8}},
         E('label', {htmlFor:'laya-bars-mode', style:{fontSize:12}}, 'Use my bars'),
         E('select', {id:'laya-bars-mode', 'aria-label':'Use my bars', value: bars.mode, disabled: !!busy,
