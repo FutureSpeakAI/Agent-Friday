@@ -45,6 +45,8 @@ GONE = [
     ("src/agent_friday/services/setup_chat_copy.py", "Nothing about you leaves this PC", "connected services talk to their vendors"),
     ("src/agent_friday/services/setup_chat_copy.py", "identity details \"\n    \"and your never-send list are held back",
      "the cautious setting keeps such details here and tells you; it is not a topic block"),
+    ("src/agent_friday/services/setup_chat_copy.py", "Already covered, always: passwords and keys, ID and account numbers",
+     "your own name and ID numbers are not refused under Cloud for everything; card and account numbers are list entries"),
     ("src/agent_friday/services/onboarding_copy.py", "Ask her about a bank balance and she will decline",
      "no blanket topic refusals: the never-send list is the floor"),
     ("src/agent_friday/services/onboarding_copy.py", "the cloud when it would clearly help",
