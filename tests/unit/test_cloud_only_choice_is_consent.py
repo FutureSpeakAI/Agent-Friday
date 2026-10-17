@@ -210,3 +210,13 @@ def test_settings_tells_the_owner_that_choosing_cloud_only_is_consent():
     assert "Choosing this is your" in src and "consent: the cloud may receive everything" in src
     # and Local preferred no longer claims an automatic fallback to the cloud
     assert "When the local model fails or is busy, the" not in src
+
+
+def test_the_privacy_panel_names_a_cloud_only_choice_in_both_ui_sources():
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[2]
+    for name in ("index.html", "ui_parts/app.html"):
+        src = (repo / name).read_text(encoding="utf-8")
+        assert "c.source === 'cloud_only_choice' ? 'unrestricted (you chose Cloud only)'" in src, name
+        assert "Choosing Cloud only in Settings > Models, or in setup, counts as unrestricted" in src, name
+        assert "Unrestricted sends content without privacy redaction" not in src, name
