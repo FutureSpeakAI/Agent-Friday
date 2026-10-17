@@ -8,9 +8,9 @@ installing without the wizard. Install from source is in
 ## What setup does
 
 `AgentFriday-Setup-1.2.0-beta.1.exe` is one file of about 675 MB. It installs
-for the current Windows account and needs no administrator rights. It sends
-nothing about you anywhere; the only things it fetches are the two parts named
-below. It carries:
+for the current Windows account, needs no administrator rights, and sends
+nothing about you anywhere (it fetches only the two parts named below). It
+carries:
 
 - its own copy of Python, so nothing has to be installed first;
 - Friday's files;
