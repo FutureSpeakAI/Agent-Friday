@@ -1,6 +1,6 @@
 # Which gate refused?
 
-> **Status:** engineering guidance · **Last verified against the code:** 2026-09-24
+> **Status:** engineering guidance · **Last verified against the code:** 2026-10-17
 
 Friday has three independent gates that can refuse a tool call. To the user they
 produce almost identical experiences — Friday says she can't do the thing — and
@@ -15,7 +15,15 @@ evidence of which gate fired.** Read the log lines.
 | **Governance rings** | `services/agent.py` → `_governance_check()` | "Is this ring permitted for this turn?" Rings 0–1 always; **ring 2 = every network tool, requires an authenticated session** (or a background task); ring 3 = OS control, requires Computer Control enabled; a turn that arrived by phone may only use ring 0 | `[GOV]` |
 | **Egress** | `services/egress_gate.py` | "May these bytes leave the machine for this provider?" | `friday.egress` logger: `ALLOW` / `BLOCK provider=... field=... tier=...` in `~/.friday/friday.log`, and one record per decision in `~/.friday/vault/egress-log.jsonl` |
 
-They are orthogonal. A call can pass two and fail the third, which is what makes
+Two other checks can stop an action and are not refusals in this sense: the
+per-action checkpoint (`governance/action_gate.py`) raises an approval card
+for an outward action and waits for the owner, and the never-send floor in
+the egress path (`judgment_gate.never_send_hits`: the owner's never-send list,
+vault document markers, deny spans and held raw records) refuses for every
+cloud destination. A card that is waiting is not a denial; look in
+**System > Approvals** before reading the logs.
+
+The three gates are orthogonal. A call can pass two and fail the third, which is what makes
 the symptom confusing: a refusal the user describes as "the vault blocked it" is
 often a governance denial with two vault `ALLOW` lines right above it.
 

@@ -79,6 +79,10 @@ document it is.
 | Document | Purpose |
 |---|---|
 | [Contributing](../CONTRIBUTING.md) | Setup, required checks, sensitive subsystems, how to submit changes. |
+| [Developer setup](development/setup.md) | Running Friday from source on Windows, and using a scratch data folder. |
+| [Tests and gates](development/testing-and-gates.md) | Test layout, the memory and disk floors, quick and full gates, CI-only test PRs, budgets and coverage floors. |
+| [Adding a workspace](development/adding-a-workspace.md) | The manifest, Laya contract and coverage steps for a new workspace. |
+| [Adding a connection](development/adding-a-connection.md) | Adding a service to Connect your services, with its Test connection probe. |
 | [Repository guards](development/repository-guards.md) | The pre-commit hook and the static checks that protect specific invariants. |
 | [UI build](development/ui-build.md) | Which UI file is authoritative and how the build refuses to lose components. |
 | [Release process](development/release-process.md) | Versioning, tagging, building the Windows installer, what ships and what does not. |
