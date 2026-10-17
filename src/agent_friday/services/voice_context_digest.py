@@ -30,6 +30,8 @@ DROPPED_SECTIONS = (
     "AVAILABLE TOOLS", "COMPUTER CONTROL", "SELF-IMPROVEMENT",
     "TASK DELEGATION", "PACKAGE INSTALLATION", "AUTONOMOUS OPERATION",
     "WHAT YOU CAN DO ON THIS COMPUTER", "SAY WHAT YOU ARE ABOUT TO DO",
+    # The voice front states it in its own fixed part (routes/voice).
+    "PRIVACY POLICY",
 )
 
 #: Taken first, in this order, after the preamble.

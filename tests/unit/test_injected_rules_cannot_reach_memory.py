@@ -60,7 +60,7 @@ def _isolate(tmp_path, monkeypatch):
 
 
 def _turn(message, **extra):
-    return agent.prepare_confirmation_ctx(SID, message, {"authenticated": True, **extra})
+    return agent.prepare_confirmation_ctx(SID, message, {"authenticated": True, "owner_surface": True, **extra})
 
 
 def _run(name, inp, ctx):

@@ -108,6 +108,9 @@ class _Entry:
     #: a conversation that never read any is not; a task ledger or a workflow's
     #: previous result is whenever the work it came from read some.
     outside: bool = True
+    #: Read from the owner's own file on this computer (see owner_local_path).
+    #: Still outside content for every role except a local write's path.
+    local: bool = False
 
 
 class Ledger:
@@ -371,6 +374,161 @@ ECHO_TOOLS = {"draft_email", "create_calendar_event", "update_calendar_event",
               "browser_type", "browser_select", "browser_close"}
 
 
+# ── The owner's own files ───────────────────────────────────────────────────
+
+#: Tools that read files on this computer. What they return is recorded as
+#: outside content like anything else; it is marked local when every file it
+#: came from is one of the owner's own (see owner_local_path).
+LOCAL_READ_TOOLS = {"read_file", "search_files"}
+#: Writes that stay on this computer. A path for one of these that is named
+#: only in the owner's own files is not outside content: "add this to my bug
+#: log" reads the log and writes it back.
+LOCAL_WRITE_TOOLS = {"write_file"}
+#: Folder names whose files arrived from elsewhere (downloads, mail
+#: attachments, browser and system caches, temp space). A file under one of
+#: these is somebody else's text, wherever the folder sits.
+_FOREIGN_DIRS = {"downloads", "download", "attachments", "temp", "tmp", "cache",
+                 "caches", "inetcache", "content.outlook", "temporary internet files",
+                 "appdata", ".cache", "library"}
+#: Folders whose files are not the owner's own text even inside the home folder: a sync root is
+#: written by other devices and the people it is shared with, node_modules by whatever was installed,
+#: a creations folder by Friday itself, ~/.ssh holds keys and trust, and a Startup folder runs what it
+#: holds at sign-in.
+_SHARED_DIRS = {"dropbox", "google drive", "googledrive", "my drive", "icloud drive", "iclouddrive",
+                "node_modules", "friday-creations", "startup", ".ssh"}
+#: A sync root that carries a suffix ("OneDrive - Example Org").
+_SHARED_DIR_PREFIXES = ("onedrive",)
+#: Files that run or steer the computer when the owner signs in, opens a shell or uses git: a write
+#: to one is never the owner's own round trip, whoever named it.
+_SENSITIVE_FILES = {".bashrc", ".bash_profile", ".bash_login", ".profile", ".zshrc", ".zprofile",
+                    ".zshenv", ".zlogin", ".gitconfig"}
+#: PowerShell profiles live in these Documents folders (any *profile.ps1 in them).
+_POWERSHELL_DIRS = {"windowspowershell", "powershell"}
+
+
+def _sensitive_or_shared(rel) -> bool:
+    """True for a home-relative path the round-trip relaxation never covers (see owner_local_path)."""
+    parts = [p.lower() for p in rel.parts]
+    folders = parts[:-1]
+    if any(f in _SHARED_DIRS or f.startswith(_SHARED_DIR_PREFIXES) for f in folders):
+        return True
+    name = parts[-1] if parts else ""
+    if name in _SENSITIVE_FILES:
+        return True
+    if name.endswith("profile.ps1") and any(f in _POWERSHELL_DIRS for f in folders):
+        return True
+    return False
+
+
+def _in_git_work_tree(p, home) -> bool:
+    """True when a folder from `p` up to the home folder holds a .git: a cloned tree's text is its
+    authors', not the owner's. A check that cannot run says yes."""
+    d = p.parent
+    while True:
+        try:
+            if (d / ".git").exists():
+                return True
+        except Exception:
+            return True
+        if d == home or d.parent == d:
+            return False
+        d = d.parent
+
+
+def _in_creations(p) -> bool:
+    """True for a file under a folder Friday saves its own creations to. Cannot tell: True."""
+    from pathlib import Path
+    try:
+        import agent_friday.core as _core
+        roots = [getattr(_core, "CREATIONS_DIR", None), getattr(_core, "DAILY_CREATIONS_DIR", None)]
+    except Exception:
+        return True
+    for root in roots:
+        if not root:
+            continue
+        try:
+            p.relative_to(Path(root).resolve())
+            return True
+        except ValueError:
+            continue
+        except Exception:
+            return True
+    return False
+
+
+def _state_dir():
+    from agent_friday.paths import friday_home
+    return friday_home()
+
+
+def owner_local_path(path: Any) -> bool:
+    """True for an absolute path to the owner's own file on this computer.
+
+    Conservative by construction: the path must sit in the owner's home
+    folder, outside Friday's own state (tool output, attachments and saved
+    pages live there), outside any downloads, attachment, cache or temp
+    folder, and, on Windows, carry no mark of the web. A network share, a
+    URL, a relative path or anything that cannot be resolved is not local.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return False
+    raw = path.strip()
+    if raw.startswith(("\\\\", "//")) or "://" in raw:
+        return False
+    import os
+    import tempfile
+    from pathlib import Path
+    try:
+        p = Path(os.path.expanduser(raw))
+        if not p.is_absolute():
+            return False
+        p = p.resolve()
+        home = Path.home().resolve()
+        rel = p.relative_to(home)
+    except Exception:
+        return False
+    if any(part.lower() in _FOREIGN_DIRS for part in rel.parts[:-1]):
+        return False
+    if _sensitive_or_shared(rel) or _in_git_work_tree(p, home) or _in_creations(p):
+        return False
+    for foreign in (tempfile.gettempdir(),):
+        try:
+            p.relative_to(Path(foreign).resolve())
+            return False
+        except Exception:
+            pass
+    try:
+        p.relative_to(Path(_state_dir()).resolve())
+        return False
+    except ValueError:
+        pass
+    except Exception:
+        return False
+    if os.name == "nt":
+        try:
+            if os.path.exists(str(p) + ":Zone.Identifier"):
+                return False            # downloaded: the mark of the web
+        except Exception:
+            return False
+    return True
+
+
+def _read_was_local(tool_name: str, tool_input: Optional[dict], raw: str) -> bool:
+    """Whether every file this read came from is the owner's own."""
+    inp = tool_input or {}
+    if tool_name == "read_file":
+        return owner_local_path(inp.get("path") or inp.get("file_path"))
+    if tool_name == "search_files":
+        try:
+            rows = (json.loads(raw) or {}).get("results")
+        except Exception:
+            return False
+        if not isinstance(rows, list):
+            return False
+        return all(isinstance(r, dict) and owner_local_path(r.get("path")) for r in rows)
+    return False
+
+
 def note_tool_output(key: str, tool_name: str, tool_input: Optional[dict], result: Any,
                      *, approved: str = "", approved_label: str = ""):
     """Record what a tool returned as something Friday READ, not something the
@@ -389,9 +547,11 @@ def note_tool_output(key: str, tool_name: str, tool_input: Optional[dict], resul
     label = describe_source(tool_name, tool_input)
     if approved:
         label = approved_label or ("a skill procedure you pre-approved (%s)" % approved)
+    local = (kind == "content" and not approved and tool_name in LOCAL_READ_TOOLS
+             and _read_was_local(tool_name, tool_input, raw))
     _ledger(key).add(_Entry(kind, label, raw, normalize(raw), time.time(),
                             _segments(tool_name, raw, label) if kind == "content" and not approved else [],
-                            approved=str(approved or "")))
+                            approved=str(approved or ""), local=local))
 
 
 def approved_labels(key: str) -> set:
@@ -417,15 +577,56 @@ def _shingles(text: str, n: int = 5) -> set:
     return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
 
 
-def origin_of(key: str, value: Any, *, free_text: bool = False) -> Origin:
+def origin_of(key: str, value: Any, *, free_text: bool = False,
+              local_is_own: bool = False) -> Origin:
     """Where `value` came from. The user wins: a value the user typed is
-    theirs even if an email also contains it."""
+    theirs even if an email also contains it.
+
+    ``local_is_own`` treats text read from the owner's own files as the
+    owner's data, and only when nothing else Friday read contains the value:
+    a path named in a web page is that page's, even if a local note names it
+    too."""
     s = str(value or "")
     n = normalize(s)
     led = _ledger(key)
     with _LOCK:
         # Carried text first, so a real source read later names itself.
         entries = list(led.carried.values()) + list(led.entries)
+    if local_is_own:
+        local = [e for e in entries if e.local]
+        if local:
+            o = _origin_in(n, s, [e for e in entries if not e.local], free_text)
+            if o.kind != "model":
+                return o
+            if not free_text and len(n) >= MIN_ATOM and any(n in e.norm for e in reversed(local)):
+                hit = next(e for e in reversed(local) if n in e.norm)
+                return Origin("own", "your own " + hit.label[2:]
+                              if hit.label.startswith("a ") else hit.label)
+            return o
+    return _origin_in(n, s, entries, free_text)
+
+
+def read_source_of(key: str, text: Any) -> str:
+    """Plain words for the earlier tool output in this conversation that contains `text`
+    (as free text), or "" when none does.
+
+    Unlike `origin_of`, the owner's own typing does not win here: this asks
+    whether words the owner just SENT were pasted from something Friday read,
+    so the owner's message itself is not a source."""
+    s = str(text or "")
+    if not s.strip():
+        return ""
+    led = _ledger(key)
+    with _LOCK:
+        entries = [e for e in list(led.carried.values()) + list(led.entries) if e.kind != "user"]
+    if not entries:
+        return ""
+    o = _origin_in(normalize(s), s, entries, True)
+    return (o.source or "something Friday read") if o.kind not in ("user", "model") else ""
+
+
+def _origin_in(n: str, s: str, entries: list, free_text: bool) -> Origin:
+    """`origin_of` over an explicit list of ledger entries."""
     if free_text:
         sh = _shingles(s)
         if not sh:
@@ -559,6 +760,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "answer_card": {},
     "release_holds": {},
     "find_free_slots": {},
+    "check_plan_travel": {},
     "text_by_phone": {"to": "recipient", "body": "message_body"},
     "call_by_phone": {"to": "recipient", "message": "message_body"},
     "browse_web": {"url": "fetch_url"},
@@ -874,8 +1076,14 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
                 d.action = _stricter(d.action, act)
             continue
         free = role in FREE_TEXT_ROLES
+        # Reading the owner's own file and writing back to the owner's own
+        # file keeps the text on this computer. Only that pairing is relaxed:
+        # anything going out, any path named in content from elsewhere, and
+        # any file Friday reads back as instructions keep the flag.
+        own_ok = (role == "write_path" and tool_name in LOCAL_WRITE_TOOLS
+                  and owner_local_path(value) and not _shapes_behaviour(value))
         for atom in (_atoms(role, value) if not free else [value if isinstance(value, str) else json.dumps(value, default=str)]):
-            o = origin_of(key, atom, free_text=free)
+            o = origin_of(key, atom, free_text=free, local_is_own=own_ok)
             if o.kind in ("user", "model"):
                 continue
             sev = "warn" if o.kind == "content" else "info"

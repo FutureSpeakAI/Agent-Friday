@@ -37,7 +37,7 @@ def _isolate(tmp_path, monkeypatch):
 
 
 def _turn(message):
-    return agent.prepare_confirmation_ctx(SID, message, {"authenticated": True})
+    return agent.prepare_confirmation_ctx(SID, message, {"authenticated": True, "owner_surface": True})
 
 
 def _cards():

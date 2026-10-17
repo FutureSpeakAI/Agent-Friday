@@ -181,9 +181,9 @@ def test_a_fragment_the_owner_said_does_not_pick_a_line_they_did_not_name(line, 
 
 
 def test_a_replace_the_owner_named_both_halves_of_saves_silently():
-    cm.add("user", "Lives in Austin.", actor="owner")
-    out = _call(_chat_ctx("conv-moved-both"), "I moved from Austin to Denver.",
-                {"action": "replace", "target": "user", "old": "Austin",
+    cm.add("user", "Lives in Springfield.", actor="owner")
+    out = _call(_chat_ctx("conv-moved-both"), "I moved from Springfield to Denver.",
+                {"action": "replace", "target": "user", "old": "Springfield",
                  "text": "Moved to Denver."})
     assert out.startswith("Updated in core memory"), out
     assert cm.entries("user") == ["Moved to Denver."]
