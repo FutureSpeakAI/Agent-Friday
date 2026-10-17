@@ -139,7 +139,11 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
 
   await waitStage(page, 'basics');
   await shot(page, info, '08-basics');
-  await page.locator('.sc-side').getByRole('button', { name: 'Continue', exact: true }).click();
+  // Nothing is picked for the person: Continue waits for "Who is this for?".
+  const basicsGo = page.locator('.sc-side').getByRole('button', { name: 'Continue', exact: true });
+  await expect(basicsGo).toBeDisabled();
+  await page.locator('.sc-side').getByRole('radio', { name: /For me/ }).click();
+  await basicsGo.click();
 
   await waitStage(page, 'posture');
   const cards = page.locator('.sc-side .sc-option');

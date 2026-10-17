@@ -197,6 +197,20 @@ def served_name(model=None) -> str:
 
 # ── What the setup chat and Settings say ─────────────────────────────────────
 
+def _thinks_locally() -> bool:
+    """True when chat can run with no cloud key: a local routing mode and a
+    conversational model installed on this PC. Any fault reads as False, so the
+    line falls back to "nothing works until a key is added"."""
+    try:
+        from agent_friday.services import cloud_intent
+        if cloud_intent.routing_mode() not in ("local_only", "local_preferred"):
+            return False
+        from agent_friday.services import local_seats
+        return bool(local_seats.installed())
+    except Exception:
+        return False
+
+
 def status() -> dict:
     """The one-key summary the checklist, Settings and the setup chat show.
 
@@ -211,6 +225,8 @@ def status() -> dict:
               "url": KEY_URLS[OPENROUTER]}]
     if in_use:
         line = copy.ONE_KEY_IN_USE.format(label=LABELS[in_use])
+    elif _thinks_locally():
+        line = copy.ONE_KEY_NONE_LOCAL
     else:
         line = copy.ONE_KEY_NONE
     return {"in_use": in_use, "label": LABELS.get(in_use or "", ""),
