@@ -1328,7 +1328,7 @@ def _act_threshold() -> float:
 
 def _tier1(text: str) -> Route:
     _PROFILE.vec = None
-    r = _decide(_score(text), text, _act_threshold(), getattr(_PROFILE, "bars", None))
+    r = _decide(_score(text), text, _act_threshold(), **_bars_kw())
     pid = getattr(_PROFILE, "pid", None)
     if pid and r.decision == "tool":
         r = _graduation_guard(pid, text, r, getattr(_PROFILE, "vec", None))
@@ -1346,7 +1346,7 @@ def _no_new_action(text: str, r: Route, vec) -> Route:
         if vec is None:
             raise RuntimeError("no turn vector")
         labels, protos = _prototypes()
-        base = _decide(_rank(vec, labels, protos), text, _owner_threshold(), getattr(_PROFILE, "bars", None))
+        base = _decide(_rank(vec, labels, protos), text, _owner_threshold(), **_bars_kw())
         if base.decision in ("ask", "no_tool"):
             return base
         return r
@@ -1385,7 +1385,7 @@ def _graduation_guard(pid: str, text: str, r: Route, vec) -> Route:
             raise RuntimeError("no turn vector")
         labels, protos = _prototypes()
         # The owner's own bars (Settings > Laya, set to act) are part of "the threshold in force".
-        base = _decide(_rank(vec, labels, protos), text, _owner_threshold(), getattr(_PROFILE, "bars", None))
+        base = _decide(_rank(vec, labels, protos), text, _owner_threshold(), **_bars_kw())
         if base.decision == "tool" and base.tool == r.tool:
             return r
         if laya_personal.graduation_ok(pid, vec, r.tool):
@@ -1620,6 +1620,13 @@ def _with_profile_bars(profile_id, bars, fn, *args):
         return _with_profile(profile_id, fn, *args)
     finally:
         _PROFILE.bars = None
+
+
+def _bars_kw() -> dict:
+    """``{"bars": ...}`` for a ``_decide`` call when this worker call carries the owner's bars, else ``{}``
+    (so a call with no bars is exactly the call it always was)."""
+    bars = getattr(_PROFILE, "bars", None)
+    return {"bars": bars} if bars else {}
 
 
 def _live_bars() -> Optional[Dict[str, float]]:
