@@ -36,6 +36,7 @@ const SECTIONS: Section[] = [
   { id: 'intelligence', label: 'Models' },
   { id: 'costs', label: 'Spending' },
   { id: 'privacy', label: 'Privacy & Data' },
+  { id: 'laya', label: 'Laya' },
   { id: 'connections', label: 'Connections' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'advanced', label: 'Advanced' },
