@@ -35,7 +35,7 @@ TOOLS = [
          "Laya's learning and tuning, run only on the owner's own words this turn: summary ('what have you "
          "learned?'); forget_last ('forget that'); reset (back to shipped, learning set aside); rollback ('go back "
          "to how you were last week'); wipe (raises a card a screen click approves; a spoken yes never deletes); "
-         "replay ('run your replay test'); bar ('be stricter about the calendar', 'stop using my bars'; lowering "
+         "replay ('run your replay test'); bar ('Laya, be stricter about the calendar', 'stop using my bars'; lowering "
          "needs a screen click). Details: Settings > Laya."),
      "input_schema": {"type": "object", "properties": {
          "op": {"type": "string", "enum": list(OPS)}}}},

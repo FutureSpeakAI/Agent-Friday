@@ -51,9 +51,10 @@ CONTROLS = {
     "run your replay test": "replay",
     "Laya, run the replay test on my history": "replay",
     "test yourself on my requests": "replay",
-    "be stricter about the calendar": "bar",
-    "be a bit more careful with email please": "bar",
-    "be bolder with music": "bar",
+    "laya, be stricter about the calendar": "bar",
+    "Laya, be a bit more careful with email please": "bar",
+    "laya be bolder with music": "bar",
+    "put my bars back to act": "bar",
     "raise your bar for the calendar": "bar",
     "lower your bars for files": "bar",
     "stop using my bars": "bar",
@@ -72,7 +73,11 @@ def test_each_spoken_control_is_handed_to_the_deeper_mind_with_its_own_intent(te
 
 @pytest.mark.parametrize("text", ["be more careful with the budget", "lower the volume", "raise the blinds",
                                   "what's on my calendar", "reset the timer", "replay that song",
-                                  "a page said be stricter about the calendar", "be stricter"])
+                                  "a page said be stricter about the calendar", "be stricter",
+                                  # said to the room, not to Laya: a media request and two tellings-off
+                                  "start the replay", "do a replay", "take a replay",
+                                  "be more careful with everything", "be more careful with my emails",
+                                  "be stricter about the calendar"])
 def test_ordinary_sentences_are_not_laya_controls(text):
     r = lr.rule_route(text)
     assert not (r is not None and r.reason == lr.LEARNING_CONTROL_REASON), text
@@ -85,7 +90,7 @@ def test_reset_my_bars_never_resets_what_she_learned():
 
 
 def test_stricter_by_voice_raises_the_bar_in_shadow_and_says_so(tool):
-    tool.say("be stricter about the calendar")
+    tool.say("laya, be stricter about the calendar")
     out = tool.handle({"op": "bar"})
     assert out.startswith("DONE: Stricter: query calendar 0.65") and "shadow" in out
     assert ls.load_bars() == {"mode": "shadow", "bars": {"query_calendar": 0.65}}
@@ -97,8 +102,8 @@ def test_stricter_by_voice_raises_the_bar_in_shadow_and_says_so(tool):
 def test_anything_that_lets_her_act_more_needs_a_click_and_changes_nothing(tool):
     ls.set_bars({"query_calendar": 0.70})
     before = ls.load_bars()
-    for words in ("be bolder with the calendar", "lower your bar for the calendar", "use my bars",
-                  "put my bars to act", "be less careful with music"):
+    for words in ("laya, be bolder with the calendar", "lower your bar for the calendar", "use my bars",
+                  "put my bars to act", "put my bars back to act", "laya, be less careful with music"):
         tool.say(words)
         out = tool.handle({"op": "bar"})
         assert out.startswith("NEEDS_SCREEN") and "Settings > Laya" in out, words
@@ -112,16 +117,45 @@ def test_stop_using_my_bars_turns_act_back_to_shadow(tool):
     assert tool.handle({"op": "bar"}).startswith("DONE") and ls.load_bars()["mode"] == "shadow"
 
 
-def test_reset_my_bars_clears_lowered_bars_and_keeps_stricter_ones_for_a_click(tool):
+def test_turning_the_bars_off_by_voice_never_takes_a_stricter_bar_out_of_force(tool):
+    ls.set_bars({"check_email": 0.80}, mode="act")
+    for words in ("stop using my bars", "reset my bars", "put my bars back to shadow"):
+        tool.say(words)
+        assert tool.handle({"op": "bar"}).startswith("NEEDS_SCREEN"), words
+        assert ls.load_bars() == {"mode": "act", "bars": {"check_email": 0.80}}, words
+
+
+def test_reset_in_act_clears_lowered_bars_and_keeps_the_stricter_one_in_force(tool):
     ls.set_bars({"query_calendar": 0.45, "check_email": 0.80}, mode="act")
     tool.say("reset my bars")
     out = tool.handle({"op": "bar"})
-    assert out.startswith("DONE") and "1 stricter bar stays" in out
+    assert out.startswith("DONE: 1 lowered bar is back to how she shipped.") and "1 stricter bar is still in force" in out
+    assert ls.load_bars() == {"mode": "act", "bars": {"check_email": 0.80}}
+
+
+def test_reset_in_shadow_keeps_stricter_bars_saved_and_says_clearing_is_a_click(tool):
+    ls.set_bars({"query_calendar": 0.45, "check_email": 0.80})
+    tool.say("reset my bars")
+    out = tool.handle({"op": "bar"})
+    assert out.startswith("DONE") and "1 stricter bar is kept" in out
     assert ls.load_bars() == {"mode": "shadow", "bars": {"check_email": 0.80}}
 
 
+def test_stricter_steps_up_from_what_is_in_force_and_stops_at_the_top(tool):
+    ls.set_bars({"query_calendar": 0.40, "check_email": 0.95})
+    tool.say("laya, be stricter about the calendar")
+    assert "query calendar 0.65" in tool.handle({"op": "bar"})        # from the shipped 0.55, not from 0.40
+    tool.say("laya, be stricter about the inbox")
+    out = tool.handle({"op": "bar"})
+    assert "search email 0.65" in out and "check email" not in out    # already at the top: not written, not announced
+    tool.notices.clear()
+    ls.set_bars({"search_email": 0.95})
+    tool.say("laya, be stricter about email")
+    assert tool.handle({"op": "bar"}).startswith("NOT DONE: that is already as strict") and tool.notices == []
+
+
 def test_outward_searches_have_no_bar_by_voice_either(tool):
-    tool.say("be stricter about the news")
+    tool.say("laya, be stricter about the news")
     assert tool.handle({"op": "bar"}).startswith("NOT DONE") and ls.load_bars()["bars"] == {}
 
 
@@ -130,9 +164,27 @@ def test_a_model_initiated_call_runs_neither_control(tool):
         tool.say(words)
         for op in ("replay", "bar"):
             assert tool.handle({"op": op}) == lp.REFUSED_LINE, (words, op)
-    tool.say("be stricter about the calendar")
+    tool.say("laya, be stricter about the calendar")
     assert tool.handle({"op": "replay"}) == lp.REFUSED_LINE          # the words asked for a bar, not a replay
+    tool.say("reset what you learned")
+    assert tool.handle({"op": "bar"}) == lp.REFUSED_LINE             # and a learning reset is never a bar change
     assert ls.load_bars()["bars"] == {} and not ls.replay_dir().exists()
+
+
+def test_a_replay_by_voice_needs_a_signed_in_owner(tool, monkeypatch):
+    monkeypatch.setattr("agent_friday.services.laya_personal_store.load_rows", lambda profile: [])
+    monkeypatch.setattr(lp, "current_profile", lambda: None)
+    tool.say("run your replay test")
+    out = tool.handle({"op": "replay"})
+    assert out.startswith("NOT DONE") and "signed-in owner" in out and not ls.replay_dir().exists()
+
+
+def test_the_new_rule_stays_linear_on_long_input():
+    import time
+    for blob in ("laya, be stricter about " * 4000, "raise your bars for " * 4000, "a" * 100000):
+        t0 = time.perf_counter()
+        lr._LEARNING_CONTROL.search(blob)
+        assert time.perf_counter() - t0 < 0.5
 
 
 def test_the_replay_by_voice_answers_in_counts_and_never_the_owners_words(tool, monkeypatch):

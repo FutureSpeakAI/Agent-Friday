@@ -60466,7 +60466,7 @@ function SettingsTabLaya() {
       E('button', {type:'button', className:'settings-btn', 'data-laya-action':'replay', disabled: !!busy, onClick: () => post('replay', {}, 'replay')},
         busy === 'replay' ? 'Replaying…' : 'Run the replay test on my history'),
       note('replay')),
-    React.createElement(StSection, { title: "Confidence bars", desc: 'How sure she must be before she acts, per action. Reads that change nothing may be set lower; actions that change something can only be made stricter here. Recommended values are labelled, never chosen for you. Your bars change nothing until you set them to act. By voice you can make her stricter ("be stricter about the calendar") or say "stop using my bars"; lowering a bar or turning them to act is a click here.' },
+    React.createElement(StSection, { title: "Confidence bars", desc: 'How sure she must be before she acts, per action. Reads that change nothing may be set lower; actions that change something can only be made stricter here. Recommended values are labelled, never chosen for you. Your bars change nothing until you set them to act. By voice you can make her stricter ("Laya, be stricter about the calendar") or say "stop using my bars"; lowering a bar or turning them to act is a click here.' },
       E('div', {style:{display:'flex', alignItems:'center', gap:8, marginBottom:8}},
         E('label', {htmlFor:'laya-bars-mode', style:{fontSize:12}}, 'Use my bars'),
         E('select', {id:'laya-bars-mode', 'aria-label':'Use my bars', value: bars.mode, disabled: !!busy,

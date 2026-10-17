@@ -761,7 +761,7 @@ VOICE_RAISE_STEP = 0.10
 _V_SHADOW = re.compile(r"\b(?:stop using|turn off|switch off) (?:my|your|laya'?s|the) (?:confidence )?bars\b"
                        r"|\bbars (?:back )?(?:to|in|on) shadow\b", re.I)
 _V_ACT = re.compile(r"\b(?:use|start using|turn on|switch on) (?:my|your|laya'?s|the) (?:confidence )?bars\b"
-                    r"|\bbars (?:to|on) act\b", re.I)
+                    r"|\bbars (?:back )?(?:to|in|on) act\b", re.I)
 _V_RESET = re.compile(r"\breset (?:my|your|laya'?s|the) (?:confidence )?bars\b", re.I)
 _V_LOOSER = re.compile(r"\b(?:bolder|braver|looser|less careful|less cautious|lower)\b", re.I)
 _V_STRICTER = re.compile(r"\b(?:stricter|more careful|more cautious|raise|higher)\b", re.I)
@@ -795,24 +795,10 @@ def voice_bars(words: str) -> dict:
     w = " ".join(str(words or "").split())
     cur = load_bars()
     shipped = _router().ACT_THRESHOLD
-    if _V_SHADOW.search(w):
-        res = set_bars(mode="shadow", actor="owner:voice", may_loosen=False)
-        return {"ok": res["ok"], "text": "Your bars are back to shadow: they are measured and change nothing."
-                if res["ok"] else "NOT DONE: " + res.get("why", "")}
     if _V_ACT.search(w):
         return {"ok": False, "needs_screen": True, "text": NEEDS_CLICK_LINE}
-    if _V_RESET.search(w):
-        lower = {t: None for t, v in cur["bars"].items() if v < shipped - 1e-9}
-        kept = [t for t, v in cur["bars"].items() if v > shipped + 1e-9]
-        res = set_bars(lower, mode="shadow", actor="owner:voice", may_loosen=False)
-        if not res["ok"]:
-            return {"ok": False, "text": "NOT DONE: " + res.get("why", "")}
-        text = "Your bars are in shadow and every lowered bar is back to how she shipped."
-        if kept:
-            text += (" %d stricter bar%s stay%s: taking %s back down lets her act more, so that needs a click in "
-                     "Settings > Laya." % (len(kept), "" if len(kept) == 1 else "s", "s" if len(kept) == 1 else "",
-                                          "it" if len(kept) == 1 else "them"))
-        return {"ok": True, "text": text}
+    if _V_SHADOW.search(w) or _V_RESET.search(w):
+        return _voice_back_down(cur, shipped, reset=bool(_V_RESET.search(w)))
     tools, outward = spoken_actions(w)
     if _V_LOOSER.search(w) and not _V_STRICTER.search(w):
         return {"ok": False, "needs_screen": True, "text": NEEDS_CLICK_LINE}
@@ -825,8 +811,13 @@ def voice_bars(words: str) -> dict:
         return {"ok": False, "text": "NOT DONE: name the action, for example the calendar, email or music."}
     new = {}
     for t in tools:
-        now = cur["bars"].get(t, shipped)
-        new[t] = min(BAR_MAX, _snap(now + VOICE_RAISE_STEP))
+        # Stricter than what is in force: a lowered bar steps up from the shipped score, not from itself.
+        base = max(cur["bars"].get(t, shipped), shipped)
+        if base >= BAR_MAX - 1e-9:
+            continue                                      # already as strict as a bar goes: nothing to write or announce
+        new[t] = min(BAR_MAX, _snap(base + VOICE_RAISE_STEP))
+    if not new:
+        return {"ok": False, "text": "NOT DONE: that is already as strict as a bar goes (%.2f)." % BAR_MAX}
     res = set_bars(new, actor="owner:voice", may_loosen=False)
     if not res["ok"]:
         return {"ok": False, "text": "NOT DONE: " + res.get("why", "")}
@@ -834,6 +825,46 @@ def voice_bars(words: str) -> dict:
     mode = "They apply now." if res["mode"] == "act" else "They stay in shadow until you set your bars to act."
     tail = " Web and news searches always ask first." if outward else ""
     return {"ok": True, "text": "Stricter: %s. %s%s" % (said, mode, tail)}
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many
+
+
+def _voice_back_down(cur: dict, shipped: float, *, reset: bool) -> dict:
+    """"stop using my bars" / "reset my bars" by voice. Lowered bars go back to shipped (that only makes her
+    stricter). The mode goes to shadow only when no stricter bar is in force, because in shadow every action
+    falls back to the shipped score and a stricter bar would stop binding. Stricter bars are never cleared here."""
+    lowered = {t: None for t, v in cur["bars"].items() if v < shipped - 1e-9}
+    stricter = [t for t, v in cur["bars"].items() if v > shipped + 1e-9]
+    binding = cur["mode"] == "act" and bool(stricter)
+    mode = None if binding else "shadow"
+    if not lowered and binding:
+        return {"ok": False, "needs_screen": True, "text": NEEDS_CLICK_LINE}     # the only change asked for loosens
+    if not lowered and cur["mode"] == "shadow":
+        text = "Your bars are already in shadow: they are measured and change nothing."
+        if reset and stricter:
+            text += (" %d stricter %s kept for when you set them to act again; clearing %s is a click in Settings > "
+                     "Laya." % (len(stricter), _plural(len(stricter), "bar is", "bars are"),
+                                _plural(len(stricter), "it", "them")))
+        return {"ok": True, "text": text}
+    res = set_bars(lowered, mode, actor="owner:voice", may_loosen=False)
+    if not res["ok"]:
+        return {"ok": False, "needs_screen": bool(res.get("needs_click")),
+                "text": NEEDS_CLICK_LINE if res.get("needs_click") else "NOT DONE: " + res.get("why", "")}
+    parts = []
+    if lowered:
+        parts.append("%d lowered %s back to how she shipped." % (len(lowered), _plural(len(lowered), "bar is", "bars are")))
+    if binding:
+        parts.append("%d stricter %s still in force; turning your bars off would let her act more, so that is a click "
+                     "in Settings > Laya." % (len(stricter), _plural(len(stricter), "bar is", "bars are")))
+    else:
+        parts.append("Your bars are in shadow: they are measured and change nothing.")
+        if reset and stricter:
+            parts.append("%d stricter %s kept for when you set them to act again; clearing %s is a click in Settings > "
+                         "Laya." % (len(stricter), _plural(len(stricter), "bar is", "bars are"),
+                                    _plural(len(stricter), "it", "them")))
+    return {"ok": True, "text": " ".join(parts)}
 
 
 def voice_replay(profile: Optional[str] = None) -> dict:

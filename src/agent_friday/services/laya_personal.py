@@ -794,7 +794,8 @@ def run_control(op: str, words: str, profile: Optional[str] = None) -> dict:
         # Settings > Laya by voice (services/laya_settings). Neither touches what she learned; a bar change only
         # ever makes her stricter here (lowering is a click on the screen) and posts a notice like the others.
         from agent_friday.services import laya_settings
-        out = laya_settings.voice_replay(profile) if op == "replay" else laya_settings.voice_bars(words)
+        # The replay reads one profile's sealed history: only the signed-in owner's, never the forget-path fallback.
+        out = laya_settings.voice_replay(current_profile()) if op == "replay" else laya_settings.voice_bars(words)
         if op == "bar" and out.get("ok"):
             notify("done:bar", "Laya's bars changed", "Laya's bars changed by voice. Settings > Laya shows them "
                                                       "and can change them back.")

@@ -647,9 +647,12 @@ _LEARNING_CONTROL = re.compile(
     r"|show me what you(?:'ve)? learned"
     # Settings > Laya by voice (Slice 2): her replay test, and her bars. Each names Laya's own bars or test, or one
     # of her actions by its everyday word, so "be more careful with the budget" stays an ordinary turn.
-    r"|(?:run|do|take|start) (?:your|the|a|laya'?s) replay(?: test)?(?: on my (?:history|requests|past requests))?"
+    r"|(?:run|do|take|start) (?:(?:your|laya'?s) replay(?: test)?|(?:the|a) replay test)"
+    r"(?: on my (?:history|requests|past requests))?"
     r"|test yourself on my (?:history|requests|past requests)"
-    r"|(?:be|get) (?:a (?:bit|little) )?" + _BAR_WAY + r" (?:about|with|on|for|when (?:it comes to|opening)) " + _BAR_WHAT
+    # "be stricter about X" is said TO Laya by name: plain "be more careful with my emails" is a telling-off, not a bar.
+    r"|laya,?\s+(?:please\s+)?(?:be|get) (?:a (?:bit|little) )?" + _BAR_WAY
+    + r" (?:about|with|on|for|when it comes to) " + _BAR_WHAT
     + r"|(?:raise|lower) (?:your|laya'?s|the|my) (?:confidence )?bars?(?: (?:for|on) " + _BAR_WHAT + r")?"
     r"|(?:stop using|start using|use|turn (?:on|off)|switch (?:on|off)|reset) (?:my|your|laya'?s|the) (?:confidence )?bars"
     r"|(?:put|set|turn) (?:my|your|the) (?:confidence )?bars (?:back )?(?:to|in|on) (?:shadow|act))"
