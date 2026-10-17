@@ -1,6 +1,8 @@
 # Local voice models and the GPU option
 
-Agent Friday™ can listen and speak entirely on your PC. This page covers the
+With local voice, Agent Friday™ listens and speaks on your PC. Where the
+replies are worked out still follows your privacy choice (see
+[Privacy](privacy.md)). This page covers the
 downloadable pieces of local voice and the optional, experimental GPU engine
 for NVIDIA graphics cards. The everyday voice features are in
 [Voice](voice.md).
@@ -24,8 +26,22 @@ the licence.
 | Ternary Bonsai 1.7B PQ2_0 | Recommended fast reply model for short voice questions and Quick reflexes. Needs the PrismML runtime that comes with a Bonsai deep thinker. | about 442 MB |
 | Qwen3-4B-Instruct-2507 Q4_K_M | Fast reply model for short voice questions (best quality). | about 2.3 GB |
 | Qwen3-1.7B Q4_K_M | A smaller fast reply model that fits beside the main model. | about 1.2 GB |
+| Kokoro voice engine | The engine that speaks podcasts and the Kokoro local voice. Needs PyTorch already on your PC. | about 1 MB, plus the packages it brings |
+| Kokoro-82M voice model and its 54 voices | The Kokoro voice itself and every voice it can speak in. | about 340 MB |
 | misaki | Tells the Kokoro voice how to pronounce words. | about 4 MB |
-| espeak-ng pronunciation helper and its library (optional) | Pronounces unusual names. Runs as its own program. | about 45 MB together |
+| spaCy small English model | Helps the pronouncer read whole sentences. | about 13 MB |
+| espeak-ng pronunciation helper and its library (helper optional) | Pronounces unusual names. Runs as its own program. | about 45 MB together |
+| faster-whisper base.en | Transcribes your audio and video, and checks a podcast says what its script says. | about 141 MB |
+| faster-whisper base | Push-to-transcribe (Alt+T) and the local ear on the processor. | about 141 MB |
+| faster-whisper small (optional) | A more accurate push-to-transcribe when a graphics card is free. | about 465 MB |
+| faster-whisper large-v3-turbo (optional) | A larger, more accurate listener. | about 1.5 GB |
+
+At the top of the same section, any feature that cannot run yet says so by
+name and size, for example "Transcription needs whisper base.en (141 MB)". One
+**Download** button fetches everything that feature needs, after you confirm.
+Features that use these pieces: media transcripts and the podcast listening
+check (faster-whisper base.en), push-to-transcribe (faster-whisper base), and
+podcast audio and the Kokoro local voice (the Kokoro pieces).
 
 A piece that needs another piece downloads it too, and the confirmation adds
 the sizes together. Optional pieces are marked "(optional)". A piece that is
@@ -93,6 +109,10 @@ shows a status message. Voice does not stop working.
 - Ternary Bonsai 1.7B (PrismML's ternary build of Qwen3-1.7B): Apache-2.0.
 - Qwen3 models: Apache-2.0.
 - Silero VAD: MIT.
+- Kokoro and Kokoro-82M, misaki: Apache-2.0.
+- spaCy small English model, faster-whisper models: MIT.
+- espeak-ng helper and library: GPL-3.0-or-later. Friday runs them only as a
+  separate helper program.
 - NeMo FastPitch and HiFi-GAN: NVIDIA's NeMo model terms.
 
 Model files are downloaded to your PC at your request. Friday does not

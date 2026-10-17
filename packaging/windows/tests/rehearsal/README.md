@@ -121,7 +121,8 @@ only thing that proves an upgrade is an upgrade**, which is the whole reason
 this directory exists.
 
 Not yet covered, and worth adding when the vault passphrase relocates out of the
-app directory (see `docs/design/vault-passphrase-location.md`): a static
+app directory (see the vault passphrase location design, now kept in the internal design
+repository): a static
 assertion that the passphrase's location is not inside `$InstallRoot`, and a run
 of this harness pointed at the new location. Neither alone is sufficient — a
 static check cannot prove no installer step reaches the path, and a single run

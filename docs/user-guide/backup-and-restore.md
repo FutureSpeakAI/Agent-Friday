@@ -18,10 +18,17 @@ DPAPI-protected file, so you do not type it every day. Both copies are tied to
 this Windows account on this PC and **do not move with a backup**. Keep your
 own copy in a password manager.
 
+One vault, one passphrase: if Friday's stored copies of the passphrase ever
+disagree, she uses the one that opens the most of your files and says so on
+an integrity card. Nothing is needed from you on an upgrade. For a read-only
+report of the vault's keys, a developer can run `scripts/vault_key_doctor.py`
+while Friday is stopped.
+
 ## What to back up
 
 Back up the whole `%USERPROFILE%\.friday` folder. It holds your wiki,
-conversations, settings, the vault, keys, receipts, traces and scheduled jobs.
+conversations, the Memory card, settings, the vault, keys, receipts, traces,
+the setup record and scheduled jobs.
 The largest parts are downloaded model files, which you can leave out and
 download again:
 
@@ -137,7 +144,9 @@ starting Friday.
 ## Backups made by the installer
 
 When you run the installer over an existing install, it first stops Friday and
-copies your data to a timestamped folder under `%USERPROFILE%\.friday-backups`.
+copies your data to a dated folder under `%USERPROFILE%\.friday-backups`.
+These backups are not deleted for you; remove old ones yourself once an
+upgrade has settled, and treat them as sensitive, like any backup.
 If the whole data folder does not fit, it copies the vault and the settings.
 After the install it checks that the data is unchanged. If the backup cannot be
 made, the upgrade does not start. See

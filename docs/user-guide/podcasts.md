@@ -2,7 +2,9 @@
 
 Agent Friday™ can turn your material into a podcast episode. An episode has
 chapters, a transcript with timed captions, and a source for every claim. Friday
-writes the script with your local model and speaks it on your PC. The same
+writes the script with your local model and speaks it on your PC. (One
+exception: see [What stays on your PC](#what-stays-on-your-pc-and-what-can-leave).)
+The same
 engine makes the audio versions of the News shows.
 
 ## What you get
@@ -15,10 +17,11 @@ engine makes the audio versions of the News shows.
   for. See [How long an episode runs](#how-long-an-episode-runs).
 - **Fewer stories, told in depth.** A News episode tells a few stories, each
   from its full article where the page can be read, not a list of headlines.
-- **Solo or two hosts.** A solo episode is Friday alone, like a newscast. With
-  two hosts the default voices are Friday and Emma. Each show has a recommended
-  setting: the Briefing, the Front Page and the Editorial are recommended solo,
-  the Weekly and episodes you make yourself are recommended with two hosts.
+- **Solo or two hosts.** A solo episode is Friday alone, like a newscast. Solo
+  is recommended, and is the default, for every show and for the episodes you
+  make yourself. You can choose two hosts for a show, for all your own
+  episodes, or for one episode. The second host is called Nova until you name
+  them (or "Agent Friday" if you have renamed Friday).
 - **Chapters, captions and a transcript.** Open the transcript or captions
   alongside the audio. Each line is timed.
 - **A source for every claim.** Ask "what's the source for that?" while an
@@ -130,12 +133,18 @@ An episode is a file, so you cannot make one while you are off the record.
 
 ## What stays on your PC, and what can leave
 
-- **The script is written locally and never by a cloud model.** If no local model
-  is serving, the episode fails with that reason. It does not fall back to the
-  cloud.
+- **Where the script is written.** A private episode (see below) is always
+  written by your local model on this PC. Other episodes are written locally
+  too, with one exception: if you chose cloud for everything (the routing mode
+  "cloud only", in the setup chat or in Settings) and a cloud model is set for
+  that job (**Settings > Spending**), the script for a public episode, such as a News show, is written by
+  that cloud model. If you never chose that mode yourself, it stays local. If no
+  local model is serving when one is needed, the episode fails with that reason.
 - **Speech runs on this PC's processor** with a local voice (Kokoro). The
-  listening check runs locally too. A voice that is not installed is refused by
-  name and never downloaded for this.
+  listening check runs locally too. Friday never downloads a voice on its own:
+  if the Kokoro voice is missing, **Settings > Voice > Local voice models**
+  offers it with its size and a **Download** button (see
+  [Local voice models](local-voice-gpu-tier.md)).
 - **Private episodes.** An episode built from any of your own material (files,
   wiki, graph entries, conversations, creations, datasets, pasted text, and the
   Briefing, which carries mail and calendar) is marked private. A private episode

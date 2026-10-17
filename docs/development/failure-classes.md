@@ -383,7 +383,7 @@ fires rarely rather than sitting permanently in the interface.
    a warning. An optional seat with no model assigned is an available option,
    not a fault. A fact about the configuration is not yellow.
 
-**Worked example.** Settings → Intelligence rendered **thirteen**
+**Worked example.** Settings → Intelligence (now labelled **Models**) rendered **thirteen**
 identical amber boxes under "What will not fit right now". Ten of them were one
 arithmetic bug: `hardware_profile.live_display_mib()` summed a WDDM counter that
 is not bounded by physical VRAM (Chrome alone reported 25,808 MiB on a 12,282 MiB

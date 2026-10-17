@@ -60,4 +60,4 @@ def test_creation_asset_exception_matches_the_gate():
 
 
 def test_verified_date_is_current():
-    assert "Last verified against the code: 2026-09-30" in _MODEL
+    assert "Last verified against the code: 2026-10-17" in _MODEL

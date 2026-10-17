@@ -1,5 +1,7 @@
 # A heavy local job swaps seats through one routine, and ComfyUI keeps the display reserve
 
+> **Status (2026-10-17):** still in force (services/residency_arbiter.py:3016, 2073-2078; services/local_image.py:1082; services/build_hours.py:28).
+
 **Date:** 2026-10-01
 **Status:** decided, implemented in `services/residency_arbiter.py` (`Arbiter.heavy_job`), `services/local_image.py`, `services/build_hours.py`; tests in `tests/unit/test_heavy_job_swap.py`.
 

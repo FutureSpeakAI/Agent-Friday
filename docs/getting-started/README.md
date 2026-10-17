@@ -85,14 +85,15 @@ administrator access. There are four decisions.
    engine (OfficeCLI) and the checkpoint for the judgment model.
 
 Setup puts shortcuts, with the rocket icon, on your Desktop (also when OneDrive
-holds your Desktop) and in the Start menu. The program is in
-`%LOCALAPPDATA%\AgentFriday`. Your data is in `%USERPROFILE%\.friday`, which
-installing and updating never touch.
+holds your Desktop) and in the Start menu. Its last page offers **Start Agent
+Friday now**. The program is in `%LOCALAPPDATA%\AgentFriday`. Your data is in
+`%USERPROFILE%\.friday`; installing and updating do not change it.
 
 If you already run a 5.x version or an earlier beta, run this installer over it. Setup stops
 Friday, copies your data to a dated folder under `.friday-backups` in your user
 folder, installs, and then checks that your data folder has every file it had
-before. Your vault, memory and settings are kept. See
+before. Your vault, memory and settings are kept, and a Friday tab you left
+open reloads itself. See
 [Updating and uninstalling](../user-guide/updating-and-uninstalling.md).
 
 ## 5. First start
@@ -101,23 +102,35 @@ Open Friday from the Desktop shortcut or the tray icon's **Open Agent
 Friday™**. It opens in your browser at `http://localhost:3000`. If you chose
 local models, the downloads begin now and a progress indicator shows them.
 
-Friday asks a few questions before anything else: what she writes down and
-where, a passphrase for the vault, where your words go (the cloud, this
-computer only, or both), what it means that she holds notes about people you
-mention, and whether she may check for new versions once a week. Nothing is
-pre-selected. The vault passphrase protects finance, health, legal and family
-records, and **if you lose it those files cannot be recovered**. Keep it in a
-password manager. The [first-run page](../user-guide/getting-started.md) covers
-each question.
+Friday shows a few screens before anything else: what she writes down and
+where, a passphrase for the vault, what it means that she holds notes about
+people you mention, what she does when you are on a video call, and whether
+she may check for new versions once a week. Nothing is pre-selected. The vault
+passphrase protects finance, health, legal and family records, and **if you
+lose it those files cannot be recovered**. Keep it in a password manager. The
+[first-run page](../user-guide/getting-started.md) covers each screen.
 
-## 6. Your first conversation
+## 6. The setup conversation
 
-After the questions, Friday starts the **setup chat**. She asks what to call
-you, checks your hardware, lists the accounts and keys she can use (each card
-says exactly what it asks for), and asks a few questions about how you like to
-be spoken to. Every step can be skipped, and **Set up later** is always there.
-It works with no model and no key. See
-[The setup chat](../user-guide/setup-chat.md).
+Then Friday sets herself up with you in a conversation. You can talk, type, or
+tell her you use a screen reader. In about twenty minutes she asks:
+
+- what to call her, her voice, and what to call you;
+- **where she may think**: **Only on this PC**, **Cloud for public things** or
+  **Cloud for everything**. Nothing is picked for you, and each card says what
+  it means and costs on this PC. Until you choose, every safeguard stays on;
+- what must **never** leave this PC (names, clients, projects);
+- which services to connect, on the **Connect your services** screen. Choose
+  **I'll just use local AI** if you want no cloud keys at all;
+- optional things: folders to start from, a public web look-up of your work,
+  how you like to be spoken to, a monthly spending ceiling, routines;
+- a few house rules, then a receipt, **What we set up**, that says who decided
+  each line.
+
+Every step has **Set up later**, and some have **Use the recommended answer**.
+The conversation works with no model and no key. See
+[The setup chat](../user-guide/setup-chat.md) and
+[Connect your services](../user-guide/connections.md).
 
 When it ends, type in the chat panel. Start with something that does not touch
 the outside world, such as asking what she can do for you, or pasting in a
@@ -126,12 +139,17 @@ Anything that would send, publish or change something waits for your approval
 on a card. Read [Approvals and receipts](../user-guide/approvals-and-receipts.md)
 before you connect mail or calendar.
 
+**Keys go in the secure field, never the chat.** If you paste a key or a
+password into the chat box, Friday withholds it before anything keeps it and
+offers the secure field instead.
+
 ## 7. Set up voice
 
 Open **Settings > Voice**. There are two ways to talk to Friday.
 
-**Cloud voice.** Choose Gemini Live and add a Gemini key under **Settings >
-Connections**. Audio goes to Google while you talk.
+**Cloud voice.** Choose Gemini Live and add a Google Gemini key under
+**Settings > Connections > Connect your services**. Audio goes to Google while
+you talk.
 
 **Local voice.** Choose Local CPU or Local GPU (NVIDIA). Listening and speaking
 happen on this PC. Local voice needs a few downloaded parts. **Settings > Voice
@@ -151,8 +169,9 @@ transcribed on your PC. See [Voice](../user-guide/voice.md).
 ## If something goes wrong
 
 [Troubleshooting and FAQ](../user-guide/troubleshooting.md) covers the
-SmartScreen box, a missing Desktop shortcut, slow or out-of-memory behaviour on
-small machines, where the logs are, and how to back up, restore and uninstall.
+SmartScreen box, a missing Desktop shortcut, a service that says "not
+connected", a key Friday withheld, slow or out-of-memory behaviour on small
+machines, where the logs are, and how to back up, restore and uninstall.
 
 ## Where to go next
 

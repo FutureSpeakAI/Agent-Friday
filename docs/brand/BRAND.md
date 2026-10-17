@@ -141,7 +141,8 @@ near-black.
 
 ## Type
 
-Three faces, self-hosted in `static/fonts`.
+Three faces, self-hosted: the `@font-face` rules are in `static/fonts/fonts.css`
+and the font files in `static/fonts/g/`.
 
 | Token | Face | Job |
 |---|---|---|
@@ -178,8 +179,11 @@ for the move to finish: a hidden cluster turns invisible once it has faded.
 
 The mark is the neon rocket: `assets/icons/futurespeak.png` (a real alpha
 channel, transparent around the rocket), `assets/icons/futurespeak.ico` and
-`assets/friday.ico`. The installer and autostart shortcuts read
-`app\assets\friday.ico`. The lightning bolt in `assets/icons/futurespeak.svg`
+`assets/friday.ico` (a byte copy of `futurespeak.ico`). The installer does not
+use `friday.ico`: the Inno Setup script copies `assets\icons\futurespeak.ico`
+into the install folder as `AgentFriday.ico` and every shortcut points at that,
+while `install.ps1` and `autostart.ps1` read `app\assets\icons\futurespeak.ico`
+(`tests/unit/test_installer_inno.py`). The lightning bolt in `assets/icons/futurespeak.svg`
 is the Sites workspace icon and is not the mark.
 
 The wordmark reads **AGENT FRIDAY™** *by* **FutureSpeak.AI™**. It is one
@@ -296,7 +300,7 @@ A workspace is the same thing in a desktop window and in its own tab
 
 Where the shipped UI had several values for one role, they now share one token.
 Each visible change is a brand decision, recorded in
-the table below and numbered B7 to B15.
+the table below and numbered B7 to B14.
 
 | Decision | Surface | Before | After |
 |---|---|---|---|
@@ -307,7 +311,7 @@ the table below and numbered B7 to B15.
 | B11 | Push-to-talk indicator (Python) | arming `#64748b`, recording `#ef4444`, thinking `#e0a030`, done `#22c55e`, clipboard `#e0a030`, idle `#94a3b8` | arming and idle `#7a8699`, recording `#00d4ff`, thinking `#7b61ff`, done `#00ff80`, clipboard `#f59e0b`; the in-page card in `friday_push_to_transcribe.js` reads the same table and the guard checks it |
 | B12 | Connected-account palette (Python) | cyan, purple, `#22c55e`, amber, pink, teal, red | cyan, purple, teal, pink, blue, sand, silver: no status hue, every pair told apart at a glance; an account saved with an old status hue shows the slot it once held |
 | B13 | Type | body `Helvetica Neue`; Orbitron falling back to `monospace`; the login page in Orbitron throughout | body Inter; Orbitron falls back to `sans-serif` everywhere; the login page is Inter with an Orbitron heading |
-| B14 | The mark | a dark box baked into the PNG and the icon | a real alpha channel; `assets/friday.ico` added for the installer |
+| B14 | The mark | a dark box baked into the PNG and the icon | a real alpha channel; `assets/friday.ico` added (the installer now uses `futurespeak.ico`, see above) |
 
 The reserved hues themselves (`#00ff80`, `#f59e0b`, `#ff0080`, `#ef4444`) did
 not move. The re-pointed scoped sets (news categories, message lanes, calendar,

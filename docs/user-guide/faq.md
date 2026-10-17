@@ -3,10 +3,16 @@
 ## The basics
 
 **What is Agent Friday™?**
-A private AI agent that runs on your own Windows PC. It chats, listens and
-talks, reads and drafts mail, manages a calendar, makes documents, and keeps
-notes about your life in files you own. It asks before it does anything outward
-on your behalf.
+An AI agent you install on your own Windows PC. It chats, listens and talks,
+reads and drafts mail, manages a calendar, makes documents, and keeps notes
+about your life in files you own. It asks before it sends, spends or deletes
+anything on your behalf, unless you pre-approved that kind of send.
+
+**Does it run entirely on my PC?**
+Only if you choose that. Out of the box Friday is set to think in the cloud,
+and the setup chat asks where she may think, with nothing picked for you. To
+keep everything on your PC, choose **Only on this PC** and have a local model
+that fits your PC. See [Privacy](privacy.md).
 
 **What does it cost?**
 Agent Friday is free software under the MIT license. If you use a cloud model,
@@ -44,10 +50,23 @@ If you lose that passphrase, those files cannot be recovered.
 
 **What reaches a cloud model?**
 Only what a cloud model needs to answer you, and only when a cloud model
-answers. Before anything is sent, an egress gate on your PC withholds private
-and sensitive content, and if the gate fails nothing is sent. The gate matches
-patterns, so sensitive meaning in ordinary words can get through. See
+answers. Choosing **Cloud for everything** is your consent to that. Your
+never-send list is refused for every cloud model, always, and a key you paste
+into chat is withheld. With the safeguards on (**Cloud for public things**, or
+before you answer), private and sensitive content, including card and account
+numbers, is held back too. The checks match patterns, so
+sensitive meaning in ordinary words can get through. See
 [Privacy](privacy.md).
+
+**Why did Friday refuse something my settings allow?**
+That is a bug. Friday reads your privacy settings at the start of every turn,
+and a refusal that goes against them should be reported. Please
+[tell us](https://github.com/FutureSpeakAI/Agent-Friday/issues).
+
+**I pasted a key into the chat. Is it saved?**
+No. Friday withholds it before anything keeps it and offers the secure field
+instead. Keys pasted before Beta 1.2 may still be in old history; see
+[Updating and uninstalling](updating-and-uninstalling.md#after-you-upgrade-to-beta-12).
 
 **Can it work offline?**
 With local models downloaded, chat and local voice work without the internet.
@@ -74,7 +93,14 @@ processor, and a 12 GB NVIDIA card runs it at about 45 tokens per second.
 
 **Can I use only the cloud?**
 Yes. Tick **Use a cloud model instead** in setup, or choose one later, and add
-a key under **Settings > Connections**. Nothing is downloaded.
+a key on the **Connect your services** screen (**Settings > Connections**).
+Nothing is downloaded. See [Connect your services](connections.md).
+
+**Can I use only my own PC, with no keys?**
+Yes. Choose local models in setup, choose **Only on this PC** in the setup
+chat, and press **I'll just use local AI** on the Connect screen so Friday
+stops suggesting cloud keys. That button alone does not change where Friday
+thinks; the privacy choice does.
 
 **Does it work with AMD or Intel graphics?**
 Setup reads memory only from NVIDIA cards. A machine with another card is
@@ -83,9 +109,13 @@ planned as if it had no card, so models run on the processor.
 ## Control
 
 **What will Friday do without asking?**
-Read, search, draft, generate, and work in its own folders. Sending mail or
-texts, changing the calendar, publishing, installing, overwriting your files and
-most commands wait for you. See
+Read, search, draft (email drafts are saved to your Gmail Drafts; nothing is
+sent), generate, and work in its own folders. Sending mail or texts, changing
+your Google calendar, publishing, installing, overwriting your files and most
+commands wait for your yes on a card. The exception is an email to people you
+pre-approved yourself in **Settings > Privacy & Data > Pre-approved sends**,
+which goes without a card and with an Undo. When Friday says she did
+something, she must have a receipt for it from that turn. See
 [Approvals and receipts](approvals-and-receipts.md).
 
 **Can Friday see my screen?**
@@ -107,15 +137,17 @@ Settings. The check only notifies; it never downloads anything.
 
 **Will it offer to install an old 5.x build?**
 No. Releases are ordered by a build sequence, and every 5.x build is older than
-Beta 1.0.x.
+every Beta.
 
 **Does uninstalling delete my notes?**
 Not unless you say so. Uninstall asks, and the default keeps your data. See
 [Updating and uninstalling](updating-and-uninstalling.md).
 
 **Why is the installer unsigned?**
-Code signing has not been set up yet and is the next priority. Check the file's
-SHA-256 against the one on the release page. See
+Code signing has not been set up yet, by decision for this beta. Windows
+SmartScreen therefore shows **Unknown publisher**. Check the file's SHA-256
+against the one on the release page, then choose **More info** and **Run
+anyway**. See
 [Getting started](../getting-started/README.md#3-the-smartscreen-warning).
 
 ## Reporting problems

@@ -29,16 +29,33 @@ git config core.hooksPath .githooks
    `src/`, and the two HTML files must write the same key set.
 4. **Stale model names** — `scripts/check_stale_model_names.py`. User-facing
    documents must not name a model that the product no longer ships.
-5. **Brand tokens** — `scripts/check_brand_tokens.py`. The palette lives in
+5. **Governance never reads trust** — `scripts/check_trust_in_governance.py`.
+   An AST walk: trust may add caution and can never clear an approval card.
+6. **Model work is visible** — `scripts/check_visible_jobs.py`. Every launch
+   point of model work sits behind `services/visible_jobs.visible_job`; see
+   [Visible jobs](visible-jobs.md).
+7. **Brand tokens** — `scripts/check_brand_tokens.py`. The palette lives in
    `src/agent_friday/brand.py`; the `--fr-*` block in `index.html` and
    `ui_parts/head.html` must be byte-identical to `brand.css_root_block()`
    (`--write` regenerates it). The Python colour tables read `brand`, the
    reserved status hues stay at their shipped values, Orbitron always names a
    `sans-serif` fallback, and `.status-dot` has one definition. It does not
    migrate literals in the UI; see `docs/brand/BRAND.md`.
-6. **Secret and PII scanner** — `.githooks/security_scan.py`. Scans staged
+8. **Secret and PII scanner** — `.githooks/security_scan.py`. Scans staged
    additions for credentials, private keys, personal identifiers, and
    username-bearing paths. Its exit status is the hook's.
+
+Every check after the import smoke test is stdlib only and runs without the
+venv.
+
+## The pre-push hook
+
+`.githooks/pre-push` refuses to push any ref that shares no merge base with
+`origin/main` (or `<remote>/main`). The public history was rewritten once to
+remove personal data, and a lineage from before that rewrite has no merge base
+with the published history, so this is the exact signal for it. It needs a
+fetched `origin/main` to compare against and refuses with a message when there
+is none.
 
 Bypass a single false positive with a trailing `# pragma: allowlist secret`.
 `git commit --no-verify` skips every check and is not acceptable for a change
@@ -56,16 +73,19 @@ that will be reviewed.
   mounts a Windows checkout, `venv/Scripts/python.exe` exists but cannot run,
   and the hook fails closed. Run the checks from the host, or from a venv
   created inside that environment.
-- **Three source files carry a UTF-8 byte-order mark** and parse fine in
-  Python but not in tools that read source as text without `utf-8-sig`.
+- **About a hundred Python files under `src/` carry a UTF-8 byte-order
+  mark** (101 on 2026-10-17). They parse fine in Python but not in tools that
+  read source as text without `utf-8-sig`.
 
 ## CI
 
 `.github/workflows/tests.yml` runs the unit, API, and security suites on
 Windows and Ubuntu, the import smoke test, the fatal-rule `ruff` set, every
 guard listed above, a Markdown link check, a whole-tree run of the secret
-scanner, and a package build that verifies the bundled seed content is
-included in the wheel.
+scanner, `git diff --check` for whitespace and conflict markers, the
+Playwright app specs on Windows, and a package build that verifies the bundled
+seed content is included in the wheel. See
+[Testing and gates](testing-and-gates.md).
 
 ## The guarded suite runner
 

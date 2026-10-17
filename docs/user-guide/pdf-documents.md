@@ -65,7 +65,8 @@ signs. The signed copy is saved as a new file (`<name>-signed.pdf`) in the
 Before it signs, Friday re-checks the card: it must be approved by you (not
 auto-approved), unused, unchanged since you saw it, and the PDF must be the same
 file you approved. One card signs once. If the file changed in the meantime,
-nothing is signed and Friday asks again.
+nothing is signed and Friday asks again. A digital signature is refused if your
+certificate has expired.
 
 ### Setting your signature and certificate
 

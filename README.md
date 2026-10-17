@@ -4,10 +4,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release: Beta 1.2](https://img.shields.io/badge/release-Beta%201.2-informational.svg)](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest)
 
-**A private AI agent that runs on your own Windows PC.** It chats, listens and
+**An AI agent you install on your own Windows PC.** It chats, listens and
 talks, drafts your mail, keeps your calendar, makes documents and remembers what
-matters to you. Your data stays on your machine, it asks before it acts, and it
-sends nothing about you anywhere.
+matters to you. What it knows is kept in a folder on your PC, it asks before it
+sends, spends or deletes, and you choose where it thinks: only on this PC, or
+in the cloud with your own key. Nothing is sent to FutureSpeak.AI.
 
 ![The Friday desktop](docs/images/desktop.png)
 
@@ -17,22 +18,25 @@ it is meant to be tried, and it has rough edges. They are listed in
 
 ## Why Friday
 
-- **Private by default.** Your wiki, conversations, settings and receipts live
-  in one folder on your PC. There is no Friday server and no account. Finance,
-  health, legal and family records go in a vault encrypted with your
-  passphrase.
-- **Local first, and yours.** Friday can think on your own graphics card or
-  processor, in the cloud (Anthropic, Google, OpenRouter or any
-  OpenAI-compatible provider), or both. Every reply says which model answered.
-  The code is MIT licensed.
+- **Your data lives on your PC.** Your wiki, conversations, settings and
+  receipts live in one folder on your PC. There is no Friday server and no
+  account. Finance, health, legal and family records go in a vault encrypted
+  with your passphrase.
+- **You choose where it thinks.** Friday can think on your own graphics card
+  or processor, in the cloud (Anthropic, OpenRouter, Google and other
+  providers), or both. Out of the box it is set to use the cloud; the setup
+  conversation asks you, with nothing picked for you. Choose **Only on this
+  PC** with a local model and every model runs on your PC. Every reply says
+  which model answered. The code is MIT licensed.
 - **Zero telemetry.** No analytics, no crash reports, no license check. Friday
   connects to the internet only for things you use: the model providers you
   configure, model downloads you approve, the news or weather you open. The
   optional update check, which is off until you turn it on, contacts
   `api.github.com` once a week.
 - **You approve actions.** Reading and drafting run on their own. Sending,
-  publishing, scheduling, installing and changing your files wait for your yes,
-  and every decision is written to a signed log you can read.
+  publishing, installing and changing your files wait for your yes on a card,
+  unless you pre-approved that kind of send yourself, and every decision is
+  written to a signed log you can read.
 
 ## What it does
 
@@ -46,15 +50,18 @@ it is meant to be tried, and it has rough edges. They are listed in
 - **See & Touch.** Friday sees what your open workspace shows, points at rows
   with numbered badges, ticks or filters what you mean, and fills in a field you
   can see. Acting on what is ticked still needs your approval.
-- **Mail and calendar.** A Gmail client and Google Calendar and Tasks. Friday
-  drafts, and sends or changes only after you approve a card.
+- **Mail and calendar.** A Gmail client and Google Calendar and Tasks. Drafts
+  are saved to your Gmail Drafts with no card, and nothing is sent. Friday
+  sends only when you ask, after a card, or without one only to people you
+  pre-approved. Calendar changes in Google ask first; showing or hiding a
+  calendar inside Friday changes nothing in Google.
 - **Library and Media.** Documents you add, read on your PC and answered with
   footnotes, and a media workspace with search, previews and transcripts.
 - **Documents.** Real Word, Excel and PowerPoint files made locally and checked
   visually before Friday calls them done.
 - **Workflows, scheduled jobs and podcasts.** Reusable procedures with checked
-  results, briefings and daily work on your local model by default, and
-  podcast episodes written by your local model and spoken on your processor.
+  results, jobs on a timetable that run on the model you pin, and podcast
+  episodes spoken on your processor.
 - **Phone** (off by default): texts, voicemail and approvals by text through
   your own Twilio number.
 
@@ -67,8 +74,12 @@ it is meant to be tried, and it has rough edges. They are listed in
 2. Check its SHA-256 against the one on the release page, then run it. The setup
    program is not code-signed yet, so Windows SmartScreen shows **Unknown
    publisher**. Choose **More info**, then **Run anyway**.
-3. Choose your models. Setup reads your memory, graphics card and disk and shows
-   only what fits. Or choose a cloud model.
+3. On the setup program's model page, pick local models (it shows only what
+   fits your memory, graphics card and disk) or a cloud model.
+4. Open Friday. She sets herself up with you in a short conversation: where
+   she may think, what must never leave your PC, which services to connect
+   (or **I'll just use local AI**), and a few house rules. Every step can be
+   skipped.
 
 The file carries its own Python and every package, so you need nothing else.
 Step by step: [Getting started](docs/getting-started/README.md). If you run a
@@ -95,11 +106,13 @@ Sizing by graphics card, and what to expect, is in
   encrypted with your passphrase; keys and account tokens are encrypted; your
   wiki and conversations are ordinary files you can read.
 - **What leaves:** what a cloud model needs to answer you, and only when a cloud
-  model answers, after the egress gate. The gate withholds private and
-  sensitive content, and it matches patterns, so sensitive meaning in ordinary
-  words can get through. In "On this computer only" mode with no local model
-  running, Friday refuses the turn and offers to answer it in the cloud; nothing
-  is sent until you choose.
+  model answers. Choosing **Cloud for everything** in setup is your consent to
+  that; until you answer, the safeguards stay on. Your never-send list is
+  refused for every cloud model, always, and a key you paste into chat is
+  withheld. The checks match patterns, so sensitive meaning in ordinary words
+  can get through. In "Only on this PC" mode with no local model running,
+  Friday refuses the turn and offers to answer it in the cloud; nothing is
+  sent until you choose.
 - **What leaves on its own:** news feeds; health checks for services you
   connected; and, only if you said yes, the weekly update check. The page's
   fonts are bundled, so they make no request. The connectivity probe
@@ -116,8 +129,8 @@ More in [Privacy: local and cloud](docs/user-guide/privacy.md),
 
 | | |
 |---|---|
-| [Getting started](docs/getting-started/README.md) | Download, SmartScreen, setup, first conversation, voice |
-| [User guide](docs/README.md#user-guide) | Settings, See & Touch, Library, Media, Chat Hub, Podcasts, Workflows, Mail, Calendar, Voice and more |
+| [Getting started](docs/getting-started/README.md) | Download, SmartScreen, setup, the setup conversation, voice |
+| [User guide](docs/README.md#user-guide) | Settings, Connect your services, Locks, Privacy, See & Touch, Library, Mail, Calendar, Voice and more |
 | [Troubleshooting](docs/user-guide/troubleshooting.md) and [FAQ](docs/user-guide/faq.md) | Fixes for real failures, logs, backup, uninstall |
 | [Release notes](RELEASE_NOTES.md), [Changelog](CHANGELOG.md), [Known issues](KNOWN_ISSUES.md) | What is in Beta 1.2 and what is not right yet |
 

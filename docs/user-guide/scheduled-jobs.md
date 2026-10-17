@@ -26,6 +26,70 @@ ask Friday in chat.
 Jobs are stored in `%USERPROFILE%\.friday\schedules.json`, and each run is
 recorded in `schedule_runs.jsonl`.
 
+## How often
+
+The **How often** list in the editor has these choices:
+
+- **Only when I run it** (nothing runs by itself)
+- **Every day**, at a time
+- **Every weekday (Mon–Fri)**, at a time
+- **On certain days**, at a time
+- **Every few hours**
+- **Every month**, on a day from **Day 1** to **Day 31**, or **Last day**
+- **Once**, on a date and time
+
+Times are your local time and stay the same when the clocks change for
+daylight saving.
+
+## Which model a job uses
+
+A job either follows your normal routing or is pinned to one model. The card
+in Workflows says which: "Model: ..." (pinned: every run uses this model, and
+is held if it is unavailable) or "Model (not pinned): ...".
+
+A pinned job never moves to another model. If that model cannot answer when
+the job is due, the run is **held**, and the card can show "Waiting for its
+model to come back, then it runs once." What happens to a held run is set in
+**Settings > General > Scheduled jobs**:
+
+- **A run held because its pinned model was unavailable**: **Run it once when
+  the model is back (recommended)** or **Wait for its next scheduled time**.
+- **A run missed while Friday was closed**: **Run it once at the next start
+  (recommended)** or **Skip it until its next time**.
+
+These are defaults for your jobs. Each job's card in Workflows has its own
+**Missed while closed** and (for a pinned job) **Held by its model** lists.
+Their first choice, **follow my default (now: ...)**, puts the job back on
+the setting above and says what it currently is.
+
+## Jobs that write email
+
+Each job's card has **Its emails:** with two choices:
+
+- **save as drafts in Gmail** (what a new job does)
+- **send (asks first unless pre-approved)**
+
+A saved workflow that you run by hand has the same switch on its card. With
+**send**, each message still waits on an approval card unless a
+[pre-approved send](mail.md#pre-approved-sends) covers it.
+
+When drafting became the default, jobs that were already made to send email
+were kept sending, once, so nothing you relied on stopped. If you had any,
+one notice in Activity lists them: **Your email jobs keep sending**. You can
+switch any of them to drafts on its card.
+
+## Friday's built-in routines
+
+Under **Friday's built-in routines** in Workflows you can switch each built-in
+job on or off. One of them is **Calendar reminders**, which checks every 2
+minutes for reminders that are due (see [Calendar](calendar.md#reminders-and-prep-cards)).
+The routines offered in the setup chat (morning and evening front page,
+afternoon briefing, weekly editorial, hourly heartbeat, podcast) start
+unticked; nothing runs until you choose it.
+
+Until you finish the setup chat, jobs still run and are still recorded, but
+Friday holds their notices so a new install stays quiet.
+
 See [Workflows](workflows.md) for project destinations, checked outputs,
 change-only notices and the same controls in chat and voice.
 
@@ -168,8 +232,9 @@ Scheduled jobs run when nobody is watching, so they cannot ask you in chat.
 Create a grant in **Settings > Privacy & Data > Scheduled jobs: what they may
 do on their own**: choose the job, tick the actions, and set an expiry and a
 number of uses. A grant is tied to that job's own runs and cannot be used by
-anything else. Email is never covered by a grant; each message gets its own
-card. A grant does not reach the steps of a workflow saved on the Workflows
+anything else. Email is never covered by these grants; an email send gets
+its own card unless you made a
+[pre-approved send](mail.md#pre-approved-sends) for it. A grant does not reach the steps of a workflow saved on the Workflows
 screen: their outward actions always wait on a card, even when a grant names
 that workflow's schedule. See
 [Approvals and receipts](approvals-and-receipts.md).

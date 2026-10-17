@@ -2,6 +2,8 @@
 
 All endpoints are served by the Flask application in `server.py` at `http://localhost:3000` by default. Endpoints under `/api/` require authentication when `FRIDAY_PASSWORD` is set; loopback (same-machine) requests are auto-authenticated by default. Set `FRIDAY_TRUST_LOOPBACK=0` to require login for loopback requests too. The `/ws/live` voice WebSocket can additionally require a shared token via `FRIDAY_WS_TOKEN` (passed as `?token=…`) regardless of loopback trust. See [Configuration → Authentication](../user-guide/configuration.md#authentication) for details.
 
+This page covers the main routes, not all of them: the server registers about 1,200 method-and-path pairs across `src/agent_friday/routes/*.py`. Each route module's docstring lists its own routes; that is the authority when this page is silent. (Checked against the code 2026-10-17: every route listed here exists.)
+
 ---
 
 ## Authentication
@@ -327,7 +329,7 @@ Pull (download) a new Ollama model.
 
 ## Providers & Model Catalog
 
-The provider layer (v5.1) is model-agnostic: OpenRouter and OpenAI-compatible providers can be registered, keyed, tested, and browsed at runtime. These endpoints back the Settings provider step, the Add Provider form, and the model picker.
+The provider layer is model-agnostic: OpenRouter and OpenAI-compatible providers can be registered, keyed, tested, and browsed at runtime. These endpoints back the Settings provider step, the Add Provider form, and the model picker.
 
 ### `GET /api/providers`
 List all registered providers, enriched with availability, live health stats (latency/error-rate), catalog size, spend today, and origin.
@@ -446,7 +448,7 @@ authoritative shape, not this snippet):
 ```json
 {
   "status": "ok",
-  "version": "5.14.3",
+  "version": "1.2.0b1",
   "mood": "...",
   "memory_entries": 128,
   "vault_count": 42,
@@ -674,7 +676,7 @@ List available vibe code presets.
 
 ## Content Pipeline (v2)
 
-Social publishing routes (Blueprint `content_pipeline_bp`, `routes/content_pipeline.py`) — see `docs/CONTENT_PIPELINE_SPEC.md` §11 for the full design. All responses are JSON envelopes (`{ "ok": ... }` or `{ "status": ... }`); errors are reported in-body with HTTP 200 (creations-route convention). The legacy ideation-kanban routes (`/api/content/pipeline`, `/api/content/idea`, `/api/content/draft`, `/api/content/templates`, `/api/content/from-template`, `/api/content/item`, `/api/content/drafts` in `routes/workflows.py`) remain untouched and back the Ideas tab.
+Social publishing routes (Blueprint `content_pipeline_bp`, `routes/content_pipeline.py`) — the full design (§11 of the content pipeline spec) is kept in the internal design repository. All responses are JSON envelopes (`{ "ok": ... }` or `{ "status": ... }`); errors are reported in-body with HTTP 200 (creations-route convention). The legacy ideation-kanban routes (`/api/content/pipeline`, `/api/content/idea`, `/api/content/draft`, `/api/content/templates`, `/api/content/from-template`, `/api/content/item`, `/api/content/drafts` in `routes/workflows.py`) remain untouched and back the Ideas tab.
 
 ### Posts
 
@@ -1008,7 +1010,7 @@ Generate today's creation on demand. Pass `?force=1` to regenerate if it already
 ## Calendar & Countdowns
 
 ### `GET /api/calendar`
-Get calendar events.
+Legacy placeholder: always returns `{ "status": "placeholder", "events": [] }` (`routes/calendar.py`). The Calendar page uses the routes under [Calendar views and changes](#calendar-views-and-changes).
 
 ### `GET /api/countdowns`
 Get active countdowns.
@@ -1038,6 +1040,211 @@ app without a sufficient grant (`services/desktop_grants.py`).
 
 ### `POST /api/control/kill`
 Emergency stop: revokes the Computer Control grant and sets the kill switch.
+
+---
+
+## Setup chat and Connect your services
+
+All routes in this section answer only the local user on Friday's own computer (a remote or observer session gets 403), and writes need a same-origin JSON body (`routes/setup_chat.py` `_local_user_only`). No route here accepts or returns a provider key: keys go through `POST /api/providers/<name>/key`.
+
+### `GET /api/setup-chat/state`
+The setup chat as the window draws it.
+
+### `POST /api/setup-chat/begin`
+Called when the consent screens are done. Body `{routing_mode, vault_passphrase}`.
+
+### `POST /api/setup-chat/answer`
+One answer. Body `{stage, value?, text?}`.
+
+### `POST /api/setup-chat/skip-all`
+**Set up later**: finish with defaults (routines off).
+
+### `POST /api/setup-chat/use-recommended`
+**Use the recommended answer** for the current step.
+
+### `POST /api/setup-chat/rerun` · `POST /api/setup-chat/goto`
+Run the chat again from Settings (keeps connections, learning and posture); revisit a finished stage `{stage}`.
+
+### `POST /api/setup-chat/talk`
+Switch Talk / Type / screen reader `{mode}`.
+
+### `DELETE /api/setup-chat/about/<id>`
+Delete one line of the About you card.
+
+### `POST /api/setup-chat/open-windows-users` · `POST /api/setup-chat/voice-sample`
+Open Windows' Other users page; play a short sample of a local voice `{voice}`.
+
+### `GET /api/setup-chat/record`
+The setup record (`<home>/setup/ledger.jsonl`): decisions, who decided, and whether the hash chain verifies.
+
+### `GET /api/setup-chat/secret-shapes`
+The key shapes the chat box's input guard checks before sending.
+
+### `POST /api/setup-chat/style/preview`
+A sample reply for slider values.
+
+### `GET /api/setup-chat/research` · `POST /api/setup-chat/research/start` · `POST /api/setup-chat/research/review`
+The opt-in public web lookup job: read it, start it `{seeds}`, keep or drop findings `{decisions: [{id, action, text?}]}`.
+
+### `GET|DELETE /api/setup-chat/profile` · `PUT /api/setup-chat/profile/answers` · `POST /api/setup-chat/profile/style`
+The answers and derived style; delete them; edit answers `{answers, rebuild?}`; set sliders `{sliders, summary?}`.
+
+### `GET /api/setup/connections`
+The Connect your services list (categories, cards, states). Never returns a secret value.
+
+### `POST /api/setup/connections/<id>/skip`
+Mark a card skipped `{skipped}`.
+
+### `POST /api/setup/connections/<id>/test`
+**Test connection**. Returns `{state, text, fix}` (Test passed / Test failed with How to fix / Not connected yet / Could not tell).
+
+### `POST /api/setup/connections/local-only`
+**I'll just use local AI** `{on}`. Writes `~/.friday/connections_choice.json`; changes no privacy or routing setting.
+
+### `POST /api/setup/connections/ollama` · `POST /api/setup/connections/endpoint`
+Save an Ollama address `{base_url}`; save an LM Studio or OpenAI-compatible address `{kind: lmstudio|custom, label, base_url}`.
+
+### `POST /api/setup/connections/mcp` · `DELETE /api/setup/connections/mcp/<name>` · `POST /api/setup/connections/mcp/<name>/sign-in`
+Add an MCP server `{name, url | command}`, remove it, or start its sign-in (returns `{auth_url}`). A refusal is 422 with a fixed sentence, never the exception text (`routes/connect_services.py`).
+
+### `POST /api/setup/verify-key/<name>`
+Check the key just saved for `anthropic` or `openrouter` (takes no key). Returns `{verdict, can_think, text}`.
+
+---
+
+## Privacy
+
+### `GET /api/privacy/cloud-consent` · `POST /api/privacy/cloud-consent`
+Read or record the cloud consent answer. `POST {choice}` where choice is `local_private`, `cloud_guarded` or `cloud_unrestricted`. Not an agent tool: only the page a person is looking at can record it (`routes/privacy_consent.py`).
+
+### `GET /api/privacy/file-grants` and related
+Per-file cloud permissions (raw records and other held files): list, grant, revoke, start fresh, scan (`routes/control.py`).
+
+## Locks page
+
+**Settings > Privacy & Data > Locks**. Local user on Friday's own computer only; POST needs same-origin JSON (`routes/locks.py`).
+
+### `GET /api/locks`
+Every line of the page, read from the stores that decide it.
+
+### `POST /api/locks/open-windows`
+`{page: device_encryption | other_users}`: open that Windows settings page.
+
+### `POST /api/locks/raw-holds/ask`
+`{path}`: raise the file-access card for one held raw record (**Ask me about this file**).
+
+### `POST /api/locks/raw-holds/reset`
+Raise the screen-only card that starts the held list fresh (**Start the list fresh…**). Does not change the never-send list.
+
+---
+
+## Memory card
+
+**Settings > Privacy & Data > Memory card** (`routes/core_memory.py`). `target` is `user` ("About you", `ME.md`) or `friday` ("Working with you", `FRIDAY.md`). Owner edits apply to every open conversation's next turn.
+
+### `GET /api/core-memory`
+Both notes, Friday's recent changes (last 20) and the "Waiting for your review" queue.
+
+### `POST /api/core-memory/add` · `/edit` · `/delete`
+`{target, text}` · `{target, index, text}` · `{target, index}`.
+
+### `POST /api/core-memory/undo`
+`{change_id}`: undo one of Friday's changes ("What Friday changed").
+
+### `POST /api/core-memory/review`
+`{id, keep: bool}`: Keep or Discard a queued suggestion.
+
+---
+
+## Conversation search
+
+### `GET /api/conversations/search?q=&since=&until=`
+Full-text search over every conversation on this PC (`services/conversation_fts`), at most 30 results. Withheld keys and off-the-record messages are not indexed.
+
+### `DELETE /api/conversations/<cid>/messages/<mid>`
+Delete one message from the transcript and every index at once (full-text search, vector memory, the chat mirror, the review buffer).
+
+---
+
+## Calendar views and changes
+
+Read routes cover the switched-on calendars of every connected Google account. Every write needs the owner's click on Friday's own Calendar page (`screen_click.screen_session`); a loopback caller without the page's headers and token changes nothing (403).
+
+### `GET /api/calendar/today` · `/tomorrow` · `/week` · `/day/<YYYY-MM-DD>`
+Day lists with gaps and Friday's one-line note.
+
+### `GET /api/calendar/range?start=&end=&keys=`
+Events from `start` to `end` (end exclusive, at most 62 days) for the week and month views. `keys` narrows to some calendars.
+
+### `GET /api/calendar/freebusy?start=&end=&keys=`
+Busy blocks (calendar names, never titles) and free time inside working hours, at most 14 days. Worked out on this PC; no free/busy query is sent anywhere. 409 when no calendar is switched on; 502 when none could be read.
+
+### `GET /api/calendar/calendars`
+Every calendar of every connected account, its Google colour and whether it is shown in Friday.
+
+### `POST /api/calendar/calendars/visible`
+`{changes: {<calendar key>: true|false}}`: the **Calendars** button's "Calendars shown here". Friday-side only; nothing is written to Google.
+
+### `GET /api/calendar/event/<id>` · `POST /api/calendar/prep/<id>`
+One event (today plus the next 7 days); make or read its prep card.
+
+### `POST /api/calendar/quick-add`
+`{text}`: read a sentence into a preview. Writes nothing.
+
+### `POST /api/calendar/events`
+The owner's **Add** on a quick-add preview. `{title, start_time, end_time, location, attendees, calendar_key, confirmed}`.
+
+### `POST /api/calendar/events/<id>/move`
+The owner's confirmed drag. `{calendar_key, start_time, end_time, confirmed: true}`. Returns a receipt whose Undo puts it back.
+
+### `POST /api/calendar/events/<id>/rsvp`
+`{calendar_key, response, confirmed: true}`: Going / Maybe / Not going. Google tells the organiser.
+
+### `POST /api/calendar/events/<id>/delete`
+`{calendar_id?, account_id?, notify_guests?}`. One occurrence for repeats. A failure answers a fixed sentence; Google's error text goes to `friday.log` under an error id.
+
+---
+
+## Mail
+
+`routes/gmail_send.py`. Drafting saves to Gmail Drafts with no card; a send raises an approval card unless a pre-approval covers it.
+
+### `GET /api/mail/can-send` · `GET /api/mail/draft-accounts`
+Which connected accounts may send (scopes Google actually granted); the accounts drafts can be saved to.
+
+### `POST /api/mail/draft`
+Save a draft in Gmail Drafts. Sends nothing.
+
+### `POST /api/mail/request` · `POST /api/mail/send`
+Queue a message for the owner's approval (sends nothing); send a message the owner already approved.
+
+### `GET /api/mail/outbox` · `GET /api/mail/held` · `POST /api/mail/held/<id>/cancel`
+Recent send attempts (successes and failures); sends waiting in the unattended Undo window; cancel one.
+
+### `GET|POST /api/mail/unsubscribe` · `POST /api/mail/modify` · `POST /api/mail/modify/undo` · `GET|POST /api/mail/labels`
+Inbox clean-up and label actions.
+
+---
+
+## Approvals and pre-approved sends
+
+### `GET /api/approvals` · `GET /api/approvals/<id>` · `POST /api/approvals/<id>/decide`
+The approval cards (chat, Activity **Needs you**, popup and **System > Approvals** all read this one list; one decision wins everywhere).
+
+### `GET /api/approvals/events`
+Server-sent events: every open page's feed of approval cards.
+
+### `GET /api/governance/send-grants` · `POST /api/governance/send-grants`
+**Settings > Privacy & Data > Pre-approved sends**. List or create a pre-approval: `{scope: recipients | job | skill, recipients, actions?, schedule_id?, skill?}`. Answers only Friday's own page (`X-Friday-Token`, else 403). Free-mail domains and public suffixes are refused (400).
+
+### `POST /api/governance/send-grants/<id>/reapprove`
+**Approve again as it is now** after the job or skill changed.
+
+### `POST /api/governance/send-grants/options`
+`{voice_may_use: bool}`: **Voice may use pre-approvals** (off by default). Kept signed beside the grants, not in `settings.json`.
+
+### `DELETE /api/governance/send-grants/<id>`
+**Revoke**.
 
 ---
 

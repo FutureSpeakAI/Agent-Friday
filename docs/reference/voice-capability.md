@@ -24,7 +24,7 @@ Voice can do anything chat can, unless the user has restricted Friday.
   (`settings.subagent_model`), and reports to the voice call's conversation.
   Friday acknowledges it in a sentence and keeps talking.
 - **Results come back.** A finished task posts its outcome into its
-  conversation (`agent._post_task_result_to_conversation`). If a voice call is
+  conversation. If a voice call is
   still open on that conversation, the outcome is queued for the live model
   (`services/voice_live_channel.py`). It is handed over at the next quiet
   moment, through the same egress gate as any tool result.
@@ -42,12 +42,12 @@ current state. The Voice tab in Settings shows it.
 |---|---|---|
 | Local-only mode | user setting | Nothing may reach a cloud model, so the cloud voice session does not start. Local voice still works. |
 | Vault kept on this PC | user setting | Private vault notes reach the cloud voice model only as an answer from the local model, shown on a card first. |
-| Tools off in voice | user setting | `voice_tools: false`: voice talks but calls no tools. |
+| Tools off in voice | user setting | `voice_tools: false`: voice talks but calls no tools, not even the hand-over to Friday. |
 | Computer control off | user setting | Screenshots and mouse and keyboard control are refused, as in chat. |
-| Approval cards for outward actions | governance | Sending, buying, posting or changing anything outside the PC waits for an OK, as in chat. |
+| Approval cards for outward actions | governance | Sending, buying, posting or changing anything outside the PC waits for an OK, as in chat. A pre-approved send does not cover a spoken request unless **Voice may use pre-approvals** is on (off by default). |
 | Never-send list | privacy | Withheld from every cloud model. |
-| 20-second limit on direct tools | responsiveness | A quick tool that runs longer is stopped so the conversation never goes silent. Longer work goes through `delegate_to_friday`. |
-| Spoken approvals in a room of several people | known limit | In "Several people" mode, a spoken yes to a card counts only when it names Friday. Voices are not told apart until Household Identity lands. |
+| 20-second limit on direct tools | user setting (`voice_tool_hard_limit_s`, default 20, `0` for none) | A quick tool that runs longer hands off to Friday in the background instead of holding the line. It refuses nothing: the work still runs and reports back. |
+| Spoken approvals in a room of several people | identity (`voice_room_approvals_require_name`, default on) | In "Several people" mode, a spoken yes to a card counts only when it names Friday. The setup chat asks this (**Require my name** / **Anyone in the room**). Voices are not told apart until Household Identity lands. |
 
 ## What was removed
 
@@ -96,7 +96,9 @@ the user's life, preferences). See `services/local_context.py`.
   egress audit log's "live voice session opened/closed" entries. Everything
   else counts as local-only.
 - **`search_past_conversations`** searches voice and chat history with dates
-  (`services/conversation_recall.py`).
+  (`services/conversation_recall.py`; the full-text index behind
+  **Settings > Privacy & Data > Search your conversations** is
+  `services/conversation_fts.py`, and withheld keys are never indexed).
   - Matches the same cloud provider already heard come back directly, through
     the normal egress gate.
   - Other matches are summarised by the local model and shown on the payload

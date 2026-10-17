@@ -1,7 +1,7 @@
 # Troubleshooting
 
-Problems people have met with Agent Friday™, with the cause and the fix. Each
-entry says whether it is fixed in Beta 1.0. If yours is not here, find the logs
+Problems people have met with Agent Friday™, with the cause and the fix. Some
+entries say which beta fixed them. If yours is not here, find the logs
 (see [Where the logs are](#where-the-logs-are)) and open an issue using the bug
 report template.
 
@@ -9,9 +9,17 @@ report template.
 
 ### Windows says "Windows protected your PC"
 
-The setup program is not code-signed, so SmartScreen shows **Unknown
-publisher**. Check the file's SHA-256 against the one on the release page, then
-choose **More info** and **Run anyway**. The steps are in
+The setup program is not code-signed, by decision for this beta, so
+SmartScreen shows **Unknown publisher**. This does not mean Windows found a
+problem; it has no reputation record for the file. Check the file's SHA-256
+against the one on the release page:
+
+```powershell
+Get-FileHash .\AgentFriday-Setup-<version>.exe -Algorithm SHA256
+```
+
+If the hash matches, choose **More info**, then **Run anyway**. If it does not
+match, delete the file and download it again. The steps are in
 [Getting started](../getting-started/README.md#3-the-smartscreen-warning).
 
 ### Setup stops and says Friday needs more free space
@@ -34,9 +42,9 @@ that names the file to start.
 ### Setup says a newer version is installed
 
 Setup compares build sequence, not the version number, and it never replaces a
-newer build with an older one. Nothing was changed. Beta 1.0.1 (1.0.1b1) looks
-numerically lower than 5.14.3 but is newer, so it installs over Beta 1.0.1, Beta 1.0 and any
-5.x release.
+newer build with an older one. Nothing was changed. A Beta version looks
+numerically lower than 5.14.3 but is newer, so Beta 1.2 installs over Beta
+1.1, Beta 1.0.2, Beta 1.0.1, Beta 1.0 and any 5.x release.
 
 ## Models and memory
 
@@ -87,8 +95,8 @@ a very long conversation: start a fresh one, or hand the work to the main agent.
 
 ### The faster, more accurate speech listener is not offered
 
-The optional larger listener (Whisper large-v3-turbo) is not offered in Beta
-1.0, because its download is not yet pinned to a verified version. The
+The optional larger listener (Whisper large-v3-turbo) is not offered yet,
+because its download is not yet pinned to a verified version. The
 streaming listener that is offered is the one Friday uses.
 
 ## Opening and using Friday
@@ -116,9 +124,67 @@ rules again. Reading and drafting keep working. See
 
 ### Friday asked me twice to confirm an action
 
-When the model asks "shall I?" before calling a tool, your yes is not yet the
-checkpoint's question, so the checkpoint asks once more for that exact action.
-It is a known behaviour; see [Known issues](../../KNOWN_ISSUES.md).
+When the model asks "shall I?" in its own words before calling a tool, your
+yes is not yet the checkpoint's question, so the checkpoint asks once more for
+that exact action, as a card. It is a known behaviour; see
+[Known issues](../../KNOWN_ISSUES.md). The card itself is the same everywhere
+(in the chat, the **Needs you** tab, the popup and **System > Approvals**), and
+one decision settles it in all of them.
+
+## Connections and keys
+
+### A service says "not connected", or Test connection fails
+
+"Not connected" in grey on the **Connect your services** screen (**Settings >
+Connections**) means nothing is saved for that service yet. That is normal on
+a fresh install, and Friday does not warn about it. Open the card, follow its
+three steps, paste the key, press **Save securely**, then **Test connection**.
+
+What the result means:
+
+| Result | What to do |
+|---|---|
+| **Test passed** | Nothing. It works. |
+| **Test failed** | Read the **How to fix** line on the card. Usually: copy a fresh key and paste it again; add credit or a payment method at the provider (a key with no credit is accepted but cannot answer); start Ollama or LM Studio; check an address ends in `/v1`; for Google, press **Connect** and approve on Google's screen again. For Brave, check the key is for the Search plan, not the AI plan. |
+| **Not connected yet** | No key or sign-in is saved for it. Add one. |
+| **Could not tell** | Friday could not reach the service. That is not a verdict on the key. Check the internet connection and try again in a minute. |
+
+If you chose **I'll just use local AI**, cloud services are hidden from advice
+but you can still connect any of them; **Show cloud options again** brings
+them back. See [Connect your services](connections.md).
+
+### Gmail says it needs permission to send
+
+Sending, and saving drafts, need Google permissions that start off when you
+connect an account. If Friday says one is missing, press **Reconnect with
+sending** and approve on Google's screen. See
+[Mail](mail.md).
+
+### Friday said "That looked like a … I withheld it"
+
+You pasted a key or password into the chat. Friday withheld it before anything
+kept it: it is not in the conversation, her memory or any log, and the message
+shows `[credential withheld]` in its place. Nothing is wrong. Paste the key into
+the secure field instead: the **Store that key securely** form that opened, or
+the service's card in **Settings > Connections**.
+
+If you pasted keys into chat before Beta 1.2, see
+[After you upgrade to Beta 1.2](updating-and-uninstalling.md#after-you-upgrade-to-beta-12).
+
+### Friday refused something your settings allow
+
+Every prompt tells Friday your privacy settings as they are now, and that a
+refusal against them is a bug. If she refuses something your choice allows
+(for example a public news search, or a cloud answer when you chose **Cloud
+for everything**), she should say so and offer the local model. Either way,
+please [open an issue](https://github.com/FutureSpeakAI/Agent-Friday/issues)
+with what you asked and your setting from **Settings > Privacy & Data > Cloud
+consent**. Leave out anything private.
+
+Some refusals are expected under every setting: anything on your never-send
+list, passwords, keys and account numbers never go to a cloud model, and a
+mail archive or bank statement goes only after your yes for that file. See
+[Privacy](privacy.md).
 
 ## Where the logs are
 

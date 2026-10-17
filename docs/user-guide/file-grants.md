@@ -1,9 +1,10 @@
 # File access: letting a cloud model read your files
 
-Agent Friday™ keeps what it cannot confidently classify as public on this PC.
-Ask Friday to read your résumé and reason about it with a cloud model, and
-she declines, because a résumé is full of the contact details that rule
-exists to hold back. A file grant is how you say "this document, on purpose".
+With the safeguards on (the **Cloud for public things** choice, or no choice
+yet), Agent Friday™ keeps what it cannot confidently classify as public on
+this PC. Ask Friday to read your résumé and reason about it with a cloud
+model, and she declines, because a résumé is full of the contact details that
+rule exists to hold back. A file grant is how you say "this document, on purpose".
 The decision is recorded, scoped, expiring where it has to be, and
 revocable.
 
@@ -13,6 +14,11 @@ record.
 
 File grants matter only when a cloud model is in use. With a local model
 nothing leaves the PC, and no grant is needed.
+
+**Raw records are separate.** A whole mail archive or a bank or card
+statement goes to a cloud model only after your yes for that one file, under
+every privacy choice. A folder grant does not cover the raw records inside it.
+See [Locks](locks.md#raw-records).
 
 ## Granting access
 
@@ -26,6 +32,10 @@ Open **Settings > Privacy & Data > File access**.
 The list shows each grant with its state: Valid, Paused, File changed, File
 missing, Expired, Quarantined or Unverified. **Remove** revokes one. Nothing
 in the list is deleted from history; a removal is recorded as a removal.
+
+You can also start Friday on your folders in the setup chat or in **Settings >
+Privacy & Data > Your knowledge**, where letting cloud models read a folder is
+a separate choice that lasts 30 days.
 
 Friday can also ask for access. She raises an approval card naming the file
 or folder, and you approve it with **Allow it** on screen. A typed or spoken

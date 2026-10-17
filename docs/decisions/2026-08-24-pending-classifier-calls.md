@@ -1,5 +1,7 @@
 # Two calls for the maintainer — 2026-08-24
 
+> **Status (2026-10-17):** superseded by the rulings now in code. Decision 1 went the classifier's way, refined: the bare phrases rate PUBLIC and the same words in a possessive frame ("our family gathering…") rate PRIVATE (tests/test_egress_adversarial.py:459-487). Decision 2: `enum` values stay ungated, as recommended (services/egress_gate.py:28-29); no enum warning was added.
+
 > **Status:** active
 > **Last verified:** 2026-09-06
 > **Implementation:** none (pending) — concerns `services/sensitivity_classifier.py` and `services/egress_gate.py`

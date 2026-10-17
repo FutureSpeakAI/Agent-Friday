@@ -117,7 +117,7 @@ under your vault key, or a plain file).
 Library text goes to a cloud model only when all of these hold:
 
 - the chat is using a cloud model,
-- **Settings, Privacy & Data, Library, Let a cloud model write Library answers**
+- **Settings > Privacy & Data > Library > Let a cloud model write Library answers**
   is on (off by default),
 - the document has its own cloud permission under File access (see
   [File grants](file-grants.md)), and
@@ -131,9 +131,9 @@ service counts as cloud.
 
 ## Settings
 
-Under **Settings, Privacy & Data, Library**:
+Under **Settings > Privacy & Data > Library**:
 
-- **Include everything Friday already tracks** (see above).
+- **Include everything Friday already tracks (Recommended)** (see above).
 - **Library search**, on by default. Off, Friday cannot see your documents;
   nothing is deleted.
 - **Let a cloud model write Library answers** and the character cap.

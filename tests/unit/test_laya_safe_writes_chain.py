@@ -1724,7 +1724,9 @@ def test_f3_docs_say_how_a_laya_card_is_approved_and_what_is_named():
     flat = lambda name: " ".join((root / name).read_text(encoding="utf-8").split())
     mail, phone, log = flat("docs/user-guide/mail.md"), flat("docs/user-guide/phone.md"), flat("CHANGELOG.md")
     assert "A text message does not approve it either" in mail and "never the addresses" in mail
-    assert "never texted" in phone and "Voice history keeps no card details" in log
+    # The card may be texted with its code; a YES for it is refused (phone/service.py), so the
+    # page says "never approved by text".
+    assert "never approved by text" in phone and "Voice history keeps no card details" in log
     assert "they say that a card was raised" in mail
 
 
@@ -1876,7 +1878,7 @@ def test_mj4_the_docs_call_it_a_rule_not_a_known_issue():
     assert "Changes Friday makes without a card (a rule you set)" in mail and "never a subject" in mail
     section = known[known.index("## 3. Deliberate behaviour"):]
     assert "run with no card when a model asks" in section and "This is your rule" in section
-    assert "Open in Beta 1.1" in known and "model path still runs star" not in known
+    assert "Open since Beta 1.1" in known and "model path still runs star" not in known
     assert "only if Friday actually read that card's line aloud in this conversation" in mail
 
 

@@ -107,7 +107,7 @@ drive it — cloud `_call_claude_agent` tool loop only.
 
 ---
 
-## Model defaults checklist (v5.1+)
+## Model defaults checklist
 
 Sonnet 5 is the default orchestrator. Fable 5 is the creative/narrative specialist. Verify:
 
@@ -144,8 +144,8 @@ This regression is automated in `friday_ui_full.spec.ts` →
 
 ## 10. Content Pipeline — per-platform first connect & first publish
 
-Real platform OAuth and live publishing can't be CI'd
-(`docs/CONTENT_PIPELINE_SPEC.md` §15). Run the common checklist once per
+Real platform OAuth and live publishing can't be CI'd (the content pipeline
+design, §15, now kept in the internal design repository). Run the common checklist once per
 platform, then that platform's specific steps. Prereqs: server on
 localhost:3000, Content workspace enabled (`settings.content.enabled`).
 
@@ -278,6 +278,10 @@ First publish:
 - Without a token: same assisted-handoff flow as Substack.
 
 ### Federation
+
+> Held feature: Federation and the Marketplace are off in this release
+> (`held_features.federation` is `false` in `core/__init__.py`). Run these
+> steps only on a build with that switch turned on.
 
 - No external service. Publish with the Federation chip → **Expect** the
   asset registered in the ownership index, a signed marketplace listing at

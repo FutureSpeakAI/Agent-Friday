@@ -1,7 +1,7 @@
 # HIG chapter: the hand cursor and big mode
 
-> **Status:** built on `feat/hand-cursor` (Layer 1 and the first four surfaces of Layer 2),
-> owner-approved 2026-10-02; handed to the program lead's daytime lane. What ships:
+> **Status (2026-10-17):** shipped on main (Layer 1 and the first four surfaces of Layer 2).
+> What ships:
 > `static/hand_cursor_core.js` (the maths), `static/hand_cursor.js` (registry, reticle, snap,
 > freeze, dwell, drag, big mode), `services/hand_cursor_tools.py` (voice), the settings rows,
 > and the tests named in §4. Part of the [Agent Friday™ Human Interface Guidelines](README.md).
@@ -54,9 +54,11 @@ average, no fixed delay.
 ### 1.3 Pinch freeze
 
 The pinch gesture moves the fingertip the tracker follows, which is exactly what used to drag
-the cursor off a 24 px button. At pinch onset (strength above 0.6) the cursor **freezes** at
-the snapped point; it stays frozen until release (strength below 0.4; the gap keeps a
-wavering pinch from double-firing). A release without movement past 36 px is a **click at
+the cursor off a 24 px button. At pinch onset the cursor **freezes** at the snapped point; it
+stays frozen until release. The page uses the tracking engine's own pinch hysteresis
+(`tracking.pinch_enter` / `tracking.pinch_exit`), so the gap that keeps a wavering pinch from
+double-firing lives there; the core's 0.6 / 0.4 strength thresholds are only its defaults
+(`static/hand_cursor.js` passes a 0-or-1 strength). A release without movement past 36 px is a **click at
 the frozen point**. A pinch that moves past 36 px is a **drag** (§1.5), and its release is
 not a click; the pinch's own motion moves the tracked midpoint by up to about 30 px, which
 stays under that slop.
@@ -64,7 +66,7 @@ stays under that slop.
 ### 1.4 Dwell to click
 
 An alternative to the pinch, for hands that tire or trackers that lose the thumb: hover a
-locked target for 650 ms and it clicks. A ring around the reticle fills over the dwell; leaving
+locked target for 700 ms (the default `tracking.dwell_ms`) and it clicks. A ring around the reticle fills over the dwell; leaving
 the target empties it; the same target cannot dwell-click twice without the cursor leaving it.
 Pinch and dwell are the existing "Click method" setting in Settings → Appearance → Head and hand tracking; the
 dwell time is its existing slider.
@@ -175,7 +177,7 @@ mode off": the last five are two tools per the voice tool contract, `big_mode(on
 | Row | Key | Default |
 |---|---|---|
 | Click method | `tracking.click_method` (exists) | pinch |
-| Dwell time | `tracking.dwell_ms` (exists) | 650 |
+| Dwell time | `tracking.dwell_ms` (exists) | 700 |
 | Snap to targets | `tracking.snap` | on |
 | Snap reach | `tracking.snap_radius` | 40 px (engage; release is 1.6×) |
 | Two-hand zoom | `tracking.two_hand_zoom` | off (a second tracked hand costs CPU; takes effect when tracking next starts) |

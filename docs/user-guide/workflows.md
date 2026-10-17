@@ -70,8 +70,10 @@ decision**. Approval requests still arrive as they do anywhere else in Friday.
 
 ## Make it a routine
 
-Choose **Make routine**, or set timing in the editor: only when you run it,
-every weekday, on certain days, every few hours, or once. Choose
+Choose **Make routine**, or set timing in the editor's **How often** list:
+**Only when I run it**, **Every day**, **Every weekday (Mon–Fri)**, **On
+certain days**, **Every few hours**, **Every month** (a day from 1 to 31, or
+the last day) or **Once**. Choose
 **When a run finishes**, **Only when something changes**, or **Keep results
 here; no routine notifications**.
 
@@ -84,9 +86,20 @@ computer, which must be awake, and its services and models must be available.
 Closing the Workflows screen does not stop it. Workflows have no always-on
 remote host and no mailbox or webhook triggers.
 
+A scheduled workflow's card also has **Missed while closed**, **Held by its
+model** (when it is pinned to one model) and **Its emails**. Each of the
+first two can **follow my default**. See
+[Scheduled jobs](scheduled-jobs.md#which-model-a-job-uses).
+
+**Its emails** decides what happens to email the workflow writes: **save as
+drafts in Gmail** (the choice for a new workflow) or **send (asks first unless
+pre-approved)**. A saved workflow that you only run by hand has the same
+switch on its card. See [Pre-approved sends](mail.md#pre-approved-sends).
+
 Scheduled prompts saved before workflows existed appear in the same list, with
-**Run now** and the same on and off switch. See
-[Scheduled jobs](scheduled-jobs.md).
+**Run now** and the same on and off switch. Friday's own jobs, including
+**Calendar reminders**, are listed separately under **Friday's built-in
+routines**. See [Scheduled jobs](scheduled-jobs.md).
 
 ## Reuse and correction
 

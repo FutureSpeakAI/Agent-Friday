@@ -1,5 +1,8 @@
 # Sites and domains
 
+> **Status (2026-10-17):** shipped (GitHub Pages hosting only; Cloudflare Pages is refused).
+
+Open **Workspaces → Sites** (the workspace's internal id is `futurespeak`).
 Sites connects an existing repository to its saved builds, preview, publication
 and domain. The Sites workspace, chat and voice use the same operations and
 approval records. A site belongs to one conversation and its current project;

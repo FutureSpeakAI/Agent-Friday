@@ -1,7 +1,6 @@
 # Independent agent workspaces
 
-Status: browser workspace preview. Native desktop application control is outside
-this feature.
+> **Status (2026-10-17):** shipped (browser workspaces only). Native desktop application control is outside this feature.
 
 Friday and Crew agents can use separate browser sessions with visible, named
 cursors. Their input goes to those sessions. It does not move the operating
@@ -9,8 +8,8 @@ system pointer or type into the user's focused application.
 
 ## Enable and use
 
-Enable **Independent agent workspaces** during setup or in **Privacy &
-Approvals → Agent workspaces**. The setting starts off. Model-facing browser
+Enable **Independent agent workspaces** during setup or in **Settings →
+Privacy & Data → Agent workspaces**. The setting starts off. Model-facing browser
 tools, including Friday's own browser tools, require this permission. Crew
 agents also need the relevant browser tools and project in their saved access
 settings. Enabling workspaces does not grant additional project, file or

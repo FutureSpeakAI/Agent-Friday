@@ -28,6 +28,95 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ### Added
 
+- **First run is a conversation.** After the first-run screens (which now
+  include the vault passphrase, so nothing personal is asked before the lock
+  exists), Friday sets herself up by talking you through it, scripted so it
+  works with no model and no key: talk, type or "I use a screen reader"; an
+  offer to clean up your inbox; her name, voice and pronouns; your name, city
+  and time zone; where she may think; a never-send list; Connect your
+  services; your folders; an optional public web look-up; style questions and
+  sliders; a monthly spending ceiling (No cap, $5, $10 recommended, $25) when
+  the cloud is in play; routines, none ticked; memory and approval rules;
+  household; spoken approvals in a room; and keeping the local model loaded.
+  Every step has **Set up later**; **Use the recommended answer** answers only
+  the step on screen. It resumes where you left off. It ends with a receipt,
+  **What we set up**, saying who decided each line, backed by a hash-chained
+  setup record (`setup/ledger.jsonl`, labels and counts only). Run it again
+  from Settings > General > Your profile.
+- **One privacy question, three answers.** **Only on this PC**, **Cloud for
+  public things** or **Cloud for everything**, nothing preselected; the
+  recommended one depends on whether this PC can run a local model. One answer
+  writes the cloud consent, the routing mode and whether scheduled jobs may use
+  the cloud. Skipping keeps every safeguard on.
+- **Connect your services.** One screen, in setup and at the top of Settings >
+  Connections (and step 5 of the terminal wizard), for AI model providers
+  (Anthropic, OpenRouter, Google Gemini, Groq, Mistral, xAI, DeepSeek,
+  Together, Ollama, LM Studio, any OpenAI-compatible address), creative and
+  media tools, search, your accounts and any MCP server by address or command.
+  Each card has a checked sign-up link, three steps, a cost note only where the
+  vendor states it, "What it can access", a masked key field and **Test
+  connection** (Test passed, Test failed with How to fix, Not connected yet,
+  Could not tell). A key is never shown back or logged. Saving a key for a
+  provider that ships switched off turns it on. Services not built in yet are
+  listed as coming soon, with nothing to buy. **I'll just use local AI** skips
+  every key and changes no privacy or routing setting (**Show cloud options
+  again** undoes it). "Connect OpenRouter" by voice opens that card; voice never
+  types a key, and an MCP server by command needs your click.
+- **The Locks page** (Settings > Privacy & Data > Locks, on this PC only): how
+  your things are locked, line by line, what you chose, what was sent today,
+  whether Friday's own records were changed, and the honest limit.
+- **Raw records ask per file.** A whole mail archive or a bank or card
+  statement reaches a cloud model only after a yes for that one file, under
+  every privacy choice, even Cloud for everything. A raw record opened without
+  a yes is held from the cloud and listed on the Locks page with **Ask me about
+  this file** and **Start the list fresh…** (a card, approved on screen).
+- **Cards that show what would leave.** An email written on a cloud model with
+  private details shows exactly what would be sent (Send / Don't send). Email
+  paragraphs about money under the safeguards show on a card first (Send / Keep
+  on this PC, remember for a thread or sender; by voice, only after a
+  read-back), set in Settings > Privacy & Data > Money paragraphs in email. A
+  search that would share private text from the conversation shows the exact
+  query and engine.
+- **Friday can offer to switch a chat's model, or hand one task to the local
+  model**, on a single card you approve, when the vault needs it.
+- **Mail drafts go to Gmail Drafts.** A drafted email is saved to your Gmail
+  Drafts with no card ("Saved as a draft in … Gmail Drafts. Nothing was
+  sent."); a send happens only when you ask. Drafts go to the account you name,
+  else the reply's account, else Settings > Connections > Google accounts >
+  Default account for drafts (Ask me by default). Replies thread properly. A
+  missing permission offers **Reconnect with sending**. Friday can read a whole
+  email thread to you, by text or voice.
+- **Pre-approved sends** (Settings > Privacy & Data > Pre-approved sends):
+  named addresses or an `@domain` (never "anyone", a free-mail domain or a
+  public suffix), for any job or chat, one scheduled job, or a skill. A card
+  still appears for a recipient not named, after the work read outside
+  content, by voice (unless **Voice may use pre-approvals** is on), for
+  anything personal or sensitive, and for cloud-written private details.
+  Editing a job voids its pre-approval. **Revoke** takes back queued sends.
+  Every pre-approved send notifies with an Undo (unattended window 120 s by
+  default, 10 to 600 s).
+- **Inbox clean-up.** A Gmail or Google Takeout `.mbox` scan as a visible job;
+  one-click unsubscribe only where the sender's own domain vouches for the
+  link; nothing pre-ticked; a check 14 days later for senders still sending.
+- **Calendar views.** Day, Week, Month and Free/busy (names only, never
+  titles), every calendar of every Google account in Google's colours, a
+  **Calendars** button to show or hide calendars inside Friday only, and a
+  voice filter chip. Quick add shows the event and a calendar picker before it
+  writes. Dragging (or Alt+arrows) moves an event only after "Move …?", with an
+  optional 30-minute "Move without asking" and Undo. Invitations can be
+  answered Going, Maybe or Not going after a confirmation that names the
+  organiser. Events can be deleted from the event itself after a confirmation
+  that names it, its time and its calendar. Reminders come at Google's times,
+  once, in the tray, through a built-in "Calendar reminders" routine every 2
+  minutes; important events open with a prep card. Plans with several stops
+  get a rough travel-time check, labelled rough.
+- **Scheduled jobs on a timetable**: Only when I run it, Every day, Every
+  weekday, On certain days, Every few hours, Every month (day 1 to 31 or the
+  last day) or Once, kept in local time across daylight-saving changes. A job
+  pinned to a model always uses it and is held if it is unavailable; Settings >
+  General > Scheduled jobs sets what a held or missed run does, and each job can
+  choose its own. Per job and per on-request workflow: **Its emails: save as
+  drafts in Gmail** or **send (asks first unless pre-approved)**.
 - **A memory card you can read and edit** (Settings > Privacy & Data > Memory
   card). Friday keeps two short notes that she reads at the start of every
   conversation: what she knows about you, and what she has learned about
@@ -55,11 +144,52 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   anything is indexed, and nothing said off the record is there. Settings >
   Privacy & Data > Search your conversations lets you search it yourself and
   delete a message from its conversation and from every index at once. A
-  cloud model is only shown matches from conversations it already took part
-  in.
+  cloud model is only shown messages that were already sent to that provider.
 
 ### Changed
 
+- **Every confirmation is a card from the first ask.** The card shows in the
+  chat, in the Activity panel's **Needs you** tab, in the popup on every page
+  (**Later** folds it) and in System > Approvals, and one decision settles it
+  everywhere. A whole typed "yes" on your own page approves the card it answers,
+  once; a bare "no" declines only that card; "No, I meant…" cancels only the
+  chat question. The Activity button stays in the top bar while anything waits.
+- **A claim that something was done needs a receipt.** Friday does not say she
+  saved, sent or changed something unless the write happened in that turn.
+- **Every prompt starts with your privacy settings.** Chat, agent, background
+  and cloud voice prompts open with a short summary of the live settings (mode,
+  consent, local-only records, never-send count, spending caps) and the rules:
+  public web and news searches are not private because of their topic;
+  choosing cloud is consent except for the never-send floor; inform once, the
+  owner decides; a refusal against these settings is a bug. Every background
+  prompt carries only what its job needs.
+- **The never-send floor** (your never-send list, files marked never-send,
+  vault finance, legal and family records, and quoted lines of held raw
+  records) is refused for every cloud model in every mode, even unrestricted,
+  and fails closed.
+- **The vault asks for your cloud consent**, and never gates a tool that sends
+  nothing off this PC. A task meant for this PC stays here, and so does its
+  result.
+- **New email jobs save drafts.** A one-time migration keeps existing scheduled
+  email jobs and workflows sending (each send still asks unless pre-approved),
+  with one Activity notice, "Your email jobs keep sending".
+- **A fresh install is quiet.** Services never connected say "not connected"
+  and stay silent; scheduler notices are held until setup is finished (runs are
+  still recorded).
+- **The Models card shows the model that actually answered**, the routing mode
+  says what actually answers, and a model that writes a tool call as text has
+  it run or is told it could not.
+- **Setup fits this PC.** First run says what is still downloading; model
+  names show what is actually running; local models are sized to this PC's
+  memory, feature models report their real download sizes, and the graphics
+  card is used only when its libraries load. The local model runtime installs
+  from a pinned, known-good release. Your own changes to Friday's files
+  survive updates.
+- **Searches show what they send.** A search card shows everything that would
+  leave this PC and is approved only on screen; cloud voice asks too.
+- You can ask Friday to show, hide or list the workspaces in the dock (done at
+  once with an Undo, or a card if you prefer).
+- The memory ledger names a fork when it finds one.
 - **Friday does not save the same thing twice, or re-learn what she just
   remembered.** Before a line goes on the memory card or into its review
   queue, it is compared with what is already there, and the same fact in other
@@ -80,9 +210,46 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   own edits and deletions apply straight away.
 - **Spending caps ship off and are ready to be asked about at setup.** The daily creation ceiling ($0.50) and the per-workspace task budgets (1000ψ a month, 100ψ a task) no longer apply until you set them; every cap is listed in one registry (services/spending_caps.py) with a plain-language question and a suggested figure for the first-run setup conversation, and the workspace budget panel says "No cap (ask me during setup)" when one is off. An existing install is migrated once, with a line in friday.log: a stored $0.50 ceiling you never answered for, and a workspace policy at exactly the old 1000ψ/100ψ, are switched off so the setup conversation asks about them; any other figure is kept.
 
+### Security
+
+- **A key pasted into chat is withheld before anything keeps it.** It is
+  replaced with `[credential withheld]` in the conversation, memory, logs and
+  every index, and Friday offers the secure field ("Store that key securely")
+  instead; the chat box may catch it before it is sent. The same holds for
+  topic keywords, schedule creation and updates, task instructions, workflows
+  and workspace chat. Keys pasted before Beta 1.2 may still be in older
+  history. The Gemini key now travels in a request header, not the address.
+- **One vault, one passphrase.** When stored copies of the passphrase
+  disagree, Friday uses the one that opens the most files, keeps the Windows
+  keychain slot for the real Friday home only, and reports the disagreement on
+  an integrity card. A read-only key doctor (`scripts/vault_key_doctor.py`)
+  groups vault homes by passphrase without storing any hash of it. Upgrading
+  needs no action.
+- **Signed lists.** The public lists and the release manifest carry
+  signatures; with no certificate configured, signing does nothing.
+- Friday will not run a program that walks a folder named through your home
+  folder or an environment variable, and checks encoded commands inside
+  encoded commands.
+- Conversation memory and the knowledge graph use Friday's own embedder,
+  never a default one downloaded on their own.
+
 ### Fixed
 
 - **Saving part of a settings block keeps the rest of it.** A save of one podcast show's format, one host's voice, one working-hours time and the like no longer replaces the whole block; nested settings merge key by key, lists and the maps a caller prunes are still replaced whole.
+- An open Friday tab reloads itself after an update.
+- A message you sent is kept when the reply fails, and can be sent again.
+- Setup no longer launches the server inside the installer's console;
+  starting Friday is left to the tray. The Desktop and Start menu shortcuts
+  open Friday through the tray.
+- The desktop sky shows success stars only; failures stay in Activity.
+- Knowledge-graph recovery restores only what a save dropped for want of a key.
+- Source trust scores each article once, whatever tracking tags its link
+  carries.
+- Wiki changes apply only as previewed, never over a page you edited; additions
+  land at the end of the right section, and a page keeps one title.
+- Podcast hosts take their names from Settings, links in pasted research
+  become sources, and sentences no longer break at an initial or an
+  abbreviation.
 
 ---
 

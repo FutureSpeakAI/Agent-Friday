@@ -1,5 +1,7 @@
 # One governance checkpoint for every action, and where each detail came from
 
+> **Status (2026-10-17):** partly in force: the checkpoint is merged and enforced (governance/action_gate.py:1178), but every confirmation is now an approval card from the first ask, with the chat question as a second way to answer (services/agent.py:13573-13579); grants have a UI (index.html:60201); and pre-approved sends to named recipients were added (governance/send_grants.py; voice may not use them unless the owner turns it on, send_grants.py:879-905).
+
 **Status:** built on `feat/injection-defense`, not merged. Sensitive subsystem
 (governance/, approvals, the tool hook chain, voice tool dispatch, a
 federation route).

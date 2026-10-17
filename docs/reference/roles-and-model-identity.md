@@ -12,17 +12,20 @@ A live contract. Audience: anything that renders a model picker, binds a model t
 
 ---
 
-## 1. `ROLES` went from 8 entries to 13 — this is a breaking change
+## 1. `ROLES` went from 8 entries to 14 — this is a breaking change
 
-Anything that iterates `residency_policy.ROLES` and assumes the old set will now see five more.
+Anything that iterates `residency_policy.ROLES` and assumes the old set will now see six more.
 
 ```
 interactive_brain  heavy_hitter  sidekick  sidekick_heavy  embedder  stt  tts  image
 orchestrator  sidekick_fast  function_manager  memory_manager  researcher
+video
 ```
 
-The five new ones are the **working roles**. Do not assume a role is a
-model, and do not assume a role list is a count of resident processes. See §3.
+Five of the new ones are the **working roles**. `video` is a placeholder seat
+that is always refused until a local video backend exists. Do not assume a
+role is a model, and do not assume a role list is a count of resident
+processes. See §3.
 
 ---
 
@@ -71,7 +74,7 @@ wrongly merged model has silently vanished. Surface suspicions; never collapse o
 
 ---
 
-## 3. Residency classes — why 13 roles is not 13 models
+## 3. Residency classes — why 14 roles is not 14 models
 
 `GET /api/residency/roles` returns, per role: `residency`, `cpu_capable`, `default_num_ctx`, plus
 the alias table. **Read it. Do not hardcode this.**
@@ -82,16 +85,18 @@ the alias table. **Read it. Do not hardcode this.**
 | `leased` | commissioned, exclusive; evicts resident seats except the retained sidekick | only while running |
 | `on-demand` | scheduled or reactive (nightly consolidation, STT, TTS) | only while running |
 
-Current assignment: `orchestrator`, `sidekick`, `sidekick_fast`, `function_manager`, `embedder`,
-`interactive_brain` are **resident**. `heavy_hitter`, `researcher`, `sidekick_heavy`, `image` are
-**leased**. `memory_manager`, `stt`, `tts` are **on-demand**.
+Current assignment: `orchestrator`, `sidekick`, `sidekick_fast`, `function_manager`,
+`interactive_brain` are **resident**. `heavy_hitter`, `researcher`, `sidekick_heavy`, `image`,
+`video` are **leased**. `embedder`, `memory_manager`, `stt`, `tts` are **on-demand** (the embedder
+moved from resident: live recall embeds in-process on the CPU, so nothing was using a resident
+embedder seat).
 
 `cpu_capable` roles (`embedder`, `memory_manager`, `stt`, `tts`) cost **no VRAM** when they hold a
 model alone — but a CPU-capable role sharing a model with a GPU role is pulled onto the GPU, because
 one process cannot sit on two devices.
 
-If the picker presents thirteen roles without their residency class, a user reasonably concludes
-they need thirteen models resident at once. On a 12 GB card that reads as impossible, and it isn't:
+If the picker presents fourteen roles without their residency class, a user reasonably concludes
+they need fourteen models resident at once. On a 12 GB card that reads as impossible, and it isn't:
 **seven roles fit in three or four models**, because only the conversational tier is resident.
 
 Do not hardcode a peak figure from this document. It moved once already — a lineup that peaked at
@@ -207,11 +212,14 @@ misleading. Show `seat.num_ctx` from the plan or preview.
 
 ## Open, and worth knowing before you build on it
 
-1. `model_store.register()` does not call `register_gguf()`, so a model downloaded directly into
-   Friday's store is invisible to the arbiter until someone registers it by hand. Only the
-   Ollama-extraction path registers.
+1. *(Resolved.)* This said a model downloaded directly into Friday's store was invisible to the
+   arbiter because `model_store.register()` does not call `register_gguf()`. The arbiter's seat
+   map now reads Friday's own store first (`residency_catalog.seat_files()` via
+   `model_store.seat_file_map()`), and `installed_entries()` does the same; the older
+   `gguf_models.json` written by `register_gguf()` is only a second source.
 2. `gemma4:26b` (17,391 MiB measured) no longer fits this card at all under an honest display
    reserve, and a resident 12B beside the sidekick (9,529 MiB against 8,241) does not either. Any
    default lineup a picker offers should not assume they do.
-3. `sidekick_fast` exists in `ROLES` but has no seating logic of its own yet; it is a valid
-   assignment target and behaves like `sidekick` for costing.
+3. `sidekick_fast` is one of the assigned working roles (`ASSIGNED_ROLES`): the policy never
+   picks a model for it, so it is an R11 empty seat until the user names one, and it is then
+   placed and costed like any other assignment.

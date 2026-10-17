@@ -7,8 +7,8 @@ installs, is in [Installation](../getting-started/installation.md).
 ## What you need
 
 - Windows 10 or 11, 64-bit.
-- About 5 GB of free disk for the program. Setup stops with a plain message if
-  the drive is too full.
+- About 8 GB of free disk for the program (about 5 GB if you skip the memory
+  tier). Setup stops with a plain message if the drive is too full.
 - **For cloud use:** any computer that runs Windows 10 or 11, and one API key
   (see [One key is enough](#one-key-is-enough)).
 - **For a local model:** 16 GB of RAM and a processor with AVX2. A graphics
@@ -34,10 +34,16 @@ With that one key, chat, tools, briefings, the front page, scheduled jobs and
 research all work. With an OpenRouter key and no Anthropic key, Friday uses
 the same Claude model through OpenRouter. If you have both, Anthropic is used.
 
-Paste the key into the secure field on its card in the setup chat, or in
-**Settings > Connections**. It is stored encrypted on this PC and never goes
-into a conversation. Friday checks the key with one tiny request when you save
-it and tells you whether she can think.
+Other providers work too (Google Gemini, Groq, Mistral, xAI, DeepSeek,
+Together, or any OpenAI-compatible address); see
+[Connect your services](connections.md). You need no key at all if you use
+only a local model.
+
+Paste the key into the secure field on its card on the **Connect your
+services** screen, in the setup chat or in **Settings > Connections**. It is
+stored encrypted on this PC and never goes into a conversation. Press **Test
+connection** to check it works. A key pasted into the chat box instead is
+withheld before anything keeps it.
 
 ## Install
 
@@ -63,24 +69,29 @@ it and tells you whether she can think.
    download is interrupted.
 5. Optionally tick **Start Agent Friday quietly when I sign in** (off by
    default), and finish. You get a shortcut on the Desktop and in the Start
-   menu.
+   menu, and the last page offers **Start Agent Friday now**.
+
+The setup program is not code-signed. If Windows shows **Windows protected
+your PC** and **Unknown publisher**, check the file's SHA-256 against the
+release page, then choose **More info** and **Run anyway**. See
+[Getting started](../getting-started/README.md#3-the-smartscreen-warning).
 
 Friday installs into `%LOCALAPPDATA%\AgentFriday`, with its own private copy of
 Python. Your data lives in `.friday` in your user folder
 (`%USERPROFILE%\.friday`), not in the program folder.
 
-### Upgrading from 5.x
+### Upgrading from 5.x or an earlier beta
 
-Run the same installer. It stops Friday, copies your data to
-`%USERPROFILE%\.friday-backups`, installs, and then checks the data is
+Run the same installer. It stops Friday, copies your data to a dated folder
+under `%USERPROFILE%\.friday-backups`, installs, and then checks the data is
 unchanged. Your vault, memory and settings are kept. A newer installed release
-is never replaced by an older installer. More in
-[Updating and uninstalling](updating-and-uninstalling.md).
+is never replaced by an older installer. More, including what changes for you
+in Beta 1.2, in [Updating and uninstalling](updating-and-uninstalling.md).
 
 ## First run
 
-The first time you open Friday it asks a few questions before anything else.
-The same questions appear in the terminal if you set up there.
+The first time you open Friday it shows a few screens before anything else.
+Nothing on them is pre-selected.
 
 1. **Before anything else.** What Friday writes down (a wiki, your
    conversations, a map of how things connect) and where: the `.friday` folder
@@ -89,33 +100,37 @@ The same questions appear in the terminal if you set up there.
    records live in the vault and are encrypted with this passphrase. You can
    skip it and set it later in Settings. **If you lose it, those files cannot
    be recovered.** Put it in your password manager.
-3. **Where your words go.** Cloud, on this computer only, or both. Nothing is
-   pre-selected. If you choose cloud, a further screen says plainly what the
-   cloud provider will see and what Friday will refuse to send.
-4. **The part about other people.** Friday will hold notes about people you
-   mention, who did not agree to it. In cloud mode their details travel with
-   yours. You can make Friday forget a person from the People workspace.
-5. **When you're on a call.** Whether Friday steps back from the camera,
+3. **The part about other people.** Friday will hold notes about people you
+   mention, who did not agree to it. If you let her use the cloud, their
+   details travel with yours. You can make Friday forget a person from
+   Contacts.
+4. **When you're on a call.** Whether Friday steps back from the camera,
    microphone and memory when another app such as Zoom or Teams takes them.
-   Standing back on her own is labelled recommended; nothing is pre-selected.
-6. **Checking for new versions.** Check once a week, or don't check. Nothing is
-   pre-selected, and nothing downloads on its own either way. The check stays
-   off until you turn it on.
+   Standing back on her own is labelled recommended.
+5. **Checking for new versions.** Check once a week, or don't check. Nothing
+   downloads on its own either way. The check stays off until you turn it on.
 
-Then the **setup chat**. Friday introduces herself and asks, one short message
-at a time: what to call you and what to call her; who this Friday is for and a
-starting profile, with a hardware check that can download a local model; which
-of your accounts and keys to connect, each card saying exactly what it asks
-for; whether to look you up on the public web (off unless you say yes); a few
-questions about how you like to be spoken to; and the speaking style that comes
-out of your answers, which you can tune with sliders. You can type or tap an
-answer, skip anything, and leave with **Set up later** at any point. It works
-with no model and no key at all.
+Then the **setup chat**, a conversation of about twenty minutes. In order:
+how you want to talk to her (talk, type, or "I use a screen reader"); an offer
+to start cleaning up your inbox; her name, voice and pronouns; your name, city
+and time zone; **where she may think** (**Only on this PC**, **Cloud for
+public things** or **Cloud for everything**, nothing picked for you); a
+never-send list; **Connect your services**; your folders; an optional public
+web look-up of your work; how you like to be spoken to; a monthly spending
+ceiling (only if the cloud is in play); routines (none ticked); memory and
+approval rules; whether anyone else uses this PC; spoken approvals with other
+people in the room; and what to do with a large local model when you quit.
+
+You can type or tap an answer, skip anything, and leave with **Set up later**
+at any point. Where a step has one, **Use the recommended answer** answers
+that step only. It works with no model and no key at all. At the end, **What
+we set up** lists every choice and who made it.
 
 If you close Friday partway through, it picks up where you left off. Anything
 you skipped waits in **Settings > General > Setup checklist**, and
-**Settings > General > Your profile** can run the chat again. What each part
-does and what is stored where: [The setup chat](setup-chat.md).
+**Settings > General > Your profile > Run the setup chat again** runs it
+again. What each step does and what is stored where:
+[The setup chat](setup-chat.md).
 
 ## Opening Friday
 
@@ -162,15 +177,18 @@ available from the chat panel. Any workspace can also open in its own browser
 tab at `/w/<name>`.
 
 Settings has these sections, in order: **General**, **Voice**, **Models**,
-**Privacy & Data**, **Connections**, **Appearance**, **Advanced**, and
-**About** at the bottom. **Settings > Models** shows, for each job, which
-model does it and whether it runs on this PC or in the cloud.
+**Spending**, **Privacy & Data**, **Connections**, **Appearance**,
+**Advanced**, and **About** at the bottom. **Settings > Models** shows, for
+each job, which model does it and whether it runs on this PC or in the cloud.
+See [Settings](settings.md).
 
 ## Next
 
 - [Approvals and receipts](approvals-and-receipts.md): what Friday asks before
   it acts, and the record it keeps.
 - [Privacy: local and cloud](privacy.md): what leaves your PC and when.
+- [Connect your services](connections.md), [Memory](memory.md) and
+  [Locks](locks.md).
 - [Mail](mail.md), [Calendar](calendar.md), [Voice](voice.md),
   [Documents](documents.md), [Scheduled jobs](scheduled-jobs.md),
   [Phone](phone.md).

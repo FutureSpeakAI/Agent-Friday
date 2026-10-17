@@ -7,21 +7,22 @@ does not defend against, and the guarantees provided by each security mechanism.
 
 ## First: which Agent Friday are you running?
 
-**There is no single artifact, and the difference is a security difference, not
-a packaging detail.** Every guarantee below is conditioned on this, so it is
-stated before anything else rather than in a footnote.
+**The classifier layers you get depend on how Friday was installed.** Every
+guarantee below is conditioned on this, so it is stated before anything else
+rather than in a footnote.
 
-| | **`AgentFriday.exe`** | **`AgentFriday-Setup-*.zip`** | **From source** |
-|---|---|---|---|
-| Built by | PyInstaller, one frozen file | Embedded CPython + source payload + wheelhouse (`packaging/windows/`) | Your own `pip install` |
-| Egress classifier | **Layers 1a + 1b only** | 1a + 1b, plus Layer 3 if the memory tier installs | Depends on your extras |
-| `sentence-transformers` (Layer 3) | **Excluded deliberately** — pulls torch, over 4 GB measured against a ~152 MB binary | Installed by the *memory* tier (~2.5 GB, announced, skippable) | `.[local]` or `.[all]` |
-| `presidio-analyzer` (Layer 2) | Not bundled | Installed — but **observe-only**, see §1 | `.[pii]` or `.[all]` — still observe-only |
+| | **Windows setup program `AgentFriday-Setup-<tag>.exe`** | **From source** |
+|---|---|---|
+| Built by | Inno Setup (`packaging/windows/installer/AgentFriday.iss`): embedded CPython, the source payload and a wheelhouse, installed per user by `packaging/windows/install.ps1` | Your own `pip install` |
+| Egress classifier | Layers 1a + 1b always; Layer 3 when the *memory* tier installed | Depends on your extras |
+| `sentence-transformers` (Layer 3) | Installed by the *memory* tier (`requirements/memory.txt`, about 1.5 GB with torch; announced and skippable with `-SkipMemory`) | `.[local]` or `.[all]` |
+| `presidio-analyzer` (Layer 2) | Installed by the *recommended* tier, **observe-only** (the step is titled "a trial privacy filter"), see §1 | `.[pii]` or `.[all]`; still observe-only |
 
-So the honest one-line summary: **the downloadable `.exe` runs two layers of
-pattern matching.** That is a deliberate trade — not shipping a 4+ GB tensor
-library inside a desktop download — and not a defect. What *would* be a defect
-is letting you believe otherwise, so:
+The old one-file PyInstaller `AgentFriday.exe` and the setup `.zip` are no
+longer built; the setup program above is the only Windows artifact. So the
+honest one-line summary: **if you skipped the memory tier, the gate runs two
+layers of pattern matching.** That is a deliberate trade, not a defect. What
+*would* be a defect is letting you believe otherwise, so:
 
 **Do not take this table's word for it.** Friday probes its own layers at every
 boot and prints the result, and prints a boxed `SENSITIVITY CLASSIFIER IS
@@ -53,11 +54,11 @@ what actually runs.
 | **1a — Regex** | Structured tokens: SSN, card numbers, API keys, routing numbers, phone/address/account-tail shapes | **Always.** No dependency. |
 | **1b — Keyword** | Strong phrases plus context-gated keyword tiers | **Always.** No dependency. |
 | **2 — Presidio NER** | Names, dates, medical/financial entities | **No, by default** — see below. |
-| **3 — Embedding** | MiniLM semantic similarity to curated sensitive exemplars | **Only if `sentence-transformers` is present.** Installed by the Windows installer's *memory* tier; **excluded from the PyInstaller `.exe` on purpose.** |
+| **3 — Embedding** | MiniLM semantic similarity to curated sensitive exemplars | **Only if `sentence-transformers` is present.** Installed by the Windows setup program's *memory* tier; absent when that tier was skipped. |
 | **4 — Local LLM** | Ollama adjudication of ambiguous spans | **No** — opt-in per call (`use_llm=True`), off by default. |
 
-So the honest summary: **the frozen `.exe` runs Layers 1a+1b only** — four
-regexes and two keyword lists. A full Windows installer run additionally gets
+So the honest summary: **without the memory tier the gate runs Layers 1a+1b
+only**, regexes and keyword lists. A full Windows setup run additionally gets
 Layer 3.
 
 **Presidio was evaluated and deliberately rejected.** It is not a missing
@@ -97,10 +98,14 @@ on uncertain similarity. So content the rules do not recognise is sent. The gate
 never sends content to the cloud to decide whether it is sensitive — all
 classification runs locally.
 
-**Guarantee:** No content the classifier places above TIER_1 (PUBLIC) leaves
-your device to cloud providers via the normal call path — **except content you
-have explicitly granted**, a deliberate exception described in
-[File grants](../user-guide/file-grants.md). The model router is an
+**Guarantee:** Under the "Only on this PC" or "Cloud for public things"
+answer (or no answer yet), no content the classifier places above TIER_1
+(PUBLIC) leaves your device to cloud providers via the normal call path —
+**except content you have explicitly granted** (a deliberate exception
+described in [File grants](../user-guide/file-grants.md)) and a paragraph you
+released by pressing **Send** on its card. Under the recorded "Cloud for
+everything" answer the gate still runs and still applies the never-send floor,
+but the tier policy is widened (see §8). The model router is an
 optimization; the egress gate is the enforcement boundary and cannot be
 bypassed without modifying `services/egress_gate.py`.
 
@@ -108,15 +113,15 @@ bypassed without modifying `services/egress_gate.py`.
 Friday with a vault.** The gate is an enforcement boundary, not a proof. Three
 honest limits:
 
-1. **It is only as good as its classifier**, which on a frozen build is two
-   layers of pattern matching. Novel PII shapes it has no rule for will pass.
+1. **It is only as good as its classifier**, which without the memory tier is
+   two layers of pattern matching. Novel PII shapes it has no rule for will pass.
    The deterministic detectors cover *structured* shapes — phone numbers,
    street addresses, masked account tails, issued identifiers — because there
    the shape itself is the signal. There is **no named-entity recognition**, so
    anything that depends on knowing a word is a name is classified by its
    surrounding words alone and can pass as TIER_1: a bare drug name
    (*"she started sertraline 50mg"*), *"Dr. Lastname"*, or a given-name
-   possessive (*"Emma's school pickup is at 3:15"*). Wiki and smart-context
+   possessive (*"Dana's school pickup is at 3:15"*). Wiki and smart-context
    sections default to TIER_2, so those sources are withheld regardless; the
    residual exposure is content classified ad hoc, principally tool results
    passing through the egress gate. The deliberate trade-offs: a dosage regex
@@ -124,7 +129,10 @@ honest limits:
    ordinary prompts such as "Dr. Seuss". The tractable fix is a local NER pass
    at Layer 4, not Presidio.
 2. **A grant is a real hole, on purpose.** Granted file content is registered as
-   sendable and crosses the wire. The design reasoning is in FILE_GRANTS.md.
+   sendable and crosses the wire. The design reasoning is in
+   [File grants](../user-guide/file-grants.md). A grant may also carry a
+   separately ticked override of your never-send list for that file's exact
+   paragraphs only (`services/egress_gate.py` `register_override_text`).
 3. **Only the user can open it.** No model on any surface can create a grant —
    there is no grant tool in `CLAUDE_TOOLS`, so a prompt-injected model cannot
    widen its own reach, and a spoken "yes" cannot create one either.
@@ -220,12 +228,31 @@ classified:
 - **forbidden** — a shell command that names Friday's own local API — is
   refused.
 
-An outward action is approved by a chat yes/no in a live conversation (bound to
-that exact action and arguments), by an approval card otherwise, or, for a
-scheduled job, by a grant the owner created that names the job, the tools, an
-expiry and a use count (`~/.friday/governance/grants.json`, created only through
-an owner session). Each decision is written as an HMAC-signed receipt to
-`~/.friday/decision-bom.jsonl`.
+A fourth class, **observe** (a read at a service the owner connected), is
+receipted as reaching outside and runs without a card unless a detail came
+from read content or its arguments would carry private data out.
+
+Every confirmation is an **approval card** from the first ask. The same card
+shows in the chat, in the Activity panel's **Needs you** tab, in the popup on
+every page and in **System > Approvals**; one decision wins everywhere
+(`services/approvals.py`). In a live conversation on the owner's own page, a
+typed whole "yes" approves the one card it answers, once, bound to that exact
+action and arguments; a bare "no" declines only that card. For a scheduled
+job, an outward tool can also be covered by a grant the owner created that
+names the job, the tools, an expiry and a use count
+(`~/.friday/governance/grants.json`, created only through an owner session),
+and a send by a pre-approval of its recipients (§8). Each decision is written
+as an HMAC-signed receipt to `~/.friday/decision-bom.jsonl`.
+
+**Screen-only cards.** Some cards can be approved only by a click on Friday's
+own page, never by a spoken or typed yes and never by a program that calls
+itself the owner: a file grant request, starting file access fresh, Library
+add/remove/forget, loosening or wiping what Laya learned, and starting the
+raw-record hold list fresh (`SCREEN_ONLY_KINDS` in `services/approvals.py`).
+A click is a same-origin browser request carrying the page's rotating token
+(`services/screen_click.py`). Limit: a local program that forges browser
+headers and reads the token can pass; this raises the bar over a bare
+`curl`, it does not stop software running as you.
 
 Fail-closed: if classification, the cLaws integrity check, a configured
 second-opinion model or the receipt write fails, outward actions are held and
@@ -284,6 +311,11 @@ with no Friday routes at all.
 **Limit:** a tunnel that forwards no headers still looks like loopback. Do not
 publish Friday's own port through a tunnel; if you must, set
 `FRIDAY_TRUST_LOOPBACK=0` so every request needs a login.
+
+Pages that hold the most sensitive controls go further and refuse a remote
+request even after it logs in: the setup chat and **Connect your services**
+(`routes/setup_chat.py` `_local_user_only`) and the **Locks** page
+(`routes/locks.py`) answer only the local user on Friday's own computer.
 
 ### 7. Web pages, other sites and generated markup reaching the vault, credentials or `run_command`
 
@@ -371,6 +403,111 @@ in `core.check_auth` before loopback trust):
 
 ---
 
+### 8. Privacy posture, consent and the cloud gates (Beta 1.2)
+
+**Threat:** private material reaches a cloud model the owner did not choose,
+or a setting nobody chose is read as consent.
+
+**Posture and consent** (`privacy/cloud_consent.py`, `services/setup_steps.py`).
+Out of the box `model_routing.mode` is `cloud_only` (the factory default in
+`core/__init__.py`), and cloud consent starts **unanswered**; while it is
+unanswered every safeguard stays on. The setup chat's privacy step offers
+three cards, none preselected, and one answer writes consent, routing mode and
+the scheduled-cloud switch together:
+
+| Card | Consent recorded | Routing mode |
+|---|---|---|
+| **Only on this PC** | `local_private` | `local_only` |
+| **Cloud for public things** | `cloud_guarded` | `local_only` if this PC can run a local model, else `cloud_only` |
+| **Cloud for everything** | `cloud_unrestricted` | `cloud_only` |
+
+The default mode is never treated as consent: `is_unrestricted_cloud()` is true
+only for a recorded `cloud_unrestricted` answer (or the legacy
+`unrestricted_cloud` flag from an older install), and any read failure counts
+as "not unrestricted". Consent is recorded only through
+`POST /api/privacy/cloud-consent`, which is not an agent tool, and the generic
+settings save strips the key. Friday runs fully on this PC only when you choose
+**Only on this PC** and have a local model; every other answer uses cloud
+models for some work.
+
+**Egress gate by consent** (`services/egress_gate._gate_text_span`). Under
+`local_private`, `cloud_guarded` or no answer, the tier policy in §1 applies.
+Under `cloud_unrestricted` the gate still runs on every call, still records it
+and still applies the never-send floor; classification, span withholding and
+the identifier scrub (`core._scrub_pii`: SSNs, Luhn-valid card numbers and
+similar) are skipped (`egress_gate.py` `seal_outbound`, `_seal_steps`). Card
+numbers and bank or account numbers are on every never-send list by default
+(removable), so they are still refused; other identifiers reach the cloud
+unless they are on the list. The owner's explicit choice of Cloud only
+(Settings > Models clicked on the page, or setup) is the same consent as
+`cloud_unrestricted`; the factory default is not. Public web and news query text is not treated as
+private because of its topic; only the never-send floor and personal
+identifiers apply to it (decision record 2026-10-15). Under `cloud_guarded`,
+email paragraphs the gate would hold are shown on a card first ("this is
+exactly what would be sent", **Send** / **Don't send**; `services/cloud_release.py`).
+Every system prompt starts with a short summary of the live privacy settings
+(`services/privacy_policy_summary.py`) so a model can tell a refusal that
+follows the settings from one that contradicts them.
+
+**Never-send floor** (`services/judgment_gate.never_send_hits`). Your
+never-send list (`~/.friday/privacy_shield.json`), files you marked never-send,
+vault legal/finance/family paths, and quoted lines of held raw records block
+the **whole** call to any cloud destination in every mode, including
+`cloud_unrestricted`. It runs ahead of every allow-list and of classification,
+independent of the optional judgment model. **It fails closed:** if the check
+cannot run, the payload is held ("the never-send check could not run").
+The one owner-made exception is a file grant whose never-send override was
+ticked separately, and then only for that file's exact paragraphs.
+
+**Vault gate** (`privacy/vault_policy.py`, `privacy/vault_access.py`).
+`vault_local_only` defaults to on: vault tiers are stripped from cloud prompts
+and vault questions route to a local model. When the gate refuses a tool for a
+cloud seat, the refusal becomes one card offering to switch the chat's model or
+hand that one task to the local model (`services/seat_handoff.py`,
+`switch_seat`); a cloud-tagged "local" model is never a valid target. A tool
+that sends nothing off the PC is not gated by it.
+
+**Raw-record guard** (`services/raw_records.py`, owner decision O7). Whole mail
+archives (`.mbox`, `.eml`, `.msg`, `.pst` and similar) and bank or card
+statements (`.ofx`, `.qfx`, `.qif`, `.qbo`, or a PDF or spreadsheet named like
+a statement) reach a cloud model only after a yes for that one file, under
+every posture including **Cloud for everything**. Files are recognised by what
+they are (extension and name, or a sniff of an unnamed file), never by what a
+model says. Lines read from a held file are hashed into a hold store; a
+payload quoting them trips the never-send floor. An unreadable or unwritable
+hold store fails closed. Held files are listed on **Settings > Privacy & Data >
+Locks**; starting the list fresh is a screen-only card.
+**Known residual:** the guard checks the paths a tool call names, including
+pieces of a command. A model that deliberately builds a path from pieces at
+run time (for example inside a script it writes) can read around it. The
+never-send floor is the backstop: quoted lines from a held file are still
+caught on the way out.
+
+**Pasted-secret withholding** (`services/pasted_secrets.py`,
+`services/secret_patterns.py`). A key or password pasted into chat is replaced
+with `[credential withheld]` before the turn starts, so the model, the prompt,
+every store and every index see only the marker; the reply offers the secure
+field. The same scrub runs again where text is written (topic keywords,
+schedules, task steering, workflows, workspace chat) and the value is never
+indexed in conversation search. Limit: keys pasted before Beta 1.2 may still
+be in old history.
+
+**Pre-approved sends** (`governance/send_grants.py`). Every send asks by
+default. The owner may pre-approve named addresses or `@domain` in **Settings >
+Privacy & Data > Pre-approved sends**, for any job or chat, one scheduled job,
+or one skill. There is no "anyone" grant; free-mail domains and public
+suffixes are refused; non-ASCII addresses are never covered. A send still gets
+its card when a recipient is not named, when anything in the call or the
+conversation came from outside content, when it was asked by voice (unless
+**Voice may use pre-approvals**, off by default), when the subject or body does
+not screen as public, or when it was written on a cloud model with private
+details. Editing the job or skill voids its grant until approved again.
+**Revoke** takes back queued sends. Every covered send notifies at once with
+Undo. Grants are signed; a revoked grant stays revoked even if the file is
+restored from an older copy.
+
+---
+
 ## What We Do NOT Defend Against
 
 ### 1. A compromised or hostile local machine owner
@@ -406,15 +543,21 @@ intentionally shared with them.
 
 ### 4. Extraction of the shipped Google OAuth client
 
-**Friday ships a Google OAuth client ID and secret in this public repository,
-on purpose.** If you found it and are about to report it as a leaked
-credential: thank you, and it is deliberate. Here is the reasoning, so you can
-decide whether you disagree rather than having to guess what we intended.
+**Current state (checked 2026-10-17): no client is bundled.**
+`BUNDLED_CLIENT_ID` and `BUNDLED_CLIENT_SECRET` in
+`src/agent_friday/services/google_oauth_client.py` are empty strings, which the
+module treats as "there is no bundled client"; every Google connection uses
+the owner's own client (the guided "bring your own" path). The rest of this
+section is the reasoning that applies once the maintainer fills those values
+in, so a reporter does not have to guess.
 
-`src/agent_friday/services/google_oauth_client.py` holds
-`BUNDLED_CLIENT_ID` / `BUNDLED_CLIENT_SECRET`. They are also allowlisted **by
-name, with this reasoning attached**, in `.githooks/security_scan.py`
-(`DELIBERATE_PUBLIC_CREDENTIALS`) rather than silenced with a bare pragma.
+**Friday is designed to ship a Google OAuth client ID and secret in this
+public repository, on purpose.** If you found one and are about to report it
+as a leaked credential: thank you, and it is deliberate.
+
+The two constants are allowlisted **by name, with this reasoning attached**,
+in `.githooks/security_scan.py` (`DELIBERATE_PUBLIC_CREDENTIALS`) rather than
+silenced with a bare pragma.
 
 **Why it is not a secret.** Friday is an installed desktop application.
 [RFC 8252](https://datatracker.ietf.org/doc/html/rfc8252) classifies native
@@ -463,9 +606,11 @@ requirements file use `>=` floors, not exact pins) and optional extras
 
 ## Egress Gate Guarantee
 
-> **Nothing classified as PRIVATE or SENSITIVE leaves your device to cloud
-> providers via the normal call path. The gate is the enforcement boundary,
-> not the router. A failure of the gate blocks the send.**
+> **Unless you recorded "Cloud for everything", nothing classified as PRIVATE
+> or SENSITIVE leaves your device to cloud providers via the normal call path.
+> Under every answer, never-send material stops the whole call. The gate is
+> the enforcement boundary, not the router. A failure of the gate, or of the
+> never-send check, blocks the send.**
 
 This guarantee holds as long as:
 - `services/egress_gate.py` is not modified
@@ -487,16 +632,17 @@ This guarantee holds as long as:
 | Configuration | What leaves your device |
 |--------------|------------------------|
 | A local model answers | Nothing — processing on-device |
-| A cloud model answers | Content the classifier places in TIER_1 (PUBLIC); private content becomes a placeholder, sensitive content is withheld |
-| Unrestricted cloud (an explicit, recorded consent) | Everything in the assembled payload |
+| A cloud model answers, consent `local_private`, `cloud_guarded` or unanswered | Content the classifier places in TIER_1 (PUBLIC); private content becomes a placeholder, sensitive content is withheld; never-send material stops the whole call |
+| A cloud model answers, consent `cloud_unrestricted` (**Cloud for everything**, an explicit, recorded answer) | Everything in the assembled payload **except** the never-send floor, held raw records without a per-file yes, and (if that switch is on) local-only vault records |
 
 In "On this computer only" (`local_only`) mode, a chat turn with no local seat
 serving is refused (`routing/model_router._route_basic`) with an offer to answer
-it in the cloud, which the owner must accept; voice has its own pipeline. The
-first-run screen's text still describes a fallback to cloud and is out of date.
-There is no switch that turns the egress gate off; unrestricted cloud is the
-only bypass, and it requires the recorded consent in `privacy/cloud_consent.py`.
-The privacy posture is visible in the setup wizard and in Settings → Privacy & Data.
+it in the cloud, which the owner must accept; voice has its own pipeline.
+There is no switch that turns the egress gate off; unrestricted cloud widens
+its tier policy but never removes the never-send floor, and it requires the
+recorded consent in `privacy/cloud_consent.py`. The posture is chosen in the
+setup chat's privacy step and shown in **Settings > Privacy & Data** (the
+**Locks** page lists it as "Where I think").
 
 ---
 
@@ -518,7 +664,7 @@ permissions) as the fallback. The Ed25519 private key is a file only,
 
 ---
 
-*Last verified against the code: 2026-09-30. Update this document whenever the
+*Last verified against the code: 2026-10-17 (Beta 1.2, `1.2.0b1`). Update this document whenever the
 security architecture changes. The egress gate guarantee is a functional
 invariant; any change that weakens it requires explicit security review. How to
 report a problem, and which versions receive fixes, is in the repository's

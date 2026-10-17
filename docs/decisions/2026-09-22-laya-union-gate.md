@@ -1,11 +1,13 @@
 # The Laya union gate — shipped ON, with a switch
 
+> **Status (2026-10-17):** partly in force: the union, its keyword fallback and the three-state switch stand (services/decisions.py:67; services/laya_backend.py:964), but it now ships in **Shadow**, not On: `decision_backend` is `keyword` and `decision_shadow` is `laya` after the week-one review (core/__init__.py:3157-3175). The judgment tier stays optional (packaging/windows/requirements/judgment.txt).
+
 **Status:** built, wired, **ON by default**, with an off/shadow/on control in
 Settings. The owner's call, made with the eval below in hand: "land the code,
 land the model, then turn it on." An earlier draft of this document said
 default-OFF; that was superseded the same day and the reversal is the owner's to make.
 **Written:** 2026-09-22
-**Supersedes nothing.** Extends `docs/design/active/laya-across-the-harness.md`,
+**Supersedes nothing.** Extends (design paths now in the internal design repository) `docs/design/active/laya-across-the-harness.md`,
 which ranked the harness's judgments and recommended the corpus work first.
 
 ---

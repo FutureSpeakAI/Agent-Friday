@@ -1,9 +1,11 @@
 # Architecture decisions — August 2026
 
+> **Status (2026-10-17):** partly in force: D1 is implemented through `provider_health.inference_health`, not the `ollama_manager.health_check` call site (routes/core_routes.py:928-951; `health_check` at routing/ollama_manager.py:535 still has no caller), and a paid provider shows a key check unless the owner asks for the deep probe; D2 holds (services/worker_adapters/ollama_adapter.py:138); the tray now has `sys.platform` guards (friday_tray.py:278, 936).
+
 > **Status:** implemented
 > **Last verified:** 2026-09-06
-> **Implementation:** Phase A landed as the truth-flow work (`routes/ollama_manager.py` `health_check` call site, egress gate on `services/worker_adapters/ollama_adapter.py`, catalog-driven context windows); Phase B/C in `services/hardware_profile.py`, `services/residency_policy.py`, `services/residency_arbiter.py`
-> **Supersedes / superseded by:** inherits the inference-discovery audit; inherited by `docs/design/implemented/residency-policy.md`
+> **Implementation:** Phase A landed as the truth-flow work (`routing/ollama_manager.py` `health_check` call site, egress gate on `services/worker_adapters/ollama_adapter.py`, catalog-driven context windows); Phase B/C in `services/hardware_profile.py`, `services/residency_policy.py`, `services/residency_arbiter.py`
+> **Supersedes / superseded by:** inherits the inference-discovery audit; inherited by `docs/design/implemented/residency-policy.md` (now in the internal design repository)
 > **Written:** 2026-08-13
 
 ## Implementation notes

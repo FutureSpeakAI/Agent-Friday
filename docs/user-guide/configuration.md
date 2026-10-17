@@ -28,12 +28,17 @@ file while Friday is stopped.
 - **A file that will not parse** makes Friday run on factory defaults and log
   an error; saving is then refused so the file is not overwritten.
 - **Partial saves.** `capability_routing`, `model_routing`, `content`,
-  `turn_budget`, `local_address`, `scheduled_cloud` and `tracking` are merged
-  field by field. Every other
-  block is replaced whole by a partial write, so send the complete block.
+  `turn_budget`, `local_address`, `scheduled_cloud`, `tracking`, `podcasts`,
+  `scheduling`, `idle_work`, `google_oauth`, `career_ops`, `channels`,
+  `cost_budget`, `task_journal`, `reasoning_traces`, `spending_caps`,
+  `schedules` and `trust_scoring` are merged key by key, at every depth; a list
+  inside them is replaced whole, and so is each capability's seat in
+  `capability_routing`. Every other block is replaced whole by a partial
+  write, so send the complete block.
 - **Some values are written by exactly one code path.**
-  `model_routing.cloud_consent` is set only by the consent screen and is
-  removed from any other save. `model_routing.mode_chosen` is written only
+  `model_routing.cloud_consent` is set only by your answer to the privacy
+  question (the setup chat, or **Settings > Privacy & Data > Cloud consent**)
+  and is removed from any other save. `model_routing.mode_chosen` is written only
   when you change the routing mode yourself, and removed from any other save.
 - **Mirrored keys.** `orchestrator_model`, `subagent_model`, `creative_model`,
   `music_model` and `voice_model` are kept in step with `capability_routing`
@@ -107,7 +112,7 @@ A capability that is not in the defaults is removed on the next save.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mode` | `"cloud_only"` | `cloud_only`, `local_preferred` or `local_only`; `cloud_preferred` is also accepted but is not offered in Settings yet. First-run setup asks. A blank `mode` means you have not chosen: it behaves as `cloud_only`, every part of Friday reads it that way, and setup can ask you. `cloud_preferred` is a cloud mode: the cloud answers, background work runs as in `cloud_only`, cloud voice is allowed, and if the cloud cannot be reached the local model may answer, opening with "Answering locally: no connection to <provider>." `smart`, an older fourth mode, was the same as `local_preferred`; a settings file that still says `smart` is renamed to `local_preferred` the first time it is read. In both local modes the cloud is reached only when you ask for it: background tasks use the local model unless a task or a scheduled job is pinned to a cloud model, and a turn the local model cannot take is refused with an offer to answer it in the cloud, never sent on its own. In `local_only`, asking for the cloud for one turn needs a confirm that names the mode. |
+| `mode` | `"cloud_only"` | `cloud_only`, `local_preferred` or `local_only`; `cloud_preferred` is also accepted but is not offered in Settings yet. The setup chat's privacy question sets it: **Only on this PC** gives `local_only`; **Cloud for public things** gives `local_only` if this PC can run a local model and `cloud_only` if it cannot; **Cloud for everything** gives `cloud_only`. A blank `mode` means you have not chosen: it behaves as `cloud_only`, every part of Friday reads it that way, and setup can ask you. `cloud_preferred` is a cloud mode: the cloud answers, background work runs as in `cloud_only`, cloud voice is allowed, and if the cloud cannot be reached the local model may answer, opening with "Answering locally: no connection to <provider>." `smart`, an older fourth mode, was the same as `local_preferred`; a settings file that still says `smart` is renamed to `local_preferred` the first time it is read. In both local modes the cloud is reached only when you ask for it: background tasks use the local model unless a task or a scheduled job is pinned to a cloud model, and a turn the local model cannot take is refused with an offer to answer it in the cloud, never sent on its own. In `local_only`, asking for the cloud for one turn needs a confirm that names the mode. |
 | `default_cloud_model` | `"claude-sonnet-5"` | The router's default cloud model. |
 | `local_model` | `"gemma4:e2b"` | The default local model. |
 | `ollama_url` | `"http://localhost:11434"` | Ollama endpoint. |
@@ -127,7 +132,7 @@ A capability that is not in the defaults is removed on the next save.
 | `voice_switch_back` | `{}` | *Internal.* Where the one offer to switch back to local voice stands after an *always*: `pending` (shown, not answered), `switched` or `kept`. It is made once, when a later check finds local voice ready on this computer with measured numbers, and not again until local voice stops being ready and then becomes ready again. No answer changes nothing; It is offered in every mode except local-only, the default cloud-only mode included, because local voice is still an engine you can choose there; two readings in a row that are not ready are needed before it can be offered again. You can answer on the card, or by voice ("switch back", "keep cloud") when the local model is loaded, which is how cloud voice reaches it (ask_friday); with no local model loaded, answer on the card. A spoken answer counts only as your own words, said after the question, that give exactly one answer ("no, not always" gives none, and Friday asks again). Cloud text-to-speech providers (only the reply text leaves) keep their own disclosure and are not asked this question. |
 | `work_orders_enabled` | `false` | *Internal.* Lets a cloud model hand this computer a plan (a work order) that this computer then carries out locally. While this is off, the two tools that take an order (`submit_work_order`, `work_order_status`) are not offered to any model, and turning it off cancels orders that are queued or waiting and stops a running one before its next step. There is no Settings control for it. See [Cloud work orders](cloud-work-orders.md). |
 | `work_order_privacy_class` | `""` | How much of a finished work order may go back to the cloud model. `""` means you have not chosen: rough counts (none, 1-4, 5-19, 20 or more) and fixed words only (P1). `P1_aggregate` is the same, chosen. `P2_summary` lets a summary with personal details removed go back, after you approve its exact text on a card (a share you allowed earlier does not stand in for it), in every mode that uses a cloud model. `P3_local_only` sends back only a handle. Material from the vault or marked private is always P3, whatever this says. Nothing is preselected; there is no Settings control for it yet. |
-| `cloud_consent` | not answered | *Internal.* Your recorded answer to the unrestricted-cloud screen. The only thing that can turn the egress gate's safeguards off. |
+| `cloud_consent` | not answered | *Internal.* Your recorded privacy answer: `local_private` (Only on this PC), `cloud_guarded` (Cloud for public things) or `cloud_unrestricted` (Cloud for everything). Only `cloud_unrestricted` turns the egress gate's safeguards off; the never-send floor stays on whatever it says. Until it is answered every safeguard stays on. |
 | `unrestricted_cloud` | `false` | *Internal.* Legacy; read once to migrate into `cloud_consent`. |
 | `mode_chosen`, `mode_chosen_at` | absent | *Internal.* The record that you chose the routing mode yourself (the Settings mode control, setup, the setup chat) and when. A new install's starting `cloud_only` does not have it. Only a chosen `cloud_only` is consent for routine jobs to use the cloud ([scheduled jobs](scheduled-jobs.md)). Removed from any other save. |
 
@@ -172,6 +177,8 @@ Laya plans, picks tools, runs quick actions (open, select, play, timers, reads) 
 | `news_local_sources` | `[]` | Outlet domains for the Local beat, for example `["springfield-local.example"]`. Each is fetched as a Local feed and trusted like the built-in high-trust outlets. With this and `news_local_area` both empty there is no Local beat; nothing ships with a city. |
 | `news_trusted_outlets` | `[]` | Outlet domains that start at high trust, like the built-in trusted list, without being fetched or labelled as Local news. Set in News › Customize › Trusted outlets. |
 | `memory_recall_enabled` | `true` | Recall from past conversations. |
+| `memory_review_enabled` | `true` | The quiet review for the Memory card: after Friday answers, a model on this PC reads the latest exchanges and may add a line that rests on your own typed words; anything else waits for your Keep. Never a cloud model; skipped when there is no local model. Settings > Privacy & Data > Memory card, **Review our conversations for the card**. |
+| `memory_review_every_turns` | `10` | How many turns between reviews (2 to 100). |
 | `compaction` | on; trigger at 70% of a 200,000-token window; keep 3 head and 10 tail messages | Summarises the middle of a long transcript. |
 | `context_pruning` | on; over 50 turns keep the 4 most recent and the 10 most relevant | Keeps relevant past turns by meaning (MiniLM embeddings). |
 | `context_compression` | on above 1,000 tokens | Compresses kept turns with Headroom when installed. |
@@ -191,6 +198,7 @@ Laya plans, picks tools, runs quick actions (open, select, play, timers, reads) 
 | `wiki_encrypted_sections` | `[]` | Wiki sections to encrypt with the vault key, for example `["health", "legal", "family"]`. Needs a vault passphrase. Encrypted sections are also kept out of the cloud knowledge block. |
 | `wiki_mirror_dir` | `""` (off) | An absolute path to an existing folder you choose. Every wiki write and delete is copied there. Encrypted sections are copied as ciphertext, everything else as plain text. If the folder is synced by OneDrive, Google Drive, Dropbox or similar, every mirrored page leaves this computer through that client. |
 | `judgment_gate` | off; model `gemma4:e2b` | A local model that judges ambiguous privacy cases. |
+| `email_cloud_release` | `"ask"` | Email paragraphs about money that the safeguards would hold back from a cloud model: `ask` shows a card with exactly that text (Send / Keep on this PC); `withhold` keeps them on this PC and says so. Settings > Privacy & Data > Money paragraphs in email. |
 | `task_journal` | keep forever; capture reasoning; encrypted | The background-task journal in `~/.friday/tasks/`. |
 | `reasoning_traces` | capture on; keep forever | The reasoning-trace archive in `~/.friday/traces/`. See [reasoning traces](../reference/reasoning-traces.md). |
 | `knowledge_graph` | see below | The knowledge graph behind the Knowledge workspace. |
@@ -228,6 +236,16 @@ cognitive memory, soul); `nightly_reindex: true`; `max_visible_nodes: 2000`.
 
 Grants for scheduled jobs are not a setting; they are kept in
 `~/.friday/governance/grants.json` and managed in Settings > Privacy & Data.
+Pre-approved sends are not a setting either; they are managed in **Settings >
+Privacy & Data > Pre-approved sends**.
+
+### Mail and calendar
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mail_default_account` | `""` | Where an email draft goes when you name no account and it is not a reply (an account id, address or label). Empty is **Ask me**: with more than one account Friday asks which. Settings > Connections > Google accounts > Default account for drafts. |
+| `unattended_send_undo_s` | `120` | The Undo window, in seconds (10 to 600), of an email sent with nobody watching under a pre-approval. Sends you approve in person keep 10 seconds. |
+| `calendar_delete_notify_guests` | `false` | Whether **Notify guests** starts ticked when you delete a calendar event. |
 
 ### Spending
 
@@ -236,12 +254,15 @@ Grants for scheduled jobs are not a setting; they are kept in
 | `cost_budget` | alert at $5/day and $50/month (both off); hard stop $0 (off); loop guard on | The alert cap warns at 80% and alerts at 100% and never blocks. The hard stop, when enabled, refuses further cloud calls for the rest of its period. Local models are never affected. The loop guard (`loop_guard_enabled`) stops a model that repeats the same call without the conversation moving on; it fires on that pattern, never on an amount. |
 | `daily_creation_free_choice` | `true` | Daily creation chooses freely across media. |
 | `daily_creation_budget_usd` | `null` | Soft cap on a day's creative spend; `null` or `0` is no cap. Off unless you set it (asked about during setup). |
+| `spending_caps` | not asked; workspace caps `null` | Whether the setup conversation has been through the caps, what you answered, and the default per-workspace task budgets (`null` is no cap). Every cap ships off. |
 
 ### Scheduled and background work
 
 | Key | Default | Meaning |
 |---|---|---|
 | `idle_work` | on; after 600 s idle; between 09:00 and 23:00 | Work that runs once a day while you are away, such as daily creation. |
+| `schedules.missed_default` | `"run_once"` | For new jobs, a run missed while Friday was closed: `run_once` at the next start, or `skip` until its next time. Each job can choose its own. Settings > General > Scheduled jobs. |
+| `schedules.held_default` | `"retry"` | For new jobs, a run held because its pinned model was unavailable: `retry` (run once when the model is back) or `wait` (its next scheduled time). A pinned job never moves to another model. |
 | `scheduled_cloud.answered` | `false` | Whether you have answered "may daily creation and the heartbeat use a cloud model when this PC has no local model?". Skipping the question leaves it `false`. |
 | `scheduled_cloud.allow` | `false` | Your answer. When `true` and no local model is serving, daily creation and the heartbeat run on the cloud models below. In a local routing mode a local model that is serving is always used first, and News is not covered: it always runs on this PC. Under a cloud routing mode see `routine_follows_cloud_mode` below. Ignored until `answered` is `true`. |
 | `scheduled_cloud.at` | `null` | When you answered (ISO time). |
@@ -335,7 +356,8 @@ the cost of the call; `tools/voice_session_tokens.py` measures it on this PC):
 Cloud voices: `elevenlabs_model` (`"eleven_flash_v2_5"`), `elevenlabs_voice_id`,
 `inworld_model` (`"inworld-tts-2-flash"`), `inworld_voice_id`,
 `inworld_plan_tier` (`"on_demand"`). The two API keys are stored encrypted
-when you add them on the setup checklist or in Settings > Connections. An
+when you add them on the Connect your services screen (setup or Settings >
+Connections). An
 `elevenlabs_api_key` or `inworld_api_key` found in `settings.json` is still
 read, and is moved into the encrypted store the first time it is used. The
 `ELEVENLABS_API_KEY` and `INWORLD_API_KEY` environment variables take
@@ -356,6 +378,7 @@ precedence over both.
 | `camera_interval_sec` | `3` | Camera capture interval: 1, 3 or 5 seconds. |
 | `audio_input_device_id`, `audio_output_device_id` | `""` | Preferred microphone and speaker. |
 | `pause_warnings_off` | `false` | "Don't warn me again" when pausing a seat. |
+| `dock_by_asking` | `"apply_with_undo"` | Asking Friday to show or hide a workspace in the dock: done at once with an Undo, or `ask_first` (a card). |
 
 ### Library, artifacts and publishing
 
@@ -393,7 +416,8 @@ and `channels` (the channel bridges read `~/.friday/channels.json` instead).
 | File | What it configures |
 |---|---|
 | `~/.friday/phone/config.json` | The phone: on/off (off by default), Twilio account and number, your verified cell, what Friday may do by text and call, limits. Secrets are stored separately and encrypted. See [Phone](phone.md). |
-| `~/.friday/privacy_shield.json` | `watchlist`: extra strings (names, account numbers) to redact from anything bound for the cloud. |
+| `~/.friday/privacy_shield.json` | `never_send`: your never-send list, refused for every cloud model in every mode. `watchlist`: extra strings (names, account numbers, your own name from setup) to redact from anything bound for the cloud. |
+| `~/.friday/connections_choice.json` | Your "I'll just use local AI" answer on the Connect your services screen. It changes no privacy or routing setting. |
 | `~/.friday/schedules.json` | Scheduled jobs. |
 | `~/.friday/governance/grants.json` | Grants for scheduled jobs. |
 | `~/.friday/mcp_servers.json` | MCP servers Friday starts. |
@@ -481,8 +505,10 @@ child processes.
 
 ## Provider keys
 
-The recommended place for a key is **Settings > Connections**, which
-encrypts it under Friday's keystore (`~/.friday/providers/keys/`). Where every
+The recommended place for a key is **Settings > Connections > Connect your
+services** (see [Connect your services](connections.md)), which encrypts it
+under Friday's keystore (`~/.friday/providers/keys/`). A key pasted into the
+chat is withheld, never stored. Where every
 credential lives is in [SECURITY.md](../../SECURITY.md#where-secrets-live).
 
 | Provider | Environment variable |
@@ -534,6 +560,9 @@ encrypted at rest on this disk.
 | `config.yaml` | Keys written by the terminal wizard | Plain text |
 | `wiki/` | Your wiki pages | Plain text, except sections in `wiki_encrypted_sections` |
 | `memory/`, `chat_history.json` | Conversations and conversation memory | Plain text |
+| `conversations/index.sqlite` | The full-text index behind Search your conversations; pasted keys are withheld before indexing | Plain text |
+| `core_memory/ME.md`, `core_memory/FRIDAY.md` | The Memory card: About you, and Working with you | Plain text |
+| `setup/ledger.jsonl` | The setup record: one line per setup decision and who made it, labels and counts only | Plain text, hash-chained |
 | `knowledge-graph/` | The graph derived from your pages; safe to delete, it is rebuilt | Private and sensitive records encrypted |
 | `finance/`, `health/`, `vault/legal/`, `vault/finances/`, `vault/family/` | The vault | Encrypted when a vault passphrase is set |
 | `security/keystore.json` | The credential root key | Owner-only file; unwrapped by default |

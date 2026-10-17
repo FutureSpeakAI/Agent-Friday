@@ -19,9 +19,10 @@ The skill system has three parts:
 
 - **Saved from a workflow.** After a successful workflow run whose deliverable
   was verified, **Keep as reusable procedure** saves the workflow's steps as a
-  skill named `workflow-<workflow name>`. It is refused if the run was not
-  verified, or if the workflow changed after that run. Saving it again for the
-  same revision changes nothing.
+  skill named `workflow-` plus the workflow's short name. It is refused if the
+  run was not verified, if the workflow changed after that run, or if a
+  different skill already uses that name. Saving it again for the same revision
+  changes nothing.
 - **Created in chat.** Ask Friday to remember a procedure. Friday uses the
   `learn_skill` tool, which writes a YAML skill file.
 - **Imported.** From a folder, a `.zip`, a legacy `.yaml` file or an

@@ -1,5 +1,7 @@
 # Five settings that persist and redraw but drive nothing — five decisions
 
+> **Status (2026-10-17):** still in force: the four builds are still unbuilt and their controls stay out of Settings (tests/unit/test_settings_structure.py:153); the seven cloud-voice keys are declared (core/__init__.py:2626-2637) and pinned (tests/gauntlet/test_cloud_voice_egress_and_cost.py:220).
+
 > **Status:** active
 > **Last verified:** 2026-09-09 (addendum: three more found, tally now 8)
 > **Implementation:** none yet — `scene_name` removed, with proof test `tests/gauntlet/test_dead_scene_name_setting_removed.py`; the other four are ruled but unbuilt. Until each is built, the Settings pane does not show its control (`auto_open_chat`, `compact_mode`, `startup_workspace` removed from Settings; `tests/unit/test_settings_structure.py`), so no switch claims an effect it does not have. The ruling to build them stands.

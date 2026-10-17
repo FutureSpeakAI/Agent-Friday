@@ -1,8 +1,10 @@
 # Meetings
 
 Agent Friday™ can record a meeting or a call, write down what was said, and take
-notes. All of it happens on this PC. Nothing is recorded unless you press start
-on screen and confirm. Friday never starts a recording by herself.
+notes. Recording, the transcript and the notes are made on this PC. Meeting
+content leaves only in the ways listed under [Privacy](#privacy), such as an
+email you approve. Nothing is recorded unless you press start on screen and
+confirm. Friday never starts a recording by herself.
 
 ## Where to find it
 
@@ -27,10 +29,10 @@ start card and waits for you. She does not start anything by voice.
 - A name for the meeting. If a calendar event is on now, its title is filled in.
 - **Keep the audio (encrypted)**, **Also record the other side of the call**,
   and **Stop after** 1 to 4 hours (the default is 2).
-- The start button. It reads "I've told everyone, start recording". If you
-  changed **Consent mode** to **owner decides** (the setting
-  `meeting_consent_mode`), it reads "I've checked what applies, start
-  recording". Either way, recording starts only from the Start card in the Friday window: the request must come from that page with its session token. That proves a page, not a physical click, so a program on this PC that forges those browser headers could ask for a start.
+- The start button. It reads "I've told everyone" followed by "start
+  recording". If the setting `meeting_consent_mode` is `owner_decides` (there
+  is no on-screen switch for it; see [Configuration](configuration.md)), it
+  reads "I've checked what applies" followed by "start recording". Either way, recording starts only from the Start card in the Friday window: the request must come from that page with its session token. That proves a page, not a physical click, so a program on this PC that forges those browser headers could ask for a start.
 
 "Your call is starting. Take notes?" may appear for a calendar event. It shows
 at most once per event, and switches itself off after you say **Not now** twice
