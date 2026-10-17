@@ -22,6 +22,7 @@ calendar edit clears all three bars by not existing.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 
 from agent_friday.services.calendar_engine import (
@@ -32,6 +33,55 @@ from agent_friday.services.calendar_engine import (
 )
 
 FULL_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
+
+_log = logging.getLogger("friday.calendar_write")
+
+#: What a route may show the browser for a failed write, by the `code` the
+#: result carries. A result's `error` is for the model and may name the event
+#: or the accounts; a route answers with `public_error(result)`, which is only
+#: ever one of these sentences. No sentence here or in any `error` is built
+#: from an exception: the exception's type goes to the local log.
+ERROR_MESSAGES = {
+    "bad_calendar": "that is not a calendar id; nothing was changed",
+    "needs_reconnect": ("Google Calendar cannot be written to right now; reconnect "
+                        "Google in Settings > Connections. Nothing was changed."),
+    "needs_account": "that Google account cannot write to this calendar right now; nothing was changed",
+    "no_service": "Google Calendar could not be reached; nothing was changed",
+    "missing_fields": "a title and a start time are required",
+    "title_refused": "could not create the event: the privacy gate kept the title on this device",
+    "bad_end": "could not work out an end time from the start time",
+    "create_failed": "could not create the event; Google did not accept it",
+    "bad_response": "a reply is one of: accepted, tentative, declined",
+    "read_failed": "could not read that event from Google",
+    "no_invitation": "there is no invitation for you on this event to reply to",
+    "organiser": "you organise this event; there is no invitation to reply to",
+    "reply_failed": "could not send the reply; Google did not accept it",
+    "search_failed": "Calendar search failed",
+    "update_failed": "could not update the event; Google did not accept it",
+}
+GENERIC_ERROR = "the calendar change could not be made; nothing was changed"
+
+
+def _fail(code: str, text=None, **extra) -> dict:
+    """A failed result: `error` (the model's sentence, `ERROR_MESSAGES[code]`
+    unless a fuller one is given) and `code` (what the browser is told)."""
+    return {"error": ERROR_MESSAGES[code] if text is None else text, "code": code, **extra}
+
+
+def public_error(result) -> str:
+    """The sentence a route shows for a failed `result`: the fixed message for
+    its code, never the result's own `error` text."""
+    code = str(result.get("code") or "") if isinstance(result, dict) else ""
+    return ERROR_MESSAGES.get(code, GENERIC_ERROR)
+
+
+def _logged(what: str, exc: BaseException) -> None:
+    """Log a Google or library failure by its type (and HTTP status) only: the
+    message can quote a request, a token or event text, and stays out of
+    results and logs."""
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    _log.warning("%s: %s%s", what, type(exc).__name__,
+                 (" (HTTP %s)" % status) if isinstance(status, int) else "")
 
 
 def _cal(calendar_id) -> str:
@@ -82,7 +132,8 @@ def write_ready() -> tuple:
     try:
         data = json.loads(GOOGLE_TOKEN_PATH.read_text(encoding="utf-8"))
     except Exception as e:
-        return False, "the stored Google token could not be read (%s)" % e
+        _logged("reading the stored Google token", e)
+        return False, "the stored Google token could not be read"
     granted = list(data.get("scopes") or [])
     if CALENDAR_WRITE_SCOPE in granted or FULL_CALENDAR_SCOPE in granted:
         return True, None
@@ -165,7 +216,8 @@ def _service(account_id=None):
             from agent_friday.services import google_accounts as ga
             creds = ga.credentials_for(account_id)
         except Exception as e:
-            return None, "could not load that account's credentials: %s" % e
+            _logged("loading an account's Google credentials", e)
+            return None, "could not load that account's credentials"
         if not creds:
             return None, ("that Google account needs reconnecting; its "
                           "credentials could not be used.")
@@ -176,12 +228,14 @@ def _service(account_id=None):
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return None, "google-api-python-client not installed: %s" % e
+        _logged("importing google-api-python-client", e)
+        return None, "google-api-python-client is not installed"
     try:
         return build("calendar", "v3", credentials=creds,
                      cache_discovery=False), None
     except Exception as e:
-        return None, "could not build the Calendar client: %s" % e
+        _logged("building the Calendar client", e)
+        return None, "could not build the Calendar client"
 
 
 def find_events(query: str, *, days_back: int = 60, days_ahead: int = 400,
@@ -207,7 +261,8 @@ def find_events(query: str, *, days_back: int = 60, days_ahead: int = 400,
             q=query, singleEvents=True, orderBy="startTime", maxResults=250,
         ).execute()
     except Exception as e:
-        return {"error": "Calendar search failed: %s" % e}
+        _logged("searching the calendar", e)
+        return _fail("search_failed")
     events, master_ids = [], set()
     for ev in resp.get("items", []):
         rid = ev.get("recurringEventId")
@@ -368,8 +423,9 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
                                body=patch).execute()
             _drop_calendar_cache()
         except Exception as e:
+            _logged("adding to a calendar event", e)
             skipped.append({"id": t["id"], "title": t.get("title"),
-                            "why": "patch failed: %s" % e})
+                            "why": "Google did not accept the change"})
             continue
         changed.append({"id": t["id"], "title": t.get("title"),
                         "kind": t["kind"], "set": patch, "before": before})
@@ -391,13 +447,15 @@ def _gate_calendar_field(text: str, field: str) -> tuple[str, str]:
     try:
         from agent_friday.services import egress_gate as _eg
     except Exception as e:
-        return "", f"the privacy gate could not be reached ({e})"
+        _logged("loading the privacy gate", e)
+        return "", "the privacy gate could not be reached"
     try:
         gated = _eg._gate_text(text, "google", f"calendar.{field}")
     except _eg.NeverSendBlocked as nb:
         return "", str(nb)
     except Exception as e:
-        return "", f"the privacy gate failed ({e})"
+        _logged("gating calendar text", e)
+        return "", "the privacy gate failed"
     return gated, ""
 
 
@@ -409,23 +467,23 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
     `account_id` names the account; see `resolve_write_account`. `calendar_id`
     names one of that account's calendars (its primary one by default)."""
     if not _cal(calendar_id):
-        return {"error": "that is not a calendar id; nothing was changed"}
+        return _fail("bad_calendar")
     ready, why = write_ready()
     if not ready:
-        return {"error": why, "needs_reconnect": True}
+        return _fail("needs_reconnect", why, needs_reconnect=True)
     if not title or not start:
-        return {"error": "a title and a start time are required"}
+        return _fail("missing_fields")
     aid, acct_err = resolve_write_account(account_id)
     if acct_err:
-        return {"error": acct_err, "needs_account": True}
+        return _fail("needs_account", acct_err, needs_account=True)
     svc, err = _service(aid)
     if svc is None:
-        return {"error": err}
+        return _fail("no_service", err)
     title, title_err = _gate_calendar_field(title, "title")
     if title_err or not title:
-        return {"error": "could not create the event: title " +
-                (title_err or "contained only private content that stays "
-                              "on this device")}
+        return _fail("title_refused", "could not create the event: title " +
+                     (title_err or "contained only private content that stays "
+                                   "on this device"))
     location, _le = _gate_calendar_field(location, "location")
     description, _de = _gate_calendar_field(description, "description")
     if not end:
@@ -433,7 +491,7 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
             end = (datetime.fromisoformat(start)
                    + timedelta(hours=1)).isoformat()
         except Exception:
-            return {"error": "could not derive an end time from %r" % start}
+            return _fail("bad_end", "could not derive an end time from %r" % start)
     body = {"summary": title, "start": {"dateTime": start},
             "end": {"dateTime": end}}
     if location:
@@ -445,7 +503,8 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
     try:
         ev = svc.events().insert(calendarId=_cal(calendar_id), body=body).execute()
     except Exception as e:
-        return {"error": "could not create the event: %s" % e}
+        _logged("creating a calendar event", e)
+        return _fail("create_failed")
     _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
@@ -470,7 +529,8 @@ def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary") -
     try:
         ev = svc.events().get(calendarId=_cal(calendar_id), eventId=event_id).execute()
     except Exception as e:
-        return {"error": "could not read event %s: %s" % (event_id, e)}
+        _logged("reading a calendar event", e)
+        return _fail("read_failed", "could not read event %s" % event_id)
     st, en = ev.get("start") or {}, ev.get("end") or {}
     return {"ok": True, "id": ev.get("id") or event_id, "title": ev.get("summary") or "(no title)",
             "start": st.get("dateTime") or "", "end": en.get("dateTime") or "",
@@ -594,7 +654,8 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
         before = svc.events().get(calendarId=_cal(calendar_id),
                                   eventId=event_id).execute()
     except Exception as e:
-        return {"error": "could not read event %s: %s" % (event_id, e)}
+        _logged("reading a calendar event", e)
+        return _fail("read_failed", "could not read event %s" % event_id)
     patch, would_clear = {}, []
     for key, val in (("summary", title), ("location", location),
                      ("description", description)):
@@ -629,7 +690,8 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
         ev = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
                                 body=patch).execute()
     except Exception as e:
-        return {"error": "could not update the event: %s" % e}
+        _logged("updating a calendar event", e)
+        return _fail("update_failed")
     _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "set": patch,
@@ -663,23 +725,24 @@ def respond_to_event(event_id: str, response: str, *, account_id=None,
     no invitation for the owner (her own event, or one she is not on).
     `before` is the reply it replaced, so the page can say what changed."""
     if not _cal(calendar_id):
-        return {"error": "that is not a calendar id; nothing was changed"}
+        return _fail("bad_calendar")
     response = str(response or "").strip().lower()
     if response not in RSVP_RESPONSES:
-        return {"error": "a reply is one of: " + ", ".join(RSVP_RESPONSES)}
+        return _fail("bad_response")
     ready, why = write_ready()
     if not ready:
-        return {"error": why, "needs_reconnect": True}
+        return _fail("needs_reconnect", why, needs_reconnect=True)
     aid, acct_err = resolve_write_account(account_id)
     if acct_err:
-        return {"error": acct_err, "needs_account": True}
+        return _fail("needs_account", acct_err, needs_account=True)
     svc, err = _service(aid)
     if svc is None:
-        return {"error": err}
+        return _fail("no_service", err)
     try:
         ev = svc.events().get(calendarId=_cal(calendar_id), eventId=event_id).execute()
     except Exception as e:
-        return {"error": "could not read event %s: %s" % (event_id, e)}
+        _logged("reading a calendar event", e)
+        return _fail("read_failed", "could not read event %s" % event_id)
     attendees = [dict(a) for a in (ev.get("attendees") or [])]
     # Google's `self` is "the calendar this copy sits on". On a calendar shared with her that is someone
     # else, so the row is hers only on her own primary calendar or when it carries her own address.
@@ -687,13 +750,13 @@ def respond_to_event(event_id: str, response: str, *, account_id=None,
     mine = [a for a in attendees if a.get("self") and (_cal(calendar_id) == "primary"
                                                        or (own and str(a.get("email") or "").lower() == own))]
     if not mine:
-        return {"error": "there is no invitation for you on “%s” to reply to"
-                % (ev.get("summary") or "this event")}
+        return _fail("no_invitation", "there is no invitation for you on “%s” to reply to"
+                     % (ev.get("summary") or "this event"))
     org = ev.get("organizer") or {}
     if org.get("self") and (_cal(calendar_id) == "primary" or (own and str(org.get("email") or "").lower() == own)
                             or mine[0].get("organizer")):
-        return {"error": "you organise “%s”; there is no invitation to reply to"
-                % (ev.get("summary") or "this event")}
+        return _fail("organiser", "you organise “%s”; there is no invitation to reply to"
+                     % (ev.get("summary") or "this event"))
     before = mine[0].get("responseStatus") or "needsAction"
     if before == response:
         return {"ok": True, "unchanged": True, "id": event_id, "response": response, "before": before}
@@ -706,7 +769,8 @@ def respond_to_event(event_id: str, response: str, *, account_id=None,
         out = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
                                  body={"attendees": [row], "attendeesOmitted": True}, sendUpdates="all").execute()
     except Exception as e:
-        return {"error": "could not send the reply: %s" % e}
+        _logged("sending an invitation reply", e)
+        return _fail("reply_failed")
     _drop_calendar_cache()
     return {"ok": True, "id": out.get("id") or event_id, "title": out.get("summary") or ev.get("summary"),
             "response": response, "before": before, "account_id": aid, "calendar_id": _cal(calendar_id)}
