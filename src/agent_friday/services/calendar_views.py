@@ -102,6 +102,22 @@ def _load_visible() -> dict:
         return {}
 
 
+#: What `set_visible` refuses with, by code. A route shows the sentence for the
+#: code the refusal carries; the key that was refused is never echoed back.
+VISIBLE_REFUSALS = {
+    "none_named": "name at least one calendar to switch",
+    "not_yours": "that is not one of your calendars",
+}
+
+
+class VisibleRefused(ValueError):
+    """A refused switch, carrying the code of its fixed sentence."""
+
+    def __init__(self, code: str):
+        self.code = code if code in VISIBLE_REFUSALS else "not_yours"
+        super().__init__(VISIBLE_REFUSALS[self.code])
+
+
 def set_visible(changes: dict) -> dict:
     """Switch calendars on or off in Friday (never in Google). `changes` maps a
     calendar key to True/False. Returns the whole stored choice.
@@ -110,12 +126,12 @@ def set_visible(changes: dict) -> dict:
     not listed there is refused, so the stored choice never grows past the
     calendars she has."""
     if not isinstance(changes, dict) or not changes:
-        raise ValueError("name at least one calendar to switch")
+        raise VisibleRefused("none_named")
     known = {str(c.get("key") or "") for c in (cached_calendars().get("calendars") or [])}
     for k in changes:
         k = str(k)
         if "|" not in k or len(k) > 400 or k not in known:
-            raise ValueError("not one of your calendars: %r" % k[:60])
+            raise VisibleRefused("not_yours")
     with _LOCK:
         cur = _load_visible()
         for k, v in changes.items():

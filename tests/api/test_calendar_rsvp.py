@@ -7,6 +7,8 @@ Synthetic accounts and events only.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent_friday.services import calendar_write as cw
@@ -133,3 +135,40 @@ def test_a_program_without_the_owners_click_sends_no_reply(client, google):
         assert r.status_code == 403, (headers, r.get_json())
     assert log == [], "Google was called for a request that was not the owner's click"
     assert store[("fam", "inv")]["attendees"][1]["responseStatus"] == "needsAction"
+
+
+MARKER = "SECRET-MARKER-123"
+
+
+@pytest.mark.parametrize("fails", ["get", "patch"])
+def test_a_google_failure_is_answered_in_a_fixed_sentence_never_its_own_text(client, google, monkeypatch, fails):
+    """The browser gets the sentence for the failure's code; the exception's text stays on this side."""
+    store, log = google
+
+    class _Raising(_Events):
+        def get(self, calendarId, eventId):
+            if fails == "get":
+                raise RuntimeError(MARKER)
+            return super().get(calendarId, eventId)
+
+        def patch(self, calendarId, eventId, body, **kw):
+            raise RuntimeError(MARKER)
+
+    svc = _Svc(store, log)
+    svc.e = _Raising(store, log)
+    monkeypatch.setattr(cw, "_service", lambda account_id=None: (svc, None))
+    r = client.post("/api/calendar/events/inv/rsvp",
+                    json={"calendar_key": "home|fam", "response": "accepted", "confirmed": True}, headers=_page())
+    assert r.status_code == 409
+    assert MARKER not in r.get_data(as_text=True)
+    want = "read_failed" if fails == "get" else "reply_failed"
+    assert r.get_json()["message"] == cw.ERROR_MESSAGES[want]
+    out = cw.respond_to_event("inv", "accepted", account_id="home", calendar_id="fam")
+    assert out["code"] == want and MARKER not in json.dumps(out)
+
+
+def test_a_refusal_naming_the_event_reaches_the_browser_as_the_fixed_sentence(client, google):
+    store, log = google
+    r = client.post("/api/calendar/events/mine/rsvp",
+                    json={"calendar_key": "home|fam", "response": "declined", "confirmed": True}, headers=_page())
+    assert r.status_code == 409 and r.get_json()["message"] == cw.ERROR_MESSAGES["organiser"]
