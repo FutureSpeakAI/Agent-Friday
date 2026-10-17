@@ -377,3 +377,53 @@ def test_each_card_says_what_it_can_reach_once(client, home):
     kie = next(i for i in client.get("/api/setup/connections").get_json()["items"]
                if i["id"] == "provider:kie")
     assert kie["category"] == "creative" and "generation" in kie["unlocks"]
+
+
+# ── Refusals are fixed sentences ─────────────────────────────────────────────
+
+MARKER = "SECRET-MARKER-123"
+
+
+def test_a_registry_refusal_never_reaches_the_screen_as_its_own_text(client, home, monkeypatch):
+    from agent_friday.services import provider_registry as pr
+
+    class _Reg:
+        def get_provider(self, name):
+            return None
+
+        def add_provider(self, desc, replace=False):
+            raise ValueError(MARKER)
+    monkeypatch.setattr(pr, "get_provider_registry", lambda: _Reg())
+    r = client.post("/api/setup/connections/endpoint",
+                    json={"kind": "custom", "label": "Gateway", "base_url": "https://gateway.example.com/v1"})
+    assert r.status_code == 422 and MARKER not in r.get_data(as_text=True)
+    from agent_friday.services import connections_setup as cx
+    assert r.get_json()["message"] == cx.REFUSALS["endpoint_not_accepted"]
+
+
+def test_a_sign_in_failure_never_reaches_the_screen_as_its_own_text(client, home, monkeypatch):
+    from agent_friday.services import connections_setup as cx
+
+    class _Mgr:
+        def authorize(self, name, open_browser=False, on_ready=None):
+            return {"ok": False, "error": MARKER}
+    monkeypatch.setattr(cx, "_manager", lambda: _Mgr())
+    r = client.post("/api/setup/connections/mcp/docs/sign-in", json={})
+    assert r.status_code == 422 and MARKER not in r.get_data(as_text=True)
+    assert r.get_json()["message"] == cx.REFUSALS["mcp_sign_in"]
+
+
+def test_what_the_person_typed_is_not_echoed_in_a_refusal(client, home):
+    assert client.post("/api/setup/connections/mcp",
+                       json={"name": "docs", "url": "https://mcp.example.com/mcp"}).status_code == 200
+    r = client.delete("/api/setup/connections/mcp/zz-" + MARKER.lower())
+    assert r.status_code == 422 and MARKER.lower() not in r.get_data(as_text=True)
+    from agent_friday.services import connections_setup as cx
+    assert r.get_json()["message"] == cx.REFUSALS["mcp_missing"]
+
+
+def test_a_refusal_names_only_a_connector_from_the_fixed_table():
+    from agent_friday.services import connections_setup as cx
+    assert str(cx.Refused("mcp_connector_name", connector="notion")).startswith("notion has its own card")
+    assert MARKER not in str(cx.Refused("mcp_connector_name", connector=MARKER))
+    assert str(cx.Refused(MARKER)) == cx.REFUSALS["refused"]

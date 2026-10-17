@@ -377,23 +377,65 @@ def testable(item_id: str) -> bool:
 
 # ── Local and custom endpoints ───────────────────────────────────────────────
 
+#: Every refusal this screen can give, by code. The screen shows the sentence
+#: for the code a `Refused` carries. A sentence names something only from a
+#: fixed table (a connector card's own server name); what the person typed (a
+#: label, a server name, an address) and any exception's text are never
+#: echoed back.
+REFUSALS = {
+    "url_scheme": "That address should start with http:// or https://.",
+    "url_password": "Leave any password out of the address; keys go in the secure field.",
+    "url_local_only": "This one runs on this computer or your own network.",
+    "url_needs_https": "A service on the internet needs an https:// address.",
+    "endpoint_name": "Give it a short name, letters and numbers.",
+    "endpoint_exists": "You already have one with that name; pick another name.",
+    "endpoint_kind": "Unknown endpoint kind.",
+    "endpoint_not_accepted": "That address was not accepted.",
+    "command_quote": "That command has an unclosed quote.",
+    "command_empty": "Paste the command that starts the server.",
+    "mcp_name": "Give it a short name: lowercase letters, numbers, - or _.",
+    "mcp_connector_name": "{connector} has its own card; connect it there, or pick another name.",
+    "mcp_url_or_command": "Paste either an address or a command, not both.",
+    "mcp_exists": "There is already a server with that name.",
+    "mcp_url_keys": ("Leave keys out of the address. If the server needs a key, add it "
+                     "with its own instructions in Settings > Advanced."),
+    "mcp_connector_remove": "Disconnect that one from its own card.",
+    "mcp_missing": "There is no server with that name.",
+    "mcp_starting": "The MCP servers are still starting; try again in a moment.",
+    "mcp_sign_in": "That server can't sign in.",
+    "refused": "That was not accepted.",
+}
+
+
+def refusal_text(code: str, connector: str = "") -> str:
+    """The sentence for `code`. `{connector}` is filled only with a name taken
+    from `_CONNECTOR_SERVERS` itself (the one equal to `connector`)."""
+    text = REFUSALS.get(code, REFUSALS["refused"])
+    named = next((c for c in sorted(_CONNECTOR_SERVERS) if c == connector), "That name")
+    return text.replace("{connector}", named)
+
+
 class Refused(ValueError):
-    """A plain sentence the screen shows as it is."""
+    """A refusal by code; `str()` is its fixed sentence, which the screen shows."""
+
+    def __init__(self, code: str, connector: str = ""):
+        self.code = code if code in REFUSALS else "refused"
+        self.connector = connector if connector in _CONNECTOR_SERVERS else ""
+        super().__init__(refusal_text(self.code, self.connector))
 
 
 def _clean_url(url: str, *, local_only: bool) -> str:
     url = (url or "").strip().rstrip("/")
     p = urlparse(url)
     if p.scheme not in ("http", "https") or not p.netloc:
-        raise Refused("That address should start with http:// or https://.")
+        raise Refused("url_scheme")
     if p.username or p.password:
-        raise Refused("Leave any password out of the address; keys go in the "
-                      "secure field.")
+        raise Refused("url_password")
     from agent_friday.routing.provider_descriptors import is_private_host
     if local_only and not is_private_host(url):
-        raise Refused("This one runs on this computer or your own network.")
+        raise Refused("url_local_only")
     if p.scheme == "http" and not is_private_host(url):
-        raise Refused("A service on the internet needs an https:// address.")
+        raise Refused("url_needs_https")
     return url
 
 
@@ -438,16 +480,15 @@ def save_endpoint(kind: str, label: str, base_url: str) -> dict:
         label = re.sub(r"\s+", " ", str(label or "")).strip()[:40]
         slug = re.sub(r"[^a-z0-9-]+", "-", label.lower()).strip("-")[:24].strip("-")
         if not label or not _NAME_RE.match(slug or ""):
-            raise Refused("Give it a short name, letters and numbers.")
+            raise Refused("endpoint_name")
         name = CUSTOM_PREFIX + slug
         if get_provider_registry().get_provider(name) is not None:
-            raise Refused("You already have one called %s; pick another name."
-                          % label)
+            raise Refused("endpoint_exists")
         url = _clean_url(base_url, local_only=False)
         auth = {"type": "env_var",
                 "key": "FRIDAY_%s_API_KEY" % name.upper().replace("-", "_")}
     else:
-        raise Refused("Unknown endpoint kind.")
+        raise Refused("endpoint_kind")
     from agent_friday.routing.provider_descriptors import is_private_host
     desc = {"name": name, "label": label, "type": "openai-compatible",
             "base_url": url, "auth": auth, "models": [],
@@ -456,7 +497,7 @@ def save_endpoint(kind: str, label: str, base_url: str) -> dict:
     try:
         get_provider_registry().add_provider(desc, replace=(kind == "lmstudio"))
     except ProviderExistsError:
-        raise Refused("You already have one called %s; pick another name." % label)
+        raise Refused("endpoint_exists")
     try:
         from agent_friday.services.model_discovery import invalidate_cache
         invalidate_cache(name)
@@ -497,9 +538,9 @@ def _split_command(command: str) -> tuple[str, list]:
     try:
         parts = shlex.split(command, posix=True)
     except ValueError:
-        raise Refused("That command has an unclosed quote.")
+        raise Refused("command_quote")
     if not parts:
-        raise Refused("Paste the command that starts the server.")
+        raise Refused("command_empty")
     return parts[0], parts[1:]
 
 
@@ -510,23 +551,20 @@ def add_mcp(name: str, url: str = "", command: str = "") -> dict:
     reloads the servers."""
     name = str(name or "").strip().lower()
     if not _MCP_NAME_RE.match(name):
-        raise Refused("Give it a short name: lowercase letters, numbers, - or _.")
+        raise Refused("mcp_name")
     if name in _CONNECTOR_SERVERS:
-        raise Refused("%s has its own card; connect it there, or pick another "
-                      "name." % name)
+        raise Refused("mcp_connector_name", connector=name)
     if bool(url) == bool(command):
-        raise Refused("Paste either an address or a command, not both.")
+        raise Refused("mcp_url_or_command")
     from agent_friday.services import agent
     cfg = agent._load_mcp_servers() or {}
     servers = dict(cfg.get("servers") or {})
     if name in servers:
-        raise Refused("There is already a server called %s." % name)
+        raise Refused("mcp_exists")
     if url:
         clean = _clean_url(url, local_only=False)
         if urlparse(clean).query:
-            raise Refused("Leave keys out of the address. If the server needs "
-                          "a key, add it with its own instructions in Settings "
-                          "> Advanced.")
+            raise Refused("mcp_url_keys")
         spec = {"url": clean, "enabled": True, "note": "Added in Connect your services."}
     else:
         cmd, args = _split_command(command)
@@ -544,12 +582,12 @@ def add_mcp(name: str, url: str = "", command: str = "") -> dict:
 def remove_mcp(name: str) -> dict:
     name = str(name or "").strip().lower()
     if name in _CONNECTOR_SERVERS:
-        raise Refused("Disconnect that one from its own card.")
+        raise Refused("mcp_connector_remove")
     from agent_friday.services import agent
     cfg = agent._load_mcp_servers() or {}
     servers = dict(cfg.get("servers") or {})
     if name not in servers:
-        raise Refused("There is no server called %s." % name)
+        raise Refused("mcp_missing")
     servers.pop(name)
     agent._save_mcp_servers({**cfg, "servers": servers})
     try:
@@ -562,12 +600,13 @@ def remove_mcp(name: str) -> dict:
 def sign_in_mcp(name: str) -> dict:
     mgr = _manager()
     if mgr is None:
-        raise Refused("The MCP servers are still starting; try again in a moment.")
+        raise Refused("mcp_starting")
     from agent_friday.services import agent
     res = mgr.authorize(name, open_browser=False,
                         on_ready=getattr(agent, "_mcp_register_server_tools", None))
     if not res.get("ok"):
-        raise Refused(str(res.get("error") or "That server can't sign in."))
+        _log.debug("mcp sign-in refused for a server (%s)", "error" if res.get("error") else "no answer")
+        raise Refused("mcp_sign_in")
     return {"auth_url": res.get("auth_url") or ""}
 
 
