@@ -1915,6 +1915,9 @@ def main():
         # chosen, not seeded (cloud_intent.mode_was_chosen).
         block["mode_chosen"] = str(chosen_mode).strip().lower()
         block["mode_chosen_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        # Answered at the terminal by the owner: a setup choice. Choosing cloud
+        # only here is consent (privacy/cloud_consent.ROUTING_CONSENT_VIAS).
+        block["mode_chosen_via"] = "setup"
         config["model_routing"] = block
 
     # Defaults that server expects
