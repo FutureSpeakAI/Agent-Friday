@@ -73,41 +73,98 @@ def _headers(account_id: str, message_id: str) -> dict:
     svc = gm._read_svc(account_id)
     msg = gmail_api.execute(svc.users().messages().get(
         userId="me", id=message_id, format="metadata",
-        metadataHeaders=["From", "List-Unsubscribe", "List-Unsubscribe-Post"]))
-    return {h["name"].lower(): h["value"] for h in (msg.get("payload") or {}).get("headers") or []}
+        metadataHeaders=["From", "List-Unsubscribe", "List-Unsubscribe-Post", "Authentication-Results"]))
+    headers = (msg.get("payload") or {}).get("headers") or []
+    out = {h["name"].lower(): h["value"] for h in headers}
+    # Every Authentication-Results header, top to bottom: only the first, the
+    # provider's own, is trusted (inbox_cleanup.dkim_pass_domains).
+    out["authentication-results*"] = [h["value"] for h in headers
+                                      if str(h.get("name") or "").lower() == "authentication-results"]
+    return out
+
+
+def _one_click_target(h: dict) -> str:
+    """The one address Friday may POST to, or "".
+
+    The same rule the inbox clean-up applies: DKIM passed for the sender's
+    own organisation, by the provider's verdict, and the address is on that
+    domain or the From domain. The address returned is the entry that rule
+    approved, never merely the first entry in the header."""
+    from agent_friday.services import inbox_cleanup as ic
+    hdrs = {"from": [h.get("from", "")], "list-unsubscribe": [h.get("list-unsubscribe", "")],
+            "list-unsubscribe-post": [h.get("list-unsubscribe-post", "")],
+            "authentication-results": list(h.get("authentication-results*") or [])}
+    rows: dict = {}
+    ic.add_message(rows, ic.normalize(hdrs, msg_id="m", ts=1.0, via_gmail=True))
+    row = next(iter(rows.values()), None)
+    if not row:
+        return ""
+    verdict = ic.classify(row)
+    return (verdict.get("url") or "") if verdict.get("route") == "one_click" else ""
+
+
+def _post(url: str):
+    """The one POST RFC 8058 defines, with no proxy from the environment, so
+    the pinned address is the address dialled."""
+    import requests
+    return requests.post(url, data="List-Unsubscribe=One-Click", timeout=12, allow_redirects=False,
+                         stream=True, proxies=NO_PROXY,
+                         headers={"Content-Type": "application/x-www-form-urlencoded",
+                                  "User-Agent": "Friday (List-Unsubscribe one-click)"})
+
+
+#: Explicit "no proxy" for every scheme: requests fills proxies from the
+#: environment only where a key is absent, and drops keys set to None.
+NO_PROXY = {"http": None, "https": None, "all": None}
 
 
 def options(account_id: str, message_id: str) -> dict:
     """What leaving this list would involve, for the confirm dialog."""
     h = _headers(account_id, message_id)
     ways = parse_header(h.get("list-unsubscribe", ""))
-    one_click = bool(ways["https"]) and "list-unsubscribe=one-click" in (h.get("list-unsubscribe-post") or "").lower()
+    target = ""
+    if ways["https"] and "list-unsubscribe=one-click" in (h.get("list-unsubscribe-post") or "").lower():
+        target = _one_click_target(h)
+    one_click = bool(target)
     method = "one_click" if one_click else "mailto" if ways["mailto"] else "link" if ways["https"] else None
+    shown = target or (ways["https"][0] if ways["https"] else "")
     return {"status": "ok" if method else "none", "method": method, "sender": h.get("from", ""),
             "mailto": _mailto(ways["mailto"][0]) if ways["mailto"] else None,
             "url": ways["https"][0] if ways["https"] and not one_click else None,
-            "host": urlsplit(ways["https"][0]).hostname if ways["https"] else None}
+            "host": urlsplit(shown).hostname if shown else None}
 
 
 def unsubscribe(account_id: str, message_id: str) -> dict:
     """Do the part Friday can do itself. -> {"status": "done" | "next" | "none" | "error", ...}"""
     opt = options(account_id, message_id)
     if opt["method"] == "one_click":
-        h = _headers(account_id, message_id)
-        url = parse_header(h.get("list-unsubscribe", ""))["https"][0]
-        if not _public_host(url):
+        # The entry the DKIM rule approved, read afresh: the first entry in
+        # the header may be a third party's tracker.
+        url = _one_click_target(_headers(account_id, message_id))
+        if not url or not _public_host(url):
             return {"status": "error", "method": "one_click",
                     "message": "The list's unsubscribe address is not a public web address, so Friday did not contact it."}
-        import requests
+        from agent_friday.services import web_safety
         try:
-            r = requests.post(url, data="List-Unsubscribe=One-Click", timeout=12, allow_redirects=False,
-                              headers={"Content-Type": "application/x-www-form-urlencoded",
-                                       "User-Agent": "Friday (List-Unsubscribe one-click)"})
+            # The address judged public above is the address dialled: a name
+            # that answers differently the second time (DNS rebinding) is refused.
+            with web_safety.pinned(url):
+                r = _post(url)
+                getattr(r, "close", lambda: None)()
+        except web_safety.UnsafeURLError:
+            return {"status": "error", "method": "one_click",
+                    "message": "The list's unsubscribe address is not a public web address, so Friday did not contact it."}
         except Exception as e:
             return {"status": "error", "method": "one_click", "message": ExceptionText("The list did not answer: %s" % e)}
-        if 200 <= r.status_code < 400:
+        if 200 <= r.status_code < 300:
             return {"status": "done", "method": "one_click", "host": opt["host"],
                     "message": "Unsubscribed: %s accepted the request." % opt["host"]}
+        if 300 <= r.status_code < 400:
+            # A redirect is not a confirmation, and following it would send
+            # Friday wherever a mail header pointed.
+            return {"status": "error", "method": "one_click",
+                    "message": "The list sent Friday somewhere else instead of confirming, so it is not "
+                               "unsubscribed yet. Use the list's own page."}
         return {"status": "error", "method": "one_click",
                 "message": "The list refused the request (HTTP %d)." % r.status_code}
     if opt["method"] == "mailto":

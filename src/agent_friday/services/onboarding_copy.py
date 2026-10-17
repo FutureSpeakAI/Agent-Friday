@@ -23,12 +23,16 @@ what it used to say and why it could not stay.
 """
 from __future__ import annotations
 
-# Screen order. Screens 1, 2 and 4 are new; 3 replaces the old provider screen;
-# 3b is shown only when 3 chose cloud.
+# Screen order. The lock (vault) comes before the setup conversation, so
+# nothing personal is asked before it exists. Where Friday may think is no
+# longer a screen here: the conversation asks it as one plain choice (the
+# three postures, services/setup_steps.posture_view) that writes the cloud
+# consent, the routing mode and the scheduled-jobs answer together. The
+# routing and cloud_ack copy below stays for the terminal wizard, which still
+# asks the routing mode.
 # The updates question stays last (test_onboarding_copy pins it); calls sit
 # just before it.
-SCREEN_ORDER = ("collects", "vault", "routing", "cloud_ack", "third_party", "calls",
-                "updates")
+SCREEN_ORDER = ("collects", "vault", "third_party", "calls", "updates")
 
 
 # The one scheduled request to Friday's own project (GitHub's releases list).

@@ -12,12 +12,16 @@ import pytest
 from agent_friday.services import setup_chat as sc
 from agent_friday.services import setup_chat_copy as copy
 
+from setup_walk_helpers import PREAMBLE, answer_through
+
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     import agent_friday.core as core
     from agent_friday.services import setup_connections, setup_reader, soul
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import user_model as _um
+    monkeypatch.setattr(_um, "DB_PATH", tmp_path / "user_model.db")
     monkeypatch.setattr(soul, "SOUL_FILE", tmp_path / "SOUL.md")
     monkeypatch.setattr(soul, "HISTORY_DIR", tmp_path / "soul_history")
     monkeypatch.setattr(soul, "FRIDAY_DIR", tmp_path)
@@ -43,15 +47,16 @@ def home(tmp_path, monkeypatch):
 
 def _through_style(routing="cloud_only"):
     sc.begin(routing, "")
-    for s, v, t in [("welcome", None, "Sam"), ("agent_name", "Friday", ""),
-                    ("basics", {"minor_mode": False, "distribution": "default"}, ""),
-                    ("connect", "done", ""), ("knowledge", "skip", ""), ("reader", "ok", "")]:
+    answer_through(sc, PREAMBLE)
+    for s, v, t in [("connect", "done", ""), ("knowledge", "skip", ""), ("reader", "ok", "")]:
         sc.answer(s, v, t)
     if sc.load_state()["stage"] == "research_ask":       # a model can read
         sc.answer("research_ask", "no", "")
     for _ in copy.QUESTIONS:
         sc.answer("questions", "skip", "")
     sc.answer("style", {"action": "skip"}, "")
+    if sc.load_state()["stage"] == "money":              # the cloud is in play
+        sc.answer("money", "skip", "")
     return sc.load_state()["stage"]
 
 
@@ -73,30 +78,30 @@ def test_without_a_local_model_the_question_is_asked_with_the_cost(home):
     assert "a month in total" in question and "$" in question
     assert "Settings > Spending" in question
     assert [c["value"] for c in v["prompt"]["chips"]] == ["yes", "no", "skip"]
-    assert v["groups"][-1]["state"] == "current"
+    assert next(g for g in v["groups"] if g["id"] == "routine")["state"] == "current"
 
 
 def test_with_a_local_model_the_question_never_appears(home, monkeypatch):
     from agent_friday.services import setup_reader
     monkeypatch.setattr(setup_reader, "local_model", lambda: "gemma4:26b")
-    assert _through_style() == "room_voice"
+    assert _through_style() == "routines"
     assert not any(e.get("stage") == "scheduled_cloud"
                    for e in sc.view()["transcript"])
 
 
 def test_local_only_routing_already_answers_it(home):
-    assert _through_style(routing="local_only") == "room_voice"
+    assert _through_style(routing="local_only") == "routines"
 
 
 def test_an_existing_answer_is_not_asked_again(home):
     home["settings"]["scheduled_cloud"] = {"answered": True, "allow": False}
-    assert _through_style() == "room_voice"
+    assert _through_style() == "routines"
 
 
 def test_yes_is_saved_and_the_chat_moves_on(home):
     _through_style()
     sc.answer("scheduled_cloud", "yes", "")
-    assert sc.load_state()["stage"] == "room_voice"
+    assert sc.load_state()["stage"] == "routines"
     ans = _answers(home)[-1]
     assert ans["answered"] is True and ans["allow"] is True and ans["at"]
     texts = [e["text"] for e in sc.view()["transcript"]]
@@ -113,7 +118,7 @@ def test_no_is_saved_as_an_answer(home):
 def test_skip_leaves_it_unanswered(home):
     _through_style()
     sc.answer("scheduled_cloud", "skip", "")
-    assert sc.load_state()["stage"] == "room_voice"
+    assert sc.load_state()["stage"] == "routines"
     assert _answers(home) == []
 
 
@@ -136,4 +141,4 @@ def test_the_rail_cannot_open_it_on_a_machine_that_does_not_need_it(home, monkey
     _through_style()
     sc.answer("scheduled_cloud", "skip", "")
     monkeypatch.setattr(setup_reader, "local_model", lambda: "gemma4:26b")
-    assert sc.goto("scheduled_cloud")["stage"] == "room_voice"
+    assert sc.goto("scheduled_cloud")["stage"] == "routines"

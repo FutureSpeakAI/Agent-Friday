@@ -13,10 +13,15 @@ def wire(monkeypatch):
     state = SimpleNamespace(body=b'{"sha":"synthetic"}', headers={}, status=200,
                             phase=None, sends=[], sockets=[], closed_responses=[], drips=0)
     monkeypatch.setattr(sites_privacy, "require_generation", lambda generation: None)
+    # socket.socket is replaced for the whole process, so a background thread
+    # left by another test can make one too; only the request's own sockets,
+    # made on this thread, are the adapter's to close.
+    caller = threading.current_thread()
     class Socket:
         def __init__(self, *args):
             self.closed = threading.Event()
-            state.sockets.append(self)
+            if threading.current_thread() is caller:
+                state.sockets.append(self)
         def settimeout(self, timeout):
             assert timeout > 0
         def connect(self, address):
@@ -167,3 +172,12 @@ def test_every_subrequest_receives_the_same_absolute_deadline(monkeypatch):
         adapters._SITE_DEADLINE.reset(token)
         adapters._SITE_GENERATION.reset(origin)
     assert seen == [(deadline, 3), (deadline, 3)]
+
+
+def test_a_socket_another_thread_makes_is_not_the_requests_to_close(wire):
+    # A background thread left by another test opens a socket while the request runs.
+    foreign = threading.Thread(target=lambda: adapters.socket.socket(), name="foreign")
+    foreign.start()
+    foreign.join()
+    request(body={"message": "publish"})
+    assert len(wire.sockets) == 1 and all(sock.closed.is_set() for sock in wire.sockets)
