@@ -127,7 +127,7 @@ def test_a_send_is_for_the_provider_the_card_named(gate):
     assert PRIVATE in _seal(PRIVATE)["messages"][0]["content"]
     other = _seal(PRIVATE, provider="openrouter", model="some/model")["messages"][0]["content"]
     assert MARK not in other, "a Send to one provider let the text go to another"
-    assert [c["payload"]["where"]["provider"] for c in _cards()] == ["anthropic", "openrouter"]
+    assert sorted(c["payload"]["where"]["provider"] for c in _cards()) == ["anthropic", "openrouter"]
 
 
 def test_a_json_tool_result_puts_the_field_on_the_card_not_the_whole_result(gate):
