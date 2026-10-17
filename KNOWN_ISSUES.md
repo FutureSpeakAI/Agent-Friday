@@ -49,8 +49,9 @@ you hit something that is not here, please open an issue.
   setup chat go to Friday's older list of facts about you (deletable from the
   card beside the setup conversation), not to the About you note on the
   Memory card (Settings > Privacy & Data > Memory card).
-- **The never-send list has no Settings screen.** You set it in the setup
-  chat; to add more, run the setup chat again.
+- **You can't add to the never-send list in Settings.** **Settings > Privacy &
+  Data > Locks** shows the list and removes entries; to add more, run the setup
+  chat again.
 - **Settings > Privacy & Data > Cloud consent uses older labels** ("Keep it
   local and private", "Cloud with safeguards on", "Allow unrestricted cloud")
   for the same three answers the setup chat calls Only on this PC, Cloud for

@@ -21,7 +21,7 @@ it leaves the PC.
 | **Recovery** | There is no recovery kit yet. If you lose your passphrase, the vault cannot be opened. Keep it in a password manager. |
 | **Everything else** | Your conversations, memory and most of Friday's databases are not encrypted yet. Until they are, your Windows account protects them. |
 | **Your disk** | Whether Windows' own disk encryption is on. Friday cannot yet read this reliably without administrator rights, so today it says "I couldn't tell" and offers to open Windows' settings page so you can see for yourself. |
-| **Where I think** | Your privacy choice (**Only on this PC**, **Cloud for public things** or **Cloud for everything**, or "not chosen yet"), how many items your never-send list holds, and how many requests left this PC today, by destination. |
+| **Where I think** | Your privacy choice (**Only on this PC**, **Cloud for public things** or **Cloud for everything**, or "not chosen yet"), your never-send list, each entry with a **Remove** button (a click on this page only), and how many requests left this PC today, by destination. |
 | **Keys you've given me** | Which provider keys are stored, encrypted, on this PC. Stored is not the same as working; each key is checked when it is used. |
 | **My records** | Whether Friday's own records were changed after they were written: the setup record and the inbox clean-up receipts. |
 | **Held from the cloud** | Raw records (below) that Friday opened without your yes, held back from every cloud model. |

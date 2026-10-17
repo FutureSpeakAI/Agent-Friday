@@ -34,18 +34,22 @@ asks you where she may think, with three cards and nothing picked for you:
 | Your choice | What it means |
 |---|---|
 | **Only on this PC** | Every model runs on this PC, so your conversations are answered here. Needs a PC that can run a local model, and it is slower. |
-| **Cloud for public things** | Your own words, files and mail stay on this PC; public things such as news and web searches may use the cloud, with the safeguards on. On a PC that cannot run a local model, your conversations also go to the cloud with the safeguards on: money, health, legal and identity details and your never-send list are held back. |
-| **Cloud for everything** | Chat and routines may use the cloud. The never-send floor (below) still applies, every call is still checked and logged, and raw records go only with your yes for each file. |
+| **Cloud for public things** | Your own words, files and mail stay on this PC; public things such as news and web searches may use the cloud, with the safeguards on. On a PC that cannot run a local model, your conversations also go to the cloud with the safeguards on: money, health, legal or identity details are not sent quietly; Friday keeps them on this PC and tells you, and where a card is offered (mail, private records) it shows exactly what would go. Your never-send list is never sent. |
+| **Cloud for everything** | Chat and routines may use the cloud, and only your never-send list is refused. The never-send floor (below) still applies, every call is still checked and logged, and raw records go only with your yes for each file. |
 
 **Choosing Cloud for everything is your consent.** It lets cloud models be
 used for everything except the never-send floor (and, if you turned it on, the
 vault records kept local). Friday tells you once what that means and then does
 what you chose; she does not ask again or lecture.
 
-**Cloud for public things** keeps the safeguards on. So does switching to
-**Cloud only** in Settings > Models without answering the question: picking a
-mode is not the same as answering it. Until you answer, the consent is "not
-answered" and every safeguard stays on.
+**Choosing Cloud only yourself is consent too.** Picking **Cloud only** in
+**Settings > Models** (or the cloud answer in setup) counts the same as Cloud
+for everything, and Settings says so on the button. The starting setting is
+not consent: a fresh install starts on Cloud only without anyone choosing it,
+so until you answer, the consent is "not answered" and every safeguard stays
+on. Of your answer here and a later choice of Cloud only, the later one counts.
+
+**Cloud for public things** keeps the safeguards on.
 You can change the answer later in **Settings > Privacy & Data > Cloud
 consent** (**Re-answer**), and the routing mode in **Settings > Models**.
 
@@ -90,10 +94,13 @@ Two related protections work differently:
 
 - **Keys and passwords you paste into chat** are withheld before anything
   keeps them (see [Keys you paste into chat are withheld](#keys-you-paste-into-chat-are-withheld)).
-- **Card and account numbers in ordinary text** are masked when the safeguards
-  are on (**Only on this PC** or **Cloud for public things**). Under **Cloud
-  for everything** they are not masked. If there is a number that must never
-  reach a cloud model, add it to your never-send list.
+- **Card numbers and bank or account numbers** are on your never-send list from
+  the start, as two entries: **Card numbers** and **Bank and account numbers**.
+  So they are refused under every choice, Cloud for everything included. Friday
+  recognises a card number by its checksum, an IBAN by its checksum, and a
+  number written as an account, routing or sort-code number. You can remove
+  either entry on **Settings > Privacy & Data > Locks**; Friday told you once
+  in Activity when they were added.
 
 ## Cards that show what would leave
 

@@ -84,7 +84,9 @@ conversation, where you can delete any line. Your name is kept out of anything
 sent to a cloud model.
 
 Then the basics card: who this Friday is for (you, or your child, with
-age-appropriate filtering), a starting profile for the dock and her tone, and
+age-appropriate filtering; nothing is picked for you, and **Continue** waits
+for your answer), a starting profile for the dock and her tone (the receipt
+says "default" if you leave it as it is), and
 what this computer can run on its own, with a button to download a local model
 if a runtime is installed.
 
@@ -96,8 +98,8 @@ what it costs on this PC.
 | Card | What it means | What it sets |
 |---|---|---|
 | **Only on this PC** | Every model runs here, so your conversations are answered on this PC. Needs a capable PC, and it is slower. | Routing: only on this PC. Scheduled jobs: never the cloud. |
-| **Cloud for public things** | Your own words, files and mail stay on this PC; public things such as news and web searches may use the cloud, with the safeguards on. On a PC that cannot run Friday's thinking model, your conversations also go to the cloud with the safeguards on: money, health, legal and identity details and your never-send list are held back. | Routing: only on this PC if this PC can run a local model, otherwise cloud. Scheduled jobs may use the cloud. |
-| **Cloud for everything** | Chat and routines may use the cloud. Your never-send list still applies, every call is still checked and logged, and raw records (mail archives, bank statements) go only with your yes for each file. | Routing: cloud. Scheduled jobs may use the cloud. |
+| **Cloud for public things** | Your own words, files and mail stay on this PC; public things such as news and web searches may use the cloud, with the safeguards on. On a PC that cannot run Friday's thinking model, your conversations also go to the cloud with the safeguards on: money, health, legal or identity details are not sent quietly; Friday keeps them on this PC and tells you, and where a card is offered (mail, private records) it shows exactly what would go. Your never-send list is never sent. | Routing: only on this PC if this PC can run a local model, otherwise cloud. Scheduled jobs may use the cloud. |
+| **Cloud for everything** | Chat and routines may use the cloud, and choosing it is your consent: only your never-send list is refused. It is still applied, every call is still checked and logged, and raw records (mail archives, bank statements) go only with your yes for each file. | Routing: cloud. Scheduled jobs may use the cloud. |
 
 The recommended card is **Only on this PC** when this PC can run a local
 model, and **Cloud for public things** when it cannot. **Only on this PC** is
@@ -118,11 +120,14 @@ names, topics, a client or a project, one per line or separated by commas (up
 to 50). A message to a cloud model that contains one is stopped, not sent,
 under every choice above.
 
-Passwords and keys, ID and account numbers, your own name and contact details,
-and the private records in your vault are covered already, always.
+Card numbers and bank or account numbers are on the list from the start. Your
+vault's finance, legal and family records never go either, and a key or
+password you paste is withheld before anything keeps it. Your own name and
+contact details are kept out of what goes to a cloud model while the
+safeguards are on.
 
-There is no Settings screen for this list yet; to add more later, run the
-setup chat again.
+**Settings > Privacy & Data > Locks** shows the list and removes entries; to
+add more later, run the setup chat again.
 
 ### Connect
 

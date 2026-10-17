@@ -96,7 +96,8 @@ acknowledgement first.
   spoken approval has to say Friday's name ("Friday, send it"), so a "yeah,
   send it" from across the room does not count. The setup chat asks about this
   (**Require my name** or **Anyone in the room may approve**); skipping keeps
-  the name required. Alone, "send it" is enough.
+  the name required. Change it any time in **Settings > Voice > Spoken
+  approvals in a room**. Alone, "send it" is enough.
 - A send you ask for by voice always gets its card, even to someone you
   pre-approved, unless you turned on **Voice may use pre-approvals** (off by
   default). See [Mail](mail.md#pre-approved-sends).

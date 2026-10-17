@@ -62,7 +62,9 @@ service's card.
 - **Conversation style.** **Answer depth** and **Speaking pace**, applied from
   the next voice session.
 - **Listening.** What happens when you talk over her, who is talking when several
-  people are in the room, how long a silence ends your turn, and
+  people are in the room, whose spoken yes counts on an approval when others
+  can be heard (**Spoken approvals in a room**: **Require my name** or
+  **Anyone in the room**), how long a silence ends your turn, and
   push-to-transcribe (the shortcut and how long to hold it).
 - **What voice can't do, and why.**
 - **Podcasts: Episode length.** How long each show runs when spoken, set
@@ -123,7 +125,9 @@ Every spending cap ships switched off, so nothing is limited until you choose.
   local model is serving, such questions are refused instead of leaking.
 - **Cloud consent**: your privacy choice from the setup chat. Here it is shown
   as "local, private" (Only on this PC), "cloud, safeguards on" (Cloud for
-  public things) or "unrestricted" (Cloud for everything). **Re-answer**
+  public things) or "unrestricted" (Cloud for everything); "unrestricted (you
+  chose Cloud only)" when the consent came from picking Cloud only in Models
+  or setup. **Re-answer**
   checks this PC again and lets you change it; it changes the consent, not the
   routing mode in Models. See [Privacy](privacy.md).
 - **Wiki sections kept off the cloud**, **What cloud models are sent**, and
