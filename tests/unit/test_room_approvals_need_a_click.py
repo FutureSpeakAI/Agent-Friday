@@ -56,6 +56,15 @@ def test_the_owner_click_loosens_and_tightening_needs_nothing(settings_file):
     assert _stored() is True
 
 
+def test_a_whole_file_write_from_the_command_line_cannot_loosen_it():
+    """cli.py and the setup wizard write a whole settings file through guarded_settings.clamp."""
+    from agent_friday.services import guarded_settings as gs
+    assert gs.clamp({KEY: False}, {KEY: True})[KEY] is True
+    assert gs.clamp({KEY: False}, {})[KEY] is True, "the default (name required) is the narrow side"
+    assert gs.clamp({KEY: False}, {KEY: False})[KEY] is False, "a loose setting the owner chose is kept"
+    assert gs.clamp({KEY: True}, {KEY: False})[KEY] is True
+
+
 def _post(monkeypatch, body, click):
     from flask import Flask
     from agent_friday.routes import core_routes as cr

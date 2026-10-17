@@ -86,6 +86,17 @@ def test_letting_anyone_approve_needs_a_press_on_the_page(value, saved):
     assert copy.ROOM_VOICE_NEEDS_CLICK in [m.get("text") for m in transcript]
 
 
+def test_typed_words_on_the_page_are_not_the_press(saved):
+    """Typing "anyone" in the setup box comes from the page too, but it is not the chip."""
+    st, transcript = {"stage": "room_voice"}, []
+    tok = sc.SCREEN_CLICK.set(True)
+    try:
+        sc._on_room_voice(st, transcript, None, "anyone")
+    finally:
+        sc.SCREEN_CLICK.reset(tok)
+    assert "value" not in saved and st["stage"] == "room_voice"
+
+
 def test_requiring_the_name_needs_no_press(saved):
     _st, _t, s = _run("name", saved, click=False)
     assert s.get("value") is True

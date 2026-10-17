@@ -897,17 +897,26 @@ def _gate_text_held(text: str, provider: str, field: str,
                 _dlog.debug("email result for a local destination (%s): passed whole", provider)
                 return text
             mail = _try_json(text)
-            rel = _cr.released(mail) if mail is not None else set()
+            rel = _cr.released(mail, provider) if mail is not None else set()
             if rel:
                 rel_tok = _RELEASED.set(frozenset(rel))
     except Exception as e:
         _dlog.debug("cloud release lookup skipped: %s", e)
         mail = None
+    mail_tok = None
+    if mail is not None:
+        try:
+            from agent_friday.services import cloud_release as _cr2
+            mail_tok = (_cr2, _cr2.IN_MAIL.set(True))
+        except Exception:
+            mail_tok = None
     try:
         return _gate_text_inner(text, provider, field, log_path, mail)
     finally:
         if rel_tok is not None:
             _RELEASED.reset(rel_tok)
+        if mail_tok is not None:
+            mail_tok[0].IN_MAIL.reset(mail_tok[1])
 
 
 #: Paragraphs the owner released to the cloud for the email result being gated (services/cloud_release).

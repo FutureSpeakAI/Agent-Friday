@@ -1378,9 +1378,9 @@ def _on_room_voice(st, transcript, value, text):
         want = True
     elif choice in ("anyone", "no", "n", labels["anyone"].lower()):
         want = False
-    if want is False and not SCREEN_CLICK.get():
+    if want is False and not (SCREEN_CLICK.get() and str(value or "").strip().lower() == "anyone"):
         # Letting anyone in the room approve loosens who may say yes: it takes a press of
-        # the chip on Friday's own page, never a spoken or relayed answer.
+        # the chip ("anyone") on Friday's own page, never typed, spoken or relayed words.
         _say(transcript, copy.ROOM_VOICE_NEEDS_CLICK, "room_voice")
         return
     if want is None:

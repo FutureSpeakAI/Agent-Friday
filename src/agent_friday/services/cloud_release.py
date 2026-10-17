@@ -164,13 +164,23 @@ def _once_hashes(now=None) -> set:
     return {h for h, until in (d.get("once") or {}).items() if float(until or 0) > now}
 
 
-def _release_once(hashes) -> None:
+def _key(h: str, provider: str = "") -> str:
+    """A release is for the destination the card named: "<hash>@<provider>". A key with no
+    provider is an older release (any provider), still honoured until it runs out."""
+    return "%s@%s" % (h, provider) if provider else h
+
+
+def _is_released_key(h: str, provider: str, keys: set) -> bool:
+    return (bool(provider) and _key(h, provider) in keys) or h in keys
+
+
+def _release_once(hashes, provider: str = "") -> None:
     now = time.time()
     with _LOCK:
         d = _read()
         once = {h: u for h, u in (d.get("once") or {}).items() if float(u or 0) > now}
         for h in hashes:
-            once[h] = now + RELEASE_TTL_S
+            once[_key(h, provider)] = now + RELEASE_TTL_S
         d["once"] = once
         _write(d)
 
@@ -238,10 +248,10 @@ def _scopes() -> tuple:
             {r["value"] for r in rows if r.get("scope") == "sender"})
 
 
-def released(parsed) -> set:
+def released(parsed, provider: str = "") -> set:
     """The stripped paragraphs of this result the owner let go: a Send for these exact paragraphs (the
-    turn), or a remembered thread or sender (its money paragraphs). Empty unless the cautious consent is
-    in force; the gate still runs every other check on everything else."""
+    turn, to the provider its card named), or a remembered thread or sender (its money paragraphs).
+    The gate still runs every other check on everything else."""
     rows = _messages(parsed)
     if not rows:
         return set()
@@ -253,7 +263,7 @@ def released(parsed) -> set:
         for field in ("text", "snippet"):
             for p in _paras(m.get(field)):
                 ps = p.strip()
-                if _hash(ps) in once or (scoped and is_money(ps)):
+                if _is_released_key(_hash(ps), provider, once) or (scoped and is_money(ps)):
                     if not _never_offer(ps):
                         out.add(ps)
     return out
@@ -370,8 +380,23 @@ def decide(approval_id: str, decision: str, remember_scope=None, decided_by: str
                                              remember={"thread": bool(want.get("thread")),
                                                        "sender": bool(want.get("sender")),
                                                        "text": bool(want.get("text"))}))
-    out, won = _ap.decide_with_outcome(approval_id, decision, decided_by=decided_by)
+    if decision == "approve":
+        # The server's own mark that THIS path decided it (the dedicated route after its screen
+        # check, or answer_in_words after a read-back). A card approved through any other route
+        # carries a label a request body could have claimed, so it releases nothing.
+        with _SEND_LOCK:
+            _SERVER_SEND.add(approval_id)
+    try:
+        out, won = _ap.decide_with_outcome(approval_id, decision, decided_by=decided_by)
+    finally:
+        with _SEND_LOCK:
+            _SERVER_SEND.discard(approval_id)
     return {"ok": True, "approval": out, "won": won}
+
+
+#: Approval ids being approved through decide() right now (see there). In-process only.
+_SERVER_SEND: set = set()
+_SEND_LOCK = threading.Lock()
 
 
 def _on_decision(record: dict) -> None:
@@ -382,14 +407,18 @@ def _on_decision(record: dict) -> None:
     hashes = [it.get("hash") for it in payload.get("items") or [] if it.get("hash")]
     if status in ("approved", "denied", "expired"):
         _clear_pending(hashes)
-    if status == "approved" and record.get("decided_by") not in SEND_DECIDERS:
-        # Approved by a path that is not the owner's click, read-back yes or own words (a relayed
-        # or programmatic decision): nothing is released; the text stays on this PC.
-        _log.warning("cloud release: a Send decided by %r was not honoured; nothing released",
-                     record.get("decided_by"))
-        return
     if status == "approved":
-        _release_once(hashes)
+        with _SEND_LOCK:
+            ours = record.get("approval_id") in _SERVER_SEND
+        if not ours or record.get("decided_by") not in SEND_DECIDERS:
+            # Approved by a path that is not the owner's click or their own words after a read-back
+            # (another approvals route, a relayed or programmatic decision): nothing is released.
+            _log.warning("cloud release: a Send decided by %r outside the card's own path was not "
+                         "honoured; nothing released", record.get("decided_by"))
+            return
+    provider = str(payload.get("provider") or "")
+    if status == "approved":
+        _release_once(hashes, provider)
         rem = payload.get("remember") or {}
         scope = payload.get("scope") or {}
         if rem.get("thread") and scope.get("thread"):
@@ -399,7 +428,8 @@ def _on_decision(record: dict) -> None:
         if rem.get("text") and scope.get("text"):
             for it in payload.get("items") or []:
                 if it.get("hash"):
-                    remember("text", it["hash"], "“%s”" % _short(it.get("text")))
+                    remember("text", _key(it["hash"], provider), "“%s” to %s"
+                             % (_short(it.get("text")), provider or "any cloud model"))
         _log.info("cloud release: owner sent %d paragraph(s) (thread=%s sender=%s)", len(hashes),
                   bool(rem.get("thread")), bool(rem.get("sender")))
     elif status in ("denied", "expired"):
@@ -549,8 +579,11 @@ _PROBE_PROVIDERS = frozenset({"selftest-cloud", "probe-cloud"})
 HELD_CARDS = True
 #: Spans held in the current outermost gate call: None outside a collecting() scope.
 _HELD: contextvars.ContextVar = contextvars.ContextVar("cloud_release_held", default=None)
-#: Longest text a card quotes per item; longer items say how much more there is.
-ITEM_MAX = 4000
+#: The release store read once per outermost scope (every paragraph checks it).
+_SNAP: contextvars.ContextVar = contextvars.ContextVar("cloud_release_snap", default=None)
+#: True while the gate judges an email-shaped tool result (egress_gate._gate_text_held), so the
+#: owner's "keep money paragraphs in email without asking" choice applies to those spans only.
+IN_MAIL: contextvars.ContextVar = contextvars.ContextVar("cloud_release_in_mail", default=False)
 
 
 def _short(text, n: int = 60) -> str:
@@ -589,12 +622,8 @@ def _pending() -> set:
         return set()
     try:
         from agent_friday.services import approvals as _ap
-        live = set()
-        for h, aid in pend.items():
-            rec = _ap.get_approval(aid)
-            if rec and rec.get("status") == "pending":
-                live.add(h)
-        return live
+        waiting = {r.get("approval_id") for r in _ap.list_approvals(status="pending", kind=APPROVAL_KIND)}
+        return {h for h, aid in pend.items() if aid in waiting}
     except Exception:
         return set(pend)
 
@@ -603,13 +632,21 @@ def _remembered_texts() -> set:
     return {r.get("value") for r in _read().get("remembered") or [] if r.get("scope") == "text"}
 
 
+def _released_keys() -> set:
+    """Send-once keys still in time, and "always send" keys: read once per outermost scope."""
+    snap = _SNAP.get()
+    if snap is not None:
+        return snap
+    return _once_hashes() | _remembered_texts()
+
+
 def is_released(text: str, provider: str = "") -> bool:
-    """Did the owner let exactly this text go (Send on its card, still in time, or "always send")?"""
+    """Did the owner let exactly this text go to this provider (Send on its card, still in time, or
+    "always send this exact text")?"""
     if provider in _PROBE_PROVIDERS:
         return False
     try:
-        h = _hash(str(text or "").strip())
-        return h in _once_hashes() or h in _remembered_texts()
+        return _is_released_key(_hash(str(text or "").strip()), provider, _released_keys())
     except Exception:
         return False
 
@@ -632,11 +669,17 @@ class collecting:
     """Context manager: collect what the gate holds back in this call; the outermost one offers it."""
 
     def __init__(self, provider: str = "", model: str = ""):
-        self.provider, self.model, self._tok = str(provider or ""), str(model or ""), None
+        self.provider, self.model = str(provider or ""), str(model or "")
+        self._tok = self._snap_tok = None
 
     def __enter__(self):
         if _HELD.get() is None:
             self._tok = _HELD.set([])
+            try:
+                snap = _once_hashes() | _remembered_texts()
+            except Exception:
+                snap = None
+            self._snap_tok = _SNAP.set(snap)
         return self
 
     def __exit__(self, *exc):
@@ -644,6 +687,7 @@ class collecting:
             return False
         items = _HELD.get() or []
         _HELD.reset(self._tok)
+        _SNAP.reset(self._snap_tok)
         if items and exc[0] is None:
             offer_held(items, self.provider, self.model)
         return False
@@ -661,7 +705,8 @@ def note_held(text: str, field: str, provider: str) -> None:
         h = _hash(t)
         if any(it["hash"] == h for it in held):
             return
-        held.append({"hash": h, "text": t, "field": str(field or ""), "provider": str(provider or "")})
+        held.append({"hash": h, "text": t, "field": str(field or ""), "provider": str(provider or ""),
+                     "mail": bool(IN_MAIL.get())})
     except Exception as e:
         _log.debug("held span not noted: %s", e)
 
@@ -682,9 +727,11 @@ def offer_held(items: list, provider: str = "", model: str = "") -> dict | None:
             return None
         withhold_money = _choice() == "withhold"
         with _LOCK:     # two calls sealing the same history at once raise one card, not two
-            skip = _declined() | _pending() | _once_hashes() | _remembered_texts()
+            skip = _declined() | _pending()
+            released = _once_hashes() | _remembered_texts()
             ask = [it for it in items if it["hash"] not in skip
-                   and not (withhold_money and is_money(it["text"]))]
+                   and not _is_released_key(it["hash"], provider, released)
+                   and not (withhold_money and it.get("mail") and is_money(it["text"]))]
             if not ask:
                 return None
             return _raise_held_card(ask, provider, model)
@@ -699,12 +746,8 @@ def _raise_held_card(items: list, provider: str, model: str) -> dict | None:
     if model:
         dest = "%s (%s)" % (dest, model)
     parts = sorted({_part(it["field"]) for it in items})
-    texts = []
-    for it in items:
-        t = it["text"]
-        texts.append(t if len(t) <= ITEM_MAX else
-                     t[:ITEM_MAX] + "\n[… %d more characters, sent as they are if you choose Send]"
-                     % (len(t) - ITEM_MAX))
+    # The card shows every character Send would let go: nothing is cut short.
+    texts = [it["text"] for it in items]
     payload = {
         "handler": HANDLER,
         "general": True,

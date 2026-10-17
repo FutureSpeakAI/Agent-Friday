@@ -759,6 +759,10 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if (decision == "approve" and _is_public_query_card(rec)
                 and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
             return dict(rec), False
+        if decision == "approve" and _is_cloud_release_card(rec) and not _cloud_release_send(approval_id):
+            # Send on a card that lets private text leave the PC is its own button on screen (or the
+            # owner's own words after a read-back), never another approvals route (cloud_release.decide).
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
@@ -768,6 +772,20 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     _feed("card_resolved", out)
     _fire_hook(out)
     return out, True
+
+
+def _is_cloud_release_card(rec: dict) -> bool:
+    return (rec.get("payload") or {}).get("handler") == "cloud_release"
+
+
+def _cloud_release_send(approval_id: str) -> bool:
+    """Is cloud_release.decide approving this card right now (its own path)?"""
+    try:
+        from agent_friday.services import cloud_release as _cr
+        with _cr._SEND_LOCK:
+            return approval_id in _cr._SERVER_SEND
+    except Exception:
+        return False
 
 
 def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
@@ -784,6 +802,9 @@ def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
             and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
         return ("A search card is sent only with its own Send button in the app, where you see the exact "
                 "text that would go out. It cannot be approved from here.")
+    if rec.get("status") == "pending" and _is_cloud_release_card(rec) and not _cloud_release_send(approval_id):
+        return ("Private text goes to the cloud only with its card's own Send button in the app, where you "
+                "see exactly the words and where they would go. It cannot be approved from here.")
     return ""
 
 
