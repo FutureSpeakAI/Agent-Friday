@@ -3216,6 +3216,12 @@ DEFAULT_SETTINGS = {
     # Off keeps and reads nothing. Retention is in days; the shadow days are how long a
     # refit of her confidence runs unseen before it takes over.
     "laya_personal_learning": True,
+    # The memory card's background review (services/memory_review): every N
+    # user turns in a conversation, after the reply, a LOCAL model reads the
+    # recent exchanges and may add a line resting on the owner's own words;
+    # anything it would change or remove waits for the owner. Off reviews nothing.
+    "memory_review_enabled": True,
+    "memory_review_every_turns": 10,
     "laya_personal_retention_days": 180,
     "laya_personal_shadow_days": 3,
     # How hard a local reasoning seat thinks (services/reasoning_policy, read

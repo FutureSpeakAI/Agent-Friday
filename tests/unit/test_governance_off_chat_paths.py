@@ -387,6 +387,8 @@ REVIEWED_BUILTINS = {
     "content_insights": "summarises local post metrics",
     "relationship_sync": "reads the owner's mail and calendar headers, writes the "
                          "local timeline, and raises local notifications only",
+    "calendar_reminders": "reads the owner's calendar events and raises local reminder "
+                          "notifications at the minutes Google holds; writes nothing to Google, runs no model",
     "laya_personal_refit": "refits Laya's personal phrasings and calibration from the owner's "
                            "own sealed corrections on this PC; only tightens, reaches no one",
     "avatar_growth_check": "asks the owner's chosen model for a look change (numbers "
@@ -519,9 +521,14 @@ REVIEWED_SINKS = {
         "only for a label id that the same change created (run_email records undo.created_labels only "
         "when it made the label), and it deletes only a user label Gmail reports empty: never mail",
     ("services/calendar_write.py", "create_event"):
-        "the create_calendar_event tool, which is outward",
+        "the create_calendar_event tool, which is outward; or the owner's Add on the quick-add "
+        "preview (routes/calendar.py api_calendar_create_event, refused without confirmed)",
     ("services/calendar_write.py", "update_event"):
-        "the update_calendar_event tool, which is outward",
+        "the update_calendar_event tool, which is outward; or the owner's confirmed drag "
+        "(routes/calendar.py api_calendar_move_event -> item_actions.move_event_by_owner, with Undo)",
+    ("services/calendar_write.py", "respond_to_event"):
+        "the owner's confirmed reply in the Calendar (routes/calendar.py api_calendar_rsvp, refused "
+        "without confirmed); changes only the owner's own guest row",
     ("services/calendar_write.py", "annotate_events"):
         "the annotate_calendar_events tool, which is outward",
     ("services/calendar_write.py", "delete_event"):
@@ -535,8 +542,6 @@ REVIEWED_SINKS = {
         "deletes only events re-read with Friday's active hold marker for "
         "the series and no attendees; reached from book_slot (outward) and "
         "release_holds (internal: it undoes Friday's own holds)",
-    ("routes/calendar.py", "api_calendar_quick_add"):
-        "the owner's click in the calendar",
     ("services/publisher.py", "_run_target"):
         "every target waits on _authorize_publish: an approved card for its "
         "exact text, media and platform, or a still-valid scoped grant",

@@ -13,6 +13,95 @@ includes calendar read and write permission and Google Tasks. An account
 connected with read-only calendar permission is reported when Friday tries to
 make a change, and **Reconnect** fixes it.
 
+## Day, Week and Month
+
+The switch at the top of the Calendar shows one day (the timeline, with gaps,
+prep cards and tomorrow's preview), a week (seven columns on the same hours,
+all-day entries above) or a month (each day with its first events and a count
+of the rest). The arrows and **Today** move through weeks and months; clicking
+a day opens it in the Day view. Friday remembers the view you used last.
+
+Every calendar of every connected account is read, and each event wears the
+colour it has in Google Calendar: its own colour if you gave it one, otherwise
+its calendar's. Calendars you have unticked in Google stay hidden until you
+switch them on. If one calendar cannot be read, the view names it; it is never
+shown as an empty day.
+
+By voice: "show me my calendar by month", "switch to the week view",
+"show my free busy time".
+
+An account connected before the full calendar permission existed shows only
+its main calendar and says so; **Settings > Connections > Reconnect** adds the
+others.
+
+## Which calendars, and free/busy
+
+**Calendars** in the toolbar lists every calendar of every connected account
+with its colour. Tick or untick one to show it in Friday or not; that changes
+Friday only, never Google. A calendar you have hidden in Google starts
+unticked and says so.
+
+By voice, "show only my family calendar" narrows the view without changing
+your ticks: a chip says "Only Family · by Friday", and its × (or "show all my
+calendars") brings the rest back. Friday never switches a calendar off by
+herself.
+
+**Free/busy** shows the week as time taken and time open. Busy blocks name
+their calendars, never the titles of events, so it is safe to show on a shared
+screen; free time is counted inside your working hours on working days (the
+same `scheduling` settings Friday uses to offer meeting times). It is worked
+out on this computer from the events already read; nothing is asked of Google.
+
+## Adding and moving events yourself
+
+**Quick add.** Type a sentence ("lunch with Dana Tuesday 12pm") and press
+Enter. Friday reads it, by code first and with a small model only for what
+code could not find, and shows the event: its title, when, and a list of the
+calendars you can add to. Nothing is written until you press **Add to ...**.
+Guests named in the sentence are added without an email from Google.
+
+**Drag to reschedule.** In the Day and Week views, drag an event to a new
+time (in Week, to another day too), or focus it and press Alt with an arrow
+key. Friday then asks "Move ... ?" with the old and new times; **Cancel** is
+the button in focus, and nothing changes until you press **Move**. A drag of
+less than a quarter of an hour, Esc during a drag, or an event you can't
+change (one someone else organises) asks nothing and changes nothing. After a
+move, **Undo** puts the event back.
+
+**Replying to an invitation.** An event someone else invited you to shows
+your reply and three buttons: **Going**, **Maybe**, **Not going**. Friday
+asks "Reply ... ?" and says Google will let the organiser know; nothing is
+sent until you press **Send reply**. You can change a reply any time. Replies
+are a click, not something Friday sends by voice, because they reach another
+person.
+
+**Deleting an event.** An event you can change has **Delete** on it. Friday
+asks "Delete ... ?" with its time and calendar (Cancel is in focus) and
+deletes only when you press **Delete event**. For a repeating event, only the
+one occurrence you clicked is deleted.
+
+If you are moving several things, tick **Move without asking for the next 30
+minutes** in the confirmation. That permission lives only in this window and
+runs out by itself; every move still gets its Undo.
+
+## Reminders and prep cards
+
+Friday uses the reminders you already have in Google Calendar: an event's own
+("30 minutes before"), or its calendar's default. The Day view shows each
+event's reminder, and when one comes due Friday puts it in her tray: "Dentist
+in 30 minutes". Each reminder comes once. Friday adds no reminder Google does
+not have, says nothing for an invitation you declined, and leaves email
+reminders to Google. Quiet hours hold reminders like any other notice.
+
+An event with other people in it (or about your career) is one that matters:
+its reminder says the prep card is one click away, and clicking the reminder
+opens the event with its prep card (the "Meeting prep" job, which you can see
+in Activity). Friday makes no prep card by herself.
+
+To stop Friday's reminders, switch off **Calendar reminders** in the
+Workflows workspace, under Friday's built-in routines
+([Scheduled jobs](scheduled-jobs.md)); Google's own reminders are unchanged.
+
 ## What Friday can do
 
 | Action | Needs your approval? |

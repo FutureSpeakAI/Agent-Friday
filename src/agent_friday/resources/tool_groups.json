@@ -483,6 +483,9 @@
   "propose_wiki_update": [
    "wiki_knowledge"
   ],
+  "update_core_memory": [
+   "wiki_knowledge"
+  ],
   "publish_artifact": [
    "code",
    "web"

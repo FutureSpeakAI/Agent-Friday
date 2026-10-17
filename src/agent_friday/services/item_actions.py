@@ -1851,6 +1851,7 @@ def plan_calendar(action: str, events=None, days=0, minutes=0, account: str = ""
                     "new_start": _shifted(ev["start"], ev.get("tz") or "", days, minutes),
                     "new_end": _shifted(ev["end"], ev.get("tz") or "", days, minutes),
                     "guests": int(ev.get("guests") or 0), "account": ev.get("account_id") or "",
+                    "calendar": ev.get("calendar_id") or "primary",
                     "days": days, "minutes": minutes})
     return ops
 
@@ -1868,6 +1869,10 @@ def _cal_when(iso: str) -> str:
 
 
 def _calendar_words(ops: list[dict]) -> tuple[str, list[str]]:
+    if ops and ops[0].get("op") == "set_time":
+        o = ops[0]
+        return ("move \u201c%s\u201d to %s" % (o["title"], _cal_when(o["new_start"])),
+                ["%s: %s \u2192 %s" % (o["title"], _cal_when(o["start"]), _cal_when(o["new_start"]))])
     n, d, m = len(ops), ops[0].get("days") or 0, ops[0].get("minutes") or 0
     parts = []
     if d:
@@ -1888,11 +1893,13 @@ def run_calendar(ops: list[dict], *, approval_id: str | None = None, conversatio
     for o in ops:
         it = {"op": "shift", "id": o["id"], "title": o.get("title"), "ok": False}
         try:
-            res = cw.update_event(o["id"], start=o["new_start"], end=o["new_end"], account_id=o.get("account") or None)
+            res = cw.update_event(o["id"], start=o["new_start"], end=o["new_end"], account_id=o.get("account") or None,
+                                  calendar_id=o.get("calendar") or "primary")
             if res.get("error"):
                 raise Refused(res["error"])
             it["ok"] = True
-            undo_rows.append({"id": o["id"], "start": o["start"], "end": o["end"], "account": o.get("account") or ""})
+            undo_rows.append({"id": o["id"], "start": o["start"], "end": o["end"], "account": o.get("account") or "",
+                              "calendar": o.get("calendar") or "primary"})
         except Exception as e:
             it["error"] = str(getattr(e, "user_message", "") or exception_text(e))[:200]
         items.append(it)
@@ -1912,7 +1919,8 @@ def undo_calendar(receipt: dict) -> dict:
     back, failed = 0, 0
     for r in (receipt.get("undo") or {}).get("calendar") or []:
         try:
-            res = cw.update_event(r["id"], start=r["start"], end=r["end"], account_id=r.get("account") or None)
+            res = cw.update_event(r["id"], start=r["start"], end=r["end"], account_id=r.get("account") or None,
+                                  calendar_id=r.get("calendar") or "primary")
             ok = not res.get("error")
         except Exception:
             ok = False
@@ -2009,6 +2017,42 @@ def organize_calendar(action: str, *, events=None, days=0, minutes=0, account: s
     return _local("calendar", ops[0]["op"], ops, bulk=True, why=why, conversation_id=conversation_id,
                   owner_words=owner_words, requested_by=requested_by, replaces=replaces, refs=refs,
                   selection_id=selection_id, stage_rev=stage_rev, stage_ws="calendar", rule=rule)
+
+
+def move_event_by_owner(event_id: str, *, start: str, end: str, calendar_id: str = "primary",
+                        account: str = "", conversation_id: str | None = None) -> dict:
+    """The owner moved one event on their own screen (a drag they confirmed): run it now, with a receipt
+    whose Undo puts the event back. Refused for an all-day entry, a time that does not parse, an end before
+    the start, an event that cannot be read, or one she may not change (someone else organises it and its
+    guests may not modify it). The event's current times and who may change it come from Google, never the
+    page's word."""
+    from datetime import datetime, timedelta
+    try:
+        ns, ne = datetime.fromisoformat(str(start)), datetime.fromisoformat(str(end))
+    except (TypeError, ValueError):
+        raise Refused("the new time is not a date and time")
+    if ns.tzinfo is None or ne.tzinfo is None:
+        raise Refused("the new time needs its time zone")
+    if ne <= ns:
+        raise Refused("the event would end before it starts")
+    if ne - ns > timedelta(days=14):
+        raise Refused("that is longer than an event can be moved by dragging")
+    ev = _cw().get_event(_event_id(event_id), account_id=account or None, calendar_id=calendar_id or "primary")
+    if not ev.get("ok"):
+        raise Refused(ev.get("error") or "that event could not be read")
+    if ev.get("all_day") or not ev.get("start") or not ev.get("end"):
+        raise Refused("\u201c%s\u201d is an all-day entry; I move events that have a time" % ev.get("title"))
+    if not (ev.get("organizer_self") or ev.get("guests_can_modify")):
+        raise Refused("\u201c%s\u201d is organised by someone else and its guests cannot change it; "
+                      "the organiser can move it" % ev.get("title"))
+    op = {"op": "set_time", "id": ev["id"], "title": str(ev["title"])[:120], "start": ev["start"], "end": ev["end"],
+          "new_start": ns.isoformat(), "new_end": ne.isoformat(), "guests": int(ev.get("guests") or 0),
+          "account": ev.get("account_id") or account or "", "calendar": ev.get("calendar_id") or calendar_id or "primary",
+          "days": 0, "minutes": 0}
+    rec = run_calendar([op], conversation_id=conversation_id)
+    _tell_pages("calendar", rec["receipt_id"])
+    return {"status": rec["status"], "receipt_id": rec["receipt_id"], "text": rec.get("summary") or "",
+            "items": rec.get("items") or []}
 
 
 def organize_wiki(action: str, *, pages=None, to: str = "", new_name: str = "", tags=None,

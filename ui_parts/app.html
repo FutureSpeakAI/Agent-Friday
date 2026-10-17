@@ -12229,7 +12229,17 @@ const CAL_START_HOUR=6, CAL_END_HOUR=24, CAL_HOUR_PX=52;
 function calY(iso){const d=new Date(iso);if(isNaN(d))return 0;const h=d.getHours()+d.getMinutes()/60;return Math.max(0,(h-CAL_START_HOUR)*CAL_HOUR_PX);}
 function calFmtTime(iso){const d=new Date(iso);if(isNaN(d))return'';return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
 
-fridayDeclareNav('calendar',{keys:['date','view','meeting_id','event','start'],sections:[{id:'meetings',label:'Meetings',key:'view'}]});
+// The Calendar's places Friday can open by name: its views, every calendar ("only" narrows the view to it,
+// shown as a chip, never kept) and all of them. The calendars are added once their list has loaded.
+const CAL_NAV_SECTIONS=[{id:'meetings',label:'Meetings',key:'view'},{id:'day',label:'Day',key:'view'},{id:'week',label:'Week',key:'view'},{id:'month',label:'Month',key:'view'},{id:'freebusy',label:'Free/busy',key:'view'},{id:'all',label:'All calendars',key:'only'}];
+fridayDeclareNav('calendar',{keys:['date','view','meeting_id','event','start','prep','only'],sections:CAL_NAV_SECTIONS});
+// The Calendar's views (static/calendar_views.js): Day is the timeline below; Week, Month and Free/busy come from that file.
+const CAL_VIEW_IDS=['day','week','month','freebusy'];
+// Adds the calendars to the sections once they load (keys stay as declared above).
+const CAL_WS_ID='calendar';
+// Stands in for CalendarViews.useCalendars when that file is missing, with the same hooks in the same order.
+function calNoCalendars(tick){useState(null);useEffect(()=>{},[tick]);return{calendars:[],accounts:[]};}
+function calStoredView(){try{const v=localStorage.getItem('friday_cal_view');return CAL_VIEW_IDS.includes(v)?v:'day';}catch(_){return 'day';}}
 function CalendarWS(){
   const[today,setToday]=useState(null);const[loading,setLoading]=useState(true);
   const[week,setWeek]=useState([]);const[sel,setSel]=useState(null);// selected date iso (null=today)
@@ -12237,16 +12247,35 @@ function CalendarWS(){
   const[tomorrow,setTomorrow]=useState(null);
   const[now,setNow]=useState(new Date());
   const[quick,setQuick]=useState('');const[adding,setAdding]=useState(false);
+  // Quick add reads the sentence and shows what it would add; only the owner's Add writes.
+  const[qaPreview,setQaPreview]=useState(null);
   const[prepFor,setPrepFor]=useState(null);const[prepText,setPrepText]=useState('');const[prepBusy,setPrepBusy]=useState(false);
   const setToast = useFridayToast();
   const tlRef=useRef(null);
   // Deep-link: a notification target {workspace:'calendar', date} selects that day.
   const [shownEvent,setShownEvent]=useState('');
-  useTabState('calendar',()=>({date:sel||'',event:shownEvent})); // what its own tab opens on
+  // A reminder's "open its prep" (notification target prep: '1') opens that event's prep card once it is on screen.
+  const[prepWanted,setPrepWanted]=useState('');
+  const[view,setViewRaw]=useState(calStoredView);
+  const[anchor,setAnchor]=useState(()=>window.CalendarViews?window.CalendarViews.iso(new Date()):'');
+  const[rangeTick,setRangeTick]=useState(0);
+  // Which calendars: the owner's ticks are kept on this PC (CalendarsPanel); Friday's "only these" is a chip.
+  const[calsTick,setCalsTick]=useState(0);const[showCals,setShowCals]=useState(false);const[onlySpec,setOnlySpec]=useState('');
+  const calsState=(window.CalendarViews?window.CalendarViews.useCalendars:calNoCalendars)(calsTick);
+  const calSlug=window.CalendarViews?window.CalendarViews.slug:(x=>String(x));
+  const onlyCals=onlySpec?calsState.calendars.filter(c=>c.on&&(c.key===onlySpec||'cal-'+calSlug(c.name)===onlySpec||calSlug(c.name)===calSlug(onlySpec))):[];
+  const onlyKeys=onlyCals.length?onlyCals.map(c=>c.key):null;
+  useEffect(()=>{fridayDeclareNav(CAL_WS_ID,{sections:CAL_NAV_SECTIONS.concat(calsState.calendars.map(c=>({id:'cal-'+calSlug(c.name),label:c.name,key:'only'})))});},[calsState.calendars]);
+  const setView=v=>{if(!CAL_VIEW_IDS.includes(v))return;setViewRaw(v);try{localStorage.setItem('friday_cal_view',v);}catch(_){}};
+  useTabState('calendar',()=>({date:sel||'',event:shownEvent,view})); // what its own tab opens on
   useNavTarget('calendar',t=>{
     setShownEvent('');
+    if(t.only){setOnlySpec(t.only==='all'?'':String(t.only));if(!t.view&&!t.event)return;}
+    if(t.view&&CAL_VIEW_IDS.includes(t.view)){setView(t.view);if(t.date)setAnchor(t.date);if(t.view!=='day'&&!t.event)return;}
     if (t.event) {
       // Friday took the owner to one event: its day, then the event outlined (no number), and reported back.
+      if (view !== 'day') setView('day');
+      if (t.prep) setPrepWanted(String(t.event));
       if (t.date) { setSel(t.date); loadDay(t.date); }
       const ref = 'event:' + encodeURIComponent(String(t.event));
       [400, 900, 1800].forEach(ms => setTimeout(() => {
@@ -12276,18 +12305,28 @@ function CalendarWS(){
     const t=setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(t)},[]);
 
   const flash=t=>{setToast(t);};
+  const reloadDay=()=>{if(sel)loadDay(sel);else loadToday();};
+  const openDay=d=>{const todayIso=window.CalendarViews?window.CalendarViews.iso(new Date()):'';setView('day');setAnchor(d);pickDay(d,d===todayIso);};
   const pickDay=(iso,isToday)=>{if(isToday){setSel(null);setDayData(null)}else{setSel(iso);loadDay(iso)}setPrepFor(null)};
   const quickAdd=async()=>{if(!quick.trim()||adding)return;setAdding(true);
     try{const r=await fetch('/api/calendar/quick-add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:quick})});const d=await r.json();
-      if(d.status==='ok'){flash((d.created_in_google?'Added to Google Calendar':'Added (stored locally)')+': '+d.event.title);setQuick('');loadToday();loadWeek();loadTomorrow();if(sel)loadDay(sel)}
-      else flash('Could not parse that — try “interview with Acme Tuesday 2pm”')}
-    catch(e){flash('Quick-add failed')}setAdding(false)};
+      if(d.status==='ok'&&d.preview)setQaPreview({preview:d.preview,calendars:d.calendars||[]});
+      else flash(d.message||'Could not read that — try “interview with Acme Tuesday 2pm”')}
+    catch(e){flash('Quick add could not reach '+fridayName())}setAdding(false)};
+  const reloadAll=()=>{loadToday();loadWeek();loadTomorrow();setRangeTick(n=>n+1);if(sel)loadDay(sel)};
+  const addPreview=async(calKey)=>{if(!qaPreview||adding)return;setAdding(true);
+    try{const r=await fetch('/api/calendar/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({},qaPreview.preview,{calendar_key:calKey,confirmed:true}))});const d=await r.json();
+      if(r.ok&&d.status==='ok'){const cal=(qaPreview.calendars.find(c=>c.key===calKey)||{}).name;flash((d.created_in_google?'Added to '+(cal||'Google Calendar'):'Kept on this PC')+': '+d.event.title);setQuick('');setQaPreview(null);reloadAll()}
+      else flash("Couldn't add it: "+(d.message||'Google did not take it')+'. Nothing was added.')}
+    catch(e){flash("Couldn't reach "+fridayName()+" to add it. Nothing was added.")}setAdding(false)};
   const genPrep=async(ev)=>{if(prepFor===ev.id){setPrepFor(null);return}setPrepFor(ev.id);setPrepBusy(true);setPrepText('');
     try{const r=await fetch('/api/calendar/prep/'+ev.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();setPrepText(d.prep||('[Error: '+(d.message||'prep failed')+']'))}catch(e){setPrepText('[Error generating prep]')}setPrepBusy(false)};
 
   const active=sel?dayData:today;
-  const events=(active?.events)||[];
-  const gaps=(active?.gaps)||[];
+  const events=((active?.events)||[]).filter(e=>!onlyKeys||!e.calendar_key||onlyKeys.includes(e.calendar_key));
+  useEffect(()=>{if(!prepWanted)return;const ev=events.find(x=>String(x.id)===prepWanted);if(!ev)return;setPrepWanted('');if(ev.prep_available&&prepFor!==ev.id)genPrep(ev);},[prepWanted,active]);
+  // Free time is never drawn from a read that failed.
+  const gaps=active?.read_failed?[]:((active?.gaps)||[]);
   const allDay=events.filter(e=>e.all_day);
   const timed=events.filter(e=>!e.all_day);
   const activeDate=sel||((week.find(d=>d.is_today)||{}).date)||'';
@@ -12297,6 +12336,8 @@ function CalendarWS(){
   const timedAll=timed.concat(mediaEvents);
   const openMediaCard=c=>{if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'media',card:c.id});};
   const conflicts=timed.filter(e=>e.conflict);
+  // Events at the same time sit side by side in the Day view too (every calendar makes overlaps common).
+  const dayLanes={};if(window.CalendarViews)window.CalendarViews.lanes(timedAll.filter(x=>!x.media&&x.start_time),{hourPx:CAL_HOUR_PX,minH:34}).forEach(g=>{dayLanes[g.ev.id]=g;});
   const hours=[];for(let h=CAL_START_HOUR;h<CAL_END_HOUR;h++)hours.push(h);
   const showNow=!sel; // only show now-line on the actual today view
   const nowY=calY(now.toISOString());const nowVisible=now.getHours()>=CAL_START_HOUR;
@@ -12309,9 +12350,22 @@ function CalendarWS(){
     {/* Quick add */}
     <div className="cal-quickadd">
       <input className="input" style={{flex:1}} value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==='Enter'&&quickAdd()} placeholder="Quick add — e.g. “interview with Acme Tuesday 2pm”"/>
-      <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Parsing…':'✨ Add'}</button>
+      <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Reading…':'✨ Add'}</button>
     </div>
-    
+    {qaPreview&&window.CalendarViews&&<window.CalendarViews.QuickAddPreview preview={qaPreview.preview} calendars={qaPreview.calendars} busy={adding} onAdd={addPreview} onCancel={()=>setQaPreview(null)}/>}
+    {window.CalendarViews&&<window.CalendarViews.MoveLayer onMoved={reloadAll}/>}
+    {window.CalendarViews&&<window.CalendarViews.RsvpLayer onReplied={reloadAll}/>}
+    {window.CalendarViews&&<window.CalendarViews.DeleteLayer onDeleted={reloadAll}/>}
+    {window.CalendarViews&&<div className="calv-toolbar">
+      <window.CalendarViews.ViewSwitch view={view} onChange={v=>{if(v==='day')openDay(sel||window.CalendarViews.iso(new Date()));else{setAnchor(sel||anchor);setView(v);}}}/>
+      {view!=='day'&&<window.CalendarViews.Nav title={window.CalendarViews.title(view,anchor)} onStep={dir=>setAnchor(a=>window.CalendarViews.step(view,a,dir))} onToday={()=>setAnchor(window.CalendarViews.iso(new Date()))}/>}
+      <window.CalendarViews.OnlyChip names={onlyCals.map(c=>c.name)} onClear={()=>setOnlySpec('')}/>
+      <button type="button" className={'btn'+(showCals?' active':'')} aria-expanded={showCals} data-cal-calendars="toggle" onClick={()=>setShowCals(v=>!v)}>Calendars</button>
+      {showCals&&<window.CalendarViews.CalendarsPanel calendars={calsState.calendars} accounts={calsState.accounts} onClose={()=>setShowCals(false)} onChanged={()=>{setCalsTick(n=>n+1);reloadAll();}}/>}
+    </div>}
+    {view==='freebusy'&&window.CalendarViews?<window.CalendarViews.FreeBusyView anchor={anchor} keys={onlyKeys} reloadKey={rangeTick} onPickDay={openDay} onRetry={()=>setRangeTick(n=>n+1)}/>:
+     view==='week'&&window.CalendarViews?<window.CalendarViews.WeekView anchor={anchor} keys={onlyKeys} reloadKey={rangeTick} onPickDay={openDay} onRetry={()=>setRangeTick(n=>n+1)} onOpen={ev=>openDay(window.CalendarViews.iso(new Date(ev.start_time)))}/>:
+     view==='month'&&window.CalendarViews?<window.CalendarViews.MonthView anchor={anchor} keys={onlyKeys} reloadKey={rangeTick} onPickDay={openDay} onRetry={()=>setRangeTick(n=>n+1)} onOpen={ev=>openDay(String(ev.start_time).length===10?ev.start_time:window.CalendarViews.iso(new Date(ev.start_time)))}/>:<>
     <MeetingsLink/>
 
     <div className="cal-layers"><button className={'btn'+(showMedia?' active':'')} aria-pressed={showMedia} onClick={()=>setShowMedia(v=>{const n=!v;try{localStorage.setItem('friday_cal_media',n?'1':'0');}catch(_){}return n;})}>Media</button><span className="cal-layer-note">{showMedia?mediaCards.length+' timed card'+(mediaCards.length===1?'':'s')+' this week':'Media cards hidden'}</span></div>
@@ -12331,11 +12385,13 @@ function CalendarWS(){
 
     {/* All-day events */}
     {allDay.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
-      {allDay.map(e=><span key={e.id} className={'cal-event '+(e.type||'normal')} style={{position:'static',display:'inline-block'}}>{e.title} <span style={{color:'#8a93a6',fontSize:10}}>(all day)</span></span>)}
+      {allDay.map(e=><span key={e.id} className={'cal-event '+(e.type||'normal')} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:true,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} style={{position:'static',display:'inline-block',...(e.color?{'--ev':e.color}:{})}}>{e.title} <span style={{color:'#8a93a6',fontSize:10}}>(all day)</span></span>)}
     </div>}
 
     {/* Timeline */}
-    {timedAll.length===0&&gaps.length===0?<div className="msg-empty">No timed events. {sel?'':'Enjoy the open day, or quick-add something above.'}</div>:
+    {window.CalendarViews&&((active?.errors)||[]).length>0&&<window.CalendarViews.Errors errors={active.errors}/>}
+    {active?.read_failed&&<div className="msg-empty" role="alert">Couldn't read your calendar. Google did not answer; this day may not be empty. <button className="btn" onClick={()=>reloadDay()}>Try again</button></div>}
+    {timedAll.length===0&&gaps.length===0?(active?.read_failed?null:<div className="msg-empty">No timed events. {sel?'':'Enjoy the open day, or quick-add something above.'}</div>):
     <div className="cal-timeline" ref={tlRef} style={{position:'relative',height:(CAL_END_HOUR-CAL_START_HOUR)*CAL_HOUR_PX+10}}>
       {hours.map(h=><div key={h} className="cal-hour" style={{height:CAL_HOUR_PX}}>
         <span className="cal-hour-label">{h===12?'12 PM':h===0||h===24?'12 AM':h<12?h+' AM':(h-12)+' PM'}</span>
@@ -12347,18 +12403,21 @@ function CalendarWS(){
       })}
 
       {/* Events */}
-      {timedAll.map(e=>{const top=calY(e.start_time);const end=calY(e.end_time)||top+CAL_HOUR_PX;const ht=Math.max(34,end-top);const open=prepFor===e.id;return(
-        <div key={e.id} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:false,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
+      {timedAll.map(e=>{const top=calY(e.start_time);const end=calY(e.end_time)||top+CAL_HOUR_PX;const ht=Math.max(34,end-top);const open=prepFor===e.id;const lane=dayLanes[e.id];return(
+        <div key={e.id} {...(e.media?{}:fridayRow('event',e.id,e.title,{kind:e.type||'normal',all_day:false,has_guests:!!(e.attendees&&e.attendees.length),when:fridayWhen(e.start_time)}))} {...(window.CalendarViews?window.CalendarViews.dragProps(e,{mode:'day',hourPx:CAL_HOUR_PX}):{})} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht,...(e.color?{'--ev':e.color}:{}),...(lane&&lane.of>1?{left:'calc(68px + (100% - 76px) * '+lane.lane+' / '+lane.of+')',right:'auto',width:'calc((100% - 76px) / '+lane.of+' - 4px)'}:{})}} onClick={()=>e.media?openMediaCard(e.media):(e.prep_available&&genPrep(e))}>
           <div className="cal-ev-title">{e.title}</div>
           <div className="cal-ev-meta">
             <span>{calFmtTime(e.start_time)}{e.end_time?(' – '+calFmtTime(e.end_time)):''}</span>
             {e.location&&<span>📍 {e.location}</span>}
             {e.attendees&&e.attendees.length>0&&<span>👥 {e.attendees.length}</span>}
             {e.countdown&&<span className="cal-countdown">⏳ {e.title.split(' ')[0]} in {e.countdown}</span>}
+            {window.CalendarViews&&window.CalendarViews.reminderText(e)&&<span className="cal-ev-remind">{window.CalendarViews.reminderText(e)}</span>}
+            {window.CalendarViews&&<window.CalendarViews.RsvpButtons ev={e}/>}
+            {window.CalendarViews&&<window.CalendarViews.DeleteButton ev={e}/>}
             {e.prep_available&&<span className="cal-prep-badge">Prep available</span>}
             {e.related_emails&&e.related_emails.length>0&&<span style={{color:'#00d4ff'}}>✉ {e.related_emails.length} related</span>}
           </div>
-          {open&&<div onClick={ev=>ev.stopPropagation()} style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.08)'}}>
+          {open&&<div data-no-drag="on" onClick={ev=>ev.stopPropagation()} style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.08)'}}>
             {e.related_emails&&e.related_emails.length>0&&<div style={{fontSize:10,color:'#8fb8c8',marginBottom:6}}>Related threads: {e.related_emails.map(r=>r.subject).join(' · ')}</div>}
             {prepBusy&&!prepText?<div style={{fontSize:11,color:'#c4b5fd'}}>{fridayName()} is building your prep card…</div>:
              <><FridayDoc text={prepText} compact style={{fontSize:11}}/>
@@ -12387,6 +12446,7 @@ function CalendarWS(){
         {e.prep_available&&<span className="cal-prep-badge">Prep</span>}
       </div>)}
     </div>}
+    </>}
   </div>);
 }
 
@@ -19722,6 +19782,12 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Your knowledge" desc={"Notes and documents you want " + fridayName() + " to start with. Each folder has two separate choices: read it on this PC, and, only if you turn it on, let cloud models read it."}>
       <KnowledgePanel mode="settings"/>
     </StSection>
+    <StSection title="Memory card">
+      <MemoryCardPanel s={s} save={save}/>
+    </StSection>
+    <StSection title="Search your conversations">
+      <ConversationSearchPanel/>
+    </StSection>
     <StSection title="What needs your sign-off">
       <ApprovalScannerPanel s={s} save={save}/>
     </StSection>
@@ -20576,6 +20642,148 @@ function LayaLearningPanel({s, save}) {
         o.can_offer && E('div', {style: dim}, 'This raises a card in your approvals. Only a click there lets her act on less than the shipped score.')))));
 }
 // End Laya learning panel
+
+function MemoryCardPanel({s, save}) {
+  // The core memory card (services/core_memory): the two short notes Friday reads at
+  // the top of every conversation. Every line is shown and can be edited or deleted
+  // here; suggestions from nightly dreaming and the background review wait for a Keep;
+  // each change Friday made can be undone. The owner's edits apply at once.
+  const E = React.createElement;
+  const [rep, setRep] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [edit, setEdit] = useState(null);
+  const [draft, setDraft] = useState({user: '', friday: ''});
+  const load = useCallback(() => {
+    apiFetch('/api/core-memory')
+      .then(r => r.json())
+      .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory card.'); setRep(d); })
+      .catch(e => setMsg(e.message || 'Could not read the memory card.'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const post = (path, body, key, after) => {
+    setBusy(key || path); setMsg('');
+    apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
+      .then(r => r.json())
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const head = {fontSize:11.5, color:'rgba(255,255,255,0.7)', margin:'12px 0 4px'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
+  const when = at => { try { return new Date(at * 1000).toLocaleDateString(); } catch (e) { return ''; } };
+  const btn = (label, onClick, key, extra) => E('button', Object.assign({className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, extra || {}), label);
+  const from = src => (String(src || '').indexOf('dream') === 0 ? 'nightly dreaming'
+    : src === 'review' ? 'the background review' : src === 'friday' ? fridayName() : 'an older note');
+  const file = t => {
+    // The owner's own words for the two files (the server's titles are written for the prompt).
+    const f = Object.assign({}, rep.card[t], {title: t === 'user' ? 'About you' : 'Working with you (' + fridayName() + '’s own lessons)'});
+    const pct = f.cap ? Math.min(100, Math.round(100 * f.used / f.cap)) : 0;
+    return E('div', {key: t, 'data-core-memory': t},
+      E('div', {style: head}, f.title),
+      E('div', {style: dim}, f.used.toLocaleString() + ' of ' + f.cap.toLocaleString() + ' characters'),
+      E('div', {style:{height:4, borderRadius:2, background:'rgba(255,255,255,0.08)', margin:'4px 0 8px'}},
+        E('div', {style:{height:4, borderRadius:2, width: pct + '%', background: pct >= 90 ? 'var(--st-warn)' : 'var(--st-accent)'}})),
+      f.entries.length === 0 && E('div', {style: dim}, 'Nothing yet.'),
+      f.entries.map((line, i) => (edit && edit.t === t && edit.i === i)
+        ? E('div', {key: t + i, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'})},
+            E('input', {className:'input', 'aria-label':'Edit this line', style:{flex:'1 1 240px', fontSize:12}, value: edit.text,
+              onChange: e => setEdit({t: t, i: i, text: e.target.value})}),
+            btn('Save', () => post('edit', {target: t, index: i, text: edit.text}, 'e' + t + i, () => setEdit(null)), 'save'),
+            btn('Cancel', () => setEdit(null), 'cancel'))
+        : E('div', {key: t + i, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+            E('div', {style:{flex:1, fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, line),
+            btn('Edit', () => setEdit({t: t, i: i, text: line}), 'edit'),
+            btn('Delete', () => post('delete', {target: t, index: i}, 'd' + t + i), 'delete'))),
+      E('div', {style:{display:'flex', gap:6, marginTop:4}},
+        E('input', {className:'input', 'aria-label':'Add a line to ' + f.title, placeholder:'Add a line', style:{flex:1, fontSize:12}, value: draft[t],
+          onChange: e => setDraft(Object.assign({}, draft, {[t]: e.target.value}))}),
+        btn('Add', () => post('add', {target: t, text: draft[t]}, 'a' + t, () => setDraft(Object.assign({}, draft, {[t]: ''}))), 'add',
+          {disabled: !!busy || !String(draft[t] || '').trim()})));
+  };
+  const what = p => p.op === 'add' ? 'Add: “' + p.text + '”'
+    : p.op === 'remove' ? 'Remove: “' + p.old + '”' : 'Change “' + p.old + '” to “' + p.text + '”';
+  const chg = c => c.op === 'add' ? 'Added “' + (c.after || '') + '”'
+    : c.op === 'remove' ? 'Removed “' + (c.before || '') + '”' : 'Changed “' + (c.before || '') + '” to “' + (c.after || '') + '”';
+  return E('div', null,
+    E('div', {'data-st-key': 'settings.memory_review'},
+      E(StToggle, {label:'Review our conversations for the card', value: s.memory_review_enabled !== false,
+        onChange: () => save({memory_review_enabled: s.memory_review_enabled === false}),
+        desc:'On. Every ' + (s.memory_review_every_turns || 10) + ' turns, after ' + fridayName() + ' has answered, a model on this PC reads the latest exchanges and may add a line that rests on your own words. Anything it would change or remove, and anything it got from what she read, waits below for your Keep. It never uses a cloud model. Off, nothing is reviewed.'})),
+    E('div', {style: dim}, 'Two short notes ' + fridayName() + ' reads at the start of every conversation: what she knows about you, and what she has learned about working with you. Each has a size limit, so she merges or drops lines to make room. She saves on her own when you tell her something; anything she picked up from a page, a mail or a file waits for your OK first. Your changes here apply straight away; hers from the next conversation. The files are on this PC only.'),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'#f59e0b', marginTop:6}}, msg),
+    !rep && !msg && E('div', {style: dim}, 'Loading…'),
+    rep && E('div', null,
+      file('user'), file('friday'),
+      (rep.pending || []).length > 0 && E('div', {style: head}, 'Waiting for your review'),
+      (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card; Discard drops them.'),
+      (rep.pending || []).slice(0, 30).map(p => E('div', {key: p.id, style: row},
+        E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, what(p)),
+        E('div', {style: dim}, (p.target === 'friday' ? 'Working with you' : 'About you') + ' · from ' + from(p.source) + ' · ' + when(p.ts)),
+        p.reason ? E('div', {style: dim}, p.reason) : null,
+        E('div', {style:{display:'flex', gap:6, marginTop:4}},
+          btn('Keep', () => post('review', {id: p.id, keep: true}, 'k' + p.id), 'keep'),
+          btn('Discard', () => post('review', {id: p.id, keep: false}, 'x' + p.id), 'discard')))),
+      (rep.changes || []).length > 0 && E('div', {style: head}, 'What ' + fridayName() + ' changed'),
+      (rep.changes || []).slice(0, 20).map(c => E('div', {key: c.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+        E('div', {style:{flex:1}},
+          E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, chg(c)),
+          E('div', {style: dim}, (c.target === 'friday' ? 'Working with you' : 'About you') + ' · ' + when(c.ts) + (c.undone ? ' · undone' : ''))),
+        !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo')))));
+}
+// End memory card panel
+
+function ConversationSearchPanel() {
+  // Full-text search over every conversation (services/conversation_fts), with a Delete
+  // per message that removes it from the transcript and from every index at once.
+  const E = React.createElement;
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [ask, setAsk] = useState('');
+  const run = (query) => {
+    const text = String(query == null ? q : query).trim();
+    if (!text) { setHits(null); return; }
+    setBusy('search'); setMsg('');
+    apiFetch('/api/conversations/search?q=' + encodeURIComponent(text))
+      .then(r => r.json())
+      .then(d => { if (d.status !== 'ok') throw new Error(d.error || 'Search is not available right now.'); setHits(d.results || []); })
+      .catch(e => setMsg(e.message || 'Search is not available right now.'))
+      .finally(() => setBusy(''));
+  };
+  const del = h => {
+    setBusy('d' + h.message_id); setMsg('');
+    apiFetch('/api/conversations/' + encodeURIComponent(h.conversation_id) + '/messages/' + encodeURIComponent(h.message_id), {method:'DELETE'})
+      .then(r => r.json())
+      .then(d => { if (d.status !== 'ok') throw new Error(d.error || 'That did not work.'); setMsg('Deleted from the conversation and from every index.'); setAsk(''); run(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
+  const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, label);
+  return E('div', null,
+    E('div', {style: dim}, 'Everything you and ' + fridayName() + ' have said, typed or spoken, searchable on this PC. Keys and passwords you pasted are withheld before anything is indexed, and nothing said off the record is here. Delete removes a message from its conversation and from every index ' + fridayName() + ' searches, at once.'),
+    E('div', {style:{display:'flex', gap:6, marginTop:6}},
+      E('input', {className:'input', 'aria-label':'Search your conversations', placeholder:'Search your conversations', style:{flex:1, fontSize:12}, value: q,
+        onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === 'Enter') run(); }}),
+      btn('Search', () => run(), 'go')),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'var(--st-warn)', marginTop:6}}, msg),
+    hits && hits.length === 0 && E('div', {style: Object.assign({}, dim, {marginTop:6})}, 'Nothing matches.'),
+    hits && hits.map(h => E('div', {key: h.message_id, style: Object.assign({}, row, {marginTop:6})},
+      E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, h.text),
+      E('div', {style: dim}, h.date + ' · ' + (h.role === 'user' ? 'you' : fridayName()) + ' · ' + (h.via === 'voice' ? 'spoken' : 'typed') + (h.title ? ' · ' + h.title : '')),
+      E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}},
+        ask === h.message_id
+          ? [E('span', {key:'q', style: dim}, 'Delete this message everywhere? It cannot be undone.'),
+             btn('Yes, delete it', () => del(h), 'yes'), btn('Keep it', () => setAsk(''), 'no')]
+          : btn('Delete…', () => setAsk(h.message_id), 'del')))));
+}
+// End conversation search panel
+
+
 
 function ApprovalScannerPanel({s,save}){
   const [st,setSt]=useState(null);

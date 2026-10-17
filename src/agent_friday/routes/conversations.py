@@ -19,6 +19,8 @@ CONTRACT, taken from what the UI actually sends rather than from a design doc:
     GET    /api/conversations/<cid>        -> {status, conversation}
     PATCH  /api/conversations/<cid>        -> {status, conversation, note?}
     GET    /api/conversations/<cid>/messages -> {status, messages}
+    GET    /api/conversations/search?q=    -> {status, results}   (full-text, every conversation)
+    DELETE /api/conversations/<cid>/messages/<mid> -> {status, deleted}  (every index at once)
     GET    /api/projects                   -> {status, projects}
     POST   /api/projects                   -> {status, project}
     GET    /api/projects/<pid>             -> {status, project, conversations}
@@ -443,6 +445,35 @@ def conversation_messages(cid):
     except Exception:
         limit = None
     return jsonify({"status": "ok", "messages": _conv.messages(cid, limit)})
+
+
+@conversations_bp.route("/api/conversations/search", methods=["GET"])
+def conversation_search():
+    """Full-text search over every conversation (services/conversation_fts)."""
+    from agent_friday.services import conversation_fts
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"status": "ok", "results": []})
+    try:
+        hits = conversation_fts.search(q, since=request.args.get("since"),
+                                       until=request.args.get("until"), limit=30)
+    except Exception:
+        return jsonify({"status": "error", "error": "Search is not available right now.",
+                        "results": []})
+    return jsonify({"status": "ok", "results": hits})
+
+
+@conversations_bp.route("/api/conversations/<cid>/messages/<mid>", methods=["DELETE"])
+def conversation_delete_message(cid, mid):
+    """Delete one message from the transcript and from every index at once:
+    full-text search, vector memory, the chat mirror, the review buffer."""
+    from agent_friday.services import conversation_fts
+    if _conv.load(cid) is None:
+        return jsonify({"status": "error", "error": "no such conversation: %s" % cid}), 404
+    res = conversation_fts.delete_message(cid, mid)
+    if not res.get("ok"):
+        return jsonify({"status": "error", "error": res.get("error")}), 404
+    return jsonify({"status": "ok", "deleted": mid})
 
 
 class _SeatSurveyPending(str):

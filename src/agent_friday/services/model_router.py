@@ -2567,11 +2567,12 @@ def _current_session_id():
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
+def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
+                     owner=True):
     """The end of a chat or voice turn: index it, then let the turn's one
     embedding of the message go (services/turn_vector)."""
     try:
-        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library)
+        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library, owner)
     finally:
         try:
             from agent_friday.services import turn_vector as _tv
@@ -2580,7 +2581,8 @@ def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id
             pass
 
 
-def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False):
+def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
+                          owner=True):
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
@@ -2597,10 +2599,33 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
             return
     except Exception:
         pass
-    try:
-        if library:
+    if library:
+        try:
             from agent_friday.services.library import cite as _library_cite
             reply = _library_cite.ELIDED
+        except Exception as _le:
+            # Never index (or review) a Library answer's words un-elided.
+            print(f"  [MEMORY] turn indexing skipped: {_le}")
+            return
+    # What Friday recalled this turn is not new: fenced spans go, and so do the
+    # reply's sentences that only repeat a recalled excerpt (services/
+    # memory_fence), before the index or the review sees the exchange.
+    try:
+        from agent_friday.services import memory_fence as _mf
+        message = _mf.strip(message)
+        reply = _mf.drop_recalled(reply, session_id)
+    except Exception:
+        pass
+    # Every few turns a local model reviews the conversation for the memory
+    # card, after the reply (services/memory_review). Same end-of-turn door
+    # for chat and voice; off the record never reaches here.
+    try:
+        from agent_friday.services import memory_review as _mreview
+        # `owner`: the user side is the owner's own words (False for voice).
+        _mreview.note_turn(message, reply, session_id, owner=owner)
+    except Exception:
+        pass
+    try:
         mem = _get_conversation_memory()
         mem.index_exchange(
             message, reply, session_id=session_id,
@@ -2736,11 +2761,13 @@ def _build_session_continuity_block():
         snippet = text.strip()
         if len(snippet) > 1400:
             snippet = snippet[:1400].rsplit("\n", 1)[0] + "\n…"
+        from agent_friday.services import memory_fence as _mf
         return (
             "\n== CONTINUITY FROM YOUR LAST SESSION (" + date_str + ") ==\n"
-            "This is your own summary of the most recent day you spoke with the "
-            "user. Use it for continuity — pick up open threads naturally — but "
-            "don't recite it back at them.\n" + snippet + "\n")
+            + _mf.fence("last_session_summary",
+                        "This is your own summary of the most recent day you spoke with the "
+                        "user. Use it for continuity — pick up open threads naturally — but "
+                        "don't recite it back at them.\n" + snippet) + "\n")
     except Exception:
         return ""
 
@@ -2933,12 +2960,12 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         if not kept:
             return live_block
         lines = [
-            "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==",
             "These are real excerpts from earlier conversations with this user. "
             "Use them for continuity. When you rely on one to make a factual "
             "claim, you may cite it as [conversation:DATE/\"short quote\"].",
         ]
         used = 0
+        recalled = []
         for h in kept:
             date = h.get("date") or (h.get("timestamp") or "")[:10]
             role = "You" if h.get("role") == "friday" else "User"
@@ -2949,8 +2976,15 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             if used + len(entry) > max_chars:
                 break
             lines.append(entry)
+            recalled.append(" ".join((h.get("text") or "").split()))
             used += len(entry)
-        return live_block + "\n".join(lines) + "\n"
+        # Labelled as recalled (services/memory_fence), and remembered for this
+        # session so the end-of-turn index does not store a reply's repeat of it
+        # as a new exchange.
+        from agent_friday.services import memory_fence as _mf
+        _mf.remember(session_id, recalled)
+        return (live_block + "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==\n"
+                + _mf.fence("past_conversations", "\n".join(lines)) + "\n")
     except Exception as _e:
         return ""
 
@@ -3295,7 +3329,8 @@ def _log_policy_failure():
         pass
 
 
-def memory_head_blocks(workspace='', freeze_key=None) -> str:
+def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
+                       vault_control=None, vault_fallback='redact', model='') -> str:
     """The USER MODEL and LEARNED HEURISTICS blocks for the prompt head.
 
     Both are TIER_1 behavioural text (never raw PII), best-effort, and empty
@@ -3305,13 +3340,47 @@ def memory_head_blocks(workspace='', freeze_key=None) -> str:
     the head stays the same bytes for the seat's cache. An owner's own edit
     or delete applies at once (services/prompt_freeze). /api/chat and every
     `_get_friday_system_prompt` caller share this one renderer.
+
+    The CORE MEMORY lines about the user are personal data: with a
+    `vault_control` and a provider it may not see raw, they are gated as
+    TIER_2 (redacted for the cloud), whatever a keyword scan would say.
     """
     from agent_friday.services import prompt_freeze as _pf
     out = ''
 
+    gate_fn, gate_key = None, "ungated"
+    if vault_control is not None:
+        try:
+            if not vault_control.can_access(provider, model):
+                from agent_friday.privacy.vault_access import Tier as _Tier
+
+                def gate_fn(text):
+                    # Personal by default (fail closed, like the wiki).
+                    return vault_control.gate_content(
+                        text, provider, tier=_Tier.PRIVATE, fallback=vault_fallback,
+                        detail="core-memory", model=model)
+                gate_key = "cloud-gated"
+        except Exception:
+            def gate_fn(text):
+                return ""
+            gate_key = "cloud-gated"
+
+    def _core():
+        from agent_friday.services import core_memory
+        return core_memory.render_prompt(gate=gate_fn)
+
+    # The core memory card first: the facts about the owner and Friday's own
+    # lessons, capped and owner-editable (services/core_memory). It replaces
+    # the USER MODEL's old auto-ranked fact list, which is no longer rendered.
+    core = _pf.frozen(freeze_key, "core_memory:" + gate_key, _core)
+    if core:
+        from agent_friday.services import memory_fence as _mf
+        out += ("\n\n== CORE MEMORY ==\n"
+                + _mf.fence("memory_card", _strip_overrides(core, "core-memory")) + "\n")
+
     def _um():
         from agent_friday.services.user_model import render_user_model_prompt
-        return render_user_model_prompt()
+        return render_user_model_prompt(max_facts=0)
 
     def _heur():
         from agent_friday.services.learning_loop import render_heuristics_prompt
@@ -3332,7 +3401,7 @@ def memory_head_blocks(workspace='', freeze_key=None) -> str:
 
 def _get_friday_system_prompt(keywords='', workspace='', *, provider,
                               vault_control, vault_fallback='redact', tools_block=True,
-                              freeze_key=None):
+                              freeze_key=None, model=''):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
@@ -3361,6 +3430,8 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
         VaultAccessControl.gate_content.
     freeze_key: the conversation this prompt serves, if any. Its memory
         blocks are frozen for that conversation (`memory_head_blocks`).
+    model: the model the prompt is for, when the caller knows it; a
+        cloud-tagged model is gated as cloud in the memory blocks.
     """
     settings = _load_settings()
     personality = _load_agent_personality()
@@ -3434,7 +3505,11 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
 
     # v5 personalization — the LOCAL user model + learned heuristics, frozen
     # for the conversation `freeze_key` names (services/prompt_freeze).
-    prefix += memory_head_blocks(workspace, freeze_key)
+    # `model` too: a cloud-tagged model served through the local daemon
+    # ("glm-4.6:cloud") is a cloud reader whatever the provider name says.
+    prefix += memory_head_blocks(workspace, freeze_key, provider=provider,
+                                 vault_control=vault_control, vault_fallback=vault_fallback,
+                                 model=str(model or ''))
 
     try:
         system_prompt, _ = _build_context_prompt(
