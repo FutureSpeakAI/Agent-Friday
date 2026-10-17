@@ -25,15 +25,18 @@ All contributors follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
-Agent Friday™ is developed on Windows 10 and 11. Install Python 3.11 or 3.12
-(tick "Add python.exe to PATH" in the installer) and Git. Node.js 18 or later is
-needed only for the Playwright browser tests.
+Agent Friday™ is developed on Windows 10 and 11. Install Python 3.12 (3.11 is
+also tested; tick "Add python.exe to PATH" in the installer) and Git. Node.js
+18 or later is needed only for the Playwright browser tests and the node UI
+tests. The full walk-through, including where Friday keeps its data and how to
+run against a scratch home, is in
+[Developer setup](docs/development/setup.md).
 
 ```powershell
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
 cd Agent-Friday
 python -m venv venv
-venv\Scriptsctivate
+venv\Scripts\activate
 pip install -e ".[dev,windows]"
 git config core.hooksPath .githooks
 ```
@@ -41,10 +44,11 @@ git config core.hooksPath .githooks
 Python 3.10 or later satisfies `requires-python` in `pyproject.toml`; CI runs
 3.11 and 3.12. `pip install -e ".[dev,windows]"` installs the application in
 editable mode plus `pytest`, `pytest-xdist` and `ruff`, and the Windows extras
-(the tray tests import `pystray`). CI also installs the `google`, `federation`
-and `podcast` extras. The other extras in `pyproject.toml` are `voice`,
-`voice-local-lite`, `voice-local-gpu`, `creative`, `compose`, `provenance`,
-`local`, `compression`, `pii`, `keyring`, `pdf`, `documents` and `all`.
+(the tray tests import `pystray`). CI also installs the `google`, `federation`,
+`podcast` and `compose` extras. The other extras in `pyproject.toml` are `voice`,
+`voice-local-lite`, `creative`, `provenance`, `local`, `compression`, `pii`,
+`keyring`, `pdf`, `documents` and `all`. The GPU voice tier is not a pip
+extra; Settings installs it as its own step.
 `requirements.txt` lists the same packages for a plain `pip install -r`.
 
 On macOS and Linux the same commands work with `source venv/bin/activate`, but
@@ -65,10 +69,13 @@ which local models fit your hardware, and `friday doctor` checks the
 installation. `python friday_tray.py` runs the system tray app, which starts the
 server for you.
 
-Point `FRIDAY_HOME` at a scratch folder unless you mean to touch your real
-`%USERPROFILE%\.friday`. Importing the server seeds schedules and creates state
-files there, and `scripts/check_imports.py` does the same. The test suite
-isolates its own home directory.
+Point `FRIDAY_HOME` at a scratch folder under `%TEMP%` unless you mean to
+touch your real `%USERPROFILE%\.friday`. Importing the server seeds schedules
+and creates state files there, and `scripts/check_imports.py` does the same.
+A home outside the temp directory counts as a real home and may use the
+account's vault-passphrase keychain slot
+([Developer setup](docs/development/setup.md#use-a-scratch-home-not-your-real-one)).
+The test suite isolates its own home directory.
 
 Friday runs local models itself (`llama-server`, managed by the residency
 arbiter), so Ollama is optional. Cloud keys are entered in the running app and
@@ -80,7 +87,9 @@ hooks enforce invariants a reviewer cannot reliably catch by reading a diff (see
 [Repository guards](docs/development/repository-guards.md)). The pre-commit hook
 runs the secret and personal-data scanner on staged additions, the import smoke
 test (when a `venv` exists in the checkout), and the gated-prompt,
-settings-reader, stale-model-name, trust-in-governance and brand-token checks.
+settings-reader, stale-model-name, trust-in-governance, visible-jobs and
+brand-token checks. The pre-push hook refuses a branch that shares no history
+with `origin/main`.
 Do not bypass it with `--no-verify`; if it blocks a false positive, allowlist
 that line with `# pragma: allowlist secret`.
 
@@ -107,10 +116,13 @@ suites on Windows and Ubuntu; the guard scripts on Ubuntu).
 The scanner without `--tree` checks only what is staged, which is what the
 pre-commit hook runs.
 
-`pytest.ini` runs with `-n auto` (all cores) by default. Use `-n 0` to debug a
-single test with normal tracebacks, or `-n 2` if the machine is also running a
-local model. The unit and API suites are hermetic: no live server, no network,
-no API keys. Tests that need a live server (`tests/test_friday_ui.py`,
+`pytest.ini` asks for `-n auto`, and `pytest_resource_guard.py` caps it at two
+workers off CI. A run over whole directories also needs 12 GB of free memory
+and 20 GB of free disk, or it stops before collecting anything; a run that
+names test files is never refused. Use `-n 0` to debug a single test with
+normal tracebacks. The unit and API suites are hermetic: no live server, no
+network, no API keys. Lanes, CI-only pull requests, budgets and CodeQL
+dismissals are in [Testing and gates](docs/development/testing-and-gates.md). Tests that need a live server (`tests/test_friday_ui.py`,
 `tests/test_ui_audit.py`) are excluded by default; see `pytest.ini`. The
 Playwright app tests start their own scratch server: `npm install`, then
 `npm run test:smoke` (see [tests/app/README.md](tests/app/README.md)).
@@ -198,8 +210,12 @@ tool ask for approval rather than run silently, but the test still fails.
 ## Laya in every workspace
 
 If you add or change a workspace or a UI action, update its Laya manifest in
-`src/agent_friday/resources/laya_manifests/`. CI checks it
-(`tests/test_laya_workspace_contracts.py`).
+`src/agent_friday/resources/laya_manifests/` and run
+`pytest tests/test_laya_workspace_contracts.py`. CI does not run that file
+(`tests.yml` runs only the unit, API and security paths), so run it yourself.
+The full steps for a new workspace are in
+[Adding a workspace](docs/development/adding-a-workspace.md); for a new
+service card, [Adding a connection](docs/development/adding-a-connection.md).
 
 - A new UI action needs a manifest verb (tool, argument template, gate class,
   phrasings, undo, eval case) or a `not_for_laya` entry with a one-line reason.
