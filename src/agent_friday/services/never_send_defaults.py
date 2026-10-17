@@ -2,11 +2,15 @@
 
 Two entries join the owner's never-send list on every install, new and existing:
 
-* ``[card numbers]``             -- any payment-card number (13 to 19 digits that pass the card
-                                    checksum, so order numbers and long digit runs do not trip it);
+* ``[card numbers]``             -- any payment-card number: 13 to 19 digits in a row or in card
+                                    groups (4-4-4-4, 4-6-5) that pass the card checksum, so order
+                                    numbers and spaced lists of numbers do not trip it;
 * ``[bank and account numbers]`` -- an IBAN (its own checksum), and a number written as a bank or
                                     account number: after "account number", "acct", "a/c",
-                                    "routing number", "ABA" or "sort code".
+                                    "routing number", "ABA number" or "sort code".
+
+A hit stops the whole cloud call, like every never-send entry, and a turn that quoted one keeps
+stopping later calls that carry it in their history: the floor's rule, by design.
 
 They are entries like any other: the never-send floor (``judgment_gate.never_send_hits``, run by
 ``egress_gate`` before every cloud call in every mode, "Cloud for everything" included) refuses a
@@ -34,11 +38,17 @@ SOURCE = "default"
 MARK = "numbers-2026-10"
 NOTICE_KEY = "never-send-defaults-numbers"
 
-_CARD_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+#: A card number as people write one: 13-19 digits in a row, or grouped the way cards print
+#: (4-4-4-4 with an optional 1-3 digit tail, 4-6-5 or 4-6-4). Not any run of spaced numbers, so a
+#: table of small numbers or a list of years is not read as a card.
+_CARD_RE = re.compile(
+    r"\b(?:\d{13,19}"
+    r"|\d{4}([ -])\d{4}\1\d{4}\1\d{4}(?:\1\d{1,3})?"
+    r"|\d{4}([ -])\d{6}\2\d{4,5})\b")
 _IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b")
 _LABELLED_RE = re.compile(
     r"(?i)\b(?:(?:bank\s+)?account\s*(?:number|no\.?|num\.?|#)|acct\.?\s*(?:number|no\.?|#)?|a/c\s*(?:no\.?|number)?"
-    r"|routing\s*(?:number|no\.?|#)?|aba(?:\s*(?:number|no\.?|#))?|sort\s*code)"
+    r"|routing\s*(?:number|no\.?|#)|aba\s*(?:routing\s*)?(?:number|no\.?|#)|sort\s*code)"
     r"\s*(?:is\s*)?[:#]?\s*(\d[\d -]{4,32}\d)")
 
 

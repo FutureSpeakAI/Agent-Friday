@@ -103,6 +103,8 @@ def test_the_server_start_runs_the_migration():
     ("My account number: 12345678, sort code 12-34-56.", nsd.BANK),
     ("acct # 00123456789", nsd.BANK),
     ("routing number 021000021", nsd.BANK),
+    ("Card: 4111-1111-1111-1111", nsd.CARD),
+    ("Amex 3782 822463 10005", nsd.CARD),
 ])
 def test_the_floor_finds_each_kind(home, text, hit):
     nsd.migrate()
@@ -115,6 +117,10 @@ def test_the_floor_finds_each_kind(home, text, hit):
     "Tracking 123456789 arrives Tuesday.",
     "Where do I find my card numbers and account numbers in the app?",
     "Your Google account 2 is connected.",
+    # spaced small numbers and dates are not a card or a routing number (critic review)
+    "Scores: 1 2 3 4 5 6 7 8 9 0 1 2 3 4",
+    "routing 2026-10-17 to the new queue",
+    "ABA 021000021 is a format example",
 ])
 def test_the_floor_lets_ordinary_text_through(home, text):
     nsd.migrate()
