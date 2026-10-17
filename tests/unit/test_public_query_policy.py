@@ -679,18 +679,19 @@ def test_the_search_gate_refusal_is_logged_without_the_value(caplog):
 
 
 def test_log_refusal_writes_only_fixed_vocabulary(caplog):
-    """Reason and kinds are logged from constant tables: an unexpected value
-    on a Refusal is written as "other", never echoed."""
+    """The reason is logged from a constant table (an unexpected value is
+    written as "other", never echoed); the kinds, the tool and the call's
+    labels are not logged at all."""
     from agent_friday.privacy import public_query as pq
     odd = pq.Refusal("not-a-reason-xyz", kinds=("card", "weird-kind-xyz"),
                      count=2)
     with caplog.at_level(logging.WARNING, logger="friday.privacy"):
-        pq.log_refusal(odd, action="search_web")
+        pq.log_refusal(odd, action="search_web", provider="anthropic", surface="check_action")
     text = " ".join(r.getMessage() for r in caplog.records
                     if r.name.startswith("friday.privacy"))
-    assert "reason=other" in text and "kinds=card,other" in text
-    assert "count=" not in text
-    assert "xyz" not in text
+    assert "reason=other" in text
+    for absent in ("kinds=", "count=", "xyz", "search_web", "anthropic", "check_action"):
+        assert absent not in text, absent
 
 
 def test_the_model_is_told_the_component_reason_and_to_report_it():

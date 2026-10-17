@@ -47,16 +47,16 @@ import re
 from typing import Optional
 
 #: What the app calls itself wherever it shows its version.
-RELEASE_NAME = "Agent Friday Beta 1.1"
+RELEASE_NAME = "Agent Friday Beta 1.2"
 
 #: The tag this tree is released under.
-RELEASE_TAG = "v1.1.0-beta.1"
+RELEASE_TAG = "v1.2.0-beta.1"
 
 #: Everything at or above this is a release after the 5.x line.
 ERA_FLOOR = 100_000_000
 
 #: Bumped by every release; see the module docstring for the shape.
-BUILD_SEQUENCE = 101_010_001
+BUILD_SEQUENCE = 101_020_001
 
 _VERSION = re.compile(
     r"^\s*[vV]?(\d+)(?:\.(\d+))?(?:\.(\d+))?"

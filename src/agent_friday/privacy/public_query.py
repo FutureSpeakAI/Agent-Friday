@@ -583,54 +583,26 @@ def log_refusal(refusal: Refusal, *, action: str = "", provider: str = "",
                 surface: str = "") -> None:
     """One WARNING line in friday.log naming the component and the reason.
 
-    Kinds and a count only -- never the matched value. Reason and kinds are
-    written as constants looked up from fixed tables (anything unknown is
-    logged as "other"), so no text derived from the inspected value can reach
-    the log line.
+    The component and a reason only -- never the matched value, the tool or
+    its labels. The reason is a constant looked up from a fixed table
+    (anything unknown is logged as "other"), so no text derived from the
+    inspected value can reach the log line.
     """
-    # Each logged word is SELECTED from a constant table by comparison, never
-    # copied from the refusal (CodeQL py/clear-text-logging): the refusal was
-    # built while inspecting text that may hold a secret. No count either.
+    # The logged reason is SELECTED from a constant table by comparison, never
+    # copied from the refusal (CodeQL py/clear-text-logging): the refusal, the
+    # tool arguments and the call's labels were all handled while inspecting
+    # text that may hold a secret, so none of them is written here. The tool,
+    # provider and kinds go to the access log and the refusal the model reads.
     reason_code = "other"
     for code in _LOG_REASON_CODES:
         if refusal.reason == code:
             reason_code = code
-    kind_codes = [code for code in _LOG_KIND_CODES if code in refusal.kinds]
-    if any(k not in _LOG_KIND_CODES for k in refusal.kinds):
-        kind_codes.append("other")
-    _log.warning("REFUSED component=%s reason=%s kinds=%s tool=%s "
-                 "provider=%s surface=%s",
-                 COMPONENT, reason_code, ",".join(kind_codes),
-                 action or "-", provider or "-", surface or "-")
+    _log.warning("REFUSED component=%s reason=%s", COMPONENT, reason_code)
 
 
-#: Fixed log vocabulary for log_refusal: the logged reason/kind is always one
-#: of these constant strings, never text taken from the refusal itself.
+#: Fixed log vocabulary for log_refusal: the logged reason is always one of
+#: these constant strings, never text taken from the refusal itself.
 _LOG_REASON_CODES = tuple(REASONS)
-_LOG_KIND_CODES = {
-    # what _hits() reports
-    "never_send": "never_send",
-    "secret": "secret",
-    "api_key": "api_key",
-    "ssn": "ssn",
-    "routing": "routing",
-    "card": "card",
-    "watchlist": "watchlist",
-    "email": "email",
-    "identity": "identity",
-    "phone": "phone",
-    # floor_unavailable carries the failing exception's type name
-    "ImportError": "ImportError",
-    "ModuleNotFoundError": "ModuleNotFoundError",
-    "AttributeError": "AttributeError",
-    "TypeError": "TypeError",
-    "ValueError": "ValueError",
-    "KeyError": "KeyError",
-    "OSError": "OSError",
-    "RuntimeError": "RuntimeError",
-    "RecursionError": "RecursionError",
-    "UnicodeError": "UnicodeError",
-}
 
 
 def gate_outbound(text: str, provider: str, field: str) -> tuple[str, str]:

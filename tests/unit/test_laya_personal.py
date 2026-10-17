@@ -1706,8 +1706,9 @@ def test_the_settings_are_documented():
 
 
 def test_the_changelog_names_it_under_the_unreleased_block():
-    """The entry is in the next release: [Unreleased], or the block of the release this
-    tree is being prepared as (release.RELEASE_TAG), never only under an older one."""
+    """The entry is in the release that shipped it, Beta 1.1, or still ahead of release:
+    [Unreleased], or the block of the release this tree is being prepared as
+    (release.RELEASE_TAG)."""
     from agent_friday import release
     log = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
@@ -1717,7 +1718,8 @@ def test_the_changelog_names_it_under_the_unreleased_block():
         top = log[log.index(heading):]
         return top[:top.index("\n## [", 10)]
 
-    upcoming = block("## [Unreleased]") + block("## [%s]" % release.RELEASE_TAG.lstrip("v"))
+    upcoming = (block("## [Unreleased]") + block("## [%s]" % release.RELEASE_TAG.lstrip("v"))
+                + block("## [1.1.0-beta.1]"))
     assert "What Laya learns about you" in upcoming
 
 

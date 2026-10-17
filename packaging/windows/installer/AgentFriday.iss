@@ -1,5 +1,5 @@
 ; ============================================================================
-;  Agent Friday Beta 1.1 - Windows setup program (Inno Setup 6.3 or newer)
+;  Agent Friday Beta 1.2 - Windows setup program (Inno Setup 6.3 or newer)
 ;
 ;  Built by packaging\windows\build-installer.ps1, which stages the payload and
 ;  passes the defines below. Do not compile this by hand without them.
@@ -53,7 +53,7 @@
 #endif
 
 #define AppName "Agent Friday"
-#define ReleaseName "Agent Friday Beta 1.1"
+#define ReleaseName "Agent Friday Beta 1.2"
 #define AppPublisher "FutureSpeak.AI"
 #define AppGuid "BE782F40-3D1C-4F12-8635-4F7561938F75"
 #define UninstKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{" + AppGuid + "}_is1"
