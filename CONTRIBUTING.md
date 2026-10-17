@@ -211,8 +211,8 @@ tool ask for approval rather than run silently, but the test still fails.
 
 If you add or change a workspace or a UI action, update its Laya manifest in
 `src/agent_friday/resources/laya_manifests/` and run
-`pytest tests/test_laya_workspace_contracts.py`. CI does not run that file
-(`tests.yml` runs only the unit, API and security paths), so run it yourself.
+`pytest tests/test_laya_workspace_contracts.py`. CI runs that file in its own
+step of `tests.yml` on every pull request; run it yourself before you push.
 The full steps for a new workspace are in
 [Adding a workspace](docs/development/adding-a-workspace.md); for a new
 service card, [Adding a connection](docs/development/adding-a-connection.md).

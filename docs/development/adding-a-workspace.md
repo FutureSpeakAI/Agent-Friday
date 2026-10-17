@@ -132,7 +132,6 @@ pytest tests/unit/test_workspace_registry_ui.py tests/unit/test_workspace_aliase
 python scripts/check_visible_jobs.py
 ```
 
-`tests/test_laya_workspace_contracts.py` is not run by CI (`tests.yml` runs
-`tests/unit`, `tests/api` and the security paths), so run it yourself. The
-other two lines are also covered by CI. Then follow
+CI runs `tests/test_laya_workspace_contracts.py` in its own step of
+`tests.yml`, and the other two lines too; run them yourself before you push. Then follow
 [Testing and gates](testing-and-gates.md) for the rest of the suite.
