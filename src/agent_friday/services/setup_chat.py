@@ -45,6 +45,14 @@ from agent_friday.services import setup_steps as steps
 _log = logging.getLogger("friday.setup_chat")
 from agent_friday.user_errors import UserFacingError, log_failure
 
+import contextvars
+
+#: True while the route handles an answer that came from a press or typing on Friday's own
+#: page (screen_click.screen_session); False for a spoken answer or any other caller. The
+#: room-approval question needs it to let anyone in the room approve.
+SCREEN_CLICK: "contextvars.ContextVar[bool]" = contextvars.ContextVar("setup_chat_screen_click",
+                                                                       default=False)
+
 _LOCK = threading.RLock()
 
 STAGES = copy.STAGES
@@ -1370,6 +1378,11 @@ def _on_room_voice(st, transcript, value, text):
         want = True
     elif choice in ("anyone", "no", "n", labels["anyone"].lower()):
         want = False
+    if want is False and not SCREEN_CLICK.get():
+        # Letting anyone in the room approve loosens who may say yes: it takes a press of
+        # the chip on Friday's own page, never a spoken or relayed answer.
+        _say(transcript, copy.ROOM_VOICE_NEEDS_CLICK, "room_voice")
+        return
     if want is None:
         _heard(transcript, copy.SKIP, "room_voice")
         _say(transcript, copy.ROOM_VOICE_SKIPPED, "room_voice")
@@ -1391,7 +1404,9 @@ def _set_room_approvals_require_name(require: bool) -> None:
     """
     try:
         from agent_friday.core import _save_settings
-        _save_settings({"voice_room_approvals_require_name": bool(require)})
+        # Loosening is accepted only for a press on the page (SCREEN_CLICK, set by the route).
+        _save_settings({"voice_room_approvals_require_name": bool(require)},
+                       owner_room_approvals_change=bool(SCREEN_CLICK.get()))
     except Exception as e:  # noqa: BLE001
         _log.warning("setup could not save the room-approval choice: %s: %s",
                      type(e).__name__, e)
