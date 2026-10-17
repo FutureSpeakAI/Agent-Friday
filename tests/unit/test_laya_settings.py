@@ -142,6 +142,10 @@ def test_what_counts_as_letting_her_act_more(home):
     assert ls.is_loosening({"set_chat_tray": None}, None)          # clearing a stricter bar loosens
     assert not ls.is_loosening({}, "shadow")
     assert ls.is_loosening({}, "act")
+    ls.set_bars(mode="act")
+    assert ls.is_loosening({}, "shadow"), "act -> shadow takes the stricter set_chat_tray bar out of force"
+    ls.set_bars({"set_chat_tray": None})
+    assert not ls.is_loosening({}, "shadow"), "with only a lowered bar left, shadow is the safe direction"
 
 
 def test_without_a_click_the_check_and_the_write_happen_under_one_lock(home):
