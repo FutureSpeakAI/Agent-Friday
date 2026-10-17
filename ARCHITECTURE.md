@@ -5,12 +5,24 @@ together, for people who work on the code. Paths are relative to
 `src/agent_friday/` unless they start at the repository root. When this page
 and the code disagree, the code is right; please fix the page.
 
-Friday is a local Flask application with a single-page UI, a set of local model
-runtimes it manages itself, and optional cloud providers. Every model call to
-the cloud passes an egress gate, and every tool call passes one governance
-checkpoint. More diagrams and subsystem detail are in
-[docs/architecture/overview.md](docs/architecture/overview.md); the security
-design is in [docs/security/threat-model.md](docs/security/threat-model.md).
+Friday is a local Flask application with a single-page UI, local model
+runtimes it manages itself, and optional cloud providers. Out of the box the
+routing mode is `cloud_only` (`model_routing.mode` in `DEFAULT_SETTINGS`,
+`core/__init__.py`); the privacy answer in first-run setup rewrites it. Friday
+can run fully local when the owner chooses **Only on this PC** and has a local
+model. Every cloud model call passes the egress gate, and every tool call
+passes one governance checkpoint.
+
+More detail:
+
+- [docs/architecture/overview.md](docs/architecture/overview.md): each
+  subsystem in detail (consent, gates, approvals, scheduler, memory, search,
+  vault key, Laya, routing, connections, first run, workspaces, task
+  visibility, release).
+- [docs/architecture/diagram.md](docs/architecture/diagram.md): Mermaid
+  diagrams of the component layout and of a chat turn through the gates.
+- [docs/security/threat-model.md](docs/security/threat-model.md): the
+  security design.
 
 ## Processes
 
@@ -22,247 +34,223 @@ friday_tray.py  (system tray; Windows)
      ├─ Ollama (external)     leased seats, localhost:11434
      ├─ voice workers         python -m agent_friday.voice.worker, one per GPU voice engine
      ├─ ComfyUI (optional)    local image and video generation
-     ├─ MCP servers           stdio child processes from ~/.friday/mcp_servers.json
+     ├─ MCP servers           stdio children or Streamable HTTP, from ~/.friday/mcp_servers.json
      ├─ officecli.exe         run per document command
      └─ in-process listeners  phone ingress (127.0.0.1:3011), local-address proxy (443/80)
 ```
 
 - **The tray** (`friday_tray.py`) starts the server as a child process with no
   console window, waits for `/health`, and restarts or stops it from its menu.
-  It also runs the system-wide push-to-transcribe hook, because the tray is the
-  one Friday process that outlives the browser. The installed "Start Friday
-  when I sign in" entry starts the tray; the desktop and Start menu shortcuts run
-  `python -m agent_friday.cli`, which starts the server and opens the browser
-  without the tray. `friday_tray.py` and `server.py` at the repository root are
-  thin shims over the package.
+  It also runs the push-to-transcribe hook. The installed desktop and Start
+  menu icons run `Agent Friday (tray).cmd`. While setup is not complete the
+  tray hands over to the console launcher, `Agent Friday.cmd`
+  (`python -m agent_friday.cli`), so the setup wizard can ask its questions.
+  `friday_tray.py` and `server.py` at the repository root are thin shims over
+  the package.
 - **The server** (`server.py`) binds to `127.0.0.1` on `FRIDAY_PORT` (default
   3000, next free port if busy). It registers every blueprint in `routes/` by
   auto-discovery (`_discover_and_register_blueprints`), falling back to the
   `ROUTE_MODULES` manifest in a frozen build, and starts the background
-  services: scheduler, notification and network monitor, news archiver,
-  connector health, credential sweep and the residency arbiter; the phone
-  service starts when its routes load. `FRIDAY_TESTING=1` suppresses the
-  background threads for tests.
+  services (scheduler, notifications, connector health, credential sweep, the
+  residency arbiter and others). `FRIDAY_TESTING=1` suppresses background
+  threads for tests.
 - **Local model runtimes** are owned by the residency arbiter
-  (`services/residency_arbiter.py`). Seats the plan pins run as `llama-server`
-  processes the arbiter spawns, health-checks and terminates, so nothing else
-  can evict them. Leased seats may use Ollama, where eviction is acceptable.
-  Transitions are serial under one lock.
-- **The phone ingress** (`phone/ingress.py`) is a separate WSGI application,
-  with its own routes only, served on its own loopback socket by a thread in
-  the server process. It imports nothing from `core`, so no Friday route is
-  reachable through it, and it runs only while the phone is switched on.
-- **The local-address proxy** (`services/local_proxy.py`) is an asyncio byte
-  relay on loopback ports 443 and 80, opened only when turned on in Settings.
+  (`services/residency_arbiter.py`). Pinned seats run as `llama-server`
+  processes the arbiter spawns, health-checks and stops. Leased seats may use
+  Ollama. Transitions are serial under one lock.
+- **The phone ingress** (`phone/ingress.py`) is a separate WSGI application on
+  its own loopback port, with its own routes only. It runs only while the
+  phone is switched on.
+- **The local-address proxy** (`services/local_proxy.py`) is a byte relay on
+  loopback ports 443 and 80, opened only when turned on in Settings.
 
 ## A chat turn
 
-1. **UI.** `index.html` posts to `/api/chat/stream` (Server-Sent Events) or
-   `/api/chat`; voice uses the `/ws/voice-local` or `/ws/live` WebSocket.
-   `/api/chat/send` is a second, older endpoint used by some surfaces.
+The diagram version is in [diagram.md](docs/architecture/diagram.md#2-a-chat-turn-through-the-gates).
+
+1. **UI.** `index.html` posts to `/api/chat` or `/api/chat/stream`; the
+   stream endpoint runs the same `chat()` on a worker thread and streams
+   tokens. `/api/chat/send` is an older endpoint used by some surfaces; it
+   does not run the Laya reflexes. Voice uses `/ws/voice-local` or `/ws/live`.
 2. **Authentication** (`core/__init__.py`). Direct loopback requests are the
-   owner; a request that looks proxied (any `CF-*` header, a forwarding chain
-   with a non-loopback address, an unknown forwarded host) must log in.
-3. **Context assembly.** The system prompt is built by
-   `_get_friday_system_prompt`, which requires an explicit provider and vault
-   control; vault content is tier-gated for cloud providers
-   (`privacy/vault_access.py`). The action permission policy is appended last,
-   and override attempts in assembled context are stripped.
-4. **Routing** (`routing/model_router.py`). Vault requests are routed first
-   (local, or refused, while `vault_local_only` is on). Otherwise the seat you
-   chose for the conversation or globally wins; the task classifier and the
-   routing mode (`cloud_only`, `cloud_preferred`, `smart`, `local_preferred`, `local_only`) decide
-   the rest. In `local_only`, a turn with no local seat is refused with an offer
-   to answer in the cloud.
-5. **Egress** (`services/model_router._seal_or_block`). Before any cloud call:
-   the hard spending cap, a payload size ceiling, then
-   `services/egress_gate.seal_outbound`, which scrubs PII and replaces or
-   withholds private and sensitive content. Any failure blocks the send. Local
+   owner; a request that looks proxied must log in.
+3. **Intake.** A key pasted into the message is withheld before anything keeps
+   it (`services/pasted_secrets.py`, decorator in `routes/chat.py`).
+4. **Reflexes** (`services/reflex_chat.py`). A typed whole "yes" or bare "no"
+   on the owner's page answers a waiting card with no model call. Other Laya
+   steps are opt-in or shadow ([overview §9](docs/architecture/overview.md#9-laya-what-is-live-and-what-is-trial)).
+5. **Routing** (`routing/model_router.py`). Vault requests first (local while
+   `vault_local_only` is on), then the chosen seat, then the routing mode
+   (`local_only`, `local_preferred`, `cloud_preferred`, `cloud_only`). In
+   `local_only` a turn with no local seat is refused with an offer to switch.
+6. **Context.** `services/model_router._get_friday_system_prompt` builds the
+   prompt. It starts with the live privacy summary
+   (`services/privacy_policy_summary.py`), adds the memory card frozen for
+   this conversation (`services/prompt_freeze.py`), and gates vault content
+   for cloud providers (`privacy/vault_access.py`).
+7. **Egress** (`services/model_router._seal_or_block`). Before any cloud call:
+   the hard spending cap, a size ceiling, then
+   `services/egress_gate.seal_outbound`: the never-send floor (blocks the whole
+   call in every mode), then, unless consent is `cloud_unrestricted`, the
+   identifier scrub and tier withholding. Any failure blocks the send. Local
    providers pass through.
-6. **The agent loop.** Anthropic models run the Claude tool loop in
+8. **The agent loop.** Anthropic models run the Claude tool loop in
    `services/agent.py`; every OpenAI-compatible provider, local or cloud, runs
-   the shared `_oai_agentic_loop`. Both use one tool registry (`CLAUDE_TOOLS`)
-   and send the model an index of tools with schemas loaded on demand.
-7. **Tools** run through `_execute_tool` (below). Results are capped, dated
-   with computed weekdays, and returned to the loop.
-8. **Response.** The reply streams back with the model that answered; the turn
-   is recorded in the conversation store, the cost meter and, if enabled, the
-   encrypted reasoning-trace log (`services/reasoning_trace.py`).
+   `_oai_agentic_loop`. Both use one tool registry (`CLAUDE_TOOLS`).
+9. **Tools** run through `_execute_tool` and the hook chain (below). A tool
+   that needs the owner raises an approval card on the first ask.
+10. **Response.** Claims of completed work are checked against the turn's
+    receipts (`services/completion_receipts.py`); the reply returns with the
+    model that answered (`services/answer_truth.py`), and the turn is recorded.
 
 ## Tool dispatch and the governance hook chain
 
 `_execute_tool(name, input, …)` in `services/agent.py` is the only way a tool
-handler runs. `tests/unit/test_every_action_is_governed.py` discovers every
-registered tool and every direct handler call site and fails on a bypass.
+handler runs. `tests/unit/test_every_action_is_governed.py` fails on a bypass.
+Hooks are registered in `services/agent.py` (registry in
+`services/tool_hooks.py`). Pre-hooks run in priority order; a deny stops the
+chain and becomes the tool result the model sees. Critical hooks cannot be
+disabled, and an exception in one denies the call.
 
-Pre-hooks run in priority order; a deny stops the chain and becomes the tool
-result the model sees. Hooks marked critical cannot be disabled, and an
-exception in one denies the call.
+| Phase | Priority | Hook | Critical | What it does |
+|---|---|---|---|---|
+| pre | 1 | `governance_rings` | yes | Refuses key material first (`_hook_credential_refusal`); privilege rings and subagent scope; taint (`services/taint.py`); then `governance/action_gate.authorize`: cLaws pin check, classify (`internal`, `observe`, `outward`, `forbidden`), decide (`allow`, `confirm`, `card`, `deny`), signed receipt. Fails closed for outward actions. |
+| pre | 5 | `call_verifier` | no | Escalate-only: the verifier's reasons to ask become a confirmation or, with nobody in the chat, a card. |
+| pre | 10 | `confirmation_gate` | yes | A `confirm` verdict becomes a `tool_confirm` card on the first ask, with the question also shown in chat; a second ask goes to the card only. |
+| pre | 25 | `vault_zt` | yes | Ring-2 (network and vault tier) tools need an authenticated or background session. Defence in depth; the ring check in hook 1 already covers it. |
+| pre | 30 | `sandbox_policy` | no | `FRIDAY_SANDBOX_MODE` path confinement and command allowlist. |
+| pre | 40 | `rate_limiter` | no | Per-minute token buckets. |
+| post | 80 | `cost_attribution` | no | Cost meter. |
+| post | 85 | `taint_record` | yes | Records the result as read content. |
+| post | 90 | `audit_log` | no | Audit log. |
+| post | 95 | `pii_scrub` | no | Scrubs the result. |
+| post | 96 | `file_grant_registration` | yes | For `read_file` only. |
+| post | 99 | `call_verifier_record` | no | Records the call for the verifier. |
 
-| Priority | Hook | Critical | What it does |
-|---|---|---|---|
-| 1 | `governance_rings` | yes | Privilege rings and subagent scope (`_governance_check`); a phone-origin turn is read-only. Provenance (`services/taint.py`): a sensitive argument that came from read content forces a card. Then `governance/action_gate.authorize`: cLaws integrity against the pin, classify internal / outward / forbidden, decide (allow, chat confirmation, card, or grant), write the signed receipt. Fails closed for outward actions. |
-| 10 | `confirmation_gate` | yes | The chat yes/no for outward actions in a live conversation, bound to the action's fingerprint; a repeated ask escalates to a card. |
-| 25 | `vault_zt` | yes | Ring-2 tools need an authenticated or background session. |
-| 30 | `sandbox_policy` | no | `FRIDAY_SANDBOX_MODE` path confinement for `write_file`, and the `strict` command allowlist. |
-| 40 | `rate_limiter` | no | Per-minute token buckets for ring 2 and ring 3. |
-| 100+ | skill hooks | no | May only tighten. |
+`services/tool_receipts.record` notes each call that ran. Approval records are
+in `services/approvals.py`; decision receipts are appended to
+`~/.friday/decision-bom.jsonl`, HMAC-signed with the governance key. The card
+pipeline, chat yes/no, pre-approved sends and receipts are described in
+[overview §4](docs/architecture/overview.md#4-approvals-cards-and-receipts).
 
-After the handler returns, `tool_receipts.record` notes that the call happened,
-and post-hooks run: cost attribution (80), provenance recording of the result
-as read content (85, critical), audit log (90), PII scrub (95) and file-grant
-registration for `read_file` (96).
+## Privacy, in one paragraph
 
-Approvals are durable records in `services/approvals.py`; grants for scheduled
-work live in `~/.friday/governance/grants.json`; receipts are appended to
-`~/.friday/decision-bom.jsonl` and HMAC-signed with the governance key
-(`governance/proof_of_integrity.get_governance_key`). Sends that are not tool
-calls (an approved email, phone alerts and codes, federated compute jobs) take
-the same integrity check and receipt through `action_gate.authorize_external`
-or `record_external`.
+Mode, consent and local-only records are three settings with one owner each
+(`routing/model_router.py`, `privacy/cloud_consent.py`,
+`privacy/vault_policy.py`). The setup posture answer writes all of them
+(`services/setup_steps.apply_posture`). The never-send floor
+(`services/judgment_gate.never_send_hits`, including raw-record hash holds)
+blocks a cloud call in every mode; card numbers and bank or account numbers
+are on every never-send list by default (`services/never_send_defaults.py`,
+matched by pattern, removable on the Locks page). Other identifiers and
+credentials are masked by the identifier scrub except under unrestricted
+consent, refused in tool inputs in every mode by the vault gate, and keys are
+withheld at chat intake. An explicit owner choice of Cloud only (Settings >
+Models clicked on the page, or setup; `model_routing.mode_chosen_via`) is
+unrestricted consent; the factory default is not. Details:
+[overview §1-3](docs/architecture/overview.md#1-routing-mode-and-cloud-consent).
 
 ## Secrets, the vault and the keystore
 
 - **Keystore** (`services/keystore.py`): a random 32-byte root key in
-  `~/.friday/security/keystore.json`, unwrapped by default (owner-only ACL) or
-  wrapped with an Argon2id passphrase. `services/credential_store.py` encrypts
-  every credential with it (AES-256-GCM) and still reads blobs written by the
-  older vault-key and DPAPI mechanisms.
-- **Vault** (`privacy/`): the user's sensitive documents (finance, health,
-  legal, family, and chosen wiki sections), encrypted with AES-256-GCM under a
-  key derived by Argon2id from the vault passphrase. `privacy/vault_access.py`
-  classifies vault content into tiers for prompt assembly;
-  `privacy/cloud_consent.py` holds the one recorded choice that can turn cloud
-  safeguards off.
-- **Vault passphrase** (`services/vault_passphrase.py`): one resolver; stored
-  in Windows Credential Manager and a DPAPI file.
+  `~/.friday/security/keystore.json`. `services/credential_store.py` encrypts
+  every credential (AES-256-GCM; vault key, then DPAPI; no plaintext tier).
+- **Vault** (`privacy/`): sensitive documents, encrypted with AES-256-GCM
+  under an Argon2id key from the vault passphrase (`privacy/vault_crypto.py`).
+- **Vault passphrase** (`services/vault_passphrase.py`): one resolver over
+  several stored copies; when they disagree it uses the one that opens the
+  most files. `scripts/vault_key_doctor.py` reports and repairs.
 - **Governance key** (`governance/proof_of_integrity.py`): Credential Manager,
   with a file fallback; never replaced automatically.
 
 ## Seats and residency
 
-A **seat** is a model bound to a job: `reasoning`, `subagent`,
-`heavy_hitter`, `function_manager`, `memory_manager`, `researcher`,
-`creative_image`, `asr`, `tts` and so on (`capability_routing` in settings).
-A seat is local or cloud by the model it names. The planner
-(`services/model_plan.py`) sizes local models to the card (VRAM minus a 2.5 GiB
-display reserve); the residency policy decides what should be resident, and
-the arbiter makes it so, granting GPU leases to voice workers and image jobs.
-`services/local_seats.py` answers which installed model serves a role and
-announces any substitution. "I need my machine" in Settings releases the GPU.
-
-## Scheduler
-
-`services/scheduler.py` ticks every 60 seconds over `~/.friday/schedules.json`.
-Built-in jobs (heartbeat, briefings, the news front page, daily creation) are
-local-only by default: the run is skipped, with a reason, if no local seat is
-serving, and `services/local_only_guard.py` refuses a cloud call at the
-transport inside a local-only run. `idle_daily` jobs wait for the owner to be
-away, inside a daily window, with the GPU free. Scheduled runs are
-non-interactive, so an outward action needs a grant scoped to that schedule or
-waits on a card. The weekly update check is a schedule seeded from the owner's
-first-run answer.
+A **seat** is a model bound to a job (`capability_routing` in settings). The
+planner (`services/model_plan.py`) sizes local models to the card; the
+residency policy decides what should be resident, and the arbiter makes it
+so. `services/local_seats.py` answers which installed model serves a role.
+See [overview §10](docs/architecture/overview.md#10-seats-and-model-routing).
 
 ## Voice
 
-Voice has two paths that share the same brain and the same governance chain.
-
-- **Local voice** (`/ws/voice-local`, `/ws/voice` in `routes/voice.py`) runs
-  speech recognition, the model turn and speech synthesis on this PC. The CPU
-  engines (`services/local_voice.py`) run in the server process. GPU engines run
-  as separate processes, `python -m agent_friday.voice.worker`, one per engine,
-  managed by `services/voice_workers.py`. Each worker holds a GPU lease from
-  the residency arbiter, and the lease ends when the process exits. A voice
-  lease can be taken back by an image job or a heavy turn, and the stage then
-  falls back to the CPU with a notice. `services/voice_session.py` runs the
-  session and `services/voice_engine.py` picks the engines.
-- **Cloud voice** (`/ws/live` in `routes/voice.py`) streams to a cloud
-  provider.
-- **Local voice models** are fetched by `services/voice_installer.py` from
-  Settings > Voice, and by `services/first_run_models.py` for the choices made
-  in setup. Both ask before downloading and verify what they fetch.
-- **Push-to-transcribe** (`services/push_to_talk.py`) is a keyboard hook that
-  lives in the tray process.
+- **Local voice** (`/ws/voice-local` in `routes/voice.py`) runs speech
+  recognition, the model turn and speech on this PC. CPU engines run in the
+  server process (`services/local_voice.py`); GPU engines run as
+  `python -m agent_friday.voice.worker` processes (`services/voice_workers.py`)
+  holding GPU leases from the arbiter. Local voice routes tools through the
+  Laya rule router by default (`voice_tool_routing="laya"`).
+- **Cloud voice** (`/ws/live`) streams to a cloud voice provider; its prompt
+  carries the same privacy summary.
+- **Push-to-transcribe** (`services/push_to_talk.py`) is a keyboard hook in the
+  tray process.
 
 ## UI
 
-`index.html` at the repository root is the served, authoritative UI: React
-components compiled into the page, with Three.js for the 3D views, served by
-the Flask app. `ui_parts/app.html` is a hand-maintained JSX mirror. A UI change
-edits both files, and the build tool (`ui/`) refuses to
-regenerate `index.html` in a way that drops components. Static assets
-(fonts, vendored libraries, scene scripts and icons) are in `static/`, and the
-icon set is in `assets/`. See [docs/development/ui-build.md](docs/development/ui-build.md).
-Any workspace except Settings can open as its own tab at `/w/<id>`
-(`routes/core_routes.py`).
+`index.html` at the repository root is the served, authoritative UI (React
+components compiled into the page). `ui_parts/app.html` is a hand-maintained
+JSX mirror; a UI change edits both. Static assets and page scripts are in
+`static/`. See [docs/development/ui-build.md](docs/development/ui-build.md).
+Any workspace except Settings can open as its own tab at `/w/<id>`.
 
 ## Settings
 
-Defaults live in `DEFAULT_SETTINGS` in `core/__init__.py`. The values a person
-changes are stored in `settings.json` in the data folder, which is `~/.friday`
-(`%USERPROFILE%\.friday` on Windows) unless `FRIDAY_HOME` names another one
-(`paths.py`). Keys the UI writes that are not in `DEFAULT_SETTINGS` are dropped
-on load, and `scripts/check_settings_readers.py` checks that each key has a
-reader.
+Defaults live in `DEFAULT_SETTINGS` in `core/__init__.py`. Changed values are
+stored in `settings.json` in the data folder, `~/.friday` unless
+`FRIDAY_HOME` names another (`paths.py`). Keys not in `DEFAULT_SETTINGS` are
+dropped on load; some keys (cloud consent, `laya_safe_writes`) cannot be set
+through a generic settings write. `scripts/check_settings_readers.py` checks
+that each key has a reader.
 
-## Installer
+## Installer and first run
 
-The Windows setup program is built from `packaging/windows/`. See
-`packaging/windows/README.md` for the full guide.
-
-| Path | Role |
-|---|---|
-| `packaging/windows/installer/AgentFriday.iss` | Inno Setup script: wizard, model page, shortcuts, uninstaller. |
-| `packaging/windows/installer/probe-hardware.ps1` | Reads RAM, GPU and disk for the model page. |
-| `packaging/windows/lib/ModelPicker.ps1` | Chooses which models fit, from `resources/bonsai2-tiers.json`. |
-| `packaging/windows/install.ps1` | The install engine the setup program runs. |
-| `packaging/windows/lib/Upgrade.ps1` | Orders releases by build sequence and backs up the data folder before an upgrade. |
-| `packaging/windows/uninstall.ps1` | Uninstall; asks whether to keep data. |
-| `packaging/windows/build-installer.ps1` | Builds `AgentFriday-Setup-<tag>.exe` and its checksum. |
-| `packaging/windows/requirements/` | Dependency tiers installed from the bundled wheelhouse. |
-| `packaging/windows/tests/Test-Installer.ps1` | Installer assertions. |
-
-An installed copy lives under `%LOCALAPPDATA%\AgentFriday` (`app\` for the
-source tree, `python\` for a private interpreter). Setup downloads no model
-weights; `services/first_run_models.py` fetches the chosen models on first
-start. Releases are ordered by `BUILD_SEQUENCE` in `release.py`
+The Windows setup program is built from `packaging/windows/` (see
+`packaging/windows/README.md`). The Inno Setup program runs
+`install.ps1 -Unattended`; first-run questions are asked by Friday, not the
+installer: the CLI wizard (`setup_wizard.py`), the consent screens, then the
+setup chat (`services/setup_chat.py`), recorded in a hash-chained setup ledger
+and finished by `services/setup_complete.py`. See
+[overview §12](docs/architecture/overview.md#12-first-run). Releases are
+ordered by `BUILD_SEQUENCE` in `release.py`
 ([release process](docs/development/release-process.md)).
 
 ## Tests and documentation
 
 - `tests/unit/` is fast and needs no server. `tests/api/` uses the Flask test
-  client with every model call stubbed. `tests/security/`,
-  `tests/test_egress_adversarial.py` and `tests/test_judgment_gate.py` cover the
-  egress boundary. Browser tests are Playwright specs under `tests/app/`
-  (`npm run test:smoke`) and a few `tests/*.spec.ts` files. See
-  [tests/README.md](tests/README.md).
-- Repository guards are scripts in `scripts/` and the hooks in `.githooks/`; see
+  client with model calls stubbed. `tests/security/`,
+  `tests/test_egress_adversarial.py` and `tests/test_judgment_gate.py` cover
+  the egress boundary. Browser tests are Playwright specs under `tests/app/`.
+  See [tests/README.md](tests/README.md).
+- Repository guards are scripts in `scripts/`; see
   [repository guards](docs/development/repository-guards.md).
-- Documentation starts at [docs/README.md](docs/README.md). Design rules for
-  the UI are in [docs/design/hig](docs/design/hig/) and the brand tokens in
-  [docs/brand/BRAND.md](docs/brand/BRAND.md).
+- Documentation starts at [docs/README.md](docs/README.md).
 
 ## Where things live
 
 | Concern | Module |
 |---|---|
 | App object, blueprint discovery, background services | `server.py` |
-| Settings, auth, locality rule, shared state | `core/__init__.py` |
+| Settings, auth, shared state | `core/__init__.py` |
 | Data folder resolution (`FRIDAY_HOME`) | `paths.py` |
 | Agent loops, tool registry, `_execute_tool`, hooks | `services/agent.py`, `services/tool_hooks.py` |
-| Per-action checkpoint, grants, receipts | `governance/action_gate.py` |
-| Provenance of arguments | `services/taint.py` |
-| Approval cards | `services/approvals.py` |
-| Egress gate, classifier | `services/egress_gate.py`, `services/sensitivity_classifier.py` |
-| Routing | `routing/model_router.py`, `services/model_router.py` |
-| Residency | `services/residency_arbiter.py`, `residency_policy.py`, `model_plan.py` |
-| Voice | `services/voice_engine.py`, `voice_session.py`, `voice_workers.py`, `local_voice.py`, `voice_installer.py`, `push_to_talk.py`, `voice/worker.py` |
-| Mail | `services/gmail_api.py`, `gmail_mailbox.py`, `gmail_read.py`, `gmail_send.py`, `mail_proposals.py` |
+| Per-action checkpoint, grants, receipts | `governance/action_gate.py`, `governance/send_grants.py` |
+| Approval cards | `services/approvals.py`, `approval_feed.py`, `approval_executor.py` |
+| Mode, consent, local-only records | `services/cloud_intent.py`, `privacy/cloud_consent.py`, `privacy/vault_policy.py` |
+| Privacy summary in every prompt | `services/privacy_policy_summary.py` |
+| Egress gate, never-send floor, classifier | `services/egress_gate.py`, `services/judgment_gate.py`, `services/sensitivity_classifier.py` |
+| Vault gate | `privacy/vault_access.py` |
+| Raw records, file grants, Locks page | `services/raw_records.py`, `services/file_grants.py`, `services/locks.py` |
+| Routing and model calls | `routing/model_router.py`, `services/model_router.py` |
+| Seats and residency | `services/seat_*.py`, `services/residency_arbiter.py`, `model_plan.py` |
+| Laya | `services/laya*.py`, `services/reflex_chat.py`, `services/chat_tool_routing.py` |
+| Scheduler | `services/scheduler.py`, `services/schedule_math.py`, `services/email_jobs.py` |
+| Memory card | `services/core_memory.py`, `core_memory_tools.py`, `memory_review.py`, `prompt_freeze.py` |
+| Conversation search | `services/conversation_fts.py`, `conversation_search_tool.py` |
+| Knowledge graph | `services/knowledge_graph/` |
+| Connections | `services/connections_guide.py`, `connections_setup.py`, `routes/connect_services.py`, `services/provider_registry.py`, `mcp_client.py` |
+| First run | `cli.py`, `setup_wizard.py`, `services/setup_chat.py`, `setup_steps.py`, `setup_record.py`, `setup_complete.py` |
+| Task visibility | `services/visible_jobs.py`, `local_scheduler.py`, `task_journal.py`, `activity_lane.py` |
+| Voice | `services/voice_engine.py`, `voice_session.py`, `voice_workers.py`, `local_voice.py`, `push_to_talk.py`, `voice/worker.py` |
+| Mail | `services/gmail_api.py`, `gmail_read.py`, `gmail_send.py`, `mail_proposals.py` |
 | Phone | `phone/` |
-| Documents | `services/office_engine.py` |
-| Local address | `services/local_address.py`, `local_ca.py`, `local_proxy.py` |
-| Reasoning traces | `services/reasoning_trace.py`, `routes/traces.py` |
-| Update check | `services/update_check.py` |
-| CLI | `cli.py` (`friday`), `setup_wizard.py` |
-| Local model downloads at first start | `services/first_run_models.py`, `services/model_store.py` |
+| Held features | `services/held_features.py` |
 | Windows installer | `packaging/windows/` |

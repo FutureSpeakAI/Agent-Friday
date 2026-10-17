@@ -1,5 +1,7 @@
 # Voice-first: every limit, kept or removed
 
+> **Status (2026-10-17):** still in force (services/voice_engine.py:1778-1846; core/__init__.py:2458, 2468). Added since: voice may use pre-approved sends only if the owner turns that on, and it is off by default (governance/send_grants.py:879-905).
+
 > **Status:** DECIDED and built, except where marked.
 > **Decided:** 2026-09-29, on the owner's instruction: *"No restrictions unless
 > the user explicitly sets them… every voice-specific restriction becomes a user
@@ -110,7 +112,7 @@ the model never receives the raw text and that a floor refusal still stands.
 
 ## Not a restriction we could act on yet
 
-`docs/design/active/owner-rules-and-anomaly-detection.md` §7.4 says cards
+`docs/design/active/owner-rules-and-anomaly-detection.md` (internal design repository) §7.4 says cards
 raised by a rule or an anomaly pause **cannot** be approved by voice in room
 mode at all — stricter than the naming rule above.
 
