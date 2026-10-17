@@ -142,6 +142,29 @@ def test_what_counts_as_letting_her_act_more(home):
     assert ls.is_loosening({}, "act")
 
 
+def test_without_a_click_the_check_and_the_write_happen_under_one_lock(home):
+    assert ls.set_bars({"query_calendar": 0.80})["ok"]
+    res = ls.set_bars({"query_calendar": 0.70}, may_loosen=False)
+    assert not res["ok"] and res["needs_click"]
+    assert ls.load_bars()["bars"] == {"query_calendar": 0.80}
+    assert ls.set_bars({"query_calendar": 0.90}, may_loosen=False)["ok"]
+    assert not ls.set_bars(mode="act", may_loosen=False)["ok"]
+
+
+def test_the_shadow_preview_keeps_a_threshold_learning_raised(home):
+    now = datetime.now()
+    rows = [_row(now, "ask", conf=0.60)]
+    assert ls.bars_preview(rows, {"query_calendar": 0.45})["would_act_more"] == 1
+    assert ls.bars_preview(rows, {"query_calendar": 0.45}, learned=0.70)["would_act_more"] == 0
+
+
+def test_another_profiles_replay_is_not_shown(home):
+    ls.replay_dir().mkdir(parents=True)
+    (ls.replay_dir() / "latest.json").write_text(json.dumps({"ok": True, "profile": "someone-else",
+                                                             "plain": {"of": 3, "right": 3}}), encoding="utf-8")
+    assert ls.last_replay() is None and ls.spoken_report_line() == ""
+
+
 def test_every_bar_change_is_kept_in_an_append_only_history(home):
     ls.set_bars({"query_calendar": 0.45}, actor="owner:ui")
     ls.set_bars({"query_calendar": None})

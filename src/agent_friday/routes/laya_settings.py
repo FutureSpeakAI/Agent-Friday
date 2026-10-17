@@ -73,14 +73,12 @@ def bars():
     mode = body.get("mode")
     if not isinstance(new, dict) or (mode is not None and not isinstance(mode, str)):
         return jsonify({"status": "error", "message": "Send bars as {action: number or null} and mode as shadow or act."}), 400
-    if ls.is_loosening(new, mode):
-        from agent_friday.services import screen_click
-        if not screen_click.screen_session(request):
-            return jsonify({"status": "error", "message": "Letting Laya act more needs a click on the screen, in Friday's own page."}), 403
-        actor = "owner:ui"
-    else:
-        actor = "owner"
-    res = ls.set_bars(new, mode, actor=actor)
+    from agent_friday.services import screen_click
+    clicked = bool(screen_click.screen_session(request))
+    # The loosening check runs inside set_bars, under the lock that writes the bars.
+    res = ls.set_bars(new, mode, actor="owner:ui" if clicked else "owner", may_loosen=clicked)
     if not res.get("ok"):
+        if res.get("needs_click"):
+            return jsonify({"status": "error", "message": res.get("why")}), 403
         return jsonify({"status": "error", "message": res.get("why") or "That did not save."}), 400
     return jsonify({"status": "ok", "message": "", "bars": ls.bars_view(), "modes": ls.modes()})

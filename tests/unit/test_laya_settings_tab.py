@@ -51,12 +51,14 @@ def test_the_tab_writes_only_through_its_own_routes():
     assert "'/api/settings'" not in p, "a bar must never be saved through the generic settings save"
 
 
-def test_the_bars_mode_offers_shadow_and_act_only_and_the_approval_check_has_no_control():
+def test_the_bars_mode_offers_shadow_and_act_only_and_modes_are_read_only_chips():
     p = _panel("index.html")
     mode = p[p.index("id:'laya-bars-mode'"):]
     mode = mode[:mode.index("))),")]
     assert re.findall(r"E\('option', \{value:'([a-z]+)'\}", mode) == ["shadow", "act"]
-    assert "approval" not in p.lower().split("laya's modes")[1].split("data-laya-capability")[0]
+    assert p.count("E('select'") == 2, "only the bars mode and the per-action bars are controls"
+    modes = p[p.index('title: "Laya\'s modes"'):p.index('title: "Laya\'s report card"')]
+    assert "E('select'" not in modes and "E('input'" not in modes
 
 
 def test_recommended_bars_are_labelled_not_selected():

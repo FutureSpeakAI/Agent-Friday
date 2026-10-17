@@ -90,6 +90,41 @@ def test_route_uses_the_owners_bars_only_when_they_are_set_to_act(home):
     assert (r.decision, r.tool) == ("tool", "query_calendar")
 
 
+@pytest.fixture
+def owner(home, monkeypatch):
+    """A signed-in owner whose corrections have not raised the act score and whose phrasing has not graduated:
+    the graduation guard re-decides the base, which must use the owner's bars too."""
+    def score(text):
+        lr._PROFILE.vec = [1.0, 0.0]
+        return list(RANKED)
+    monkeypatch.setattr(lr, "_score", score)
+    monkeypatch.setattr(lr, "_prototypes", lambda: (["query_calendar"], [[1.0, 0.0]]))
+    monkeypatch.setattr(lr, "_rank", lambda vec, labels, protos: list(RANKED))
+    monkeypatch.setattr("agent_friday.services.laya_personal.act_threshold", lambda pid, base: base)
+    monkeypatch.setattr("agent_friday.services.laya_personal.graduation_ok", lambda pid, vec, tool: False)
+    monkeypatch.setattr("agent_friday.services.laya_personal.calibration_view", lambda: (None, None))
+    lr._PROFILE.pid = "owner"
+    return home
+
+
+def test_a_lower_read_bar_acts_for_a_signed_in_owner_through_the_graduation_guard(owner):
+    lr._PROFILE.bars = {"query_calendar": 0.45}
+    r = lr._tier1(TEXT)
+    assert (r.decision, r.tool) == ("tool", "query_calendar")
+
+
+def test_a_raised_bar_binds_the_trained_head(home, monkeypatch):
+    from agent_friday.services import laya_router_head as lh
+    monkeypatch.setattr(lh, "decide", lambda text: lr.Route("tool", tool="query_calendar", confidence=0.70,
+                                                             layer="head", label="checking your calendar"))
+    assert lr._tier1_head(TEXT).layer == "head"
+    lr._PROFILE.bars = {"query_calendar": 0.90}
+    r = lr._tier1_head(TEXT)
+    assert r.layer == "laya2" and r.decision == "ask"
+    lr._PROFILE.bars = {"query_calendar": 0.40}
+    assert lr._tier1_head(TEXT).layer == "head", "a lowered bar never changes what the certified head does"
+
+
 def test_a_hand_edited_lower_bar_on_an_action_that_changes_something_never_reaches_the_router(home):
     ranked = [("set_chat_tray", 0.50, 0.9), ("check_email", 0.20, 0.5), ("get_briefing", 0.1, 0.2)]
     import agent_friday.services.laya_router as router

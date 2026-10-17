@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -58,6 +59,7 @@ WEEKS_SHOWN = 8
 LOG_TAIL_BYTES = 8 * 1024 * 1024
 
 REPLAY_MAX_ROWS = 300
+REPLAY_YIELD_S = 0.005
 REPLAY_DIRNAME = "laya_replay"
 
 _lock = threading.Lock()
@@ -138,7 +140,7 @@ def _speed(rows: List[dict], days: int = 7) -> dict:
     if not ms:
         return {"turns": 0, "p50_ms": None, "p95_ms": None, "days": days}
     ms.sort()
-    p95 = ms[min(len(ms) - 1, max(0, int(round(0.95 * len(ms))) - 1))]
+    p95 = ms[min(len(ms) - 1, max(0, math.ceil(0.95 * len(ms)) - 1))]       # nearest rank
     return {"turns": len(ms), "p50_ms": round(statistics.median(ms), 1), "p95_ms": round(p95, 1), "days": days}
 
 
@@ -373,10 +375,11 @@ def bars_view() -> dict:
     return {"mode": cur["mode"], "rows": rows, "step": BAR_STEP}
 
 
-def is_loosening(new_bars: Dict[str, Optional[float]], new_mode: Optional[str]) -> bool:
+def is_loosening(new_bars: Dict[str, Optional[float]], new_mode: Optional[str],
+                 cur: Optional[dict] = None) -> bool:
     """True when the change would let her act more: a bar set below what is in force now (the owner's bar,
     else the shipped one), or the mode turned to act."""
-    cur = load_bars()
+    cur = cur if cur is not None else load_bars()
     if new_mode == "act" and cur["mode"] != "act":
         return True
     shipped = _router().ACT_THRESHOLD
@@ -395,16 +398,21 @@ def is_loosening(new_bars: Dict[str, Optional[float]], new_mode: Optional[str]) 
 
 
 def set_bars(new_bars: Optional[Dict[str, Optional[float]]] = None, mode: Optional[str] = None,
-             *, actor: str = "owner") -> dict:
+             *, actor: str = "owner", may_loosen: bool = True) -> dict:
     """Apply a change. Refuses (ok False) a tool the router cannot choose, an outward search, a value off
-    the range (a change-class bar below the shipped score is off its range) or an unknown mode. The caller
-    decides whether the request may loosen (routes/laya_settings checks a click)."""
+    the range (a change-class bar below the shipped score is off its range) or an unknown mode. With
+    ``may_loosen`` False (no click on the page: routes/laya_settings), a change that lets her act more is
+    refused with ``needs_click``; the check reads the bars under the same lock that writes them, so a
+    change made in between cannot be undone without a click."""
     lr = _router()
     new_bars = dict(new_bars or {})
     if mode is not None and mode not in BAR_MODES:
         return {"ok": False, "why": "The mode is shadow or act."}
     with _lock:
         cur = load_bars()
+        if not may_loosen and is_loosening(new_bars, mode, cur):
+            return {"ok": False, "needs_click": True,
+                    "why": "Letting Laya act more needs a click on the screen, in Friday's own page."}
         bars = dict(cur["bars"])
         for tool, v in new_bars.items():
             if tool not in lr.TOOLS:
@@ -466,13 +474,30 @@ def live_bars() -> Dict[str, float]:
     return dict(data)
 
 
+def learned_threshold(profile: Optional[str]) -> float:
+    """The act score this profile's own corrections raised (never below the shipped one); the router's
+    rule is that it still binds over a lower bar."""
+    lr = _router()
+    if not profile:
+        return lr.ACT_THRESHOLD
+    try:
+        from agent_friday.services import laya_personal
+        return max(lr.ACT_THRESHOLD, float(laya_personal.act_threshold(profile, lr.ACT_THRESHOLD)))
+    except Exception:
+        return lr.ACT_THRESHOLD
+
+
 def apply_bar(decision: Optional[str], tool: Optional[str], layer: Optional[str], conf, runner_conf,
-              bars: Dict[str, float]) -> Optional[str]:
+              bars: Dict[str, float], learned: Optional[float] = None) -> Optional[str]:
     """What a guessed turn would have been under ``bars`` (None when the bars do not touch it). Only the
-    phrase matcher's own guesses (layer laya2) at a tool with a bar move; rules never do."""
+    phrase matcher's own guesses (layer laya2) at a tool with a bar move; rules never do. ``learned`` is a
+    threshold the owner's corrections raised: as in the router, it still binds over a lower bar."""
     if layer != "laya2" or not tool or tool not in bars or decision not in ("tool", "ask"):
         return None
     lr = _router()
+    bar = float(bars[tool])
+    if learned is not None and learned > lr.ACT_THRESHOLD + 1e-9:
+        bar = max(bar, float(learned))
     try:
         c = float(conf)
     except (TypeError, ValueError):
@@ -481,14 +506,16 @@ def apply_bar(decision: Optional[str], tool: Optional[str], layer: Optional[str]
         rc = float(runner_conf) if runner_conf is not None else 0.0
     except (TypeError, ValueError):
         rc = 0.0
-    if c >= bars[tool] and (c - rc) >= lr.MARGIN_THRESHOLD:
+    if c >= bar and (c - rc) >= lr.MARGIN_THRESHOLD:
         return "tool"
     return "ask" if c >= lr.ASK_THRESHOLD else "no_tool"
 
 
-def bars_preview(rows: List[dict], bars: Dict[str, float], days: int = 28) -> dict:
+def bars_preview(rows: List[dict], bars: Dict[str, float], days: int = 28,
+                 learned: Optional[float] = None) -> dict:
     """Shadow: over the last ``days`` of the decision log, how many turns would have gone from asking to
-    acting, or from acting to asking, under ``bars``. Needs no new logging."""
+    acting, or from acting to asking, under ``bars``. Needs no new logging. An estimate: the log has no
+    turn vector, so a learned phrasing's own guard is not replayed."""
     since = datetime.now() - timedelta(days=days)
     more = fewer = 0
     by: Dict[str, Dict[str, int]] = {}
@@ -497,7 +524,7 @@ def bars_preview(rows: List[dict], bars: Dict[str, float], days: int = 28) -> di
             continue
         ru = r.get("runner_up")
         rc = ru[1] if isinstance(ru, (list, tuple)) and len(ru) > 1 else None
-        new = apply_bar(r.get("decision"), r.get("tool"), r.get("layer"), r.get("confidence"), rc, bars)
+        new = apply_bar(r.get("decision"), r.get("tool"), r.get("layer"), r.get("confidence"), rc, bars, learned)
         if new is None or new == r.get("decision"):
             continue
         t = by.setdefault(r.get("tool"), {"more": 0, "fewer": 0})
@@ -619,6 +646,7 @@ def run_replay(*, profile: Optional[str] = None, route_fn=None) -> dict:
         route_fn = route_fn or _route_one
         bars = load_bars()
         shadow_bars = bars["bars"] if bars["mode"] != "act" else {}
+        learned = learned_threshold(profile)
         t0 = time.perf_counter()
         cases = []
         for r in scored:
@@ -631,11 +659,12 @@ def run_replay(*, profile: Optional[str] = None, route_fn=None) -> dict:
             if shadow_bars:
                 cands = list(getattr(plain, "candidates", None) or [])
                 rc = cands[1][1] if len(cands) > 1 else None
-                nd = apply_bar(plain.decision, plain.tool, plain.layer, plain.confidence, rc, shadow_bars)
+                nd = apply_bar(plain.decision, plain.tool, plain.layer, plain.confidence, rc, shadow_bars, learned)
                 if nd is not None:
                     case["with_your_bars"] = score(exp, (nd, plain.tool if nd == "tool" else None))
             cases.append(case)
-        res = {"ok": True, "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "series": SERIES_NAME,
+            time.sleep(REPLAY_YIELD_S)       # the router's one worker serves live turns between rows
+        res = {"ok": True, "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "series": SERIES_NAME, "profile": profile,
                "plain": _tally(cases, "plain"), "reshuffled": _tally(cases, "reshuffled"),
                "waiting_not_scored": waiting, "set_aside_not_scored": aside, "capped_at": REPLAY_MAX_ROWS,
                "elapsed_s": round(time.perf_counter() - t0, 2), "cases": cases}
@@ -672,10 +701,21 @@ def _save_result(res: dict) -> None:
         _log.warning("replay result not saved: %s", type(e).__name__)
 
 
+def _current_profile() -> Optional[str]:
+    try:
+        from agent_friday.services import laya_personal as lp
+        return lp.current_profile()
+    except Exception:
+        return None
+
+
 def last_replay(include_cases: bool = False) -> Optional[dict]:
+    """The newest replay of the profile asking (the signed-in owner); another profile's result is not shown."""
     try:
         res = json.loads((replay_dir() / "latest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return None
+    if not res.get("profile") or res.get("profile") != _current_profile():
         return None
     if not include_cases:
         res.pop("cases", None)
@@ -701,5 +741,6 @@ def overview() -> dict:
     cur = load_bars()
     return {"what_runs": what_runs(), "modes": modes(), "mode_meaning": MODE_MEANING,
             "report": {"take_rate": take_rate(rows), "replay": last_replay(),
-                       "bars_preview": bars_preview(rows, cur["bars"]) if cur["bars"] else None},
+                       "bars_preview": (bars_preview(rows, cur["bars"], learned=learned_threshold(_current_profile()))
+                                        if cur["bars"] else None)},
             "bars": bars_view()}

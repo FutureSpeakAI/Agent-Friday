@@ -1346,7 +1346,7 @@ def _no_new_action(text: str, r: Route, vec) -> Route:
         if vec is None:
             raise RuntimeError("no turn vector")
         labels, protos = _prototypes()
-        base = _decide(_rank(vec, labels, protos), text, _owner_threshold())
+        base = _decide(_rank(vec, labels, protos), text, _owner_threshold(), getattr(_PROFILE, "bars", None))
         if base.decision in ("ask", "no_tool"):
             return base
         return r
@@ -1384,7 +1384,8 @@ def _graduation_guard(pid: str, text: str, r: Route, vec) -> Route:
         if vec is None:
             raise RuntimeError("no turn vector")
         labels, protos = _prototypes()
-        base = _decide(_rank(vec, labels, protos), text, _owner_threshold())
+        # The owner's own bars (Settings > Laya, set to act) are part of "the threshold in force".
+        base = _decide(_rank(vec, labels, protos), text, _owner_threshold(), getattr(_PROFILE, "bars", None))
         if base.decision == "tool" and base.tool == r.tool:
             return r
         if laya_personal.graduation_ok(pid, vec, r.tool):
@@ -1472,6 +1473,12 @@ def _tier1_head(text: str) -> Route:
             # threshold and guards apply.
             if (r.decision == "tool" and getattr(_PROFILE, "pid", None)
                     and _act_threshold() > ACT_THRESHOLD and float(r.confidence or 0.0) < _act_threshold()):
+                return _tier1(text)
+            # A bar the owner RAISED binds the head too (Settings > Laya): below it, the prototypes decide.
+            # A lowered bar never makes the head bolder; its own certified threshold stands.
+            bars = getattr(_PROFILE, "bars", None) or {}
+            if (r.decision == "tool" and r.tool in bars and float(bars[r.tool]) > ACT_THRESHOLD
+                    and float(r.confidence or 0.0) < float(bars[r.tool])):
                 return _tier1(text)
             return r
     except Exception as e:  # noqa: BLE001
