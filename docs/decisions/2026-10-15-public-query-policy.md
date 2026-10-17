@@ -1,5 +1,7 @@
 # Public query text is not private because of its topic
 
+> **Status (2026-10-17):** still in force (privacy/public_query.py:172, 639, 645; services/approvals.py:112; services/agent.py:13695; services/privacy_policy_summary.py:15).
+
 **Status:** implemented (branch fix/public-query-policy). Sensitive subsystem
 (privacy/, the egress gates).
 **Decided:** 2026-10-15, by the owner (decision (a) in the 2026-10-14 field install

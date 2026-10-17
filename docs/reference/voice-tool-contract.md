@@ -46,8 +46,8 @@ Everything lives in `services/voice_engine.py` unless noted.
    and the PII hooks — a spoken request must pass the same checkpoint a typed
    one does.
 
-3. **Allow it** in `governance/action_gate.py`. A tool absent from the ring-1
-   list raises an approval card on every call, which in a conversation means
+3. **Allow it** in `governance/action_gate.py`. A tool absent from
+   `INTERNAL_TOOLS` (the "ring 1" list) raises an approval card on every call, which in a conversation means
    the user approving a card to hear their own calendar. Put it in ring 1 only
    if it reaches no one outside this machine, and say why in a comment beside
    it. If it *does* reach someone, leave it out: the card is correct.
@@ -116,6 +116,22 @@ is that the user's own words have to carry the decision:
 
 If your tool raises a card, reuse this path. Do not add a second way to say yes.
 
+Three more voice rules from Beta 1.2 that a new tool must not work around:
+
+- **Pre-approved sends do not cover a spoken request** unless the owner turned
+  on **Voice may use pre-approvals** (off by default;
+  `governance/send_grants.py` `use_refusal`). A send asked for by voice gets
+  its card.
+- **Money paragraphs.** When the owner has **Money paragraphs in email** on,
+  a spoken Send on that card counts only after the paragraphs were read back
+  (valid for 10 minutes).
+- **Keys are never spoken.** "Connect OpenRouter" is a `navigate_to` to
+  Settings: it opens that service's card on **Settings > Connections** with the
+  secure field focused (`services/desktop_targets.resolve_settings`). Voice
+  never types or hears a key, and a pasted or spoken key is withheld
+  (`services/pasted_secrets.py`). Adding an MCP server by command is the
+  owner's click only.
+
 ---
 
 ## 4. Reading an approval card back
@@ -133,10 +149,10 @@ before asking. The pattern, as the payload card does it
    change it. `revise_share_request` exists so "change it" is real.
 4. **In room mode, keep the rationale out of it.** Do not read back anything
    that quotes the user's history in front of other people; say that something
-   needs them on screen. (Owner rules and anomaly pauses will state this as a
-   rule of their own — `docs/design/active/owner-rules-and-anomaly-detection.md`
-   §7.4 — which is specified and **not yet built**. Follow it anyway; it is the
-   right shape for any card.)
+   needs them on screen. (Owner rules and anomaly pauses were specified to
+   state this as a rule of their own, in a design spec that is not in this
+   repository and is **not built**. Follow it anyway; it is the right shape
+   for any card.)
 
 A declined card sends nothing and says only that. It never re-asks on its own.
 

@@ -63,7 +63,7 @@ All three come from the journal, so all three survive a restart of Friday.
 
 ### 1. What is running — `GET /api/tasks`
 
-One row per task the process knows about, plus the live process orbs
+Returns `{"tasks": [...]}`: one row per task the process knows about, plus the live process orbs
 (flagged `process: true`; skip those). For rows whose status is `running`,
 `queued` or `interrupted` the row also carries liveness from the record:
 
@@ -72,14 +72,17 @@ One row per task the process knows about, plus the live process orbs
 | `status` | `queued`, `running`, `complete`, `completed_unverified`, `failed`, `cancelled`, `interrupted` |
 | `now` | the latest checkpoint summary, e.g. `Reasoning (step 4) on gemma4:e4b` |
 | `last_seen` | epoch seconds of the last heartbeat (every 10 s while the loop is alive) |
-| `stalled` | `true` when `running` and the heartbeat is older than 30 s: the process may be wedged or gone |
+| `stalled` | `true` when `running` or `queued` and the heartbeat is older than 30 s: the process may be wedged or gone |
 | `cost_usd` | metered spend so far |
 | `stop_requested` | the user has asked it to stop after the current step |
 
 `interrupted` means Friday restarted while the task was running. The record
-ends with a `halt` naming the last checkpoint; nothing resumes on its own.
-Only the user can re-run it (`POST /api/tasks/<id>/rerun`, refused to the
-observer).
+ends with a `halt` naming the last checkpoint. With `task_resume_auto` on (the
+default), Friday resumes it from its checkpoint or task ledger on her own (see
+[long-running tasks](long-running-tasks.md)). The user can also resume it
+(`GET /api/tasks/<id>/resumable`, `POST /api/tasks/<id>/resume`) or start it
+over from its prompt (`POST /api/tasks/<id>/rerun`); all three are refused to
+the observer.
 
 `GET /api/tasks/<id>` returns the same row for one task.
 
@@ -163,7 +166,7 @@ import requests, time
 H = {"X-Friday-Observer": TOKEN}
 BASE = "http://127.0.0.1:3000"
 
-running = [t for t in requests.get(f"{BASE}/api/tasks", headers=H).json()
+running = [t for t in requests.get(f"{BASE}/api/tasks", headers=H).json()["tasks"]
            if not t.get("process") and t["status"] in ("running", "interrupted")]
 for t in running:
     d = requests.get(f"{BASE}/api/tasks/{t['task_id']}/digest", headers=H).json()

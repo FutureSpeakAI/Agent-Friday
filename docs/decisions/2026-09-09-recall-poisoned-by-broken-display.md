@@ -1,5 +1,7 @@
 ﻿# Recall can be poisoned by a broken display
 
+> **Status (2026-10-17):** still in force (services/model_router.py:2939-2940; conversation_memory.py:538-593).
+
 > **Status:** implemented
 > **Written:** 2026-09-09
 > **Implementation:** `services/live_state.py` (the rule and the probe registry); `services/model_router.py` `_build_memory_context_block` (the hook); `conversation_memory.py` `supersede()` / `unsupersede()` / `find_ids()` (the remedy)
