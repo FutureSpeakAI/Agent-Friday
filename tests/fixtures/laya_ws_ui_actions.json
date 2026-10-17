@@ -75,7 +75,12 @@
    {"id": "calendar.quick_add", "group": "create", "label": "quick add event", "audit_status": "M"},
    {"id": "calendar.meeting_prep", "group": "create", "label": "generate meeting prep", "audit_status": "M"},
    {"id": "calendar.delete_event", "group": "organize", "label": "delete event / meeting", "audit_status": "N"},
-   {"id": "calendar.move_event", "group": "organize", "label": "move / shift event", "audit_status": "M"}
+   {"id": "calendar.move_event", "group": "organize", "label": "move / shift event", "audit_status": "M"},
+   {"id": "calendar.switch_view", "group": "navigate", "label": "switch day / week / month view", "audit_status": "new"},
+   {"id": "calendar.free_busy", "group": "navigate", "label": "free / busy view", "audit_status": "new"},
+   {"id": "calendar.only_calendars", "group": "select", "label": "show only some calendars (Friday's chip)", "audit_status": "new"},
+   {"id": "calendar.toggle_calendar", "group": "settings", "label": "switch a calendar on or off in Friday", "audit_status": "new"},
+   {"id": "calendar.rsvp", "group": "organize", "label": "reply to an invitation (going / maybe / not going)", "audit_status": "new"}
   ],
   "family": [
    {"id": "family.view", "group": "read", "label": "view members / dates / countdowns", "audit_status": "N"},
@@ -306,7 +311,14 @@
    {"id": "settings.laya_notice", "group": "settings", "label": "what Laya learned: acknowledge the learning notice", "audit_status": "new"},
    {"id": "settings.preapproved_sends", "group": "settings", "label": "pre-approve sends to named recipients, approve exactly the needs a skill declares (refused if it changed), approve a changed job or skill again, let voice use pre-approvals, revoke", "audit_status": "new"},
    {"id": "settings.owner_choices", "group": "settings", "label": "the owner's standing choices: money paragraphs in email (and Forget), missed and held runs, unattended undo window, trust scoring, co-host name, dock by asking, notify guests", "audit_status": "new"},
-   {"id": "settings.mail_default_account", "group": "settings", "label": "Connections > Google accounts: default account for drafts (Ask me, or a connected Gmail account)", "audit_status": "new"}
+   {"id": "settings.mail_default_account", "group": "settings", "label": "Connections > Google accounts: default account for drafts (Ask me, or a connected Gmail account)", "audit_status": "new"},
+   {"id": "settings.core_memory_card", "group": "read", "label": "memory card: the lines Friday keeps about you and about working with you", "audit_status": "new"},
+   {"id": "settings.core_memory_line", "group": "settings", "label": "memory card: add, edit or delete one line", "audit_status": "new"},
+   {"id": "settings.core_memory_review", "group": "settings", "label": "memory card: keep or discard a suggestion waiting for review", "audit_status": "new"},
+   {"id": "settings.core_memory_undo", "group": "settings", "label": "memory card: undo a change Friday made", "audit_status": "new"},
+   {"id": "settings.memory_review", "group": "settings", "label": "memory card: review our conversations every few turns (local model only)", "audit_status": "new"},
+   {"id": "settings.conversation_search", "group": "read", "label": "search your conversations (full text, every conversation)", "audit_status": "new"},
+   {"id": "settings.conversation_delete_message", "group": "settings", "label": "search your conversations: delete one message everywhere", "audit_status": "new"}
   ]
  }
 }

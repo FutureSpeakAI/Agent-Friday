@@ -13,7 +13,49 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
 
 ## [Unreleased]
 
+### Added
+
+- **A memory card you can read and edit** (Settings > Privacy & Data > Memory
+  card). Friday keeps two short notes that she reads at the start of every
+  conversation: what she knows about you, and what she has learned about
+  working with you. Each has a size limit, so when one is full she merges or
+  drops lines before adding another. You can see, edit and delete every line,
+  undo any change she made, and keep or discard suggestions waiting for your
+  review. She saves on her own when you tell her something; anything she
+  picked up from a page, a mail or a file asks you first. Nothing she notes
+  overnight is used until you keep it. The notes are plain files on this PC
+  (`.friday/core_memory`). The older list of facts Friday kept about you moves
+  over once: the ones you entered or approved go onto the card, and the ones
+  she noted without asking wait for your review.
+- **A quiet review for the memory card.** Every ten turns, after Friday has
+  answered, a model on this PC reads the latest exchanges and may add a line
+  that rests on your own words. Anything it would change or remove, and
+  anything it picked up from what Friday read, waits on the card for your
+  Keep. It never uses a cloud model, shows in the Local AI queue like any
+  other job, and can be turned off on the Memory card panel.
+
+- **Search every conversation, and delete a message everywhere.** Friday
+  keeps a full-text index of everything you have typed or said to her, on
+  this PC, and can search it in chat and in voice ("what did we decide about
+  the trip?"); it finds words, word forms and parts of names, and shows real
+  excerpts with dates. Keys and passwords you pasted are withheld before
+  anything is indexed, and nothing said off the record is there. Settings >
+  Privacy & Data > Search your conversations lets you search it yourself and
+  delete a message from its conversation and from every index at once. A
+  cloud model is only shown matches from conversations it already took part
+  in.
+
 ### Changed
+
+- **Friday does not save the same thing twice, or re-learn what she just
+  remembered.** Before a line goes on the memory card or into its review
+  queue, it is compared with what is already there, and the same fact in other
+  words is skipped (your own additions are always kept). What she recalls from
+  earlier conversations, the last session's summary and the card itself is
+  marked in her instructions as recalled, not new; and a reply that only
+  repeats something she recalled is not stored again as a new exchange.
+- **Nightly dreaming no longer writes into what Friday knows.** What it finds
+  in the day's conversations waits on the memory card for your Keep.
 
 - **What Friday remembers about you is fixed for the length of a
   conversation.** Her instructions open with what she has learned about you

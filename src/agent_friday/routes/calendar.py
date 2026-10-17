@@ -75,19 +75,57 @@ def _calendar_health():
                            source="routes.calendar")
 
 
+def _not_the_owners_click():
+    """None for the owner's click in Friday's own page, else the 403 to answer.
+
+    A change the owner makes on the Calendar page (switching calendars, adding,
+    moving or answering an event) is taken only from a same-origin browser page
+    that carries the page's rotating session token (screen_click.screen_session).
+    A body flag such as `confirmed: true` is no proof of a click: a local program
+    with no browser metadata passes check_auth without the token and can send it.
+    """
+    from agent_friday.services import screen_click
+    if screen_click.screen_session(request):
+        return None
+    return jsonify({"status": "denied", "error": "this change must come from the Calendar page",
+                    "message": "this change must come from the Calendar page"}), 403
+
+
+
+def _read_state(day):
+    """{read_failed, errors} for one day's read: whether Google could not be read at
+    all, and which calendars failed, so the page never draws a failure as a free day."""
+    start = datetime(day.year, day.month, day.day)
+    end = start + timedelta(days=1)
+    try:
+        from agent_friday.services import calendar_engine as ce
+        from agent_friday.services import calendar_views as cv
+        return {"read_failed": ce.range_failed(start, end), "errors": cv.errors_for(start, end)}
+    except Exception:
+        return {"read_failed": False, "errors": []}
+
+
+def _annotation(day, events, state):
+    """The day's one-line note; never written (or cached) from a read that failed."""
+    if state.get("read_failed"):
+        return "Couldn't read your calendar for this day, so there is nothing to say about it yet."
+    return _day_annotation(day, events)
+
 
 @calendar_bp.route('/api/calendar/today')
 def api_calendar_today():
     """Today's events + gap analysis + Friday's annotation."""
     today = date.today()
     events = _enrich_events(_events_for_day(today))
-    gaps = _gap_analysis(events, today)
+    state = _read_state(today)
+    gaps = [] if state["read_failed"] else _gap_analysis(events, today)
     return jsonify({
         "status": "ok",
         "date": today.isoformat(),
         "events": events,
         "gaps": gaps,
-        "annotation": _day_annotation(today, events),
+        **state,
+        "annotation": _annotation(today, events, state),
         # Was `_google_credentials() is not None`, which asks whether the
         # PRIMARY account can produce a credential - not whether Calendar is
         # usable across the accounts that have it switched on. See
@@ -139,11 +177,155 @@ def api_calendar_day(day_str):
     except Exception:
         return jsonify({"status": "error", "message": "use YYYY-MM-DD"}), 400
     events = _enrich_events(_events_for_day(d))
+    state = _read_state(d)
     return jsonify({
-        "status": "ok", "date": d.isoformat(), "events": events,
-        "gaps": _gap_analysis(events, d),
-        "annotation": _day_annotation(d, events),
+        "status": "ok", "date": d.isoformat(), "events": events, **state,
+        "gaps": [] if state["read_failed"] else _gap_analysis(events, d),
+        "annotation": _annotation(d, events, state),
     })
+
+
+@calendar_bp.route('/api/calendar/calendars')
+def api_calendar_calendars():
+    """Every calendar of every connected account, its Google colour and whether
+    it is switched on in Friday; plus why an account shows only its main one."""
+    from agent_friday.services import calendar_views as cv
+    try:
+        listing = cv.cached_calendars()
+    except Exception as e:
+        return api_error(e, "Couldn't read your calendars")
+    return jsonify({"status": "ok", "calendars": listing.get("calendars") or [],
+                    "accounts": listing.get("accounts") or [], "errors": cv.last_errors()})
+
+
+@calendar_bp.route('/api/calendar/calendars/visible', methods=['POST'])
+def api_calendar_calendars_visible():
+    """Switch calendars on or off in Friday. Nothing is written to Google.
+    Body: {changes: {<calendar key>: true|false}}."""
+    from agent_friday.services import calendar_views as cv
+    refused = _not_the_owners_click()
+    if refused:
+        return refused
+    data = request.get_json(silent=True) or {}
+    try:
+        chosen = cv.set_visible(data.get("changes") or {})
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    return jsonify({"status": "ok", "visible": chosen})
+
+
+def ce_range_failed(start, end):
+    from agent_friday.services import calendar_engine as ce
+    return ce.range_failed(start, end)
+
+
+def _keys_arg():
+    """The calendars a view is narrowed to (Friday's "only these"), from ?keys=a,b; None for all switched on."""
+    keys = [k for k in (request.args.get("keys") or "").split(",") if k and "|" in k][:50]
+    return keys or None
+
+
+@calendar_bp.route('/api/calendar/range')
+def api_calendar_range():
+    """Events of the switched-on calendars from `start` to `end` (YYYY-MM-DD,
+    end exclusive, at most 62 days), for the week and month views."""
+    from agent_friday.services import calendar_views as cv
+    try:
+        d0 = date.fromisoformat(request.args.get("start") or "")
+        d1 = date.fromisoformat(request.args.get("end") or "")
+    except ValueError:
+        return jsonify({"status": "error", "message": "use start and end as YYYY-MM-DD"}), 400
+    if d1 <= d0 or (d1 - d0).days > cv.MAX_RANGE_DAYS:
+        return jsonify({"status": "error",
+                        "message": "end must be after start, at most %d days" % cv.MAX_RANGE_DAYS}), 400
+    start = datetime(d0.year, d0.month, d0.day)
+    end = datetime(d1.year, d1.month, d1.day)
+    events, errors = [], []
+    if cv.multi_calendar_available():
+        try:
+            got = cv.events_in_range(start, end, keys=_keys_arg(), calendars=cv.cached_calendars())
+            events, errors = got["events"], got["errors"]
+        except Exception as e:
+            return api_error(e, "Couldn't read your calendars")
+    else:
+        for i in range((d1 - d0).days):
+            day = d0 + timedelta(days=i)
+            events.extend(_events_for_day(day))
+            if _read_state(day)["read_failed"]:
+                # The older one-calendar connection could not be read: an error, never an empty week.
+                return jsonify({"status": "error", "message": "Couldn't read your calendar."}), 502
+    for le in ([] if _keys_arg() else _load_local_events()):
+        sdt = _parse_dt(le.get("start_time"))
+        if sdt and start <= sdt < end and le.get("id") not in {e.get("id") for e in events}:
+            events.append(dict(le))
+    seen, merged = set(), []
+    for ev in events:
+        k = ev.get("id") or (ev.get("title", "") + ev.get("start_time", ""))
+        if k in seen:
+            continue
+        seen.add(k)
+        ev = dict(ev)
+        ev["type"] = ev.get("type") or _classify_event(ev)
+        merged.append(ev)
+    merged.sort(key=lambda e: str(e.get("start_time") or ""))
+    return jsonify({"status": "ok", "start": d0.isoformat(), "end": d1.isoformat(),
+                    "events": _enrich_events(merged), "errors": errors})
+
+
+@calendar_bp.route('/api/calendar/freebusy')
+def api_calendar_freebusy():
+    """Busy blocks (calendar names, never titles) and the free time inside
+    working hours, per day, from `start` to `end` (YYYY-MM-DD, end exclusive, at
+    most 14 days). Worked out from the switched-on calendars' events on this PC;
+    no free/busy query is sent anywhere."""
+    from agent_friday.services import calendar_views as cv
+    try:
+        d0 = date.fromisoformat(request.args.get("start") or "")
+        d1 = date.fromisoformat(request.args.get("end") or "")
+    except ValueError:
+        return jsonify({"status": "error", "message": "use start and end as YYYY-MM-DD"}), 400
+    if d1 <= d0 or (d1 - d0).days > cv.MAX_FREEBUSY_DAYS:
+        return jsonify({"status": "error",
+                        "message": "end must be after start, at most %d days" % cv.MAX_FREEBUSY_DAYS}), 400
+    start = datetime(d0.year, d0.month, d0.day)
+    end = datetime(d1.year, d1.month, d1.day)
+    errors = []
+    if cv.multi_calendar_available():
+        try:
+            got = cv.events_in_range(start, end, keys=_keys_arg(), calendars=cv.cached_calendars())
+        except Exception as e:
+            return api_error(e, "Couldn't read your calendars")
+        events, errors = got["events"], got["errors"]
+        read = cv.chosen_calendars(got["calendars"], _keys_arg())
+        if not read:
+            # Nothing was read (no calendar switched on, or the chosen one is gone): not a free week.
+            return jsonify({"status": "error", "message": "No calendar is switched on, so there is no free time "
+                            "to work out. Switch one on under Calendars."}), 409
+        if errors and not events and len(errors) >= len(read):
+            # Every calendar failed: an error, never a free week.
+            return jsonify({"status": "error", "message": "Couldn't read any of your calendars, so free time "
+                            "can't be worked out.", "errors": errors}), 502
+    else:
+        events = []
+        for i in range((d1 - d0).days):
+            day = d0 + timedelta(days=i)
+            events.extend(_events_for_day(day))
+            dstart = datetime(day.year, day.month, day.day)
+            if ce_range_failed(dstart, dstart + timedelta(days=1)):
+                return jsonify({"status": "error", "message": "Couldn't read your calendar, so free time "
+                                "can't be worked out."}), 502
+    if not _keys_arg():
+        # Events kept on this PC (quick add without Google) take time too, as in the other views.
+        for le in _load_local_events():
+            sdt = _parse_dt(le.get("start_time"))
+            if sdt and start <= sdt < end:
+                events.append(dict(le, start_time=sdt.astimezone().isoformat(),
+                                   end_time=(_parse_dt(le.get("end_time")) or sdt + timedelta(hours=1)).astimezone().isoformat(),
+                                   calendar_name="On this PC"))
+    out = cv.free_busy(events, start.astimezone(), end.astimezone())
+    # With some calendars unread, free time is only "free on the calendars read", and says so.
+    return jsonify({"status": "ok", "start": d0.isoformat(), "end": d1.isoformat(),
+                    "errors": errors, "partial": bool(errors), **out})
 
 
 @calendar_bp.route('/api/calendar/event/<event_id>')
@@ -282,87 +464,216 @@ def api_calendar_prep(event_id):
 @calendar_bp.route('/api/calendar/quick-add', methods=['POST'])
 @visible_job('Quick add event', kind='calendar_quick_add', workspace='calendar')
 def api_calendar_quick_add():
-    """Natural-language event creation. Parses with Claude, then writes to
-    Google Calendar if a write scope is available, else stores locally so the
-    event still appears on the timeline. Body: {text}."""
+    """Read a quick-add sentence into an event the owner can check. WRITES NOTHING.
+
+    The sentence is read by code first (services/calendar_quickadd); a model is
+    asked, with a tiny prompt, only for what code could not find. The answer is
+    a preview with the calendars the event can go on; the owner's Add sends it
+    to POST /api/calendar/events. Before this, quick add wrote to Google at
+    once, from a model's reading the owner never saw. Body: {text}."""
+    from agent_friday.services import calendar_quickadd as cq
     data = request.get_json(silent=True) or {}
-    text = (data.get("text") or "").strip()
+    text = " ".join(str(data.get("text") or "").split())[:500]
     if not text:
         return jsonify({"status": "error", "message": "text required"}), 400
-    now = datetime.now()
-    prompt = (
-        "Parse this into a calendar event. Return ONLY a JSON object with keys: "
-        "title (string), start_time (ISO 8601 local, no timezone), end_time "
-        "(ISO 8601 local; default 1 hour after start), location (string, may be "
-        "empty), attendees (array of strings, may be empty). Assume the current "
-        f"date/time is {now.isoformat(timespec='minutes')}. If a weekday is "
-        "named, pick the next future occurrence. Return nothing but the JSON.\n\n"
-        f"Request: {text}"
-    )
+    got = cq.parse(text)
+    fields, parsed_by = dict(got["fields"]), "code"
+    if not got["complete"]:
+        now = datetime.now()
+        prompt = (
+            "Parse this into a calendar event. Return ONLY a JSON object with keys: "
+            "title (string), start_time (ISO 8601 local, no timezone), end_time "
+            "(ISO 8601 local; default 1 hour after start), location (string, may be "
+            "empty). Assume the current "
+            f"date/time is {now.isoformat(timespec='minutes')}. If a weekday is "
+            "named, pick the next future occurrence. Return nothing but the JSON.\n\n"
+            f"Request: {text}"
+        )
+        try:
+            raw = _generate_text([{"role": "user", "content": prompt}],
+                                 system="You turn one sentence into one calendar event as JSON.",
+                                 max_tokens=300, workspace='calendar')
+            m = re.search(r"\{.*\}", raw or "", re.S)
+            model = json.loads(m.group(0)) if m else {}
+        except Exception:
+            model = {}
+        for k in ("title", "start_time", "end_time", "location"):
+            if not fields.get(k) and isinstance(model.get(k), str):
+                fields[k] = model[k][:200]
+        parsed_by = "code+model"
+    sdt = _local_dt(fields.get("start_time"))
+    if not sdt:
+        return jsonify({"status": "unparsed", "message": "Say a day and a time, like \u201clunch with Dana Tuesday 12pm\u201d.",
+                        "fields": fields})
+    edt = _local_dt(fields.get("end_time"))
+    if not edt or edt <= sdt:
+        edt = sdt + timedelta(hours=1)
+    preview = {"title": (fields.get("title") or text)[:200],
+               "start_time": sdt.astimezone().isoformat(timespec="minutes"),
+               "end_time": edt.astimezone().isoformat(timespec="minutes"),
+               "location": fields.get("location") or "",
+               "attendees": [a for a in (fields.get("attendees") or []) if a][:20]}
+    return jsonify({"status": "ok", "preview": preview, "parsed_by": parsed_by,
+                    "calendars": _writable_calendars()})
+
+
+def _local_dt(text):
+    """A time as this PC's wall clock: an offset or Z is converted (a model may answer in UTC), a bare
+    time is already local. None for something that is not a time."""
+    if not text:
+        return None
     try:
-        system = _get_friday_system_prompt(
-            keywords=text, workspace="task",
-            provider=_predict_route_provider(keywords=text, workspace="task"),
-            vault_control=_gated_vault_control())
-        raw = _generate_text([{"role": "user", "content": prompt}],
-                             system=system, max_tokens=400, workspace='calendar')
-        m = re.search(r"\{.*\}", raw, re.S)
-        parsed = json.loads(m.group(0)) if m else {}
-    except Exception as e:
-        return api_error(e, "Couldn't add the event")
+        d = datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return _parse_dt(text)
+    return d.astimezone().replace(tzinfo=None) if d.tzinfo else d
 
-    title = (parsed.get("title") or text)[:200]
-    start_time = parsed.get("start_time") or ""
-    end_time = parsed.get("end_time") or ""
-    sdt = _parse_dt(start_time)
-    if not end_time and sdt:
-        end_time = (sdt + timedelta(hours=1)).isoformat(timespec="minutes")
 
-    event = {
-        "id": "local-" + uuid.uuid4().hex[:12],
-        "title": title,
-        "start_time": start_time,
-        "end_time": end_time,
-        "location": parsed.get("location") or "",
-        "attendees": [a for a in (parsed.get("attendees") or []) if a],
-        "description": f"Created via Quick Add: \"{text}\"",
-        "all_day": False,
-        "source": "local",
-    }
+def _writable_calendars():
+    """The calendars an event can be added to or moved on: ones the owner may
+    write on an account whose token can write. Empty when Google cannot write."""
+    from agent_friday.services import calendar_views as cv
+    from agent_friday.services import calendar_write as cw
+    ok, _why = cw.write_ready()
+    if not ok:
+        return []
+    writable = {a.get("id") for a in cw.writable_accounts()}
+    try:
+        cals = cv.cached_calendars().get("calendars") or []
+    except Exception:
+        cals = []
+    out = [{"key": c["key"], "name": c.get("name") or "", "color": c.get("color") or "",
+            "primary": bool(c.get("primary")), "on": bool(c.get("on"))}
+           for c in cals
+           if c.get("access_role") in ("owner", "writer")
+           and (c.get("account_id") in writable or (c.get("account_id") is None and not writable))]
+    out.sort(key=lambda c: (not c["primary"], not c["on"], c["name"].lower()))
+    return out
+
+
+def _calendar_of(key):
+    """(account_id, calendar_id) for a calendar key from /api/calendar/calendars."""
+    from agent_friday.services import calendar_views as cv
+    key = str(key or "")
+    for c in (cv.cached_calendars().get("calendars") or []):
+        if c.get("key") == key:
+            return c.get("account_id"), c.get("calendar_id") or "primary"
+    return None, None
+
+
+@calendar_bp.route('/api/calendar/events', methods=['POST'])
+def api_calendar_create_event():
+    """The owner's Add on a quick-add preview: create exactly the event shown.
+
+    Requires the owner's click on the Calendar page (screen_session), confirmed:
+    true (she pressed Add on the preview) and a calendar key from the preview's
+    list. With no Google write access the event is kept on this PC and the
+    answer says so. Body: {title, start_time, end_time, location, attendees,
+    calendar_key, confirmed}."""
+    from agent_friday.services import calendar_write as cw
+    refused = _not_the_owners_click()
+    if refused:
+        return refused
+    data = request.get_json(silent=True) or {}
+    if data.get("confirmed") is not True:
+        return jsonify({"status": "error", "message": "an event is added only from the owner's Add"}), 400
+    title = " ".join(str(data.get("title") or "").split())[:200]
+    sdt, edt = _local_dt(data.get("start_time")), _local_dt(data.get("end_time"))
+    if not title or not sdt:
+        return jsonify({"status": "error", "message": "a title and a start time are required"}), 400
+    if not edt or edt <= sdt:
+        edt = sdt + timedelta(hours=1)
+    attendees = [str(a)[:200] for a in (data.get("attendees") or []) if a][:20]
+    location = str(data.get("location") or "")[:300]
+    writable = _writable_calendars()
+    if data.get("calendar_key") and not writable:
+        # The preview offered Google calendars and Google can no longer be written to: say so, never
+        # quietly keep on this PC an event she asked to put on a calendar.
+        return jsonify({"status": "error", "message": "Google Calendar cannot be written to right now; "
+                        "reconnect Google in Settings > Connections. Nothing was added."}), 409
+    if writable:
+        if data.get("calendar_key") not in {c["key"] for c in writable}:
+            return jsonify({"status": "error", "message": "choose a calendar you can add to"}), 400
+        aid, cid = _calendar_of(data.get("calendar_key"))
+        if cid is None:
+            return jsonify({"status": "error", "message": "choose a calendar from the list"}), 400
+        out = cw.create_event(title=title, start=sdt.astimezone().isoformat(),
+                              end=edt.astimezone().isoformat(), location=location,
+                              description="", attendees=attendees, account_id=aid, calendar_id=cid)
+        if out.get("error"):
+            return jsonify({"status": "error", "message": str(out["error"])[:300]}), 409
+        _drop_calendar_cache()
+        return jsonify({"status": "ok", "created_in_google": True,
+                        "event": {"id": out.get("id"), "title": out.get("title") or title,
+                                  "start_time": out.get("start"), "end_time": out.get("end"),
+                                  "calendar_key": data.get("calendar_key")}})
+    event = {"id": "local-" + uuid.uuid4().hex[:12], "title": title,
+             "start_time": sdt.isoformat(timespec="minutes"), "end_time": edt.isoformat(timespec="minutes"),
+             "location": location, "attendees": attendees, "description": "", "all_day": False,
+             "source": "local"}
     event["type"] = _classify_event(event)
+    with _CALENDAR_LOCK:
+        events = _load_local_events()
+        events.append(event)
+        _save_local_events(events)
+    return jsonify({"status": "ok", "created_in_google": False, "event": event})
 
-    # Try Google insert only if a write scope was granted (read-only by default,
-    # so this normally no-ops and we fall back to local — never silently expand
-    # the OAuth consent the user agreed to).
-    created_in_google = False
-    if "https://www.googleapis.com/auth/calendar.events" in GOOGLE_SCOPES:
-        creds = _google_credentials()
-        if creds is not None and sdt:
-            try:
-                from googleapiclient.discovery import build
-                svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
-                body = {
-                    "summary": title,
-                    "location": event["location"],
-                    "description": event["description"],
-                    "start": {"dateTime": sdt.isoformat()},
-                    "end": {"dateTime": (_parse_dt(end_time) or sdt + timedelta(hours=1)).isoformat()},
-                }
-                gev = svc.events().insert(calendarId="primary", body=body).execute()
-                _drop_calendar_cache()
-                event["id"] = gev.get("id", event["id"])
-                event["source"] = "google"
-                created_in_google = True
-            except Exception:
-                created_in_google = False
 
-    if not created_in_google:
-        with _CALENDAR_LOCK:
-            events = _load_local_events()
-            events.append(event)
-            _save_local_events(events)
-    return jsonify({"status": "ok", "event": event,
-                    "created_in_google": created_in_google})
+@calendar_bp.route('/api/calendar/events/<event_id>/rsvp', methods=['POST'])
+def api_calendar_rsvp(event_id):
+    """The owner's confirmed reply to an invitation (going, maybe, not going),
+    from her click on the Calendar page (screen_session). Google tells the
+    organiser. Body: {calendar_key, response, confirmed}."""
+    from agent_friday.services import calendar_write as cw
+    refused = _not_the_owners_click()
+    if refused:
+        return refused
+    data = request.get_json(silent=True) or {}
+    if data.get("confirmed") is not True:
+        return jsonify({"status": "error", "message": "a reply is sent only after the owner confirms"}), 400
+    if not event_id or len(event_id) > 300:
+        return jsonify({"status": "error", "message": "not an event id"}), 400
+    aid, cid = _calendar_of(data.get("calendar_key"))
+    if cid is None:
+        return jsonify({"status": "error", "message": "that calendar is not one Friday knows"}), 400
+    out = cw.respond_to_event(event_id, str(data.get("response") or ""), account_id=aid, calendar_id=cid)
+    if out.get("error"):
+        return jsonify({"status": "error", "message": str(out["error"])[:300]}), 409
+    _drop_calendar_cache()
+    return jsonify({"status": "ok", "response": out.get("response"), "before": out.get("before"),
+                    "unchanged": bool(out.get("unchanged"))})
+
+
+@calendar_bp.route('/api/calendar/events/<event_id>/move', methods=['POST'])
+def api_calendar_move_event(event_id):
+    """The owner's confirmed drag: move one event to the times shown in the
+    confirmation, from her click on the Calendar page (screen_session). Answers
+    with the receipt whose Undo puts it back.
+    Body: {calendar_key, start_time, end_time, confirmed}."""
+    from agent_friday.services import item_actions
+    refused = _not_the_owners_click()
+    if refused:
+        return refused
+    data = request.get_json(silent=True) or {}
+    if data.get("confirmed") is not True:
+        return jsonify({"status": "error", "message": "an event is moved only after the owner confirms"}), 400
+    if not event_id or len(event_id) > 300:
+        return jsonify({"status": "error", "message": "not an event id"}), 400
+    aid, cid = _calendar_of(data.get("calendar_key"))
+    if cid is None:
+        return jsonify({"status": "error", "message": "that calendar is not one of the calendars shown here"}), 400
+    try:
+        out = item_actions.move_event_by_owner(event_id, start=str(data.get("start_time") or ""),
+                                               end=str(data.get("end_time") or ""), calendar_id=cid,
+                                               account=aid or "")
+    except item_actions.Refused as e:
+        return jsonify({"status": "error", "message": e.user_message}), 409
+    if out.get("status") != "complete":
+        err = next((i.get("error") for i in out.get("items") or [] if i.get("error")), "")
+        return jsonify({"status": "error", "message": err or "Google did not take the change",
+                        "receipt_id": out.get("receipt_id")}), 409
+    _drop_calendar_cache()
+    return jsonify({"status": "ok", "receipt_id": out["receipt_id"], "text": out.get("text") or ""})
 
 
 # ═══════════════════════════════════════════════════════════════

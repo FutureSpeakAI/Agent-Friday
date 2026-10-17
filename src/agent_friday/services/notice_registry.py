@@ -329,6 +329,9 @@ _ALL = [
     # ── data integrity: a store Friday cannot open or cannot vouch for ───────
     _e("DI1", "services/integrity_report.py:_card", "data_integrity", NEEDS_YOU,
        "data-integrity:{store}", source="integrity", pk="warning"),
+    # ── calendar: a reminder Google has for an event, raised in Friday's tray ──
+    _e("CR1", "services/calendar_reminders.py:tick", "calendar_reminder", UPDATES,
+       "calendar-reminder:{event_id}:{minutes}", source="calendar"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),

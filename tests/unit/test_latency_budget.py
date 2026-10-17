@@ -46,8 +46,10 @@ MAX_SYSTEM_PROMPT_TOKENS = 6_000
 #: tools: deleting a calendar event (delete_calendar_event, ~120 tokens) and
 #: reading a whole email thread (search_email's thread/offset, ~100), plus
 #: the trust query covering outlets and the dock/podcast setting paths; their
-#: descriptions were trimmed first. Measured on Windows CI: ~23,070.
-MAX_TOOL_CATALOGUE_TOKENS = 23_500
+#: descriptions were trimmed first. Then from 23,500 for the memory card's two
+#: tools (update_core_memory ~240, search_past_conversations ~140), after
+#: trimming both. Measured locally on Windows: ~23,530.
+MAX_TOOL_CATALOGUE_TOKENS = 23_800
 
 #: What a turn actually sends by default: the tool index (name and one line
 #: per tool, services/tool_catalogue.py) plus the few resident tools. ~3,425
