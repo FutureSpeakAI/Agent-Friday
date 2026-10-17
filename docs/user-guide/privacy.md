@@ -34,7 +34,7 @@ asks you where she may think, with three cards and nothing picked for you:
 | Your choice | What it means |
 |---|---|
 | **Only on this PC** | Every model runs on this PC, so your conversations are answered here. Needs a PC that can run a local model, and it is slower. |
-| **Cloud for public things** | Your own words, files and mail stay on this PC; public things such as news and web searches may use the cloud, with the safeguards on. On a PC that cannot run a local model, your conversations also go to the cloud with the safeguards on: money, health, legal or identity details are not sent quietly; Friday keeps them on this PC and tells you, and where a card is offered (mail, private records) it shows exactly what would go. Your never-send list is never sent. |
+| **Cloud for public things** | Your own words, files and mail stay on this PC; public things such as news and web searches may use the cloud, with the safeguards on. On a PC that cannot run a local model, your conversations also go to the cloud with the safeguards on: money, health, legal or identity details are not sent quietly: a card asks you first, showing exactly what would go and where. Your never-send list is never sent. |
 | **Cloud for everything** | Chat and routines may use the cloud, and only your never-send list is refused. The never-send floor (below) still applies, every call is still checked and logged, and raw records go only with your yes for each file. |
 
 **Choosing Cloud for everything is your consent.** It lets cloud models be
@@ -104,6 +104,17 @@ Two related protections work differently:
 
 ## Cards that show what would leave
 
+- **Any private detail Friday holds back from a cloud model.** Unless you
+  chose **Cloud for everything**, whatever the privacy check keeps back from a
+  cloud model goes on one card for that request: exactly the words the cloud
+  model would receive, and where they would go (the provider and model, and
+  whether it is your conversation, a tool result or Friday's background
+  context). **Send** lets exactly those words go on this conversation's next
+  cloud calls; **Keep on this PC** keeps them here and you are not asked about
+  them again; **Always send this exact text** stops asking for those words.
+  **Send** counts only as a click on the card on screen, or your own yes after
+  Friday reads the text back. Your never-send list is never on a card: it is
+  refused, and Friday says so.
 - **An email written on a cloud model with private details in it.** Before it
   is sent, the send card says "this is exactly what would be sent", with
   **Send** or **Don't send**.
