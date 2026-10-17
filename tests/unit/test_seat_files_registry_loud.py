@@ -67,3 +67,12 @@ def test_an_empty_map_is_announced_with_the_reasons(isolated, capsys):
     assert "NO LOCAL SEAT CAN BE SERVED" in out
     assert "gemma4:e2b" in out and "gemma4:12b" in out     # the stale registry
     assert "fw:" in out                                     # the store's miss
+
+
+def test_an_empty_store_on_a_fresh_install_is_a_fact_not_an_error(isolated, capsys, caplog):
+    import logging
+    with caplog.at_level(logging.INFO, logger="friday.residency"):
+        assert rc.seat_files() == {}
+    out = capsys.readouterr().out
+    assert "No local model is downloaded yet" in out and "NO LOCAL SEAT" not in out
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
