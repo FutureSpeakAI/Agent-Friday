@@ -435,9 +435,12 @@ models for some work.
 Under `cloud_unrestricted` the gate still runs on every call, still records it
 and still applies the never-send floor; classification, span withholding and
 the identifier scrub (`core._scrub_pii`: SSNs, Luhn-valid card numbers and
-similar) are skipped (`egress_gate.py` `seal_outbound`, `_seal_steps`). So
-under that answer a card or account number reaches the cloud unless it is on
-your never-send list. Public web and news query text is not treated as
+similar) are skipped (`egress_gate.py` `seal_outbound`, `_seal_steps`). Card
+numbers and bank or account numbers are on every never-send list by default
+(removable), so they are still refused; other identifiers reach the cloud
+unless they are on the list. The owner's explicit choice of Cloud only
+(Settings > Models clicked on the page, or setup) is the same consent as
+`cloud_unrestricted`; the factory default is not. Public web and news query text is not treated as
 private because of its topic; only the never-send floor and personal
 identifiers apply to it (decision record 2026-10-15). Under `cloud_guarded`,
 email paragraphs the gate would hold are shown on a card first ("this is

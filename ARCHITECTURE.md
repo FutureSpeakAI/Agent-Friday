@@ -140,9 +140,14 @@ Mode, consent and local-only records are three settings with one owner each
 `privacy/vault_policy.py`). The setup posture answer writes all of them
 (`services/setup_steps.apply_posture`). The never-send floor
 (`services/judgment_gate.never_send_hits`, including raw-record hash holds)
-blocks a cloud call in every mode. Card numbers and credentials are masked by
-the identifier scrub except under `cloud_unrestricted`, refused in tool inputs
-in every mode by the vault gate, and withheld at chat intake. Details:
+blocks a cloud call in every mode; card numbers and bank or account numbers
+are on every never-send list by default (`services/never_send_defaults.py`,
+matched by pattern, removable on the Locks page). Other identifiers and
+credentials are masked by the identifier scrub except under unrestricted
+consent, refused in tool inputs in every mode by the vault gate, and keys are
+withheld at chat intake. An explicit owner choice of Cloud only (Settings >
+Models clicked on the page, or setup; `model_routing.mode_chosen_via`) is
+unrestricted consent; the factory default is not. Details:
 [overview §1-3](docs/architecture/overview.md#1-routing-mode-and-cloud-consent).
 
 ## Secrets, the vault and the keystore

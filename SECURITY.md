@@ -98,8 +98,11 @@ your behalf. Its defences are aimed at the ways such an agent goes wrong.
 - **A default read as consent.** The factory routing mode is `cloud_only`,
   but cloud consent starts unanswered and every safeguard stays on until you
   answer the setup chat's privacy question (**Only on this PC**, **Cloud for
-  public things** or **Cloud for everything**). No model can record that
-  answer.
+  public things** or **Cloud for everything**) or choose **Cloud only**
+  yourself in Settings > Models (which is consent). A mode change counts as
+  that choice only from a click on Friday's own page or a setup answer, never
+  from a request that merely claims to be the owner. No model can record
+  either.
 - **Raw records and pasted keys.** Mail archives and bank or card statements
   reach a cloud model only after a yes for that one file, under every
   posture. A key or password pasted into chat is withheld before the model,

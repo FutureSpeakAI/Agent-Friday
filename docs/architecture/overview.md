@@ -57,6 +57,17 @@ raises. The recorded choice is one of `local_private`, `cloud_guarded` or
 `cloud_unrestricted`. Unanswered, unreadable or broken consent all resolve to
 "gated", which keeps every safeguard on (the same as `cloud_guarded`). Only
 `cloud_unrestricted` widens the egress gate's tier policy (section 2).
+Choosing Cloud only is consent too (owner ruling 2026-10-17): when
+`model_routing.mode` and `mode_chosen` are both `cloud_only` and
+`mode_chosen_via` is `settings` (the Settings > Models control, clicked on
+Friday's own page: `screen_click.screen_session`) or `setup` (the terminal
+wizard, or setup completion clicked on the page), `resolve()` answers
+`cloud_unrestricted` with source `cloud_only_choice`, unless a recorded answer
+is later (a tie goes to the recorded answer). `core._save_settings` writes
+`mode_chosen_via` only on an owner routing change and strips it from client
+writes; the setup chat's posture answer writes `posture` (its recorded consent
+decides), so its implied mode never counts on its own. The privacy summary
+states what `resolve()` decides, the same answer the gate acts on.
 `record_consent()` is the only writer: it re-measures the hardware, refuses
 `local_private` on a machine that cannot run a local model, and writes through
 an internal settings path. Every generic settings write strips this key, so
@@ -177,9 +188,17 @@ destination in every mode. If the check cannot run, the payload is held. The
 only exception is a file-grant override that covers the exact paragraphs; a
 held raw record is never covered.
 
-Card numbers, SSNs and credentials (`hard_identifier_hits`) are **not** part
-of the egress floor. In prose they are masked by the identifier scrub, which
-is skipped under `cloud_unrestricted`. They are refused in tool inputs by the
+Card numbers and bank or account numbers ARE part of the floor by default:
+`services/never_send_defaults.py` adds the entries `[card numbers]` and
+`[bank and account numbers]` to every never-send list once per install
+(migration from scheduler start, Activity notice NS1, a removed entry is
+never re-added), and `never_send_hits` matches them by pattern (card
+checksum, IBAN checksum, numbers written after an account, routing or
+sort-code label). The owner removes either on the Locks page
+(`POST /api/locks/never-send/remove`, screen click only). SSNs and
+credentials (`hard_identifier_hits`) are not part of the floor. In prose they
+are masked by the identifier scrub, which is skipped under unrestricted
+consent. They are refused in tool inputs by the
 vault gate's floor in every mode, and a key pasted into chat is withheld
 before the turn starts (`services/pasted_secrets.py`, applied to
 `/api/chat`, `/api/chat/stream` and `/api/chat/send`).
