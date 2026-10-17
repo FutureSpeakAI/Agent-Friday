@@ -133,8 +133,7 @@ Format: [Keep a Changelog](https://keepachangelog.com) · Dates: YYYY-MM-DD
   anything is indexed, and nothing said off the record is there. Settings >
   Privacy & Data > Search your conversations lets you search it yourself and
   delete a message from its conversation and from every index at once. A
-  cloud model is only shown matches from conversations it already took part
-  in.
+  cloud model is only shown messages that were already sent to that provider.
 
 ### Changed
 

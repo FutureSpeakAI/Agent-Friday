@@ -18,7 +18,7 @@ you.** You need no key at all to use Friday with a local model.
 | Category | What is in it |
 |---|---|
 | **AI model providers** | Anthropic, OpenRouter, Google Gemini, Groq, Mistral, xAI, DeepSeek, Together and others; Ollama and LM Studio on this PC; and any service that speaks the OpenAI API, by its address. One provider is enough. |
-| **Creative and media** | Higgsfield (sign in with your Higgsfield account), kie.ai, and the ElevenLabs and Inworld voices. |
+| **Creative and media** | Higgsfield (sign in with your Higgsfield account), kie.ai, and the ElevenLabs and Inworld voices (an Inworld key can be saved, but Inworld cannot be chosen as Friday's voice yet; see [Voice](voice.md)). |
 | **Search and web** | Brave Search and Firecrawl. Without them Friday uses a free search that works, more roughly. |
 | **Accounts** | Your Google accounts (Gmail, Calendar, Drive and more), GitHub, Slack and Discord tokens, and Notion and Linear through their own sign-in. |
 | **Add any MCP server** | MCP is an open standard for plugging tools into AI assistants. Add a server by its `https://` address or by the command that starts it, or pick one from a short list. |

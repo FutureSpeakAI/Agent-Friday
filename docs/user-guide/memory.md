@@ -96,8 +96,8 @@ spoken, and the conversation's title.
 - The index is on this PC.
 - Keys and passwords you pasted are withheld before anything is indexed.
 - Anything said off the record is not there.
-- When a cloud model searches your past conversations, it sees only matches
-  from conversations that it took part in.
+- When a cloud model searches your past conversations, it sees only messages
+  that were already sent to that same provider.
 
 ### Deleting a message everywhere
 
