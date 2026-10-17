@@ -137,7 +137,7 @@ jobs:
           activity_never_collapses.spec.ts connect_services.spec.ts
       - name: Keep the Settings walk table and failure traces
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # same pin as installer.yml
         with:
           name: app-specs-results
           path: test-results/app
@@ -155,7 +155,7 @@ jobs:
           --timeout=600000 --output=test-results/first-run first_run_setup.spec.ts
       - name: Keep the first-run screenshots
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # same pin as installer.yml
         with:
           name: first-run-screens
           path: test-results/first-run
