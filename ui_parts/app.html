@@ -9851,7 +9851,7 @@ const WF_SCHED_STATUS = {
 function WfScheduleFacts({ w }) {
   const E = React.createElement;
   const s = w.when ? WF_SCHED_STATUS[w.schedule_status] : null;
-  if (!s && !w.model) return null;
+  if (!s && !w.model && !w.slug) return null;
   return E('div', { className: 'wfx-meta', 'data-testid': 'wf-schedule-facts' },
     s ? E('span', { 'data-testid': 'wf-schedule-status', 'data-status': w.schedule_status },
       E('span', { className: 'wfx-dot', style: { background: s.color } }), 'Schedule: ' + s.label) : null,
@@ -9859,6 +9859,7 @@ function WfScheduleFacts({ w }) {
       (w.model_pinned ? 'Model: ' : 'Model (not pinned): ') + w.model) : null,
     s && w.missed_text ? E('span', { 'data-testid': 'wf-missed' }, w.missed_text) : null,
     s && w.schedule_id ? E(WfJobChoices, { w: w }) : null,
+    !w.schedule_id && w.slug ? E(WfEmailChoice, { w: w }) : null,
     s && (w.schedule_status === 'held' || w.schedule_status === 'failed') && w.status_reason ?
       E('div', { className: 'wfx-shield', 'data-testid': 'wf-schedule-reason', style: { flexBasis: '100%' } }, w.status_reason) : null);
 }
@@ -20025,6 +20026,26 @@ function WfJobChoices({ w }) {
       E('option', { value: 'draft' }, 'save as drafts in Gmail'), E('option', { value: 'send' }, 'send (asks first unless pre-approved)'))),
     note ? E('span', { role: 'status' }, note) : null);
 }
+// A saved workflow run on request: the same "Its emails" switch a scheduled job has, on the
+// workflow record (PATCH /api/workflows/chains/<slug>, services/email_jobs). A workflow the
+// one-time mark kept sending shows "send" and can be switched back to drafts here.
+function WfEmailChoice({ w }) {
+  const E = React.createElement;
+  const [emailSend, setEmailSend] = useState(w.email_send === true);
+  const [note, setNote] = useState('');
+  if (!w.slug || w.schedule_id) return null;
+  const choose = v => {
+    const before = emailSend;
+    setEmailSend(v);
+    apiFetch('/api/workflows/chains/' + encodeURIComponent(w.slug), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email_send: v }) })
+      .then(r => r.json()).then(d => { if (d && d.status === 'ok') setNote('Saved for this workflow.'); else { setEmailSend(before); setNote('Not saved' + (d && d.message ? ': ' + d.message : '.')); } })
+      .catch(() => { setEmailSend(before); setNote('Not saved.'); });
+  };
+  return E('span', { 'data-testid': 'wf-workflow-email', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+    E('label', null, 'Its emails: ', E('select', { className: 'input', 'data-testid': 'wf-email-choice', 'aria-label': 'What this workflow does with the emails it writes', value: emailSend ? 'send' : 'draft', onChange: e => choose(e.target.value === 'send') },
+      E('option', { value: 'draft' }, 'save as drafts in Gmail'), E('option', { value: 'send' }, 'send (asks first unless pre-approved)'))),
+    note ? E('span', { role: 'status' }, note) : null);
+}
 // Calendar: deleting an event asks first, with "notify guests" (unticked
 // unless Settings says otherwise). POST /api/calendar/events/<id>/delete.
 function CalDeleteConfirm({ e, onDone }) {
@@ -28191,12 +28212,12 @@ function App(){
     /* A key never leaves the chat box. The same shapes the setup chat checks
        (/api/setup-chat/secret-shapes); a match is not sent anywhere, not even
        to the pause forecast, and the secure key form opens instead. A bare hex
-       run is a hash or a commit id, not a key. The server withholds keys too
+       run (a hash, a commit id) or a UUID is an identifier, not a key. The server withholds keys too
        (routes/chat._withhold_pasted_keys) for any caller that skips this. */
     if(!opts.alreadyShown){
       const shapes=await scLoadShapes();
       let hit=scDetectSecret(m,shapes);
-      if(hit&&hit.id==='generic'&&/^[0-9a-fA-F]+$/.test(m))hit=null;
+      if(hit&&hit.id==='generic'&&(/^[0-9a-fA-F]+$/.test(m)||/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(m)))hit=null;
       if(hit){
         if(!opts.preserveDraft)setChatIn('');
         setTurnMsgs(p=>[...p,{role:'system',kind:'key_withheld',text:'\u{1F511} '+scKeyNote(hit,shapes),time:new Date().toLocaleTimeString()}]);

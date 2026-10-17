@@ -335,8 +335,10 @@ def api_provider_test(name):
                                       "anthropic-version": "2023-06-01"},
                              timeout=10)
         elif ptype == "google":
+            # The key in Google's header, never in the URL (an error that
+            # quotes the URL would carry it).
             r = requests.get(base + "/v1beta/models",
-                             params={"key": api_key or ""}, timeout=10)
+                             headers={"x-goog-api-key": api_key or ""}, timeout=10)
         else:  # openai-compatible
             r = requests.get(base + "/models", headers=headers, timeout=10)
         latency = int((_t.time() - t0) * 1000)

@@ -5,6 +5,7 @@ CRUD over the schedule registry plus run-now and run-history. Reads are open
 """
 import traceback
 from flask import Blueprint, jsonify, request
+from agent_friday.services.pasted_secrets import withholds_request_body
 from agent_friday.core import login_required
 from agent_friday.services import scheduler as _sched
 from agent_friday.routes._errors import api_error
@@ -25,6 +26,7 @@ def list_schedules():
 
 @scheduler_bp.route('/api/schedules', methods=['POST'])
 @login_required
+@withholds_request_body
 def create_schedule():
     """Create a user-defined schedule. Body: a schedule record (see spec A.2)."""
     data = request.get_json(silent=True) or {}
@@ -48,12 +50,22 @@ def get_schedule(sid):
 
 @scheduler_bp.route('/api/schedules/<sid>', methods=['POST', 'PATCH'])
 @login_required
+@withholds_request_body
 def update_schedule(sid):
     """Patch a schedule (name/trigger/spec/task/enabled/notify/retry/timeout)."""
     patch = request.get_json(silent=True) or {}
     rec = _sched.update_schedule(sid, patch)
     if not rec:
         return jsonify({"status": "error", "message": "not found"}), 404
+    task = rec.get("task") or {}
+    if isinstance(patch.get("email_send"), bool) and task.get("kind") == "workflow" and task.get("ref"):
+        # A scheduled workflow's card has one "Its emails" switch: it decides the job's runs and the
+        # workflow's runs on request alike (services/email_jobs). Outside the schedule store's lock.
+        try:
+            from agent_friday.services import email_jobs as _ej
+            _ej.set_workflow_email_send(str(task["ref"]), patch["email_send"])
+        except Exception as e:
+            return api_error(e, "The job's choice was saved, but its workflow's runs on request were not changed")
     return jsonify({"status": "ok", "schedule": rec})
 
 
