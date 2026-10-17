@@ -25,6 +25,7 @@ conversation content, vault data or personal details.
 | Local chat models | `huggingface.co` (weights), `api.github.com` and `github.com` (the model runtime) | Only when you ask: the first-start download you agreed to in setup, or Settings > Models | Choose a cloud model, or do not tick the download box |
 | Local voice models | `huggingface.co`, `github.com`, PyPI | Only when you press Download in Settings > Voice > Local voice models | Do not press Download |
 | Connector health | Your connected services (Google, MCP servers) | About every 2 minutes | Disconnect the connector |
+| Calendar reminders | Google Calendar, for today's and tomorrow's events | Every 2 minutes, when a Google account is connected | Workflows > Friday's built-in routines |
 | Scheduled jobs | Your model provider, feeds, git remotes | Per schedule | Workflows workspace |
 | Phone (off by default) | Twilio API | Only when the phone is on | Off unless you turn it on |
 
@@ -35,7 +36,7 @@ conversation content, vault data or personal details.
 **What it does:** Asks GitHub for the list of published Agent Friday releases
 and, if a newer build exists, shows you a notification with a link. Releases
 are compared by build sequence, not by version number, so Friday never offers
-an older build, such as a 5.x release, to a Beta 1.0.x install.
+an older build, such as a 5.x release, to a Beta install.
 
 **How often:** The scheduler looks every 6 hours, but a request is made only
 when the last successful check was at least 7 days ago.
@@ -146,6 +147,16 @@ Roughly every 2 minutes Friday checks that the services you connected still
 work: a token-validity check for Google (no mail or calendar content) and a
 reachability check for MCP servers. A standing credential sweep also runs
 locally. Disconnect a connector in Settings > Connections to stop its check.
+
+Services you have never connected are not checked: on a fresh install they
+show "not connected" and stay silent. **Test connection** on the Connect your
+services screen sends one small request to that service, and only when you
+press it.
+
+**Calendar reminders.** A built-in routine, "Calendar reminders", runs every 2
+minutes. It reads today's and tomorrow's events from your connected Google
+calendars and raises a reminder in the tray when Google's own reminder time
+comes. It only reads; it writes nothing to Google.
 
 MCP servers you configure in `~/.friday/mcp_servers.json` are local processes
 that Friday talks to over stdio, but a server may make its own network calls.

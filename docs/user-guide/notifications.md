@@ -8,11 +8,19 @@ can tell at a glance whether something needs you or only happened.
 | **Needs you** | Only what waits for your decision: approvals, a failure you have to fix, a money or credential problem. | The badge, and a popup for approvals, within the limits below. |
 | **Activity** | Every task that is running or waiting, whoever started it. | You open it. The count never pops up. |
 | **Updates** | Results and things for your information: a briefing ready, a task done. | You open it. A quiet dot, no sound, no popup. |
-| **Receipts and traces** | Why Friday did something, step by step. | You ask. They are never pushed. |
+| **Receipts & traces** | Why Friday did something, step by step. | You ask. They are never pushed. |
 
-All four open from the chip in the top bar, which already shows the Local AI
-queue. When something needs you, the chip carries an amber **need you** badge.
-Amber only ever means that.
+All four are tabs of the **Activity** panel, which opens from the chip in the
+top bar (the same chip shows the Local AI queue). When something needs you,
+the chip carries an amber badge, for example "1 needs you" or "3 need you",
+and it stays in the top bar while anything is waiting. Amber only ever means
+that. Every approval card also shows in the chat and in **System >
+Approvals**; see [Approvals and receipts](approvals-and-receipts.md).
+
+A new install is quiet. Services you never connected show as "not
+connected" in grey, with no warnings at start-up, and until you finish the
+setup chat Friday holds the notices from scheduled jobs (the runs are still
+recorded).
 
 ## Needs you
 
@@ -39,7 +47,8 @@ waiting").
 ## Activity
 
 The second tab lists every task, whoever started it: chat, voice, a button in a
-workspace, a schedule, background work, Laya. Each row shows:
+workspace, a schedule, background work, or Friday's small on-PC helper
+(called Laya in Settings). Each row shows:
 
 - the **model** answering it (or that one will be chosen when it starts);
 - its **status**, and its **place in line** while it waits;
@@ -57,7 +66,7 @@ The third tab is a digest of what happened today, grouped by kind, newest first.
 Nothing here ever interrupts you. Muting a kind from the tray still works, and
 approvals can never be muted.
 
-## Receipts and traces
+## Receipts & traces
 
 The fourth tab lists recent reasoning traces. You reach one from the item that
 made it (**Why?**, **Trace**) or from here, and from the Trust workspace. Traces
@@ -71,7 +80,7 @@ The setup chat asks once, and you can skip it, whether you want quiet hours;
 for you beyond the defaults.
 
 - **How often something may interrupt you.** The default, and the recommended
-  choice, is 6 an hour. Over the limit, things that need you wait in the badge
+  choice, is **6 an hour (Recommended)**. Over the limit, things that need you wait in the badge
   without popping up, and the badge says how many. You can choose 3, 6, 12 an
   hour, or no limit.
 - **Quiet hours.** Off until you turn them on. 22:00 to 07:00 is offered as the

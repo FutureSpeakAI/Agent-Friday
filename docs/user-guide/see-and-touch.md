@@ -19,7 +19,7 @@ Open the workspace first. Friday sees the one on your screen.
 | Message Center | yes | yes | yes (view, unread, search, folder, account) |
 | Media | yes | yes | yes (status, kind, project, search) |
 | Library | yes | yes | yes (folder) |
-| News | yes | no | yes (category, sort) |
+| News | yes | yes | yes (category, sort) |
 | Files | yes | yes | no |
 | Calendar | yes | yes | no |
 | Meetings | counts only | yes | no |
@@ -50,8 +50,8 @@ Ordinary sentences work, typed or spoken.
 - "Only show drafts." Friday sets a filter chip.
 - "Add a reply saying I'll call tomorrow." Friday writes into the reply box.
 - "Archive these." "These" means, in this order, the rows you have ticked, the
-  row your hand cursor is on (for three seconds after it moved off), then what
-  Friday just pointed at. If none of those exists, Friday asks which ones you
+  row your hand cursor is on (for three seconds after it moved off), the item
+  you have open, the row that has focus, then what Friday just pointed at. If none of those exists, Friday asks which ones you
   mean instead of guessing.
 
 ## What you see
@@ -90,7 +90,8 @@ normal rule for that action applies.
   star and label run at once and write a receipt you can undo.
 - **Files and wiki pages.** Trash and archive always ask, even for one item.
   Two or more items ask on one card. A single local rename or move that can be
-  undone runs at once.
+  undone runs at once. A move into a folder that a cloud service syncs, or into
+  your code projects, asks first even for one file.
 - **Media cards.** Favourite, tag and move to a project run at once for one
   card; two or more wait for one card.
 - **Calendar.** Moving events always waits for one card, because it reaches
@@ -104,9 +105,9 @@ See [Approvals and receipts](approvals-and-receipts.md).
 
 ## What is never shared
 
-- **Health, Finance and Family** show Friday a kind of row (such as
-  "medication" or "position") and its place in the list. No title, name,
-  amount, diagnosis, date of birth or filter text leaves those pages.
+- **Health, Finance, Family and Meetings** show Friday a kind of row (such as
+  "medication", "position" or "meeting") and its place in the list. No title,
+  name, amount, diagnosis, date of birth or filter text leaves those pages.
 - **Voice.** When you talk to a cloud voice, or the room is shared, Friday's
   view of your screen is reduced to counts and categories: no sender, subject,
   file name or filter words. Results for a cloud voice name counts and kinds,

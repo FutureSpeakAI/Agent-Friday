@@ -9,7 +9,8 @@ installing without the wizard. Install from source is in
 
 `AgentFriday-Setup-1.2.0-beta.1.exe` is one file of about 675 MB. It installs
 for the current Windows account, needs no administrator rights, and sends
-nothing anywhere. It carries:
+nothing about you anywhere (it fetches only the two parts named below). It
+carries:
 
 - its own copy of Python, so nothing has to be installed first;
 - Friday's files;
@@ -38,7 +39,7 @@ memory tier), before any model files.
 | Your data (wiki, conversations, settings, vault, receipts) | `%USERPROFILE%\.friday` |
 | Setup log | `%LOCALAPPDATA%\AgentFriday\logs\setup.log` |
 | Server log | `%USERPROFILE%\.friday\friday.log` |
-| Backup made before an upgrade | `%USERPROFILE%\.friday-backups` |
+| Backup made before an upgrade | A dated folder under `%USERPROFILE%\.friday-backups` |
 | Desktop and Start menu shortcuts | **Agent Friday**, with the rocket icon |
 | Start-at-sign-in switch | Start menu, **Agent Friday**, **Start Friday when I sign in** |
 
@@ -54,6 +55,17 @@ anything, setup stops Friday and copies the data folder to a dated folder under
 `.friday-backups`. When it finishes, it checks that the data folder has every
 file it had before and that the vault's key files are unchanged. A newer
 version already installed is never replaced by an older setup program.
+
+What carries over, and what to know after an upgrade to Beta 1.2 (spending
+caps, scheduled email jobs, keys pasted into chat before 1.2), is in
+[Updating and uninstalling](../user-guide/updating-and-uninstalling.md#after-you-upgrade-to-beta-12).
+
+## When setup finishes
+
+The last page offers **Start Agent Friday now**. Friday opens in your browser.
+The first start takes a minute or two. Friday's first run then shows a few
+screens (including the vault passphrase) and the setup conversation. See
+[The setup chat](../user-guide/setup-chat.md).
 
 ## Silent install
 
