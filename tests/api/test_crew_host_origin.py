@@ -33,9 +33,10 @@ def test_typed_host_keeps_private_origin_after_mode_ends(app, monkeypatch, path,
     assert crew_runtime.HOST_ORIGIN.get() is None
 
 
+@pytest.mark.parametrize("noise", [False, True])
 @pytest.mark.parametrize("private_at_start", [False, True])
 @pytest.mark.parametrize("raises", [False, True])
-def test_streaming_transfers_original_privacy_before_worker_starts(client, monkeypatch, private_at_start, raises):
+def test_streaming_transfers_original_privacy_before_worker_starts(client, monkeypatch, private_at_start, raises, noise):
     from flask import jsonify
     from agent_friday.routes import chat
     from agent_friday.services import crew_runtime, off_record, agent
@@ -46,6 +47,10 @@ def test_streaming_transfers_original_privacy_before_worker_starts(client, monke
     seen, restored, workers = [], [], []
     original_start = threading.Thread.start
     def start(thread):
+        # Thread.start is replaced for the whole process, so only the stream's
+        # own worker is followed; a thread anything else starts runs untouched.
+        if getattr(getattr(thread, "_target", None), "__name__", "") != "_run_turn":
+            return original_start(thread)
         # The privacy lifetime ends after HTTP admission but before the new
         # thread runs. This is deterministic and requires no sleeps.
         state.update(private=False, generation=7)
@@ -61,6 +66,11 @@ def test_streaming_transfers_original_privacy_before_worker_starts(client, monke
     monkeypatch.setattr(threading.Thread, "start", start)
     def host_turn():
         seen.append((threading.get_ident(), crew_runtime.HOST_ORIGIN.get()))
+        if noise:
+            # Another part of Friday starting a thread meanwhile is not the stream's worker.
+            other = threading.Thread(target=lambda: None, name="unrelated")
+            other.start()
+            other.join()
         if raises:
             raise RuntimeError("Synthetic host failure")
         result = agent._execute_tool("ask_crew", {"agent": "Reviewer", "request": "Private marker"})
