@@ -59212,6 +59212,12 @@ function SettingsLocks() {
     path
   }).then(x => setMsg(x.ok ? 'A card asking about that file is on screen.' : x.message || 'No card could be raised.')).catch(() => setMsg('Could not reach the server.'));
   const resetHeld = () => post('/api/locks/raw-holds/reset').then(x => setMsg(x.ok ? 'A card is on screen that says exactly what starting fresh lets go. Nothing changes until you approve it there.' : 'No card could be raised.')).catch(() => setMsg('Could not reach the server.'));
+  const removeNever = entry => post('/api/locks/never-send/remove', {
+    entry
+  }).then(x => {
+    setMsg(x.message || (x.ok ? 'Removed.' : 'It was not removed.'));
+    if (x.ok) load();
+  }).catch(() => setMsg('Could not reach the server.'));
   return /*#__PURE__*/React.createElement(StSection, {
     title: "Locks",
     desc: "How your things are locked on this PC, in plain words, and what that cannot stop."
@@ -59232,7 +59238,20 @@ function SettingsLocks() {
     className: "lk-sub"
   }, l.today.map(t => /*#__PURE__*/React.createElement("li", {
     key: t.destination
-  }, t.destination + ': ' + t.sent + ' sent' + (t.stopped ? ', ' + t.stopped + ' stopped' : '')))), l.checks && /*#__PURE__*/React.createElement("ul", {
+  }, t.destination + ': ' + t.sent + ' sent' + (t.stopped ? ', ' + t.stopped + ' stopped' : '')))), l.never_send && l.never_send.length > 0 && /*#__PURE__*/React.createElement("ul", {
+    className: "lk-sub",
+    "aria-label": "Your never-send list"
+  }, l.never_send.map(n => /*#__PURE__*/React.createElement("li", {
+    key: n.entry
+  }, n.label + ' ', /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    "aria-label": 'Remove ' + n.label + ' from the never-send list',
+    onClick: () => removeNever(n.entry)
+  }, "Remove")))), l.checks && /*#__PURE__*/React.createElement("ul", {
     className: "lk-sub"
   }, l.checks.map(c => /*#__PURE__*/React.createElement("li", {
     key: c.name
