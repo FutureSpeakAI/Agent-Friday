@@ -294,14 +294,29 @@ def _disk_view(record: dict) -> dict:
     return {k: record.get(k) for k in _RECEIPT_KEYS if k in record}
 
 
+#: A Windows read or replace can meet the file mid-replace (another thread, an
+#: indexer, antivirus) and get a sharing violation for a moment.
+_BUSY_RETRIES = 6
+
+
 def _read_store() -> List[dict]:
-    try:
-        data = json.loads(APPROVALS_FILE.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            data = data.get("approvals", [])
-        data = data if isinstance(data, list) else []
-    except Exception:
-        return []
+    # A store that is there but busy is retried, never read as empty: an empty
+    # read followed by a write would drop every card in it.
+    for attempt in range(_BUSY_RETRIES):
+        try:
+            data = json.loads(APPROVALS_FILE.read_text(encoding="utf-8"))
+            break
+        except FileNotFoundError:
+            return []
+        except PermissionError:
+            if attempt == _BUSY_RETRIES - 1:
+                raise
+            time.sleep(0.02 * (attempt + 1))
+        except Exception:
+            return []
+    if isinstance(data, dict):
+        data = data.get("approvals", [])
+    data = data if isinstance(data, list) else []
     out = []
     for r in data:
         if isinstance(r, dict) and r.get("off_record"):
@@ -320,7 +335,14 @@ def _write_store(records: List[dict]) -> None:
         tmp = APPROVALS_FILE.with_suffix(".json.tmp")
         records = [_disk_view(r) if isinstance(r, dict) else r for r in records]
         tmp.write_text(json.dumps(records, indent=2, default=str), encoding="utf-8")
-        tmp.replace(APPROVALS_FILE)
+        for attempt in range(_BUSY_RETRIES):
+            try:
+                tmp.replace(APPROVALS_FILE)
+                break
+            except PermissionError:
+                if attempt == _BUSY_RETRIES - 1:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
     except Exception as e:
         _log.error("approvals store write FAILED: %s", e)
 

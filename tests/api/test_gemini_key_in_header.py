@@ -2,8 +2,9 @@
 URL. A URL is what an exception message, a proxy log or an error page quotes
 back, so a key in its query string ends up wherever those are kept.
 
-Both places that test a Google key are checked: Settings' Test Connection
-(/api/providers/<name>/test) and the 1-token key verdict
+Every place that tests a Google key is checked: Settings' Test Connection
+(/api/providers/<name>/test), Connect your services' Test connection
+(/api/setup/connections/provider:<name>/test) and the 1-token key verdict
 (services/key_verdict.ping_detail).
 """
 from __future__ import annotations
@@ -44,6 +45,25 @@ def test_test_connection_sends_the_gemini_key_in_a_header(client, monkeypatch):
     monkeypatch.setattr(pd, "provider_api_key", lambda prov: FAKE)
     r = client.post("/api/providers/google-gemini/test", json={})
     assert r.status_code == 200, r.data[:300]
+    assert calls, "no request was made"
+    for c in calls:
+        _no_key_in_url(c)
+    assert FAKE not in r.get_data(as_text=True)
+
+
+def test_connect_your_services_test_sends_the_gemini_key_in_a_header(client, monkeypatch):
+    from agent_friday.routing import provider_descriptors as pd
+    calls = []
+
+    def fake_get(url, params=None, headers=None, timeout=None, **_):
+        calls.append({"url": url, "params": params, "headers": headers or {}})
+        return _Resp()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(pd, "provider_api_key", lambda prov: FAKE)
+    r = client.post("/api/setup/connections/provider:google-gemini/test", json={})
+    assert r.status_code == 200, r.data[:300]
+    assert r.get_json()["state"] == "pass", r.get_json()
     assert calls, "no request was made"
     for c in calls:
         _no_key_in_url(c)

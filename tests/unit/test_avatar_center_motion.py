@@ -264,7 +264,7 @@ def test_each_avatar_structure_is_centred_with_the_tray_open(browser, index):
     try:
         name = page.evaluate("i => fridayVibe.getStructures()[i].id", index)
         page.evaluate("__avc.tray('third', true)")
-        page.wait_for_function("() => __avc.chat() && __avc.chat().w > 100", timeout=15000)
+        page.wait_for_function("() => __avc.chat() && __avc.chat().w > 100", timeout=30000)   # the tray opening, on the real clock
         freeze(page)
         page.evaluate("i => fridayVibe.setStructure(i)", index)
         step_until(page, lambda s, n=name: s["target"] == n and s["progress"] >= .999, limit=200, ms=250)

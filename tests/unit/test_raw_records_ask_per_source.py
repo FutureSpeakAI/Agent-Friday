@@ -9,6 +9,8 @@ it. The never-send floor stays: a deny mark is never lifted by a raw record's ye
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from agent_friday.services import egress_gate as eg
@@ -1032,6 +1034,7 @@ def test_forfiles_and_where_walk_deep_with_their_recursion_flag(cards, tmp_path)
     assert fg.raw_refusal_for_command('forfiles /p %s /c "cmd /c type @file"' % m) is None, "no /s: its own files"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="drive letters and C$ admin shares are Windows spellings")
 def test_device_and_loopback_spellings_are_judged_as_this_pcs_folders(cards, tmp_path):
     stmt, _inbox = _records(tmp_path)
     drive, rest = str(stmt.parent)[0], str(stmt.parent)[2:]
