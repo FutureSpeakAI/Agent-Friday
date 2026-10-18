@@ -422,11 +422,33 @@ def _feed_lesson_records(cand: dict, result: dict) -> None:
     application per task. Records hold hashes and names, never lesson text."""
     from agent_friday.services import lesson_records as lr
     subj = cand["subject"]
+    with_arm = subject_arm(cand)
     if subj["kind"] == "lesson":
         ref = (cand.get("apply") or {}).get("lesson_ref") or subj["id"]
-        lr.note_trial("lesson", ref, cand["id"], result.get("recommend", ""), result.get("per_task", {}))
+        lr.note_trial("lesson", ref, cand["id"], result.get("recommend", ""), result.get("per_task", {}),
+                      with_arm=with_arm)
     elif subj["kind"] == "skill":
-        lr.note_trial("skill", subj["id"], cand["id"], result.get("recommend", ""), result.get("per_task", {}))
+        lr.note_trial("skill", subj["id"], cand["id"], result.get("recommend", ""), result.get("per_task", {}),
+                      with_arm=with_arm)
+
+
+def subject_arm(cand: dict) -> str:
+    """The arm that runs WITH the record's skill or lesson. Usually the new way
+    (b): a new or changed skill, a restored one. Archiving is the other way
+    round: the current version (a) still has the skill or lesson and the new
+    way runs without it, so the new way winning means the skill hurt."""
+    subj = cand.get("subject") or {}
+    cur = (cand.get("current") or {}).get("files") or {}
+    new_side = cand.get("candidate") or {}
+    new = new_side.get("files") or {}
+    if new_side.get("restore"):
+        return "b"
+    if subj.get("kind") == "skill":
+        rel = f"skills/{subj.get('id')}/SKILL.md"
+        return "a" if rel in cur and rel not in new else "b"
+    if (cand.get("apply") or {}).get("lesson_action") == "archive" or (cur and not new):
+        return "a"
+    return "b"
 
 
 def _feed_learning_loop(cand: dict, rows: List[dict]) -> None:

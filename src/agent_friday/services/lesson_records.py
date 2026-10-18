@@ -122,13 +122,31 @@ def _short(v) -> Optional[str]:
 
 #: A cue ("applies when ...") is the model's own free text and is served by
 #: /api/learning/records, so it is kept short and stripped of contact details
-#: (security review 2026-10-18, finding 9). The lesson text is never stored.
+#: and of anything that looks like a name or a place (a capitalised word that
+#: does not start a sentence). The lesson text is never stored.
 CUE_MAX = 160
 _CUE_SCRUB = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+|\+?\d[\d ()./-]{6,}\d|https?://\S+")
+_CUE_WORD = re.compile(r"(?<![\w'\u2019-])[A-Z][\w'\u2019-]*")
+#: Capitalised words that are not names: Friday herself, days, months, a few
+#: common abbreviations.
+_CUE_KEEP = frozenset({
+    "I", "Friday", "Monday", "Tuesday", "Wednesday", "Thursday", "Saturday", "Sunday",
+    "January", "February", "March", "April", "May", "June", "July", "August", "September",
+    "October", "November", "December", "AM", "PM", "OK", "PDF", "UTC", "CSV", "AI"})
 
 
 def _scrub_cue(v) -> Optional[str]:
     s = _CUE_SCRUB.sub("[removed]", " ".join(str(v if v is not None else "").split()))
+
+    def name(m):
+        w = m.group(0)
+        if w in _CUE_KEEP:
+            return w
+        before = s[:m.start()].rstrip()
+        if not before or before[-1] in ".!?:;\"(":
+            return w          # the first word of a sentence
+        return "[name]"
+    s = _CUE_WORD.sub(name, s)
     return s[:CUE_MAX] or None
 
 
@@ -435,17 +453,25 @@ def judge(kind: str, ref: str, verdict: str, *, source: str) -> Dict[str, Any]:
     return _update(kind, ref, fn)
 
 
-def note_trial(kind: str, ref: str, trial_id: str, recommend: str, per_task: Dict[str, dict]) -> Dict[str, Any]:
+def note_trial(kind: str, ref: str, trial_id: str, recommend: str, per_task: Dict[str, dict],
+               *, with_arm: str = "b") -> Dict[str, Any]:
     """A practice-task trial of this record: its id and verdict, and one judged
-    application per task (favours the record: helped; against: hurt; tie:
-    neutral). The trial's own paired result is the strongest evidence there is."""
+    application per task. ``with_arm`` is the arm that ran WITH the skill or
+    lesson ("b" for a new or changed one, "a" when the trial tests archiving
+    it): a task favouring that arm counts as helped, the other arm as hurt, a
+    tie as neutral. The trial's own paired result is the strongest evidence."""
+    if with_arm not in ("a", "b"):
+        raise ValueError("with_arm must be 'a' or 'b'")
+    without = "a" if with_arm == "b" else "b"
+
     def fn(rec):
         refs = list(rec.get("trial_refs") or [])
-        refs.append({"trial": str(trial_id)[:40], "recommend": str(recommend)[:20], "at": time.time()})
+        refs.append({"trial": str(trial_id)[:40], "recommend": str(recommend)[:20],
+                     "with_arm": with_arm, "at": time.time()})
         rec["trial_refs"] = refs[-20:]
         for t in (per_task or {}).values():
             fav = t.get("favours")
-            rec["judged"]["helped" if fav == "b" else "hurt" if fav == "a" else "neutral"] += 1
+            rec["judged"]["helped" if fav == with_arm else "hurt" if fav == without else "neutral"] += 1
     return _update(kind, ref, fn)
 
 
@@ -523,6 +549,10 @@ def _archive_lesson_line(ref: str) -> bool:
 
 def _on_retire_decided(card: Dict[str, Any]) -> None:
     if card.get("status") != "approved":
+        return
+    # Only the owner's click on the card retires anything (the kind is
+    # screen-only in approvals); any other decider changes nothing.
+    if card.get("decided_by") != "owner:ui":
         return
     rid = (card.get("payload") or {}).get("record") or ""
     kind, _, ref = rid.partition(":")
@@ -685,3 +715,26 @@ def comparison(old_id: str, new_id: str) -> Dict[str, Any]:
     return {"ok": True, "old": sa, "new": sb,
             "comparable": bool(sa["judged"] and sb["judged"]
                                and (sa["attributable"] or sb["attributable"]))}
+
+
+#: The workflow checks that read a deliverable back (services/workflow_outcomes).
+#: Only these may judge whether a lesson helped: "a reply was produced" or a
+#: check marked not automatically checked says nothing about that.
+_JUDGING_CHECKS = frozenset({"artifact_saved", "file_saved", "code_change_saved", "comparison_read"})
+
+
+def outcome_checked(outcome: Any) -> bool:
+    """Did the task's own verification actually check the work? False when
+    there was no verification, when any part could not be checked automatically,
+    when the evidence could not be saved, or when only a reply was checked."""
+    if not isinstance(outcome, dict):
+        return False
+    checks = [c for c in (outcome.get("checks") or []) if isinstance(c, dict)]
+    if not checks:
+        return False
+    for c in checks:
+        if c.get("status") == "not_automatically_checked":
+            return False
+        if c.get("name") in ("durable_evidence", "supported_output"):
+            return False
+    return any(c.get("name") in _JUDGING_CHECKS for c in checks)

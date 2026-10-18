@@ -1,4 +1,4 @@
-"""Learning records gain outcome tracking (harness2 adoption HA3, spec §10).
+"""Learning records gain outcome tracking.
 
 On the records PR (#152) a record counted uses and task outcomes; nothing said
 whether a lesson helped or hurt, nothing retired one that kept failing, and a
@@ -183,3 +183,72 @@ def test_reply_shape_scores_never_feed_the_records():
     root = Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "services"
     for name in ("lesson_records.py", "trials.py"):
         assert "_success_score" not in (root / name).read_text(encoding="utf-8")
+
+
+def test_a_trial_of_archiving_a_skill_counts_the_new_way_winning_as_hurt(home):
+    """Arm a still has the skill and arm b runs without it: b winning means the
+    skill made things worse."""
+    from agent_friday.services import trials
+    lr.note_taught("skill", "demo", applies_when="when filing", taught_by={"source": "friday"})
+    cand = {"id": "trial_arch", "subject": {"kind": "skill", "id": "demo"},
+            "current": {"files": {"skills/demo/SKILL.md": "# demo"}}, "candidate": {"files": {}}}
+    assert trials.subject_arm(cand) == "a"
+    trials._feed_lesson_records(cand, {"recommend": "candidate",
+                                       "per_task": {"t1": {"favours": "b"}, "t2": {"favours": "b"},
+                                                    "t3": {"favours": "a"}}})
+    rec = next(r for r in lr.records("skill") if r["ref"] == "demo")
+    assert rec["judged"] == {"helped": 1, "hurt": 2, "neutral": 0}
+    new = dict(cand, candidate={"files": {"skills/demo/SKILL.md": "# demo v2"}})
+    assert trials.subject_arm(new) == "b"
+    assert trials.subject_arm(dict(cand, candidate={"files": {}, "restore": "demo"},
+                                   current={"files": {}})) == "b"
+
+
+def test_only_a_click_retires_a_lesson(home):
+    from agent_friday.services import approvals
+    assert approvals.SCREEN_ONLY_KINDS.get("lesson_retire") == frozenset({"owner:ui"})
+    assert core_memory.add("friday", LINE, actor="friday")["ok"]
+    ref = _lesson()
+    for _ in range(6):
+        lr.judge("lesson", ref, "hurt", source="verify")
+    card = lr.raise_retirement_cards()[0]
+    try:
+        approvals.decide(card["approval_id"], "approve", decided_by="voice")
+    except Exception:
+        pass
+    lr._on_retire_decided({"status": "approved", "decided_by": "voice",
+                           "payload": {"record": f"lesson:{ref}"}})
+    assert LINE in core_memory.entries("friday")
+    assert _rec(ref)["status"] != "archived"
+
+
+def test_a_cue_carries_no_names_or_places(home):
+    ref = lr.lesson_ref("y")
+    lr.note_taught("lesson", ref, applies_when="When Sam asks about the Paris trip on Friday. Check twice.",
+                   taught_by={"source": "friday"})
+    cue = _rec(ref)["applies_when"]
+    assert "Sam" not in cue and "Paris" not in cue
+    assert cue.startswith("When ") and "Friday" in cue and "Check twice" in cue
+
+
+@pytest.mark.parametrize("outcome,want", [
+    (None, False),
+    ({"checks": [{"name": "reply_present", "status": "passed"}]}, False),
+    ({"checks": [{"name": "file_saved", "status": "passed"}]}, True),
+    ({"checks": [{"name": "file_saved", "status": "unverified"}]}, True),
+    ({"checks": [{"name": "code_change_saved", "status": "passed"},
+                 {"name": "code_review", "status": "not_automatically_checked"}]}, False),
+    ({"checks": [{"name": "artifact_saved", "status": "passed"},
+                 {"name": "success_criteria", "status": "not_automatically_checked"}]}, False),
+    ({"checks": [{"name": "file_saved", "status": "passed"},
+                 {"name": "durable_evidence", "status": "unverified"}]}, False),
+])
+def test_only_a_real_check_may_judge(outcome, want):
+    assert lr.outcome_checked(outcome) is want
+
+
+def test_the_task_path_judges_only_through_outcome_checked():
+    src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "services"
+           / "agent.py").read_text(encoding="utf-8")
+    assert "checked=_lr.outcome_checked(_checked_outcome)" in src
+    assert "checked=_checked_outcome is not None" not in src

@@ -6233,10 +6233,11 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # counts as one more task for each lesson on the card (lesson_records).
         try:
             from agent_friday.services import lesson_records as _lr
-            # `checked`: the outcome came from the task's deterministic
-            # verification, so it may also judge helped/hurt (HA-E26).
+            # `checked`: the task's own verification read the deliverable
+            # back, with nothing left unchecked, so the outcome may also judge
+            # helped/hurt. "Could not check" judges nothing.
             _lr.note_task_outcome(task_id, prompt or '', bool(verified),
-                                  checked=_checked_outcome is not None)
+                                  checked=_lr.outcome_checked(_checked_outcome))
         except Exception:
             pass
 

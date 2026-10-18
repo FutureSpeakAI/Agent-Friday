@@ -187,11 +187,14 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # on the card on screen only (owner decision O7).
     "raw_holds_reset": frozenset({"owner:ui"}),
     # A change to how Friday works, tested on practice tasks old way against
-    # new (services/trials, harness2 adoption HA2): only the owner's click on
+    # new (services/trials): only the owner's click on
     # the card decides, so a voice or typed "yes" can never adopt one. The
     # same for a learned heuristic's add/remove card (services/learning_loop).
     "instruction_trial": frozenset({"owner:ui"}),
     "learning_skill_change": frozenset({"owner:ui"}),
+    # Retiring a learned lesson or skill (services/lesson_records): it archives
+    # something the owner relies on, so a click on the card only.
+    "lesson_retire": frozenset({"owner:ui"}),
 }
 
 
