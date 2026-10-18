@@ -485,6 +485,85 @@ def readback_line(rec: dict) -> str:
                          (" You can also say " + " or ".join(extra) + ".") if extra else ""))
 
 
+# ── a typed Send of a held private detail names where it goes ───────────────────────────
+#
+# A typed yes to a held-detail card ("general") is the owner's words relayed by the chat model, which
+# may be a cloud one: a model could frame an unrelated "shall I continue?" and spend the owner's "yes"
+# on a card it picked. So a typed answer sends a held detail only when the owner's OWN message says
+# send and names the destination the card names ("send it to Anthropic", "yes, send to OpenRouter").
+# A bare yes, ok or continue sends nothing, and naming another provider sends nothing. The card on
+# screen shows the exact words; its Send button stays the other way. Money cards keep their own rule.
+
+#: Provider key -> (the name a card shows, other names the owner may type for it). Unknown keys are
+#: matched by the key itself.
+_PROVIDER_NAMES = {
+    "anthropic": ("Anthropic", ("claude",)),
+    "openrouter": ("OpenRouter", ("open router",)),
+    "openai": ("OpenAI", ("open ai", "chatgpt")),
+    "google": ("Google", ("gemini",)),
+    "gemini": ("Google", ("google",)),
+    "xai": ("xAI", ("grok",)),
+    "mistral": ("Mistral", ()),
+    "deepseek": ("DeepSeek", ("deep seek",)),
+    "groq": ("Groq", ()),
+}
+#: Words that turn a send into something else (a condition, a negation, a change of target).
+_NOT_A_PLAIN_SEND = re.compile(
+    r"(?i)(?:\b(?:not|never|don'?t|do not|no|but|except|unless|only if|instead|rather|or|and also|"
+    r"wait|stop|cancel|keep)\b|n't\b|\?)")
+#: The whole message with the target in place of TARGET: an optional yes, then send (it), nothing else.
+_SEND_WHOLE = (
+    r"\s*(?:(?:yes|yeah|yep|yup|ok(?:ay)?|sure|fine|go ahead|please|alright|all right)\b[\s,.!-]*)*"
+    r"(?:(?:please|go ahead and|you can|you may)\s+)?send(?:\s+(?:it|this|that|them|these|those|"
+    r"(?:the|this|that|these|those) (?:text|detail|details|words|paragraphs?)))?"
+    r"(?:\s+(?:once|now|please|then|over))*\s+TARGET(?:\s+(?:once|now|please|then))*[\s,.!]*"
+    r"(?:(?:please|thanks|thank you)[\s,.!]*)?")
+
+
+def provider_display(provider: str) -> str:
+    """The provider's name as a card shows it (and as the owner is told to type it)."""
+    p = str(provider or "").strip()
+    row = _PROVIDER_NAMES.get(p.lower())
+    return row[0] if row else p
+
+
+def _provider_aliases(provider: str) -> list:
+    p = str(provider or "").strip().lower()
+    if not p:
+        return []
+    row = _PROVIDER_NAMES.get(p)
+    names = {p, p.replace("-", " ").replace("_", " ")}
+    if row:
+        names.add(row[0].lower())
+        names.update(a.lower() for a in row[1])
+    return sorted((n for n in names if n.strip()), key=len, reverse=True)
+
+
+def typed_send_names_provider(words: str, provider: str) -> bool:
+    """Do the owner's own typed words say send, to exactly this provider? Case-insensitive, whole words:
+    "send it to Anthropic", "yes, send to OpenRouter", "ok send this to Claude". A bare yes, a condition
+    ("but", "except", "only if"), a negation, a question, or any other provider named is not."""
+    w = " ".join(str(words or "").split())
+    names = _provider_aliases(provider)
+    if not w or not names or _NOT_A_PLAIN_SEND.search(w):
+        return False
+    target = r"to\s+(?:the\s+)?(?:%s)(?:'s)?(?:\s+(?:api|cloud|model))?(?![\w-])" % "|".join(
+        r"\s+".join(re.escape(part) for part in n.split()) for n in names)
+    return bool(re.fullmatch(_SEND_WHOLE.replace("TARGET", target), w, flags=re.I))
+
+
+def _typed_send_hint(rec: dict) -> str:
+    p = rec.get("payload") or {}
+    name = provider_display(p.get("provider") or "")
+    if not name:
+        return ("NOT SENT: nothing was released. This card names no destination, so it is answered on the "
+                "card on the user's screen (Send or Keep on this PC). Tell the user that.")
+    return ('NOT SENT: nothing was released. A typed answer sends a held private detail only when the '
+            'user\'s own message says send and names where it goes. Tell the user exactly this: Type '
+            '"send it to %s" or use the card on screen (Send or Keep on this PC). Do not ask them a yes or '
+            'no question about it.' % name)
+
+
 def answer_in_words(approval_id: str, claimed: str, owner_words: str, *, spoken: bool,
                     room_mode: bool = False, cloud_voice: bool = False) -> dict:
     """answer_card for a money-paragraph card, from typed or spoken words.
@@ -495,7 +574,11 @@ def answer_in_words(approval_id: str, claimed: str, owner_words: str, *, spoken:
     once; "remember this thread" or "this sender" in those same words remembers it, as the card's ticks
     do. In a room of several people the money is not read aloud, and a cloud voice (`cloud_voice`) is
     never handed the text: the card is answered on screen. Typed, the read-back points at the card on
-    the screen, which shows exactly the text (the chat model may be a cloud one)."""
+    the screen, which shows exactly the text (the chat model may be a cloud one).
+
+    A held private-detail card ("general") answered in typed words is stricter: the owner's own message
+    must say send and name the provider the card names ("send it to Anthropic"); a bare yes sends
+    nothing and the model is told what the owner should type (typed_send_names_provider)."""
     from agent_friday.services import approvals as _ap
     rec = _ap.get_approval(str(approval_id or "").strip())
     if not rec or (rec.get("payload") or {}).get("handler") != HANDLER:
@@ -532,6 +615,20 @@ def answer_in_words(approval_id: str, claimed: str, owner_words: str, *, spoken:
                                       "aloud would send it there before the user said yes. Tell the user the card "
                                       "is on their screen with exactly the words: Send or Keep on this PC there, "
                                       "or switch to local voice to hear it read back.")}
+    payload = rec.get("payload") or {}
+    if payload.get("general") and not spoken:
+        # A held private detail, typed: the owner's own message must say send AND name the provider the
+        # card names. Nothing is read back and no earlier "yes" counts (see typed_send_names_provider).
+        if not typed_send_names_provider(words, str(payload.get("provider") or "")):
+            return {"ok": False, "text": _typed_send_hint(rec)}
+        out = decide(rec["approval_id"], "approve", {}, decided_by="owner:chat")
+        _READBACKS.pop(rec["approval_id"], None)
+        if not out.get("ok") or not out.get("won"):
+            return {"ok": False, "text": "That card was already decided."}
+        return {"ok": True, "remembered": [], "text": (
+            "Recorded: sent. Exactly the words on the card go to %s %s; nothing else was released."
+            % (provider_display(payload.get("provider") or "") or "the cloud model",
+               "for this conversation" if payload.get("conversation") else "for the next 30 minutes"))}
     rb = _READBACKS.get(rec["approval_id"])
     fresh = rb is not None and time.time() - rb[1] <= READBACK_TTL_S
     if not fresh or rb[0] == _words_hash(words):

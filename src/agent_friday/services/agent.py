@@ -4563,7 +4563,8 @@ def _tool_answer_card(inp):
         from agent_friday.services import cloud_release as _cr
         if _cr.is_card(str(inp.get("card_id") or "")):
             # A money-paragraph card: a spoken (or typed) Send counts only after Friday has read back
-            # exactly what would go, and sends once (services/cloud_release.answer_in_words).
+            # exactly what would go, and sends once. A held private-detail card typed: only the owner's
+            # own message saying send AND naming the card's provider sends (cloud_release.answer_in_words).
             return _cr.answer_in_words(str(inp.get("card_id") or ""), str(inp.get("decision") or ""),
                                        _CURRENT_OWNER_TEXT.get(), spoken=surface.startswith("voice"),
                                        room_mode=_voice_room() if surface.startswith("voice") else False,
