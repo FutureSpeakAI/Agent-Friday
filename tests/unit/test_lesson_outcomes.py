@@ -229,6 +229,12 @@ def test_a_cue_carries_no_names_or_places(home):
     cue = _rec(ref)["applies_when"]
     assert "Sam" not in cue and "Paris" not in cue
     assert cue.startswith("When ") and "Friday" in cue and "Check twice" in cue
+    ref2 = lr.lesson_ref("z")
+    lr.note_taught("lesson", ref2, applies_when="Sarah wants it: Bob asks (\u00c9lodie in \u0141\u00f3d\u017a)",
+                   taught_by={"source": "friday"})
+    cue2 = _rec(ref2)["applies_when"]
+    for nm in ("Sarah", "Bob", "\u00c9lodie", "\u0141\u00f3d\u017a"):
+        assert nm not in cue2, (nm, cue2)
 
 
 @pytest.mark.parametrize("outcome,want", [
