@@ -23,3 +23,6 @@ LOCKED_SECTIONS = {
         '\n'
     ),
 }
+
+#: Where each locked section sits in the joined core (its manifest order).
+LOCKED_ORDER = {"20_autonomous_operation": 2, "60_honest_degradation": 6}
