@@ -433,7 +433,7 @@ class _Run:
     page_url: str = ""
     read_only: bool = False
     typed: List[str] = dataclasses.field(default_factory=list)
-    opened: List[str] = dataclasses.field(default_factory=list)
+    reached_by_open: bool = False
 
     def site_level(self, site: str) -> Optional[str]:
         """The level for a site within THIS task: the owner's list, narrowed
@@ -536,14 +536,20 @@ def _carries_an_address(url: str) -> bool:
     except Exception:
         return True
     tail = parts.query + "&" + parts.fragment
+    path = parts.path
     for _ in range(4):
         low = tail.lower()
-        if "://" in low or re.search(r"(^|[=&])//", low) or re.search(r"(^|[=&])(https?|ftp):", low):
+        lpath = path.lower()
+        if ("://" in low or "\\" in low or "://" in lpath or "\\" in lpath
+                or re.search(r"(^|[=&])[\s\x00-\x1f]*[/\\]{2}", low)
+                or re.search(r"(^|[=&])[\s\x00-\x1f]*(https?|ftp|javascript|data|vbscript):", low)
+                or re.search(r"/(https?|ftp)(:|%3a)", lpath)
+                or re.search(r"(^|[=&])[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?/", low)):
             return True
-        nxt = unquote_plus(tail)
-        if nxt == tail:
+        nxt_tail, nxt_path = unquote_plus(tail), unquote_plus(path)
+        if nxt_tail == tail and nxt_path == path:
             return False
-        tail = nxt
+        tail, path = nxt_tail, nxt_path
     return True
 
 
@@ -675,11 +681,38 @@ def _echoed(text: str, url: str) -> bool:
     return bool(n) and n in _norm(decoded)
 
 
+def _alnum(s: str) -> str:
+    return re.sub(r"[^0-9a-z]", "", str(s or "").casefold())
+
+
+def _longest_common(a: str, b: str) -> int:
+    """Length of the longest common substring (small strings only)."""
+    best, prev = 0, [0] * (len(b) + 1)
+    for ca in a:
+        cur = [0]
+        for j, cb in enumerate(b, 1):
+            v = prev[j - 1] + 1 if ca == cb else 0
+            cur.append(v)
+            if v > best:
+                best = v
+        prev = cur
+    return best
+
+
 def _overlaps_typed(text: str, typed: List[str]) -> bool:
-    n = _norm(text)
-    for t in typed or []:
-        tn = _norm(t)
-        if len(tn) >= 4 and (tn in n or n in tn):
+    """True when what Friday typed in this run makes up most of ``text``
+    (letters and digits only, so markup, spacing and pieces typed one after
+    another are seen through). A name typed into a form does not stop
+    "Booking confirmed for <name>" from counting."""
+    t = _alnum(text)[:400]
+    if not t:
+        return False
+    pieces = [_alnum(x)[:600] for x in typed or [] if _alnum(x)]
+    if not pieces:
+        return False
+    need = max(8, (len(t) + 1) // 2)
+    for cand in pieces + ["".join(pieces)[-1200:]]:
+        if _longest_common(t, cand) >= min(need, len(t)):
             return True
     return False
 
@@ -710,13 +743,14 @@ def _url_core(url: str) -> str:
 
 
 def run_checks(plan: WebTaskPlan, url: str, page_text: str, *, typed: Optional[List[str]] = None,
-               opened: Optional[List[str]] = None) -> Tuple[bool, List[Dict[str, Any]]]:
+               reached_by_open: bool = False) -> Tuple[bool, List[Dict[str, Any]]]:
     """Every success check against the final page. A URL check does not count
-    on a page Friday opened by address herself (only one reached by a click or
-    a form), and a text check does not count on text Friday typed."""
+    when Friday's last navigation was opening an address herself (wherever it
+    landed): only a page reached by a click or a form counts. A text check
+    does not count on text Friday typed."""
     results = []
     core = _url_core(url)
-    self_opened = core in {_url_core(u) for u in (opened or [])}
+    self_opened = bool(reached_by_open)
     for c in plan.success:
         (kind, value), = c.items()
         if kind == "url_contains":
@@ -931,11 +965,14 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
             run_state.typed.append(args["text"])
         elif tool == "browser_select" and isinstance(args.get("option"), str):
             run_state.typed.append(args["option"])
-        elif tool == "browser_open" and isinstance(args.get("url"), str):
-            run_state.opened.append(args["url"])
+        before = run_state.page_url
         res = ports.browser.call(tool, args)
         res = res if isinstance(res, str) else str(res)
         track_url(res)
+        if tool == "browser_open":
+            run_state.reached_by_open = True
+        elif tool in ("browser_click", "browser_type", "browser_select") and run_state.page_url != before:
+            run_state.reached_by_open = False
         return res
 
     ending, why = "gave_up", ""
@@ -997,7 +1034,7 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                     ok, msg = evidence_found(str(payload.get("evidence") or ""), fresh_text, url,
                                              typed=run_state.typed)
                     checks_ok, checks_out = run_checks(plan, url, fresh_text, typed=run_state.typed,
-                                                       opened=run_state.opened)
+                                                       reached_by_open=run_state.reached_by_open)
                     if ok and checks_ok:
                         evidence = {"quote": str(payload.get("evidence")),
                                     "page_sha256": hashlib.sha256(fresh_text.encode("utf-8")).hexdigest()}
@@ -1032,7 +1069,10 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                     if card:
                         title = str(((card.get("card") or {}).get("title")) or "an action on the page")
                         decision = wait_card(card["approval_id"], title=title, outward=True)
+                        before_card = run_state.page_url
                         page = act("browser_read", {})
+                        if decision == "approved" and run_state.page_url != before_card:
+                            run_state.reached_by_open = False
                         if decision == "approved":
                             journal.append("checkpoint", url=_url_core(run_state.page_url), step=state["steps"])
                             notes.append(f"The owner approved \"{title}\"; the page now shows its result.")
@@ -1484,6 +1524,10 @@ def _resume_locked(task_id: str) -> bool:
         return False
     plan, _approved_by = loaded
     from agent_friday.services import agent
+    try:
+        agent._task_set(task_id, status="queued")    # inside the lock: a second press sees it
+    except Exception:
+        pass
     return bool(agent.resume_runner_task(
         task_id, make_runner(plan, resume=True, read_only=plan_is_read_only(task_id))))
 

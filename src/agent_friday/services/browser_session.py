@@ -922,8 +922,11 @@ class BrowserSession:
         u = (url or "").strip()
         if navigation and main_frame and self.owner is not None and self.owner.task_id:
             # A website task (services/web_tasks.py) opens only its plan's
-            # sites. Judged on every top-level navigation: an address Friday
-            # opens, a link click, a redirect. Other browser use is untouched.
+            # sites. Judged on every top-level navigation request the route
+            # sees (an address Friday opens, a link click) and on where any
+            # page lands (_check_landing). A server redirect hop is NOT seen
+            # by the route; web_tasks refuses redirect-shaped addresses for
+            # that reason. Other browser use is untouched.
             try:
                 from agent_friday.services import web_tasks
                 ok, why = web_tasks.navigation_check(self.owner.task_id, u)
@@ -2056,19 +2059,44 @@ _PROOF_BLUR_CSS = (
 
 
 _PROOF_TEXT_JS = r"""() => {
-  const root = document.body ? document.body.cloneNode(true) : null;
+  const SKIP = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]),'
+    + ' [role="textbox"], script, style, template, noscript';
+  const root = document.body || document.documentElement;
   if (!root) return '';
-  root.querySelectorAll('input, textarea, select, [contenteditable], [contenteditable=""],'
-    + ' [contenteditable="true"], [role="textbox"], script, style, template, noscript')
-    .forEach(n => n.remove());
-  return (root.innerText || root.textContent || '').slice(0, 200000);
+  const seen = new Map();
+  const shown = (el) => {
+    if (seen.has(el)) return seen.get(el);
+    let ok = true;
+    if (el.closest(SKIP)) ok = false;
+    else if (el.checkVisibility && !el.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) ok = false;
+    else {
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2 || r.right < 0 || r.bottom < 0) ok = false;
+    }
+    seen.set(el, ok);
+    return ok;
+  };
+  const out = [];
+  let total = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = walker.nextNode())) {
+    const el = n.parentElement;
+    const t = n.nodeValue;
+    if (!el || !t || !t.trim() || !shown(el)) continue;
+    out.push(t);
+    total += t.length;
+    if (total > 200000) break;
+  }
+  return out.join(' ');
 }"""
 
 
 def proof_text(s: "BrowserSession") -> str:
-    """The page's text WITHOUT anything a visitor can type into: what a
-    website task's proof of completion is checked against, so text Friday
-    typed into a comment box or a chat widget can never count as proof."""
+    """The text a person can SEE on the live page, without anything a visitor
+    can type into: what a website task's proof of completion is checked
+    against. Hidden text (a form's not-yet-shown "Thank you!") and text Friday
+    typed into a comment box or a chat widget never count as proof."""
     def read():
         s._need_running()
         return str(s._page.evaluate(_PROOF_TEXT_JS) or "")

@@ -51,6 +51,8 @@ def decided_by(request, claimed: str = "owner") -> str:
         from agent_friday.services import approvals
         if claimed in approvals.LAYA_CARD_APPROVERS:
             return "owner"      # the voice label is granted by the server's own voice path, never by a request body
+        if any(claimed in allowed for allowed in approvals.SCREEN_ONLY_KINDS.values()):
+            return "owner"      # any label a screen-only card accepts is granted by the server, never claimed
     except Exception:       # noqa: BLE001
-        pass
+        return "owner"
     return claimed

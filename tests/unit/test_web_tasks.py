@@ -669,8 +669,45 @@ def test_vague_success_checks_are_refused(check):
 def test_an_address_check_does_not_count_on_a_page_friday_opened_herself():
     p = plan(success=[{"url_contains": "/confirm"}])
     url = "https://shop.example.com/confirm"
-    assert wt.run_checks(p, url, "", opened=[url])[0] is False
-    assert wt.run_checks(p, url, "", opened=["https://shop.example.com/"])[0] is True
+    assert wt.run_checks(p, url, "", reached_by_open=True)[0] is False
+    assert wt.run_checks(p, url, "", reached_by_open=False)[0] is True
+
+
+def test_opening_the_success_address_by_hand_is_never_done():
+    pages = dict(SHOP)
+    pages["https://shop.example.com/order/./confirm"] = "Page not found"
+    b = FakeBrowser(pages)
+    m = FakeModel([{"actions": [{"do": "open", "url": "https://shop.example.com/order/./confirm"}]},
+                   {"done": {"evidence": "Page not found here"}},
+                   {"done": {"evidence": "Page not found"}}])
+    out = wt.run("tm1", plan(success=[{"url_contains": "/confirm"}]), ports(b, m))
+    assert out["receipt"]["outcome"] == "gave_up" and out["receipt"]["verified"] is False
+
+
+def test_a_typed_name_does_not_block_a_real_confirmation():
+    assert not wt._overlaps_typed("Booking confirmed for Stephen", ["Stephen"])
+    assert wt._overlaps_typed("Your order is confirmed", ["Your **order** is confirmed"])
+    assert wt._overlaps_typed("Your order is confirmed", ["Your", " ord", "er i", "s confirmed"])
+
+
+def test_a_claimed_screen_label_in_a_request_is_only_the_plain_owner():
+    from agent_friday.services import screen_click
+    from agent_friday.services import approvals
+    req = types.SimpleNamespace(headers={})
+    assert screen_click.decided_by(req, "owner:ui") == "owner"
+    for kind, allowed in approvals.SCREEN_ONLY_KINDS.items():
+        for label in allowed:
+            assert screen_click.decided_by(req, label) == "owner", (kind, label)
+    # Whatever a request claims, it is never a label a website plan accepts.
+    for label in ("owner:voice", "owner:/voice/", "owner:sms", "owner:chat", "friday"):
+        assert screen_click.decided_by(req, label) not in approvals.SCREEN_ONLY_KINDS[wt.PLAN_CARD]
+
+
+def test_proof_text_reads_only_visible_text_on_the_live_page():
+    from agent_friday.services import browser_session as bs
+    js = bs._PROOF_TEXT_JS
+    assert "cloneNode" not in js and "checkVisibility" in js and "createTreeWalker" in js
+    assert 'contenteditable]:not([contenteditable="false"])' in js
 
 
 def test_the_plan_card_shows_what_done_means():
@@ -682,9 +719,7 @@ def test_the_plan_card_shows_what_done_means():
 def test_a_website_plan_is_never_approved_by_a_typed_yes_or_a_text_reply():
     from agent_friday.services import approvals
     allowed = approvals.SCREEN_ONLY_KINDS[wt.PLAN_CARD]
-    assert "owner:ui" in allowed and "owner:voice" in allowed
-    for who in ("owner", "owner:chat", "owner:sms"):
-        assert who not in allowed
+    assert allowed == frozenset({"owner:ui"})
 
 
 def test_the_resume_route_leaves_a_website_task_to_its_runner(monkeypatch):
@@ -715,6 +750,11 @@ def test_unknown_gate_messages_count_as_refusals():
     "https://shop.example.com/out?to=https%3A%2F%2Fevil.test",
     "https://shop.example.com/out?to=%2F%2Fevil.test",
     "https://shop.example.com/go#https://evil.test",
+    "https://shop.example.com/out?to=/%5Cevil.test",
+    "https://shop.example.com/out?to=%20//evil.test",
+    "https://shop.example.com/out?to=evil.test/x",
+    "https://shop.example.com/out/https://evil.test",
+    "https://shop.example.com/out?to=javascript:alert(1)",
 ])
 def test_redirect_shaped_addresses_are_not_opened(url):
     _activate("tredir", plan())
