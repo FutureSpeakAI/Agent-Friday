@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent_friday.skillopt_engine import DEFAULT_WEIGHTS, MIN_GRADED_CASES, SkillOptEngine, composite_score
+from agent_friday.skillopt_engine import DEFAULT_WEIGHTS, SkillOptEngine, composite_score
+
+#: Read at run time, so on the old code (which lacks it) the tests fail on
+#: their assertions rather than on an import.
+MIN_GRADED_CASES = 6
 
 
 @pytest.fixture
