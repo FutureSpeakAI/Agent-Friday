@@ -30,11 +30,18 @@ test.use({ viewport: VIEWPORT });
 const PUBLISHER = 'sch_content_publisher';
 const TOASTS = '#friday-toast-host [role="status"]';
 
-/** A full-page screenshot, saved and attached. `focus` is scrolled into view; `hold` (a notice) is hovered, which
- *  keeps a Friday toast on screen until the picture is taken (fridayToast retains a hovered notice). */
+/** Keep a Friday toast on screen: fridayToast retains a notice while the pointer is over it. Call it as soon as the
+ *  notice is seen, before anything else, or a short notice can expire first. */
+async function keep(notice: Locator) {
+  await expect(notice).toBeVisible({ timeout: 30_000 });
+  await notice.hover({ timeout: 5_000 });
+}
+
+/** A full-page screenshot, saved and attached. `focus` is scrolled into view; `hold` is a notice already kept on
+ *  screen with keep(), hovered again in case scrolling moved the page under the pointer. */
 async function shot(page: Page, info: TestInfo, name: string, focus?: Locator, hold?: Locator) {
   if (focus) await focus.scrollIntoViewIfNeeded().catch(() => { /* the screenshot still shows the page */ });
-  if (hold) await hold.hover();
+  if (hold) await hold.hover({ timeout: 5_000 });
   await settle(page, { quietMs: 200, timeout: 2000 });
   if (hold) await expect(hold, 'the notice went away before it could be photographed').toBeVisible();
   const path = info.outputPath(name + '.png');
@@ -180,6 +187,7 @@ test('a post scheduled while the Content publisher is switched off says it will 
     await expect(page.locator(TOASTS).filter({ hasText: /^Scheduled\./ })).toBeVisible({ timeout: 15_000 });
     const notice = page.locator(TOASTS).filter({ hasText: OFF_NOTICE });
     await expect(notice, 'no notice that the post will not go out').toBeVisible({ timeout: 15_000 });
+    await keep(notice);
     await expect(notice.getByRole('button', { name: 'Open Workflows' })).toBeVisible();
     await shot(page, info, 'posting-1-notice-publisher-off', undefined, notice);
   } finally {
@@ -243,7 +251,7 @@ test('a held post offers Publish anyway…, and the confirm lists why it was hel
     await expect.poll(() => releases.length, { timeout: 15_000 }).toBe(1);
     expect(releases[0]).toEqual({ ack: true });
     const released = page.locator(TOASTS).filter({ hasText: 'Released. Its approval card asks you before it goes out.' });
-    await expect(released).toBeVisible({ timeout: 15_000 });
+    await keep(released);
     await shot(page, info, 'posting-4c-held-post-released-toast', undefined, released);
   } finally {
     await api(page, 'DELETE', '/api/content/posts/' + encodeURIComponent(post.id)).catch(() => {});
@@ -277,23 +285,24 @@ test.describe('Settings, Connections: the publishing accounts (one app load)', (
     await card.scrollIntoViewIfNeeded();
     await card.getByRole('button', { name: 'Check connection' }).click();
     const said = page.locator(TOASTS).filter({ hasText: 'Nothing was posted.' });
-    await expect(said).toBeVisible({ timeout: 30_000 });
+    await keep(said);
     await expect(said).not.toContainText('Test post sent');
     await shot(page, info, 'posting-3-check-connection-nothing-posted', card, said);
   });
 
   test('an OAuth platform asks for its developer app, and YouTube says it cannot be connected yet', async ({}, info) => {
     const linkedin = account('LinkedIn');
+    await linkedin.scrollIntoViewIfNeeded();
     await linkedin.getByRole('button', { name: /Connect$/ }).click();
+    const needs = page.locator(TOASTS).filter({ hasText: 'LinkedIn needs your own developer app' });
+    await keep(needs);
+    await expect(needs).toContainText('then press Save and sign in.');
     const form = linkedin.getByTestId('cp-oauth-app-form');
     await expect(form, 'no developer-app entry on the LinkedIn card').toBeVisible({ timeout: 30_000 });
     await expect(form.getByRole('textbox', { name: 'Client ID' })).toBeVisible();
     await expect(form.getByLabel('Client secret')).toHaveAttribute('type', 'password');
     await expect(form.locator('code')).toContainText('/api/content/platforms/linkedin/callback');
     await expect(form.getByRole('button', { name: 'Save and sign in' })).toBeVisible();
-    const needs = page.locator(TOASTS).filter({ hasText: 'LinkedIn needs your own developer app' });
-    await expect(needs).toBeVisible({ timeout: 15_000 });
-    await expect(needs).toContainText('then press Save and sign in.');
     // The redirect address is shown whole: it wraps inside the card instead of running past its edge.
     const code = form.locator('code');
     const fits = await code.evaluate(el => {
@@ -309,7 +318,7 @@ test.describe('Settings, Connections: the publishing accounts (one app load)', (
     await youtube.scrollIntoViewIfNeeded();
     await youtube.getByRole('button', { name: /Connect$/ }).click();
     const cannot = page.locator(TOASTS).filter({ hasText: "YouTube can't be connected from here yet" });
-    await expect(cannot).toBeVisible({ timeout: 30_000 });
+    await keep(cannot);
     await expect(youtube.getByTestId('cp-oauth-app-form')).toHaveCount(0);
     await shot(page, info, 'posting-5b-youtube-cannot-connect-yet', youtube, cannot);
   });
