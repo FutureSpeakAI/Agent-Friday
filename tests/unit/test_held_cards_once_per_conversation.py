@@ -6,7 +6,8 @@ a count, a rotating note) made every turn a "new" private text and a new card. T
   * cards are compared by content (case, spacing and digits ignored) and provider;
   * a conversation shows at most one card for a given content and provider;
   * while a conversation has a card waiting for a provider, details held meanwhile wait for it;
-  * Send holds for the rest of the conversation it was asked in; Keep on this PC covers the content.
+  * Send holds for the exact words, for the rest of the conversation it was asked in, to that provider;
+  * the conversation is kept on the web request, never inherited by a later request on the thread.
 The details stay on this PC throughout. Synthetic text only; the classifier is pinned.
 """
 from __future__ import annotations
@@ -96,20 +97,72 @@ def test_one_card_waits_at_a_time_per_conversation_and_provider(gate):
 def test_a_conversation_never_shows_the_same_content_twice(gate):
     _turn(_clock(1))
     card = _cards()[0]
+    assert "this conversation's next cloud calls" in card["description"]
+    assert "comes back changed" in card["description"]
     cr.decide(card["approval_id"], "approve", decided_by="owner:ui")
-    # The send-once window runs out; the conversation it was asked in still sends it, without a new card.
-    data = json.loads((gate / "cloud_release.json").read_text(encoding="utf-8"))
-    data["once"] = {}
-    (gate / "cloud_release.json").write_text(json.dumps(data), encoding="utf-8")
+    # Send holds for the conversation it was asked in, with no new card.
     assert _clock(1) in _sent_system(_turn(_clock(1)))
-    # The same content with a new time in that conversation: no second card.
+    assert _clock(1) in _sent_system(_turn(_clock(1)))
+    # The same content with a new time in that conversation: kept here, no second card.
     out = _turn(_clock(2))
     assert MARK not in _sent_system(out)
     assert len(_cards()) == 1
-    # Another conversation was never asked: it gets its one card.
-    assert MARK not in _sent_system(_turn(_clock(3), conversation="conv-2"))
+    # Another conversation: the exact words the first one sent stay here until it is asked there.
+    assert MARK not in _sent_system(_turn(_clock(1), conversation="conv-2"))
     _turn(_clock(4), conversation="conv-2")
     assert sorted(c["payload"]["conversation"] for c in _cards()) == ["conv-1", "conv-2"]
+
+
+def test_a_send_in_a_conversation_is_for_that_provider_only(gate):
+    _turn(_clock(1))
+    cr.decide(_cards()[0]["approval_id"], "approve", decided_by="owner:ui")
+    out = _turn(_clock(1), provider="openrouter", model="some/model")
+    assert MARK not in _sent_system(out)
+    assert sorted(c["payload"]["where"]["provider"] for c in _cards()) == ["anthropic", "openrouter"]
+
+
+def test_a_send_with_no_conversation_runs_out(gate):
+    _turn(_clock(1), conversation=None)
+    card = _cards()[0]
+    assert "the next cloud calls in the next 30 minutes" in card["description"]
+    cr.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    assert _clock(1) in _sent_system(_turn(_clock(1), conversation=None))
+    data = json.loads((gate / "cloud_release.json").read_text(encoding="utf-8"))
+    data["once"] = {}
+    (gate / "cloud_release.json").write_text(json.dumps(data), encoding="utf-8")
+    assert MARK not in _sent_system(_turn(_clock(1), conversation=None))
+
+
+def test_inside_a_request_the_conversation_is_the_requests_never_the_threads_leftover(gate):
+    from flask import Flask
+    app = Flask(__name__)
+    tok = cr.CONVERSATION.set("left-over")           # a reused thread's earlier context
+    try:
+        with app.test_request_context("/api/chat", method="POST"):
+            assert cr._conversation() == ""
+            cr.set_conversation("conv-7")
+            assert cr._conversation() == "conv-7"
+        with app.test_request_context("/api/other"):
+            assert cr._conversation() == "", "a later request inherited the conversation"
+        assert cr.CONVERSATION.get() == "left-over"   # the request never wrote the thread's value
+    finally:
+        cr.CONVERSATION.reset(tok)
+
+
+def test_a_card_that_was_not_created_does_not_count_as_shown(gate, monkeypatch):
+    real = cr._raise_held_card
+    monkeypatch.setattr(cr, "_raise_held_card", lambda *a, **k: None)
+    _turn(_clock(1))
+    monkeypatch.setattr(cr, "_raise_held_card", real)
+    _turn(_clock(2))
+    assert len(_cards()) == 1
+
+
+def test_a_damaged_ledger_row_does_not_stop_cards(gate):
+    (gate / "cloud_release.json").write_text(json.dumps(
+        {"carded": {"conv-1": {"c:x@anthropic": "not a row", "c:y@anthropic": [None]}}}), encoding="utf-8")
+    _turn(_clock(1))
+    assert len(_cards()) == 1
 
 
 def test_the_same_content_waiting_elsewhere_is_not_carded_again(gate):
@@ -125,12 +178,14 @@ def test_dedupe_is_by_content_and_provider(gate):
     assert sorted(c["payload"]["where"]["provider"] for c in _cards()) == ["anthropic", "openrouter"]
 
 
-def test_keep_on_this_pc_covers_the_content_not_only_the_exact_words(gate):
+def test_keep_on_this_pc_holds_for_the_conversation_and_another_may_ask_once(gate):
     _turn(_clock(1))
     cr.decide(_cards()[0]["approval_id"], "deny", decided_by="owner")
-    out = _turn(_clock(42), conversation="conv-9")
-    assert MARK not in _sent_system(out)
+    assert MARK not in _sent_system(_turn(_clock(42)))
     assert len(_cards()) == 1
+    assert MARK not in _sent_system(_turn(_clock(43), conversation="conv-9"))
+    _turn(_clock(44), conversation="conv-9")
+    assert len(_cards()) == 2
 
 
 def test_calls_with_no_conversation_share_one_bucket(gate):
@@ -144,6 +199,10 @@ def test_the_content_key_ignores_case_spacing_and_digits_only():
     assert cr.content_key("the note") != cr.content_key("the other note")
 
 
-def test_both_chat_routes_name_the_conversation():
+def test_both_chat_routes_name_the_conversation_as_soon_as_it_is_resolved():
     src = (REPO / "src" / "agent_friday" / "routes" / "chat.py").read_text(encoding="utf-8-sig")
-    assert src.count("set_conversation(_conversation_id)") == 2
+    named = "_conversation_id = _conv_id_from(data)\n"
+    assert src.count(named) == 2
+    for at in [i for i in range(len(src)) if src.startswith(named, i)]:
+        nxt = src[at + len(named):at + len(named) + 400]
+        assert "_cloud_release_conversation(_conversation_id)" in nxt
