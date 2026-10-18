@@ -510,6 +510,15 @@ def save_skill(name, description="", body="", triggers=None, tool_chain=None,
     return folder
 
 
+def _skill_dir(root, name, *parts) -> Path:
+    """``root/<safe name>/<parts...>``, resolved and proven to stay inside
+    ``root`` (paths.contained): a skill folder that is a link or junction to
+    somewhere else is refused (ValueError) rather than written through."""
+    from agent_friday.paths import contained
+    rel = os.path.join(_safe_name(name), *[str(p) for p in parts])
+    return contained(Path(root), rel)
+
+
 def _non_agent_actor(actor) -> str:
     """The public save path never records the actor as Friday herself; only
     agent_save_skill does."""
@@ -527,7 +536,7 @@ def _write_manifest(name, *, description="", body="", triggers=None, tool_chain=
     content bytes); action is None when nothing changed."""
     root = Path(root) if root is not None else SKILLS_DIR
     root.mkdir(parents=True, exist_ok=True)
-    folder = root / _safe_name(name)
+    folder = _skill_dir(root, name)
     skill = Skill(
         name=name, description=description, body=body,
         triggers=_as_list(triggers), tool_chain=_as_list(tool_chain),
@@ -777,7 +786,10 @@ def _read_ledger_file(path: Path) -> list:
 def read_ledger(name, root=None) -> list:
     """The ledger of a live skill, or of its newest archived copy."""
     root = Path(root) if root is not None else SKILLS_DIR
-    live = root / _safe_name(name) / LEDGER_NAME
+    try:
+        live = _skill_dir(root, name, LEDGER_NAME)
+    except ValueError:
+        return []
     if live.exists():
         return _read_ledger_file(live)
     copies = _archived_copies(name, root)
@@ -795,7 +807,10 @@ def skill_owner(name, root=None) -> Optional[str]:
     shadow it)."""
     root = Path(root) if root is not None else SKILLS_DIR
     safe = _safe_name(name)
-    folder = root / safe
+    try:
+        folder = _skill_dir(root, safe)
+    except ValueError:
+        return "owner"              # a link out of the skills folder: never hers
     key = _name_key(safe)
     if (root / f"{safe}.yaml").exists() or (root / f"{safe}.yml").exists():
         return "owner"
@@ -937,8 +952,18 @@ def _name_reserved(safe: str, root: Path) -> bool:
     return False
 
 
+def _archive_dir(root, name, *parts) -> Path:
+    """``root/.archive/<safe name>/<parts...>``, contained like _skill_dir."""
+    from agent_friday.paths import contained
+    rel = os.path.join(ARCHIVE_DIRNAME, _safe_name(name), *[str(p) for p in parts])
+    return contained(Path(root), rel)
+
+
 def _archived_copies(name, root) -> list:
-    base = Path(root) / ARCHIVE_DIRNAME / _safe_name(name)
+    try:
+        base = _archive_dir(root, name)
+    except ValueError:
+        return []
     if not base.is_dir():
         return []
     return sorted(p for p in base.iterdir() if p.is_dir() and _find_manifest(p))
@@ -958,15 +983,15 @@ def archive_skill(name, *, actor, reason="", evidence=None, root=None) -> Path:
     archive only a skill Friday wrote."""
     root = Path(root) if root is not None else SKILLS_DIR
     safe = _safe_name(name)
-    folder = root / safe
     with _SKILL_WRITE_LOCK:
         if actor == AGENT_AUTHOR and skill_owner(safe, root) != AGENT_AUTHOR:
             raise SkillWriteRefused(
                 f"'{safe}' is not a skill Friday wrote, so Friday cannot archive it.")
+        folder = _skill_dir(root, safe)
         if not (folder.is_dir() and _find_manifest(folder)):
             raise FileNotFoundError(f"skill not found: {safe}")
         stamp = _now_iso().replace(":", "").replace(".", "").replace("-", "")
-        dest = root / ARCHIVE_DIRNAME / safe / stamp
+        dest = _archive_dir(root, safe, stamp)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(folder), str(dest))
         _append_ledger(dest, "archive", reason=reason, evidence=evidence, actor=actor)
@@ -993,7 +1018,7 @@ def restore_skill(name, *, actor, reason="", evidence=None, root=None) -> Path:
     archived stays archived until the owner brings it back."""
     root = Path(root) if root is not None else SKILLS_DIR
     safe = _safe_name(name)
-    folder = root / safe
+    folder = _skill_dir(root, safe)
     with _SKILL_WRITE_LOCK:
         copies = _archived_copies(safe, root)
         if not copies:

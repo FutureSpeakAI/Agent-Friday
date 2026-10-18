@@ -527,6 +527,26 @@ def test_the_real_key_path_signs_and_caches_and_fails_closed(home, monkeypatch):
                   content=SKILL_YAML).startswith("[GOVERNANCE DENY]")
 
 
+def test_a_skill_folder_that_links_outside_the_skills_folder_is_refused(home, tmp_path):
+    """A link or junction named like a skill, pointing at the owner's files
+    elsewhere, is never written through or moved."""
+    import os
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "SKILL.md").write_text("---\nname: linked\n---\nOwner's file.\n", encoding="utf-8")
+    try:
+        os.symlink(outside, home / "linked", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this runner cannot create directory links")
+    before = (outside / "SKILL.md").read_bytes()
+
+    for action in ("create", "modify", "archive"):
+        out = _learn(action=action, name="linked", content=SKILL_YAML)
+        assert out.startswith("[GOVERNANCE DENY]"), (action, out)
+    assert (outside / "SKILL.md").read_bytes() == before
+    assert sorted(p.name for p in outside.iterdir()) == ["SKILL.md"]
+
+
 def test_export_leaves_the_ledger_and_record_behind(home, tmp_path):
     import zipfile
     _learn(action="create", name="report-summary", content=SKILL_YAML)
