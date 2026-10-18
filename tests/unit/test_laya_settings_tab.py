@@ -8,7 +8,9 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PAGES = ["index.html", "ui_parts/app.html"]
-TITLES = ["What Laya does", "Laya's modes", "Laya's report card", "Replay test", "Confidence bars", "Coming next"]
+TITLES = ["What Laya does", "Laya's modes", "Laya's report card", "Replay test", "Confidence bars", "Teach her a phrase",
+          "What Laya learns about you", "Instant answers (no model)", "Laya chat pilot",
+          "Safe writes (off until you turn them on)", "Coming next"]
 
 
 def _panel(page: str) -> str:
@@ -24,7 +26,7 @@ def test_both_pages_carry_the_same_laya_tab():
 @pytest.mark.parametrize("page", PAGES)
 def test_the_rail_opens_the_laya_tab(page):
     text = (ROOT / page).read_text(encoding="utf-8")
-    assert re.search(r"tab === 'laya' && /\*#__PURE__\*/React\.createElement\(SettingsTabLaya, null\)", text)
+    assert re.search(r"tab === 'laya' && /\*#__PURE__\*/React\.createElement\(SettingsTabLaya, \{ s: s, save: save \}\)", text)
 
 
 def test_every_section_is_titled_for_voice_in_order():
@@ -56,7 +58,7 @@ def test_the_bars_mode_offers_shadow_and_act_only_and_modes_are_read_only_chips(
     mode = p[p.index("id:'laya-bars-mode'"):]
     mode = mode[:mode.index("))),")]
     assert re.findall(r"E\('option', \{value:'([a-z]+)'\}", mode) == ["shadow", "act"]
-    assert p.count("E('select'") == 2, "only the bars mode and the per-action bars are controls"
+    assert p.count("E('select'") == 3, "the bars mode, the per-action bars and Teach her a phrase's picker"
     modes = p[p.index('title: "Laya\'s modes"'):p.index('title: "Laya\'s report card"')]
     assert "E('select'" not in modes and "E('input'" not in modes
 
