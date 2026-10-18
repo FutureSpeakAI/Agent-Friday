@@ -79,6 +79,15 @@ def test_a_seat_that_refuses_connections_is_missing_not_zero(tmp_path):
     assert res["grade"]["status"] == "missing"
 
 
+def test_an_interactive_turn_stops_the_child_and_the_episode_is_missing(tmp_path):
+    yf = tmp_path / "yield"
+    yf.write_text("yield", encoding="utf-8")
+    res = run_episode(_task("cal-01"), arm="a", repeat=0, scripted=LUNCH, out_dir=tmp_path / "ep",
+                      yield_file=str(yf))
+    assert res["outcome"] == "seat_busy"
+    assert res["grade"]["status"] == "missing"
+
+
 def test_a_candidate_instruction_reaches_the_childs_prompt(tmp_path):
     from agent_friday.services import instruction_files as inf
     sid = "50_say_before_acting"
