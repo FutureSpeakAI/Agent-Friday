@@ -1474,7 +1474,8 @@ def _completion_payload(st: dict) -> dict:
 
 def _complete(st: dict) -> None:
     from agent_friday.services.setup_complete import complete_setup
-    complete_setup(_completion_payload(st))
+    # The routing mode here is the one the privacy answer implied: "posture".
+    complete_setup(_completion_payload(st), routing_via="posture")
     st["completed"] = True
     st["stage"] = "done"
 
