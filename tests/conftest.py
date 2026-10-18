@@ -414,6 +414,52 @@ def _core_imported_before_any_turn():
     yield
 
 
+def _task_and_orb_registries() -> list:
+    """The two process-wide registries Activity reads besides the Local AI
+    queue (services/activity_lane): the task records (``agent.TASKS``, which
+    services/visible_jobs registers jobs into) and the process orbs
+    (``core.PROCESSES``). Only modules already imported are touched, and a
+    test that puts a stand-in module in their place (one without the registry)
+    is left alone."""
+    out = []
+    for name, lock_attr, reg_attr in (("agent_friday.services.agent", "TASKS_LOCK", "TASKS"),
+                                      ("agent_friday.core", "PROCESSES_LOCK", "PROCESSES")):
+        mod = sys.modules.get(name)
+        lock, reg = getattr(mod, lock_attr, None), getattr(mod, reg_attr, None)
+        if lock is not None and isinstance(reg, dict):
+            out.append((lock, reg))
+    return out
+
+
+@pytest.fixture(autouse=True)
+def _no_task_or_orb_outlives_its_test():
+    """Each test leaves the task records and the process orbs as it found them.
+
+    Both live for the whole process, and an xdist worker runs many files in
+    one: a record a test leaves "running" (a hand-written TASKS entry, a job
+    whose finish never ran, an orb nothing closed) is a running task in every
+    later test's Activity, so queue_status says "One running." to a test that
+    started nothing. A record the test added is removed and one it removed is
+    put back, by identity, so a record that existed before is the same object
+    afterwards."""
+    before = []
+    for lock, reg in _task_and_orb_registries():
+        with lock:
+            before.append((lock, reg, dict(reg)))
+    seen = {id(reg) for _lock, reg, _snap in before}
+    yield
+    for lock, reg in _task_and_orb_registries():
+        if id(reg) not in seen:             # imported during the test: it found none
+            before.append((lock, reg, {}))
+    for lock, reg, snap in before:
+        with lock:
+            for key in [k for k in reg if k not in snap]:
+                del reg[key]
+            for key, rec in snap.items():
+                if key not in reg:
+                    reg[key] = rec
+
+
 @pytest.fixture(autouse=True)
 def _fresh_off_record_memory():
     """What one test kept off the record is gone before the next one runs."""
