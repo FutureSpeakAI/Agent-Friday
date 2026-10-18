@@ -17060,11 +17060,16 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip, curated })
         setMsg({ ok: true, text: 'The sign-in page opens in a new browser tab (if nothing opened, allow pop-ups for this page and try again). Approve access there, then come back and press Test connection.' });
       } else setMsg({ ok: !!d.message, text: d.message || 'No sign-in page opened: this service gave no sign-in address. Try again, or check its setup.' });
     } else if (c.kind === 'platform_oauth') {
-      const d = await post(c.endpoint, {});
-      if (scSafeUrl(d.connect_url)) {
+      // Not post(): a platform that needs the owner's developer app, or can't
+      // be connected yet, answers ok:false with words of its own to show.
+      const r = await scJSON(c.endpoint, 'POST', {});
+      const d = r.data || {};
+      if (r.ok && d.ok !== false && scSafeUrl(d.connect_url)) {
         openUrl(d.connect_url);
         setMsg({ ok: true, text: 'The sign-in page opens in a new browser tab (if nothing opened, allow pop-ups for this page and try again). Approve access there, then come back and press Test connection.' });
-      } else setMsg({ ok: false, text: d.message || 'No sign-in page opened: this platform has no sign-in set up yet.' });
+      } else if (d.needs === 'client') {
+        setMsg({ ok: false, text: it.label + ' needs your own developer app before it can connect. Nothing opened. Enter the app\'s details on the ' + it.label + ' card under Settings, Connections, Publishing channels, then press Save and sign in there.' });
+      } else setMsg({ ok: false, text: d.message || d.error || 'No sign-in page opened: this platform has no sign-in set up yet.' });
     } else if (c.kind === 'local_endpoint') {
       const f = c.field || {};
       const v = (vals[f.key] !== undefined ? vals[f.key] : (f.value || '')).trim();

@@ -1028,7 +1028,7 @@ def content_platform_connect(name):
                         "message": f"{adapter.label} needs your own developer app "
                                    "before it can connect. Enter the app's "
                                    + " and ".join(_FIELD_WORDS[f] for f in fields)
-                                   + ", then press Connect."})
+                                   + ", then press Save and sign in."})
     if adapter.auth_mode in ("token", "app_password"):
         return jsonify(public_result({"ok": True, "mode": adapter.auth_mode,
                         "needs": "secret",

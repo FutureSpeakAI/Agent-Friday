@@ -10304,6 +10304,19 @@ def _content_deeplink(tab: str, post_id=None) -> str:
     return f"{link}&post={post_id}" if post_id else link
 
 
+def _content_post_link(post_id=None) -> str:
+    """Where a post is shown now, as a link: the same place the publisher's
+    notices open (publisher._post_card_target), its card in Media, or Media's
+    "Needs you" list without a post. The Content workspace's old Queue tab
+    redirects to Media's board, so a link there lost the post. A workspace
+    tab (/w/media) turns its query into the workspace's nav target."""
+    from urllib.parse import urlencode
+    from agent_friday.services import publisher as _pub
+    target = _pub._post_card_target(post_id)
+    params = {k: v for k, v in target.items() if k != "workspace"}
+    return f"/w/{target['workspace']}" + (f"?{urlencode(params)}" if params else "")
+
+
 _WHEN_HOUR_WORDS = {"morning": 9, "noon": 12, "midday": 12, "afternoon": 15,
                     "evening": 18, "tonight": 20, "night": 20}
 _WHEN_WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
@@ -10488,7 +10501,7 @@ def _tool_content_create_post(inp):
     optimal = bool(inp.get("optimal_time"))
     out = {"status": "ok", "post_id": post["id"], "post_status": "DRAFT",
            "platforms": platforms,
-           "queue_link": _content_deeplink("queue", post["id"])}
+           "queue_link": _content_post_link(post["id"])}
     if when or optimal:
         sched = _content_apply_schedule(post["id"], when, optimal,
                                         inp.get("timezone"))
@@ -10504,7 +10517,7 @@ def _tool_content_create_post(inp):
             out["approval"] = _content_approval_note(sched.get("approval"))
             out["message"] = (f"Scheduled for {sched.get('publish_at')} "
                               f"({out['time_source']}). {out['approval']} "
-                              f"Review or reschedule in the Queue: "
+                              f"Review or reschedule it on its card in Media: "
                               f"{out['queue_link']}")
             notice = (sched.get("publisher") or {}).get("notice")
             if notice:
@@ -10561,10 +10574,10 @@ def _tool_content_schedule_post(inp):
            "timezone": res.get("timezone"),
            "time_source": res.get("resolved"),
            "approval": approval,
-           "queue_link": _content_deeplink("queue", post_id),
+           "queue_link": _content_post_link(post_id),
            "message": (f"Scheduled for {res.get('publish_at')} "
-                       f"({res.get('resolved')}). {approval} Queue: "
-                       + _content_deeplink("queue", post_id))}
+                       f"({res.get('resolved')}). {approval} Its card in Media: "
+                       + _content_post_link(post_id))}
     notice = (res.get("publisher") or {}).get("notice")
     if notice:
         out["publisher_notice"] = notice
@@ -10595,12 +10608,13 @@ def _tool_content_post_status(inp):
                "publish_at": (p.get("schedule") or {}).get("publish_at"),
                "timezone": (p.get("schedule") or {}).get("timezone"),
                "targets": targets,
-               "queue_link": _content_deeplink("queue", post_id)}
+               "queue_link": _content_post_link(post_id)}
         held = sum(1 for t in targets if t["status"] == "HELD")
         if held:
             out["held_note"] = (f"{held} target(s) HELD — the egress gate "
                                 "flagged possibly-private content; the user "
-                                "must review and release them in the Queue.")
+                                "must review and release them on the post's "
+                                "card in Media (Publish anyway…).")
         return json.dumps(out, default=str)
     upcoming, held = [], []
     for st in ("SCHEDULED", "PUBLISHING", "HELD"):
@@ -10617,7 +10631,7 @@ def _tool_content_post_status(inp):
     recent = _cp.read_publish_log(limit=10).get("entries") or []
     return json.dumps({"status": "ok", "upcoming": upcoming[:15], "held": held,
                        "recent_history": recent,
-                       "queue_link": _content_deeplink("queue")}, default=str)
+                       "queue_link": _content_post_link()}, default=str)
 
 
 def _tool_content_repurpose(inp):
