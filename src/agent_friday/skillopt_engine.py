@@ -277,6 +277,8 @@ class ValidationGate:
 
 #: A paired comparison needs at least this many graded cases (HA-E27).
 MIN_GRADED_CASES = 6
+#: More than this share of cases missing (the evaluator raised) is inconclusive.
+MAX_MISSING_SHARE = 0.10
 #: Two composite scores closer than this are a tie for that case.
 PAIR_EPSILON = 1e-6
 
@@ -846,8 +848,9 @@ class SkillOptEngine:
                     successful_cases += 1
             cand_scores.append(composite_score(cand_metrics, weights))
             base_scores.append(composite_score(base_metrics, weights))
-            cand_safety.append(bool((cand_metrics or {}).get("safety_fail"))
-                               and not bool((base_metrics or {}).get("safety_fail")))
+            # Any safety mistake by the candidate counts, even where the
+            # baseline made one too (security review 2026-10-18, finding 5).
+            cand_safety.append(bool((cand_metrics or {}).get("safety_fail")))
 
         epoch.candidate_score = statistics.mean(cand_scores) if cand_scores else 0.0
         epoch.baseline_score = statistics.mean(base_scores) if base_scores else 0.0
@@ -881,7 +884,13 @@ class SkillOptEngine:
             return epoch
 
         best_score = baseline.metrics_summary.get("composite", epoch.baseline_score)
-        if self.evaluator:
+        if self.evaluator and len(eval_errors) > MAX_MISSING_SHARE * len(eval_batch):
+            # More than 10% of the cases could not be graded: whatever the
+            # rest say, it is not enough to recommend (the trials' rule).
+            decision, reason = "inconclusive", (
+                f"{len(eval_errors)} of {len(eval_batch)} cases could not be graded "
+                "(over 10%); refusing to recommend")
+        elif self.evaluator:
             # Paired per case, on the graded cases only (HA-E27).
             decision, reason = self.paired_gate.evaluate(
                 list(zip(cand_scores, base_scores, cand_safety)), best_score)

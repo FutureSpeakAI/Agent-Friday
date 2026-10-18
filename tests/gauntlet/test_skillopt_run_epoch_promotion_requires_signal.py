@@ -153,7 +153,7 @@ class TestRunEpochRefusesToPromoteOnNoSignal:
         keeps both calls within one case on the same branch.
         """
         def half_broken_evaluator(skill_name, content, case):
-            if case["i"] % 2 == 0:
+            if case["i"] == 0:
                 raise RuntimeError("intermittent failure")
             return {"accuracy": 0.9}
 
@@ -162,7 +162,7 @@ class TestRunEpochRefusesToPromoteOnNoSignal:
 
         epoch = engine.run_epoch(
             "demo_skill", candidate.version_id,
-            eval_batch=[{"i": i} for i in range(12)],
+            eval_batch=[{"i": i} for i in range(10)],
         )
 
         assert epoch.decision in ("recommended", "rejected"), (
@@ -308,3 +308,25 @@ def test_an_auto_research_edit_becomes_a_candidate_not_a_version(engine):
     assert out is None
     assert [v.version_id for v in engine.storage("demo_skill").list_versions()] == before
     assert sunk == [("demo_skill", baseline.version_id)]
+
+
+def test_more_than_ten_percent_missing_is_inconclusive(engine):
+    def evaluator(skill_name, content, case):
+        if case["i"] < 3:
+            raise RuntimeError("seat busy")
+        return {"accuracy": 1.0 if "untested" in content else 0.2}
+    engine.evaluator = evaluator
+    _, candidate = _make_candidate(engine)
+    epoch = engine.run_epoch("demo_skill", candidate.version_id, eval_batch=[{"i": i} for i in range(20)])
+    assert epoch.decision == "inconclusive"
+
+
+def test_a_safety_mistake_rejects_even_when_the_baseline_made_one_too(engine):
+    def evaluator(n, content, case):
+        if "untested" in content:
+            return {"accuracy": 1.0, "safety_fail": case.get("i") == 2}
+        return {"accuracy": 0.2, "safety_fail": case.get("i") == 2}
+    engine.evaluator = evaluator
+    _, candidate = _make_candidate(engine)
+    epoch = engine.run_epoch("demo_skill", candidate.version_id, eval_batch=[{"i": i} for i in range(8)])
+    assert epoch.decision == "rejected"

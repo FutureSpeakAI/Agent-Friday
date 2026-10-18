@@ -23,7 +23,8 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-RULE = "skillopt-paired-1 (2026-10-18): >= 6 graded cases, paired per case, a tie keeps the baseline, any safety mistake rejects"
+RULE = ("skillopt-paired-1 (2026-10-18): >= 6 graded cases, <= 10% missing, paired per case, "
+        "a tie keeps the baseline, any safety mistake rejects")
 
 
 class EvalMissing(RuntimeError):
@@ -39,10 +40,10 @@ def cases_for(skill_name: str, pack: Optional[List[dict]] = None) -> List[dict]:
 def make_evaluator(run_one: Optional[Callable[..., dict]] = None, *, endpoint: str = "",
                    model: str = "") -> Callable[[str, str, dict], Dict[str, float]]:
     if run_one is None:
-        from agent_friday.task_eval.runner import run_episode
-
-        def run_one(**kw):
-            return run_episode(endpoint=endpoint, model=model, **kw)
+        # The same seat-taking runner the trial job uses: through the Local AI
+        # queue, then held by the scheduler per episode (services/trial_job).
+        from agent_friday.services.trial_job import seat_run_one
+        run_one = seat_run_one({"endpoint": endpoint, "model": model})
     counter = {"n": 0}
 
     def evaluator(skill_name: str, content: str, case: dict) -> Dict[str, float]:
