@@ -110,7 +110,8 @@ def test_owner_accept_adds_the_heuristic():
 def test_approving_the_card_directly_adds_the_heuristic():
     sid = _ready_skill()
     ll.promote(threshold=0.5, min_trials=3)
-    approvals.decide(_cards()[0]["approval_id"], "approve")
+    # The card is screen-only now (harness2 adoption HA-E17): the owner's click.
+    approvals.decide(_cards()[0]["approval_id"], "approve", decided_by="owner:ui")
     assert sid in [s["skill_id"] for s in ll.active_skills()]
 
 
