@@ -3,9 +3,9 @@
 // SCRATCH server only (FRIDAY_BASE must be set; the live :3000 is refused). Synthetic posts go to the in-memory
 // mock platform, which reaches no network. What is proved, one screen state at a time:
 //  1. scheduling a post while the owner has switched the Content publisher off says the post won't go out, with
-//     an "Open Workflows" button;
-//  2. scheduling a post for a connected account switches the Content publisher on: Workflows lists it as on, with
-//     the note saying when and why, and its switch turns it off;
+//     an "Open Workflows" button (the publisher's part of the answer is given in its real words: see below);
+//  2. Workflows lists the Content publisher as on after it was switched on automatically, with the note saying
+//     when and why, and its switch turns it off (the job's row is given in its real shape: see below);
 //  3. "Check connection" on a connected account says nothing was posted;
 //  4. a held post's Media card offers "Publish anyway…", and the confirm lists why it was held (the post and its
 //     release are route-stubbed: nothing is released and nothing reaches a network);
@@ -30,9 +30,13 @@ test.use({ viewport: VIEWPORT });
 const PUBLISHER = 'sch_content_publisher';
 const TOASTS = '#friday-toast-host [role="status"]';
 
-async function shot(page: Page, info: TestInfo, name: string, focus?: Locator) {
+/** A full-page screenshot, saved and attached. `focus` is scrolled into view; `hold` (a notice) is hovered, which
+ *  keeps a Friday toast on screen until the picture is taken (fridayToast retains a hovered notice). */
+async function shot(page: Page, info: TestInfo, name: string, focus?: Locator, hold?: Locator) {
   if (focus) await focus.scrollIntoViewIfNeeded().catch(() => { /* the screenshot still shows the page */ });
+  if (hold) await hold.hover();
   await settle(page, { quietMs: 200, timeout: 2000 });
+  if (hold) await expect(hold, 'the notice went away before it could be photographed').toBeVisible();
   const path = info.outputPath(name + '.png');
   await page.screenshot({ path, fullPage: true });
   await info.attach(name, { path, contentType: 'image/png' });
@@ -90,62 +94,96 @@ async function scheduleFromCard(page: Page) {
   await page.getByRole('button', { name: 'Schedule…', exact: true }).click();
 }
 
-test('the Content publisher switches on for a scheduled post, says so in Workflows, and a post scheduled after the owner switched it off says it will not go out', async ({ page }, info) => {
-  test.setTimeout(420_000);
+// The scratch server runs with FRIDAY_TESTING=1, under which server.py starts no background daemons: the
+// scheduler seeds no built-in jobs and the publisher registers none, so the Content publisher job does not exist
+// there. Its switching (on for a scheduled post, the owner's off winning) is proved against the real scheduler in
+// tests/unit/test_content_publisher_job.py. These two tests check what a person SEES of it: the server's answers
+// for that job are given here in the exact shape and words the server sends (services/workflow_overview
+// _auto_enabled_note, services/publisher.ensure_publisher_running), and the screens are driven for real.
+const AUTO_NOTE = (at: Date) => {
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][at.getMonth()];
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `Switched on automatically on ${p(at.getDate())} ${mon} ${at.getFullYear()}, ${p(at.getHours())}:${p(at.getMinutes())}`
+    + ' because a post was scheduled for a connected account. You can switch it off here.';
+};
+const OFF_NOTICE = "This post won't go out: the Content publisher is switched off. Turn it on in Workflows.";
+
+test('Workflows lists the Content publisher as on after it was switched on automatically, says why, and its switch turns it off', async ({ page }, info) => {
+  test.setTimeout(300_000);
+  await setUp(page);
+  let on = true;
+  const patches: any[] = [];
+  const row = () => ({
+    schedule_id: PUBLISHER, name: 'Content publisher', when_text: 'Every 15 minutes', enabled: on,
+    running: false, next_run: null, last_run: null, announces_finish: false, finish_notice: true,
+    schedule_status: on ? 'scheduled' : null, status_reason: '', model: '', note: on ? AUTO_NOTE(new Date()) : '',
+  });
+  await page.route(u => u.pathname === '/api/workflows/overview', async route => {
+    const res = await route.fetch();
+    const d = await res.json();
+    d.routines = (d.routines || []).filter((r: any) => r.schedule_id !== PUBLISHER).concat([row()]);
+    await route.fulfill({ response: res, json: d });
+  });
+  await page.route(u => u.pathname === '/api/schedules/' + PUBLISHER, route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { status: 'ok', schedule: { id: PUBLISHER, enabled: on } } });
+    const body = route.request().postDataJSON();
+    patches.push(body);
+    if (body && typeof body.enabled === 'boolean') on = body.enabled;
+    return route.fulfill({ json: { status: 'ok', schedule: { id: PUBLISHER, enabled: on } } });
+  });
+
+  await openApp(page, '/w/workflows', () => page.getByText(/built-in routines/).first().isVisible());
+  const routines = page.locator('details.wfx-disclosure').filter({ hasText: 'built-in routines' }).first();
+  if (!(await routines.evaluate(d => (d as HTMLDetailsElement).open))) await routines.locator('summary').click();
+  const line = routines.locator('.wfx-routine').filter({ has: page.locator('strong', { hasText: /^Content publisher$/ }) });
+  await expect(line, 'Workflows does not list the Content publisher').toHaveCount(1);
+  const sw = line.getByRole('switch', { name: 'Run Content publisher' });
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  const note = line.getByTestId('wf-routine-note');
+  await expect(note, 'Workflows does not say why the Content publisher is on').toBeVisible();
+  await expect(note).toContainText('Switched on automatically on');
+  await expect(note).toContainText('because a post was scheduled for a connected account. You can switch it off here.');
+  await shot(page, info, 'posting-2a-workflows-publisher-on-with-note', line);
+
+  await sw.click();
+  await expect.poll(() => patches.length, { timeout: 15_000, message: 'the switch sent nothing' }).toBe(1);
+  expect(patches[0]).toEqual({ enabled: false });
+  await expect(sw).toHaveAttribute('aria-checked', 'false', { timeout: 15_000 });
+  await expect(line.getByTestId('wf-routine-note')).toHaveCount(0);
+  await shot(page, info, 'posting-2b-workflows-publisher-switched-off', line);
+});
+
+test('a post scheduled while the Content publisher is switched off says it will not go out, with Open Workflows', async ({ page }, info) => {
+  test.setTimeout(300_000);
   await setUp(page);
   await openApp(page, '/w/media', () => page.evaluate(() => typeof (window as any).fridayToast === 'function'));
-  const made: string[] = [];
+  const post = await newPost(page, 'owner-off');
   try {
-    const seeded = await api(page, 'GET', '/api/schedules/' + PUBLISHER);
-    expect(seeded.status, 'the Content publisher job is not registered on this server').toBe(200);
-    const rec0 = seeded.data.schedule;
-    expect(rec0.enabled, 'the Content publisher should ship switched off').toBe(false);
-    expect(rec0.switched_at, 'the Content publisher was already switched by someone on this scratch home').toBeFalsy();
-
-    // 2. A post scheduled for a connected account (the mock platform) switches the job on.
-    const first = await newPost(page, 'auto-on');
-    made.push(first.id);
-    await openCard(page, first.card);
+    // The schedule really happens (the mock platform; nothing leaves); its answer carries what the publisher
+    // check says when the owner has switched the job off.
+    const cardPaths = new Set(['/api/media/' + encodeURIComponent(post.card), '/api/media/' + post.card]);
+    let scheduled = 0;
+    await page.route(u => cardPaths.has(u.pathname), async route => {
+      if (route.request().method() !== 'PATCH') return route.continue();
+      const res = await route.fetch();
+      const d = await res.json();
+      if (d && d.status === 'ok') {
+        scheduled += 1;
+        d.publisher = { on: false, auto_enabled: false, notice: OFF_NOTICE,
+          action: { label: 'Open Workflows', target: { workspace: 'workflows' } } };
+      }
+      await route.fulfill({ response: res, json: d });
+    });
+    await openCard(page, post.card);
     await scheduleFromCard(page);
-    await expect(page.locator(TOASTS).filter({ hasText: /^Scheduled\./ })).toBeVisible({ timeout: 30_000 });
-    await expect.poll(async () => (await api(page, 'GET', '/api/schedules/' + PUBLISHER)).data.schedule.enabled,
-      { timeout: 15_000, message: 'scheduling a post for a connected account left the Content publisher off' }).toBe(true);
-    await expect(page.locator(TOASTS).filter({ hasText: "won't go out" })).toHaveCount(0);
-    await shot(page, info, 'posting-2a-media-card-scheduled-publisher-switched-on');
-
-    await openApp(page, '/w/workflows', () => page.getByText(/built-in routines/).first().isVisible());
-    const routines = page.locator('details.wfx-disclosure').filter({ hasText: 'built-in routines' }).first();
-    if (!(await routines.evaluate(d => (d as HTMLDetailsElement).open))) await routines.locator('summary').click();
-    const row = routines.locator('.wfx-routine').filter({ has: page.locator('strong', { hasText: /^Content publisher$/ }) });
-    await expect(row, 'Workflows does not list the Content publisher').toHaveCount(1);
-    const sw = row.getByRole('switch', { name: 'Run Content publisher' });
-    await expect(sw).toHaveAttribute('aria-checked', 'true');
-    const note = row.getByTestId('wf-routine-note');
-    await expect(note).toContainText('Switched on automatically');
-    await expect(note).toContainText('because a post was scheduled for a connected account');
-    await expect(note).toContainText('You can switch it off here.');
-    await shot(page, info, 'posting-2b-workflows-publisher-on-with-note', row);
-
-    await sw.click();
-    await expect(sw).toHaveAttribute('aria-checked', 'false', { timeout: 15_000 });
-    await expect(row.getByTestId('wf-routine-note')).toHaveCount(0);
-    expect((await api(page, 'GET', '/api/schedules/' + PUBLISHER)).data.schedule.enabled).toBe(false);
-    await shot(page, info, 'posting-2c-workflows-publisher-switched-off', row);
-
-    // 1. Switched off by the owner: the next scheduled post says it won't go out, with the way to Workflows.
-    const second = await newPost(page, 'owner-off');
-    made.push(second.id);
-    await openCard(page, second.card);
-    await scheduleFromCard(page);
-    const notice = page.locator(TOASTS).filter({ hasText: "This post won't go out: the Content publisher is switched off." });
-    await expect(notice).toBeVisible({ timeout: 30_000 });
-    await expect(notice).toContainText('Turn it on in Workflows.');
+    await expect.poll(() => scheduled, { timeout: 30_000, message: 'the post was not scheduled' }).toBe(1);
+    await expect(page.locator(TOASTS).filter({ hasText: /^Scheduled\./ })).toBeVisible({ timeout: 15_000 });
+    const notice = page.locator(TOASTS).filter({ hasText: OFF_NOTICE });
+    await expect(notice, 'no notice that the post will not go out').toBeVisible({ timeout: 15_000 });
     await expect(notice.getByRole('button', { name: 'Open Workflows' })).toBeVisible();
-    expect((await api(page, 'GET', '/api/schedules/' + PUBLISHER)).data.schedule.enabled,
-      "the owner's off was overridden").toBe(false);
-    await shot(page, info, 'posting-1-notice-publisher-off', notice);
+    await shot(page, info, 'posting-1-notice-publisher-off', undefined, notice);
   } finally {
-    for (const id of made) await api(page, 'DELETE', '/api/content/posts/' + encodeURIComponent(id)).catch(() => {});
+    await api(page, 'DELETE', '/api/content/posts/' + encodeURIComponent(post.id)).catch(() => {});
   }
 });
 
@@ -169,10 +207,16 @@ test('a held post offers Publish anyway…, and the confirm lists why it was hel
       if (d && d.card) Object.assign(d.card, { held: true, status: 'review', badges: ['held'] });
       await route.fulfill({ response: res, json: d });
     });
-    await page.route(u => u.pathname === '/api/content/posts/' + post.id, route => {
+    await page.route(u => u.pathname === '/api/content/posts/' + post.id, async route => {
       if (route.request().method() !== 'GET') return route.continue();
-      return route.fulfill({ json: { ok: true, post: { id: post.id, status: 'HELD', title: 'Synthetic held post',
-        targets: reasons.map((r, i) => ({ id: 'tgt_synthetic_' + i, post_id: post.id, platform: r.platform, status: 'HELD', error: r.error })) } } });
+      const res = await route.fetch();
+      const d = await res.json();
+      const real = (d && d.post && d.post.targets && d.post.targets[0]) || {};
+      if (d && d.post) {
+        d.post.status = 'HELD';
+        d.post.targets = reasons.map((r, i) => ({ ...real, id: (real.id || 'tgt_synthetic') + '_' + i, platform: r.platform, status: 'HELD', error: r.error }));
+      }
+      await route.fulfill({ response: res, json: d });
     });
     await page.route(u => u.pathname === '/api/content/posts/' + post.id + '/release', route => {
       releases.push(route.request().postDataJSON());
@@ -198,9 +242,9 @@ test('a held post offers Publish anyway…, and the confirm lists why it was hel
 
     await expect.poll(() => releases.length, { timeout: 15_000 }).toBe(1);
     expect(releases[0]).toEqual({ ack: true });
-    await expect(page.locator(TOASTS).filter({ hasText: 'Released. Its approval card asks you before it goes out.' }))
-      .toBeVisible({ timeout: 15_000 });
-    await shot(page, info, 'posting-4c-held-post-released-toast');
+    const released = page.locator(TOASTS).filter({ hasText: 'Released. Its approval card asks you before it goes out.' });
+    await expect(released).toBeVisible({ timeout: 15_000 });
+    await shot(page, info, 'posting-4c-held-post-released-toast', undefined, released);
   } finally {
     await api(page, 'DELETE', '/api/content/posts/' + encodeURIComponent(post.id)).catch(() => {});
   }
@@ -230,11 +274,12 @@ test.describe('Settings, Connections: the publishing accounts (one app load)', (
     const card = account('Mock Platform');
     await expect(card).toContainText('Connected');
     await expect(card.getByRole('button', { name: 'Test post' })).toHaveCount(0);
+    await card.scrollIntoViewIfNeeded();
     await card.getByRole('button', { name: 'Check connection' }).click();
     const said = page.locator(TOASTS).filter({ hasText: 'Nothing was posted.' });
     await expect(said).toBeVisible({ timeout: 30_000 });
     await expect(said).not.toContainText('Test post sent');
-    await shot(page, info, 'posting-3-check-connection-nothing-posted', card);
+    await shot(page, info, 'posting-3-check-connection-nothing-posted', card, said);
   });
 
   test('an OAuth platform asks for its developer app, and YouTube says it cannot be connected yet', async ({}, info) => {
@@ -246,14 +291,27 @@ test.describe('Settings, Connections: the publishing accounts (one app load)', (
     await expect(form.getByLabel('Client secret')).toHaveAttribute('type', 'password');
     await expect(form.locator('code')).toContainText('/api/content/platforms/linkedin/callback');
     await expect(form.getByRole('button', { name: 'Save and sign in' })).toBeVisible();
-    await expect(page.locator(TOASTS).filter({ hasText: 'LinkedIn needs your own developer app' })).toBeVisible({ timeout: 15_000 });
-    await shot(page, info, 'posting-5a-linkedin-developer-app-form', form);
+    const needs = page.locator(TOASTS).filter({ hasText: 'LinkedIn needs your own developer app' });
+    await expect(needs).toBeVisible({ timeout: 15_000 });
+    await expect(needs).toContainText('then press Save and sign in.');
+    // The redirect address is shown whole: it wraps inside the card instead of running past its edge.
+    const code = form.locator('code');
+    const fits = await code.evaluate(el => {
+      const card = el.closest('.card') as HTMLElement;
+      const r = el.getBoundingClientRect(), c = card.getBoundingClientRect();
+      return r.width > 0 && r.right <= c.right + 0.5;
+    });
+    expect(fits, 'the redirect address runs past the edge of the LinkedIn card').toBe(true);
+    await shot(page, info, 'posting-5a-linkedin-developer-app-form', form, needs);
+    await needs.getByRole('button', { name: 'Dismiss notification' }).click();
 
     const youtube = account('YouTube');
+    await youtube.scrollIntoViewIfNeeded();
     await youtube.getByRole('button', { name: /Connect$/ }).click();
-    await expect(page.locator(TOASTS).filter({ hasText: "YouTube can't be connected from here yet" })).toBeVisible({ timeout: 30_000 });
+    const cannot = page.locator(TOASTS).filter({ hasText: "YouTube can't be connected from here yet" });
+    await expect(cannot).toBeVisible({ timeout: 30_000 });
     await expect(youtube.getByTestId('cp-oauth-app-form')).toHaveCount(0);
-    await shot(page, info, 'posting-5b-youtube-cannot-connect-yet', youtube);
+    await shot(page, info, 'posting-5b-youtube-cannot-connect-yet', youtube, cannot);
   });
 
   test('the Connect-your-services card for an OAuth platform says what happened, not that a window opened', async ({}, info) => {

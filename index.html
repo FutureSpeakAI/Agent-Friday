@@ -46611,7 +46611,8 @@ function ContentAccountsTab({
       }
     }, "Create an app in ", (p.label || m.label), "'s developer site, set its redirect address to ", /*#__PURE__*/React.createElement("code", {
       style: {
-        userSelect: 'all'
+        userSelect: 'all',
+        wordBreak: 'break-all'
       }
     }, appNeeds[name].redirect_uri || 'this computer\'s callback address'), ", then enter its details here. ", fridayName(), " then opens ", (p.label || m.label), "'s sign-in page."), (appNeeds[name].fields || []).map(f => /*#__PURE__*/React.createElement("input", {
       key: f,
