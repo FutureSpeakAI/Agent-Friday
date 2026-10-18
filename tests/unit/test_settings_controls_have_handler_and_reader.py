@@ -31,7 +31,7 @@ DATA = pathlib.Path(__file__).with_name("settings_controls.json")
 ROWS = json.loads(DATA.read_text(encoding="utf-8"))
 LIVE = [r for r in ROWS if r["status"] != "removed"]
 
-RAIL = {"General", "Voice", "Models", "Spending", "Privacy & Data", "Connections",
+RAIL = {"General", "Voice", "Models", "Spending", "Privacy & Data", "Laya", "Connections",
         "Appearance", "Advanced", "About"}
 HELD = "Held (hidden unless held_features.federation)"
 UI_STATUSES = {"ok", "fixed", "duplicate-accepted", "duplicate-resolved"}
