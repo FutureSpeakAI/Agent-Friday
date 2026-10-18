@@ -573,6 +573,12 @@ def _register() -> None:
         approvals.register_decision_hook(DIGEST_KIND, _on_digest_decided)
     except Exception:
         pass
+    try:
+        # The learning records' retirement card (services/lesson_records).
+        from agent_friday.services import lesson_records
+        lesson_records.register_hooks()
+    except Exception:
+        pass
 
 
 _register()
