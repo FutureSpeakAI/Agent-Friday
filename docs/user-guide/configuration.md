@@ -562,6 +562,8 @@ encrypted at rest on this disk.
 | `memory/`, `chat_history.json` | Conversations and conversation memory | Plain text |
 | `conversations/index.sqlite` | The full-text index behind Search your conversations; pasted keys are withheld before indexing | Plain text |
 | `core_memory/ME.md`, `core_memory/FRIDAY.md` | The Memory card: About you, and Working with you | Plain text |
+| `learning_records/records.json` | A record for each skill and Working-with-you lesson Friday learned: when it applies, the conversation/task that taught it (ids only), uses and outcomes since; a lesson is stored as a hash, never its text | Plain text |
+| `skills/<name>/.ledger.jsonl`, `.provenance.json` | Each skill's change history, and the signed record that Friday wrote it | Plain text, hash-chained and signed |
 | `setup/ledger.jsonl` | The setup record: one line per setup decision and who made it, labels and counts only | Plain text, hash-chained |
 | `knowledge-graph/` | The graph derived from your pages; safe to delete, it is rebuilt | Private and sensitive records encrypted |
 | `finance/`, `health/`, `vault/legal/`, `vault/finances/`, `vault/family/` | The vault | Encrypted when a vault passphrase is set |
