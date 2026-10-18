@@ -1493,6 +1493,30 @@ def _learn_skill_evidence():
     }
 
 
+def _record_skill_learned(name, fields, evidence):
+    """The skill's learning record (services/lesson_records): when it applies
+    (its triggers, else its description) and what taught it (the call's own
+    context, the same pointer as the ledger). Best-effort."""
+    try:
+        from agent_friday.services import lesson_records as _lr
+        trig = fields.get("triggers")
+        trig = [str(t) for t in trig] if isinstance(trig, list) else ([str(trig)] if trig else [])
+        when = ("when the message mentions: " + "; ".join(trig)) if trig else (fields.get("description") or None)
+        taught = {k: v for k, v in dict(evidence or {}).items() if v}
+        taught["source"] = "friday"
+        _lr.note_taught("skill", name, applies_when=when, taught_by=taught)
+    except Exception:
+        pass
+
+
+def _record_skill_status(name, status):
+    try:
+        from agent_friday.services import lesson_records as _lr
+        _lr.note_status("skill", re.sub(r'[^\w\-]', '_', name), status)
+    except Exception:
+        pass
+
+
 #: Owner decision HD1 (2026-10-18, harness2 adoption spec): every change
 #: Friday makes to her own skills waits for a practice-task test and the
 #: owner's click (services/trials). The governance checks still run at once,
@@ -1629,10 +1653,12 @@ def _tool_learn_skill(inp, *, _apply=False, _evidence=None):
             content = (inp.get('content') or '').strip()
             if not content:
                 return "learn_skill error: 'content' (YAML text) is required for create/modify."
+            fields = _learn_skill_fields(content)
             folder, done = _skreg.agent_save_skill(
-                name, _learn_skill_fields(content), reason=reason or action,
+                name, fields, reason=reason or action,
                 evidence=evidence, root=skills_dir)
             _log_context("skill_write", {"name": name, "action": done})
+            _record_skill_learned(Path(folder).name, fields, evidence)
             # Register into SkillOpt so the skill enters the closed-loop
             # optimizer; the registry already matches it on the very next turn.
             try:
@@ -1647,12 +1673,14 @@ def _tool_learn_skill(inp, *, _apply=False, _evidence=None):
             dest = _skreg.archive_skill(name, reason=reason or 'archived by Friday',
                                         evidence=evidence, actor=_skreg.AGENT_AUTHOR, root=skills_dir)
             _log_context("skill_archive", {"name": name})
+            _record_skill_status(name, "archived")
             return (f"Skill '{name}' archived to {dest}. Nothing was deleted; "
                     "learn_skill restore brings it back.")
         if action == 'restore':
             folder = _skreg.restore_skill(name, reason=reason or 'restored by Friday',
                                           evidence=evidence, actor=_skreg.AGENT_AUTHOR, root=skills_dir)
             _log_context("skill_restore", {"name": name})
+            _record_skill_status(name, "active")
             return f"Skill '{name}' restored to {folder}."
     except _skreg.SkillWriteRefused as refused:
         return f"[GOVERNANCE DENY] learn_skill: {refused}"
@@ -6187,6 +6215,13 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
             _ll.observe('agent_task', prompt or '',
                         approach=(verification_summary or 'no_tools'),
                         success=verified, workspace='task')
+        except Exception:
+            pass
+        # The same outcome credits every learned skill this task loaded, and
+        # counts as one more task for each lesson on the card (lesson_records).
+        try:
+            from agent_friday.services import lesson_records as _lr
+            _lr.note_task_outcome(task_id, prompt or '', bool(verified))
         except Exception:
             pass
 

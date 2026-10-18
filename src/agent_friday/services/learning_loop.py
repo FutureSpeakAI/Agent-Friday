@@ -595,6 +595,39 @@ def active_skills(task_type: Optional[str] = None) -> List[Dict[str, Any]]:
         return []
 
 
+def heuristic_records() -> List[Dict[str, Any]]:
+    """Every heuristic as a learning record (services/lesson_records): when it
+    applies (its task type), what taught it (the observations it was mined
+    from), and how it has done since (trials and wins). Read-only; works even
+    while the loop is switched off, since it reports what exists."""
+    try:
+        import json
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT skill_id, task_type, created_ts, pattern, status, trials, wins, "
+            "source_obs_json FROM skills").fetchall()
+        conn.close()
+    except Exception:
+        return []
+    out = []
+    for sid, tt, created, pattern, status, trials, wins, obs in rows:
+        try:
+            obs_ids = [str(o) for o in (json.loads(obs or "[]") or [])][:20]
+        except Exception:
+            obs_ids = []
+        trials, wins = _coerce_int(trials, 0), _coerce_int(wins, 0)
+        out.append({
+            "id": f"heuristic:{sid}", "kind": "heuristic", "ref": sid,
+            "status": status, "applies_when": f"{tt} tasks" if tt else None,
+            "lesson": pattern,
+            "taught_by": {"source": "learning_loop", "observations": obs_ids},
+            "created": created, "updated": created, "exposure": "on_match",
+            "uses": trials, "outcomes": {"success": wins, "failure": max(0, trials - wins)},
+            "replaces": None, "replaced_by": None, "open_contexts": 0,
+        })
+    return out
+
+
 def render_heuristics_prompt(task_type: Optional[str] = None, limit: int = 10) -> str:
     """`== LEARNED HEURISTICS ==` block body for the system prompt (bounded)."""
     limit = max(1, min(50, _coerce_int(limit, 10)))
