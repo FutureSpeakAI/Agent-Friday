@@ -442,6 +442,10 @@ def get_governance_key() -> bytes:
     live app signed (security review 2026-10-18, finding 1).
     """
     if os.environ.get("FRIDAY_TRIAL") == "1":
+        # Any FRIDAY_TRIAL, even a stray one in the real app's environment,
+        # keeps the owner's keychain untouched: the worst case is a throwaway
+        # key for one process (outward actions then hold), never a new key
+        # written over the owner's.
         return _trial_process_key()
     with _GOV_KEY_LOCK:
         # 1. Try OS keychain

@@ -96,6 +96,13 @@ def test_a_trial_process_never_touches_the_owners_keychain(monkeypatch, tmp_path
     assert not (tmp_path / "vault").exists()
 
 
+def test_a_trial_process_never_reads_the_owners_launch_script(monkeypatch):
+    """Security re-check D: the repo's start.bat can hold the vault passphrase."""
+    from agent_friday.services import vault_passphrase as vp
+    monkeypatch.setenv("FRIDAY_TRIAL", "1")
+    assert vp._from_start_bat() == ""
+
+
 def test_the_child_environment_carries_no_secrets_and_no_keychain(monkeypatch, tmp_path):
     from agent_friday.task_eval.runner import child_env
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-example-not-a-key")  # pragma: allowlist secret
