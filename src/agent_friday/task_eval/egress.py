@@ -115,8 +115,18 @@ def install(endpoint: Optional[str]) -> None:
             _check(address)
         return real_sendto(self, data, *args)
 
+    real_sendmsg = getattr(socket.socket, "sendmsg", None)
+
+    def sendmsg(self, buffers, *args):
+        address = args[2] if len(args) >= 3 else None
+        if self.family in (socket.AF_INET, socket.AF_INET6) and address is not None:
+            _check(address)
+        return real_sendmsg(self, buffers, *args)
+
     socket.socket.connect = connect
     socket.socket.connect_ex = connect_ex
     socket.socket.sendto = sendto
+    if real_sendmsg is not None:          # not on Windows
+        socket.socket.sendmsg = sendmsg
     socket.socketpair = socketpair
     socket.getaddrinfo = getaddrinfo

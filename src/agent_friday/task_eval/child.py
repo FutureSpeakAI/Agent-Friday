@@ -40,10 +40,6 @@ PRACTICE_HEADER = (
     "owner. Today in this environment is {today}.\n\n"
 )
 
-TRANSPORT_MARKERS = ("ConnectionError", "ConnectionRefused", "Loading model", "503",
-                     "ChunkedEncodingError", "ConnectionResetError", "Max retries exceeded",
-                     "ReadTimeout", "RemoteDisconnected")
-
 
 class _Transport(Exception):
     pass
@@ -234,7 +230,9 @@ def run(job: dict) -> dict:
     err = result.get("error", "")
     text = result.get("text") or ""
     rec["final_text"] = text
-    if state["transport"] or (err and any(m in err for m in TRANSPORT_MARKERS)):
+    # Only the send wrapper's own transport error makes an episode missing; a
+    # crash whose text merely mentions "503" is the agent's (security re-check F).
+    if state["transport"]:
         rec["outcome"] = "seat_busy"
         rec["infra_error"] = (state["transport"] or err)[:500]
     elif err:
