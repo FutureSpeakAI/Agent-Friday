@@ -454,7 +454,7 @@ def write_override(sid: str, text: str, *, actor: str, card: str = "", reason: s
         _LOAD_CACHE.pop(sid, None)
         row = {"at": meta["at"], "id": sid, "action": "write", "actor": actor, "card": str(card or ""),
                "reason": str(reason or "")[:500], "before_sha256": _sha(before),
-               "after_sha256": _sha(text), "before_file": kept}
+               "after_sha256": _sha(text), "before_file": kept, "base_sha256": base}
         _append_history(row)
         return row
 
@@ -473,7 +473,12 @@ def undo(sid: str, *, actor: str = "undo") -> dict:
         raise InstructionError("the previous version in the history folder does not match its record")
     with _LOCK:
         current = load(sid)
-        if previous == shipped_text(sid):
+        # Back to the shipped text, never to an older shipped version: when the
+        # text being restored was the shipped text at the time of the change,
+        # or the change is paused because an update rewrote the section,
+        # undoing it means using what ships now.
+        was_shipped = bool(last.get("base_sha256")) and last.get("before_sha256") == last.get("base_sha256")
+        if previous == shipped_text(sid) or was_shipped or _PAUSED.get(sid):
             kept = _keep_previous(sid, current)
             for p in (_active_path(sid), _sig_path(sid)):
                 try:

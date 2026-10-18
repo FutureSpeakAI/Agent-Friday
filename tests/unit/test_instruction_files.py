@@ -426,3 +426,20 @@ def test_the_settings_page_carries_the_instructions_section():
     assert '/static/friday_instructions.js' in idx and "window.FridayInstructionsSettings ?" in idx
     assert '/static/friday_instructions.js' in (ROOT / "ui_parts" / "styles_and_scene.html").read_text(encoding="utf-8")
     assert "window.FridayInstructionsSettings ?" in (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")
+
+
+def test_undoing_a_paused_change_uses_the_new_shipped_text(home):
+    """Owner changes v1, an update ships v2 (the change is paused), the owner
+    undoes: Friday uses v2, not the old v1 put back as an override."""
+    from agent_friday.services import instruction_files as inf
+    v1 = inf.shipped_text(UNLOCKED)
+    inf.write_override(UNLOCKED, _candidate(), actor="owner:ui")
+    v2 = v1 + "\nA sentence an update added.\n"
+    with inf._LOCK:
+        inf._SHIPPED[UNLOCKED] = v2
+        inf._LOAD_CACHE.clear()
+    assert inf.load(UNLOCKED) == v2
+    assert next(r for r in inf.status() if r["id"] == UNLOCKED)["paused"] is True
+    inf.undo(UNLOCKED, actor="owner:ui")
+    assert inf.load(UNLOCKED) == v2
+    assert not (home / "instructions" / "active" / f"{UNLOCKED}.md").exists()
