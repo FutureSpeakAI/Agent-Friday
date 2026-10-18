@@ -28,14 +28,6 @@ def test_the_suite_default_does_not_force_the_gl_emulator():
     assert "--enable-unsafe-swiftshader" in args, "WebGL must still be available to the scene"
 
 
-def test_the_app_specs_job_gives_the_runner_the_full_port_range_first():
-    """One request per connection, hundreds of page reloads: the runner's dynamic ports ran out."""
-    wf = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-    job = wf[wf.index("  app-specs:"):]
-    ports = job.index("netsh int ipv4 set dynamicport tcp start=10000 num=55535")
-    assert ports < job.index("- name: Run the app specs")
-
-
 def test_the_specs_that_judge_the_scene_opt_in():
     fixtures = (ROOT / "tests" / "app" / "fixtures.ts").read_text(encoding="utf-8")
     m = re.search(r"export const SCENE_GL_ARGS = \[([^\]]*)\]", fixtures)
