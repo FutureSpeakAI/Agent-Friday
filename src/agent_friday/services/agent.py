@@ -10420,6 +10420,9 @@ def _content_apply_schedule(post_id, when_text, optimal, tz_name):
         # behind this call) decides each target.
         from agent_friday.services import publisher as _pub
         res["approval"] = _pub.request_publish_approval(post_id)
+        # The job that sends armed posts: switched on when it is still in its
+        # seeded-off state, or a plain notice when something stops the post.
+        res["publisher"] = _pub.ensure_publisher_running(post_id)
         return res
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -10503,6 +10506,10 @@ def _tool_content_create_post(inp):
                               f"({out['time_source']}). {out['approval']} "
                               f"Review or reschedule in the Queue: "
                               f"{out['queue_link']}")
+            notice = (sched.get("publisher") or {}).get("notice")
+            if notice:
+                out["publisher_notice"] = notice
+                out["message"] += " " + notice
         else:
             warnings.append(f"schedule failed: {sched.get('error')}")
             out["message"] = ("Draft created and composed, but not scheduled — "
@@ -10558,6 +10565,10 @@ def _tool_content_schedule_post(inp):
            "message": (f"Scheduled for {res.get('publish_at')} "
                        f"({res.get('resolved')}). {approval} Queue: "
                        + _content_deeplink("queue", post_id))}
+    notice = (res.get("publisher") or {}).get("notice")
+    if notice:
+        out["publisher_notice"] = notice
+        out["message"] += " " + notice
     if warnings:
         out["warnings"] = warnings
     return json.dumps(out, default=str)

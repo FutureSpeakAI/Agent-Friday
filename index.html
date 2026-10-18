@@ -13331,6 +13331,16 @@ function fridayToast(msg, opts) {
     var message = document.createElement('span');
     message.textContent = text;
     el.appendChild(message);
+    // An optional action: {label, run} — one button that does what the
+    // notice says to do (e.g. "Open Workflows").
+    var act = opts && opts.action;
+    if (act && act.label && typeof act.run === 'function') {
+      var go = document.createElement('button');
+      go.type = 'button'; go.textContent = String(act.label);
+      go.style.cssText = 'margin-left:12px;min-height:28px;padding:0 10px;background:transparent;color:inherit;border:1px solid currentColor;border-radius:5px;cursor:pointer';
+      go.onclick = function () { el.remove(); try { act.run(); } catch (e) { /* the notice already said what to do */ } };
+      el.appendChild(go);
+    }
     var dismiss = document.createElement('button');
     dismiss.type = 'button'; dismiss.textContent = '×';
     dismiss.setAttribute('aria-label', 'Dismiss notification');
@@ -13352,6 +13362,19 @@ function fridayToast(msg, opts) {
   } catch (e) { /* a notice that throws is worse than no notice */ }
 }
 window.fridayToast = fridayToast;
+
+// The answer to arming a post carries `publisher` (services/publisher
+// ensure_publisher_running): when something will stop the post going out it
+// has a plain `notice` and the `action` that fixes it. Say it, with that one
+// button. Returns true when there was something to say.
+function fridayPublisherNotice(d) {
+  var p = d && d.publisher;
+  if (!p || !p.notice) return false;
+  var a = p.action && p.action.target ? p.action : null;
+  fridayToast(p.notice, { error: true, action: a ? { label: a.label || 'Open', run: function () { fridayNavigate(a.target); } } : null });
+  return true;
+}
+window.fridayPublisherNotice = fridayPublisherNotice;
 
 // A workspace's passing notice ("Copied", "Saved", "Could not save") is
 // Friday's one toast: the same look and place in every workspace, in a window
@@ -32637,7 +32660,10 @@ function WorkflowsWS() {
   }, /*#__PURE__*/React.createElement("strong", null, r.name), /*#__PURE__*/React.createElement("div", {
     className: "wfx-quiet",
     "data-testid": "wf-routine-line"
-  }, wfRoutineLine(r))), r.announces_finish && /*#__PURE__*/React.createElement("span", {
+  }, wfRoutineLine(r)), r.note && /*#__PURE__*/React.createElement("div", {
+    className: "wfx-quiet",
+    "data-testid": "wf-routine-note"
+  }, r.note)), r.announces_finish && /*#__PURE__*/React.createElement("span", {
     className: "wfx-quiet",
     "aria-hidden": "true"
   }, "Tell me when it finishes"), r.announces_finish && /*#__PURE__*/React.createElement(WfSwitch, {
@@ -44628,6 +44654,7 @@ function ContentComposeTab({
         });
         const d = await r.json().catch(() => ({}));
         flash(d && d.ok === false ? d.message || d.reason || 'Publish failed' : 'Approve the card to publish — it shows the exact text and where it goes');
+        if (d && d.ok !== false) fridayPublisherNotice(d);
       } else if (action === 'schedule') {
         const sc = {
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -44642,6 +44669,7 @@ function ContentComposeTab({
         });
         const d = await r.json().catch(() => ({}));
         if (d && d.conflicts && d.conflicts.length) flash('⚠ Scheduled with ' + d.conflicts.length + ' conflict warning(s) — see the Calendar');else flash(d && d.ok === false ? d.message || 'Schedule failed' : '📅 Scheduled');
+        if (d && d.ok !== false) fridayPublisherNotice(d);
         setSchedOpen(false);
       }
     } catch (e) {
@@ -46202,13 +46230,56 @@ function ContentAccountsTab({
         body: '{}'
       });
       const d = await r.json();
-      if (d.connect_url) {
-        window.open(d.connect_url, 'friday-oauth-' + name, 'width=560,height=720');
-        flash('Complete the sign-in in the popup — this card refreshes automatically.');
-        setTimeout(() => reload && reload(), 4000);
-      } else flash(d.message || d.reason || 'The connect flow is not available yet.');
+      openSignIn(name, d);
     } catch (e) {
       flash('Connect failed — is the content pipeline backend running?');
+    }
+  };
+  // What the connect route answered, said as it is: a sign-in window that
+  // really opened, the developer-app details an OAuth platform still needs,
+  // or the reason it can't be connected.
+  const [appNeeds, setAppNeeds] = useState({});
+  const openSignIn = (name, d) => {
+    if (d && d.connect_url) {
+      const w = window.open(d.connect_url, 'friday-oauth-' + name, 'width=560,height=720');
+      if (w) {
+        flash('Sign in to ' + cpMeta(name).label + ' in the window that opened and approve access. This card refreshes when you come back.');
+        setTimeout(() => reload && reload(), 4000);
+      } else flash('Your browser blocked the sign-in window. Allow pop-ups for ' + fridayName() + ' and press Connect again.');
+    } else if (d && d.needs === 'client') {
+      setAppNeeds(s => ({
+        ...s,
+        [name]: d
+      }));
+      setAuthOpen(name);
+      flash(d.message);
+    } else flash(d && (d.message || d.error || d.reason) || cpMeta(name).label + " can't be connected from here yet.");
+  };
+  const submitApp = async name => {
+    const need = appNeeds[name] || {};
+    const vals = authVals[name] || {};
+    const bodyOut = {};
+    (need.fields || []).forEach(f => {
+      if ((vals[f] || '').trim()) bodyOut[f] = vals[f].trim();
+    });
+    try {
+      const r = await fetch('/api/content/platforms/' + name + '/connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(bodyOut)
+      });
+      const d = await r.json();
+      // The app's details are saved either way; never keep the secret in the page.
+      setAuthVals(v => ({
+        ...v,
+        [name]: {}
+      }));
+      if (d && d.connect_url) setAuthOpen('');
+      openSignIn(name, d);
+    } catch (e) {
+      flash('Connect failed');
     }
   };
   const submitAuth = async name => {
@@ -46249,15 +46320,17 @@ function ContentAccountsTab({
       flash('Disconnect failed');
     }
   };
-  const testPost = async name => {
+  // Check connection: the route checks the saved credential and posts
+  // nothing; its own words say what was checked.
+  const checkConnection = async name => {
     try {
       const r = await fetch('/api/content/platforms/' + name + '/test', {
         method: 'POST'
       });
       const d = await r.json();
-      flash(d && d.ok === false ? d.message || 'Test failed' : d.message || '✓ Test post sent (private/self where the platform allows)');
+      flash(d && d.message || (d && d.ok ? 'The saved credential is there. Nothing was posted.' : 'Could not check the connection. Nothing was posted.'));
     } catch (e) {
-      flash('Test failed');
+      flash('Could not check the connection. Nothing was posted.');
     }
   };
   const pauseAll = () => fetch('/api/content/pause', {
@@ -46440,8 +46513,9 @@ function ContentAccountsTab({
       style: {
         fontSize: 10
       },
-      onClick: () => testPost(name)
-    }, "Test post"), conn && /*#__PURE__*/React.createElement("button", {
+      title: "Checks the saved sign-in with " + (p.label || m.label) + ". Posts nothing.",
+      onClick: () => checkConnection(name)
+    }, "Check connection"), conn && /*#__PURE__*/React.createElement("button", {
       className: "btn btn-magenta",
       style: {
         fontSize: 10,
@@ -46523,7 +46597,59 @@ function ContentAccountsTab({
         color: '#666',
         marginTop: 3
       }
-    }, ("Stored encrypted in " + fridayName() + "'s credential vault \u2014 never plaintext, never logged."))), authOpen === name && isManual && /*#__PURE__*/React.createElement("div", {
+    }, ("Stored encrypted in " + fridayName() + "'s credential vault \u2014 never plaintext, never logged."))), authOpen === name && !pasteAuth && appNeeds[name] && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 8
+      },
+      "data-testid": "cp-oauth-app-form"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: '#a8a8b4',
+        lineHeight: 1.5,
+        marginBottom: 6
+      }
+    }, "Create an app in ", (p.label || m.label), "'s developer site, set its redirect address to ", /*#__PURE__*/React.createElement("code", {
+      style: {
+        userSelect: 'all'
+      }
+    }, appNeeds[name].redirect_uri || 'this computer\'s callback address'), ", then enter its details here. ", fridayName(), " then opens ", (p.label || m.label), "'s sign-in page."), (appNeeds[name].fields || []).map(f => /*#__PURE__*/React.createElement("input", {
+      key: f,
+      type: f === 'client_secret' ? 'password' : 'text',
+      className: "input",
+      autoComplete: "off",
+      "aria-label": {
+        client_id: 'Client ID',
+        client_key: 'Client key',
+        client_secret: 'Client secret'
+      }[f] || f,
+      style: {
+        width: '100%',
+        fontSize: 11,
+        marginBottom: 4,
+        boxSizing: 'border-box'
+      },
+      placeholder: {
+        client_id: 'Client ID',
+        client_key: 'Client key',
+        client_secret: 'Client secret'
+      }[f] || f,
+      value: (authVals[name] || {})[f] || '',
+      onChange: e => setAV(name, f, e.target.value)
+    })), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 10,
+        fontWeight: 600
+      },
+      onClick: () => submitApp(name)
+    }, "Save and sign in"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        color: '#666',
+        marginTop: 3
+      }
+    }, "The client secret is stored encrypted on this computer and is never shown again or logged.")), authOpen === name && isManual && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 8
       }
@@ -46699,8 +46825,11 @@ function QuickPostModal({
       })
     });
     const d = await r.json();
+    cardRef.current = d.media_card || null;
     return d.post && d.post.id || d.id || null;
   };
+  // The new post's card in Media: the full composer is that card.
+  const cardRef = useRef(null);
   const ship = async mode => {
     if (busy) return;
     if (!body.trim()) {
@@ -46720,13 +46849,16 @@ function QuickPostModal({
         return;
       }
       if (mode === 'composer') {
-        if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({
-          workspace: 'content'
-        });
+        // Posts are cards in Media now; the card opens this post in the
+        // composer. (The old Content workspace redirects to Media's board.)
+        if (!cardRef.current) {
+          flash('The post was saved as a draft, but its card could not be found. Open it from Media.');
+          setBusy(false);
+          return;
+        }
         fridayNavigate({
-          workspace: 'content',
-          tab: 'compose',
-          post: id
+          workspace: 'media',
+          card: cardRef.current
         });
         onClose();
         return;
@@ -46741,12 +46873,13 @@ function QuickPostModal({
         })
       }).catch(() => {});
       if (mode === 'now') {
-        await fetch('/api/content/posts/' + id + '/publish-now', {
+        const d = await fetch('/api/content/posts/' + id + '/publish-now', {
           method: 'POST'
-        });
-        flash('Approve the card to publish — it shows the exact text and where it goes');
+        }).then(r => r.json()).catch(() => ({}));
+        flash(d && d.ok === false ? d.message || d.error || 'Could not post it' : 'Approve the card to publish — it shows the exact text and where it goes');
+        if (d && d.ok !== false) fridayPublisherNotice(d);
       } else {
-        await fetch('/api/content/posts/' + id + '/schedule', {
+        const d = await fetch('/api/content/posts/' + id + '/schedule', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -46755,8 +46888,9 @@ function QuickPostModal({
             optimal_time: true,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
           })
-        });
-        flash('📅 Scheduled at the next optimal slot');
+        }).then(r => r.json()).catch(() => ({}));
+        flash(d && d.ok === false ? d.message || d.error || 'Could not schedule it' : '📅 Scheduled at the next optimal slot');
+        if (d && d.ok !== false) fridayPublisherNotice(d);
       }
       setTimeout(onClose, 1200);
     } catch (e) {
@@ -46849,7 +46983,7 @@ function QuickPostModal({
       key: p.name,
       className: "btn",
       disabled: !conn,
-      title: conn ? m.label : m.label + ' not connected — open Content → Accounts',
+      title: conn ? m.label : m.label + ' not connected — connect it in Settings → Connections',
       onClick: () => setSel(s => on ? s.filter(x => x !== p.name) : [...s, p.name]),
       style: {
         fontSize: 10,
@@ -50969,17 +51103,28 @@ function SetupConnectionItem({
       });
     } else if (c.kind === 'oauth_connector') {
       const d = await post(c.endpoint, {});
-      openUrl(d.auth_url);
-      setMsg({
-        ok: true,
-        text: d.message || 'Approve access in the browser window that opened.'
+      // Say only what happened: a sign-in page this card opened, or none.
+      if (scSafeUrl(d.auth_url)) {
+        openUrl(d.auth_url);
+        setMsg({
+          ok: true,
+          text: 'The sign-in page opens in a new browser tab (if nothing opened, allow pop-ups for this page and try again). Approve access there, then come back and press Test connection.'
+        });
+      } else setMsg({
+        ok: !!d.message,
+        text: d.message || 'No sign-in page opened: this service gave no sign-in address. Try again, or check its setup.'
       });
     } else if (c.kind === 'platform_oauth') {
       const d = await post(c.endpoint, {});
-      openUrl(d.connect_url);
-      setMsg({
-        ok: true,
-        text: 'Approve access in the browser window that opened.'
+      if (scSafeUrl(d.connect_url)) {
+        openUrl(d.connect_url);
+        setMsg({
+          ok: true,
+          text: 'The sign-in page opens in a new browser tab (if nothing opened, allow pop-ups for this page and try again). Approve access there, then come back and press Test connection.'
+        });
+      } else setMsg({
+        ok: false,
+        text: d.message || 'No sign-in page opened: this platform has no sign-in set up yet.'
       });
     } else if (c.kind === 'local_endpoint') {
       const f = c.field || {};

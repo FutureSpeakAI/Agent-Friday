@@ -135,9 +135,28 @@ def _notify(title: str, body: str = "", priority: str = "medium",
         pass
 
 
-def _queue_action() -> List[Dict[str, Any]]:
-    return [{"label": "Review in Content → Queue", "action": "navigate",
-             "target": {"workspace": "content", "tab": "queue"}}]
+def _post_card_target(post_id: Optional[str]) -> Dict[str, Any]:
+    """Where a post is shown now: its card in Media (the card opens the post
+    in the composer, and a held post's card can release it). Without a post
+    id, Media's "Needs you" list."""
+    if post_id:
+        try:
+            from agent_friday.services import media_index
+            return {"workspace": "media", "card": media_index.post_card_id(post_id)}
+        except Exception:
+            _log.debug("post card id unavailable", exc_info=True)
+    return {"workspace": "media", "default_view": "review"}
+
+
+def _queue_action(post_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    return [{"label": "Open the post in Media", "action": "navigate",
+             "target": _post_card_target(post_id)}]
+
+
+def _accounts_action() -> List[Dict[str, Any]]:
+    """Publishing accounts live under Settings, Connections."""
+    return [{"label": "Open Connections", "action": "navigate",
+             "target": {"workspace": "settings", "tab": "connections"}}]
 
 
 def _self_agent_id() -> str:
@@ -281,9 +300,11 @@ def start() -> Dict[str, Any]:
         # every job that runs less often. A maintenance job nobody asked for
         # should not be the loudest thing in the log.
         #
-        # `default_enabled` seeds the schedule disabled; the moment a post is
-        # scheduled the pipeline enables it (see _ensure_publisher_enabled),
-        # so this costs nothing to whoever does use the feature.
+        # `default_enabled` seeds the schedule disabled; the first time a post
+        # is armed for a platform with a connected account, the job is
+        # switched on (see ensure_publisher_running), unless the owner has
+        # switched it off themselves. So this costs nothing to whoever does
+        # use the feature.
         register_builtin_task(
             "content_publisher", tick, label="Content publisher",
             default_trigger="interval", default_spec={"every_minutes": 15},
@@ -316,6 +337,127 @@ def kick() -> Dict[str, Any]:
         return {"kicked": True, "via": "thread"}
     except Exception as e:
         return {"kicked": False, "reason": exception_text(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  The Content publisher job: on when posts are armed, and the owner's switch
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The scheduler builtin that runs tick() ships switched off. When a post is
+# armed (scheduled, posted now, released) for at least one platform with a
+# connected account, ensure_publisher_running switches it on through the
+# scheduler's own update (the Workflows switch), records when and why, and
+# says so once. Switching it on publishes nothing: every target still meets
+# the gate chain and the owner's card in _run_target.
+#
+# The owner's switch wins: once the job has been switched off after its seed
+# (scheduler.builtin_switched_off_by_owner), nothing here switches it back on;
+# the arming call instead carries a notice saying the post will not go out,
+# with the way to Workflows, and a notification says the same.
+
+PUBLISHER_REF = "content_publisher"
+PUBLISHER_SCHEDULE_ID = "sch_" + PUBLISHER_REF
+AUTO_ENABLE_REASON = "a post was scheduled for a connected account"
+
+
+def _workflows_action() -> List[Dict[str, Any]]:
+    return [{"label": "Open Workflows", "action": "navigate",
+             "target": {"workspace": "workflows"}}]
+
+
+def _platform_ready(platform: str) -> bool:
+    """A connected account, or a platform whose publishing is a hand-off
+    package that needs no account (manual mode)."""
+    try:
+        adapter = platform_registry.get_adapter(platform)
+        if adapter is None:
+            return False
+        if str(getattr(adapter, "auth_mode", "") or "") == "manual":
+            return True
+        return bool((adapter.status() or {}).get("connected"))
+    except Exception:
+        return False
+
+
+def ensure_publisher_running(post_id: str) -> Dict[str, Any]:
+    """Called when a post is armed. Switches the Content publisher job on when
+    it is still in its seeded-off state and one of the post's platforms is
+    ready, and reports whether the post can go out.
+
+    Returns {on, auto_enabled, notice, action}; `notice` (plain words) is set
+    whenever something will stop the post going out, and `action` is the
+    navigation that fixes it. Never raises; never publishes or approves
+    anything."""
+    out: Dict[str, Any] = {"on": False, "auto_enabled": False,
+                           "notice": None, "action": None}
+    try:
+        got = store.get_post(post_id)
+        if not got.get("ok"):
+            return out
+        post = got["post"]
+        armed = [t for t in (post.get("targets") or [])
+                 if t.get("status") == "PENDING"]
+        if not armed:
+            return out
+        now = time.time()
+        later = any((_epoch(t.get("publish_at")) or 0) > now for t in armed)
+        ready = [str(t.get("platform")) for t in armed
+                 if _platform_ready(str(t.get("platform") or ""))]
+
+        from agent_friday.services import scheduler as _sched
+        # Registered at boot (start()); a process that never started the
+        # publisher has no job to switch.
+        registered = PUBLISHER_REF in _sched.BUILTIN_TASKS
+        rec = _sched.get_schedule(PUBLISHER_SCHEDULE_ID) if registered else None
+        if registered:
+            if rec is not None and rec.get("enabled", True):
+                out["on"] = True
+            elif ready and not (rec is not None
+                                and _sched.builtin_switched_off_by_owner(rec)):
+                if rec is None:
+                    _sched.seed_builtin(PUBLISHER_REF)
+                switched = _sched.switch_on_automatically(
+                    PUBLISHER_SCHEDULE_ID, AUTO_ENABLE_REASON)
+                if switched and switched.get("enabled"):
+                    out["on"] = out["auto_enabled"] = True
+                    _log.info("content publisher job switched on automatically "
+                              "(post %s armed for %s)", post_id, ", ".join(ready))
+                    _notify("Content publisher turned on",
+                            "It sends your scheduled posts, each only once you have "
+                            "approved it. You can switch it off in Workflows.",
+                            priority="medium", actions=_workflows_action(),
+                            dedupe="content-publisher-auto-on")
+
+        # What still stops this post, most fundamental first.
+        if not content_enabled():
+            out["notice"] = ("This post won't go out: publishing is switched off "
+                             "in Settings. Turn it back on there.")
+            out["action"] = {"label": "Open Settings", "target": {"workspace": "settings"}}
+        elif platform_registry.publishing_paused():
+            out["notice"] = ("This post won't go out: all publishing is paused. "
+                             "Resume it in Settings, Connections, Publishing channels.")
+            out["action"] = {"label": "Open Connections",
+                             "target": {"workspace": "settings", "tab": "connections"}}
+        elif not ready:
+            out["notice"] = ("This post won't go out: none of its platforms has a "
+                             "connected account. Connect one in Settings, Connections.")
+            out["action"] = {"label": "Open Connections",
+                             "target": {"workspace": "settings", "tab": "connections"}}
+        elif registered and not out["on"]:
+            if later:
+                out["notice"] = ("This post won't go out: the Content publisher is "
+                                 "switched off. Turn it on in Workflows.")
+            else:
+                out["notice"] = ("The Content publisher is switched off, so if this "
+                                 "post can't go out straight away it won't be tried "
+                                 "again. Turn it on in Workflows.")
+            out["action"] = {"label": "Open Workflows", "target": {"workspace": "workflows"}}
+            _notify("The Content publisher is switched off",
+                    out["notice"], priority="high", actions=_workflows_action(),
+                    dedupe=f"content-publisher-off:{post_id}")
+    except Exception:
+        _log.debug("content publisher job check failed", exc_info=True)
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -496,7 +638,7 @@ def _recover_sent_limbo(now=None, exclude=None):
         _spend_authorization(tid)
         _log_attempt(target, "failed", error=reason)
         _notify(f"Publish failed — {platform}", reason, priority="high",
-                actions=_queue_action(), dedupe=f"content-failed:{tid}")
+                actions=_queue_action(target.get("post_id")), dedupe=f"content-failed:{tid}")
         counts["failed"] = counts.get("failed", 0) + 1
     return counts, confirmed_posts
 
@@ -714,8 +856,8 @@ def _card_words(target: Dict[str, Any], post: Dict[str, Any], texts: List[str],
     joined = "\n\n".join(texts)
     room = _CARD_TEXT_MAX - len(header)
     if len(joined) > room:
-        note = ("\n\n[{} more characters are not shown here; the full text is in "
-                "Content, Queue.]")
+        note = ("\n\n[{} more characters are not shown here; the full text is on "
+                "the post's card in Media.]")
         cut = max(0, room - len(note.format(len(joined))) - 4)
         shown = joined[:cut] + note.format(len(joined) - cut)
     else:
@@ -897,7 +1039,7 @@ def _hold(target: Dict[str, Any], reason: str) -> str:
         "platform": target.get("platform"), "reason": reason, "ok": False})
     _notify("Post held — review before publishing",
             f"{target.get('platform')}: {reason}", priority="high",
-            actions=_queue_action(), dedupe=f"content-held:{tid}")
+            actions=_queue_action(target.get("post_id")), dedupe=f"content-held:{tid}")
     return "held"
 
 
@@ -965,7 +1107,7 @@ def _run_target(target: Dict[str, Any]) -> str:
                          error=reason)
             _notify("Post blocked by the harm floor",
                     f"{platform}: {verdict.get('reason') or 'blocked'}",
-                    priority="high", actions=_queue_action(),
+                    priority="high", actions=_queue_action(target.get("post_id")),
                     dedupe=f"content-blocked:{tid}")
             return "failed"
 
@@ -1021,7 +1163,7 @@ def _run_target(target: Dict[str, Any]) -> str:
         store.set_target_status(tid, "FAILED", error=f"license: {license_block}")
         _log_attempt(target, "failed", error=f"license: {license_block}")
         _notify("Post blocked — license incompatible", license_block,
-                priority="high", actions=_queue_action())
+                priority="high", actions=_queue_action(target.get("post_id")))
         return "failed"
 
     # 5 BUDGET pre-check — defer without burning the attempt (§7.1 step 5).
@@ -1148,7 +1290,7 @@ def _handle_failure(target: Dict[str, Any], adapter, env: Dict[str, Any],
         store.set_target_status(tid, "FAILED", error=reason)
         _log_attempt(target, "failed", duration_s=duration, error=reason)
         _notify(f"Publish failed — {target.get('platform')}", reason,
-                priority="high", actions=_queue_action(),
+                priority="high", actions=_queue_action(target.get("post_id")),
                 dedupe=f"content-failed:{tid}")
         return "failed"
 
@@ -1175,13 +1317,13 @@ def _handle_failure(target: Dict[str, Any], adapter, env: Dict[str, Any],
                                     not_before=time.time() + 5)
             _log_attempt(target, "retrying", duration_s=duration, error=err)
             return "retrying"
-        reason = f"{err} — reconnect {target.get('platform')} in Accounts"
+        reason = (f"{err} — reconnect {target.get('platform')} in Settings, "
+                  "Connections")
         store.set_target_status(tid, "FAILED", error=reason)
         _log_attempt(target, "failed", duration_s=duration, error=reason)
         _notify(f"Publish failed — {target.get('platform')} needs re-auth",
                 reason, priority="high",
-                actions=[{"label": "Open Accounts", "action": "navigate",
-                          "target": {"workspace": "content", "tab": "accounts"}}],
+                actions=_accounts_action(),
                 dedupe=f"content-auth:{target.get('platform')}")
         return "failed"
 
@@ -1205,7 +1347,7 @@ def _handle_failure(target: Dict[str, Any], adapter, env: Dict[str, Any],
     store.set_target_status(tid, "FAILED", error=err)
     _log_attempt(target, "failed", duration_s=duration, error=err)
     _notify(f"Publish failed — {target.get('platform')}", err, priority="high",
-            actions=_queue_action(), dedupe=f"content-failed:{tid}")
+            actions=_queue_action(target.get("post_id")), dedupe=f"content-failed:{tid}")
     return "failed"
 
 

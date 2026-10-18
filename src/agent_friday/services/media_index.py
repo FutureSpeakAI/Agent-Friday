@@ -268,6 +268,11 @@ def _id_for(source_kind: str, ref: str) -> str:
     return source_kind + ":" + hashlib.sha1(f"{source_kind}|{ref}".encode("utf-8")).hexdigest()[:12]
 
 
+def post_card_id(post_id: str) -> str:
+    """The Media card id of a content post (the card that shows the post)."""
+    return _id_for("post", str(post_id))
+
+
 def _iso(ts: Optional[float]) -> Optional[str]:
     if not ts:
         return None
@@ -1436,7 +1441,9 @@ def patch(card_id: str, status: Optional[str] = None, project: Optional[str] = N
                     return {"status": "error", "message": r.get("error") or "Could not schedule the post."}
                 _set_override(card_id, status=None, when_ts=None)
                 reindex_posts_only()
-                return {"status": "ok", "card": get(card_id)}
+                from agent_friday.services import publisher as pub
+                return {"status": "ok", "card": get(card_id),
+                        "publisher": pub.ensure_publisher_running(pid)}
             if status in ("draft", "idea") and c["status"] == "scheduled":
                 r = cp.cancel_post(pid)
                 if not r.get("ok"):
@@ -1574,6 +1581,7 @@ def _publish_post(c: Dict[str, Any]) -> Dict[str, Any]:
     if not r.get("ok"):
         return {"status": "error", "message": r.get("error") or "The post could not be armed."}
     ap = pub.request_publish_approval(pid)
+    running = pub.ensure_publisher_running(pid)
     try:
         pub.kick()
     except Exception:
@@ -1582,9 +1590,11 @@ def _publish_post(c: Dict[str, Any]) -> Dict[str, Any]:
     targets = ap.get("targets") or []
     states = {str(t.get("state") or "") for t in targets}
     if targets and states <= {"approved", "covered by a grant"}:
-        return {"status": "ok", "message": "Publishing.", "card": get(c["id"]), "targets": targets}
+        return {"status": "ok", "message": "Publishing.", "card": get(c["id"]), "targets": targets,
+                "publisher": running}
     return {"status": "pending", "message": "A card is asking you first, for each place it goes.",
-            "targets": targets, "approval_id": next((t.get("approval_id") for t in targets if t.get("approval_id")), None)}
+            "targets": targets, "approval_id": next((t.get("approval_id") for t in targets if t.get("approval_id")), None),
+            "publisher": running}
 
 
 def _publish_description(c: Dict[str, Any]) -> str:
