@@ -12,8 +12,8 @@
 // runner), and each test used to pay it before its first assertion. The five Settings tests now share one page,
 // opened once per worker; before each test the panel is put back the way a fresh visit shows it (the local-only
 // choice undone through its own button, the panel shown again, scrolled to the top), and every step opens a card
-// only if it is closed, so no test depends on another's order or leftovers. The page keeps a trace, saved when a
-// test fails. The setup test needs its own stubbed routes, so it keeps its own page.
+// only if it is closed, so no test depends on another's order or leftovers. Playwright traces the shared page as it
+// does every page. The setup test needs its own stubbed routes, so it keeps its own page.
 import { test, expect, type Page } from '../fixtures';
 import type { BrowserContext, Locator } from '@playwright/test';
 import { settle } from '../helpers/settle';
@@ -42,12 +42,11 @@ async function expand(card: Locator) {
 test.describe('Connect your services in Settings (one app load)', () => {
   let ctx: BrowserContext;
   let page: Page;
-  let failed = false;
 
   test.beforeAll(async ({ browser }) => {
     test.setTimeout(240_000);
+    // Playwright traces this context too (the config's trace: 'retain-on-failure').
     ctx = await browser.newContext({ viewport: VIEWPORT });
-    await ctx.tracing.start({ screenshots: true, snapshots: true });
     page = await ctx.newPage();
     await page.route('**/api/setup/status', r => r.fulfill(json({ initialized: true })));
     await page.goto(`${BASE}/w/settings`, { waitUntil: 'domcontentloaded' });
@@ -69,12 +68,7 @@ test.describe('Connect your services in Settings (one app load)', () => {
     await settle(page, { root: PANEL, quietMs: 200, timeout: 3000 });
   });
 
-  test.afterEach(async ({}, info) => { if (info.status !== info.expectedStatus) failed = true; });
-
-  test.afterAll(async ({}, info) => {
-    await ctx.tracing.stop(failed ? { path: info.outputPath('trace.zip') } : undefined);
-    await ctx.close();
-  });
+  test.afterAll(async () => { await ctx.close(); });
 
   test('the screen lists every category, preselects nothing and is honest on a fresh install', async ({}, info) => {
     const panel = page.locator(PANEL).first();
