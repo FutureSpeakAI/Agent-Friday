@@ -29,6 +29,11 @@ from typing import Dict, List, Optional
 IMPORT_ALLOWANCE_S = 300
 #: Environment variables a local episode child never inherits.
 _SECRET_HINTS = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+#: Variables that point into the owner's own profile; a child gets scratch
+#: copies (or none) instead.
+_PROFILE_VARS = ("HOME", "USERPROFILE", "PYTHONPATH", "PYTHONHOME", "APPDATA", "LOCALAPPDATA",
+                 "TEMP", "TMP", "TMPDIR", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME",
+                 "XDG_DATA_HOME", "XDG_CACHE_HOME")
 
 
 def _src_root() -> str:
@@ -47,8 +52,7 @@ def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Di
     env = {}
     for k, v in os.environ.items():
         up = k.upper()
-        if up.startswith("FRIDAY_") or up in ("HOME", "USERPROFILE", "PYTHONPATH", "PYTHONHOME",
-                                               "APPDATA", "LOCALAPPDATA"):
+        if up.startswith(("FRIDAY_", "ONEDRIVE")) or up in _PROFILE_VARS:
             continue
         if not keep_cloud_keys and any(h in up for h in _SECRET_HINTS):
             continue
@@ -59,6 +63,7 @@ def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Di
     user.mkdir(parents=True, exist_ok=True)
     (user / "AppData" / "Roaming").mkdir(parents=True, exist_ok=True)
     (user / "AppData" / "Local").mkdir(parents=True, exist_ok=True)
+    (user / "tmp").mkdir(parents=True, exist_ok=True)
     env.update({
         "FRIDAY_TRIAL": "1",
         "FRIDAY_TRIAL_INSTRUCTION_KEY": key.hex(),
@@ -69,6 +74,9 @@ def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Di
         # scratch profile too, never at the owner's.
         "APPDATA": str(user / "AppData" / "Roaming"),
         "LOCALAPPDATA": str(user / "AppData" / "Local"),
+        "TEMP": str(user / "tmp"),
+        "TMP": str(user / "tmp"),
+        "TMPDIR": str(user / "tmp"),
         "FRIDAY_TESTING": "1",
         "FRIDAY_NO_ARBITER": "1",
         "FRIDAY_DECISION_BACKEND": "keyword",
