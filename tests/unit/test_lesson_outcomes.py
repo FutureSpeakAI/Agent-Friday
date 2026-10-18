@@ -170,6 +170,15 @@ def test_records_written_before_ha3_read_as_empty_fields(home):
     assert rec["judged"]["neutral"] == 1 and rec["tags"] == [] and rec["trial_refs"] == []
 
 
+def test_a_cue_is_short_and_carries_no_contact_details(home):
+    ref = lr.lesson_ref("x")
+    lr.note_taught("lesson", ref, applies_when="when Sam (sam@example.test, +44 1632 960 418) asks; see https://x.test/a"
+                   + " and more" * 40, taught_by={"source": "friday"})
+    cue = _rec(ref)["applies_when"]
+    assert len(cue) <= lr.CUE_MAX
+    assert "@" not in cue and "960" not in cue and "https" not in cue
+
+
 def test_reply_shape_scores_never_feed_the_records():
     root = Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "services"
     for name in ("lesson_records.py", "trials.py"):

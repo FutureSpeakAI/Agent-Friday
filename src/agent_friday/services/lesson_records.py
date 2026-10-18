@@ -40,6 +40,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import threading
 import time
 import uuid
@@ -117,6 +118,18 @@ def _save(data: Dict[str, Any]) -> None:
 def _short(v) -> Optional[str]:
     s = " ".join(str(v if v is not None else "").split())[:_TEXT_MAX]
     return s or None
+
+
+#: A cue ("applies when ...") is the model's own free text and is served by
+#: /api/learning/records, so it is kept short and stripped of contact details
+#: (security review 2026-10-18, finding 9). The lesson text is never stored.
+CUE_MAX = 160
+_CUE_SCRUB = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+|\+?\d[\d ()./-]{6,}\d|https?://\S+")
+
+
+def _scrub_cue(v) -> Optional[str]:
+    s = _CUE_SCRUB.sub("[removed]", " ".join(str(v if v is not None else "").split()))
+    return s[:CUE_MAX] or None
 
 
 def current_taught_by(source: str = "friday") -> Dict[str, Any]:
@@ -218,7 +231,7 @@ def note_taught(kind: str, ref: str, *, applies_when: Any = None,
             if tags:
                 rec["tags"] = _clean_tags(list(rec.get("tags") or []) + list(tags))
             if applies_when is not None:
-                rec["applies_when"] = _short(applies_when)
+                rec["applies_when"] = _scrub_cue(applies_when)
             if replaces and replaces != rid:
                 rec["replaces"] = replaces
                 old = recs.get(replaces)
