@@ -45,8 +45,8 @@ These keys work on the desktop only, not in a workspace's own tab.
 | **F9** | The widget: a small window that is mostly Friday; F9 again to come back |
 
 A middle-click on a dock button also opens that workspace in its own tab. Both
-open the tab in the background, so you stay where you are. Settings always
-opens in place. If the browser blocks the tab, Friday asks you to allow pop-ups
+open the tab in the background, so you stay where you are. Settings never
+opens in a tab of its own. If the browser blocks the tab, Friday asks you to allow pop-ups
 for its address.
 
 See [The holographic desktop](desktop.md) for the structures and the widget.

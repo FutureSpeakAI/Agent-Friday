@@ -68,7 +68,7 @@ Every episode opens and closes with fixed lines, not written by the model.
 
 A News show's episode opens with where you are, the day, the time it was made,
 and the weather there when it could be fetched. For example: "Good morning
-from [your city]. It's Monday, October 18, 7:05 AM, and [the weather]. This is
+from [your city]. It's Monday, October 19, 7:05 AM, and [the weather]. This is
 The Briefing from Agent Friday. I'm Friday." The greeting is morning before
 noon, afternoon until 5 PM, and evening after that. Without a city it is just
 "Good morning". To get the weather, Friday sends your city name to the
