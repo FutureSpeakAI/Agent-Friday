@@ -1255,16 +1255,21 @@ class FridayModel:
         self.reader, self.task_id = reader, task_id
 
     def decide(self, system: str, user: str):
-        from agent_friday.services import local_call
+        """One model call, inside the task's own visible job (task visibility:
+        the card names the model, its legs and its place in the Local AI queue)."""
+        from agent_friday.services import local_call, visible_jobs
         where, model = self.reader.get("where"), self.reader.get("model") or ""
-        if where == "cloud":
-            from agent_friday.services.model_router import _call_claude
-            raw = _call_claude([{"role": "user", "content": user}], system=system,
-                               model=model or None, max_tokens=1200) or ""
-            return local_call.extract_json(raw), {"in_chars": len(system) + len(user),
-                                                  "out_chars": len(raw)}
-        out = local_call.call_json(system, user, model, max_tokens=1200, retries=1)
-        return out, {"in_chars": len(system) + len(user), "out_chars": len(json.dumps(out or {}))}
+        with visible_jobs.visible_task(self.task_id, name="Website task"):
+            visible_jobs.note_route("cloud" if where == "cloud" else "local", model or None,
+                                    "the website task's page reader")
+            if where == "cloud":
+                from agent_friday.services.model_router import _call_claude
+                raw = _call_claude([{"role": "user", "content": user}], system=system,
+                                   model=model or None, max_tokens=1200) or ""
+                return local_call.extract_json(raw), {"in_chars": len(system) + len(user),
+                                                      "out_chars": len(raw)}
+            out = local_call.call_json(system, user, model, max_tokens=1200, retries=1)
+            return out, {"in_chars": len(system) + len(user), "out_chars": len(json.dumps(out or {}))}
 
 
 class FridayCards:
