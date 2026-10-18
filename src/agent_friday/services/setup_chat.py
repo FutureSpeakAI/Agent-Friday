@@ -830,8 +830,11 @@ def _on_basics(st, transcript, value, text):
     st["distribution"] = dist or "default"
     _heard(transcript, "%s, %s profile" % (
         "For my child" if st["minor_mode"] else "For me", st["distribution"]), "basics")
+    # The receipt says who decided: the starting profile is the person's only when they picked
+    # it on the card (or it was their earlier answer); otherwise it is the default.
     record.append("basics", "for a child" if st["minor_mode"] else "for me", "you",
-                  profile=st["distribution"])
+                  profile=st["distribution"],
+                  profile_by=("you" if v.get("profile_picked") else "default"))
     _enter(st, transcript, "posture")
 
 
