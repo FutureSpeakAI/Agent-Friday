@@ -210,13 +210,16 @@ def test_both_chat_routes_name_the_conversation_as_soon_as_it_is_resolved():
 
 # ── a typed Send of a held detail names where it goes ─────────────────────────────────────
 
-def _typed(card_id, words, decision="approve"):
-    """The owner's typed words reach answer_card the way a chat turn does (agent._tool_answer_card)."""
+def _typed(card_id, words, decision="approve", conversation="conv-1"):
+    """The owner's typed words reach answer_card the way a chat turn does (agent._tool_answer_card),
+    with the turn's conversation set around the tool call."""
     from agent_friday.services import agent
-    toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_OWNER_TEXT.set(words)]
+    toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_OWNER_TEXT.set(words),
+            agent._CURRENT_CONVERSATION.set(conversation)]
     try:
         return agent._tool_answer_card({"card_id": card_id, "decision": decision})
     finally:
+        agent._CURRENT_CONVERSATION.reset(toks[2])
         agent._CURRENT_OWNER_TEXT.reset(toks[1])
         agent._CURRENT_SURFACE.reset(toks[0])
 
@@ -242,6 +245,15 @@ def test_a_typed_send_naming_the_cards_provider_releases_exactly_that_text_there
     assert MARK not in _sent_system(_turn(_clock(1), conversation="conv-2"))
     assert MARK not in _sent_system(_turn(_clock(1), provider="openrouter", model="some/model"))
     assert MARK not in _sent_system(_turn("The PRIVATE-MARK note today is alpha."))
+
+
+def test_words_typed_in_another_conversation_release_nothing(gate):
+    _turn(_clock(1))                                    # the card is raised in conv-1
+    cid = _cards()[0]["approval_id"]
+    said = _typed(cid, "Yes, send it to anthropic.", conversation="conv-2")
+    assert ap.get_approval(cid)["status"] == "pending", said
+    assert said.startswith("NOT SENT") and "another conversation" in said
+    assert MARK not in _sent_system(_turn(_clock(1)))
 
 
 def test_naming_a_different_provider_releases_nothing(gate):

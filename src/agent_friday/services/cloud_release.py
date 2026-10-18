@@ -621,6 +621,10 @@ def answer_in_words(approval_id: str, claimed: str, owner_words: str, *, spoken:
         # card names. Nothing is read back and no earlier "yes" counts (see typed_send_names_provider).
         if not typed_send_names_provider(words, str(payload.get("provider") or "")):
             return {"ok": False, "text": _typed_send_hint(rec)}
+        # Words typed in one conversation decide only that conversation's card.
+        if payload.get("conversation") and payload.get("conversation") != _conversation():
+            return {"ok": False, "text": ("NOT SENT: that card was raised in another conversation. Tell the user "
+                                          "it is on their screen: Send or Keep on this PC there.")}
         out = decide(rec["approval_id"], "approve", {}, decided_by="owner:chat")
         _READBACKS.pop(rec["approval_id"], None)
         if not out.get("ok") or not out.get("won"):
