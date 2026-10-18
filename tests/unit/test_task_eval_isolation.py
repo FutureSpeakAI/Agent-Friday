@@ -80,7 +80,7 @@ def test_the_child_refuses_a_tool_list_with_anything_but_the_virtual_tools():
 
 
 def test_a_trial_process_never_touches_the_owners_keychain(monkeypatch, tmp_path):
-    """Security review 2026-10-18, finding 1: the keychain is per Windows user,
+    """The keychain is per Windows user,
     so a scratch home does not isolate it."""
     keyring = pytest.importorskip("keyring")
     from agent_friday.governance import proof_of_integrity as poi
@@ -97,7 +97,7 @@ def test_a_trial_process_never_touches_the_owners_keychain(monkeypatch, tmp_path
 
 
 def test_a_trial_process_never_reads_the_owners_launch_script(monkeypatch):
-    """Security re-check D: the repo's start.bat can hold the vault passphrase."""
+    """The repo's start.bat can hold the vault passphrase."""
     from agent_friday.services import vault_passphrase as vp
     monkeypatch.setenv("FRIDAY_TRIAL", "1")
     assert vp._from_start_bat() == ""
@@ -156,8 +156,10 @@ def test_the_egress_guard_allows_only_the_model_endpoint():
         "out['log'] = egress.refused()\n"
         "print(json.dumps(out))\n")
     try:
+        import os
         r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                           encoding="utf-8", timeout=60)
+                           encoding="utf-8", timeout=60,
+                           env=dict(os.environ, PYTHONPATH=str(ROOT / "src")))
     finally:
         allowed.close()
         other.close()
@@ -168,3 +170,30 @@ def test_the_egress_guard_allows_only_the_model_endpoint():
     assert out["dns"] == "refused"
     assert out["socketpair"] == "ok"
     assert f"127.0.0.1:{port_b}" in out["log"]
+
+
+def test_every_child_loads_the_friday_this_process_imported(tmp_path):
+    """The episode child, the grader and the canary scan are started with the
+    package root of THIS process's Friday first on PYTHONPATH, so a PC whose
+    installed copy is a different checkout still runs the code under test."""
+    import os
+    import agent_friday
+    from agent_friday.task_eval import runner
+    here = str(Path(agent_friday.__file__).resolve().parents[1])
+    assert runner.child_pythonpath() == here
+    env = runner.child_env(tmp_path, b"k" * 32)
+    assert env["PYTHONPATH"] == here
+    probe = "import agent_friday, sys; print(agent_friday.__file__)"
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, encoding="utf-8",
+                         timeout=60, cwd=str(tmp_path), env=dict(os.environ, PYTHONPATH=runner.child_pythonpath()))
+    assert Path(out.stdout.strip()).resolve().parents[1] == Path(here)
+    src = (Path(runner.__file__)).read_text(encoding="utf-8")
+    assert src.count("PYTHONPATH=child_pythonpath()") == 2   # grade_episode, scan_for_canary
+
+
+def test_a_child_profile_never_points_at_the_owners_app_data(monkeypatch, tmp_path):
+    from agent_friday.task_eval.runner import child_env
+    monkeypatch.setenv("APPDATA", str(tmp_path.parent / "owner-profile" / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / "owner-profile" / "Local"))
+    env = child_env(tmp_path, b"k" * 32)
+    assert env["APPDATA"].startswith(str(tmp_path)) and env["LOCALAPPDATA"].startswith(str(tmp_path))

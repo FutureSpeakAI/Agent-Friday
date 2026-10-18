@@ -231,7 +231,7 @@ def run(job: dict) -> dict:
     text = result.get("text") or ""
     rec["final_text"] = text
     # Only the send wrapper's own transport error makes an episode missing; a
-    # crash whose text merely mentions "503" is the agent's (security re-check F).
+    # crash whose text merely mentions "503" is the agent's.
     if state["transport"]:
         rec["outcome"] = "seat_busy"
         rec["infra_error"] = (state["transport"] or err)[:500]

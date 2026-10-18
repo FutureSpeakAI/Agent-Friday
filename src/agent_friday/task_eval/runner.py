@@ -36,11 +36,19 @@ def _src_root() -> str:
     return str(Path(agent_friday.__file__).resolve().parents[1])
 
 
+def child_pythonpath() -> str:
+    """PYTHONPATH for any child process that runs Friday code: the package root
+    of the Friday THIS process imported, first, so a child never resolves
+    `agent_friday` to a different installed checkout."""
+    return _src_root()
+
+
 def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Dict[str, str]:
     env = {}
     for k, v in os.environ.items():
         up = k.upper()
-        if up.startswith("FRIDAY_") or up in ("HOME", "USERPROFILE", "PYTHONPATH", "PYTHONHOME"):
+        if up.startswith("FRIDAY_") or up in ("HOME", "USERPROFILE", "PYTHONPATH", "PYTHONHOME",
+                                               "APPDATA", "LOCALAPPDATA"):
             continue
         if not keep_cloud_keys and any(h in up for h in _SECRET_HINTS):
             continue
@@ -49,12 +57,18 @@ def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Di
     user = scratch / "user"
     home.mkdir(parents=True, exist_ok=True)
     user.mkdir(parents=True, exist_ok=True)
+    (user / "AppData" / "Roaming").mkdir(parents=True, exist_ok=True)
+    (user / "AppData" / "Local").mkdir(parents=True, exist_ok=True)
     env.update({
         "FRIDAY_TRIAL": "1",
         "FRIDAY_TRIAL_INSTRUCTION_KEY": key.hex(),
         "FRIDAY_HOME": str(home),
         "HOME": str(user),
         "USERPROFILE": str(user),
+        # Per-user application data (credential files, caches) points into the
+        # scratch profile too, never at the owner's.
+        "APPDATA": str(user / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(user / "AppData" / "Local"),
         "FRIDAY_TESTING": "1",
         "FRIDAY_NO_ARBITER": "1",
         "FRIDAY_DECISION_BACKEND": "keyword",
@@ -64,7 +78,7 @@ def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Di
         # is in-memory in trial mode (proof_of_integrity.get_governance_key).
         "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
         "PYTHONIOENCODING": "utf-8",
-        "PYTHONPATH": _src_root(),
+        "PYTHONPATH": child_pythonpath(),
     })
     return env
 
@@ -78,10 +92,11 @@ def write_candidate_instructions(home: Path, texts: Dict[str, str], key: bytes) 
         if inf.is_locked(sid):
             raise ValueError(f"{sid} is locked and cannot be a trial subject")
         d.mkdir(parents=True, exist_ok=True)
+        base = inf.shipped_sha(sid)
         (d / f"{sid}.md").write_bytes(text.encode("utf-8"))
         (d / f"{sid}.sig.json").write_text(json.dumps({
-            "id": sid, "card": "trial", "actor": "trial", "at": time.time(),
-            "mac": inf.sign(sid, text, "trial", key)}), encoding="utf-8")
+            "id": sid, "card": "trial", "actor": "trial", "at": time.time(), "base_sha256": base,
+            "mac": inf.sign(sid, text, "trial", key, base)}), encoding="utf-8")
 
 
 def grade_episode(episode_path: Path, *, pack: str = "dev", answers_dir: Optional[str] = None,
@@ -90,7 +105,7 @@ def grade_episode(episode_path: Path, *, pack: str = "dev", answers_dir: Optiona
     cmd = [python or sys.executable, "-m", "agent_friday.task_eval_grader", "grade",
            "--episode", str(episode_path)]
     cmd += ["--answers", answers_dir] if answers_dir else ["--pack", pack]
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=_src_root())
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=child_pythonpath())
     try:
         # A fresh, empty working folder: `-m` puts the cwd first on the import
         # path, and the episode folder is one the child wrote into.
@@ -117,7 +132,7 @@ def scan_for_canary(text: str, *, pack: str = "dev", answers_dir: Optional[str] 
         p.write_text(text, encoding="utf-8")
         cmd = [python or sys.executable, "-m", "agent_friday.task_eval_grader", "scan", "--text-file", str(p)]
         cmd += ["--answers", answers_dir] if answers_dir else ["--pack", pack]
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=_src_root())
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=child_pythonpath())
         try:
             out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=60, env=env, cwd=d)
             return json.loads((out.stdout or "").strip().splitlines()[-1])

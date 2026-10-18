@@ -1,7 +1,6 @@
 """Practice tasks: multi-step episodes Friday runs against a virtual world.
 
-Harness2 adoption spec HA1 (ftv/program/specs/harness2_adoption_STORM_2026-10-18.md
-§8). One episode is one practice task run once by Friday's real system prompt
+One episode is one practice task run once by Friday's real system prompt
 and real tool loop, in a child process, with a scratch home and only the
 virtual tools in ``world`` (mailbox, calendar, files, wiki, web pages, skills,
 a scripted owner). Nothing real is read or sent.
