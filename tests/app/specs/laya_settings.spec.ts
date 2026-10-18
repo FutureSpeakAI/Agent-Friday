@@ -79,7 +79,9 @@ test('the tab shows what runs, her modes and a report card, and the approval che
   await page.reload({ waitUntil: 'domcontentloaded' });
   root = await openLaya(page);
   const titles = await root.locator('section[data-st-section]').evaluateAll(es => es.map(e => e.getAttribute('data-st-section')));
-  expect(titles).toEqual(["What Laya does", "Laya's modes", "Laya's report card", "Replay test", "Confidence bars", "Coming next"]);
+  expect(titles).toEqual(["What Laya does", "Laya's modes", "Laya's report card", "Replay test", "Confidence bars",
+    "Teach her a phrase", "What Laya learns about you", "Instant answers (no model)", "Laya chat pilot",
+    "Safe writes (off until you turn them on)", "Coming next"]);
   await expect(root.locator('[data-laya-card="series"]')).toContainText('Series One');
   await expect(root.locator('[data-laya-card="series"]')).toContainText('ms typical');
   for (const id of ['approval_check', 'safe_writes']) {
@@ -183,4 +185,71 @@ test('"confidence bars" by voice opens the Laya tab at that section', async ({ p
   await expect(page.locator('[data-laya-settings="ready"]')).toBeVisible({ timeout: 30000 });
   await expect(page.locator('section[data-st-section="Confidence bars"]')).toBeInViewport({ timeout: 30000 });
   await shot(page, info, '08-laya-voice-confidence-bars');
+});
+
+// ── Slice 2: the panels that moved here, Teach her a phrase, reset my bars ──
+
+const MOVED = ['What Laya learns about you', 'Instant answers (no model)', 'Laya chat pilot', 'Safe writes (off until you turn them on)'];
+
+test('the Laya panels from Privacy & Data are on this tab now, and gone from Privacy & Data', async ({ page }, info) => {
+  const root = await openLaya(page);
+  for (const title of MOVED) await expect(root.locator(`section[data-st-section="${title}"]`)).toHaveCount(1);
+  await expect(root.locator('[data-st-key="settings.laya.personal_learning"]')).toHaveCount(1);
+  await showSection(page, 'What Laya learns about you');
+  await shot(page, info, '09-laya-learning-moved-here');
+  // "Change" on a mode row scrolls to the section on this tab that changes it.
+  await showSection(page, "Laya's modes");
+  await root.locator('[data-laya-change="safe_writes"]').click();
+  await expect(page.locator('section[data-st-section="Safe writes (off until you turn them on)"]')).toBeInViewport({ timeout: 10000 });
+  await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'privacy' } })); });
+  await expect(page.locator('section[data-st-section="What needs your sign-off"]')).toHaveCount(1, { timeout: 30000 });
+  for (const title of MOVED) await expect(page.locator(`section[data-st-section="${title}"]`)).toHaveCount(0);
+});
+
+test('teach her a phrase: nothing is chosen for you, and the answer is honest', async ({ page }, info) => {
+  const root = await openLaya(page);
+  await showSection(page, 'Teach her a phrase');
+  const box = root.locator('input[aria-label="Phrase to teach"]');
+  const pick = root.locator('select[aria-label="What you mean by it"]');
+  const go = root.locator('[data-laya-action="teach"]');
+  await expect(pick).toHaveValue('');
+  await expect(go).toBeDisabled();
+  await box.fill('pull up my week');
+  await expect(go).toBeDisabled();                                       // still nothing picked
+  await pick.selectOption('query_calendar');
+  await expect(go).toBeEnabled();
+  const sent = page.waitForResponse(r => new URL(r.url()).pathname === '/api/laya/settings/teach' && r.request().method() === 'POST');
+  await go.click();
+  const res = await sent;
+  expect([200, 400]).toContain(res.status());                           // a scratch home may have no vault: then it says so
+  const note = root.locator('[data-laya-note="teach"]');
+  await expect(note).toContainText(/Taken|vault|switched off|off the record/, { timeout: 20000 });
+  expect(await note.innerText()).not.toContain('pull up my week');      // her answer never repeats your words
+  await expect(note).toBeInViewport();
+  await shot(page, info, '10-laya-teach-a-phrase');
+});
+
+test('reset my bars asks first, then puts every bar back to how she shipped, in shadow', async ({ page }, info) => {
+  let root = await openLaya(page);
+  await resetBars(page);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  root = await openLaya(page);
+  await showSection(page, 'Confidence bars');
+  const read = root.locator('[data-laya-bar="query_calendar"] select');
+  const saved = page.waitForResponse(r => new URL(r.url()).pathname === '/api/laya/settings/bars' && r.request().method() === 'POST');
+  await read.selectOption('0.45');
+  await saved;
+  await root.locator('[data-laya-action="reset-bars-ask"]').click();
+  await expect(root.locator('[data-laya-action="reset-bars"]')).toBeVisible();
+  await shot(page, info, '11-laya-reset-asks-first');
+  const reset = page.waitForResponse(r => new URL(r.url()).pathname === '/api/laya/settings/bars' && r.request().method() === 'POST');
+  await root.locator('[data-laya-action="reset-bars"]').click();
+  expect((await reset).status()).toBe(200);
+  await expect(read).toHaveValue('');
+  await expect(root.locator('#laya-bars-mode')).toHaveValue('shadow');
+  const done = root.locator('[data-laya-note="reset"]');               // beside the button that caused it
+  await expect(done).toHaveText('Your bars are back to how she shipped, in shadow.');
+  await expect(done).toBeInViewport();
+  await expect(root.locator('[data-laya-action="reset-bars-ask"]')).toBeDisabled();   // nothing left to reset
+  await shot(page, info, '12-laya-reset-done');
 });
