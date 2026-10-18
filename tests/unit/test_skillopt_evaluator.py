@@ -127,3 +127,14 @@ def test_the_nightly_skillopt_run_is_a_visible_job_and_skips_on_battery(monkeypa
     out = notifications._skillopt_nightly.__wrapped__() if hasattr(notifications._skillopt_nightly, "__wrapped__") \
         else notifications._skillopt_nightly()
     assert out["skipped"] == "on battery"
+
+
+def test_a_closed_evaluator_runs_nothing(home):
+    from agent_friday.services import skillopt_evaluator as sev
+    run_one = _fake_run(lambda tid, c: {"status": "graded", "pass": True, "score": 1.0})
+    ev = sev.make_evaluator(run_one)
+    ev.close()
+    ev.close()
+    with pytest.raises(sev.EvalMissing):
+        ev("demo", "# v2", {"task": {"id": "t1"}})
+    assert run_one.seen == []

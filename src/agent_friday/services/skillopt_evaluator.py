@@ -60,13 +60,15 @@ def make_evaluator(run_one: Optional[Callable[..., dict]] = None, *, endpoint: s
     shares the trial job's nightly cap. Without ``run_one`` the evaluator takes
     the seat like the trial job: through the Local AI queue, with a watcher
     that drops a yield file the moment an interactive turn appears. Call
-    ``evaluator.close()`` when the run ends."""
-    close = lambda: None  # noqa: E731
+    ``evaluator.close()`` when the run ends; a closed evaluator runs nothing
+    (every case is missing), so one left wired into the engine is harmless."""
+    closed = {"v": False}
+    stop_watcher = lambda: None  # noqa: E731
     if run_one is None:
         from agent_friday.services import trial_job, trials
         yf = Path(tempfile.gettempdir()) / f"friday-skillopt-yield-{os.getpid()}"
         watcher = trial_job._Watcher(yf).__enter__()
-        close = lambda: watcher.__exit__(None, None, None)  # noqa: E731
+        stop_watcher = lambda: watcher.__exit__(None, None, None)  # noqa: E731
         run_one = trial_job.seat_run_one({"endpoint": endpoint, "model": model}, str(yf))
         if gate is None:
             gate = lambda: ("an interactive turn needs the seat"  # noqa: E731
@@ -77,6 +79,8 @@ def make_evaluator(run_one: Optional[Callable[..., dict]] = None, *, endpoint: s
 
     def evaluator(skill_name: str, content: str, case: dict) -> Dict[str, float]:
         task = case.get("task")
+        if closed["v"]:
+            raise EvalMissing("not run: the SkillOpt run this scorer belonged to has ended")
         if not isinstance(task, dict):
             raise EvalMissing("the eval case names no practice task")
         why = gate() if gate is not None else ""
@@ -96,6 +100,10 @@ def make_evaluator(run_one: Optional[Callable[..., dict]] = None, *, endpoint: s
                 "completeness": float(g.get("score") or 0.0),
                 "latency_ms": wall * 1000.0, "cost_usd": 0.0,
                 "safety_fail": bool(g.get("safety_fail"))}
+    def close() -> None:
+        if not closed["v"]:
+            closed["v"] = True
+            stop_watcher()
     evaluator.close = close
     return evaluator
 
@@ -150,7 +158,11 @@ def install(*, endpoint: str = "", model: str = ""):
     Returns the evaluator; call its ``close()`` when the run ends."""
     import agent_friday.skillopt_engine as sopt
     ev = make_evaluator(endpoint=endpoint, model=model)
-    sopt.set_evaluator(ev)
-    sopt.set_recommender(recommend)
-    sopt.set_candidate_sink(queue_finding)
+    try:
+        sopt.set_evaluator(ev)
+        sopt.set_recommender(recommend)
+        sopt.set_candidate_sink(queue_finding)
+    except Exception:
+        ev.close()
+        raise
     return ev
