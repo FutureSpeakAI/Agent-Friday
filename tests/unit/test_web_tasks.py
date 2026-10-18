@@ -798,3 +798,52 @@ def test_a_task_whose_records_cannot_be_written_leaves_no_run_behind(monkeypatch
     monkeypatch.setattr(wt.Journal, "append", lambda self, *a, **k: (_ for _ in ()).throw(OSError("disk")))
     out = wt.run("tn5", plan(), ports(FakeBrowser(SHOP), FakeModel([])))
     assert out["status"] == "failed" and wt.active("tn5") is None
+
+
+# ── Confirmation review (conditions 1-4) ──────────────────────────────────────
+
+def test_an_in_page_anchor_after_opening_the_address_by_hand_is_not_a_new_page():
+    class Anchor(FakeBrowser):
+        def call(self, tool, args):
+            if tool == "browser_click":
+                self.calls.append((tool, dict(args)))
+                self.url = self.url.split("#")[0] + "#main"
+                return page(self.url, self.pages.get(self.url.split("#")[0], ""))
+            return super().call(tool, args)
+
+        def page_text(self):
+            return self.pages.get(self.url.split("#")[0], "")
+    pages = dict(SHOP)
+    b = Anchor(pages)
+    m = FakeModel([{"actions": [{"do": "open", "url": "https://shop.example.com/confirm"}]},
+                   {"actions": [{"do": "click", "element": 1}]},
+                   {"done": {"evidence": "HP 305 black cartridge added"}},
+                   {"done": {"evidence": "HP 305 black cartridge added"}}])
+    out = wt.run("tc1", plan(success=[{"url_contains": "/confirm"}]), ports(b, m))
+    assert out["receipt"]["verified"] is False
+
+
+def test_a_long_typed_value_cannot_hide_the_proof_past_a_cut_off():
+    assert wt._overlaps_typed("Thank you, your order is placed",
+                              ["x" * 600 + " Thank you, your order is placed"])
+
+
+@pytest.mark.parametrize("url", ["https://x.example.com/?u=/%09/evil.com", "https://x.example.com/?u=evil.com",
+                                 "https://x.example.com/?dest=www.evil.com", "https://x.example.com/redirect/evil.com"])
+def test_more_redirect_shapes_are_refused(url):
+    assert wt._carries_an_address(url)
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.amazon.com/s?k=hp+305+ink&ref=nb_sb_noss",
+    "https://www.opentable.com/r/le-bistro?covers=4&dateTime=2026-10-20T19%3A00",
+    "https://www.booking.com/searchresults.html?ss=Austin&checkin=2026-11-01",
+    "https://example.com/product/hp-305-xl",
+])
+def test_ordinary_shopping_and_booking_addresses_open(url):
+    assert not wt._carries_an_address(url)
+
+
+def test_proof_text_skips_text_clipped_away_by_an_ancestor():
+    from agent_friday.services import browser_session as bs
+    assert "getComputedStyle" in bs._PROOF_TEXT_JS and "scrollY" in bs._PROOF_TEXT_JS

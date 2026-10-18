@@ -538,13 +538,16 @@ def _carries_an_address(url: str) -> bool:
     tail = parts.query + "&" + parts.fragment
     path = parts.path
     for _ in range(4):
-        low = tail.lower()
-        lpath = path.lower()
+        # Browsers drop tabs and newlines inside an address: so does this check.
+        low = re.sub(r"[\t\r\n]", "", tail.lower())
+        lpath = re.sub(r"[\t\r\n]", "", path.lower())
         if ("://" in low or "\\" in low or "://" in lpath or "\\" in lpath
                 or re.search(r"(^|[=&])[\s\x00-\x1f]*[/\\]{2}", low)
                 or re.search(r"(^|[=&])[\s\x00-\x1f]*(https?|ftp|javascript|data|vbscript):", low)
                 or re.search(r"/(https?|ftp)(:|%3a)", lpath)
-                or re.search(r"(^|[=&])[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?/", low)):
+                or re.search(r"(^|[=&])[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?/", low)
+                or re.search(r"(^|[=&])(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|co|info|biz|app|dev|xyz|ru|cn|tk|top)(:\d+)?($|&)", low)
+                or re.search(r"/(www\.)?[a-z0-9-]+\.(com|net|org|io|co|info|biz|app|dev|xyz|ru|cn|tk|top)(/|$)", lpath)):
             return True
         nxt_tail, nxt_path = unquote_plus(tail), unquote_plus(path)
         if nxt_tail == tail and nxt_path == path:
@@ -707,11 +710,18 @@ def _overlaps_typed(text: str, typed: List[str]) -> bool:
     t = _alnum(text)[:400]
     if not t:
         return False
-    pieces = [_alnum(x)[:600] for x in typed or [] if _alnum(x)]
+    pieces = [_alnum(x) for x in typed or [] if _alnum(x)]
     if not pieces:
         return False
     need = max(8, (len(t) + 1) // 2)
-    for cand in pieces + ["".join(pieces)[-1200:]]:
+    joined = "".join(pieces)
+    # Long values are checked in overlapping windows, so nothing typed hides
+    # past a cut-off.
+    windows = []
+    for cand in pieces + [joined]:
+        step = 600
+        windows += [cand[i:i + 900] for i in range(0, max(1, len(cand) - 299), step)] or [cand]
+    for cand in windows:
         if _longest_common(t, cand) >= min(need, len(t)):
             return True
     return False
@@ -971,7 +981,10 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
         track_url(res)
         if tool == "browser_open":
             run_state.reached_by_open = True
-        elif tool in ("browser_click", "browser_type", "browser_select") and run_state.page_url != before:
+        elif (tool in ("browser_click", "browser_type", "browser_select")
+              and _url_core(run_state.page_url) != _url_core(before)):
+            # Only a move to another page counts (scheme, host or path), never
+            # an in-page anchor or a script rewriting the query.
             run_state.reached_by_open = False
         return res
 
@@ -1071,7 +1084,7 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                         decision = wait_card(card["approval_id"], title=title, outward=True)
                         before_card = run_state.page_url
                         page = act("browser_read", {})
-                        if decision == "approved" and run_state.page_url != before_card:
+                        if decision == "approved" and _url_core(run_state.page_url) != _url_core(before_card):
                             run_state.reached_by_open = False
                         if decision == "approved":
                             journal.append("checkpoint", url=_url_core(run_state.page_url), step=state["steps"])

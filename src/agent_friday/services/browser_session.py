@@ -2071,7 +2071,18 @@ _PROOF_TEXT_JS = r"""() => {
     else if (el.checkVisibility && !el.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) ok = false;
     else {
       const r = el.getBoundingClientRect();
-      if (r.width < 2 || r.height < 2 || r.right < 0 || r.bottom < 0) ok = false;
+      // Outside the document (pushed off to the left or above the top),
+      // not merely scrolled past.
+      if (r.width < 2 || r.height < 2 || r.right + window.scrollX < 0 || r.bottom + window.scrollY < 0) ok = false;
+      // Clipped away by an ancestor that hides its overflow (max-height:0 and the like).
+      for (let a = el.parentElement; ok && a && a !== document.body; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (/(hidden|clip)/.test(cs.overflow + cs.overflowX + cs.overflowY)) {
+          const ar = a.getBoundingClientRect();
+          if (ar.width < 2 || ar.height < 2 || r.right <= ar.left || r.left >= ar.right
+              || r.bottom <= ar.top || r.top >= ar.bottom) ok = false;
+        }
+      }
     }
     seen.set(el, ok);
     return ok;
