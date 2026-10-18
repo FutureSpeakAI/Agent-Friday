@@ -86,8 +86,12 @@ _PROBLEMS: Dict[str, str] = {}
 _PAUSED: Dict[str, bool] = {}
 
 
-class InstructionError(ValueError):
-    """A write or undo that was refused. The message says why, in plain words."""
+from agent_friday.user_errors import UserFacingError as _UserFacingError  # noqa: E402
+
+
+class InstructionError(_UserFacingError, ValueError):
+    """A write or undo that was refused. The message says why, in plain words,
+    and is safe to show the owner."""
 
 
 # ── the shipped set ─────────────────────────────────────────────────────────
