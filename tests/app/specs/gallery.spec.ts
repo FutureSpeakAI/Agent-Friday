@@ -16,6 +16,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { bootApp, apiJson, openWorkspace, SCRATCH, scratchName, waitForSettled } from '../harness';
 import { assertCreatedByThisTest, assertNewestFirst, assertImagesDecoded } from '../liveness';
+import { settle } from '../helpers/settle';
 
 // Mirrors core.CREATIONS_DIR: the Desktop folder when it exists, else ~/.friday.
 const desktop = path.join(os.homedir(), 'Desktop');
@@ -44,7 +45,7 @@ test.describe('Studio gallery', () => {
 
     await bootApp(page);
     await openWorkspace(page, 'Studio');
-    await page.waitForTimeout(1500);
+    await settle(page, { quietMs: 1000, timeout: 6000 });
 
     const before = ((await apiJson(page, '/api/creations')).files || []).map((f: any) => f.name);
 
@@ -64,7 +65,9 @@ test.describe('Studio gallery', () => {
       shownInUi = (await page.locator(`text=${name}`).count()) > 0
         || (await page.locator(`img[src*="${name}"]`).count()) > 0;
       if (shownInUi) break;
-      await page.waitForTimeout(2000);
+      // Up to 2 s for it to show; then ask the API and look again.
+      await page.locator(`text=${name}`).or(page.locator(`img[src*="${name}"]`)).first()
+        .waitFor({ timeout: 2000 }).catch(() => { /* not yet: the loop decides */ });
     }
 
     // First: the API must see it at all. If not, the problem is the server.

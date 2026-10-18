@@ -24,10 +24,11 @@
  * tests/unit/test_settings_controls_have_handler_and_reader.py.
  */
 import * as fs from 'fs';
-import { test, expect } from '../fixtures';
+import { test, expect, GL_EMULATOR_ARGS } from '../fixtures';
 import type { Page } from '../fixtures';
 import type { Request } from '@playwright/test';
 import { BASE } from '../harness';
+import { settle } from '../helpers/settle';
 
 type Section = { id: string; label: string };
 const SECTIONS: Section[] = [
@@ -99,7 +100,7 @@ async function goSection(page: Page, s: Section) {
   await rail.getByRole('button', { name: s.label, exact: true }).click();
   await expect(rail.getByRole('button', { name: s.label, exact: true })).toHaveAttribute('aria-current', 'page');
   // Panels fetch their own data; give the section a moment to settle.
-  await page.waitForTimeout(900);
+  await settle(page, { root: '.fx-settings-sections', quietMs: 900, timeout: 3600 });
 }
 
 /** Tag every control in the open section and describe it. Deterministic order. */
@@ -163,6 +164,10 @@ async function savedSettings(page: Page): Promise<any> {
 // 60 s or more while the page's polling requests queue behind it, so the bound is generous and only a save
 // that never answers fails. The walk's own budget (below) is 15 minutes.
 const SAVE_MS = 150_000;
+
+// Measured on CI: this walk (hundreds of scrolls and reloads) is fastest with every frame composited through the
+// SwiftShader GL emulator (16.6-19 min, against 23-35 min on the suite's default path). See tests/app/fixtures.ts.
+test.use({ launchOptions: { args: GL_EMULATOR_ARGS } });
 
 test.describe('Settings walk', () => {
   test.setTimeout(900_000);

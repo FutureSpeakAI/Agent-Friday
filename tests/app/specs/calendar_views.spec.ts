@@ -90,8 +90,11 @@ test('Day, Week and Month draw the events in their Google colours, and looking w
   await expect(page.locator('.cal-timeline [data-fr-ref="event:e3"]')).toBeVisible();
 
   // Friday sees the events in every view
-  const st = await page.evaluate(() => (window as any).fridayStage && (window as any).fridayStage.snapshot('calendar'));
-  expect((st.items || []).map((i: any) => i.ref)).toContain('event:e3');
+  // The stage is published after the view draws, not with it: wait for it to name the event.
+  await expect.poll(() => page.evaluate(() => {
+    const st = (window as any).fridayStage && (window as any).fridayStage.snapshot('calendar');
+    return ((st && st.items) || []).map((i: any) => i.ref);
+  }), { timeout: 10000 }).toContain('event:e3');
   expect(writes.filter(w => /calendar/.test(w))).toEqual([]);
 });
 

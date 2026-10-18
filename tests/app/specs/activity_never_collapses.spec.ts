@@ -14,6 +14,7 @@
  */
 import { test, expect } from '../fixtures';
 import { bootApp } from '../harness';
+import { expectVisible } from '../vision';
 
 const CARD = {
   approval_id: 'appr_synthetic_topbar',
@@ -60,5 +61,8 @@ for (const [width, height] of [[1366, 768], [1280, 720]] as const) {
     expect(box && box.x >= 0 && box.x + box.width <= width, 'Activity is off the screen').toBeTruthy();
     await page.screenshot({ path: info.outputPath(`activity-kept-${width}x${height}.png`) });
     await bar.screenshot({ path: info.outputPath(`top-bar-${width}x${height}.png`) });
+    // The attributes above can all be right while Windows fonts push the chip out of sight (LESSONS).
+    // With FRIDAY_VISION_CHECK=1 and a local vision model, a model also looks; otherwise this notes why not.
+    await expectVisible(bar, 'a button labelled "Activity" in this top bar, with its label readable');
   });
 }

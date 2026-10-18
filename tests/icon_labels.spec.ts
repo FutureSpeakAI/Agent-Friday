@@ -7,6 +7,7 @@
  *   FRIDAY_URL=http://localhost:3219 PW_CHANNEL=msedge npx playwright test tests/icon_labels.spec.ts
  */
 import { test, expect, type Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 const BASE = process.env.FRIDAY_URL || '';
 if (process.env.PW_CHANNEL) test.use({ channel: process.env.PW_CHANNEL });
@@ -45,7 +46,7 @@ test('every workspace, in its own tab and in 3D', async ({ page }) => {
     for (const view3d of [false, true]) {
       await page.goto(BASE + '/w/' + id + (view3d ? '?view3d=1' : ''));
       await page.waitForSelector('.ws-tab-body > *', { timeout: 60000 });
-      await page.waitForTimeout(view3d ? 3000 : 2500);
+      await settle(page, { quietMs: 1000, timeout: view3d ? 12000 : 10000 });
       if (view3d && !(await page.locator('.f3, .f3-host.on').count())) continue;
       for (const u of await unlabelled(page)) bad.push(id + (view3d ? ' (3D)' : '') + ': ' + u);
     }
@@ -57,10 +58,10 @@ test('the desktop: windows, chat panel and chat window', async ({ page }) => {
   await prepare(page);
   await page.goto(BASE + '/');
   await page.waitForSelector('.dock', { timeout: 90000 });
-  await page.waitForTimeout(1500);
+  await settle(page, { quietMs: 1000, timeout: 6000 });
   for (const id of ['messages', 'news', 'calendar']) await page.locator(`.dock-btn[data-ws="${id}"]`).dispatchEvent('click', { bubbles: true });
   await page.evaluate(async () => { const r = await fetch('/api/conversations').then(x => x.json()); (window as any).fridayOpenChatWindow((r.conversations || [])[0].id, 'x'); });
-  await page.waitForTimeout(2500);
+  await settle(page, { quietMs: 1000, timeout: 10000 });
   const bad = await unlabelled(page);
   expect(bad, bad.join('\n')).toEqual([]);
 });

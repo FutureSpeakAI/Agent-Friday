@@ -15,9 +15,13 @@
  * satisfy a test. Slow — around 30-60s per screen — so this is the full tier,
  * never the smoke tier.
  */
-import { test, expect } from '../fixtures';
+import { test, expect, GL_EMULATOR_ARGS } from '../fixtures';
 import { bootApp, openWorkspace, waitForSettled } from '../harness';
 import { judgeConfirmed, describeVerdict } from '../vision';
+import { settle } from '../helpers/settle';
+
+// The judge looks at the scene: draw it through the full GL path.
+test.use({ launchOptions: { args: GL_EMULATOR_ARGS } });
 
 const SCREENS: { workspace: string | null; intent: string; reveal?: string }[] = [
   {
@@ -56,10 +60,10 @@ for (const screen of SCREENS) {
     if (screen.workspace) await openWorkspace(page, screen.workspace);
     if (screen.reveal) {
       const tab = page.getByRole('button', { name: screen.reveal, exact: false }).first();
-      if (await tab.count()) { await tab.click(); await page.waitForTimeout(800); }
+      if (await tab.count()) { await tab.click(); await settle(page, { quietMs: 800, timeout: 3200 }); }
     }
     await waitForSettled(page);
-    await page.waitForTimeout(1200); // let the last paint land
+    await settle(page, { quietMs: 1000, timeout: 4800 }); // let the last paint land
 
     const png = await page.screenshot({ fullPage: false });
     await info.attach(`${name}.png`, { body: png, contentType: 'image/png' });

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
+import { settle } from './app/helpers/settle';
 
 /**
  * Agent Friday — broad UI + connection test suite.
@@ -74,7 +75,7 @@ test.describe('Boot & liquid UI', () => {
     });
     page.on('pageerror', (e) => fatal.push(String(e)));
     await waitForLiquidUI(page);
-    await page.waitForTimeout(1500);
+    await settle(page, { quietMs: 1000, timeout: 6000 });
     expect(fatal, `Unexpected console errors:\n${fatal.join('\n')}`).toEqual([]);
   });
 });
@@ -107,7 +108,7 @@ test.describe('Model selector reflects available models only', () => {
   test('panel is compact: Quick Switch + collapsed roles + Browse All', async ({ page }) => {
     await waitForLiquidUI(page);
     await page.locator('[aria-label="Model selection"]').click();
-    await page.waitForTimeout(400);
+    await expect.poll(() => page.locator('body').innerText()).toMatch(/Quick Switch/i);
     const body = await page.locator('body').innerText();
     expect(body).toMatch(/Quick Switch/i);
     expect(body).toMatch(/By Role/i);
@@ -122,9 +123,9 @@ test.describe('Model selector reflects available models only', () => {
   test('expanding Orchestrator shows available-only options', async ({ page }) => {
     await waitForLiquidUI(page);
     await page.locator('[aria-label="Model selection"]').click();
-    await page.waitForTimeout(400);
+    await expect.poll(() => page.locator('body').innerText()).toMatch(/Quick Switch/i);
     await page.getByRole('button', { name: /Orchestrator/ }).first().click();
-    await page.waitForTimeout(300);
+    await settle(page, { quietMs: 300, timeout: 3000 });
     const opts = await page.locator('.model-option-cloud').allInnerTexts();
     expect(opts.length).toBeGreaterThan(0);
     // Available-only contract: no "needs key" / dimmed rows in the quick panel.
@@ -135,11 +136,11 @@ test.describe('Model selector reflects available models only', () => {
   test('Browse All Models opens Settings → Providers', async ({ page }) => {
     await waitForLiquidUI(page);
     await page.locator('[aria-label="Model selection"]').click();
-    await page.waitForTimeout(400);
+    await expect(page.getByRole('button', { name: 'Browse All Models' })).toBeVisible();
     // Role locator: the Local Models overflow hint can also contain this text
     // on machines with >4 Ollama models — the footer is the only BUTTON.
     await page.getByRole('button', { name: 'Browse All Models' }).click();
-    await page.waitForTimeout(800);
+    await expect.poll(() => page.locator('body').innerText()).toMatch(/MODEL PROVIDERS/);
     const body = await page.locator('body').innerText();
     expect(body).toMatch(/MODEL PROVIDERS/);
     expect(body).toMatch(/MODEL BROWSER/i);
@@ -178,7 +179,7 @@ test.describe('Model catalog (/api/models)', () => {
   test('Quick Switch renders from the catalog, provider-diverse', async ({ page, request }) => {
     await waitForLiquidUI(page);
     await page.locator('[aria-label="Model selection"]').click();
-    await page.waitForTimeout(500);
+    await expect.poll(() => page.locator('body').innerText()).toMatch(/Quick Switch/i);
     const opts = await page.locator('.model-option-cloud').allInnerTexts();
     const blob = opts.join(' | ');
     // Quick Switch spans providers: with Ollama running the 🏠 marker shows,
@@ -254,7 +255,7 @@ test.describe('Header controls', () => {
       const btn = page.locator(`[aria-label="${label}"]`);
       await expect(btn).toBeVisible();
       await btn.click();
-      await page.waitForTimeout(400);
+      await settle(page, { quietMs: 400, timeout: 3000 });
       // Something opened — overall body text grew or a modal/panel exists.
       expect(await page.locator('body').innerText()).toBeTruthy();
     });
@@ -263,7 +264,7 @@ test.describe('Header controls', () => {
   test('Settings panel renders core sections', async ({ page }) => {
     await waitForLiquidUI(page);
     await page.locator('[aria-label="Open settings"]').click();
-    await page.waitForTimeout(600);
+    await expect.poll(() => page.locator('body').innerText()).toContain('AI MODEL');
     const body = await page.locator('body').innerText();
     for (const section of ['AI MODEL', 'ORCHESTRATOR', 'AUDIO & VOICE', 'AGENT PERSONALITY']) {
       expect(body, `settings missing ${section}`).toContain(section);
@@ -412,7 +413,7 @@ test.describe('Content pipeline v2 UI', () => {
     // Click through every tab — none may hit the error boundary or blank out.
     for (const tab of ['Calendar', 'Queue', 'Analytics', 'Accounts', 'Ideas', 'Compose']) {
       await win.locator('button', { hasText: tab }).first().click();
-      await page.waitForTimeout(350);
+      await settle(page, { quietMs: 350, timeout: 3000 });
       const body = (await win.locator('.fwin-body').innerText()).trim();
       expect(body, `${tab} tab broke the workspace`).not.toMatch(/encountered an error/i);
       expect(body.length).toBeGreaterThan(0);
@@ -434,7 +435,7 @@ test.describe('Content pipeline v2 UI', () => {
   test('accounts: one card per platform with the trust surface', async ({ page }) => {
     const win = await openContent(page);
     await win.locator('button', { hasText: 'Accounts' }).first().click();
-    await page.waitForTimeout(500);
+    await expect(win.locator('.fwin-body')).toContainText('Test Human');
     const body = await win.locator('.fwin-body').innerText();
     // Connected card: account identity + expiry countdown + live rate budget.
     expect(body).toContain('LinkedIn');

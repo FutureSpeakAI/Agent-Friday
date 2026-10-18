@@ -8,10 +8,11 @@
 import { test } from '../fixtures';
 import { bootApp, waitForSettled } from '../harness';
 import { assertReadableContrast } from '../liveness';
+import { settle } from '../helpers/settle';
 
 test('text on the home screen can actually be read', async ({ page }) => {
   await bootApp(page);
   await waitForSettled(page).catch(() => { /* judged on whatever is on screen */ });
-  await page.waitForTimeout(1500);
+  await settle(page, { quietMs: 1000, timeout: 6000 });
   await assertReadableContrast(page, 'The home screen', 4.5);
 });

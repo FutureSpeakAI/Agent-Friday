@@ -11,6 +11,19 @@ import { test as base, expect } from '@playwright/test';
 const { resolveTarget } = require('./target.js');
 
 const TARGET = resolveTarget(process.env);
+
+/**
+ * Every frame composited through the SwiftShader GL emulator. Not the suite's
+ * default (playwright.app.config.ts): on the 4-core CI runner it kept the GPU
+ * process at 3-3.5 cores and the desktop page's specs ran out of time. Two
+ * specs opt in with `test.use({ launchOptions: { args: GL_EMULATOR_ARGS } })`,
+ * each for a measured reason:
+ *  - vision.spec.ts judges the holographic scene by eye; without this path the
+ *    scene can render as a tangle of wireframe boxes;
+ *  - settings_walk.spec.ts (hundreds of scrolls and reloads of a long page)
+ *    took 16.6-19 min on this path and 23-35 min on the default path on CI.
+ */
+export const GL_EMULATOR_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const test = base.extend<{ liveReadOnly: void }>({

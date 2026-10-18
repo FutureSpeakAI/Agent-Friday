@@ -59,7 +59,7 @@ test('the row the reticle is on reaches the stage as the cursor, for three secon
   st = await page.evaluate(() => (window as any).fridayStage.snapshot('media'));
   expect(st.cursor && st.cursor.ref).toBe('media:c4');
   expect(st.cursor.age_s).toBeLessThan(3);
-  await page.waitForTimeout(3300);
+  await page.waitForTimeout(3300);   // three seconds after it leaves: time is the behaviour under test
   st = await page.evaluate(() => (window as any).fridayStage.snapshot('media'));
   expect(st.cursor).toBeNull();
 });

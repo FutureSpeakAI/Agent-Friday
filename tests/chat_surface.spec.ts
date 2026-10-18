@@ -12,6 +12,7 @@
  *   FRIDAY_URL=http://localhost:3217 PW_CHANNEL=msedge npx playwright test tests/chat_surface.spec.ts
  */
 import { test, expect, type Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 const BASE = process.env.FRIDAY_URL || '';
 if (process.env.PW_CHANNEL) test.use({ channel: process.env.PW_CHANNEL });
@@ -37,7 +38,7 @@ async function boot(page: Page): Promise<{ sent: any[] }> {
     ? r.fulfill({ status: 200, contentType: 'application/json', body: '{"needs_prompt":false}' }) : r.continue());
   await page.goto(BASE + '/');
   await page.waitForSelector('.dock', { timeout: 90000 });
-  await page.waitForTimeout(1500);
+  await settle(page, { quietMs: 1000, timeout: 6000 });
   return { sent };
 }
 
@@ -119,7 +120,7 @@ test('workspace windows resize from the left and top edges too', async ({ page }
   await page.locator('.dock-btn[data-ws="news"]').dispatchEvent('click', { bubbles: true });
   const win = page.locator('.fwin[data-friday-workspace="news"]');
   await win.waitFor({ timeout: 20000 });
-  await page.waitForTimeout(600);
+  await settle(page, { root: '.fwin[data-friday-workspace="news"]', quietMs: 600, timeout: 3000 });
   expect(await win.locator('.win-edge').count()).toBe(8);
   const b0 = (await win.boundingBox())!;
   const e = (await win.locator('.win-edge-nw').boundingBox())!;
@@ -148,7 +149,7 @@ test('Enter sends, Shift+Enter is a new line, and composing never sends: chat wi
     const before = sent.length;
     // an IME confirming a word with Enter
     await ta.dispatchEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true });
-    await page.waitForTimeout(300);
+    await settle(page, { root, quietMs: 300, timeout: 3000 });   // a send would add to the transcript
     expect(sent.length, root + ': sent while composing').toBe(before);
     expect(await ta.inputValue(), root).toBe('line one\nline two');
     await ta.press('Enter');

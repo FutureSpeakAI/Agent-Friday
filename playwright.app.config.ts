@@ -60,11 +60,15 @@ export default defineConfig({
     headless: true,
     viewport: { width: 1440, height: 900 },
     screenshot: 'only-on-failure',
-    // Without a real GL backend, headless Chromium renders the holographic
-    // scene as a tangle of wireframe boxes, and the vision judge correctly
-    // but uselessly reports it as broken. This repo hit the same thing with
-    // the 3D knowledge galaxy.
-    launchOptions: { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
+    // WebGL is allowed (drawn in software), and the page is composited the way
+    // headless Chromium does by default. Forcing ALL compositing through the
+    // SwiftShader GL emulator (--use-gl=angle --use-angle=swiftshader) kept the
+    // GPU process at 3-3.5 of the CI runner's 4 cores for the whole run: every
+    // spec crawled, and the desktop page's specs (connect_services.spec.ts)
+    // ran past their 180 s budget on about half the runs. Two specs opt into
+    // that GL path themselves, each for a measured reason (GL_EMULATOR_ARGS in
+    // tests/app/fixtures.ts): vision.spec.ts and settings_walk.spec.ts.
+    launchOptions: { args: ['--enable-unsafe-swiftshader'] },
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
