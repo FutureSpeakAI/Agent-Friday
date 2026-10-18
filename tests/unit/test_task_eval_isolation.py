@@ -195,5 +195,10 @@ def test_a_child_profile_never_points_at_the_owners_app_data(monkeypatch, tmp_pa
     from agent_friday.task_eval.runner import child_env
     monkeypatch.setenv("APPDATA", str(tmp_path.parent / "owner-profile" / "Roaming"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / "owner-profile" / "Local"))
+    owner = tmp_path.parent / "owner-profile"
+    for var in ("TEMP", "TMP", "HOMEPATH", "OneDrive", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(var, str(owner / var))
     env = child_env(tmp_path, b"k" * 32)
     assert env["APPDATA"].startswith(str(tmp_path)) and env["LOCALAPPDATA"].startswith(str(tmp_path))
+    assert env["TEMP"].startswith(str(tmp_path)) and env["TMP"].startswith(str(tmp_path))
+    assert not [k for k, v in env.items() if str(owner) in v], "a child variable points at the owner's profile"
