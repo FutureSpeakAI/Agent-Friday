@@ -59,6 +59,10 @@ def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Di
         "FRIDAY_NO_ARBITER": "1",
         "FRIDAY_DECISION_BACKEND": "keyword",
         "CUDA_VISIBLE_DEVICES": "-1",
+        # The OS keychain is per Windows user, not per environment: a child
+        # must never read (or write) the owner's keys in it. The governance key
+        # is in-memory in trial mode (proof_of_integrity.get_governance_key).
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
         "PYTHONIOENCODING": "utf-8",
         "PYTHONPATH": _src_root(),
     })
@@ -107,8 +111,11 @@ def grade_episode(episode_path: Path, *, pack: str = "dev", answers_dir: Optiona
     cmd += ["--answers", answers_dir] if answers_dir else ["--pack", pack]
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=_src_root())
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                             timeout=timeout, env=env, cwd=str(episode_path.parent))
+        # A fresh, empty working folder: `-m` puts the cwd first on the import
+        # path, and the episode folder is one the child wrote into.
+        with tempfile.TemporaryDirectory(prefix="friday-grade-") as cwd:
+            out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                 timeout=timeout, env=env, cwd=cwd)
         line = (out.stdout or "").strip().splitlines()[-1]
         g = json.loads(line)
         if not isinstance(g, dict) or g.get("status") not in ("graded", "missing"):
@@ -146,8 +153,8 @@ def run_episode(task: dict, *, arm: str, repeat: int, instructions: Optional[Dic
     """Run one episode and grade it. Returns {"episode": path, "grade": {...}, "outcome": ...}.
 
     `overlay` is an arm: {"instructions": {section: text}, "files": {path: text}}.
-    `yield_file`: when that file exists the child stops at its next model call
-    and the episode is missing ("preempted"), so an interactive turn wins."""
+    `yield_file`: while that file exists the child is stopped at once and the
+    episode is missing ("preempted"), so an interactive turn wins the seat."""
     if overlay:
         instructions = dict(instructions or {}, **(overlay.get("instructions") or {}))
     out_dir = Path(out_dir)
@@ -166,15 +173,33 @@ def run_episode(task: dict, *, arm: str, repeat: int, instructions: Optional[Dic
         job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
         backstop = IMPORT_ALLOWANCE_S + float(task.get("wall_seconds", 360)) + 60
         t0 = time.time()
-        proc = subprocess.Popen([python or sys.executable, "-m", "agent_friday.task_eval.child", str(job_path)],
-                                cwd=str(scratch), env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT)
-        try:
-            log, _ = proc.communicate(timeout=backstop)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            log, _ = proc.communicate()
-        (out_dir / "child.log").write_bytes((log or b"")[-200_000:])
+        log_path = out_dir / "child.log"
+        preempted = False
+        with open(log_path, "wb") as logf:
+            proc = subprocess.Popen([python or sys.executable, "-m", "agent_friday.task_eval.child",
+                                     str(job_path)],
+                                    cwd=str(scratch), env=env, stdout=logf, stderr=subprocess.STDOUT)
+            # Poll, so an interactive turn takes the seat back within a second:
+            # the child is stopped, not waited for, and the episode is missing.
+            while proc.poll() is None:
+                if yield_file and os.path.exists(yield_file):
+                    preempted = True
+                    proc.kill()
+                    break
+                if time.time() - t0 > backstop:
+                    proc.kill()
+                    break
+                time.sleep(1.0)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+        if preempted:
+            rec = {"task_id": task["id"], "arm": arm, "repeat": repeat, "pack": pack,
+                   "outcome": "seat_busy", "infra_error": "preempted by an interactive turn",
+                   "proposed": _progress_calls(out_dir), "state": {}, "final_text": "",
+                   "wall_seconds": round(time.time() - t0, 2)}
+            episode_path.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
         if not episode_path.exists():
             started = (out_dir / "progress.jsonl").exists() and \
                 "first_model_call" in (out_dir / "progress.jsonl").read_text(encoding="utf-8", errors="replace")

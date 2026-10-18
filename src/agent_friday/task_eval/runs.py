@@ -132,9 +132,15 @@ def run_pairs(*, run_dir: Path, tasks: List[dict], arm_texts: Dict[str, Optional
             break
         res = run_one(task=task, arm=arm, repeat=rep, overlay=arm_texts.get(arm),
                       out_dir=Path(run_dir) / "episodes" / fp)
+        ran += 1
+        if res.get("outcome") == "seat_busy":
+            # The seat was taken (an interactive turn, a reload): not stored,
+            # so this episode is run again when the trial resumes, and this
+            # pass stops here because the seat is not free.
+            complete = False
+            break
         store(run_dir, fp, res)
         grades[(tid, rep, arm)] = res["grade"]
-        ran += 1
     rows = []
     for t in tasks:
         for r in range(int(repeats)):

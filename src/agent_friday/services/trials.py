@@ -123,9 +123,13 @@ def _remember_denied(h: str) -> None:
             _write_json(_denied_path(), hs)
 
 
-def content_hash(subject: dict, overlay: dict) -> str:
+def content_hash(subject: dict, overlay: dict, apply: Optional[dict] = None) -> str:
+    """What the card is about: the subject, the candidate, AND how it would be
+    applied. Checked again when the card is approved, so the change adopted is
+    exactly the one the owner saw (security review 2026-10-18, finding 3)."""
     body = json.dumps({"subject": {"kind": subject.get("kind"), "id": subject.get("id")},
-                       "overlay": overlay}, sort_keys=True, ensure_ascii=False)
+                       "overlay": overlay, "apply": apply or {}}, sort_keys=True, ensure_ascii=False,
+                      default=str)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
@@ -177,7 +181,7 @@ def propose(subject: dict, *, current: dict, candidate: dict, origin: str,
             bad = inf.validate(sid, text)
             if bad:
                 raise TrialRefused("; ".join(bad))
-    h = content_hash(subject, candidate)
+    h = content_hash(subject, candidate, apply)
     if h in denied_hashes():
         raise TrialRefused("the owner already declined exactly this change")
     for c in candidates():
@@ -336,7 +340,7 @@ def on_ac_power() -> bool:
         b = psutil.sensors_battery()
         return True if b is None else bool(b.power_plugged)
     except Exception:
-        return True
+        return False      # cannot tell: assume battery, wait (fail closed)
 
 
 def run_trial(cid: str, *, run_one: Optional[Callable[..., dict]] = None,
@@ -535,6 +539,12 @@ def _on_card_decided(card: Dict[str, Any]) -> None:
         return
     status = card.get("status")
     if status == "approved" and card.get("decided_by") == "owner:ui":
+        if content_hash(cand["subject"], cand["candidate"], cand.get("apply")) != (
+                payload.get("content_hash") or "") or cand.get("content_hash") != payload.get("content_hash"):
+            cand["status"] = "approve_refused"
+            cand["adopted"] = {"ok": False, "error": "the change on disk is not the one the card showed"}
+            save(cand)
+            return
         try:
             cand["adopted"] = adopt(cand, card["approval_id"])
             cand["status"] = "approved"
