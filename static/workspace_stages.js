@@ -35,16 +35,24 @@
 
   var live = {};      // ws -> off()
 
-  function present(prefix) {
-    return !!document.querySelector('[data-fr-ref^="' + prefix + '"]');
+  // The kinds of row on the page now ("event:", "health:", ...), from one pass over the marked rows.
+  function presentKinds() {
+    var kinds = {};
+    var els = document.querySelectorAll('[data-fr-ref]');
+    for (var i = 0; i < els.length; i++) {
+      var ref = String(els[i].getAttribute('data-fr-ref') || '');
+      kinds[ref.slice(0, ref.indexOf(':') + 1)] = true;
+    }
+    return kinds;
   }
 
   function sync() {
     var FS = win.fridayStage;
     if (!FS || !FS.domList || typeof document === 'undefined') return;
+    var kinds = presentKinds();
     Object.keys(WORKSPACES).forEach(function (id) {
       var w = WORKSPACES[id];
-      var on = present(w.prefix);
+      var on = !!kinds[w.prefix];
       if (on && !live[id]) {
         live[id] = FS.domList(id, {
           rows: '[data-fr-ref^="' + w.prefix + '"]', selectable: !!w.selectable, counts_only: !!w.counts_only,
@@ -57,8 +65,30 @@
     });
   }
 
+  // Did a change add or remove a marked row (or something holding one)? Text and unmarked elements
+  // changing (a clock, a status line) do not make the registrar look.
+  function marked(node) {
+    return !!(node && node.nodeType === 1 && ((node.hasAttribute && node.hasAttribute('data-fr-ref'))
+      || (node.querySelector && node.querySelector('[data-fr-ref]'))));
+  }
+  function touchesRows(records) {
+    for (var i = 0; i < (records || []).length; i++) {
+      var r = records[i], j;
+      for (j = 0; j < (r.addedNodes || []).length; j++) if (marked(r.addedNodes[j])) return true;
+      for (j = 0; j < (r.removedNodes || []).length; j++) if (marked(r.removedNodes[j])) return true;
+    }
+    return false;
+  }
+
+  // At most SYNC_MS after the first change to the rows, however busy the page is. A timer that restarted
+  // on every mutation never fired on a page that keeps changing (a clock, a status line, a live list):
+  // rows that arrived then never got their stage.
+  var SYNC_MS = 400;
   var timer = null;
-  function soon() { if (timer) clearTimeout(timer); timer = setTimeout(sync, 400); }
+  function soon(records) {
+    if (timer || !touchesRows(records)) return;
+    timer = setTimeout(function () { timer = null; sync(); }, SYNC_MS);
+  }
 
   function start() {
     if (typeof MutationObserver !== 'function' || typeof document === 'undefined') return;

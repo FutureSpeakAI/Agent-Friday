@@ -11,6 +11,16 @@ import { test as base, expect } from '@playwright/test';
 const { resolveTarget } = require('./target.js');
 
 const TARGET = resolveTarget(process.env);
+
+/**
+ * The GL path for specs that judge the holographic scene by eye. Without it,
+ * headless Chromium can render the scene as a tangle of wireframe boxes and
+ * the vision judge correctly but uselessly reports it as broken. It is costly
+ * (every frame composited through the SwiftShader GL emulator), so it is not
+ * the suite's default (playwright.app.config.ts): a spec opts in with
+ * `test.use({ launchOptions: { args: SCENE_GL_ARGS } })`.
+ */
+export const SCENE_GL_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const test = base.extend<{ liveReadOnly: void }>({
