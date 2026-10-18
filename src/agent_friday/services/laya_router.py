@@ -625,6 +625,13 @@ _SMALL_TALK = re.compile(
     re.I)
 
 
+#: Bar words for the spoken Settings > Laya controls: which way, and an action by its everyday word.
+_BAR_WAY = r"(?:stricter|more careful|more cautious|bolder|braver|less careful|less cautious)"
+_BAR_WHAT = (r"(?:the |my |your )?(?:calendar|schedule|agenda|e-?mails?|inbox|mail|briefing|files|documents|notes|wiki|"
+             r"past conversations|conversations|queue|music|media|podcasts?|screens|opening things|cards|web|news|"
+             r"everything|all of it)")
+
+
 #: The owner asking about, or acting on, what Laya has learned about them
 #: (services/laya_personal; swot spec d.4). A rule hands these to the deeper mind,
 #: which holds the ``laya_learning`` tool and the owner's own words; the router
@@ -637,7 +644,18 @@ _LEARNING_CONTROL = re.compile(
     r"|forget (?:what you(?:'ve)? (?:just )?learned|the last thing you learned|everything you learned)"
     r"|(?:reset|wipe|clear) (?:what you(?:'ve)? learned|your learning|laya|everything you learned)"
     r"|go back to how you were(?: (?:last week|a week ago|yesterday|last month))?"
-    r"|show me what you(?:'ve)? learned)"
+    r"|show me what you(?:'ve)? learned"
+    # Settings > Laya by voice (Slice 2): her replay test, and her bars. Each names Laya's own bars or test, or one
+    # of her actions by its everyday word, so "be more careful with the budget" stays an ordinary turn.
+    r"|(?:run|do|take|start) (?:(?:your|laya'?s) replay(?: test)?|(?:the|a) replay test)"
+    r"(?: on my (?:history|requests|past requests))?"
+    r"|test yourself on my (?:history|requests|past requests)"
+    # "be stricter about X" is said TO Laya by name: plain "be more careful with my emails" is a telling-off, not a bar.
+    r"|laya,?\s+(?:please\s+)?(?:be|get) (?:a (?:bit|little) )?" + _BAR_WAY
+    + r" (?:about|with|on|for|when it comes to) " + _BAR_WHAT
+    + r"|(?:raise|lower) (?:your|laya'?s|the|my) (?:confidence )?bars?(?: (?:for|on) " + _BAR_WHAT + r")?"
+    r"|(?:stop using|start using|use|turn (?:on|off)|switch (?:on|off)|reset) (?:my|your|laya'?s|the) (?:confidence )?bars"
+    r"|(?:put|set|turn) (?:my|your|the) (?:confidence )?bars (?:back )?(?:to|in|on) (?:shadow|act))"
     r"(?:\s+(?:please|now|for me))?[\s.!?]*$", re.I)
 _LEARNING_BARE = re.compile(r"^(?:friday,?\s+)?(?:forget (?:that|it)|reset|undo that learning)[\s.!]*$", re.I)
 #: The reason a learning-control rule carries; services/laya_personal reads it to
