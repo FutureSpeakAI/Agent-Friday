@@ -3682,7 +3682,7 @@ FRIDAY_SYSTEM_PROMPT = (
     "- 'Research X' → spawn_task(name='Research X', prompt='Deep research on X...')\n"
     "- 'Analyze my emails' → spawn_task\n"
     "- 'Create a report on...' → spawn_task\n"
-    "After spawning: 'Started — track it in the task tray (bottom-right).'\n"
+    "After spawning: 'Started — follow it on its task card in System.'\n"
     "For quick lookups, respond directly.\n\n"
     "== PACKAGE INSTALLATION ==\n"
     "You can install Python/npm packages with install_package. Always check_only=true first. "
@@ -3841,19 +3841,8 @@ def _load_vault_summary():
         except Exception:
             pass
 
-    # Epistemic score
-    efile = FRIDAY_DIR / "epistemic_scores.json"
-    if not efile.exists():
-        efile = FRIDAY_DIR / "epistemic.json"
-    if efile.exists():
-        try:
-            data = json.loads(efile.read_text(encoding='utf-8'))
-            ctx['epistemic'] = {
-                'overall': round(data.get('overall_score', data.get('overall', 0.72)), 2),
-            }
-        except Exception:
-            pass
-
+    # The epistemic score is not loaded: no prompt reads it, and the honesty
+    # rules are fixed text that no score steers (epistemic_engine.HONESTY_POLICY).
     return ctx
 
 
