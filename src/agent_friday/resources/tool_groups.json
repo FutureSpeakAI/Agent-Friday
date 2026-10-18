@@ -571,6 +571,9 @@
   "submit_work_order": [
    "privacy"
   ],
+  "web_task_start": [
+   "web"
+  ],
   "work_order_status": [
    "privacy"
   ],
