@@ -189,6 +189,10 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         # only on an approved card for exactly what the page
                         # holds at that moment, and raises that card otherwise.
                         "browser_click", "browser_type",
+                        # services/web_tasks: proposes a website task; an acting
+                        # task starts only on the owner's yes on its plan card,
+                        # and each browser step then passes this gate itself.
+                        "web_task_start",
                         # services/item_actions: a batch, or a change that
                         # reaches past this PC, raises ONE card and runs on
                         # approval; one local change runs with an undo.

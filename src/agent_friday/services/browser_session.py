@@ -917,9 +917,20 @@ class BrowserSession:
 
     # -- URL rules --
 
-    def url_allowed(self, url: str, *, navigation: bool) -> tuple:
+    def url_allowed(self, url: str, *, navigation: bool, main_frame: bool = True) -> tuple:
         from agent_friday.services import web_safety
         u = (url or "").strip()
+        if navigation and main_frame and self.owner is not None and self.owner.task_id:
+            # A website task (services/web_tasks.py) opens only its plan's
+            # sites. Judged on every top-level navigation: an address Friday
+            # opens, a link click, a redirect. Other browser use is untouched.
+            try:
+                from agent_friday.services import web_tasks
+                ok, why = web_tasks.navigation_check(self.owner.task_id, u)
+            except Exception:
+                ok, why = False, "the website task's sites could not be checked"
+            if not ok:
+                return False, why
         low = u.lower()
         if low.startswith(("about:", "data:", "blob:")):
             return (True, "ok") if not navigation or low.startswith("about:blank") else \
@@ -940,7 +951,12 @@ class BrowserSession:
         try:
             if self.owner is not None:
                 self._authority("view")
-            ok, why = self.url_allowed(request.url, navigation=request.is_navigation_request())
+            try:
+                main = request.frame.parent_frame is None
+            except Exception:
+                main = True     # unknown frame: judged as strictly as the page itself
+            ok, why = self.url_allowed(request.url, navigation=request.is_navigation_request(),
+                                       main_frame=main)
         except Exception as e:
             ok, why = False, f"the address could not be checked ({e})"
         if not ok:
@@ -2021,6 +2037,41 @@ def tool_close() -> str:
         return (f"Closed {s.display_name}'s agent workspace." if closed
                 else f"{s.display_name}'s browser was not open.")
     return "Closed Friday's browser window." if closed else "Friday's browser was not open."
+
+
+# ── Proof of completion: the final picture of a website task ───────────────
+
+#: Hidden before the proof picture is taken: what a password, card or
+#: identity field holds never appears in a receipt (spec WS-E12).
+_PROOF_BLUR_CSS = (
+    "input[type=password], input[autocomplete^='cc-'], input[autocomplete='one-time-code'],"
+    " input[name*='card' i], input[name*='cvv' i], input[name*='cvc' i],"
+    " input[name*='iban' i], input[name*='ssn' i], input[name*='passport' i]"
+    " { filter: blur(12px) !important; color: transparent !important;"
+    " text-shadow: none !important; }")
+
+
+def proof_picture(s: "BrowserSession", path: str) -> bool:
+    """Save a JPEG of the page for the owner's receipt, sensitive fields blurred.
+
+    Taken by Friday's code, never by the model, and never sent to any model.
+    """
+    def shot():
+        s._need_running()
+        handle = s._page.add_style_tag(content=_PROOF_BLUR_CSS)
+        try:
+            s._page.screenshot(path=str(path), type="jpeg", quality=70, full_page=False)
+        finally:
+            try:
+                handle.evaluate("el => el.remove()")
+            except Exception:
+                pass
+        return True
+    try:
+        return bool(s.call(shot, purpose="view"))
+    except Exception as e:
+        _log.info("proof picture not taken: %s", type(e).__name__)
+        return False
 
 
 # ── Approval: approving the card is what submits ────────────────────────────

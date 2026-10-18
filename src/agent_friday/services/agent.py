@@ -9962,6 +9962,44 @@ TOOL_RINGS.update({
     "browser_select": 2, "browser_scroll": 2, "browser_close": 2,
 })
 
+
+# ── Website tasks (services/web_tasks.py): an errand on a website, with caps,
+#    proof of completion and five honest endings. The tool only proposes: an
+#    acting task starts after the owner's yes on its plan card.
+
+def _tool_web_task_start(inp):
+    from agent_friday.services import web_tasks as _wt
+    return _wt.tool_web_task_start(inp)
+
+
+CLAUDE_TOOLS.append({
+    "name": "web_task_start",
+    "description": (
+        "Do a multi-step errand on a website for the user (order, book, fill in, change a "
+        "setting) as a visible background task with a step limit and a proof receipt. Shows "
+        "the user a plan card first; nothing starts before their yes. Only sites on their "
+        "list; paying, sending, submitting and passwords always wait for them."),
+    "input_schema": {"type": "object", "properties": {
+        "goal": {"type": "string", "description": "The errand, in the user's words."},
+        "start_url": {"type": "string"},
+        "sites": {"type": "array", "items": {"type": "string"}},
+        "data": {"type": "object", "description": "Values the user gave to type, by name."},
+        "success": {"type": "array", "items": {"type": "object"},
+                    "description": "Checks: {url_contains|url_matches|text_present: value}."},
+        "wants_to_act": {"type": "boolean", "description": "False for reading only."},
+        "max_steps": {"type": "integer"}, "max_minutes": {"type": "integer"},
+        "money_cap_usd": {"type": "number"}},
+        "required": ["goal", "start_url"]},
+})
+CLAUDE_TOOL_HANDLERS["web_task_start"] = _tool_web_task_start
+TOOL_RINGS["web_task_start"] = 2
+
+try:        # registers the decision hook that starts an approved website task
+    from agent_friday.services import web_tasks as _web_tasks
+    _web_tasks.register_hooks()
+except Exception as _e:
+    print(f"[agent] website tasks unavailable: {_e}")
+
 try:        # registers the decision hook that submits an approved form
     from agent_friday.services import browser_session as _browser_session  # noqa: F401
 except Exception as _e:
@@ -13182,6 +13220,38 @@ def _cloud_send_ctx(session_ctx, detail):
     return session_ctx
 
 
+def _web_task_scope(fn):
+    """A website task's session reaches only Friday's browser, only its plan's
+    sites, and never types or opens a never-send value (services/web_tasks).
+    Judged before browser ownership and every other hook; any call not made
+    under a running website task passes straight through."""
+    from functools import wraps
+
+    @wraps(fn)
+    def dispatch(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
+        try:
+            from agent_friday.services import web_tasks as _wt
+            resolved = name if name in CLAUDE_TOOL_HANDLERS else _resolve_tool_name(name)[0]
+            reason = _wt.tool_scope_denial(resolved, tool_input, session_ctx)
+        except Exception:
+            sc = session_ctx if isinstance(session_ctx, dict) else {}
+            reason = ("[WEB TASK DENY] The website task's limits could not be checked; "
+                      "nothing was run.") if sc.get("surface") == "web_task" else None
+        if reason is None:
+            return fn(name, tool_input, pii_lookup=pii_lookup, session_ctx=session_ctx, handler=handler)
+        _receipts.record(name, ok=False, denied=True, detail=reason)
+        try:
+            from agent_friday.governance import action_gate as _ag
+            _ag._receipt({"tool": name, "class": "forbidden", "decision": "deny",
+                          "reason": reason[:300], "surface": "web_task",
+                          "task_id": (session_ctx or {}).get("task_id")})
+        except Exception:
+            pass
+        return reason
+    return dispatch
+
+
+@_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):

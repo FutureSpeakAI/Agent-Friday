@@ -143,6 +143,9 @@ def notice_body(rec: Dict[str, Any]) -> str:
     return str(rec.get("description") or rec.get("action_description") or "")
 
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
+    # A website task's plan that adds a site to the owner's list
+    # (services/web_tasks): widening what Friday may do is a press on screen.
+    "web_task_plan_new_sites": frozenset({"owner:ui"}),
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
     # Library changes Friday proposes (services/library/cards.py): the click is

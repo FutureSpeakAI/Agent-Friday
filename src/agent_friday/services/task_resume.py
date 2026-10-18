@@ -259,6 +259,15 @@ def clear(task_id) -> None:
 def resumability(task_id) -> Dict[str, Any]:
     """The transcript checkpoint's verdict, or -- when that cannot be used --
     the task ledger's."""
+    try:
+        from agent_friday.services import web_tasks as _wt
+        if _wt.is_web_task(task_id):
+            # A website task resumes only on the owner's press, never on its
+            # own after a restart, and re-reads the page before any step.
+            return _wt.resumability(task_id)
+    except Exception:
+        return {"resumable": False, "reason": "The website task's record could not be read.",
+                "iteration": 0, "pending_tool": None, "needs_confirmation": False, "attempts": 0}
     state = _journal().read_state(task_id)
     if state and state.get("crew_context") is not None:
         return {"resumable": False, "reason": "Crew work cannot use a generic task resume. Start a fresh Crew turn in its conversation.",
@@ -464,6 +473,11 @@ def resume(task_id, *, confirm_pending: bool = False,
         raise ResumeRefused(verdict["reason"])
     if verdict["needs_confirmation"] and not confirm_pending:
         raise ResumeRefused(verdict["reason"])
+    if verdict.get("via") == "web_task":
+        from agent_friday.services import web_tasks as _wt
+        if not _wt.resume(task_id):
+            raise ResumeRefused("The website task could not be picked up again.")
+        return None, []
     if verdict.get("via") == "ledger":
         return _resume_from_ledger(task_id, verdict)
 
