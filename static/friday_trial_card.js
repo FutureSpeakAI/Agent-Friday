@@ -73,9 +73,10 @@
       (p.changes || []).map(c => h(Change, { key: c.id, c })),
       h(Evidence, { p }),
       p.undo ? h('div', { style: { fontSize: 10.5, color: 'rgba(255,255,255,0.55)', marginTop: 6 } }, 'To undo later: ' + p.undo + '.') : null,
+      p.too_long ? h('div', { 'data-testid': 'trial-too-long', style: { fontSize: 11, color: AMBER, marginTop: 6 } }, 'This change is too long to show in full here, so it cannot be adopted from this card.') : null,
       h('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
         h('button', { className: 'btn', 'data-testid': 'trial-keep', style: btn, disabled: off, onClick: () => onDecide(a.approval_id, 'deny') }, 'Keep current'),
-        h('button', { className: 'btn', 'data-testid': 'trial-use-new', style: btn, disabled: off, onClick: () => onDecide(a.approval_id, 'approve') }, 'Use new')));
+        h('button', { className: 'btn', 'data-testid': 'trial-use-new', style: btn, disabled: off || !!p.too_long, onClick: () => onDecide(a.approval_id, 'approve') }, 'Use new')));
   }
 
   window.FridayTrialCard = FridayTrialCard;
