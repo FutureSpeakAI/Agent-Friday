@@ -530,7 +530,13 @@ def adopt(cand: dict, card_id: str) -> dict:
     if subj["kind"] == "skill" and apply.get("skillopt"):
         import agent_friday.skillopt_engine as sopt
         s = apply["skillopt"]
-        sopt.get_engine().promote_from_card(s["skill"], s["version_id"], float(s.get("score") or 0.0))
+        eng = sopt.get_engine()
+        ver = eng.storage(s["skill"]).read_version(s["version_id"])
+        shown = (cand["candidate"].get("files") or {}).get(f"skills/{s['skill']}/SKILL.md")
+        if ver is None or ver.content != shown:
+            # The stored version is not the text the card showed (re-check B).
+            return {"ok": False, "error": "the stored SkillOpt version differs from the card"}
+        eng.promote_from_card(s["skill"], s["version_id"], float(s.get("score") or 0.0))
         return {"ok": True, "applied": f"SkillOpt version {s['version_id']} is now the champion"}
     if subj["kind"] == "skill" and apply.get("skillopt_new_version"):
         import agent_friday.skillopt_engine as sopt

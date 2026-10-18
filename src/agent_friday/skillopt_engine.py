@@ -822,6 +822,7 @@ class SkillOptEngine:
         cand_scores: List[float] = []
         base_scores: List[float] = []
         cand_safety: List[bool] = []
+        unpaired_safety: List[bool] = []
         eval_errors: List[str] = []
         successful_cases = 0
         cfg = storage.load_config()
@@ -829,11 +830,16 @@ class SkillOptEngine:
 
         for case in eval_batch:
             if self.evaluator:
+                cand_metrics = None
                 try:
                     cand_metrics = self.evaluator(skill_name, candidate.content, case)
                     base_metrics = self.evaluator(skill_name, baseline.content, case)
                     successful_cases += 1
                 except Exception as e:
+                    # A safety mistake the candidate made is kept even when the
+                    # baseline's half of the case is missing (re-check A).
+                    if cand_metrics and cand_metrics.get("safety_fail"):
+                        unpaired_safety.append(True)
                     # A case the evaluator could not grade is MISSING, not a
                     # zero for both sides: counting it as 0.0 in both means
                     # dragged both toward zero and diluted any real difference
@@ -884,7 +890,10 @@ class SkillOptEngine:
             return epoch
 
         best_score = baseline.metrics_summary.get("composite", epoch.baseline_score)
-        if self.evaluator and len(eval_errors) > MAX_MISSING_SHARE * len(eval_batch):
+        if self.evaluator and unpaired_safety:
+            decision, reason = "rejected", (
+                "the candidate made a safety mistake on a case whose baseline half is missing")
+        elif self.evaluator and len(eval_errors) > MAX_MISSING_SHARE * len(eval_batch):
             # More than 10% of the cases could not be graded: whatever the
             # rest say, it is not enough to recommend (the trials' rule).
             decision, reason = "inconclusive", (

@@ -361,6 +361,22 @@ def test_a_busy_seat_is_not_stored_and_is_run_again(home):
     assert out["status"] == "carded" and out["result"]["missing"]["b"] == 0
 
 
+def test_a_seat_that_stays_busy_is_stored_as_missing_after_three_tries(home):
+    from agent_friday.services import trials
+
+    cand, _new = _candidate(trials)
+
+    def run_one(*, task, arm, repeat, overlay=None, out_dir=None, **kw):
+        if task["id"] == "s0" and arm == "b" and repeat == 0:
+            return {"grade": {"status": "missing", "reason": "seat busy"}, "outcome": "seat_busy"}
+        return {"grade": _grade(arm == "b" or task["id"] in REG), "outcome": "completed"}
+    for _ in range(3):
+        assert trials.run_trial(cand["id"], run_one=run_one, pack=_pack())["status"] == "running"
+    out = trials.run_trial(cand["id"], run_one=run_one, pack=_pack())
+    assert out["status"] == "carded"
+    assert out["result"]["missing"]["b"] == 1
+
+
 def test_an_unreadable_battery_counts_as_battery(monkeypatch):
     import psutil
     from agent_friday.services import trials

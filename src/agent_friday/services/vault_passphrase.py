@@ -365,7 +365,10 @@ def _from_dpapi_file() -> str:
 
 
 def _from_start_bat() -> str:
-    """Parse start.bat directly. Legacy; a migration source only."""
+    """Parse start.bat directly. Legacy; a migration source only. Never in a
+    practice-task child (FRIDAY_TRIAL=1): the repo's start.bat is the owner's."""
+    if os.environ.get("FRIDAY_TRIAL") == "1":
+        return ""
     try:
         proj_root = Path(__file__).resolve().parents[3]
         sb = proj_root / "start.bat"

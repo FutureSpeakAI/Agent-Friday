@@ -91,6 +91,27 @@ def store(run_dir: Path, fp: str, result: dict) -> None:
     (d / "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
 
+#: A seat-busy episode is retried this many times before it is stored as missing.
+SEAT_BUSY_RETRIES = 3
+
+
+def _busy_path(run_dir: Path, fp: str) -> Path:
+    return Path(run_dir) / "episodes" / fp / "seat_busy.count"
+
+
+def _busy_count(run_dir: Path, fp: str) -> int:
+    try:
+        return int(_busy_path(run_dir, fp).read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _note_busy(run_dir: Path, fp: str) -> None:
+    p = _busy_path(run_dir, fp)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(str(_busy_count(run_dir, fp) + 1), encoding="utf-8")
+
+
 def abba_order(task_ids: Iterable[str], repeats: int) -> List[Tuple[str, int, str]]:
     """(task, repeat, arm) in A B B A order per task, to cancel drift."""
     order = []
@@ -133,10 +154,13 @@ def run_pairs(*, run_dir: Path, tasks: List[dict], arm_texts: Dict[str, Optional
         res = run_one(task=task, arm=arm, repeat=rep, overlay=arm_texts.get(arm),
                       out_dir=Path(run_dir) / "episodes" / fp)
         ran += 1
-        if res.get("outcome") == "seat_busy":
+        if res.get("outcome") == "seat_busy" and _busy_count(run_dir, fp) < SEAT_BUSY_RETRIES:
             # The seat was taken (an interactive turn, a reload): not stored,
             # so this episode is run again when the trial resumes, and this
-            # pass stops here because the seat is not free.
+            # pass stops here because the seat is not free. After a few tries
+            # it is stored as missing, so a seat that never answers cannot
+            # keep a trial open for ever (security re-check F).
+            _note_busy(run_dir, fp)
             complete = False
             break
         store(run_dir, fp, res)

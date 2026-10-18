@@ -65,6 +65,14 @@ class _Watcher:
             self.stop.wait(2.0)
 
     def __enter__(self):
+        # A yield file left by an earlier run (a crash, a reused process id)
+        # would preempt every episode of this one.
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
         self.t.start()
         return self
 
