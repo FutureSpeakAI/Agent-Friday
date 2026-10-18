@@ -244,7 +244,7 @@ needs them) are listed, with how to turn each off, in
 Laya, the fast part of Friday that picks a tool for a simple request, learns from
 you on this PC in two small ways. It is **on by default**, with a notice, a
 report card and controls you can reach by screen or by voice. Turn it off any
-time in **Settings > Privacy & Data > What Laya learns about you**
+time in **Settings > Laya > What Laya learns about you**
 (`laya_personal_learning`).
 
 **What teaches her.** Words spoken in a local voice call on this PC, and words you

@@ -191,29 +191,60 @@ def modes(settings: Optional[dict] = None) -> List[dict]:
         ("voice_routing", "Spoken tool routing", "act" if str(s.get("voice_tool_routing") or "laya") == "laya" else "off",
          "Opens screens and runs reads you ask for by voice, without waking the brain.", "voice"),
         ("chat_routing", "Typed tool routing", "act" if str(s.get("chat_tool_routing") or "") == "laya" else "off",
-         "The same, for what you type in chat.", "privacy"),
+         "The same, for what you type in chat.", ("laya", "Instant answers (no model)")),
         ("approval_check", "Approval check's second opinion", _gate_mode(s),
-         "Can add a check before an action. She can never approve one.", "privacy"),
+         "Can add a check before an action. She can never approve one.", ("privacy", "What needs your sign-off")),
         ("tool_head", "Trained tool head", _three(s.get("laya_tool_head"), "shadow"),
          "Inert until a trained head is certified on this PC.", None),
         ("live_reflex", "Live-call reflex", _three(s.get("voice_live_reflex"), "shadow"),
          "Quick routing beside a live cloud call.", "voice"),
         ("safe_writes", "Safe writes on mail", _safe_writes_mode(),
-         "Puts the approval card up for mail changes you point at. You approve every card.", "privacy"),
+         "Puts the approval card up for mail changes you point at. You approve every card.",
+         ("laya", "Safe writes (off until you turn them on)")),
         ("personal_learning", "Learning from your corrections", "act" if s.get("laya_personal_learning", True) is not False else "off",
-         "What she learns can only make her more careful.", "privacy"),
+         "What she learns can only make her more careful.", ("laya", "What Laya learns about you")),
         ("calibration", "Confidence scoring", "shadow",
          "Measures how far her confidence can be believed. It never changes a decision.", None),
         ("bars", "Your confidence bars", (bars["mode"] if bars["bars"] else "off"),
-         "Your own act score per action. Off until you set one.", "laya"),
+         "Your own act score per action. Off until you set one.", ("laya", "Confidence bars")),
     ]
     out = []
     for cid, label, mode, what, where in rows:
         if cid in NEVER_ACT and mode == "act":     # cannot happen from the mappings above; held here anyway
             mode = "suggest"
+        tab, section = (where if isinstance(where, tuple) else (where, None))
         out.append({"id": cid, "label": label, "mode": mode, "meaning": MODE_MEANING.get(mode, "Set by hand in the settings file."),
-                    "what": what, "change_in": where, "never_act": cid in NEVER_ACT})
+                    "what": what, "change_in": tab, "change_section": section, "never_act": cid in NEVER_ACT})
     return out
+
+
+# ---------------------------------------------------------------------------
+#  teach her a phrase (Slice 2)
+# ---------------------------------------------------------------------------
+
+TEACH_NOTHING = "conversation"
+
+
+def teach_labels() -> List[dict]:
+    """What a taught phrase may mean: every action the router can choose that may be a label
+    (laya_personal._can_label), and "just talk to me" (no action)."""
+    try:                                                  # never the reason the tab cannot load
+        lr = _router()
+        from agent_friday.services import laya_personal as lp
+        out = [{"id": t, "label": _label(t), "class": bar_class(t)} for t in lr.TOOLS if lp._can_label(t)]
+    except Exception:
+        return []
+    out.append({"id": TEACH_NOTHING, "label": "nothing: just talk to me", "class": "none"})
+    return out
+
+
+def teach(text: str, label: str, profile: Optional[str] = None) -> dict:
+    """Teach her one phrasing, typed by the owner on this page: it becomes a gold correction row through the same
+    capture, sensitivity and test-question checks as a spoken correction (laya_personal.teach_phrase)."""
+    if label not in {r["id"] for r in teach_labels()}:
+        return {"ok": False, "why": "Pick one of her actions, or \"nothing: just talk to me\"."}
+    from agent_friday.services import laya_personal as lp
+    return lp.teach_phrase(text, label, profile=profile)
 
 
 # ---------------------------------------------------------------------------
@@ -740,6 +771,149 @@ def spoken_report_line() -> str:
 
 
 # ---------------------------------------------------------------------------
+#  by voice (Slice 2): the replay, and bars in the safe direction only
+# ---------------------------------------------------------------------------
+
+#: How an owner names an action when speaking about her bars. "everything" names every action with a bar.
+SPOKEN_ACTIONS = (
+    (r"\b(?:calendar|schedule|agenda)\b", ("query_calendar",)),
+    (r"\b(?:e-?mails?|inbox|mail)\b", ("check_email", "search_email")),
+    (r"\bbriefing\b", ("get_briefing",)),
+    (r"\b(?:files?|documents?)\b", ("search_files",)),
+    (r"\b(?:notes|wiki)\b", ("search_wiki",)),
+    (r"\b(?:conversations?|chats)\b", ("search_past_conversations",)),
+    (r"\bqueue\b", ("queue_status",)),
+    (r"\b(?:music|media|videos?)\b", ("media_play",)),
+    (r"\bpodcasts?\b", ("podcast_play",)),
+    (r"\b(?:screens?|opening things|navigat\w*)\b", ("navigate_to",)),
+    (r"\bcards\b", ("set_chat_tray",)),
+    (r"\b(?:web|news|online)\b", ("search_web", "search_news")),
+)
+VOICE_RAISE_STEP = 0.10
+_V_SHADOW = re.compile(r"\b(?:stop using|turn off|switch off) (?:my|your|laya'?s|the) (?:confidence )?bars\b"
+                       r"|\bbars (?:back )?(?:to|in|on) shadow\b", re.I)
+_V_ACT = re.compile(r"\b(?:use|start using|turn on|switch on) (?:my|your|laya'?s|the) (?:confidence )?bars\b"
+                    r"|\bbars (?:back )?(?:to|in|on) act\b", re.I)
+_V_RESET = re.compile(r"\breset (?:my|your|laya'?s|the) (?:confidence )?bars\b", re.I)
+_V_LOOSER = re.compile(r"\b(?:bolder|braver|looser|less careful|less cautious|lower)\b", re.I)
+_V_STRICTER = re.compile(r"\b(?:stricter|more careful|more cautious|raise|higher)\b", re.I)
+NEEDS_CLICK_LINE = ("NEEDS_SCREEN: letting Laya act more needs a click on the screen. Settings > Laya > Confidence bars "
+                    "has the control. Nothing changed.")
+
+
+def spoken_actions(words: str) -> Tuple[List[str], List[str]]:
+    """(actions with a bar the words name, outward searches they name). "everything" or "all" is every action
+    with a bar."""
+    w = " ".join(str(words or "").lower().split())
+    lr = _router()
+    if re.search(r"\b(?:everything|all of (?:it|them)|all actions|every action)\b", w):
+        names = [t for t in lr.TOOLS if bar_range(t)]
+        return names, []
+    picked: List[str] = []
+    for pat, tools in SPOKEN_ACTIONS:
+        if re.search(pat, w):
+            picked += [t for t in tools if t in lr.TOOLS and t not in picked]
+    return [t for t in picked if bar_range(t)], [t for t in picked if not bar_range(t)]
+
+
+def _label(tool: str) -> str:
+    return tool.replace("_", " ")
+
+
+def voice_bars(words: str) -> dict:
+    """One spoken bar control, the owner's own words. Only the safe direction runs here: raising a bar, turning the
+    bars back to shadow, and clearing bars that are LOWER than shipped. Anything that would let her act more
+    (lowering, turning the bars to act, clearing a stricter bar) changes nothing and says where the click is."""
+    w = " ".join(str(words or "").split())
+    cur = load_bars()
+    shipped = _router().ACT_THRESHOLD
+    if _V_ACT.search(w):
+        return {"ok": False, "needs_screen": True, "text": NEEDS_CLICK_LINE}
+    if _V_SHADOW.search(w) or _V_RESET.search(w):
+        return _voice_back_down(cur, shipped, reset=bool(_V_RESET.search(w)))
+    tools, outward = spoken_actions(w)
+    if _V_LOOSER.search(w) and not _V_STRICTER.search(w):
+        return {"ok": False, "needs_screen": True, "text": NEEDS_CLICK_LINE}
+    if not _V_STRICTER.search(w):
+        return {"ok": False, "text": "NOT DONE: say stricter, or bars back to shadow. Lowering a bar is a click in "
+                                     "Settings > Laya."}
+    if not tools:
+        if outward:
+            return {"ok": False, "text": "NOT DONE: a guess at a web or news search always asks first, so it has no bar."}
+        return {"ok": False, "text": "NOT DONE: name the action, for example the calendar, email or music."}
+    new = {}
+    for t in tools:
+        # Stricter than what is in force: a lowered bar steps up from the shipped score, not from itself.
+        base = max(cur["bars"].get(t, shipped), shipped)
+        if base >= BAR_MAX - 1e-9:
+            continue                                      # already as strict as a bar goes: nothing to write or announce
+        new[t] = min(BAR_MAX, _snap(base + VOICE_RAISE_STEP))
+    if not new:
+        return {"ok": False, "text": "NOT DONE: that is already as strict as a bar goes (%.2f)." % BAR_MAX}
+    res = set_bars(new, actor="owner:voice", may_loosen=False)
+    if not res["ok"]:
+        return {"ok": False, "text": "NOT DONE: " + res.get("why", "")}
+    said = ", ".join("%s %.2f" % (_label(t), v) for t, v in new.items())
+    mode = "They apply now." if res["mode"] == "act" else "They stay in shadow until you set your bars to act."
+    tail = " Web and news searches always ask first." if outward else ""
+    return {"ok": True, "text": "Stricter: %s. %s%s" % (said, mode, tail)}
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many
+
+
+def _voice_back_down(cur: dict, shipped: float, *, reset: bool) -> dict:
+    """"stop using my bars" / "reset my bars" by voice. Lowered bars go back to shipped (that only makes her
+    stricter). The mode goes to shadow only when no stricter bar is in force, because in shadow every action
+    falls back to the shipped score and a stricter bar would stop binding. Stricter bars are never cleared here."""
+    lowered = {t: None for t, v in cur["bars"].items() if v < shipped - 1e-9}
+    stricter = [t for t, v in cur["bars"].items() if v > shipped + 1e-9]
+    binding = cur["mode"] == "act" and bool(stricter)
+    mode = None if binding else "shadow"
+    if not lowered and binding:
+        return {"ok": False, "needs_screen": True, "text": NEEDS_CLICK_LINE}     # the only change asked for loosens
+    if not lowered and cur["mode"] == "shadow":
+        text = "Your bars are already in shadow: they are measured and change nothing."
+        if reset and stricter:
+            text += (" %d stricter %s kept for when you set them to act again; clearing %s is a click in Settings > "
+                     "Laya." % (len(stricter), _plural(len(stricter), "bar is", "bars are"),
+                                _plural(len(stricter), "it", "them")))
+        return {"ok": True, "text": text}
+    res = set_bars(lowered, mode, actor="owner:voice", may_loosen=False)
+    if not res["ok"]:
+        return {"ok": False, "needs_screen": bool(res.get("needs_click")),
+                "text": NEEDS_CLICK_LINE if res.get("needs_click") else "NOT DONE: " + res.get("why", "")}
+    parts = []
+    if lowered:
+        parts.append("%d lowered %s back to how she shipped." % (len(lowered), _plural(len(lowered), "bar is", "bars are")))
+    if binding:
+        parts.append("%d stricter %s still in force; turning your bars off would let her act more, so that is a click "
+                     "in Settings > Laya." % (len(stricter), _plural(len(stricter), "bar is", "bars are")))
+    else:
+        parts.append("Your bars are in shadow: they are measured and change nothing.")
+        if reset and stricter:
+            parts.append("%d stricter %s kept for when you set them to act again; clearing %s is a click in Settings > "
+                         "Laya." % (len(stricter), _plural(len(stricter), "bar is", "bars are"),
+                                    _plural(len(stricter), "it", "them")))
+    return {"ok": True, "text": " ".join(parts)}
+
+
+def voice_replay(profile: Optional[str] = None) -> dict:
+    """The replay test, run by voice: the same run as the button, answered in one or two sentences of counts."""
+    res = run_replay(profile=profile)
+    if not res.get("ok"):
+        return {"ok": False, "text": "NOT DONE: " + str(res.get("why") or "the replay could not run.")}
+    p, s = res["plain"], res["reshuffled"]
+    if not p["of"]:
+        return {"ok": True, "text": res.get("note") or "Nothing to replay yet."}
+    return {"ok": True, "text": ("Replay done: %d of %d of your requests right, %d of %d when reworded. She missed %d "
+                                 "(asked or handed them on) and did the wrong thing %d time%s. Settings > Laya has the "
+                                 "breakdown." % (p["right"], p["of"], s["right"], s["of"], p["miss"], p["wrong"],
+                                                 "" if p["wrong"] == 1 else "s"))}
+
+
+# ---------------------------------------------------------------------------
 #  the tab
 # ---------------------------------------------------------------------------
 
@@ -750,4 +924,4 @@ def overview() -> dict:
             "report": {"take_rate": take_rate(rows), "replay": last_replay(),
                        "bars_preview": (bars_preview(rows, cur["bars"], learned=learned_threshold(_current_profile()))
                                         if cur["bars"] else None)},
-            "bars": bars_view()}
+            "bars": bars_view(), "teach_labels": teach_labels()}

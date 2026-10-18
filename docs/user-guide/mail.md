@@ -161,7 +161,7 @@ as Receipts", "move this to Receipts". She works out which rows you mean on
 this PC, with no large model. **You approve every card.** She
 never approves her own card and never changes anything first.
 
-It is off until you choose, in **Settings > Privacy & Data > Safe writes**.
+It is off until you choose, in **Settings > Laya > Safe writes**.
 Nothing is chosen for you, and no chat or voice command can turn it on. Your
 click there leaves a signed record on this PC, and the setting counts only as
 far as that record goes: a value put in `settings.json` by hand, by a restored

@@ -180,7 +180,7 @@ def _save_config(config: dict):
     for _k in _lost:
         # config.yaml does not carry the key, so this write cannot keep it: it is turned off, plainly.
         console.print(f"  [yellow]{_k} is turned OFF by this write: config.yaml does not have the key, and "
-                      "this command cannot turn it on. Turn it back on in Friday's Settings (Privacy & Data, "
+                      "this command cannot turn it on. Turn it back on in Friday's Settings (Laya, "
                       "Safe writes).[/yellow]")
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     # YAML (primary, human-editable)
@@ -746,7 +746,7 @@ def cmd_config(args):
         from agent_friday.services import guarded_settings
         if key in guarded_settings.GUARDED:
             if guarded_settings.widens(key, val, (guarded_settings.read(SETTINGS_FILE) or {}).get(key)):
-                console.print(f"  [yellow]{key} turns up only from Friday's Settings page (Privacy & Data, "
+                console.print(f"  [yellow]{key} turns up only from Friday's Settings page (Laya, "
                               "Safe writes), by your own click. This command can turn it down, never up.[/yellow]")
                 sys.exit(1)
         cfg[key] = val

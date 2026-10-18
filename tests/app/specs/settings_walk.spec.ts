@@ -68,11 +68,13 @@ const GUARDED = /phone|twilio|texting|sms|voicemail|your cell|computer control|v
  * whose per-folder ticks choose what its Save button adds to the Library (/api/library/add) or grants to cloud models
  * (/api/privacy/file-grants) and are cleared after the save). Their pickers feed a button that is not pressed here, so changing one saves nothing by design.
  */
-const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspaces|published pages|google accounts|texting registration|model browser|your knowledge|permission|grant|pre-approved sends/i;
+// Laya's confidence bars change how a later spec's turns are routed on this shared scratch server, and Teach her a
+// phrase's picker feeds a button that is not pressed here: the walk lists both and leaves them
+// (tests/app/specs/laya_settings.spec.ts changes the bars, reads them back and resets them). The rest of the Laya tab,
+// the panels that moved there from Privacy & Data, is walked as it was before.
+const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspaces|published pages|google accounts|texting registration|model browser|your knowledge|permission|grant|pre-approved sends|confidence bars|teach her a phrase/i;
 /** Sections that are accounts and phone lines from top to bottom: opened and listed, never changed. */
-// Laya: her bars change how a later spec's turns are routed on this shared scratch server, so the walk lists
-// them and leaves them; tests/app/specs/laya_settings.spec.ts changes and reads them back, then resets them.
-const LOOK_ONLY_SECTIONS = new Set(['connections', 'laya']);
+const LOOK_ONLY_SECTIONS = new Set(['connections']);
 
 /** The only free-text fields the walk types into. Everything else is present-only. */
 const TEXT_OK = /^(name|language|speaking style)\b/i;
