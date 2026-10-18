@@ -99,7 +99,10 @@ _HEAD_WORDS = ("ones", "one", "emails", "email", "e-mails", "e-mail", "messages"
                "threads", "thread", "conversations", "conversation", "stories", "story", "articles", "article",
                "files", "file", "documents", "document", "docs", "doc", "cards", "card", "items", "item",
                "rows", "row", "events", "event", "chats", "chat", "results", "result", "things", "thing",
-               "notes", "note", "pieces", "piece", "creations", "creation")
+               "notes", "note", "pieces", "piece", "creations", "creation",
+               # People rows: "open the first person" points at a row (contacts.open_person). Only the
+               # singular: "people" is also the People workspace's name.
+               "person")
 _HEAD = frozenset(_HEAD_WORDS)
 _PLURAL_HEAD = frozenset(w for w in _HEAD_WORDS if w.endswith("s") and w not in ("news",))
 
