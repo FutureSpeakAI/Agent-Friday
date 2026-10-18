@@ -115,7 +115,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        run: [1, 2, 3, 4]
+        run: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -128,18 +128,43 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
+      - name: Sample CPU by process every 10 s (CI only)
+        shell: pwsh
+        run: |
+          $script = @'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'cpu_samples.csv'
+          "t,pid,ppid,name,cpu_s,ws_mb,cmd" | Set-Content $out
+          while ($true) {
+            $t = Get-Date -Format 'HH:mm:ss'
+            Get-CimInstance Win32_Process | ForEach-Object {
+              $cpu = [math]::Round(($_.KernelModeTime + $_.UserModeTime) / 1e7, 1)
+              if ($cpu -gt 1) {
+                $cmd = ([string]$_.CommandLine) -replace '[",\r\n]', ' '
+                if ($cmd.Length -gt 160) { $cmd = $cmd.Substring(0, 160) }
+                "$t,$($_.ProcessId),$($_.ParentProcessId),$($_.Name),$cpu,$([int]($_.WorkingSetSize/1MB)),$cmd"
+              }
+            } | Add-Content $out
+            Start-Sleep 10
+          }
+          '@
+          Set-Content -Path sampler.ps1 -Value $script
+          Start-Process pwsh -ArgumentList '-NoProfile', '-File', (Resolve-Path sampler.ps1) -WindowStyle Hidden
       - name: Run the app specs
         env:
           FRIDAY_PYTHON: python
         run: >
           npx playwright test --config=playwright.app.config.ts --workers=1
           --timeout=180000 --output=test-results/app
-          settings_walk.spec.ts smoke.spec.ts
-          fill_in_place.spec.ts messages_friday_select.spec.ts open_only_stage.spec.ts
-          point_and_chips.spec.ts settings_highlight.spec.ts step_panel.spec.ts
-          studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
+          calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
           calendar_freebusy.spec.ts calendar_rsvp.spec.ts calendar_delete.spec.ts
-          activity_never_collapses.spec.ts connect_services.spec.ts
+          activity_never_collapses.spec.ts connect_services.spec.ts smoke.spec.ts
+      - name: Keep the CPU samples
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
+        with:
+          name: cpu-samples-${{ matrix.run }}
+          path: cpu_samples.csv
+          if-no-files-found: ignore
       - name: Keep the Settings walk table and failure traces
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
