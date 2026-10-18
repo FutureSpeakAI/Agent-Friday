@@ -240,15 +240,16 @@ class TestValidationGate:
         assert ok is False
         assert "baseline" in reason.lower()
 
-    def test_marginal_improvement_passes(self, gate):
-        # candidate slightly above baseline but improvement < 0.5%
+    def test_marginal_improvement_keeps_the_baseline(self, gate):
+        # candidate slightly above baseline but improvement < 0.5%: a tie,
+        # which keeps the baseline (harness2 adoption HA-E27; it used to pass).
         baseline = 0.80
         candidate = baseline + 0.001   # ~0.125% improvement
         ok, reason = gate.evaluate(candidate_score=candidate,
                                    baseline_score=baseline,
                                    best_score=baseline)
-        assert ok is True
-        assert "marginal" in reason.lower()
+        assert ok is False
+        assert "tie" in reason.lower()
 
     def test_clear_improvement_passes(self, gate):
         ok, reason = gate.evaluate(candidate_score=0.85, baseline_score=0.78, best_score=0.78)
@@ -636,7 +637,7 @@ class TestSkillOptEngine:
             return {"accuracy": 0.1}  # very low → regression
 
         engine.evaluator = bad_evaluator
-        epoch = engine.run_epoch("demo", ver2.version_id, [{"inputs": {}}])
+        epoch = engine.run_epoch("demo", ver2.version_id, [{"inputs": {}}] * 6)
         assert epoch.decision == "rejected"
 
 
