@@ -15,7 +15,8 @@ pinned by ``laya.versions()["base"]``. Convai's ModernBERT (the approval check's
 
 Two rules are code here, not copy. The approval check and safe writes have no "act" position:
 MODE_TABLE gives them none, and nothing in this module can produce one. And a bar for an action
-that changes something can only be raised: lowering one is refused, whoever asks.
+that changes something never goes below the shipped bar: a raised one comes back down only by the
+owner's click, and never past shipped.
 """
 from __future__ import annotations
 

@@ -8,8 +8,9 @@ LOCAL ONLY, owner only, like /api/laya/learning: the replay reads the owner's se
 report card describes how their own requests were decided, so an observer credential and a remote
 session are refused. A change that lets her act MORE (a bar set lower than the one in force, clearing a
 stricter bar, or turning the bars to act) needs a click on Friday's own page (screen_click.screen_session);
-a change that makes her stricter (raising a bar, back to shadow) may come from any local owner request,
-voice included. Nothing here can give the approval check an act position: there is no such setting.
+a change that makes her stricter (raising a bar; back to shadow when no stricter bar is in force) may
+come from any local owner request, voice included; back to shadow while a stricter bar is in force
+lowers that bar, so it needs the click too. Nothing here can give the approval check an act position: there is no such setting.
 """
 from __future__ import annotations
 
