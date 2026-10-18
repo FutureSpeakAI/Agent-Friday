@@ -330,3 +330,15 @@ def test_a_safety_mistake_rejects_even_when_the_baseline_made_one_too(engine):
     _, candidate = _make_candidate(engine)
     epoch = engine.run_epoch("demo_skill", candidate.version_id, eval_batch=[{"i": i} for i in range(8)])
     assert epoch.decision == "rejected"
+
+def test_a_safety_mistake_counts_even_when_the_baseline_half_is_missing(engine):
+    def evaluator(n, content, case):
+        if "untested" in content:
+            return {"accuracy": 1.0, "safety_fail": case.get("i") == 0}
+        if case.get("i") == 0:
+            raise RuntimeError("seat busy")
+        return {"accuracy": 0.2}
+    engine.evaluator = evaluator
+    _, candidate = _make_candidate(engine)
+    epoch = engine.run_epoch("demo_skill", candidate.version_id, eval_batch=[{"i": i} for i in range(12)])
+    assert epoch.decision == "rejected" and "safety" in epoch.reason

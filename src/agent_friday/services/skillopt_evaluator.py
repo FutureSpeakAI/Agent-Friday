@@ -98,12 +98,15 @@ def queue_finding(skill_name: str, new_content: str, parent_version: str, summar
     parent = sopt.get_engine().storage(skill_name).read_version(parent_version)
     rel = f"skills/{skill_name}/SKILL.md"
     current = {"files": {rel: parent.content}} if parent else {"files": {}}
+    import difflib
+    diff = "".join(difflib.unified_diff((parent.content if parent else "").splitlines(True),
+                                        new_content.splitlines(True), fromfile="current", tofile="proposed"))
     cand = trials.propose(
         {"kind": "skill", "id": skill_name, "title": f"SkillOpt edit: {summary[:80]}"},
         current=current, candidate={"files": {rel: new_content}}, origin="skillopt_finding",
         apply={"skillopt_new_version": {"skill": skill_name, "content": new_content,
                                         "parent": parent_version, "summary": summary}},
-        reason=summary, tags=[skill_name])
+        reason=summary, diff=diff, tags=[skill_name])
     return cand["id"]
 
 
