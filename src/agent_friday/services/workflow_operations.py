@@ -378,7 +378,11 @@ def _learn(definition, args):
     skill_registry.save_skill(name, description=definition.get("description") or definition["name"],
                               body="\n".join(body), triggers=[definition["name"]],
                               success_criteria=[definition.get("success_criteria") or "Verify the requested output."],
-                              source="workflow", version=version)
+                              source="workflow", version=version,
+                              reason="a verified workflow run was kept as a procedure",
+                              evidence={"workflow": slug, "revision": run_revision,
+                                        "run_id": (run or {}).get("run_id")},
+                              actor="workflow")
     learned = skill_registry.get_skill(name)
     if not learned or learned.version != version:
         raise UserFacingValueError("The learned procedure could not be read back. No successful save is claimed.")

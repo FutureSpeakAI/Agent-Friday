@@ -24,7 +24,8 @@ The skill system has three parts:
   different skill already uses that name. Saving it again for the same revision
   changes nothing.
 - **Created in chat.** Ask Friday to remember a procedure. Friday uses the
-  `learn_skill` tool, which writes a YAML skill file.
+  `learn_skill` tool, which saves a `SKILL.md` folder and signs a record
+  saying Friday wrote it (see **What Friday may change**).
 - **Imported.** From a folder, a `.zip`, a legacy `.yaml` file or an
   OpenClaw-style package.
 - **Bundled.** A few skills ship with Friday.
@@ -90,17 +91,45 @@ checks or limits.
 When a skill is saved over, the previous procedure is kept in a `_history`
 folder inside the skill's folder.
 
+Every create, update, archive and restore adds one line to the skill's
+`.ledger.jsonl`: the action, who made it (`agent`, `owner`, `import` or
+`workflow`), the reason, a pointer to where it came from (conversation, turn,
+task, seat) and a hash of the saved manifest. Each line carries the hash of the
+line before it and a signature, so a changed or removed line shows. Lines are
+only ever appended.
+
+### What Friday may change
+
+Friday may change or archive only the skills she wrote herself. Your own
+skills, imported, bundled and workflow skills, and legacy YAML skills are
+read-only to her; a request to change one is refused and the files are left as
+they were. A skill of hers never takes the name of one of yours.
+
+Who wrote a skill is not read from the skill's text. When Friday saves a skill,
+Friday signs a `.provenance.json` record in its folder with your PC's
+governance key, naming the folder and the exact `SKILL.md` she wrote. If you
+edit that skill yourself, import over it, or the record is copied, changed or
+missing, the skill counts as yours and Friday can no longer change it.
+
+Friday never deletes a skill. Archiving moves the whole folder, with its
+history, ledger and record, to `.archive\<name>\<time>\`, and `restore` moves
+the newest copy back. Friday may restore only a skill she wrote and archived
+herself; a skill of hers that you archived stays archived until you restore
+it.
+
 ### Legacy YAML skills
 
 Single-file skills in `%USERPROFILE%\.friday\skills\*.yaml` still work and are
-found alongside the folder format. The `learn_skill` tool takes these actions:
+found alongside the folder format. They are read-only to Friday. The
+`learn_skill` tool takes these actions:
 
 | Action | Description |
 |---|---|
-| `create` | Create a skill YAML file. |
-| `modify` | Replace an existing skill's content. |
-| `delete` | Remove a skill. |
-| `list` | List the YAML skills. |
+| `create` | Create a skill of Friday's own. |
+| `modify` | Replace the content of a skill Friday wrote. |
+| `archive` | Move a skill Friday wrote to the archive (`delete` is read as archive). |
+| `restore` | Bring back the newest archived copy of a skill Friday wrote and archived. |
+| `list` | List every skill, marking the ones Friday may change, and the archive. |
 | `read` | Read a skill's content. |
 
 ### Importing and exporting

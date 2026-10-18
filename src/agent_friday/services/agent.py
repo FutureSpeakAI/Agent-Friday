@@ -1055,11 +1055,12 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "get_briefing", "description": "Read Friday's most recent daily briefing: ranked stories by section. Its leading filename gives the date; if not today, state that date. Returns 'No briefings found.' if absent.",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "learn_skill", "description": "Create, modify, delete, or list skill YAML files in ~/.friday/skills/. Skills are reusable workflow definitions Friday can load. Use this for self-improvement — when you notice a pattern worth encoding. Actions: create, modify, delete, list, read.",
+    {"name": "learn_skill", "description": "Create, modify, archive, restore, list or read skills in ~/.friday/skills/: reusable workflows. Use for self-improvement when a pattern is worth encoding. You may modify or archive only skills you wrote; archive is undone by restore.",
      "input_schema": {"type": "object", "properties": {
-         "action": {"type": "string", "enum": ["create", "modify", "delete", "list", "read"], "description": "Operation to perform"},
-         "name": {"type": "string", "description": "Skill slug (alphanumeric/dashes). Required for all actions except 'list'."},
-         "content": {"type": "string", "description": "YAML content for the skill (required for create/modify). Fields: name, description, trigger_patterns, tool_chain, prompt_template, success_criteria"},
+         "action": {"type": "string", "enum": ["create", "modify", "archive", "restore", "list", "read"]},
+         "name": {"type": "string", "description": "Skill slug (alphanumeric/dashes). Required except for list."},
+         "content": {"type": "string", "description": "YAML for create/modify: description, trigger_patterns, tool_chain, prompt_template, success_criteria"},
+         "reason": {"type": "string", "description": "Why, in one sentence (kept in the skill's ledger)."},
      }, "required": ["action"]}},
     {"name": "install_package", "description": "Install a pip or npm package. Always check_only first to see if already installed. Ring 3 — requires Computer Control permission.",
      "input_schema": {"type": "object", "properties": {
@@ -1449,54 +1450,130 @@ def _tool_write_file(inp):
         return f"Write error: {e}"
 
 
+def _learn_skill_fields(content):
+    """The model's skill text as registry fields. YAML with the documented
+    keys is mapped; anything else is kept whole as the procedure body. The
+    YAML's own ``name``, ``source``, ``created_by`` and ``permissions`` are
+    ignored: the tool's ``name`` argument alone picks the skill, and who wrote
+    it is decided by the registry, never by this text."""
+    data = None
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(content)
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        return {"body": content}
+    return {
+        "description": data.get("description") or "",
+        "body": data.get("prompt_template") or data.get("body") or "",
+        "triggers": data.get("trigger_patterns") or data.get("triggers"),
+        "tool_chain": data.get("tool_chain"),
+        "success_criteria": data.get("success_criteria"),
+        "version": data.get("version") or 1,
+    }
+
+
+def _learn_skill_evidence():
+    """Where a model skill change came from, taken from the call's own context
+    (conversation, turn, task, seat), never from the model's arguments."""
+    ctx = _CURRENT_TOOL_CONTEXT.get() or {}
+    turn = None
+    try:
+        from agent_friday.services import turn_plan as _tp
+        turn = _tp.current_turn_id()
+    except Exception:
+        pass
+    return {
+        "conversation": _CURRENT_CONVERSATION.get(),
+        "turn": turn,
+        "task": ctx.get("task_id"),
+        "surface": _CURRENT_SURFACE.get(),
+        "model": _CURRENT_MODEL.get(),
+    }
+
+
 def _tool_learn_skill(inp):
-    """Create, modify, delete, or list skill YAML files in ~/.friday/skills/."""
+    """The model's door to its own skills, routed through the skill registry.
+
+    Friday may create skills and change or archive the ones she wrote (signed
+    provenance kept by the registry, never read from her text). Every other
+    skill is read-only to her. Archive replaces delete and is undone with
+    ``restore``; every write leaves a chained ledger line (skill_registry).
+    The actor recorded is fixed here as "agent": nothing in ``inp`` sets it.
+    """
+    import agent_friday.skill_registry as _skreg
     inp = inp or {}
     action = (inp.get('action') or 'create').lower()
+    if action == 'delete':
+        action = 'archive'          # nothing is ever deleted
+    if action == 'update':
+        action = 'modify'
     skills_dir = FRIDAY_DIR / 'skills'
     skills_dir.mkdir(parents=True, exist_ok=True)
 
     if action == 'list':
-        skills = sorted(f.stem for f in skills_dir.glob('*.yaml'))
-        return json.dumps({'skills': skills, 'count': len(skills), 'path': str(skills_dir)})
+        rows = [{'name': s.name, 'friday_can_edit': _skreg.friday_wrote(s)}
+                for s in _skreg.load_skills([skills_dir, _skreg.BUNDLED_DIR])]
+        rows.sort(key=lambda r: r['name'])
+        return json.dumps({'skills': rows, 'count': len(rows),
+                           'archived': _skreg.list_archived(skills_dir), 'path': str(skills_dir)})
 
     name = re.sub(r'[^\w\-]', '_', (inp.get('name') or '').strip())
     if not name:
-        return "learn_skill error: 'name' is required for create/modify/delete."
-
-    skill_file = skills_dir / f'{name}.yaml'
-
-    if action == 'delete':
-        if skill_file.exists():
-            skill_file.unlink()
-            return f"Skill '{name}' deleted."
-        return f"Skill '{name}' not found."
-
-    if action in ('create', 'modify', 'update'):
-        content = (inp.get('content') or '').strip()
-        if not content:
-            return "learn_skill error: 'content' (YAML text) is required for create/modify."
-        existed = skill_file.exists()
-        skill_file.write_text(content, encoding='utf-8')
-        _log_context("skill_write", {"name": name, "action": action})
-        # Register into the portable SKILL.md registry + SkillOpt so the skill is
-        # matched/injected on the very next turn (no restart needed) and enters
-        # the closed-loop optimizer.
-        try:
-            import agent_friday.skill_registry as _skreg
-            _sk = _skreg.get_skill(name)
-            if _sk:
-                _skreg.register_with_skillopt(_sk)
-        except Exception:
-            pass
-        return f"Skill '{name}' {'modified' if existed else 'created'} at {skill_file}. Active now — its triggers will inject it on matching turns."
+        return "learn_skill error: 'name' is required for every action except 'list'."
 
     if action == 'read':
-        if not skill_file.exists():
+        legacy = skills_dir / f'{name}.yaml'
+        if legacy.exists():
+            return legacy.read_text(encoding='utf-8')
+        sk = _skreg.get_skill(name, [skills_dir, _skreg.BUNDLED_DIR])
+        if sk is None:
             return f"Skill '{name}' not found."
-        return skill_file.read_text(encoding='utf-8')
+        p = Path(sk.path)
+        man = _skreg._find_manifest(p) if p.is_dir() else p
+        return man.read_text(encoding='utf-8') if man else f"Skill '{name}' not found."
 
-    return f"Unknown action '{action}'. Use: create, modify, delete, list, read."
+    reason = (inp.get('reason') or '').strip()
+    evidence = _learn_skill_evidence()
+    try:
+        if action in ('create', 'modify'):
+            content = (inp.get('content') or '').strip()
+            if not content:
+                return "learn_skill error: 'content' (YAML text) is required for create/modify."
+            folder, done = _skreg.agent_save_skill(
+                name, _learn_skill_fields(content), reason=reason or action,
+                evidence=evidence, root=skills_dir)
+            _log_context("skill_write", {"name": name, "action": done})
+            # Register into SkillOpt so the skill enters the closed-loop
+            # optimizer; the registry already matches it on the very next turn.
+            try:
+                _sk = _skreg.get_skill(name, [skills_dir])
+                if _sk:
+                    _skreg.register_with_skillopt(_sk)
+            except Exception:
+                pass
+            return (f"Skill '{name}' {'modified' if done == 'update' else 'created'} at {folder}. "
+                    "Active now — its triggers will inject it on matching turns.")
+        if action == 'archive':
+            dest = _skreg.archive_skill(name, reason=reason or 'archived by Friday',
+                                        evidence=evidence, actor=_skreg.AGENT_AUTHOR, root=skills_dir)
+            _log_context("skill_archive", {"name": name})
+            return (f"Skill '{name}' archived to {dest}. Nothing was deleted; "
+                    "learn_skill restore brings it back.")
+        if action == 'restore':
+            folder = _skreg.restore_skill(name, reason=reason or 'restored by Friday',
+                                          evidence=evidence, actor=_skreg.AGENT_AUTHOR, root=skills_dir)
+            _log_context("skill_restore", {"name": name})
+            return f"Skill '{name}' restored to {folder}."
+    except _skreg.SkillWriteRefused as refused:
+        return f"[GOVERNANCE DENY] learn_skill: {refused}"
+    except FileNotFoundError:
+        return f"Skill '{name}' not found."
+    except FileExistsError:
+        return f"learn_skill error: a live skill already uses the name '{name}'."
+
+    return f"Unknown action '{action}'. Use: create, modify, archive, restore, list, read."
 
 
 def _tool_install_package(inp):
