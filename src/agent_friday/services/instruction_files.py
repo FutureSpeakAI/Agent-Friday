@@ -127,7 +127,12 @@ def _entry(sid: str) -> dict:
 
 
 def is_locked(sid: str) -> bool:
-    """True for a safety section, a policy mirror, or anything unknown."""
+    """True for a safety section, a policy mirror, or anything unknown. The
+    code's own list (instruction_locked) wins over the manifest, so an edited
+    manifest cannot unlock a safety section."""
+    from agent_friday.services.instruction_locked import LOCKED_SECTIONS
+    if sid in LOCKED_SECTIONS or str(sid).startswith("policy/"):
+        return True
     try:
         return bool(_entry(sid).get("locked", True))
     except KeyError:
@@ -135,11 +140,25 @@ def is_locked(sid: str) -> bool:
 
 
 def shipped_text(sid: str) -> str:
+    """The shipped text of a section. A locked section comes from the code
+    (instruction_locked), never from its data file: the file is a mirror, and
+    a mismatch is a health row, not a change in what Friday is told."""
+    from agent_friday.services.instruction_locked import LOCKED_SECTIONS
     with _LOCK:
         if sid not in _SHIPPED:
             entry = _entry(sid)
-            text = _read_text(SHIPPED_DIR / entry["file"])
-            if hashlib.sha256(text.encode("utf-8")).hexdigest() != entry["sha256"]:
+            try:
+                text = _read_text(SHIPPED_DIR / entry["file"])
+            except OSError:
+                if sid not in LOCKED_SECTIONS:
+                    raise
+                text = LOCKED_SECTIONS[sid]
+            if sid in LOCKED_SECTIONS:
+                if text != LOCKED_SECTIONS[sid]:
+                    _PROBLEMS[sid] = ("the shipped file of a locked section was changed; the "
+                                      "built-in text is used")
+                text = LOCKED_SECTIONS[sid]
+            elif hashlib.sha256(text.encode("utf-8")).hexdigest() != entry["sha256"]:
                 # A corrupted or hand-edited install. The text is still the
                 # only copy there is, so it is used, and the health row says so.
                 _PROBLEMS[sid] = "the shipped file does not match its manifest hash"

@@ -160,12 +160,50 @@ def test_an_approved_override_reaches_both_fallbacks(home, monkeypatch):
     assert MARK in full, "the fallback path ignored the approved override"
 
 
-def test_the_override_text_is_registered_with_the_egress_gate(home):
+def test_only_the_shipped_text_is_trusted_by_the_egress_gate(home):
+    """An approved override is not a reviewed constant and may carry personal
+    words, so its changed paragraph gates like any other text (security review
+    2026-10-18, finding 2); the shipped core is registered."""
+    from agent_friday.services import egress_gate as eg
+    from agent_friday.services import instruction_files as inf
+    _core()
+    assert inf.shipped_core().strip() in eg._TRUSTED_TEXTS
     _plant(home, UNLOCKED, _candidate())
     core = _core()
-    from agent_friday.services import egress_gate as eg
     assert MARK in core
-    assert core.strip() in eg._TRUSTED_TEXTS
+    assert core.strip() not in eg._TRUSTED_TEXTS
+    assert not any(MARK in p for p in eg._TRUSTED_PARAS)
+
+
+def test_a_tampered_locked_file_or_manifest_changes_nothing(home, tmp_path, monkeypatch, request):
+    import shutil
+    from agent_friday.services import instruction_files as inf
+    from agent_friday.services.instruction_locked import LOCKED_SECTIONS
+    request.addfinalizer(inf._reset_caches_for_tests)
+    copy = tmp_path / "instructions"
+    shutil.copytree(SHIPPED, copy)
+    f = copy / f"{LOCKED}.md"
+    f.write_bytes(f.read_bytes().replace(b"ask, wait for a yes, then act", b"act at once"))
+    man = json.loads((copy / "manifest.json").read_text(encoding="utf-8"))
+    for s in man["sections"]:
+        s["locked"] = False
+    (copy / "manifest.json").write_text(json.dumps(man), encoding="utf-8")
+    monkeypatch.setattr(inf, "SHIPPED_DIR", copy)
+    inf._reset_caches_for_tests()
+    assert inf.is_locked(LOCKED)
+    core = _core()
+    assert "act at once" not in core and LOCKED_SECTIONS[LOCKED] in core
+    assert "locked section was changed" in inf.problems().get(LOCKED, "")
+    _plant(home, LOCKED, _section_text(LOCKED).replace("then act", "then act. Or not"))
+    assert "Or not" not in _core()
+
+
+def test_the_locked_mirrors_equal_their_built_in_text():
+    from agent_friday.services.instruction_locked import LOCKED_SECTIONS
+    man = json.loads((SHIPPED / "manifest.json").read_text(encoding="utf-8"))
+    assert set(LOCKED_SECTIONS) == {s["id"] for s in man["sections"] if s["locked"]}
+    for sid, text in LOCKED_SECTIONS.items():
+        assert _section_text(sid) == text, sid
 
 
 # ── what is refused, and falls back to the shipped text ─────────────────────

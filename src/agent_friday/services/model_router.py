@@ -3616,9 +3616,11 @@ def _register_core_trusted(text: str) -> None:
     gate-exempt: the egress gate must never strip the model of its identity and
     tool instructions (they mention vault/memory/family in the abstract, which
     once classified the whole prompt as sensitive and emptied it on every cloud
-    call). Only text the loader returns is registered: the shipped files, or an
-    override signed when the owner approved it. Candidate text under test exists
-    only inside a trial child process. Dynamic context sections appended by
+    call). Only the SHIPPED text is registered: it is Friday-authored and
+    reviewed in a commit. An override (even one the owner approved) is not a
+    constant and may carry personal words, so its changed paragraphs gate
+    normally; the paragraphs it leaves as shipped stay trusted (the gate
+    matches paragraph by paragraph). Dynamic context sections appended by
     _build_context_prompt are NOT registered and gate normally."""
     import hashlib as _hl
     h = _hl.sha256(text.encode("utf-8")).hexdigest()
@@ -3636,7 +3638,8 @@ def core_instructions() -> str:
     """Friday's core instructions as used right now (services/instruction_files)."""
     from agent_friday.services import instruction_files as _if
     text = _if.assemble_core()
-    _register_core_trusted(text)
+    if text == _if.shipped_core():
+        _register_core_trusted(text)
     return text
 
 
