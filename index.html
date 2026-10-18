@@ -7366,43 +7366,6 @@ window.addEventListener('DOMContentLoaded',function(){
         })();
         // </scene-motion>
 
-        // <scene-pacer>
-        // The scene gives way on a machine that cannot draw it quickly. With no
-        // GPU (a virtual machine, a remote desktop, a driver Windows has set
-        // aside) every frame is drawn in software on the CPU, and a scene that
-        // asks for the next frame as soon as the last one lands takes the whole
-        // machine: Friday's own buttons and pages then answer in seconds. So
-        // after a drawn frame that took longer than SLOW_MS, the next draw
-        // waits, and the scene uses about SHARE of the time; the rest is left
-        // for the page and the PC. On a machine that keeps up nothing changes:
-        // every frame is drawn. Only the drawing waits (the simulation, the
-        // hand cursor and the dock's depth still run every frame), and the
-        // picture holds its last frame meanwhile, as it does on a call. A gap
-        // while the tab was hidden or the scene was held is not a slow frame.
-        const ScenePacer = (function () {
-            const SLOW_MS = 66;        // slower than about 15 frames a second
-            const SHARE = 1 / 3;       // then the scene draws about a third of the time
-            const MAX_WAIT_MS = 2000;  // and still shows a new frame every few seconds
-            let lastAt = null, drew = false, waitUntil = 0;
-            const reset = () => { lastAt = null; drew = false; waitUntil = 0; };
-            try { document.addEventListener('visibilitychange', reset); } catch (e) { /* no document */ }
-            return {
-                // nowMs: this frame's time. True when the scene should draw it.
-                draw(nowMs) {
-                    if (drew && lastAt !== null) {
-                        const cost = nowMs - lastAt;
-                        if (cost > SLOW_MS) waitUntil = nowMs + Math.min(MAX_WAIT_MS, cost * (1 / SHARE - 1));
-                    }
-                    lastAt = nowMs;
-                    drew = nowMs >= waitUntil;
-                    return drew;
-                },
-                reset,
-                SLOW_MS, SHARE, MAX_WAIT_MS,
-            };
-        })();
-        // </scene-pacer>
-
         // <presence-gestures>
         // Processing states on the lattice (docs/design/active/avatar-visual-
         // genome.md §13). Every gesture starts from a real event: a presence
@@ -10764,10 +10727,10 @@ window.addEventListener('DOMContentLoaded',function(){
             requestAnimationFrame(animate);
             // With the context gone, every draw call below is a no-op against a
             // dead context and the per-frame work is wasted. Idle until restore.
-            if (sceneContextLost) { ScenePacer.reset(); return; }
+            if (sceneContextLost) return;
             // On a call the scene holds its last frame: nothing is simulated
             // and nothing is drawn, so the GPU is the call's.
-            if (callHold) { ScenePacer.reset(); return; }
+            if (callHold) return;
             const delta = Math.min(clock.getDelta(), 0.1);
             // Take back last frame's gesture rotations before anything moves.
             FridayGestureScene.begin();
@@ -11316,11 +11279,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 // scene straight. Bloom is the expensive pass and it is the one
                 // thing you do not miss in a 320px window; the avatar still
                 // animates at full frame rate.
-                // On a machine that cannot keep up, ScenePacer spaces the draws.
-                if (!ScenePacer.draw(performance.now())) { /* this frame waits */ }
-                else if (window.__fridayLowCost) renderer.render(scene, camera);
+                if (window.__fridayLowCost) renderer.render(scene, camera);
                 else composer.render();
-            } else ScenePacer.reset();
+            }
         }
 
         // A workspace in its own tab (/w/<id>), or an undocked chat
