@@ -89,6 +89,20 @@ APPROVALS_FILE = FRIDAY_DIR / "approvals.json"
 
 _LOCK = threading.RLock()
 
+
+def _new_approval_id() -> str:
+    """A fresh card id: ``appr_`` and ten hex characters, never ten digits.
+
+    The id travels to cloud models inside tool results ("ONE card (appr_...)",
+    "SEAT_NEEDS_YES:appr_..."), and every outbound message goes through the PII
+    scrub (core._scrub_pii). Ten digits starting 2-9 read there as a US phone
+    number (core._PHONE_RE), so an all-digit suffix would reach the model as a
+    ``[PII:phone:...]`` placeholder instead of the card's id."""
+    while True:
+        suffix = uuid.uuid4().hex[:10]
+        if not suffix.isdigit():
+            return "appr_" + suffix
+
 STATUSES = ("pending", "auto_approved", "approved", "denied", "expired", "blocked")
 TERMINAL_STATUSES = ("auto_approved", "approved", "denied", "expired", "blocked")
 
@@ -502,7 +516,7 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     status = "blocked" if law1_blocked else ("pending" if gated else "auto_approved")
 
     record: Dict[str, Any] = {
-        "approval_id": f"appr_{uuid.uuid4().hex[:10]}",
+        "approval_id": _new_approval_id(),
         "kind": kind,
         "subject_type": subject_type,
         "subject_id": subject_id,
@@ -562,7 +576,7 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
     law1_blocked = bool(dissent.get("law1_blocked"))
     now = time.time()
     record: Dict[str, Any] = {
-        "approval_id": f"appr_{uuid.uuid4().hex[:10]}",
+        "approval_id": _new_approval_id(),
         "kind": kind, "subject_type": subject_type, "subject_id": subject_id,
         "title": (title or "")[:200], "description": (description or "")[:2000],
         "action_description": action_text[:1000],
