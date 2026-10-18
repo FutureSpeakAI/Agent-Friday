@@ -295,17 +295,15 @@ TOOLS = [
     {"name": "avatar_evolution",
      "description": (
          "Friday's own look on the holographic desktop, which changes a little each week. "
-         "action=describe says what the current look changed and which model made it; "
-         "evolve_now makes the next change now; undo goes back to the previous look; "
-         "rollback goes to an earlier look named by 'when' (a look's name, 'last month', "
-         "'two weeks ago', 'the one <model> made', or 'the first look'); set_enabled turns "
-         "weekly evolution on or off; set_author picks who makes the changes ('frontier', "
-         "'seeded', 'local:<model>', or 'cloud:<provider>:<model>'); use_local switches to the "
-         "local model when a cloud model is missing; status says whether it is on and when "
-         "the next change is; show switches the structure on screen to the one named by "
-         "'structure' (any of its names: 'the wormhole', 'Hawking Radiation', 'the Dyson "
-         "sphere', 'Giga Earth'). Say the result in one or two plain sentences; if it asks "
-         "'Which one', ask the owner that question."),
+         "action: describe (what the current look changed, which model made it); evolve_now "
+         "(the next change now); undo (the previous look); rollback (an earlier look named by "
+         "'when': a look's name, 'last month', 'two weeks ago', 'the one <model> made', 'the "
+         "first look'); set_enabled (weekly evolution on/off); set_author (who makes changes: "
+         "'frontier', 'seeded', 'local:<model>', 'cloud:<provider>:<model>'); use_local (the "
+         "local model when a cloud model is missing); status (on or off, next change); show "
+         "(the on-screen structure named by 'structure', any of its names: 'the wormhole', "
+         "'Hawking Radiation', 'the Dyson sphere', 'Giga Earth'). Say the result in one or two "
+         "plain sentences; if it asks 'Which one', ask the owner that question."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(ACTIONS)},
          "when": {"type": "string"},

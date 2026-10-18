@@ -455,13 +455,12 @@ TOOLS = [
     {
         "name": "inspect_image",
         "description": (
-            "LOOK at a local image (or sample frames from a local video) with "
-            "a vision model and get a precise description back. Use this to "
-            "verify your own generations: character consistency, art style, "
-            "stray text/lettering, whether a scene matches its brief. Pass an "
-            "absolute path or a filename that exists under the creations "
-            "folders. Optional 'question' focuses the look (e.g. 'is the king "
-            "bald with a gray beard? any text visible?')."),
+            "LOOK at a local image (or frames of a local video) with a vision "
+            "model for a precise description. Use it to verify your own "
+            "generations: character consistency, art style, stray "
+            "text/lettering, whether a scene matches its brief. path: absolute, "
+            "or a filename under the creations folders. 'question' focuses the "
+            "look (e.g. 'is the king bald? any text visible?')."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -474,13 +473,12 @@ TOOLS = [
     {
         "name": "inspect_audio",
         "description": (
-            "LISTEN to a local audio file: returns duration, loudness levels, "
-            "and a local speech-to-text transcript (on-device whisper). Use "
-            "this to verify narration/TTS before shipping — hallucinated or "
-            "garbled speech shows up in the transcript. Optional 'question' "
-            "additionally plays the audio to a cloud model for a tone/quality "
-            "judgment (e.g. 'does this voice suit a bedtime story?'); under "
-            "Local only that listen check is skipped and said so."),
+            "LISTEN to a local audio file: duration, loudness and an on-device "
+            "whisper transcript. Use it to verify narration/TTS before "
+            "shipping: hallucinated or garbled speech shows in the transcript. "
+            "'question' also plays the audio to a cloud model for a "
+            "tone/quality judgment; under Local only that check is skipped "
+            "and said so."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -494,17 +492,14 @@ TOOLS = [
         "name": "save_output",
         "description": (
             "Download a generation result URL to disk safely (verifies the "
-            "bytes are real media, writes provenance + manifest). Use this "
-            "instead of shell curl for saving Higgsfield or other generation "
-            "outputs. 'folder' is an optional subfolder under the daily "
-            "creations directory (e.g. 'storybook-dragon/clips'); 'filename' "
-            "optionally renames the saved file."),
+            "bytes are real media, writes provenance + manifest). Use this, "
+            "not shell curl, to save Higgsfield or other generation outputs."),
         "input_schema": {
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "http(s) URL of the finished output."},
-                "folder": {"type": "string", "description": "Optional relative subfolder under creations."},
-                "filename": {"type": "string", "description": "Optional exact filename to save as."},
+                "folder": {"type": "string", "description": "Optional subfolder under the daily creations directory, e.g. 'storybook-dragon/clips'."},
+                "filename": {"type": "string", "description": "Optional new name for the saved file."},
                 "job_id": {"type": "string", "description": "Optional job id for provenance."},
             },
             "required": ["url"],

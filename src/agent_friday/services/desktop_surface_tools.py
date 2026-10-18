@@ -95,10 +95,10 @@ TOOLS = [
          "required": ["action"], "additionalProperties": False}},
     {"name": "customize_workspace", "description": (
         "Apply a reversible native workspace Salon customization immediately: density compact or comfortable, "
-        "hex accent color, pinned note, or quick-action prompts. Pass null to clear a field. "
-        "Changes are saved and the open desktop is notified in Simple and Classic. "
-        "This is workspace presentation, not codebase editing; use improve_workspace for installed workspace codebases. "
-        "Use revert_workspace or list_workspace_history to undo or inspect changes."),
+        "hex accent color, pinned note, or quick-action prompts; null clears a field. "
+        "Saved, and the open desktop is notified in Simple and Classic. "
+        "Presentation only, not codebase editing: use improve_workspace for installed workspace codebases. "
+        "revert_workspace or list_workspace_history undo or inspect changes."),
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string"}, "patch": {"type": "object", "properties": {
              "note": {"type": ["string", "null"]}, "accent": {"type": ["string", "null"]},

@@ -303,24 +303,23 @@ TOOLS = [
     {
         "name": "speak_text",
         "description": (
-            "SPEAK: turn text into natural speech with ElevenLabs and save it "
-            "as an MP3 in the creations folder. Use this for narration, "
-            "voiceover, and audio drafts. Pick a voice with list_voices first "
-            "if the user asked for a particular sound; otherwise the default "
-            "voice is used. Always run inspect_audio on the result before "
-            "telling the user it is finished — that catches garbled or "
-            "truncated speech. Costs characters against the ElevenLabs quota, "
-            "so do not re-generate identical text."),
+            "SPEAK: turn text into speech with ElevenLabs, saved as an MP3 in "
+            "creations, for narration, voiceover and audio drafts. Pick a "
+            "voice with list_voices first if the user asked for a particular "
+            "sound; otherwise the default voice. Always run inspect_audio on "
+            "the result before calling it finished: it catches garbled or "
+            "truncated speech. Costs ElevenLabs quota: do not re-generate "
+            "identical text."),
         "input_schema": {
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "The text to speak (max 5000 chars)."},
-                "voice_id": {"type": "string", "description": "Optional ElevenLabs voice_id (see list_voices)."},
-                "model_id": {"type": "string", "description": "Optional model, e.g. eleven_multilingual_v2 (quality) or eleven_flash_v2_5 (fast/cheap)."},
-                "folder": {"type": "string", "description": "Optional relative subfolder under the daily creations directory."},
-                "filename": {"type": "string", "description": "Optional exact filename to save as (.mp3)."},
-                "stability": {"type": "number", "description": "Optional 0-1. Lower is more expressive, higher more consistent."},
-                "similarity_boost": {"type": "number", "description": "Optional 0-1 adherence to the original voice."},
+                "voice_id": {"type": "string", "description": "From list_voices."},
+                "model_id": {"type": "string", "description": "e.g. eleven_multilingual_v2 (quality) or eleven_flash_v2_5 (fast/cheap)."},
+                "folder": {"type": "string", "description": "Subfolder under the daily creations directory."},
+                "filename": {"type": "string", "description": "Exact filename (.mp3)."},
+                "stability": {"type": "number", "description": "0-1. Lower is more expressive, higher more consistent."},
+                "similarity_boost": {"type": "number", "description": "0-1 adherence to the original voice."},
             },
             "required": ["text"],
         },
@@ -331,12 +330,11 @@ TOOLS = [
             "List the ElevenLabs voices this account can actually use, with "
             "their voice_ids. Call this before speak_text whenever the user "
             "asks for a specific kind of voice (warm, British, male, "
-            "narrator), so you pass a real voice_id instead of guessing one. "
-            "Optional 'search' filters by name or descriptive label."),
+            "narrator), so you pass a real voice_id instead of guessing one."),
         "input_schema": {
             "type": "object",
             "properties": {
-                "search": {"type": "string", "description": "Optional filter on voice name or label."},
+                "search": {"type": "string", "description": "Filter on voice name or descriptive label."},
             },
             "required": [],
         },
