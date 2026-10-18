@@ -732,6 +732,11 @@ _AGE = [(re.compile(r"\blast week\b|\ba week ago\b", re.I), 7.0), (re.compile(r"
 
 def _intent_of(phrase: str) -> str:
     p = re.sub(r"^(?:(?:hey |ok |okay )?(?:friday|laya),?\s+|please\s+|can you\s+|could you\s+)+", "", " ".join(phrase.lower().split()))
+    # Settings > Laya by voice, decided first: "reset my bars" is a bar control, never a reset of what she learned.
+    if "replay" in p or p.startswith("test yourself"):
+        return "replay"
+    if re.search(r"\bbars?\b", p) or re.match(r"(?:be|get) (?:a (?:bit|little) )?(?:stricter|more |less |bolder|braver)", p):
+        return "bar"
     if p.startswith("wipe") or "forget everything" in p:
         return "wipe"
     if p.startswith(("reset", "clear")) or "start over" in p:
@@ -785,6 +790,16 @@ def run_control(op: str, words: str, profile: Optional[str] = None) -> dict:
         profile = OWNER_PROFILE                           # forgetting never needs a signed-in profile
     if op not in owner_intent(words):
         return {"ok": False, "text": REFUSED_LINE}
+    if op in ("replay", "bar"):
+        # Settings > Laya by voice (services/laya_settings). Neither touches what she learned; a bar change only
+        # ever makes her stricter here (lowering is a click on the screen) and posts a notice like the others.
+        from agent_friday.services import laya_settings
+        # The replay reads one profile's sealed history: only the signed-in owner's, never the forget-path fallback.
+        out = laya_settings.voice_replay(current_profile()) if op == "replay" else laya_settings.voice_bars(words)
+        if op == "bar" and out.get("ok"):
+            notify("done:bar", "Laya's bars changed", "Laya's bars changed by voice. Settings > Laya shows them "
+                                                      "and can change them back.")
+        return out
     if op != "summary" and not flush_capture(CONTROL_FLUSH_S):
         # The row the owner means may still be on its way to the store; acting now could remove the wrong one.
         return {"ok": False, "text": "NOT DONE: I am still writing down what you just said. Say that again in a moment."}
