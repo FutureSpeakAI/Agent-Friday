@@ -21,16 +21,35 @@ platform has a card that says what Friday can and cannot do there.
   mode**, enter your publication address, and choose **Enable manual handoff**.
   Friday then prepares a ready-to-paste package on this PC, and you publish it
   in Substack yourself.
+- **Medium.** Choose **Enable manual mode**, paste a Medium integration token
+  in **Paste access token**, then **Save & connect**. Friday checks the token
+  with Medium's own account lookup, which posts nothing, and says "✓ Connected
+  — session verified" only when Medium accepts it.
+- **LinkedIn, X / Twitter, Instagram, Reddit and TikTok.** These need your own
+  developer app on the platform. Choose **🔗 Connect**. The card says
+  "Create an app in [platform]'s developer site, set its redirect address to"
+  an address it shows, "then enter its details here." Make the app, enter its
+  **Client ID** (for TikTok, its **Client key**) and **Client secret**, then
+  choose **Save and sign in**. Friday opens the platform's sign-in page in a
+  new window; sign in there and approve access, and the card refreshes when
+  you come back. If your browser blocks the window, allow pop-ups for Friday
+  and press **🔗 Connect** again. The client secret is stored encrypted on
+  this PC and is never shown again or logged.
+- **YouTube** cannot be connected yet. **🔗 Connect** says: "YouTube can't be
+  connected from here yet: its sign-in goes through Google, and linking a
+  Google account to YouTube publishing isn't finished."
 
-LinkedIn, X / Twitter, Instagram, YouTube, Reddit and TikTok also have cards.
-They cannot be connected from the app yet. **🔗 Connect** on those cards shows
-"The connect flow is not available yet." In the composer their chips show
-"connect ↗" and cannot be picked.
+In the composer, a platform that is not connected shows "connect ↗" on its
+chip and cannot be picked.
 
 Passwords and tokens are stored encrypted on this PC. On a connected card,
-**Test post** checks that the connection still works; it does not publish
-anything. **Disconnect** asks first, then withdraws Friday's access on the
-platform where it can, and deletes the stored credential.
+**Check connection** checks the saved sign-in and posts nothing. Where the
+platform has a way to look up your account, Friday asks it, and says
+"Connected to [platform] as [account]. Nothing was posted." or that the
+platform did not accept the saved credential. Where it has no such lookup,
+Friday says a credential is saved but was not checked. **Disconnect** asks
+first, then withdraws Friday's access on the platform where it can, and
+deletes the stored credential.
 
 ## Making a post
 
@@ -42,7 +61,8 @@ A post is a card in [Media](media.md). You can start one in three ways:
 - From another workspace, choose **Share / Post…** in its send menu, or
   **📤 Share / Post…** on a creation in the gallery. This opens a quick post:
   pick the platforms, check the preview, then choose **📅 Schedule (next
-  optimal)** or **🚀 Post now**.
+  optimal)** or **🚀 Post now**. **Open full composer →** saves the post as a
+  draft and opens its card in Media.
 - Ask Friday (see [Ask by voice or chat](#ask-by-voice-or-chat)).
 
 ## The composer
@@ -127,16 +147,40 @@ held, not changed. You get a notice, "Post held — review before publishing",
 that names the platform and says "post held — it looks like it contains private
 data". A post is also held when the check itself cannot run.
 
-In Media, a held post's card shows **Held for you** and sits in In review.
-Media has no button to release a held post yet, and Friday cannot release one.
+In Media, a held post's card shows **Held for you** and sits in In review. The
+notice's **Open the post in Media** opens that card.
+
+To send it anyway, choose **Publish anyway…** on the card. Friday shows why it
+was held and asks "Publish it anyway?" before anything changes. Releasing it
+sends nothing by itself: the post is checked again for harmful content, and
+its approval card still asks you before it goes out. A post the harmful-content
+check blocks is not sent, and if the check cannot run the post is held again.
+Friday cannot release a held post for you.
+
 If nobody acts on a held post for 7 days, it is cancelled and nothing is sent.
 
 ## When posts go out
 
 Scheduled posts are sent by a built-in job, **Content publisher**, which runs
-every 15 minutes. It starts switched off. Turn it on under **Friday's built-in
-routines** in **Workflows** (see [Scheduled jobs](scheduled-jobs.md)), or a
-scheduled post does not go out at its time.
+every 15 minutes. It starts switched off, and switches itself on the first
+time you schedule or post to a connected account (or to Substack's manual
+hand-off). You get a notification, "Content publisher turned on": "It sends
+your scheduled posts, each only once you have approved it. You can switch it
+off in Workflows." Switching it on sends nothing: each post still waits for its
+approval card.
+
+The job shows as on under **Friday's built-in routines** in **Workflows** (see
+[Scheduled jobs](scheduled-jobs.md)), with a note that it was switched on
+automatically, when and why. You can switch it off there.
+
+If you switch it off yourself, it stays off. Scheduling a post then shows "This
+post won't go out: the Content publisher is switched off. Turn it on in
+Workflows." with **Open Workflows**. **🚀 Post now** says "The Content
+publisher is switched off, so if this post can't go out straight away it won't
+be tried again." Friday also tells you
+when something else will stop a post: publishing switched off in Settings, all
+publishing paused, or none of its platforms connected. Each of these notices
+has a button that opens the place to fix it.
 
 - A post can go out up to about 15 minutes after its time.
 - The PC must be on and Friday running. A post missed while the PC was off goes
@@ -159,7 +203,11 @@ scheduled post does not go out at its time.
   not sent again. If it is not, the post is retried as above. If the platform
   offers no way to check, Friday does not resend, and tells you it failed.
 - **Sign-in problems.** Friday tries to refresh the sign-in once. If that fails,
-  it stops and tells you to reconnect the account.
+  it stops and tells you to reconnect the account in Settings, Connections.
+  The notice's **Open Connections** takes you there.
+
+Notices about a failed or blocked post have **Open the post in Media**, which
+opens that post's card.
 
 ## Pause all publishing
 
@@ -178,7 +226,7 @@ pausing does not recall it.
   on the same platform.
 - "What's queued?" or "Did my Mastodon post go out?" Friday lists upcoming and
   held posts and recent history, or one post's status on each platform. Friday
-  cannot release a held post.
+  cannot release a held post; use **Publish anyway…** on its card.
 - "Turn this blog post into posts for Bluesky and Mastodon." Friday writes a
   draft for each platform. Drafts only: you review and schedule them.
 
@@ -187,11 +235,14 @@ Every post made this way still waits for its approval card.
 ## What stays on your PC, and what can leave
 
 - **On this PC:** drafts, previews, the schedule, held posts, and your stored
-  passwords and tokens.
+  passwords, tokens and client secrets.
 - **Leaves the PC:** a post's text and media, to the platform, after you
-  approve. Connecting sends your handle and app password to Bluesky, or your
-  token to your Mastodon server, to check them. The per-platform rewrite may
-  use a cloud model, as described above.
+  approve. Connecting sends your handle and app password to Bluesky, your
+  token to your Mastodon server, or your token to Medium, to check them.
+  **Check connection** asks the platform about your account and posts nothing.
+  For LinkedIn, X / Twitter, Instagram, Reddit and TikTok you sign in on the
+  platform's own page. The per-platform rewrite may use a cloud model, as
+  described above.
 - **Needs your approval:** every post, to every platform, unless a grant you
   made covers it.
 

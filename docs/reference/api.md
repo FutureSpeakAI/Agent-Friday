@@ -774,7 +774,7 @@ Current insight cards from the weekly `content_insights` job (attribute lift, le
 Adapter registry + per-platform `status()` envelope (`{ connected, account, scopes, expires_at, tier, last_error }`). Never contains token material.
 
 ### `POST /api/content/platforms/<name>/connect`
-Begin auth. Returns a `connect_url` (OAuth platforms), a token-paste descriptor (Bluesky app password, Mastodon token), or a manual-mode descriptor (Substack/Medium handoff).
+Begin auth. Returns a `connect_url` (OAuth platforms), a token-paste descriptor (Bluesky app password, Mastodon token), or a manual-mode descriptor (Substack/Medium handoff). An OAuth platform with no developer app yet (LinkedIn, X, Instagram, Reddit, TikTok) answers `{ok: false, needs: "client", fields, redirect_uri, message}`; post `client_id` (TikTok: `client_key`) and `client_secret` to the same route to save them and get the `connect_url`. A token (`secret`) is checked with the platform's own account lookup where it has one (Medium: `GET /v1/me`). YouTube answers `ok: false` with a message that it can't be connected yet.
 
 ### `GET /api/content/platforms/<name>/callback`
 OAuth loopback redirect target (`http://localhost:3000/...`, PKCE where supported, `state` bound + single-use). Tokens are encrypted into the credential store; never written to disk in plaintext.
@@ -783,7 +783,7 @@ OAuth loopback redirect target (`http://localhost:3000/...`, PKCE where supporte
 Disconnect: platform-side token revoke where the API supports it + local credential purge. `?purge_analytics=1` also removes that platform's snapshots and targets.
 
 ### `POST /api/content/platforms/<name>/test`
-Connection test (private/self post where the platform allows it).
+Check connection. Posts nothing: refreshes the saved credential and, where the platform has one, runs its account lookup. Returns `{ok, connected, checked, posted: false, message, status}`; `message` says what was checked.
 
 ### Voice cards & export
 
