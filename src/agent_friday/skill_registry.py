@@ -55,6 +55,19 @@ Skills Friday writes herself (the ``learn_skill`` tool):
     hash of the previous line (a chain) and an HMAC. ``verify_ledger`` checks
     the chain. The file is only ever opened for append.
 
+Threat model and known limits (2026-10-18 reviews):
+  - The record is as strong as the governance key. The model cannot sign
+    without it, and every model path to it (write_file under the Friday home,
+    a run_command that reads the keychain or ~/.friday/vault/.governance-key)
+    waits for the owner's decision (governance/action_gate). An owner-approved
+    command can forge a record; it could also do worse, so that is accepted.
+  - The ledger chain has no anchor: cutting lines off the END of a ledger is
+    not detected (changing or removing a middle line is). Follow-up: keep the
+    newest line's hash in a signed record outside the file.
+  - A folder whose record does not verify (no key right now, or a hand edit)
+    ranks with Friday's skills (last) for names and matches until it is saved
+    again through save_skill, which drops the stale record.
+
 Public API:
     load_skills(dirs=None)               -> list[Skill]
     list_skills(dirs=None)               -> list[dict]      (summaries for UI/API)
@@ -359,6 +372,7 @@ def load_skills(dirs=None) -> list:
                             # Authorship is never read from the manifest text.
                             sk.meta.pop(CREATED_BY_KEY, None)
                             sk.meta.pop(AUTHOR_KEY, None)
+                            sk.meta.pop(UNVERIFIED_KEY, None)
                             if d != BUNDLED_DIR and _provenance_ok(child, child.name, raw):
                                 sk.name = child.name
                                 sk.meta[AUTHOR_KEY] = AGENT_AUTHOR
@@ -367,6 +381,7 @@ def load_skills(dirs=None) -> list:
                                 # A record that does not verify (no key right
                                 # now, or stale): not Friday's, and it still
                                 # never wins a name from another skill.
+                                sk.meta[UNVERIFIED_KEY] = True
                                 unverified[sk.name] = sk
                             else:
                                 by_name[sk.name] = sk
@@ -421,8 +436,11 @@ def match_skills(message, dirs=None, limit=3) -> list:
             continue
         hits = [t for t in s.triggers if t and t.lower() in msg]
         if hits:
-            # score: not-Friday's first, then triggers hit, then longest match
-            scored.append((0 if friday_wrote(s) else 1, len(hits), max(len(h) for h in hits), s))
+            # score: not-Friday's first (a folder whose record cannot be
+            # verified right now ranks with hers), then triggers hit, then
+            # longest match
+            hers = friday_wrote(s) or bool((s.meta or {}).get(UNVERIFIED_KEY))
+            scored.append((0 if hers else 1, len(hits), max(len(h) for h in hits), s))
     scored.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
     return [x[3] for x in scored[:limit]]
 
@@ -576,6 +594,8 @@ def _write_manifest(name, *, description="", body="", triggers=None, tool_chain=
 CREATED_BY_KEY = "created_by"
 #: In-memory meta key load_skills sets from the signed record (never parsed).
 AUTHOR_KEY = "_friday_author"
+#: In-memory meta key: the folder has a provenance record that does not verify.
+UNVERIFIED_KEY = "_provenance_unverified"
 AGENT_AUTHOR = "agent"
 ARCHIVE_DIRNAME = ".archive"
 LEDGER_NAME = ".ledger.jsonl"
@@ -626,7 +646,10 @@ def _provenance_key() -> bytes:
 
 def _mac(body: dict, key: bytes) -> str:
     import hmac as _hmac
-    canonical = json.dumps(body, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    # surrogatepass: a lone surrogate in a reason still signs (same bytes as
+    # plain utf-8 for every valid string, so existing signatures verify).
+    canonical = json.dumps(body, sort_keys=True, ensure_ascii=False,
+                           default=str).encode("utf-8", "surrogatepass")
     return _hmac.new(key, canonical, hashlib.sha256).hexdigest()
 
 
