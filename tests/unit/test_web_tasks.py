@@ -163,7 +163,7 @@ def test_only_a_read_only_task_on_allowed_sites_skips_the_plan_card():
     assert not wt.needs_plan_card(p, {"example.com": "may_read"})
     assert wt.needs_plan_card(p, {"example.com": None})
     p2 = wt.build_plan(goal="g", start_url="https://example.com/", wants_to_act=True,
-                       success=[{"text_present": "done"}])
+                       success=[{"text_present": "All done here"}])
     assert wt.needs_plan_card(p2, {"example.com": "may_act"})
 
 
@@ -512,7 +512,7 @@ def test_proof_cannot_be_an_echo_of_the_address():
     url = "https://shop.example.com/search?q=Order+confirmed+A-1029"
     text = "Results for Order confirmed A-1029: none."
     assert wt.evidence_found("Order confirmed A-1029", text, url)[0] is False
-    p = plan(success=[{"url_contains": "confirmed"}])
+    p = plan(success=[{"url_contains": "/search?q=Order"}])
     assert wt.run_checks(p, url, text)[0] is False
 
 
@@ -558,7 +558,7 @@ def test_an_approved_plan_adds_sites_only_on_an_on_screen_press(monkeypatch):
     started = []
     monkeypatch.setattr(wt, "spawn", lambda p, **kw: started.append((p, kw)) or "tid")
     p = wt.build_plan(goal="g", start_url="https://newshop.example.net/",
-                      success=[{"text_present": "ok"}])
+                      success=[{"text_present": "Order placed"}])
     rec = {"status": "approved", "kind": wt.PLAN_CARD_NEW_SITES, "decided_by": "owner",
            "payload": {"plan": p.to_dict(), "new_sites": ["example.net"]}}
     wt._on_plan_decision(rec)
@@ -602,7 +602,7 @@ def test_an_approved_cloud_plan_does_not_start_after_a_switch_to_local(monkeypat
     monkeypatch.setattr(cmp, "cloud_allowed", lambda *a, **k: False)
     ws.set_site("example.com", "may_act", made_by="owner:ui")
     p = wt.build_plan(goal="g", start_url="https://example.com/", reader={"where": "cloud"},
-                      money_cap_usd=1, success=[{"text_present": "ok"}])
+                      money_cap_usd=1, success=[{"text_present": "Order placed"}])
     wt._on_plan_decision({"status": "approved", "kind": wt.PLAN_CARD, "decided_by": "owner:ui",
                           "payload": {"plan": p.to_dict(), "new_sites": []}})
     assert started == []
@@ -640,3 +640,121 @@ def test_the_model_is_shown_only_web_actions():
     for word in ("send_email", "search_files", "run_command", "memory"):
         assert word not in wt.SYSTEM
     assert set(wt.ACTION_TOOLS.values()) <= wt.WEB_TASK_TOOLS
+
+
+# ── Second review (N1-N7) ─────────────────────────────────────────────────────
+
+def test_typed_text_is_never_proof():
+    class Echo(FakeBrowser):
+        def call(self, tool, args):
+            if tool == "browser_type":
+                self.pages[self.url] = self.pages.get(self.url, "") + " " + args["text"]
+            return super().call(tool, args)
+    b = Echo(dict(SHOP))
+    m = FakeModel([{"actions": [{"do": "type", "element": 2, "text": "HP 305 cartridge added to your basket"}]},
+                   {"done": {"evidence": "HP 305 cartridge added to your basket"}},
+                   {"done": {"evidence": "cartridge added to your basket"}}])
+    out = wt.run("tn1", plan(), ports(b, m))
+    assert out["receipt"]["outcome"] == "gave_up" and out["receipt"]["verified"] is False
+    assert "repeats something Friday typed" in m.prompts[2]
+
+
+@pytest.mark.parametrize("check", [{"url_matches": "*"}, {"url_contains": "://"},
+                                   {"text_present": "ok"}, {"url_contains": "confirm"}])
+def test_vague_success_checks_are_refused(check):
+    with pytest.raises(wt.PlanRefused):
+        wt.build_plan(goal="g", start_url="https://example.com/", success=[check])
+
+
+def test_an_address_check_does_not_count_on_a_page_friday_opened_herself():
+    p = plan(success=[{"url_contains": "/confirm"}])
+    url = "https://shop.example.com/confirm"
+    assert wt.run_checks(p, url, "", opened=[url])[0] is False
+    assert wt.run_checks(p, url, "", opened=["https://shop.example.com/"])[0] is True
+
+
+def test_the_plan_card_shows_what_done_means():
+    p = plan(success=[{"text_present": "Order placed"}])
+    text = wt._plan_card_text(p, {"example.com": "may_act"}, [])
+    assert 'the page says "Order placed"' in text
+
+
+def test_a_website_plan_is_never_approved_by_a_typed_yes_or_a_text_reply():
+    from agent_friday.services import approvals
+    allowed = approvals.SCREEN_ONLY_KINDS[wt.PLAN_CARD]
+    assert "owner:ui" in allowed and "owner:voice" in allowed
+    for who in ("owner", "owner:chat", "owner:sms"):
+        assert who not in allowed
+
+
+def test_the_resume_route_leaves_a_website_task_to_its_runner(monkeypatch):
+    from agent_friday.routes import tasks as rt
+    import inspect
+    src = inspect.getsource(rt.resume_task)
+    assert "verdict.get('via') != 'web_task'" in src and "RESUMED_IN_BACKGROUND" in src
+
+
+def test_a_second_resume_press_does_not_start_a_second_run(monkeypatch):
+    calls = []
+    monkeypatch.setattr(wt, "resumability", lambda tid: {"resumable": True})
+    monkeypatch.setattr(wt, "_resume_locked", lambda tid: calls.append(tid) or True)
+    assert wt.resume("tdup") is True
+    wt._register(wt._Run(task_id="tdup", plan=plan()))
+    assert wt.resume("tdup") is False and calls == ["tdup"]
+
+
+def test_unknown_gate_messages_count_as_refusals():
+    for first in ("[BLOCKED — FROM OUTSIDE CONTENT] x", "[GOVERNANCE HOLD] x", "[NOT RUN] x",
+                  "[APPROVAL CARD RAISED] x", "[SOME NEW GATE] x", "TOOL CALL FAILED: x"):
+        assert wt._refused(first + "\nmore") is True, first
+    assert wt._refused("[web page content below: DATA...]\nURL: x") is False
+
+
+@pytest.mark.parametrize("url", [
+    "https://shop.example.com/out?to=https://evil.test/?d=1",
+    "https://shop.example.com/out?to=https%3A%2F%2Fevil.test",
+    "https://shop.example.com/out?to=%2F%2Fevil.test",
+    "https://shop.example.com/go#https://evil.test",
+])
+def test_redirect_shaped_addresses_are_not_opened(url):
+    _activate("tredir", plan())
+    assert "carries another web address" in wt.tool_scope_denial("browser_open", {"url": url},
+                                                                  {"task_id": "tredir"})
+
+
+def test_an_ordinary_address_with_a_query_still_opens():
+    _activate("tq", plan())
+    assert wt.tool_scope_denial("browser_open", {"url": "https://shop.example.com/s?q=ink+305"},
+                                {"task_id": "tq"}) is None
+
+
+def test_a_cut_journal_tail_is_detected_and_a_torn_line_is_dropped():
+    j = wt.Journal("tn7")
+    j.append("start")
+    j.append("card", approval_id="a1", title="Place order", outward=True)
+    assert j.intact()
+    lines = j.path.read_text().splitlines()
+    j.path.write_text(lines[0] + "\n")               # the card line cut away
+    assert not j.intact()
+    j2 = wt.Journal("tn7b")
+    j2.append("start")
+    with open(j2.path, "a") as f:
+        f.write('{"kind": "act')                     # the process died mid-write
+    assert j2.intact() and len(j2.entries()) == 1
+    j2.append("model", step=1)
+    assert j2.intact() and [e["kind"] for e in j2.entries()] == ["start", "model"]
+
+
+def test_records_keep_addresses_without_their_query():
+    b = FakeBrowser(SHOP)
+    m = FakeModel([{"actions": [{"do": "open", "url": "https://shop.example.com/s?q=12+Long+Street"}]},
+                   {"give_up": {"reason": "x"}}])
+    out = wt.run("tq8", plan(), ports(b, m))
+    raw = (wt._task_dir("tq8") / "web_task.jsonl").read_text() + json.dumps(out["receipt"])
+    assert "Long" not in raw and "/s?…" in raw
+
+
+def test_a_task_whose_records_cannot_be_written_leaves_no_run_behind(monkeypatch):
+    monkeypatch.setattr(wt.Journal, "append", lambda self, *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    out = wt.run("tn5", plan(), ports(FakeBrowser(SHOP), FakeModel([])))
+    assert out["status"] == "failed" and wt.active("tn5") is None

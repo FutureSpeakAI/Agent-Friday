@@ -2055,6 +2055,26 @@ _PROOF_BLUR_CSS = (
     " text-shadow: none !important; }")
 
 
+_PROOF_TEXT_JS = r"""() => {
+  const root = document.body ? document.body.cloneNode(true) : null;
+  if (!root) return '';
+  root.querySelectorAll('input, textarea, select, [contenteditable], [contenteditable=""],'
+    + ' [contenteditable="true"], [role="textbox"], script, style, template, noscript')
+    .forEach(n => n.remove());
+  return (root.innerText || root.textContent || '').slice(0, 200000);
+}"""
+
+
+def proof_text(s: "BrowserSession") -> str:
+    """The page's text WITHOUT anything a visitor can type into: what a
+    website task's proof of completion is checked against, so text Friday
+    typed into a comment box or a chat widget can never count as proof."""
+    def read():
+        s._need_running()
+        return str(s._page.evaluate(_PROOF_TEXT_JS) or "")
+    return str(s.call(read, purpose="view") or "")
+
+
 def proof_picture(s: "BrowserSession", path: str) -> bool:
     """Save a JPEG of the page for the owner's receipt, sensitive fields blurred.
 

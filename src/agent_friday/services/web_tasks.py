@@ -169,7 +169,14 @@ def build_plan(*, goal, start_url, sites=None, data=None, success=None, max_step
         (kind, value), = c.items()
         if kind not in _SUCCESS_KINDS or not str(value or "").strip():
             raise PlanRefused("Each success check is one of url_contains, url_matches, text_present.")
-        checks.append({kind: str(value)[:300]})
+        value = str(value)[:300]
+        if kind == "text_present" and len(_norm(value)) < 8:
+            raise PlanRefused("A text check needs at least 8 characters the finished page will show.")
+        if kind in ("url_contains", "url_matches"):
+            letters = re.sub(r"[^A-Za-z0-9]", "", value.replace("http", "").replace("www", ""))
+            if len(letters) < 4 or "/" not in value:
+                raise PlanRefused("An address check needs a specific path, e.g. '/order/confirmation'.")
+        checks.append({kind: value})
     caps = dict(DEFAULT_CAPS)
     if max_steps is not None:
         caps["steps"] = _bounded_int(max_steps, 1, HARD_CAPS["steps"], "steps")
@@ -316,36 +323,73 @@ class Journal:
                 return "broken"
         return ""
 
+    @property
+    def head_path(self) -> Path:
+        return self.path.with_name("web_task.head.json")
+
+    def _head(self) -> Dict[str, Any]:
+        try:
+            h = json.loads(self.head_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {"count": 0}
+        return h if verify_signed(h) else {"count": -1}
+
     def append(self, kind: str, **fields) -> Dict[str, Any]:
-        """Each line is signed and names the signature of the line before it,
-        so resume can tell a journal that was edited or cut from one that wasn't."""
+        """Each line is signed and names the signature of the line before it;
+        a signed head file records how many lines there are. Resume can tell a
+        journal that was edited, or cut short, from one that wasn't."""
         with self._lock:
-            entry = {"kind": kind, "t": time.time(), **fields, "prev": self._last_sig()}
+            entries = self.entries()
+            prev = entries[-1].get("sig", "") if entries else ""
+            entry = {"kind": kind, "t": time.time(), **fields, "prev": prev}
             entry = json.loads(json.dumps(entry, default=str))
             entry["sig"] = _sign(entry)
+            self._drop_torn_tail()
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            head = {"count": len(entries) + 1, "last": entry["sig"]}
+            head["sig"] = _sign(head)
+            tmp = self.head_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(head), encoding="utf-8")
+            tmp.replace(self.head_path)
         return entry
 
+    def _drop_torn_tail(self) -> None:
+        try:
+            data = self.path.read_bytes()
+        except FileNotFoundError:
+            return
+        if data and not data.endswith(b"\n"):
+            with open(self.path, "r+b") as f:
+                f.truncate(data.rfind(b"\n") + 1)
+
     def entries(self) -> List[Dict[str, Any]]:
+        """Every complete line. A torn last line (the process died mid-write)
+        is dropped: that line was never finished, so it never happened."""
         out = []
         try:
-            for line in self.path.read_text(encoding="utf-8").splitlines():
-                try:
-                    out.append(json.loads(line))
-                except Exception:
-                    out.append({"kind": "unreadable"})
+            lines = self.path.read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
-            pass
+            return out
+        for i, line in enumerate(lines):
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                if i == len(lines) - 1:
+                    break
+                out.append({"kind": "unreadable"})
         return out
 
     def intact(self) -> bool:
         prev = ""
-        for e in self.entries():
+        entries = self.entries()
+        for e in entries:
             if not verify_signed(e) or e.get("prev") != prev:
                 return False
             prev = e["sig"]
-        return True
+        head = self._head()
+        # The head is written just after each line, so it may lag by one.
+        return head.get("count", -1) >= 0 and len(entries) in (head["count"], head["count"] + 1)
 
     def resume_state(self) -> Dict[str, Any]:
         """Where a resumed run starts, what it had used, and any outward step
@@ -388,6 +432,8 @@ class _Run:
     plan: WebTaskPlan
     page_url: str = ""
     read_only: bool = False
+    typed: List[str] = dataclasses.field(default_factory=list)
+    opened: List[str] = dataclasses.field(default_factory=list)
 
     def site_level(self, site: str) -> Optional[str]:
         """The level for a site within THIS task: the owner's list, narrowed
@@ -482,6 +528,25 @@ def _never_send_hits(text: str) -> List[str]:
         return ["(the never-send check is unavailable)"]
 
 
+def _carries_an_address(url: str) -> bool:
+    """True when a URL's query or fragment holds another web address
+    (open-redirect shape), however many times it was %-encoded."""
+    try:
+        parts = urlsplit(url)
+    except Exception:
+        return True
+    tail = parts.query + "&" + parts.fragment
+    for _ in range(4):
+        low = tail.lower()
+        if "://" in low or re.search(r"(^|[=&])//", low) or re.search(r"(^|[=&])(https?|ftp):", low):
+            return True
+        nxt = unquote_plus(tail)
+        if nxt == tail:
+            return False
+        tail = nxt
+    return True
+
+
 def tool_scope_denial(name: str, tool_input: Any, session_ctx: Any) -> Optional[str]:
     """For agent._execute_tool: a refusal string, or None to carry on.
 
@@ -505,9 +570,16 @@ def tool_scope_denial(name: str, tool_input: Any, session_ctx: Any) -> Optional[
             return ("[WEB TASK DENY] That value is on your never-send list, so Friday "
                     "did not type or open it.")
     if name == "browser_open":
-        ok, why = navigation_check(run.task_id, str(args.get("url") or ""))
+        url = str(args.get("url") or "")
+        ok, why = navigation_check(run.task_id, url)
         if not ok:
             return f"[WEB TASK DENY] not opened: {why}"
+        if _carries_an_address(url):
+            # A plan site's "go to" link could forward whatever the address
+            # carries to a site off the plan, and a server redirect happens
+            # before Friday can look at where it leads.
+            return ("[WEB TASK DENY] not opened: the address carries another web address in it; "
+                    "open the page you need directly.")
     if name in ACTING_TOOLS:
         from agent_friday.governance.web_sites import site_of
         site = site_of(run.page_url)
@@ -603,7 +675,17 @@ def _echoed(text: str, url: str) -> bool:
     return bool(n) and n in _norm(decoded)
 
 
-def evidence_found(evidence: str, page_text: str, url: str = "") -> Tuple[bool, str]:
+def _overlaps_typed(text: str, typed: List[str]) -> bool:
+    n = _norm(text)
+    for t in typed or []:
+        tn = _norm(t)
+        if len(tn) >= 4 and (tn in n or n in tn):
+            return True
+    return False
+
+
+def evidence_found(evidence: str, page_text: str, url: str = "",
+                   typed: Optional[List[str]] = None) -> Tuple[bool, str]:
     ev = _norm(evidence)
     if len(ev) < EVIDENCE_MIN:
         return False, f"the evidence must be at least {EVIDENCE_MIN} characters copied from the page"
@@ -613,6 +695,8 @@ def evidence_found(evidence: str, page_text: str, url: str = "") -> Tuple[bool, 
         return False, "your evidence is not on the current page"
     if _echoed(evidence, url):
         return False, "your evidence also appears in the page's address, so it may only echo what was typed"
+    if _overlaps_typed(evidence, typed or []):
+        return False, "your evidence repeats something Friday typed, so it is not proof from the site"
     return True, "ok"
 
 
@@ -625,17 +709,23 @@ def _url_core(url: str) -> str:
         return ""
 
 
-def run_checks(plan: WebTaskPlan, url: str, page_text: str) -> Tuple[bool, List[Dict[str, Any]]]:
+def run_checks(plan: WebTaskPlan, url: str, page_text: str, *, typed: Optional[List[str]] = None,
+               opened: Optional[List[str]] = None) -> Tuple[bool, List[Dict[str, Any]]]:
+    """Every success check against the final page. A URL check does not count
+    on a page Friday opened by address herself (only one reached by a click or
+    a form), and a text check does not count on text Friday typed."""
     results = []
     core = _url_core(url)
+    self_opened = core in {_url_core(u) for u in (opened or [])}
     for c in plan.success:
         (kind, value), = c.items()
         if kind == "url_contains":
-            ok = value in core
+            ok = value in core and not self_opened
         elif kind == "url_matches":
-            ok = fnmatch.fnmatchcase(core, value)
+            ok = fnmatch.fnmatchcase(core, value) and not self_opened
         elif kind == "text_present":
-            ok = _norm(value) in _norm(page_text) and not _echoed(value, url)
+            ok = (_norm(value) in _norm(page_text) and not _echoed(value, url)
+                  and not _overlaps_typed(value, typed or []))
         else:
             ok = False
         results.append({"check": c, "passed": bool(ok)})
@@ -659,12 +749,25 @@ _REFUSAL_FIRST_LINE = re.compile(
     r"Friday's browser is not open)")
 
 
+def _sentinels() -> Tuple[str, ...]:
+    try:
+        from agent_friday.services import agent
+        return tuple(agent._TOOL_DENY_SENTINELS) + tuple(agent._TOOL_PENDING_SENTINELS) + \
+            tuple(agent._TOOL_ERROR_SENTINELS)
+    except Exception:
+        return ()
+
+
 def _refused(result: str) -> bool:
     """A tool result that says the action did not happen. Judged on the FIRST
     line only, which Friday's code writes; a page's title or text comes after
-    the untrusted-content marker and can never fake a refusal."""
+    the untrusted-content marker and can never fake a refusal. Any other first
+    line that opens with a bracket (a gate Friday adds later) counts as refused
+    too, except the browser's own page marker."""
     first = (result or "").split("\n", 1)[0]
-    return bool(_REFUSAL_FIRST_LINE.match(first))
+    if _REFUSAL_FIRST_LINE.match(first) or first.startswith(_sentinels()):
+        return True
+    return first.startswith("[") and not first.startswith("[web page content below")
 
 
 class _Ended(Exception):
@@ -708,7 +811,7 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
     if not _register(run_state):
         # Another run of this task is live (a resume racing an old thread):
         # never two runs, and never one removing the other's limits.
-        return {"status": "failed", "result": "Not started: this website task is already running.",
+        return {"status": "running", "result": "This website task is already running.",
                 "receipt": None}
     run_id = "run_" + uuid.uuid4().hex[:8]
     clk = ports.clock
@@ -728,32 +831,37 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
     verified: Any = False
     resumed_from = None
     first_url = plan.start_url
-    if resume:
-        rs = journal.resume_state()
-        if not rs["intact"]:
-            _unregister(run_state)
-            return {"status": "failed", "receipt": None,
-                    "result": "Not resumed: the task's step record was changed or cut, so "
-                              "Friday cannot tell what already happened. Start the task again."}
-        if not rs["last_run_ended"]:
-            # The run before this one never reached an ending: it was
-            # interrupted. It gets its own receipt before this run begins.
-            write_receipt(task_id, plan, run_id=run_id + "-prior", ending="interrupted",
-                          why="Friday stopped running (a restart, a crash or the PC sleeping) "
-                              "before the task finished.", verified=False, evidence=None,
-                          checks=[], final_url=rs["checkpoint_url"] or "", picture=None,
-                          steps=[], cards=[], state={"steps": rs["steps"], "elapsed": rs["seconds"],
-                                                     "money_used": rs["money"]}, reader=plan.reader)
-        state["steps"], base_seconds, state["money_used"] = rs["steps"], rs["seconds"], rs["money"]
-        resumed_from = {k: rs[k] for k in ("checkpoint_url", "steps")}
-        first_url = rs["checkpoint_url"] or plan.start_url
-        for c in rs["unknown_outward"]:
-            notes.append(f"Before an interruption Friday asked the owner to approve "
-                         f"\"{c.get('title') or 'an action'}\". Whether it happened is UNKNOWN. "
-                         f"Check the page (order history, confirmation, sent items) before "
-                         f"doing anything like it again, and never repeat it blindly.")
-    journal.append("start", run_id=run_id, resume=bool(resume), plan_id=plan.plan_id,
-                   resumed_from=resumed_from)
+    try:
+        if resume:
+            rs = journal.resume_state()
+            if not rs["intact"]:
+                _unregister(run_state)
+                return {"status": "failed", "receipt": None,
+                        "result": "Not resumed: the task's step record was changed or cut, so "
+                                  "Friday cannot tell what already happened. Start the task again."}
+            if not rs["last_run_ended"]:
+                # The run before this one never reached an ending: it was
+                # interrupted. It gets its own receipt before this run begins.
+                write_receipt(task_id, plan, run_id=run_id + "-prior", ending="interrupted",
+                              why="Friday stopped running (a restart, a crash or the PC sleeping) "
+                                  "before the task finished.", verified=False, evidence=None,
+                              checks=[], final_url=rs["checkpoint_url"] or "", picture=None,
+                              steps=[], cards=[], state={"steps": rs["steps"], "elapsed": rs["seconds"],
+                                                         "money_used": rs["money"]}, reader=plan.reader)
+            state["steps"], base_seconds, state["money_used"] = rs["steps"], rs["seconds"], rs["money"]
+            resumed_from = {k: rs[k] for k in ("checkpoint_url", "steps")}
+            first_url = rs["checkpoint_url"] or plan.start_url
+            for c in rs["unknown_outward"]:
+                notes.append(f"Before an interruption Friday asked the owner to approve "
+                             f"\"{c.get('title') or 'an action'}\". Whether it happened is UNKNOWN. "
+                             f"Check the page (order history, confirmation, sent items) before "
+                             f"doing anything like it again, and never repeat it blindly.")
+        journal.append("start", run_id=run_id, resume=bool(resume), plan_id=plan.plan_id,
+                       resumed_from=resumed_from)
+    except Exception as e:
+        _unregister(run_state)
+        return {"status": "failed", "receipt": None,
+                "result": f"Not started: the task's records could not be written ({type(e).__name__})."}
 
     def elapsed() -> float:
         return base_seconds + max(0.0, clk.now() - started - waited)
@@ -819,6 +927,12 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
         return decision
 
     def act(tool: str, args: Dict[str, Any]) -> str:
+        if tool == "browser_type" and isinstance(args.get("text"), str):
+            run_state.typed.append(args["text"])
+        elif tool == "browser_select" and isinstance(args.get("option"), str):
+            run_state.typed.append(args["option"])
+        elif tool == "browser_open" and isinstance(args.get("url"), str):
+            run_state.opened.append(args["url"])
         res = ports.browser.call(tool, args)
         res = res if isinstance(res, str) else str(res)
         track_url(res)
@@ -832,10 +946,11 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                 first = act("browser_open", {"url": first_url})
             except Exception as e:
                 raise _Ended("gave_up", f"The browser could not open the first page ({type(e).__name__}).")
-            steps_log.append({"n": state["steps"], "actions": [["browser_open", {"url": first_url}]],
-                              "url": run_state.page_url})
-            journal.append("action", step=state["steps"], tool="browser_open", args={"url": first_url},
-                           refused=_refused(first), url=run_state.page_url)
+            steps_log.append({"n": state["steps"], "actions": [["browser_open", {"url": _record_url(first_url)}]],
+                              "url": _record_url(run_state.page_url)})
+            journal.append("action", step=state["steps"], tool="browser_open",
+                           args={"url": _record_url(first_url)}, refused=_refused(first),
+                           url=_record_url(run_state.page_url))
             if _refused(first):
                 raise _Ended("gave_up", "The first page could not be opened: " + first.split("\n", 1)[0][:200])
             page = first
@@ -879,8 +994,10 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                 if kind == "done":
                     fresh_text = ports.browser.page_text()
                     url = ports.browser.page_url() or run_state.page_url
-                    ok, msg = evidence_found(str(payload.get("evidence") or ""), fresh_text, url)
-                    checks_ok, checks_out = run_checks(plan, url, fresh_text)
+                    ok, msg = evidence_found(str(payload.get("evidence") or ""), fresh_text, url,
+                                             typed=run_state.typed)
+                    checks_ok, checks_out = run_checks(plan, url, fresh_text, typed=run_state.typed,
+                                                       opened=run_state.opened)
                     if ok and checks_ok:
                         evidence = {"quote": str(payload.get("evidence")),
                                     "page_sha256": hashlib.sha256(fresh_text.encode("utf-8")).hexdigest()}
@@ -910,14 +1027,14 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                     step_rec["actions"].append([tool, _masked_args(tool, args)])
                     journal.append("action", step=state["steps"], tool=tool,
                                    args=_masked_args(tool, args), refused=refused,
-                                   url=run_state.page_url)
+                                   url=_record_url(run_state.page_url))
                     card = _queued_card(res)
                     if card:
                         title = str(((card.get("card") or {}).get("title")) or "an action on the page")
                         decision = wait_card(card["approval_id"], title=title, outward=True)
                         page = act("browser_read", {})
                         if decision == "approved":
-                            journal.append("checkpoint", url=run_state.page_url, step=state["steps"])
+                            journal.append("checkpoint", url=_url_core(run_state.page_url), step=state["steps"])
                             notes.append(f"The owner approved \"{title}\"; the page now shows its result.")
                         else:
                             notes.append(f"The owner said no to \"{title}\" ({decision}). Do not try it again.")
@@ -935,7 +1052,7 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                     if i < len(payload) - 1 and run_state.page_url != batch_url and tool != "browser_open":
                         notes.append("The page changed, so the rest of that batch was not run; look again.")
                         break
-                step_rec["url"] = run_state.page_url
+                step_rec["url"] = _record_url(run_state.page_url)
                 steps_log.append(step_rec)
         except _Ended as e:
             ending, why = e.ending, e.why
@@ -960,6 +1077,7 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
             pass
     finally:
         _unregister(run_state)
+    final_url = _record_url(final_url)
     receipt = write_receipt(task_id, plan, run_id=run_id, ending=ending, why=why, verified=verified,
                             evidence=evidence, checks=checks_out, final_url=final_url,
                             picture=picture, steps=steps_log, cards=cards_log, state=state,
@@ -971,13 +1089,26 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
     return {"status": _STATUS_FOR_ENDING[ending], "result": result, "receipt": receipt}
 
 
+def _record_url(url: str) -> str:
+    """An address as a record keeps it: scheme, host and path. A query can
+    carry what was typed (a search, an address), so it is never kept."""
+    core = _url_core(url)
+    try:
+        has_tail = bool(urlsplit(url or "").query or urlsplit(url or "").fragment)
+    except Exception:
+        has_tail = False
+    return core + ("?…" if has_tail and core else "")
+
+
 def _masked_args(tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """What a step record keeps of an action: typed and chosen values only as
-    their length, never their content."""
+    their length, never their content; addresses without their query."""
     out = dict(args or {})
     for field in ("text", "option"):
         if isinstance(out.get(field), str):
             out[field] = f"({len(out[field])} characters)"
+    if isinstance(out.get("url"), str):
+        out["url"] = _record_url(out["url"])
     return out
 
 
@@ -988,8 +1119,8 @@ def _masked_answer(answer: Any) -> Any:
     if isinstance(answer.get("actions"), list):
         out = []
         for a in answer["actions"]:
-            if isinstance(a, dict) and a.get("do") in ("type", "select"):
-                a = _masked_args("browser_type", a)
+            if isinstance(a, dict) and a.get("do") in ("type", "select", "open"):
+                a = _masked_args("browser_" + a["do"], a)
             out.append(a)
         return {**answer, "actions": out}
     return answer
@@ -1042,11 +1173,12 @@ class FridayBrowser:
         return browser_session.resolve_owned_session(owner, browser_authority.validate_owner)
 
     def page_text(self) -> str:
+        """Proof text: the page without its editable regions (browser_session.proof_text)."""
+        from agent_friday.services import browser_session
         s = self._session()
         if s is None or not s.running:
             return ""
-        snap = s.call(s.op_read)
-        return str((snap or {}).get("text") or "")
+        return browser_session.proof_text(s)
 
     def page_url(self) -> str:
         s = self._session()
@@ -1171,6 +1303,10 @@ def _plan_card_text(plan: WebTaskPlan, levels: Dict[str, Optional[str]], new_sit
         lines.append(f"- {s}: " + ({"may_read": "may read", "may_act": "may act"}.get(lv)
                                    or "not on your list: approving adds it, may act"))
     lines.append("")
+    lines.append("Done means: " + ("; ".join(
+        {"url_contains": "the address includes", "url_matches": "the address matches",
+         "text_present": "the page says"}[k] + f" \"{v}\"" for c in plan.success for k, v in c.items())
+        or "reading only; no check"))
     lines.append("What Friday may type: " + (", ".join(f"{k} = {v}" for k, v in plan.data.items())
                                              or "nothing but what the pages show"))
     where = "on this PC" if plan.reader["where"] == "local" else "in the cloud"
@@ -1330,9 +1466,19 @@ def resumability(task_id: str) -> Dict[str, Any]:
             "pending_tool": "browser_click" if unknown else None}
 
 
+_RESUME_LOCK = threading.Lock()
+
+
 def resume(task_id: str) -> bool:
-    if not resumability(task_id).get("resumable"):
-        return False
+    with _RESUME_LOCK:
+        # One press, one run: a second press while the first is starting or
+        # running is refused here, before any thread exists.
+        if active(task_id) is not None or not resumability(task_id).get("resumable"):
+            return False
+        return _resume_locked(task_id)
+
+
+def _resume_locked(task_id: str) -> bool:
     loaded = load_plan(task_id)
     if loaded is None:
         return False
