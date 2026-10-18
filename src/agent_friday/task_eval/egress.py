@@ -37,6 +37,14 @@ def allowed_from_endpoint(endpoint: str) -> Set[Tuple[str, int]]:
     hosts = {host}
     if host in ("127.0.0.1", "localhost", "::1"):
         hosts = {"127.0.0.1", "localhost", "::1"}
+    else:
+        # A named cloud host (owner opt-in, HD2): its addresses, resolved once
+        # now, before the guard is installed; nothing else resolves later.
+        try:
+            for info in socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP):
+                hosts.add(str(info[4][0]).lower())
+        except Exception:
+            pass
     return {(h, port) for h in hosts}
 
 
@@ -98,7 +106,17 @@ def install(endpoint: Optional[str]) -> None:
             raise EgressRefused(f"practice episode: name lookup for {h} refused")
         return real_getaddrinfo(host, port, *a, **k)
 
+    real_sendto = socket.socket.sendto
+
+    def sendto(self, data, *args):
+        # UDP datagrams carry their own destination: the same rule applies.
+        address = args[-1] if args else None
+        if self.family in (socket.AF_INET, socket.AF_INET6) and address is not None:
+            _check(address)
+        return real_sendto(self, data, *args)
+
     socket.socket.connect = connect
     socket.socket.connect_ex = connect_ex
+    socket.socket.sendto = sendto
     socket.socketpair = socketpair
     socket.getaddrinfo = getaddrinfo
