@@ -67,8 +67,9 @@ async function shot(page: Page, info: any, name: string) {
 }
 
 async function showSection(page: Page, title: string) {
-  await page.locator(`section[data-st-section="${title}"]`).evaluate(e => e.scrollIntoView({ block: 'start' }));
-  await page.waitForTimeout(200);
+  const section = page.locator(`section[data-st-section="${title}"]`);
+  await section.evaluate(e => e.scrollIntoView({ block: 'start' }));
+  await expect(section).toBeInViewport();
 }
 
 test('the tab shows what runs, her modes and a report card, and the approval check never shows act', async ({ page }, info) => {

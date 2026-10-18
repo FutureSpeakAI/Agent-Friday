@@ -6,6 +6,7 @@
 // owner reads "needs you"; Stop posts to the stop route once; Esc stops it but not from a text field; the finished
 // list goes away on its own.
 import { test, expect, type Page } from '../fixtures';
+import { settle } from '../helpers/settle';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
@@ -53,7 +54,7 @@ test('Esc stops the run, but not while typing in a field', async ({ page }) => {
   await send(page, START, 'steps');
   await page.evaluate(() => { const i = document.createElement('input'); i.id = 'probe'; document.body.appendChild(i); i.focus(); });
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
+  await settle(page, { quietMs: 200, timeout: 3000 });   // a stop it should not send would be in flight
   expect(stops).toEqual([]);
   await page.evaluate(() => (document.getElementById('probe') as HTMLElement).blur());
   await page.keyboard.press('Escape');

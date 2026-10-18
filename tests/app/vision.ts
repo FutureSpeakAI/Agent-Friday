@@ -22,6 +22,8 @@
  *    asked to list what is wrong and must return a structured verdict.
  */
 
+import { test, expect, type Locator, type Page } from '@playwright/test';
+
 const OLLAMA = process.env.OLLAMA_HOST || 'http://localhost:11434';
 const MODEL = process.env.FRIDAY_VISION_MODEL || 'gemma4:12b';
 
@@ -114,6 +116,105 @@ export async function judge(png: Buffer, intent: string, timeoutMs = 120000): Pr
     return { ok: true, problems: [], sees: '', judged: false, why: 'vision judging disabled (FRIDAY_VISION=off)' };
   }
   return askOllama(png.toString('base64'), intent, timeoutMs);
+}
+
+// ── "Can a person actually see it?" ───────────────────────────────────────────
+//
+// Some defects pass every DOM assertion and still fail the person: the Activity chip
+// reported data-overflow="false" while Windows fonts pushed it out of sight. expectVisible
+// adds a second, independent look, IN ADDITION TO the DOM checks, never instead of them.
+//
+//  - OPT-IN: runs only with FRIDAY_VISION_CHECK=1 (Windows CI and anyone who asks).
+//  - LOCAL ONLY: the screenshot goes to Ollama on this machine (OLLAMA_HOST must be a
+//    loopback address); there is no cloud path here, whatever FRIDAY_VISION_CLOUD says.
+//  - GRACEFUL: with no Ollama, no vision model pulled, or a model that will not answer,
+//    the check is skipped and says why in the test's annotations; the test does not fail.
+//  - 2 OF 3: the model is asked three times at temperature 0.2 and the answer counts only
+//    if two agree; a split or an unreadable answer is "not judged", not a failure.
+
+export type Seen = { judged: boolean; passed: boolean | null; reasoning: string; votes: (boolean | null)[] };
+
+const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\/?$/i;
+
+async function localVisionModel(): Promise<string | null> {
+  if (!LOOPBACK.test(OLLAMA)) return null;          // never a remote judge
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 2000);
+  try {
+    const res = await fetch(`${OLLAMA}/api/tags`, { signal: ctrl.signal });
+    if (!res.ok) return null;
+    const body: any = await res.json();
+    const names: string[] = (body?.models || []).map((m: any) => String(m?.name || m?.model || ''));
+    const want = MODEL.includes(':') ? [MODEL] : [MODEL, MODEL + ':latest'];
+    return names.some(n => want.includes(n)) ? MODEL : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function askVisible(png: Buffer, what: string, timeoutMs: number): Promise<{ visible: boolean | null; why: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${OLLAMA}/api/chat`, {
+      method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL, stream: false, think: false, format: 'json', options: { temperature: 0.2 },
+        messages: [{
+          role: 'user', images: [png.toString('base64')],
+          content: `Look at this screenshot of part of a desktop application. Is the following fully visible and ` +
+            `readable to a person looking at the screen, not cut off, not covered and not hidden: ${what}?\n` +
+            `Reply with JSON only: {"visible": true or false, "why": "<one short sentence about what you see>"}`,
+        }],
+      }),
+    });
+    if (!res.ok) return { visible: null, why: `judge HTTP ${res.status}` };
+    const parsed = extractJson(((await res.json()) as any)?.message?.content ?? '');
+    if (!parsed || typeof parsed.visible !== 'boolean') return { visible: null, why: 'unreadable answer' };
+    return { visible: parsed.visible, why: String(parsed.why ?? '').slice(0, 200) };
+  } catch (e: any) {
+    return { visible: null, why: e?.name === 'AbortError' ? 'timed out' : String(e?.message || e).slice(0, 80) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Ask the local model, three times, whether `what` is visible in the screenshot; two agreeing answers decide. */
+export async function seeVisible(png: Buffer, what: string, timeoutMs = 90000): Promise<Seen> {
+  if (process.env.FRIDAY_VISION_CHECK !== '1' || process.env.FRIDAY_VISION === 'off') {
+    return { judged: false, passed: null, reasoning: 'vision check is opt-in (FRIDAY_VISION_CHECK=1)', votes: [] };
+  }
+  if (!(await localVisionModel())) {
+    return { judged: false, passed: null, votes: [],
+      reasoning: `no local vision model (${MODEL} on ${OLLAMA}); the DOM checks stand alone` };
+  }
+  const votes: (boolean | null)[] = [];
+  const whys: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const a = await askVisible(png, what, timeoutMs);
+    votes.push(a.visible); whys.push(a.why);
+    const yes = votes.filter(v => v === true).length, no = votes.filter(v => v === false).length;
+    if (yes >= 2 || no >= 2) {
+      return { judged: true, passed: yes >= 2, votes, reasoning: whys.join(' | ') };
+    }
+  }
+  return { judged: false, passed: null, votes, reasoning: 'the three looks did not agree: ' + whys.join(' | ') };
+}
+
+/**
+ * In a spec, after the DOM assertions: screenshot `area` (the element, or a region around it) and, when the
+ * opt-in local check runs, fail if two of three looks say `what` cannot be seen. Otherwise record why it did
+ * not run in the test's annotations and carry on.
+ */
+export async function expectVisible(area: Locator | Page, what: string): Promise<Seen> {
+  const png = await area.screenshot();
+  const seen = await seeVisible(png, what);
+  test.info().annotations.push({ type: 'vision-check',
+    description: seen.judged ? `${seen.passed ? 'visible' : 'NOT visible'} (${seen.votes.join(',')}): ${seen.reasoning}` : seen.reasoning });
+  if (seen.judged) expect(seen.passed, `A local model looked and says this cannot be seen: ${what}\n  ${seen.reasoning}`).toBe(true);
+  return seen;
 }
 
 /** Render a verdict as something a person can read in test output. */

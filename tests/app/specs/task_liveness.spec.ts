@@ -43,9 +43,9 @@ test.describe('Task liveness', () => {
 
     // Expand the first task so its log is visible.
     const expander = page.locator('.task-card-btn').first();
-    if (await expander.count()) { await expander.click(); await page.waitForTimeout(600); }
-
     const log = page.locator('.task-card-log').first();
+    if (await expander.count()) { await expander.click(); await log.waitFor({ timeout: 3000 }).catch(() => { /* judged below */ }); }
+
     if (await log.count() === 0) return; // nothing expanded; nothing to claim
     const text = (await log.innerText()).trim();
     assertNotPlaceholder(

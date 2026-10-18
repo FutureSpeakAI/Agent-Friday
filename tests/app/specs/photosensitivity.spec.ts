@@ -114,7 +114,7 @@ async function openScene(page: Page, view: any, structureIndex = 0,
     : r.fulfill({ json: { status: 'ok' } }));
   const watcher = await openApp(page, 90_000);
   await page.waitForFunction(() => (window as any).fridayVibe && typeof FridayGestures !== 'undefined');
-  if (opts.realClock) { await page.waitForTimeout(10_000); await page.evaluate(DRIVER); return watcher; }
+  if (opts.realClock) { await page.waitForTimeout(10_000); await page.evaluate(DRIVER); return watcher; }   // past the load transition on the real clock: time is the behaviour under test
   await page.clock.runFor(10_000);                      // past the load transition
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   // Friday's voice, the room the microphone hears, and the user's mic, all
@@ -324,12 +324,12 @@ test("the frame budget holds while ten helpers work under a flood of others' eve
   const rows: string[] = [];
   for (const i of [0, 12, 7]) {                          // the lattice, Giga Earth, the Mandelbrot set
     await page.evaluate(i => setEvolution(i), i);
-    await page.waitForTimeout(9000);
+    await page.waitForTimeout(9000);                     // the scene's change runs its course: time is the behaviour under test
     const before = await p95(3000);
     await floodStart(page);
     const busy = await p95(3000);
     await floodStop(page);
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2000);                     // calm again before sampling: time is the behaviour under test
     const after = await p95(3000);
     const calm = Math.max(before, after);
     rows.push(`structure ${i}: calm p95 ${calm.toFixed(1)} ms, flooded ${busy.toFixed(1)} ms`);
@@ -486,11 +486,11 @@ test('the drawn orbs cost no more than the plain orbs did', async ({ browser }) 
     const rows: Rows = { list: [] };
     await orbRoutes(page, rows);
     await openScene(page, GENOMES.v1, 0, { realClock: true, transform });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(3000);                     // scene time before the orbs: time is the behaviour under test
     await addAllKinds(page, rows);
     await page.evaluate(() => { (window as any).__sparks = setInterval(() => ['agent-r', 'agent-mail', 'code-x', 'agent-p'].forEach(id =>
       (window as any).FridayOrbScene && FridayOrbScene.frame({ type: 'presence', state: 'tool', phase: 'start', agent: id })), 120); });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2000);                     // the orbs busy for a while before sampling: time is the behaviour under test
     const got = await page.evaluate(() => new Promise<{ js: number, frame: number, orbs: number }>(res => {
       const m = processOrbManager, js: number[] = [], fr: number[] = [];
       const upd = m.update;

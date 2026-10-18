@@ -14,6 +14,7 @@
  *   FRIDAY_URL=http://localhost:3217 PW_CHANNEL=msedge npx playwright test tests/library_no_remote_loads.spec.ts
  */
 import { test, expect, type Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 const BASE = process.env.FRIDAY_URL || '';
 if (process.env.PW_CHANNEL) test.use({ channel: process.env.PW_CHANNEL });
@@ -61,7 +62,7 @@ async function boot(page: Page, leaks: string[]) {
   await page.route('**/api/privacy/cloud-consent', r => r.request().method() === 'GET' ? r.fulfill(json({ needs_prompt: false })) : r.continue());
   await page.goto(BASE + '/');
   await page.waitForSelector('.dock', { timeout: 90000 });
-  await page.waitForTimeout(1500);
+  await settle(page, { quietMs: 1000, timeout: 6000 });
 }
 
 test.skip(!BASE, 'set FRIDAY_URL to a scratch server');
@@ -82,7 +83,7 @@ test('evidence, the Reader and a written answer make no outside request', async 
   await page.click('.lb-card .acts button:has-text("Open")');
   await page.waitForSelector('.lr-root', { timeout: 30000 });
   expect(await page.locator('.lr-root img, .lr-root link, .lr-root [style*="url("]').count()).toBe(0);
-  await page.waitForTimeout(2000);
+  await settle(page, { quietMs: 2000, timeout: 8000 });   // a leak would be a request in flight
   expect(leaks, 'no request may leave the machine').toEqual([]);
 });
 

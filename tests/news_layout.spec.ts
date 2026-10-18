@@ -8,6 +8,7 @@
  *   FRIDAY_URL=http://localhost:3221 PW_CHANNEL=msedge npx playwright test tests/news_layout.spec.ts
  */
 import { test, expect, type Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 const BASE = process.env.FRIDAY_URL || '';
 const SHOTS = process.env.NEWS_SHOTS || '';
@@ -59,7 +60,7 @@ for (const s of SIZES) {
     await page.waitForSelector('.news-toolbar', { timeout: 90000 });
     await page.locator('.news-tabs button', { hasText: /feed/i }).first().click();
     await page.waitForSelector('.news-masonry > .news-card', { timeout: 90000 });
-    await page.waitForTimeout(800);
+    await settle(page, { root: '.news-ws', quietMs: 800, timeout: 3200 });
     const m = await layout(page, '.news-ws');
     expect(m.cards).toBeGreaterThan(8);
     expect(m.firstRow, JSON.stringify(m)).toBeGreaterThanOrEqual(s.cols[0] - (m.featureCols === 2 ? 1 : 0));
@@ -108,7 +109,7 @@ test('in a desktop window the cards follow the window, not the monitor', async (
   await page.waitForSelector('.fwin .news-toolbar', { timeout: 90000 });
   await page.locator('.fwin .news-tabs button', { hasText: /feed/i }).first().click();
   await page.waitForSelector('.fwin .news-masonry > .news-card', { timeout: 90000 });
-  await page.waitForTimeout(600);
+  await settle(page, { root: '.fwin .news-ws', quietMs: 600, timeout: 3000 });
   const m = await layout(page, '.fwin .news-ws');
   expect(m.columns, JSON.stringify(m)).toBe(2);                  // a 700px window on a 1920px monitor
   expect(m.overflowing).toBe(0);
@@ -120,7 +121,7 @@ for (const s of [{ width: 1366, height: 768 }, { width: 1920, height: 1080 }]) {
     await prepare(page);
     await page.goto(BASE + '/w/news?view3d=1');
     await page.waitForSelector('.f3-stage canvas', { timeout: 90000 });
-    await page.waitForTimeout(1200);
+    await settle(page, { quietMs: 1000, timeout: 4800 });
     const g = await page.evaluate(() => { const r = (document.querySelector('.f3-stage') as HTMLElement).getBoundingClientRect(); return { gap: Math.round(window.innerHeight - r.bottom), h: Math.round(r.height) }; });
     expect(g.gap, JSON.stringify(g)).toBeLessThanOrEqual(40);    // only the tab's own padding below it
     expect(g.gap, JSON.stringify(g)).toBeGreaterThanOrEqual(0);

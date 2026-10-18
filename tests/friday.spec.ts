@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
+import { settle } from './app/helpers/settle';
 
 const BASE = 'http://localhost:3000';
 const SCREENSHOTS = path.join(__dirname, 'screenshots');
@@ -177,7 +178,7 @@ test.describe('UI Rendering', () => {
   test('Page loads and shows FRIDAY branding', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
     // Wait for React to render
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
     const body = await page.textContent('body');
     expect(body).toContain('FRIDAY');
     await page.screenshot({ path: path.join(SCREENSHOTS, '01-homepage.png'), fullPage: false });
@@ -185,7 +186,7 @@ test.describe('UI Rendering', () => {
 
   test('Tab navigation — Command Center', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
     // Look for tab buttons — they might use text or aria labels
     const tabs = page.locator('button, [role="tab"], nav a, nav button');
     const tabCount = await tabs.count();
@@ -195,14 +196,14 @@ test.describe('UI Rendering', () => {
     const commandTab = page.locator('button:has-text("Command"), [role="tab"]:has-text("Command"), nav button:has-text("Command")').first();
     if (await commandTab.isVisible()) {
       await commandTab.click();
-      await page.waitForTimeout(1000);
+      await settle(page, { quietMs: 1000, timeout: 4000 });
       await page.screenshot({ path: path.join(SCREENSHOTS, '02-command-center.png'), fullPage: false });
     }
   });
 
   test('Tab navigation — all tabs clickable', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
 
     // Find all tab-like buttons in navigation area
     const tabButtons = page.locator('.tab-btn, [role="tab"], nav button');
@@ -215,7 +216,7 @@ test.describe('UI Rendering', () => {
         const text = await tab.textContent();
         tabNames.push(text?.trim() || `tab-${i}`);
         await tab.click();
-        await page.waitForTimeout(800);
+        await settle(page, { quietMs: 800, timeout: 3200 });
 
         // Screenshot each tab
         const safeName = (text?.trim() || `tab-${i}`).replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
@@ -232,7 +233,7 @@ test.describe('UI Rendering', () => {
 
   test('Chat panel opens on icon click', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
 
     // Look for chat-related button/icon
     const chatButton = page.locator(
@@ -241,7 +242,7 @@ test.describe('UI Rendering', () => {
 
     if (await chatButton.isVisible()) {
       await chatButton.click();
-      await page.waitForTimeout(1000);
+      await settle(page, { quietMs: 1000, timeout: 4000 });
       await page.screenshot({ path: path.join(SCREENSHOTS, '04-chat-panel.png'), fullPage: false });
 
       // Check for a text input or textarea (chat input)
@@ -254,7 +255,7 @@ test.describe('UI Rendering', () => {
 
   test('Vibe Mode button exists', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
 
     // Search for vibe mode toggle/button
     const vibeButton = page.locator(
@@ -264,7 +265,7 @@ test.describe('UI Rendering', () => {
     const exists = await vibeButton.isVisible().catch(() => false);
     if (exists) {
       await vibeButton.click();
-      await page.waitForTimeout(1000);
+      await settle(page, { quietMs: 1000, timeout: 4000 });
       await page.screenshot({ path: path.join(SCREENSHOTS, '05-vibe-mode.png'), fullPage: false });
     }
     // Soft assertion — vibe mode may be in a submenu
@@ -273,7 +274,7 @@ test.describe('UI Rendering', () => {
 
   test('Page contains key sections', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
 
     const bodyText = await page.textContent('body');
     // The page should have some of these key elements
@@ -288,13 +289,13 @@ test.describe('UI Rendering', () => {
 
   test('Trust graph data loads', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
 
     // Navigate to trust tab if it exists
     const trustTab = page.locator('button:has-text("Trust"), [role="tab"]:has-text("Trust"), button:has-text("People")').first();
     if (await trustTab.isVisible().catch(() => false)) {
       await trustTab.click();
-      await page.waitForTimeout(1500);
+      await settle(page, { quietMs: 1000, timeout: 6000 });
       await page.screenshot({ path: path.join(SCREENSHOTS, '06-trust-graph.png'), fullPage: false });
     }
   });
@@ -309,7 +310,7 @@ test.describe('Mobile Viewport', () => {
 
   test('Responsive layout at 375x812', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
 
     const body = await page.textContent('body');
     expect(body).toContain('FRIDAY');
@@ -324,7 +325,7 @@ test.describe('Mobile Viewport', () => {
 
   test('Mobile — tabs still accessible', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(3000);
+    await settle(page, { quietMs: 1000, timeout: 12000 });
 
     const tabButtons = page.locator('.tab-btn, [role="tab"], nav button');
     const count = await tabButtons.count();
@@ -342,7 +343,7 @@ test.describe('Mobile Viewport', () => {
 test.describe('Visual Capture', () => {
   test('Full page screenshot', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(4000);
+    await settle(page, { quietMs: 1000, timeout: 16000 });
     await page.screenshot({ path: path.join(SCREENSHOTS, '09-full-page.png'), fullPage: true });
   });
 });

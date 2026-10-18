@@ -13,6 +13,7 @@
 import * as fs from 'fs';
 import { test, expect, type Page } from '../fixtures';
 import { BASE } from '../harness';
+import { settle } from '../helpers/settle';
 
 async function shot(page: Page, info: any, name: string) {
   const file = info.outputPath(name + '.png');
@@ -59,7 +60,7 @@ async function stage(page: Page): Promise<string> {
 
 async function waitStage(page: Page, want: string) {
   await expect.poll(() => stage(page), { timeout: 30_000, message: `the conversation should reach "${want}"` }).toBe(want);
-  await page.waitForTimeout(300);
+  await settle(page, { quietMs: 300, timeout: 3000 });
 }
 
 async function chip(page: Page, label: RegExp | string) {

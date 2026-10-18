@@ -15,6 +15,7 @@
  *   FRIDAY_URL=http://localhost:3217 PW_CHANNEL=msedge npx playwright test tests/chat_no_remote_loads.spec.ts
  */
 import { test, expect, type Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 const BASE = process.env.FRIDAY_URL || '';
 if (process.env.PW_CHANNEL) test.use({ channel: process.env.PW_CHANNEL });
@@ -61,7 +62,7 @@ async function boot(page: Page, leaks: string[]) {
     ? r.fulfill({ status: 200, contentType: 'application/json', body: '{"needs_prompt":false}' }) : r.continue());
   await page.goto(BASE + '/');
   await page.waitForSelector('.dock', { timeout: 90000 });
-  await page.waitForTimeout(1500);
+  await settle(page, { quietMs: 1000, timeout: 6000 });
 }
 
 test.skip(!BASE, 'set FRIDAY_URL to a scratch server');
@@ -76,7 +77,7 @@ test('a reply with remote images makes no outside request and shows placeholders
     d.innerHTML = h;
     document.body.appendChild(d);
   }, html);
-  await page.waitForTimeout(2000);
+  await settle(page, { quietMs: 2000, timeout: 8000 });   // a leak would be a request in flight
   expect(leaks, 'no request may leave the machine').toEqual([]);
   const probe = page.locator('#exfil-probe');
   await expect(probe.locator('.friday-remote-img').first()).toContainText('leak.example');

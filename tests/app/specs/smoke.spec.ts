@@ -6,6 +6,7 @@
 import { test, expect } from '../fixtures';
 import { bootApp, openApp, attachShot, apiJson, dockButton, BASE } from '../harness';
 import { assertImagesDecoded, assertRenderedOnce } from '../liveness';
+import { settle } from '../helpers/settle';
 
 test.describe('Smoke — does the app work at all', () => {
 
@@ -26,7 +27,7 @@ test.describe('Smoke — does the app work at all', () => {
 
   test('opening the app logs no uncaught errors', async ({ page }) => {
     const w = await bootApp(page);
-    await page.waitForTimeout(2500);
+    await settle(page, { quietMs: 1000, timeout: 10000 });
     // Ignore noise we do not control: WebGL driver warnings and favicon 404s.
     const real = w.errors.filter(e => !/WebGL|GL_INVALID|favicon/i.test(e));
     expect(
@@ -59,7 +60,7 @@ test.describe('Smoke — does the app work at all', () => {
   /** A broken-image glyph is in the DOM exactly like a good image is. */
   test('every image on the first screen actually loads', async ({ page }) => {
     await bootApp(page);
-    await page.waitForTimeout(2000);
+    await settle(page, { quietMs: 1000, timeout: 8000 });
     await assertImagesDecoded(page, 'body', 'The first screen a person sees');
   });
 

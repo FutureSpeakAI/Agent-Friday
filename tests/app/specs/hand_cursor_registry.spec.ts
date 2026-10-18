@@ -7,6 +7,7 @@
 // with its tag, role and text. It also proves the frozen-point rule in the page: a pinch
 // that starts on a small button and drifts off it still clicks that button.
 import { test, expect } from '../fixtures';
+import { settle } from '../helpers/settle';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
@@ -32,7 +33,7 @@ test.describe('hand cursor registry', () => {
   for (const ws of WORKSPACES) {
     test(`every actionable element in ${ws} is a snap target`, async ({ page }) => {
       await page.goto(`${BASE}/w/${ws}`, { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(2500);
+      await settle(page, { quietMs: 1000, timeout: 10000 });
       const r = await page.evaluate(WALK) as any;
       expect(r.error).toBeUndefined();
       expect(r.seen, 'the walk saw nothing actionable; the page did not render').toBeGreaterThan(3);
@@ -42,7 +43,7 @@ test.describe('hand cursor registry', () => {
 
   test('a pinch whose own motion drifts off a small button still clicks it (freeze at onset)', async ({ page }) => {
     await page.goto(`${BASE}/w/system`, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2500);
+    await settle(page, { quietMs: 1000, timeout: 10000 });
     const out = await page.evaluate(() => new Promise(resolve => {
       const HC = (window as any).FridayHandCursor;
       // A 24 px button of our own, so the test does not depend on a workspace's content.

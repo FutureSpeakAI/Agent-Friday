@@ -15,6 +15,7 @@
  *   FRIDAY_URL=http://localhost:3221 PW_CHANNEL=msedge npx playwright test tests/standalone_layout.spec.ts
  */
 import { test, expect, type Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 const BASE = process.env.FRIDAY_URL || '';
 if (process.env.PW_CHANNEL) test.use({ channel: process.env.PW_CHANNEL });
@@ -85,7 +86,7 @@ for (const size of [{ width: 1366, height: 768 }, { width: 1920, height: 1080 }]
     for (const w of all) {
       await page.goto(BASE + '/w/' + w.id);
       await page.waitForSelector(`[data-standalone="${w.id}"] .ws-tab-body > *`, { timeout: 60000 });
-      await page.waitForTimeout(2500);                        // let the workspace load its data
+      await settle(page, { root: `[data-standalone="${w.id}"] .ws-tab-body`, quietMs: 1000, timeout: 10000 });   // let the workspace load its data
       const m = await measure(page);
       if (!m.bodyScrolls) bad.push(`${w.id}: the tab body does not scroll`);
       if (m.pageOverflow > 1) bad.push(`${w.id}: ${m.pageOverflow}px beyond the page, which cannot scroll`);
@@ -115,7 +116,7 @@ test('a workspace tab shrunk very small stays a workspace, not the desktop widge
   await prepare(page);
   await page.goto(BASE + '/w/news');
   await page.waitForSelector('[data-standalone="news"] .ws-tab-body > *', { timeout: 60000 });
-  await page.waitForTimeout(1500);
+  await settle(page, { quietMs: 1000, timeout: 6000 });
   const s = await page.evaluate(() => ({ condensed: document.body.classList.contains('condensed'), ui: getComputedStyle(document.getElementById('ui-root')!).display }));
   expect(s.condensed).toBe(false);
   expect(s.ui).not.toBe('none');

@@ -65,9 +65,9 @@ export default defineConfig({
     // SwiftShader GL emulator (--use-gl=angle --use-angle=swiftshader) kept the
     // GPU process at 3-3.5 of the CI runner's 4 cores for the whole run: every
     // spec crawled, and the desktop page's specs (connect_services.spec.ts)
-    // ran past their 180 s budget on about half the runs. The specs that judge
-    // the holographic scene by eye opt into that GL path themselves
-    // (SCENE_GL_ARGS in tests/app/fixtures.ts, vision.spec.ts).
+    // ran past their 180 s budget on about half the runs. Two specs opt into
+    // that GL path themselves, each for a measured reason (GL_EMULATOR_ARGS in
+    // tests/app/fixtures.ts): vision.spec.ts and settings_walk.spec.ts.
     launchOptions: { args: ['--enable-unsafe-swiftshader'] },
     trace: 'retain-on-failure',
   },

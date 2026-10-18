@@ -22,6 +22,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { settle } from './app/helpers/settle';
 
 const BASE = process.env.FRIDAY_URL || 'http://localhost:3221';
 const CHANNEL = process.env.PW_CHANNEL || 'msedge';
@@ -104,7 +105,7 @@ async function closeOthers(keep?: Page) {
 async function dockClick(page: Page, id: string, button: 'left' | 'middle' = 'left') {
   const btn = page.locator(`.dock-btn[data-ws="${id}"]`);
   await btn.hover();
-  await page.waitForTimeout(500);
+  await settle(page, { root: '.dock', quietMs: 500, timeout: 3000 });
   const box = (await btn.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button });
 }
@@ -122,7 +123,7 @@ async function desktop(named?: string): Promise<Page> {
   }
   await page.goto(BASE + '/');
   await page.waitForSelector('.dock-btn[data-ws="news"]', { timeout: 90000 });
-  await page.waitForTimeout(800);
+  await settle(page, { quietMs: 800, timeout: 3200 });
   return page;
 }
 
@@ -132,7 +133,7 @@ async function openWindow(page: Page, id: string) {
   // the pointer (a neighbour can slide over the target mid-click).
   if (!(await win.count())) await page.locator(`.dock-btn[data-ws="${id}"]`).evaluate(el => (el as HTMLElement).click());
   await expect(win).toHaveCount(1);
-  await page.waitForTimeout(600);
+  await settle(page, { root: `.fwin[data-friday-workspace="${id}"]`, quietMs: 600, timeout: 3000 });
   return win;
 }
 
@@ -161,8 +162,12 @@ test('choosing the menu action opens the tab where the window was, folds the win
   let win = null as null | ReturnType<Page['locator']>;
   for (const id of ['contacts', 'system', 'trust', 'code', 'news', 'knowledge']) {
     const w = await openWindow(page, id);
-    let range = 0;
-    for (let i = 0; i < 12 && range <= 200; i++) { await page.waitForTimeout(500); range = await scrollRange(w); }
+    // up to 6 s for it to fill enough to scroll
+    await page.waitForFunction(el => {
+      const sc = (window as any).fridayMainScroller(el);
+      return !!sc && sc.scrollHeight - sc.clientHeight > 200;
+    }, await w.locator('.fwin-body').elementHandle(), { timeout: 6000 }).catch(() => { /* too little: try the next */ });
+    const range = await scrollRange(w);
     if (range > 200) {
       win = w;
       const label = await page.evaluate(x => WS.find((w: any) => w.id === x).label, id);
@@ -202,7 +207,7 @@ test('asking again finds the same tab: no copy, and it comes back to the front',
   let opened = false;
   ctx.once('page', () => { opened = true; });
   await ownTab.click();
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(1500);   // no new tab opens in this time: time is the behaviour under test
   expect(opened).toBe(false);
   expect(ctx.pages().length).toBe(before);
   await expect(win).toHaveCount(0);
@@ -215,7 +220,7 @@ test('a blocked tab keeps the window open and says how to allow it', async () =>
   await page.evaluate(() => { (window as any).open = () => null; });
   const win = await openWindow(page, 'calendar');
   await (await ownTabAction(page, 'calendar')).click();
-  await page.waitForTimeout(800);
+  await expect(win.locator('.fwin-tab-blocked')).toBeVisible();
   await expect(win).toHaveCount(1);
   const hint = win.locator('.fwin-tab-blocked');
   await expect(hint).toBeVisible();
@@ -232,14 +237,14 @@ test('middle-click and Ctrl+click on the dock open a background tab and change n
   const title = await page.title();
   const [bg] = await Promise.all([ctx.waitForEvent('page'), dockClick(page, 'code', 'middle')]);
   await bg.waitForURL(/\/w\/code/, { timeout: 30000 });
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(800);   // the background tab does not come forward in this time: time is the behaviour under test
   await expectFront(profile, title);
   await expect(page.locator('.fwin[data-friday-workspace="code"]')).toHaveCount(0);
   await page.keyboard.down('Control');
   const [bg2] = await Promise.all([ctx.waitForEvent('page'), dockClick(page, 'knowledge')]);
   await page.keyboard.up('Control');
   await bg2.waitForURL(/\/w\/knowledge/, { timeout: 30000 });
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(800);   // the background tab does not come forward in this time: time is the behaviour under test
   await expectFront(profile, title);
   await expect(page.locator('.fwin[data-friday-workspace="knowledge"]')).toHaveCount(0);
 });
@@ -260,7 +265,7 @@ test('on localhost, the tab opens on Friday\'s own proven address', async () => 
   const before = ctx.pages().length;
   const again = await openWindow(page, 'news');
   await (await ownTabAction(page, 'news')).click();
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(1500);   // no new tab opens in this time: time is the behaviour under test
   await expect(again).toHaveCount(0);
   expect(ctx.pages().length).toBe(before);
   await expectFront(profile, 'News · Agent Friday™');
