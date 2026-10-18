@@ -6198,8 +6198,10 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                       'rather than complete. Provider said: %s'
                       % (reply or '').strip()[:200])
 
+        _checked_outcome = None
         if final_status != 'failed':
             outcome = _verify_workflow_task(task_id, reply or '', tool_trace)
+            _checked_outcome = outcome
             if outcome is not None:
                 verified = outcome['verified']
                 final_status = 'complete' if verified else 'completed_unverified'
@@ -6221,7 +6223,10 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # counts as one more task for each lesson on the card (lesson_records).
         try:
             from agent_friday.services import lesson_records as _lr
-            _lr.note_task_outcome(task_id, prompt or '', bool(verified))
+            # `checked`: the outcome came from the task's deterministic
+            # verification, so it may also judge helped/hurt (HA-E26).
+            _lr.note_task_outcome(task_id, prompt or '', bool(verified),
+                                  checked=_checked_outcome is not None)
         except Exception:
             pass
 

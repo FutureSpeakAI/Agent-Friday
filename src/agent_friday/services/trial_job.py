@@ -83,6 +83,14 @@ def run_pending_trials() -> dict:
     out = {"ran": [], "skipped": ""}
     if time.localtime().tm_wday == 6:
         try:
+            # Learned things that keep hurting more than they help get a
+            # "retire this?" card (services/lesson_records); quiet like the
+            # trial cards, so the summary below is the one notice.
+            from agent_friday.services import lesson_records
+            lesson_records.raise_retirement_cards()
+        except Exception:
+            pass
+        try:
             trials.weekly_digest()
         except Exception:
             pass

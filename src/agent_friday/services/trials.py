@@ -406,7 +406,24 @@ def run_trial(cid: str, *, run_one: Optional[Callable[..., dict]] = None,
         _feed_learning_loop(cand, out["rows"])
     except Exception:
         pass
+    try:
+        _feed_lesson_records(cand, result)
+    except Exception:
+        pass
     return load(cid)
+
+
+def _feed_lesson_records(cand: dict, result: dict) -> None:
+    """A trial of a lesson or of one of Friday's skills lands on its learning
+    record (services/lesson_records): the trial id and verdict, and one judged
+    application per task. Records hold hashes and names, never lesson text."""
+    from agent_friday.services import lesson_records as lr
+    subj = cand["subject"]
+    if subj["kind"] == "lesson":
+        ref = (cand.get("apply") or {}).get("lesson_ref") or subj["id"]
+        lr.note_trial("lesson", ref, cand["id"], result.get("recommend", ""), result.get("per_task", {}))
+    elif subj["kind"] == "skill":
+        lr.note_trial("skill", subj["id"], cand["id"], result.get("recommend", ""), result.get("per_task", {}))
 
 
 def _feed_learning_loop(cand: dict, rows: List[dict]) -> None:
@@ -561,10 +578,15 @@ def weekly_digest() -> Optional[dict]:
         rec = approvals.get_approval(cid)
         if rec and rec.get("status") == "pending" and (rec.get("payload") or {}).get("quiet_until_digest"):
             waiting.append((c, rec))
+    for rec in approvals.list_approvals(status="pending"):
+        if rec.get("kind") == "lesson_retire" and (rec.get("payload") or {}).get("quiet_until_digest"):
+            waiting.append(({}, rec))
     if not waiting:
         return None
     week = time.strftime("%G-W%V")
-    lines = [f"- {rec.get('title')}: recommended {('use new' if (rec.get('payload') or {}).get('recommended') == 'candidate' else 'keep current')}"
+    lines = [(f"- {rec.get('title')}" if rec.get("kind") == "lesson_retire" else
+              f"- {rec.get('title')}: recommended "
+              f"{('use new' if (rec.get('payload') or {}).get('recommended') == 'candidate' else 'keep current')}")
              for c, rec in waiting]
     return approvals.create_approval(
         kind=DIGEST_KIND, subject_type="trial_digest", subject_id=week,
