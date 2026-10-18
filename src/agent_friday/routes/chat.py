@@ -1808,6 +1808,13 @@ def chat():
                 _tplan.shadow_plan(_turn_shape, _turn_id)
         except Exception:
             pass
+        # Which conversation this turn's cloud calls belong to: a held private detail gets at most one
+        # card per conversation (services/cloud_release.py).
+        try:
+            from agent_friday.services import cloud_release as _cr_conv
+            _cr_conv.set_conversation(_conversation_id)
+        except Exception:
+            pass
 
         # ── Model Routing: decide local vs cloud BEFORE building the prompt. ──
         # The routing decision drives the whole privacy posture downstream:
@@ -3611,6 +3618,8 @@ def chat_send():
             from agent_friday.services import turn_plan as _tplan_send
             if _tplan_send.current_turn_id() != _turn_id:
                 _tplan_send.begin_turn(_turn_id)
+            from agent_friday.services import cloud_release as _cr_conv
+            _cr_conv.set_conversation(_conversation_id)
             # The model on a local leg is the conversation's seat or the saved
             # local model; one that Ollama relays to its cloud is sliced as cloud.
             _slice_model = (_conv_seat_model
