@@ -19,9 +19,14 @@ from agent_friday.core import login_required
 instructions_bp = Blueprint("instructions", __name__)
 
 
-def _sid_ok(sid: str) -> bool:
+def _known_sid(sid: str):
+    """The manifest's own id equal to `sid`, or None. Everything below uses the
+    manifest's string, never the one from the URL."""
     from agent_friday.services import instruction_files as inf
-    return sid in inf.section_ids() or sid in {p["id"] for p in inf.policies()}
+    for known in list(inf.section_ids()) + [p["id"] for p in inf.policies()]:
+        if known == sid:
+            return known
+    return None
 
 
 @instructions_bp.route("/api/instructions", methods=["GET"])
@@ -36,7 +41,8 @@ def instructions_list():
 @login_required
 def instructions_detail(sid):
     from agent_friday.services import instruction_files as inf
-    if not _sid_ok(sid):
+    sid = _known_sid(sid)
+    if sid is None:
         return jsonify({"ok": False, "error": "no such section"}), 404
     return jsonify({"ok": True, "section": inf.detail(sid)})
 
@@ -48,14 +54,16 @@ def instructions_undo(sid):
     from agent_friday.services import screen_click
     if screen_click.decided_by(request, "owner:ui") != "owner:ui":
         return jsonify({"ok": False, "error": "Undo is a click on the Settings page."}), 403
-    if not _sid_ok(sid):
+    sid = _known_sid(sid)
+    if sid is None:
         return jsonify({"ok": False, "error": "no such section"}), 404
     if inf.is_locked(sid):
         return jsonify({"ok": False, "error": "This is part of Friday's safety rules and changes only in a software update."}), 400
     try:
         row = inf.undo(sid, actor="owner:ui")
     except inf.InstructionError as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        from agent_friday.user_errors import error_text
+        return jsonify({"ok": False, "error": error_text(e, "The change could not be undone")}), 400
     try:
         from agent_friday.services import prompt_freeze
         prompt_freeze.owner_changed("instruction section undone by the owner")
