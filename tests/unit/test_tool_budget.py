@@ -272,7 +272,7 @@ def test_the_generation_reserve_never_exceeds_the_window(monkeypatch):
 def test_the_model_is_told_which_tools_it_lost(monkeypatch):
     """THE CRUX. Trimming is defensible; trimming silently is not.
 
-    FRIDAY_SYSTEM_PROMPT names ~35 tools, tells the model to use them
+    The core instructions name ~35 tools, tells the model to use them
     proactively, and says it must NEVER claim it cannot open a page or a file.
     A trimmed turn under that prompt produces the reported failure verbatim:
     a confident announcement and no action. The note must name names, and it

@@ -23,13 +23,13 @@ def _tool(name):
 def test_computer_control_is_named_where_the_ui_switches_it():
     index = (ROOT / "index.html").read_text(encoding="utf-8")
     assert "switched only in Privacy & Data" in index
-    texts = [mr.FRIDAY_SYSTEM_PROMPT] + [t["description"] for t in ag.CLAUDE_TOOLS]
+    texts = [mr.core_instructions()] + [t["description"] for t in ag.CLAUDE_TOOLS]
     assert not any("Settings > Computer Control" in t for t in texts)
-    assert "Privacy & Data" in mr.FRIDAY_SYSTEM_PROMPT
+    assert "Privacy & Data" in mr.core_instructions()
 
 
 def test_skills_are_not_said_to_need_a_restart():
-    assert "on server restart" not in mr.FRIDAY_SYSTEM_PROMPT
+    assert "on server restart" not in mr.core_instructions()
 
 
 def test_every_conversation_citation_shape_uses_the_slash_the_ui_splits_on():

@@ -437,6 +437,16 @@ def _skillopt_nightly():
         _sopt.set_researcher(_skillopt_llm_researcher)
     except Exception as e:
         print(f"  [skillopt] researcher wiring failed: {e}")
+    # The practice-task scorer, the owner's card for a recommendation, and a
+    # queued trial for each auto-research edit (services/skillopt_evaluator).
+    # Without this the engine can neither score nor change anything.
+    try:
+        from agent_friday.services import skillopt_evaluator as _sev
+        from agent_friday.services.trial_job import _seat
+        _s = _seat() or {}
+        _sev.install(endpoint=_s.get("endpoint", ""), model=_s.get("model", ""))
+    except Exception as e:
+        print(f"  [skillopt] scorer wiring failed: {e}")
     try:
         import agent_friday.skill_capture as _skcap
         result = _skcap.run_nightly()

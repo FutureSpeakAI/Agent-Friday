@@ -175,6 +175,12 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # of mail archives and statements reach a cloud model again, so a click
     # on the card on screen only (owner decision O7).
     "raw_holds_reset": frozenset({"owner:ui"}),
+    # A change to how Friday works, tested on practice tasks old way against
+    # new (services/trials, harness2 adoption HA2): only the owner's click on
+    # the card decides, so a voice or typed "yes" can never adopt one. The
+    # same for a learned heuristic's add/remove card (services/learning_loop).
+    "instruction_trial": frozenset({"owner:ui"}),
+    "learning_skill_change": frozenset({"owner:ui"}),
 }
 
 
@@ -1085,6 +1091,11 @@ def _fire_hook(record: Dict[str, Any]) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _notify_pending(record: Dict[str, Any]) -> None:
+    if (record.get("payload") or {}).get("quiet_until_digest"):
+        # A tested change Friday proposed herself (services/trials): its card
+        # waits in the app, and the one weekly summary card is the notice
+        # (owner decision HD3, "No Pestering"). Owner-started tests notify.
+        return
     try:
         import agent_friday.notifications_engine as _ne
     except Exception:

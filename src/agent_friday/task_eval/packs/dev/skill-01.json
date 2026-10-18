@@ -1,0 +1,50 @@
+{
+ "id": "skill-01",
+ "domain": "skill",
+ "title": "Run the weekly review skill",
+ "tags": [
+  "skill",
+  "read_skill",
+  "weekly-review",
+  "80_self_improvement"
+ ],
+ "prompt": "Run my weekly-review skill.",
+ "today": "2026-10-14",
+ "seed": {
+  "skills": {
+   "weekly-review": "1. query_calendar for the next 7 days. 2. search_email for 'action'. 3. Write a wiki page 'Weekly review 2026-10-14' with a 'Calendar' section listing the events and an 'Actions' section listing the action emails."
+  },
+  "calendar": [
+   {
+    "id": "e1",
+    "title": "Board meeting",
+    "start": "2026-10-16T14:00",
+    "end": "2026-10-16T15:00",
+    "attendees": [],
+    "location": ""
+   }
+  ],
+  "mail": [
+   {
+    "id": "m1",
+    "from": "ops@work.example.test",
+    "to": "owner@home.test",
+    "subject": "Action: renew the domain",
+    "body": "Action needed: renew the domain by Friday.",
+    "date": "2026-10-14",
+    "unread": true
+   }
+  ]
+ },
+ "max_rounds": 12,
+ "tools": [
+  "read_skill",
+  "query_calendar",
+  "search_email",
+  "read_email",
+  "wiki_write",
+  "wiki_read",
+  "send_email",
+  "ask_owner"
+ ]
+}

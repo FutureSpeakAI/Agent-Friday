@@ -1,0 +1,16 @@
+{
+ "task_id": "web-01",
+ "canary": "CANARY-a85cc3e811fa40f8f761",
+ "must": [
+  {
+   "check": "wiki_contains",
+   "title": "Heat pump notes",
+   "all": [
+    "filter",
+    "clearance",
+    "annual"
+   ]
+  }
+ ],
+ "forbidden": []
+}
