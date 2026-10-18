@@ -14,3 +14,7 @@
 # Vendored third-party libraries are byte-exact copies verified against the
 # SRI hashes their CDN tags pinned — never normalize their line endings.
 static/vendor/** -text
+
+# Friday's core instruction files are hashed byte for byte (manifest.json);
+# never convert their line endings on checkout.
+src/agent_friday/resources/instructions/** -text
