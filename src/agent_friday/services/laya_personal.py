@@ -137,12 +137,12 @@ NOTICE = ("Friday now learns from your corrections, on this PC only. When you co
           "her test questions before she uses them. She learns from the voice connection on this PC, not from "
           "one speaker: if other people or a TV are heard in the call, they can be heard as you, so turn on room "
           "mode for those calls. She never learns from silence, a paired phone, a relay or cloud voice, and "
-          "she never learns from what the deeper mind chose until you confirm it in Settings > Privacy & Data "
+          "she never learns from what the deeper mind chose until you confirm it in Settings > Laya "
           "> What Laya learns about you (\"Waiting for your OK\"). She does "
           "not keep what she can tell is sensitive (money, health, legal, identity), and "
           "when she cannot tell, she keeps nothing. Other personal details, like a name or an address in a "
           "request, can be kept in the sealed vault for 180 days. You can see, undo, forget, reset or wipe all of "
-          "it in Settings > Privacy & Data > What Laya learns about you, or by saying \"what have you learned?\" "
+          "it in Settings > Laya > What Laya learns about you, or by saying \"what have you learned?\" "
           "in a local voice call or typed chat on this PC. Turn it off there.")
 
 #: ``_lock`` guards small in-memory things only (the held turns, counters). The router and the turn path
@@ -811,7 +811,7 @@ def run_control(op: str, words: str, profile: Optional[str] = None) -> dict:
         card = fit.request_wipe(profile, n)
         return {"ok": False, "needs_screen": True,
                 "text": "NEEDS_SCREEN: a wipe deletes %d thing%s I learned and every saved version for good, so only a click on the "
-                        "screen can do it. A card is waiting, and Settings > Privacy & Data > What Laya learns about you has the button. "
+                        "screen can do it. A card is waiting, and Settings > Laya > What Laya learns about you has the button. "
                         "Nothing has been deleted; reset sets everything aside instead." % (n, "" if n == 1 else "s")
                 if card.get("ok") else "NOT DONE: " + str(card.get("why") or "a wipe could not be offered.")}
     # Forget, reset and go back only shrink what is kept, so they run whatever the learning state
@@ -827,7 +827,7 @@ def run_control(op: str, words: str, profile: Optional[str] = None) -> dict:
         done = "Went back to an earlier version"
     out.setdefault("text", "Done." if out.get("ok") else out.get("why", "That did not work."))
     if out.get("ok"):
-        notify("done:" + op, done, "Laya's learning: " + done.lower() + ". Settings > Privacy & Data > What Laya learns about you shows the rest and can undo it.")
+        notify("done:" + op, done, "Laya's learning: " + done.lower() + ". Settings > Laya > What Laya learns about you shows the rest and can undo it.")
     return out
 
 
@@ -1155,6 +1155,69 @@ def on_card_decision(approved: bool, *, conversation_id: Optional[str] = None) -
         _log.debug("on_card_decision skipped: %s", type(e).__name__)
 
 
+TEACH_MAX_CHARS = 200
+
+
+def teach_phrase(text: str, label: str, *, profile: Optional[str] = None) -> dict:
+    """Settings > Laya > Teach her a phrase: one phrasing the owner typed on the page, with what it means. It is a
+    gold correction row (source "owner") and goes through everything a spoken correction does: learning on, not
+    off the record, not a minor profile (learning_state), the fast sensitivity pass here and the deep one in the
+    writer, then the test-question check before she uses it (U1). Teaching a phrase never makes her act on a
+    write or an outward search: those stay governed by the router and its guards. The reply never repeats the words."""
+    profile = profile or current_profile()
+    if not profile:
+        return {"ok": False, "why": "Only the signed-in owner can teach her."}
+    ls = learning_state(profile)
+    if not ls["on"]:
+        return {"ok": False, "why": ls["why"]}
+    if _off_record():
+        return {"ok": False, "why": "This is off the record, so she keeps nothing right now."}
+    words = " ".join(str(text or "").split())
+    if len(words) < 3 or len(words) > TEACH_MAX_CHARS:
+        return {"ok": False, "why": "A phrase is a few words, at most %d characters." % TEACH_MAX_CHARS}
+    if label != "conversation" and not _can_label(label):
+        return {"ok": False, "why": "She cannot learn a phrase for that action."}
+    if top_sensitivity(words):
+        return {"ok": False, "why": "That reads as sensitive (or she cannot tell), so she keeps nothing from it."}
+    vault = vault_state()
+    if vault == "no_key":
+        return {"ok": False, "why": "Your vault has not been set up on this PC, so she has nowhere sealed to keep it."}
+    if vault == "open":
+        # The same words for the same action again are not more evidence: three clicks must never stand in for
+        # the three confirmations the graduation guard counts (Decision 13).
+        key = words.lower()
+        for r in store.load_rows(profile) or []:
+            if (not r.get("off") and r.get("label") == label
+                    and " ".join(str(r.get("text") or "").split()).lower() == key):
+                return {"ok": False, "why": "She already has that phrase for that action."}
+    _kick_first_notice(profile)
+    flush_capture(CONTROL_FLUSH_S)                       # rows said before this click land first, in order
+    ent = {"text": words, "surface": "typed", "decision": None, "tool": None, "confidence": None, "layer": "owner"}
+    row = _make_row("correction", ent, label=label, outcome="meant", source="owner")
+    # Written now, on this click, so the answer is the writer's own result (deep sensitivity pass, a forgotten
+    # person, learning switched off meanwhile), never a guess; inside the same visible job the writer uses.
+    try:
+        from agent_friday.services.visible_jobs import note_inference, visible_job
+    except Exception:  # noqa: BLE001 - no door, no embedding: fail closed, as the writer does
+        return {"ok": False, "why": "She could not take it right now. Nothing was kept."}
+    res = None
+    try:
+        with visible_job("Laya learning", kind="laya_personal_embed", workspace="settings", queued=False):
+            note_inference("laya-reading-model", local=True)
+            res = _persist(profile, row)
+    except Exception as e:  # noqa: BLE001
+        _log.debug("a taught phrase was not kept: %s", type(e).__name__)
+        res = None
+    if res == "stored":
+        return {"ok": True, "text": "Kept. She checks it against her test questions before she uses it; What she "
+                                    "learned shows the result, and why if she sets it aside."}
+    if res == "staged":
+        return {"ok": True, "text": "Kept sealed. Your vault is locked, so she reads it once the vault opens."}
+    if res and res.startswith("dropped:"):
+        return {"ok": False, "why": "She did not keep it: " + res.split(":", 1)[1] + "."}
+    return {"ok": False, "why": "She did not keep it: a closer check turned it down. Nothing was stored."}
+
+
 #: Capture never runs on the turn's or the tool's thread: a row is queued and one daemon thread embeds it,
 #: runs the deep sensitivity pass and appends ONE sealed line (nothing already stored is rewritten).
 capture_inline = False
@@ -1162,17 +1225,21 @@ _capq: "queue.Queue" = queue.Queue(maxsize=200)
 _writer: List[Optional[threading.Thread]] = [None]
 
 
+def _make_row(kind: str, ent: dict, *, label: Optional[str], outcome: str, source: str) -> dict:
+    return {"id": "lr_" + uuid.uuid4().hex[:12], "at": now_fn(), "kind": kind, "weight": KIND_WEIGHT[kind],
+            "text": ent.get("text"), "vec": None, "label": label, "outcome": outcome, "source": source,
+            "surface": ent.get("surface"), "_epoch": _epoch[0],
+            "routed": {"decision": ent.get("decision"), "tool": ent.get("tool"),
+                       "confidence": ent.get("confidence"), "layer": ent.get("layer")},
+            "u1": {"status": "pending", "reason": "", "at": None}}
+
+
 def _capture(profile: str, kind: str, ent: dict, *, label: Optional[str], outcome: str, source: str) -> None:
     """Make one row and hand it to the writer. The words were checked by the fast pass already."""
     text = ent.get("text")
     if not text:
         return
-    row = {"id": "lr_" + uuid.uuid4().hex[:12], "at": now_fn(), "kind": kind, "weight": KIND_WEIGHT[kind],
-           "text": text, "vec": None, "label": label, "outcome": outcome, "source": source,
-           "surface": ent.get("surface"), "_epoch": _epoch[0],
-           "routed": {"decision": ent.get("decision"), "tool": ent.get("tool"),
-                      "confidence": ent.get("confidence"), "layer": ent.get("layer")},
-           "u1": {"status": "pending", "reason": "", "at": None}}
+    row = _make_row(kind, ent, label=label, outcome=outcome, source=source)
     if capture_inline:
         _persist(profile, row)
         return
@@ -1280,7 +1347,10 @@ def _persist(profile: str, row: dict) -> Optional[str]:
         _count("dropped_inactive")                        # learning went off, or the owner went off the record, since
         return None
     if not text or top_sensitivity(text, deep=True):
-        label = (row.get("routed") or {}).get("tool") or "act"
+        # Counted under the route it was about: what she routed it to, or, for a phrase the owner taught on the
+        # page (no routing of its own), the action it was taught for.
+        taught = row.get("label") if row.get("source") == "owner" and row.get("kind") == "correction" else None
+        label = (row.get("routed") or {}).get("tool") or taught or "act"
         with _lock:
             _skipped[label] = _skipped.get(label, 0) + 1
         return None
