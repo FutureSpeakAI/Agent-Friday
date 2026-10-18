@@ -115,6 +115,12 @@ Two related protections work differently:
   **Send** counts only as a click on the card on screen, or your own yes after
   Friday reads the text back. Your never-send list is never on a card: it is
   refused, and Friday says so.
+  A conversation asks about the same text at most once, per provider, and
+  only one such card waits at a time: Friday's background context changes
+  every turn (a clock, a count), so the same words with a new time or number
+  are the same text. Those stay on this PC without a new card, and the card
+  says so. Details held while a card waits are asked about once it is
+  answered.
 - **An email written on a cloud model with private details in it.** Before it
   is sent, the send card says "this is exactly what would be sent", with
   **Send** or **Don't send**.
