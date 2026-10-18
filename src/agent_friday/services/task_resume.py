@@ -256,6 +256,11 @@ def clear(task_id) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Reading it back
 # ─────────────────────────────────────────────────────────────────────────────
+#: Returned by ``resume`` when the task continues on its own worker thread
+#: (a website task): the caller must not write the task's ending itself.
+RESUMED_IN_BACKGROUND = "\x00resumed-in-background"
+
+
 def resumability(task_id) -> Dict[str, Any]:
     """The transcript checkpoint's verdict, or -- when that cannot be used --
     the task ledger's."""
@@ -477,7 +482,8 @@ def resume(task_id, *, confirm_pending: bool = False,
         from agent_friday.services import web_tasks as _wt
         if not _wt.resume(task_id):
             raise ResumeRefused("The website task could not be picked up again.")
-        return None, []
+        # The task's own runner thread now owns its status and its ending.
+        return RESUMED_IN_BACKGROUND, []
     if verdict.get("via") == "ledger":
         return _resume_from_ledger(task_id, verdict)
 

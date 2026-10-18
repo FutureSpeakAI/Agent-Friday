@@ -57,6 +57,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import unquote_plus, urlsplit
 
 _log = logging.getLogger("friday.web_tasks")
 
@@ -85,7 +86,6 @@ PAGE_CHARS_TO_MODEL = 8000
 PLAN_CARD = "web_task_plan"
 #: A plan that adds a site to the owner's list: only an on-screen press.
 PLAN_CARD_NEW_SITES = "web_task_plan_new_sites"
-SITE_CARD = "web_task_site"
 QUESTION_CARD = "web_task_question"
 
 _STATUS_FOR_ENDING = {"done": "complete", "gave_up": "failed", "stopped": "cancelled",
@@ -121,6 +121,8 @@ class WebTaskPlan:
 
 
 _SUCCESS_KINDS = ("url_contains", "url_matches", "text_present")
+_CREDENTIAL_KEY = re.compile(r"pass(word|code|phrase)?|\bpin\b|otp|one.?time|cvv|cvc|security.?code|"
+                             r"secret|token|2fa|mfa", re.I)
 
 
 def build_plan(*, goal, start_url, sites=None, data=None, success=None, max_steps=None,
@@ -156,6 +158,10 @@ def build_plan(*, goal, start_url, sites=None, data=None, success=None, max_step
             clean_data[k] = v
     if len(clean_data) > 20:
         raise PlanRefused("A website task can carry at most twenty values to type.")
+    for k in clean_data:
+        if _CREDENTIAL_KEY.search(k):
+            raise PlanRefused("A website task never carries a password, PIN, one-time code or "
+                              "card security code. You sign in or enter those yourself.")
     checks = []
     for c in success or []:
         if not isinstance(c, dict) or len(c) != 1:
@@ -180,6 +186,11 @@ def build_plan(*, goal, start_url, sites=None, data=None, success=None, max_step
         if not (0 < m <= 100):
             raise PlanRefused("The money limit must be more than $0 and at most $100.")
         caps["money_usd"] = round(m, 2)
+    if wants_to_act and not checks:
+        # The owner approves what "done" means on the plan card: an acting
+        # task's finish line is never only the model's own word.
+        raise PlanRefused("A task that acts needs a success check you can approve, e.g. "
+                          "{'text_present': 'Order confirmed'} or {'url_contains': '/confirmation'}.")
     if rd["where"] == "cloud" and caps["money_usd"] is None:
         # Stephen's rule (SALON-C O1): an agent spends without asking only
         # inside a cap the person set. The plan card is where it is set.
@@ -236,9 +247,10 @@ def _task_dir(task_id: str) -> Path:
     return d
 
 
-def save_plan(task_id: str, plan: WebTaskPlan, *, approved_by: str) -> Dict[str, Any]:
+def save_plan(task_id: str, plan: WebTaskPlan, *, approved_by: str,
+              read_only: bool = False) -> Dict[str, Any]:
     body = {"task_id": task_id, "plan": plan.to_dict(), "approved_by": approved_by,
-            "saved_at": time.time()}
+            "read_only": bool(read_only or not plan.wants_to_act), "saved_at": time.time()}
     body["sig"] = _sign(body)
     (_task_dir(task_id) / "web_task_plan.json").write_text(json.dumps(body, indent=1),
                                                           encoding="utf-8")
@@ -246,7 +258,8 @@ def save_plan(task_id: str, plan: WebTaskPlan, *, approved_by: str) -> Dict[str,
 
 
 def load_plan(task_id: str) -> Optional[Tuple[WebTaskPlan, str]]:
-    """(plan, approved_by) when the stored plan is intact; None otherwise."""
+    """(plan, approved_by) when the stored plan is intact; None otherwise.
+    Use ``plan_is_read_only`` for the stored reading-only flag."""
     p = _task_dir(task_id) / "web_task_plan.json"
     try:
         body = json.loads(p.read_text(encoding="utf-8"))
@@ -257,11 +270,29 @@ def load_plan(task_id: str) -> Optional[Tuple[WebTaskPlan, str]]:
     return WebTaskPlan.from_dict(body.get("plan") or {}), str(body.get("approved_by") or "")
 
 
+def plan_is_read_only(task_id: str) -> bool:
+    """The signed plan's reading-only flag. Unreadable reads as read-only."""
+    try:
+        body = json.loads((_task_dir(task_id) / "web_task_plan.json").read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    if not verify_signed(body):
+        return True
+    plan = body.get("plan") or {}
+    return bool(body.get("read_only") or not plan.get("wants_to_act", True))
+
+
+def _plan_path(task_id: str) -> Path:
+    """Where a task's plan would be, without creating anything."""
+    from agent_friday.services import task_journal
+    return Path(task_journal.task_dir(task_id)) / "web_task_plan.json"
+
+
 def is_web_task(task_id: Optional[str]) -> bool:
     if not task_id:
         return False
     try:
-        return (_task_dir(str(task_id)) / "web_task_plan.json").exists()
+        return _plan_path(str(task_id)).exists()
     except Exception:
         return False
 
@@ -273,10 +304,27 @@ class Journal:
         self.path = _task_dir(task_id) / "web_task.jsonl"
         self._lock = threading.Lock()
 
+    def _last_sig(self) -> str:
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return ""
+        for line in reversed(lines):
+            try:
+                return str(json.loads(line).get("sig") or "")
+            except Exception:
+                return "broken"
+        return ""
+
     def append(self, kind: str, **fields) -> Dict[str, Any]:
-        entry = {"kind": kind, "t": time.time(), **fields}
-        with self._lock, open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, default=str, ensure_ascii=False) + "\n")
+        """Each line is signed and names the signature of the line before it,
+        so resume can tell a journal that was edited or cut from one that wasn't."""
+        with self._lock:
+            entry = {"kind": kind, "t": time.time(), **fields, "prev": self._last_sig()}
+            entry = json.loads(json.dumps(entry, default=str))
+            entry["sig"] = _sign(entry)
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return entry
 
     def entries(self) -> List[Dict[str, Any]]:
@@ -291,14 +339,31 @@ class Journal:
             pass
         return out
 
+    def intact(self) -> bool:
+        prev = ""
+        for e in self.entries():
+            if not verify_signed(e) or e.get("prev") != prev:
+                return False
+            prev = e["sig"]
+        return True
+
     def resume_state(self) -> Dict[str, Any]:
-        """Where a resumed run starts, and any outward step whose result is unknown."""
+        """Where a resumed run starts, what it had used, and any outward step
+        whose result is unknown. ``intact`` False means do not resume."""
         checkpoint_url, unknown, steps = None, [], 0
+        seconds, money = 0.0, 0.0
         cards: Dict[str, Dict[str, Any]] = {}
+        ended = False
         for e in self.entries():
             k = e.get("kind")
+            if k == "start":
+                ended = False
+            elif k == "end":
+                ended = True
             if k == "model":
                 steps = max(steps, int(e.get("step") or 0))
+                seconds = max(seconds, float(e.get("elapsed") or 0.0))
+                money = max(money, float(e.get("money") or 0.0))
             elif k == "checkpoint" and e.get("url"):
                 checkpoint_url = e["url"]
             elif k == "card":
@@ -306,7 +371,9 @@ class Journal:
             elif k == "card_settled":
                 cards.pop(str(e.get("approval_id")), None)
         unknown = [c for c in cards.values() if c.get("outward")]
-        return {"checkpoint_url": checkpoint_url, "unknown_outward": unknown, "steps": steps}
+        return {"checkpoint_url": checkpoint_url, "unknown_outward": unknown, "steps": steps,
+                "seconds": seconds, "money": money, "last_run_ended": ended,
+                "intact": self.intact()}
 
 
 # ── The registry of running tasks (what the hooks consult) ────────────────────
@@ -319,25 +386,18 @@ _ACTIVE_LOCK = threading.RLock()
 class _Run:
     task_id: str
     plan: WebTaskPlan
-    extra_sites: Dict[str, str] = dataclasses.field(default_factory=dict)
     page_url: str = ""
-    last_refused_site: str = ""
     read_only: bool = False
 
     def site_level(self, site: str) -> Optional[str]:
         """The level for a site within THIS task: the owner's list, narrowed
         by the plan (a site off the plan is not allowed even if listed) and
-        by read-only plans. A site allowed mid-task by the owner's card is
-        reading-only unless the list says it may act."""
+        by read-only plans. Phase 1 never widens a task mid-run: a site the
+        plan did not name means a new plan, on a new card."""
         from agent_friday.governance import web_sites
-        if site not in self.plan.sites and site not in self.extra_sites:
+        if site not in self.plan.sites:
             return None
-        listed = web_sites.level_for(site)
-        if site in self.plan.sites and listed is None:
-            return None
-        level = listed or self.extra_sites.get(site)
-        if site in self.extra_sites and level == "may_act" and listed != "may_act":
-            level = "may_read"
+        level = web_sites.level_for(site)
         if self.read_only and level == "may_act":
             level = "may_read"
         return level
@@ -350,14 +410,20 @@ def active(task_id: Optional[str]) -> Optional[_Run]:
         return _ACTIVE.get(str(task_id))
 
 
-def _register(run: _Run) -> None:
+def _register(run: _Run) -> bool:
+    """False when a run for this task already exists: one run per task."""
     with _ACTIVE_LOCK:
+        if run.task_id in _ACTIVE:
+            return False
         _ACTIVE[run.task_id] = run
+        return True
 
 
-def _unregister(task_id: str) -> None:
+def _unregister(run: _Run) -> None:
+    """Remove exactly this run, never a later one that took its id."""
     with _ACTIVE_LOCK:
-        _ACTIVE.pop(task_id, None)
+        if _ACTIVE.get(run.task_id) is run:
+            _ACTIVE.pop(run.task_id, None)
 
 
 def _task_of(session_ctx) -> Optional[str]:
@@ -376,6 +442,8 @@ def navigation_check(task_id: Optional[str], url: str) -> Tuple[bool, str]:
     """
     run = active(task_id)
     if run is None:
+        if is_web_task(task_id):
+            return False, "this website task is not running"
         return True, "ok"
     try:
         from agent_friday.governance.web_sites import site_of
@@ -386,7 +454,6 @@ def navigation_check(task_id: Optional[str], url: str) -> Tuple[bool, str]:
         if not site:
             return False, "a website task only opens web sites on its plan"
         if run.site_level(site) is None:
-            run.last_refused_site = site
             return False, f"{site} is not one of this task's sites"
         return True, "ok"
     except Exception:
@@ -402,7 +469,15 @@ def _never_send_hits(text: str) -> List[str]:
         return []
     try:
         from agent_friday.services.judgment_gate import never_send_hits
-        return list(never_send_hits(str(text)))
+        hits = list(never_send_hits(str(text)))
+        decoded = str(text)
+        for _ in range(3):      # an address can hide a value behind %-encoding
+            nxt = unquote_plus(decoded)
+            if nxt == decoded:
+                break
+            decoded = nxt
+            hits += list(never_send_hits(decoded))
+        return hits
     except Exception:
         return ["(the never-send check is unavailable)"]
 
@@ -413,8 +488,12 @@ def tool_scope_denial(name: str, tool_input: Any, session_ctx: Any) -> Optional[
     Only a call made under a running website task is judged here. Everything
     else in Friday is untouched by this function.
     """
-    run = active(_task_of(session_ctx))
+    tid = _task_of(session_ctx)
+    run = active(tid)
     if run is None:
+        sc = session_ctx if isinstance(session_ctx, dict) else {}
+        if sc.get("surface") == "web_task" or is_web_task(tid):
+            return "[WEB TASK DENY] This website task is not running, so nothing was run."
         return None
     if name not in WEB_TASK_TOOLS:
         return (f"[WEB TASK DENY] A website task can use only Friday's browser; "
@@ -492,7 +571,7 @@ def _header(plan: WebTaskPlan, state: Dict[str, Any]) -> str:
     money = state.get("money_used", 0.0)
     cap = plan.caps.get("money_usd")
     return (f"GOAL (from the owner): {plan.goal}\n"
-            f"SITES: {', '.join(plan.sites + list(state.get('extra_sites') or []))}\n"
+            f"SITES: {', '.join(plan.sites)}\n"
             f"TASK DATA (the only values you may type besides what is on the page):\n{data}\n"
             f"SUCCESS CHECK: {checks}\n"
             f"LIMITS: step {state['steps']}/{plan.caps['steps']}, "
@@ -506,7 +585,25 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip().casefold()
 
 
-def evidence_found(evidence: str, page_text: str) -> Tuple[bool, str]:
+def _echoed(text: str, url: str) -> bool:
+    """True when ``text`` also appears in the page's own address (its query or
+    fragment, decoded): a search page that repeats what was typed is not proof."""
+    try:
+        parts = urlsplit(url or "")
+        tail = parts.query + " " + parts.fragment
+    except Exception:
+        return False
+    decoded = tail
+    for _ in range(3):
+        nxt = unquote_plus(decoded)
+        if nxt == decoded:
+            break
+        decoded = nxt
+    n = _norm(text)
+    return bool(n) and n in _norm(decoded)
+
+
+def evidence_found(evidence: str, page_text: str, url: str = "") -> Tuple[bool, str]:
     ev = _norm(evidence)
     if len(ev) < EVIDENCE_MIN:
         return False, f"the evidence must be at least {EVIDENCE_MIN} characters copied from the page"
@@ -514,19 +611,31 @@ def evidence_found(evidence: str, page_text: str) -> Tuple[bool, str]:
         return False, f"the evidence must be at most {EVIDENCE_MAX} characters"
     if ev not in _norm(page_text):
         return False, "your evidence is not on the current page"
+    if _echoed(evidence, url):
+        return False, "your evidence also appears in the page's address, so it may only echo what was typed"
     return True, "ok"
+
+
+def _url_core(url: str) -> str:
+    """scheme://host/path: what a URL check may look at (never the query)."""
+    try:
+        p = urlsplit(url or "")
+        return f"{p.scheme}://{(p.hostname or '').lower()}{p.path}"
+    except Exception:
+        return ""
 
 
 def run_checks(plan: WebTaskPlan, url: str, page_text: str) -> Tuple[bool, List[Dict[str, Any]]]:
     results = []
+    core = _url_core(url)
     for c in plan.success:
         (kind, value), = c.items()
         if kind == "url_contains":
-            ok = value in (url or "")
+            ok = value in core
         elif kind == "url_matches":
-            ok = fnmatch.fnmatchcase(url or "", value)
+            ok = fnmatch.fnmatchcase(core, value)
         elif kind == "text_present":
-            ok = _norm(value) in _norm(page_text)
+            ok = _norm(value) in _norm(page_text) and not _echoed(value, url)
         else:
             ok = False
         results.append({"check": c, "passed": bool(ok)})
@@ -545,15 +654,17 @@ def _queued_card(result: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+_REFUSAL_FIRST_LINE = re.compile(
+    r"^(\[[A-Z ]+DENY\]|browser_[a-z]+ (refused|error):|I did NOT open|NOT done|"
+    r"Friday's browser is not open)")
+
+
 def _refused(result: str) -> bool:
-    """A tool result that says the action did not happen."""
-    head = (result or "")[:300]
-    low = head.lower()
-    if head.startswith("[") and "deny]" in low:
-        return True
-    if low.startswith(("not opened", "not done")):
-        return True
-    return " refused:" in low or (low.startswith("browser_") and " error:" in low)
+    """A tool result that says the action did not happen. Judged on the FIRST
+    line only, which Friday's code writes; a page's title or text comes after
+    the untrusted-content marker and can never fake a refusal."""
+    first = (result or "").split("\n", 1)[0]
+    return bool(_REFUSAL_FIRST_LINE.match(first))
 
 
 class _Ended(Exception):
@@ -594,11 +705,17 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
     """Work the task to one of five endings. Returns {"status", "result", "receipt"}."""
     journal = Journal(task_id)
     run_state = _Run(task_id=task_id, plan=plan, read_only=read_only)
-    _register(run_state)
+    if not _register(run_state):
+        # Another run of this task is live (a resume racing an old thread):
+        # never two runs, and never one removing the other's limits.
+        return {"status": "failed", "result": "Not started: this website task is already running.",
+                "receipt": None}
+    run_id = "run_" + uuid.uuid4().hex[:8]
     clk = ports.clock
     started = clk.now()
     waited = 0.0
-    state = {"steps": 0, "elapsed": 0.0, "money_used": 0.0, "extra_sites": []}
+    base_seconds = 0.0
+    state = {"steps": 0, "elapsed": 0.0, "money_used": 0.0}
     steps_log: List[Dict[str, Any]] = []
     cards_log: List[Dict[str, Any]] = []
     notes: List[str] = []
@@ -609,22 +726,37 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
     evidence = None
     checks_out: List[Dict[str, Any]] = []
     verified: Any = False
-    summary = ""
     resumed_from = None
+    first_url = plan.start_url
     if resume:
         rs = journal.resume_state()
-        state["steps"] = rs["steps"]
-        resumed_from = rs
+        if not rs["intact"]:
+            _unregister(run_state)
+            return {"status": "failed", "receipt": None,
+                    "result": "Not resumed: the task's step record was changed or cut, so "
+                              "Friday cannot tell what already happened. Start the task again."}
+        if not rs["last_run_ended"]:
+            # The run before this one never reached an ending: it was
+            # interrupted. It gets its own receipt before this run begins.
+            write_receipt(task_id, plan, run_id=run_id + "-prior", ending="interrupted",
+                          why="Friday stopped running (a restart, a crash or the PC sleeping) "
+                              "before the task finished.", verified=False, evidence=None,
+                          checks=[], final_url=rs["checkpoint_url"] or "", picture=None,
+                          steps=[], cards=[], state={"steps": rs["steps"], "elapsed": rs["seconds"],
+                                                     "money_used": rs["money"]}, reader=plan.reader)
+        state["steps"], base_seconds, state["money_used"] = rs["steps"], rs["seconds"], rs["money"]
+        resumed_from = {k: rs[k] for k in ("checkpoint_url", "steps")}
+        first_url = rs["checkpoint_url"] or plan.start_url
         for c in rs["unknown_outward"]:
             notes.append(f"Before an interruption Friday asked the owner to approve "
                          f"\"{c.get('title') or 'an action'}\". Whether it happened is UNKNOWN. "
                          f"Check the page (order history, confirmation, sent items) before "
                          f"doing anything like it again, and never repeat it blindly.")
-    journal.append("start", resume=bool(resume), plan_id=plan.plan_id,
+    journal.append("start", run_id=run_id, resume=bool(resume), plan_id=plan.plan_id,
                    resumed_from=resumed_from)
 
     def elapsed() -> float:
-        return max(0.0, clk.now() - started - waited)
+        return base_seconds + max(0.0, clk.now() - started - waited)
 
     def check_limits():
         if ports.stop():
@@ -639,6 +771,16 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
             raise _Ended("capped", f"It reached its money limit of ${cap:.2f}.")
 
     def track_url(result: str):
+        # The browser's own record of where the page is comes first; the
+        # code-written URL line of a tool result is the fallback.
+        live = ""
+        try:
+            live = ports.browser.page_url() or ""
+        except Exception:
+            live = ""
+        if live:
+            run_state.page_url = live
+            return
         m = _URL_LINE.search(result or "")
         if m:
             run_state.page_url = m.group(1)
@@ -658,7 +800,7 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                 if st in ("approved", "auto_approved"):
                     if outward:
                         settle_t0 = clk.now()
-                        while (not ports.cards.status(approval_id).get("consumed")
+                        while (not (ports.cards.status(approval_id) or {}).get("consumed")
                                and clk.now() - settle_t0 < APPROVED_SETTLE_S):
                             clk.sleep(0.5)
                     decision = "approved"
@@ -682,156 +824,147 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
         track_url(res)
         return res
 
-    ending, why, extra = "gave_up", "", {}
+    ending, why = "gave_up", ""
+    picture, final_url = None, ""
     try:
         try:
-            first = act("browser_open", {"url": (resumed_from or {}).get("checkpoint_url")
-                                          or plan.start_url})
-        except Exception as e:
-            raise _Ended("gave_up", f"The browser could not open the first page ({type(e).__name__}).")
-        steps_log.append({"n": 0, "actions": [["browser_open", {"url": plan.start_url}]],
-                          "result": first[:300]})
-        journal.append("action", step=0, tool="browser_open", result=first[:500])
-        if _refused(first):
-            raise _Ended("gave_up", "The first page could not be opened: " + first[:200])
-        page = first
-        while True:
-            check_limits()
-            user = (_header(plan, state) + ("\nNOTES:\n- " + "\n- ".join(notes) + "\n" if notes else "")
-                    + "\nCURRENT PAGE:\n" + page[:PAGE_CHARS_TO_MODEL])
-            notes = []
-            answer, usage = ports.model.decide(SYSTEM, user)
-            state["steps"] += 1
-            state["money_used"] += float(ports.cost((usage or {}).get("in_chars", len(user) + len(SYSTEM)),
-                                                    (usage or {}).get("out_chars", 0)) or 0.0)
-            kind, payload = _parse(answer)
-            journal.append("model", step=state["steps"], choice=kind,
-                           answer=_masked_answer(answer) if kind != "invalid" else None)
-            if kind == "invalid":
-                invalid_in_row += 1
-                if invalid_in_row >= INVALID_LIMIT:
-                    raise _Ended("gave_up", "The model's answers could not be understood.")
-                notes.append(f"Your last answer could not be used: {payload}.")
-                continue
-            invalid_in_row = 0
-            if kind == "give_up":
-                raise _Ended("gave_up", str(payload.get("reason") or "It could not finish.")[:500])
-            if kind in ("ask_owner", "need_eyes"):
-                q = str(payload.get("question") or payload.get("reason") or "")[:300]
-                title = ("This page can't be read as text. Do this step in the live view, "
-                         "then press Continue." if kind == "need_eyes" else q)
-                aid = ports.cards.create(QUESTION_CARD, f"Website task needs you: {title}"[:200],
-                                         f"Task: {plan.goal}\n\n{q}\n\nContinue lets Friday carry on; "
-                                         f"Stop ends the task.",
-                                         {"task_id": task_id, "step": state["steps"], "kind": kind})
-                decision = wait_card(aid, title=title, outward=False)
-                if decision != "approved":
-                    raise _Ended("stopped", "You chose to stop when Friday asked for help.")
-                page = act("browser_read", {})
-                continue
-            if kind == "done":
-                fresh_text = ports.browser.page_text()
-                url = ports.browser.page_url() or run_state.page_url
-                ok, msg = evidence_found(str(payload.get("evidence") or ""), fresh_text)
-                checks_ok, checks_out = run_checks(plan, url, fresh_text)
-                if ok and checks_ok:
-                    evidence = {"quote": str(payload.get("evidence")),
-                                "page_sha256": hashlib.sha256(fresh_text.encode("utf-8")).hexdigest()}
-                    verified = True
-                    summary = str(payload.get("summary") or "")[:500]
-                    raise _Ended("done", summary or "Done.")
-                proof_misses += 1
-                if proof_misses >= 2:
-                    raise _Ended("gave_up", "It could not show proof that the goal was met.")
-                failed = [r["check"] for r in checks_out if not r["passed"]]
-                notes.append("Not accepted as done: " + (msg if not ok else
-                             "the success check did not pass: " + json.dumps(failed)) + ".")
-                page = act("browser_read", {})
-                continue
-            # A batch of actions.
-            step_rec = {"n": state["steps"], "actions": [], "result": ""}
-            batch_url = run_state.page_url
-            for i, (tool, args) in enumerate(payload):
-                key = hashlib.sha256((tool + json.dumps(args, sort_keys=True, default=str)
-                                      + hashlib.sha256(page.encode("utf-8")).hexdigest()
-                                      ).encode("utf-8")).hexdigest()
-                seen[key] = seen.get(key, 0) + 1
-                if seen[key] >= LOOP_REPEAT_LIMIT:
-                    raise _Ended("gave_up", f"It was stuck repeating the same {tool} on an unchanged page.")
+            try:
+                first = act("browser_open", {"url": first_url})
+            except Exception as e:
+                raise _Ended("gave_up", f"The browser could not open the first page ({type(e).__name__}).")
+            steps_log.append({"n": state["steps"], "actions": [["browser_open", {"url": first_url}]],
+                              "url": run_state.page_url})
+            journal.append("action", step=state["steps"], tool="browser_open", args={"url": first_url},
+                           refused=_refused(first), url=run_state.page_url)
+            if _refused(first):
+                raise _Ended("gave_up", "The first page could not be opened: " + first.split("\n", 1)[0][:200])
+            page = first
+            while True:
                 check_limits()
-                res = act(tool, args)
-                step_rec["actions"].append([tool, _masked_args(tool, args)])
-                journal.append("action", step=state["steps"], tool=tool,
-                               args=_masked_args(tool, args), result=res[:500])
-                card = _queued_card(res)
-                if card:
-                    title = str(((card.get("card") or {}).get("title")) or "an action on the page")
-                    decision = wait_card(card["approval_id"], title=title, outward=True)
-                    if decision == "approved":
-                        page = act("browser_read", {})
-                        journal.append("checkpoint", url=run_state.page_url, step=state["steps"])
-                        notes.append(f"The owner approved \"{title}\"; the page now shows its result.")
-                    else:
-                        page = act("browser_read", {})
-                        notes.append(f"The owner said no to \"{title}\" ({decision}). Do not try it again.")
-                    break
-                if res.startswith("[WEB TASK DENY] not opened") or "not one of this task's sites" in res:
-                    site = run_state.last_refused_site
-                    if site:
-                        run_state.last_refused_site = ""
-                        aid = ports.cards.create(
-                            SITE_CARD, f"Friday wants to go to {site}"[:200],
-                            f"Task: {plan.goal}\n\n{site} is not one of this task's sites. "
-                            f"Approve to let this task READ it (it can act there only if your "
-                            f"site list says so).", {"task_id": task_id, "site": site})
-                        if wait_card(aid, title=f"go to {site}", outward=False) == "approved":
-                            run_state.extra_sites[site] = "may_read"
-                            state["extra_sites"] = list(run_state.extra_sites)
-                            notes.append(f"The owner allowed {site} for this task; try again.")
-                        else:
-                            notes.append(f"The owner did not allow {site}.")
-                    else:
-                        notes.append(f"{tool} was refused: {res[:300]}")
+                user = (_header(plan, state) + ("\nNOTES:\n- " + "\n- ".join(notes) + "\n" if notes else "")
+                        + "\nCURRENT PAGE:\n" + page[:PAGE_CHARS_TO_MODEL])
+                notes = []
+                answer, usage = ports.model.decide(SYSTEM, user)
+                state["steps"] += 1
+                state["money_used"] += float(ports.cost((usage or {}).get("in_chars", len(user) + len(SYSTEM)),
+                                                        (usage or {}).get("out_chars", 0)) or 0.0)
+                state["elapsed"] = elapsed()
+                kind, payload = _parse(answer)
+                journal.append("model", step=state["steps"], choice=kind,
+                               answer=_masked_answer(answer) if kind != "invalid" else None,
+                               elapsed=round(state["elapsed"], 2), money=round(state["money_used"], 6))
+                if kind == "invalid":
+                    invalid_in_row += 1
+                    if invalid_in_row >= INVALID_LIMIT:
+                        raise _Ended("gave_up", "The model's answers could not be understood.")
+                    notes.append(f"Your last answer could not be used: {payload}.")
+                    continue
+                invalid_in_row = 0
+                if kind == "give_up":
+                    raise _Ended("gave_up", str(payload.get("reason") or "It could not finish.")[:500])
+                if kind in ("ask_owner", "need_eyes"):
+                    q = str(payload.get("question") or payload.get("reason") or "")[:300]
+                    title = ("This page can't be read as text. Do this step in the live view, "
+                             "then press Continue." if kind == "need_eyes" else q)
+                    aid = ports.cards.create(QUESTION_CARD, f"Website task needs you: {title}"[:200],
+                                             f"Task: {plan.goal}\n\nFriday's question (written after reading "
+                                             f"the page): {q}\n\nContinue lets Friday carry on; Stop ends "
+                                             f"the task.",
+                                             {"task_id": task_id, "step": state["steps"], "kind": kind})
+                    decision = wait_card(aid, title=title, outward=False)
+                    if decision != "approved":
+                        raise _Ended("stopped", "You chose to stop when Friday asked for help.")
                     page = act("browser_read", {})
-                    break
-                if _refused(res):
-                    notes.append(f"{tool} was refused: {res[:300]}")
-                    page = act("browser_read", {}) if tool != "browser_read" else page
-                    break
-                page = res
-                if i < len(payload) - 1 and run_state.page_url != batch_url and tool != "browser_open":
-                    notes.append("The page changed, so the rest of that batch was not run; look again.")
-                    break
-            step_rec["result"] = page[:300]
-            steps_log.append(step_rec)
-    except _Ended as e:
-        ending, why, extra = e.ending, e.why, e.extra
-    except Exception as e:
-        ending, why = "gave_up", f"Something went wrong: {type(e).__name__}."
-        _log.warning("website task %s failed: %s", task_id, e)
+                    continue
+                if kind == "done":
+                    fresh_text = ports.browser.page_text()
+                    url = ports.browser.page_url() or run_state.page_url
+                    ok, msg = evidence_found(str(payload.get("evidence") or ""), fresh_text, url)
+                    checks_ok, checks_out = run_checks(plan, url, fresh_text)
+                    if ok and checks_ok:
+                        evidence = {"quote": str(payload.get("evidence")),
+                                    "page_sha256": hashlib.sha256(fresh_text.encode("utf-8")).hexdigest()}
+                        verified = True
+                        raise _Ended("done", str(payload.get("summary") or "Done.")[:500])
+                    proof_misses += 1
+                    if proof_misses >= 2:
+                        raise _Ended("gave_up", "It could not show proof that the goal was met.")
+                    failed = [r["check"] for r in checks_out if not r["passed"]]
+                    notes.append("Not accepted as done: " + (msg if not ok else
+                                 "the success check did not pass: " + json.dumps(failed)) + ".")
+                    page = act("browser_read", {})
+                    continue
+                # A batch of actions.
+                step_rec = {"n": state["steps"], "actions": [], "url": ""}
+                batch_url = run_state.page_url
+                for i, (tool, args) in enumerate(payload):
+                    key = hashlib.sha256((tool + json.dumps(args, sort_keys=True, default=str)
+                                          + hashlib.sha256(page.encode("utf-8")).hexdigest()
+                                          ).encode("utf-8")).hexdigest()
+                    seen[key] = seen.get(key, 0) + 1
+                    if seen[key] >= LOOP_REPEAT_LIMIT:
+                        raise _Ended("gave_up", f"It was stuck repeating the same {tool} on an unchanged page.")
+                    check_limits()
+                    res = act(tool, args)
+                    refused = _refused(res)
+                    step_rec["actions"].append([tool, _masked_args(tool, args)])
+                    journal.append("action", step=state["steps"], tool=tool,
+                                   args=_masked_args(tool, args), refused=refused,
+                                   url=run_state.page_url)
+                    card = _queued_card(res)
+                    if card:
+                        title = str(((card.get("card") or {}).get("title")) or "an action on the page")
+                        decision = wait_card(card["approval_id"], title=title, outward=True)
+                        page = act("browser_read", {})
+                        if decision == "approved":
+                            journal.append("checkpoint", url=run_state.page_url, step=state["steps"])
+                            notes.append(f"The owner approved \"{title}\"; the page now shows its result.")
+                        else:
+                            notes.append(f"The owner said no to \"{title}\" ({decision}). Do not try it again.")
+                        break
+                    if refused:
+                        first_line = res.split("\n", 1)[0][:300]
+                        notes.append(f"{tool} was refused: {first_line}")
+                        if "not one of this task's sites" in first_line:
+                            notes.append("That site is not on this task's plan. If the errand needs it, "
+                                         "give_up and say which site, so the owner can approve a new plan.")
+                        if tool != "browser_read":
+                            page = act("browser_read", {})
+                        break
+                    page = res
+                    if i < len(payload) - 1 and run_state.page_url != batch_url and tool != "browser_open":
+                        notes.append("The page changed, so the rest of that batch was not run; look again.")
+                        break
+                step_rec["url"] = run_state.page_url
+                steps_log.append(step_rec)
+        except _Ended as e:
+            ending, why = e.ending, e.why
+        except Exception as e:
+            ending, why = "gave_up", f"Something went wrong: {type(e).__name__}."
+            _log.warning("website task %s failed: %s", task_id, e)
+        # Proof and close happen while this run's limits still apply: page
+        # script cannot take the browser anywhere in the gap.
+        try:
+            final_url = ports.browser.page_url() or run_state.page_url
+        except Exception:
+            final_url = run_state.page_url
+        try:
+            p = _task_dir(task_id) / f"final-{run_id}.jpg"
+            if ports.browser.proof_picture(str(p)):
+                picture = str(p)
+        except Exception:
+            picture = None
+        try:
+            ports.browser.close()
+        except Exception:
+            pass
     finally:
-        _unregister(task_id)
-    picture = None
-    final_url = ""
-    try:
-        final_url = ports.browser.page_url() or run_state.page_url
-    except Exception:
-        final_url = run_state.page_url
-    try:
-        p = _task_dir(task_id) / "final.jpg"
-        if ports.browser.proof_picture(str(p)):
-            picture = str(p)
-    except Exception:
-        picture = None
-    try:
-        ports.browser.close()
-    except Exception:
-        pass
-    receipt = write_receipt(task_id, plan, ending=ending, why=why, verified=verified,
+        _unregister(run_state)
+    receipt = write_receipt(task_id, plan, run_id=run_id, ending=ending, why=why, verified=verified,
                             evidence=evidence, checks=checks_out, final_url=final_url,
                             picture=picture, steps=steps_log, cards=cards_log, state=state,
                             reader=plan.reader)
-    journal.append("end", ending=ending, why=why)
+    journal.append("end", run_id=run_id, ending=ending, why=why)
     label = {"done": "Done", "gave_up": "Gave up", "stopped": "Stopped",
              "capped": "Hit its limit", "interrupted": "Interrupted"}[ending]
     result = f"{label}: {why}" + (f" Final page: {final_url}" if final_url else "")
@@ -839,38 +972,46 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
 
 
 def _masked_args(tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """What a step record keeps of an action: typed and chosen values only as
+    their length, never their content."""
     out = dict(args or {})
-    if tool == "browser_type" and isinstance(out.get("text"), str):
-        t = out["text"]
-        out["text"] = t if len(t) <= 4 else t[:2] + "…" + f"({len(t)} chars)"
+    for field in ("text", "option"):
+        if isinstance(out.get(field), str):
+            out[field] = f"({len(out[field])} characters)"
     return out
 
 
 def _masked_answer(answer: Any) -> Any:
     """The model's answer as journalled: typed values masked like actions."""
-    if not isinstance(answer, dict) or not isinstance(answer.get("actions"), list):
+    if not isinstance(answer, dict):
         return answer
-    out = []
-    for a in answer["actions"]:
-        if isinstance(a, dict) and a.get("do") == "type":
-            a = _masked_args("browser_type", a)
-        out.append(a)
-    return {**answer, "actions": out}
+    if isinstance(answer.get("actions"), list):
+        out = []
+        for a in answer["actions"]:
+            if isinstance(a, dict) and a.get("do") in ("type", "select"):
+                a = _masked_args("browser_type", a)
+            out.append(a)
+        return {**answer, "actions": out}
+    return answer
 
 
-def write_receipt(task_id: str, plan: WebTaskPlan, *, ending, why, verified, evidence, checks,
-                  final_url, picture, steps, cards, state, reader) -> Dict[str, Any]:
-    body = {"task_id": task_id, "goal": plan.goal, "plan_id": plan.plan_id, "outcome": ending,
-            "why_ended": why, "verified": verified, "final_url": final_url,
+def write_receipt(task_id: str, plan: WebTaskPlan, *, run_id: str, ending, why, verified, evidence,
+                  checks, final_url, picture, steps, cards, state, reader) -> Dict[str, Any]:
+    """One signed receipt per run (append-only: a resumed run writes its own,
+    and ``web_receipt.json`` is a copy of the newest)."""
+    body = {"task_id": task_id, "run_id": run_id, "goal": plan.goal, "plan_id": plan.plan_id,
+            "outcome": ending, "why_ended": why, "verified": verified, "final_url": final_url,
             "evidence": evidence, "checks": checks, "final_picture": picture,
-            "steps": steps, "cards": cards, "sites_used": plan.sites + list(state.get("extra_sites") or []),
+            "steps": steps, "cards": cards, "sites_used": list(plan.sites),
             "models": [reader], "caps": plan.caps,
-            "used": {"steps": state["steps"], "seconds": round(state["elapsed"], 1),
-                     "money_usd_estimate": round(state["money_used"], 4)},
+            "used": {"steps": state["steps"], "seconds": round(float(state["elapsed"]), 1),
+                     "money_usd_estimate": round(float(state["money_used"]), 4)},
             "written_at": time.time()}
     body["sig"] = _sign(body)
-    (_task_dir(task_id) / "web_receipt.json").write_text(
-        json.dumps(body, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
+    text = json.dumps(body, indent=1, ensure_ascii=False, default=str)
+    d = _task_dir(task_id)
+    (d / f"web_receipt-{run_id}.json").write_text(text, encoding="utf-8")
+    (d / "web_receipt.json").write_text(text, encoding="utf-8")
     return body
 
 
@@ -1014,7 +1155,7 @@ def choose_reader() -> Dict[str, str]:
 def spawn(plan: WebTaskPlan, *, approved_by: str, read_only: bool = False) -> str:
     from agent_friday.services import agent
     task_id = str(uuid.uuid4())
-    save_plan(task_id, plan, approved_by=approved_by)
+    save_plan(task_id, plan, approved_by=approved_by, read_only=read_only)
     tid = agent._spawn_task(f"Website task: {plan.goal[:70]}", f"Website task: {plan.goal}",
                             description=f"Website task on {', '.join(plan.sites)}",
                             conversation_id=plan.conversation_id, task_id=task_id,
@@ -1152,13 +1293,34 @@ def _on_plan_decision(record: Dict[str, Any]) -> None:
 
 # ── Resume (task_resume asks this module about its own tasks) ─────────────────
 
+def _task_status(task_id: str) -> str:
+    try:
+        from agent_friday.services import agent
+        with agent.TASKS_LOCK:
+            rec = agent.TASKS.get(task_id)
+        if rec is not None:
+            return str(rec.get("status") or "")
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import task_journal
+        return str((task_journal.read_state(task_id) or {}).get("status") or "")
+    except Exception:
+        return ""
+
+
 def resumability(task_id: str) -> Dict[str, Any]:
-    loaded = load_plan(task_id)
     base = {"iteration": 0, "pending_tool": None, "attempts": 0, "via": "web_task"}
-    if loaded is None:
-        return {**base, "resumable": False, "needs_confirmation": False,
-                "reason": "The website task's approved plan cannot be read, so it cannot resume. Start it again."}
+    no = lambda why: {**base, "resumable": False, "needs_confirmation": False, "reason": why}
+    if load_plan(task_id) is None:
+        return no("The website task's approved plan cannot be read, so it cannot resume. Start it again.")
+    if _task_status(task_id) != "interrupted":
+        return no("Only an interrupted website task can resume; one that ended stays ended. "
+                  "Start a new one if the errand still needs doing.")
     rs = Journal(task_id).resume_state()
+    if not rs["intact"]:
+        return no("The website task's step record was changed or cut, so it cannot resume safely. "
+                  "Start it again.")
     unknown = rs["unknown_outward"]
     reason = "A website task resumes only when you press Resume. It reads the page again first."
     if unknown:
@@ -1169,13 +1331,15 @@ def resumability(task_id: str) -> Dict[str, Any]:
 
 
 def resume(task_id: str) -> bool:
+    if not resumability(task_id).get("resumable"):
+        return False
     loaded = load_plan(task_id)
     if loaded is None:
         return False
-    plan, approved_by = loaded
+    plan, _approved_by = loaded
     from agent_friday.services import agent
     return bool(agent.resume_runner_task(
-        task_id, make_runner(plan, resume=True, read_only="read-only" in approved_by)))
+        task_id, make_runner(plan, resume=True, read_only=plan_is_read_only(task_id))))
 
 
 _HOOKS_REGISTERED = False

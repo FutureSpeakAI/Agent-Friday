@@ -670,6 +670,8 @@ def resume_task(task_id):
         _tj.push_task(task_id)
         try:
             text, _trace = _tr.resume(task_id, confirm_pending=confirm)
+            if text == _tr.RESUMED_IN_BACKGROUND:
+                return      # its own runner records how it ends
             with TASKS_LOCK:
                 _still = (TASKS.get(task_id) or {}).get('status') in ('running', 'queued')
             # A ledger resume ran the task's own worker, which already

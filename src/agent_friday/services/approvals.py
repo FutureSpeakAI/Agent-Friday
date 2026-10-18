@@ -119,7 +119,10 @@ def _is_public_query_card(rec: Dict[str, Any]) -> bool:
 #: Cards whose title and description repeat what the action would carry (a path, an address, an event
 #: and its guests, a task's text). Their notices, and a text message offering them, name only the tool;
 #: the full words stay on the card in the app.
-PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff"})
+PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff",
+                                  # Website task cards carry the values to type, or a
+                                  # question written after reading a page: never in a notice.
+                                  "web_task_plan", "web_task_plan_new_sites", "web_task_question"})
 
 
 def notice_title(rec: Dict[str, Any]) -> str:

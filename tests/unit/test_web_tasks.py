@@ -15,6 +15,7 @@ from agent_friday.governance import web_sites as ws
 from agent_friday.services import web_tasks as wt
 
 KEY = b"test-governance-key-not-real"
+REAL_NEVER_SEND = wt._never_send_hits
 
 
 @pytest.fixture(autouse=True)
@@ -116,7 +117,8 @@ class FakeClock:
 def plan(**kw):
     ws.set_site("example.com", kw.pop("level", "may_act"), made_by="owner:ui")
     base = dict(goal="Put the HP 305 cartridge in my basket",
-                start_url="https://shop.example.com/", data={"item": "HP 305"})
+                start_url="https://shop.example.com/", data={"item": "HP 305"},
+                success=[{"text_present": "cartridge added"}])
     base.update(kw)
     return wt.build_plan(**base)
 
@@ -134,9 +136,10 @@ SHOP = {"https://shop.example.com/": "Shop. Search for cartridges.",
 
 def test_a_cloud_reader_needs_a_money_limit_the_owner_set():
     with pytest.raises(wt.PlanRefused, match="money limit"):
-        wt.build_plan(goal="g", start_url="https://example.com/", reader={"where": "cloud"})
+        wt.build_plan(goal="g", start_url="https://example.com/", reader={"where": "cloud"},
+                      wants_to_act=False)
     p = wt.build_plan(goal="g", start_url="https://example.com/", reader={"where": "cloud"},
-                      money_cap_usd=2)
+                      money_cap_usd=2, wants_to_act=False)
     assert p.caps["money_usd"] == 2.0
 
 
@@ -149,7 +152,7 @@ def test_a_cloud_reader_needs_a_money_limit_the_owner_set():
     ({"sites": ["10.0.0.1"]}, "not a web site"),
 ])
 def test_bad_plans_are_refused_in_plain_words(kw, match):
-    base = dict(goal="g", start_url="https://example.com/")
+    base = dict(goal="g", start_url="https://example.com/", wants_to_act=False)
     base.update(kw)
     with pytest.raises(wt.PlanRefused, match=match):
         wt.build_plan(**base)
@@ -159,7 +162,8 @@ def test_only_a_read_only_task_on_allowed_sites_skips_the_plan_card():
     p = wt.build_plan(goal="g", start_url="https://example.com/", wants_to_act=False)
     assert not wt.needs_plan_card(p, {"example.com": "may_read"})
     assert wt.needs_plan_card(p, {"example.com": None})
-    p2 = wt.build_plan(goal="g", start_url="https://example.com/", wants_to_act=True)
+    p2 = wt.build_plan(goal="g", start_url="https://example.com/", wants_to_act=True,
+                       success=[{"text_present": "done"}])
     assert wt.needs_plan_card(p2, {"example.com": "may_act"})
 
 
@@ -174,7 +178,7 @@ def test_done_needs_its_evidence_on_the_final_page_and_writes_a_signed_receipt(i
     assert out["status"] == "complete" and r["outcome"] == "done" and r["verified"] is True
     assert r["final_url"] == "https://shop.example.com/confirm"
     assert r["evidence"]["quote"] == "HP 305 black cartridge added"
-    assert r["final_picture"].endswith("final.jpg")
+    assert r["final_picture"].endswith(".jpg") and "final-run_" in r["final_picture"]
     assert wt.verify_signed(r)
     on_disk = json.loads((isolated / "tasks" / "t1" / "web_receipt.json").read_text())
     assert wt.verify_signed(on_disk)
@@ -426,9 +430,123 @@ def test_the_browser_refuses_an_off_plan_page_for_a_website_task(monkeypatch):
 
 def test_task_resume_waits_for_the_owner_for_a_website_task(monkeypatch):
     from agent_friday.services import task_resume
+    monkeypatch.setattr(wt, "_plan_path", lambda tid: wt._task_dir(tid) / "web_task_plan.json")
+    monkeypatch.setattr(wt, "_task_status", lambda tid: "interrupted")
     wt.save_plan("tres", plan(), approved_by="owner:ui")
     v = task_resume.resumability("tres")
     assert v["resumable"] is True and v["needs_confirmation"] is True and v["via"] == "web_task"
+    with pytest.raises(task_resume.ResumeRefused):
+        monkeypatch.setattr(wt, "resume", lambda tid: True)
+        monkeypatch.setattr("agent_friday.services.agent._prepare_task_start", lambda tid: True)
+        task_resume.resume("tres")          # no confirmation: refused
+    text, _ = task_resume.resume("tres", confirm_pending=True)
+    assert text == task_resume.RESUMED_IN_BACKGROUND
+
+
+def test_a_finished_website_task_does_not_resume(monkeypatch):
+    monkeypatch.setattr(wt, "_task_status", lambda tid: "failed")
+    wt.save_plan("tdone", plan(), approved_by="owner:ui")
+    assert wt.resumability("tdone")["resumable"] is False
+
+
+def test_an_edited_step_record_blocks_resume(monkeypatch):
+    monkeypatch.setattr(wt, "_task_status", lambda tid: "interrupted")
+    wt.save_plan("tedit", plan(), approved_by="owner:ui")
+    j = wt.Journal("tedit")
+    j.append("card", approval_id="a1", title="Place order", outward=True)
+    j.append("model", step=1)
+    lines = j.path.read_text().splitlines()
+    j.path.write_text(lines[1] + "\n")           # the "result unknown" card line removed
+    assert wt.resumability("tedit")["resumable"] is False
+    out = wt.run("tedit", plan(), ports(FakeBrowser(SHOP), FakeModel([])), resume=True)
+    assert out["receipt"] is None and "changed or cut" in out["result"]
+
+
+def test_resume_restores_what_was_used_and_writes_the_interrupted_receipt(isolated):
+    j = wt.Journal("tcap")
+    j.append("start", run_id="run_old")
+    j.append("model", step=5, elapsed=1150.0, money=0.04)
+    b = FakeBrowser(SHOP)
+    p = plan(reader={"where": "cloud", "model": "m"}, money_cap_usd=0.05, max_minutes=20)
+    m = FakeModel([{"actions": [{"do": "read", "text_offset": i}]} for i in range(50)])
+    out = wt.run("tcap", p, ports(b, m, cost=lambda i, o: 0.006), resume=True)
+    assert out["receipt"]["outcome"] == "capped"
+    assert out["receipt"]["used"]["steps"] <= 8
+    receipts = sorted((isolated / "tasks" / "tcap").glob("web_receipt-*.json"))
+    outcomes = sorted(json.loads(r.read_text())["outcome"] for r in receipts)
+    assert outcomes == ["capped", "interrupted"]
+    assert all(wt.verify_signed(json.loads(r.read_text())) for r in receipts)
+
+
+def test_a_read_only_plan_stays_read_only_after_resume(monkeypatch):
+    p = wt.build_plan(goal="read", start_url="https://example.com/", wants_to_act=False)
+    wt.save_plan("tro", p, approved_by="owner:ui")
+    assert wt.plan_is_read_only("tro") is True
+    p2 = plan()
+    wt.save_plan("trw", p2, approved_by="owner:ui")
+    assert wt.plan_is_read_only("trw") is False
+
+
+def test_one_run_per_task_and_a_run_removes_only_itself():
+    a = wt._Run(task_id="tone", plan=plan())
+    b = wt._Run(task_id="tone", plan=plan())
+    assert wt._register(a) is True and wt._register(b) is False
+    wt._unregister(b)
+    assert wt.active("tone") is a
+    wt._unregister(a)
+    assert wt.active("tone") is None
+
+
+def test_a_web_task_context_without_a_running_task_is_refused():
+    assert wt.tool_scope_denial("browser_open", {"url": "https://x.com"},
+                                {"task_id": "gone", "surface": "web_task"}).startswith("[WEB TASK DENY]")
+
+
+def test_a_page_title_cannot_fake_a_refusal():
+    assert wt._refused(page("https://shop.example.com/", "Access refused: members only")) is False
+    assert wt._refused("browser_click refused: element 3 is gone") is True
+    assert wt._refused("[WEB TASK DENY] not opened") is True
+
+
+def test_proof_cannot_be_an_echo_of_the_address():
+    url = "https://shop.example.com/search?q=Order+confirmed+A-1029"
+    text = "Results for Order confirmed A-1029: none."
+    assert wt.evidence_found("Order confirmed A-1029", text, url)[0] is False
+    p = plan(success=[{"url_contains": "confirmed"}])
+    assert wt.run_checks(p, url, text)[0] is False
+
+
+def test_values_are_kept_only_as_their_length():
+    assert wt._masked_args("browser_type", {"element": 1, "text": "1234"})["text"] == "(4 characters)"
+    assert wt._masked_args("browser_select", {"element": 1, "option": "Visa"})["option"] == "(4 characters)"
+
+
+def test_a_plan_never_carries_a_password_or_code():
+    for key in ("password", "PIN", "one-time code", "CVV", "security code"):
+        with pytest.raises(wt.PlanRefused, match="never carries"):
+            wt.build_plan(goal="g", start_url="https://example.com/", data={key: "x"},
+                          wants_to_act=False)
+
+
+def test_an_encoded_never_send_value_is_still_refused(monkeypatch):
+    from agent_friday.services import judgment_gate
+    monkeypatch.setattr(wt, "_never_send_hits", REAL_NEVER_SEND)
+    monkeypatch.setattr(judgment_gate, "never_send_hits", lambda t: ["card"] if "4111 1111" in t else [])
+    assert wt._never_send_hits("https://x.example.com/?c=4111%25201111") != []
+
+
+def test_an_off_plan_site_ends_the_batch_and_asks_for_a_new_plan_not_a_card():
+    class OffPlan(FakeBrowser):
+        def call(self, tool, args):
+            if tool == "browser_click":
+                self.calls.append((tool, dict(args)))
+                return "browser_click refused: the page went to an address Friday does not open (evil.test is not one of this task's sites); it was left"
+            return super().call(tool, args)
+    cards = FakeCards()
+    m = FakeModel([{"actions": [{"do": "click", "element": 4}]}, {"give_up": {"reason": "needs evil.test"}}])
+    out = wt.run("toffp", plan(), ports(OffPlan(SHOP), m, cards))
+    assert cards.created == []
+    assert "new plan" in m.prompts[1] and out["receipt"]["outcome"] == "gave_up"
 
 
 def test_a_plan_card_that_adds_a_site_is_approved_only_on_screen(monkeypatch, tmp_path):
@@ -439,7 +557,8 @@ def test_a_plan_card_that_adds_a_site_is_approved_only_on_screen(monkeypatch, tm
 def test_an_approved_plan_adds_sites_only_on_an_on_screen_press(monkeypatch):
     started = []
     monkeypatch.setattr(wt, "spawn", lambda p, **kw: started.append((p, kw)) or "tid")
-    p = wt.build_plan(goal="g", start_url="https://newshop.example.net/")
+    p = wt.build_plan(goal="g", start_url="https://newshop.example.net/",
+                      success=[{"text_present": "ok"}])
     rec = {"status": "approved", "kind": wt.PLAN_CARD_NEW_SITES, "decided_by": "owner",
            "payload": {"plan": p.to_dict(), "new_sites": ["example.net"]}}
     wt._on_plan_decision(rec)
@@ -483,7 +602,7 @@ def test_an_approved_cloud_plan_does_not_start_after_a_switch_to_local(monkeypat
     monkeypatch.setattr(cmp, "cloud_allowed", lambda *a, **k: False)
     ws.set_site("example.com", "may_act", made_by="owner:ui")
     p = wt.build_plan(goal="g", start_url="https://example.com/", reader={"where": "cloud"},
-                      money_cap_usd=1)
+                      money_cap_usd=1, success=[{"text_present": "ok"}])
     wt._on_plan_decision({"status": "approved", "kind": wt.PLAN_CARD, "decided_by": "owner:ui",
                           "payload": {"plan": p.to_dict(), "new_sites": []}})
     assert started == []
@@ -498,7 +617,8 @@ def test_the_tool_proposes_and_never_starts_an_acting_task(monkeypatch, clean_co
     monkeypatch.setattr(approvals, "create_approval",
                         lambda **kw: cards.append(kw) or {"approval_id": "appr_plan"})
     ws.set_site("example.com", "may_act", made_by="owner:ui")
-    out = json.loads(wt.tool_web_task_start({"goal": "order", "start_url": "https://example.com/"},
+    out = json.loads(wt.tool_web_task_start({"goal": "order", "start_url": "https://example.com/",
+                                             "success": [{"text_present": "Order placed"}]},
                                             {"conversation_id": "c"}))
     assert out["queued"] and started == [] and cards[0]["kind"] == wt.PLAN_CARD
     ws.set_site("example.com", "may_read", made_by="owner:ui")

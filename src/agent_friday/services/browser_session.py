@@ -2046,7 +2046,11 @@ def tool_close() -> str:
 _PROOF_BLUR_CSS = (
     "input[type=password], input[autocomplete^='cc-'], input[autocomplete='one-time-code'],"
     " input[name*='card' i], input[name*='cvv' i], input[name*='cvc' i],"
-    " input[name*='iban' i], input[name*='ssn' i], input[name*='passport' i]"
+    " input[name*='iban' i], input[name*='ssn' i], input[name*='passport' i],"
+    " input[name*='account' i], input[name*='routing' i], input[name*='dob' i],"
+    " input[name*='birth' i], input[name*='licen' i], input[name*='tax' i],"
+    " input[autocomplete^='bday'], input[autocomplete='tel'], input[autocomplete='email'],"
+    " input[autocomplete^='street-address'], input[autocomplete^='address-line']"
     " { filter: blur(12px) !important; color: transparent !important;"
     " text-shadow: none !important; }")
 
