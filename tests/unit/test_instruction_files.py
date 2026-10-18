@@ -304,9 +304,39 @@ def test_a_trial_child_loads_text_signed_with_its_trial_key_only(home, monkeypat
         raise AssertionError("a trial child must not read the governance key")
     monkeypatch.setattr(action_gate, "_governance_key", no_owner_key)
     monkeypatch.setenv("FRIDAY_TRIAL", "1")
+    monkeypatch.setenv("FRIDAY_TESTING", "1")
+    monkeypatch.setenv("FRIDAY_NO_ARBITER", "1")
     monkeypatch.setenv("FRIDAY_TRIAL_INSTRUCTION_KEY", TRIAL_KEY.hex())
     _plant(home, UNLOCKED, _candidate(), key=TRIAL_KEY)
     assert MARK in _core()
+
+
+def test_a_stray_trial_flag_alone_does_not_make_the_app_a_trial_child(home, monkeypatch):
+    """Security re-check C: FRIDAY_TRIAL in the real app's environment (a set
+    line in a start script) must not let a self-signed override load."""
+    monkeypatch.setenv("FRIDAY_TRIAL", "1")
+    monkeypatch.delenv("FRIDAY_NO_ARBITER", raising=False)
+    monkeypatch.setenv("FRIDAY_TRIAL_INSTRUCTION_KEY", TRIAL_KEY.hex())
+    _plant(home, UNLOCKED, _candidate(), key=TRIAL_KEY)
+    assert MARK not in _core()
+
+
+def test_a_manifest_that_drops_a_locked_section_does_not_drop_the_rule(home, tmp_path, monkeypatch, request):
+    import shutil
+    from agent_friday.services import instruction_files as inf
+    from agent_friday.services.instruction_locked import LOCKED_SECTIONS
+    request.addfinalizer(inf._reset_caches_for_tests)
+    copy = tmp_path / "instructions"
+    shutil.copytree(SHIPPED, copy)
+    man = json.loads((copy / "manifest.json").read_text(encoding="utf-8"))
+    man["sections"] = [s for s in man["sections"] if s["id"] != LOCKED]
+    (copy / "manifest.json").write_text(json.dumps(man), encoding="utf-8")
+    (copy / f"{LOCKED}.md").unlink()
+    monkeypatch.setattr(inf, "SHIPPED_DIR", copy)
+    inf._reset_caches_for_tests()
+    core = _core()
+    assert LOCKED_SECTIONS[LOCKED] in core
+    assert core.index(LOCKED_SECTIONS[LOCKED]) < core.index("== WHAT YOU CAN DO ON THIS COMPUTER ==")
 
 
 def test_outside_trial_mode_the_trial_key_proves_nothing(home, monkeypatch):
