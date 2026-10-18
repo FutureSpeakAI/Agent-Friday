@@ -69,9 +69,19 @@ def _key() -> bytes:
     return _governance_key()
 
 
+#: Shared-hosting names where each customer has their own subdomain, beyond
+#: the list send_grants keeps: a slip for one tenant never covers the others.
+#: (The full public suffix list is a known follow-up.)
+_EXTRA_SUFFIXES = frozenset({
+    "s3.amazonaws.com", "r2.dev", "fly.dev", "onrender.com", "glitch.me", "replit.app",
+    "repl.co", "surge.sh", "neocities.org", "wordpress.com", "wixsite.com",
+    "squarespace.com", "myshopify.com", "carrd.co", "webflow.io", "framer.app",
+    "notion.site", "gitbook.io", "readthedocs.io", "sharepoint.com", "translate.goog"})
+
+
 def _suffixes():
     from agent_friday.governance.send_grants import PUBLIC_SUFFIXES
-    return PUBLIC_SUFFIXES
+    return PUBLIC_SUFFIXES | _EXTRA_SUFFIXES
 
 
 def site_of(url_or_host: str) -> str:
@@ -106,12 +116,11 @@ def site_of(url_or_host: str) -> str:
     labels = [p for p in host.split(".") if p]
     if len(labels) < 2:
         return ""
-    last_two = ".".join(labels[-2:])
-    if last_two in _suffixes():
-        if len(labels) < 3:
-            return ""
-        return ".".join(labels[-3:])
-    return last_two
+    suffixes = _suffixes()
+    for n in (3, 2):        # the longest public suffix wins (s3.amazonaws.com before amazonaws.com)
+        if len(labels) >= n and ".".join(labels[-n:]) in suffixes:
+            return ".".join(labels[-(n + 1):]) if len(labels) > n else ""
+    return ".".join(labels[-2:])
 
 
 def _sign(row: Dict[str, Any]) -> str:

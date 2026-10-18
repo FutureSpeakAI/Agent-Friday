@@ -35,6 +35,13 @@ def test_no_site_for_addresses_that_are_not_sites(given):
     assert ws.site_of(given) == ""
 
 
+@pytest.mark.parametrize("host", ["alice.myshopify.com", "bob.wordpress.com", "x.s3.amazonaws.com"])
+def test_a_shared_host_slip_covers_one_tenant_only(store, host):
+    ws.set_site(host, "may_act", made_by="owner:ui")
+    assert ws.level_for(host) == "may_act"
+    assert ws.level_for("mallory." + host.split(".", 1)[1]) is None
+
+
 def test_lookalike_name_is_matched_only_as_punycode(store):
     ws.set_site("example.com", "may_act", made_by="owner:ui")
     # Cyrillic "е" in place of Latin "e": a different site, not the owner's slip.
