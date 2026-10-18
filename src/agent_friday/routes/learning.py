@@ -6,6 +6,9 @@ FutureSpeak.AI · Asimov's Mind
   GET   /api/learning/skills    active learned heuristics
   POST  /api/learning/epoch     run one mine→promote cycle now
   POST  /api/learning/observe   record a task outcome (used by the agent loop)
+  GET   /api/learning/records   every learned lesson/skill/heuristic: when it
+                                applies, what taught it, uses and outcomes
+  GET   /api/learning/records/compare?old=<id>&new=<id>  side by side (read-only)
   GET   /api/learning/proposals  pending heuristic changes awaiting the owner
   POST  /api/learning/proposals/<skill_id>  {decision: accept|edit|reject|defer,
                                              pattern?: the owner's wording for edit}
@@ -47,6 +50,28 @@ def learning_observe():
         d["task_type"], d.get("prompt", ""), approach=d.get("approach", "default"),
         success=bool(d["success"]), satisfaction=d.get("satisfaction"),
         revisions=int(d.get("revisions", 0)), workspace=d.get("workspace", "")), "Couldn't record the observation"))
+
+
+@learning_bp.route("/api/learning/records", methods=["GET"])
+@login_required
+def learning_records():
+    """Every learned lesson, skill and heuristic with when it applies, what
+    taught it and how it has done since (services/lesson_records). Read-only."""
+    from agent_friday.services import lesson_records
+    kind = request.args.get("kind") or None
+    rows = lesson_records.records(kind if kind in lesson_records.KINDS else None)
+    return jsonify({"ok": True, "records": rows, "count": len(rows)})
+
+
+@learning_bp.route("/api/learning/records/compare", methods=["GET"])
+@login_required
+def learning_records_compare():
+    """Two records side by side (?old=<id>&new=<id>) for an old-vs-new
+    decision. Reports only; nothing changes."""
+    from agent_friday.services import lesson_records
+    res = lesson_records.comparison(str(request.args.get("old") or ""),
+                                    str(request.args.get("new") or ""))
+    return jsonify(res), (200 if res.get("ok") else 404)
 
 
 @learning_bp.route("/api/learning/proposals", methods=["GET"])
