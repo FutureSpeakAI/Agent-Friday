@@ -159,7 +159,7 @@ def run_pairs(*, run_dir: Path, tasks: List[dict], arm_texts: Dict[str, Optional
             # so this episode is run again when the trial resumes, and this
             # pass stops here because the seat is not free. After a few tries
             # it is stored as missing, so a seat that never answers cannot
-            # keep a trial open for ever (security re-check F).
+            # keep a trial open for ever.
             _note_busy(run_dir, fp)
             complete = False
             break
