@@ -205,9 +205,8 @@ test('turning Camera mode on opens a stream, shows that it is on, and sends noth
   await expect(panel).toContainText('CAMERA MODE');
   await expect(panel).toContainText('Camera is active');
   // The default source is the screen: one screen-share request, one live video track.
-  const m = await media(page);
-  expect(m.calls).toEqual([{ fn: 'getDisplayMedia', video: true }]);
-  expect(m.tracks).toEqual([{ kind: 'screen', state: 'live' }]);
+  await expect.poll(async () => (await media(page)).tracks).toEqual([{ kind: 'screen', state: 'live' }]);
+  expect((await media(page)).calls).toEqual([{ fn: 'getDisplayMedia', video: true }]);
   expect((await camState(page)).on).toBe(true);
   await expect(pip.locator('video')).toHaveJSProperty('paused', false);
 
