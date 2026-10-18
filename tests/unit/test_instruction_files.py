@@ -1,8 +1,7 @@
 """Friday's core instructions are versioned files, and an approved change to an
 unlocked section reaches the prompt Friday actually uses.
 
-The harness2 adoption spec (HA0, ftv/program/specs/harness2_adoption_STORM_
-2026-10-18.md §7) found the trap this pins: the old core-instructions constant
+The trap this pins: the old core-instructions constant
 was used at four places in model_router, and the one that serves every normal
 turn is ``_build_context_prompt``'s first ``add()``, not the two fallbacks in
 ``_get_friday_system_prompt``. A loader wired only into the fallbacks would let
@@ -47,20 +46,27 @@ def _core() -> str:
     return fn()
 
 
-def _sign(sid: str, text: str, card: str, key: bytes) -> str:
-    body = json.dumps({"id": sid, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-                       "card": card}, sort_keys=True).encode("utf-8")
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sign(sid: str, text: str, card: str, key: bytes, base: str) -> str:
+    body = json.dumps({"id": sid, "sha256": _sha(text), "card": card, "base_sha256": base},
+                      sort_keys=True).encode("utf-8")
     return hmac.new(key, body, hashlib.sha256).hexdigest()
 
 
 def _plant(home: Path, sid: str, text: str, *, key: bytes = KEY, card: str = "appr_test01",
-           mac: str | None = None) -> None:
+           mac: str | None = None, base: str | None = None) -> None:
+    """An override as an approved card leaves it, bound to the shipped text it
+    replaced (`base`, default: the section file as shipped now)."""
+    base = _sha(_section_text(sid)) if base is None else base
     d = home / "instructions" / "active"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{sid}.md").write_bytes(text.encode("utf-8"))
     (d / f"{sid}.sig.json").write_text(json.dumps({
-        "id": sid, "card": card, "actor": f"card:{card}", "at": 0,
-        "mac": mac if mac is not None else _sign(sid, text, card, key)}), encoding="utf-8")
+        "id": sid, "card": card, "actor": f"card:{card}", "at": 0, "base_sha256": base,
+        "mac": mac if mac is not None else _sign(sid, text, card, key, base)}), encoding="utf-8")
 
 
 def _section_text(sid: str) -> str:
@@ -162,8 +168,8 @@ def test_an_approved_override_reaches_both_fallbacks(home, monkeypatch):
 
 def test_only_the_shipped_text_is_trusted_by_the_egress_gate(home):
     """An approved override is not a reviewed constant and may carry personal
-    words, so its changed paragraph gates like any other text (security review
-    2026-10-18, finding 2); the shipped core is registered."""
+    words, so its changed paragraph gates like any other text; the shipped
+    core is registered."""
     from agent_friday.services import egress_gate as eg
     from agent_friday.services import instruction_files as inf
     _core()
@@ -312,7 +318,7 @@ def test_a_trial_child_loads_text_signed_with_its_trial_key_only(home, monkeypat
 
 
 def test_a_stray_trial_flag_alone_does_not_make_the_app_a_trial_child(home, monkeypatch):
-    """Security re-check C: FRIDAY_TRIAL in the real app's environment (a set
+    """FRIDAY_TRIAL in the real app's environment (a set
     line in a start script) must not let a self-signed override load."""
     monkeypatch.setenv("FRIDAY_TRIAL", "1")
     monkeypatch.delenv("FRIDAY_NO_ARBITER", raising=False)
@@ -375,3 +381,48 @@ def test_only_the_loader_reads_the_active_overrides():
         if pattern.search(p.read_text(encoding="utf-8-sig", errors="replace")):
             offenders.append(str(p.relative_to(ROOT)))
     assert offenders == []
+
+
+# ── an update to a section pauses an override of the old version ────────────
+
+def test_an_override_of_an_older_shipped_version_is_paused_and_says_so(home):
+    """After an update rewrites a section, the owner's override of the OLD text
+    must not silently hide the new text: it is paused, and the panel says why."""
+    from agent_friday.services import instruction_files as inf
+    _plant(home, UNLOCKED, _candidate(), base=_sha("the text this section had before an update"))
+    core = _core()
+    assert MARK not in core and inf.shipped_text(UNLOCKED) in core
+    row = next(r for r in inf.status() if r["id"] == UNLOCKED)
+    assert row["paused"] is True and "update changed this section" in row["problem"]
+    d = inf.detail(UNLOCKED)
+    assert MARK in (d["stored_override"] or "") and d["in_use"] == inf.shipped_text(UNLOCKED)
+
+
+def test_an_override_signed_without_its_shipped_version_is_not_used(home):
+    from agent_friday.services import instruction_files as inf
+    cand = _candidate()
+    old_mac = hmac.new(KEY, json.dumps({"id": UNLOCKED, "sha256": _sha(cand), "card": "c"},
+                                       sort_keys=True).encode("utf-8"), hashlib.sha256).hexdigest()
+    _plant(home, UNLOCKED, cand, card="c", mac=old_mac)
+    assert MARK not in _core()
+
+
+def test_detail_shows_both_texts_and_the_difference(home):
+    from agent_friday.services import instruction_files as inf
+    inf.write_override(UNLOCKED, _candidate(), actor="card:appr_x", card="appr_x")
+    d = inf.detail(UNLOCKED)
+    assert d["shipped"] == inf.shipped_text(UNLOCKED) and MARK in d["in_use"]
+    assert "+" in d["diff"] and MARK in d["diff"]
+    assert d["history"][-1]["card"] == "appr_x"
+
+
+def test_the_settings_page_carries_the_instructions_section():
+    """The owner-visible place to compare and undo (static/friday_instructions.js),
+    loaded by both pages and placed in Settings."""
+    js = (ROOT / "static" / "friday_instructions.js").read_text(encoding="utf-8")
+    assert "window.FridayInstructionsSettings =" in js
+    assert "/api/instructions/" in js and "/undo" in js and "decided_by: 'owner:ui'" in js
+    idx = (ROOT / "index.html").read_text(encoding="utf-8")
+    assert '/static/friday_instructions.js' in idx and "window.FridayInstructionsSettings ?" in idx
+    assert '/static/friday_instructions.js' in (ROOT / "ui_parts" / "styles_and_scene.html").read_text(encoding="utf-8")
+    assert "window.FridayInstructionsSettings ?" in (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")

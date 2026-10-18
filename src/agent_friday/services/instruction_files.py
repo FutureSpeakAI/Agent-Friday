@@ -82,6 +82,8 @@ _MANIFEST: Optional[dict] = None
 _SHIPPED: Dict[str, str] = {}
 _LOAD_CACHE: Dict[str, tuple] = {}
 _PROBLEMS: Dict[str, str] = {}
+#: Sections whose signed override is paused because the shipped text changed.
+_PAUSED: Dict[str, bool] = {}
 
 
 class InstructionError(ValueError):
@@ -233,10 +235,19 @@ def _key() -> bytes:
     return _governance_key()
 
 
-def sign(sid: str, text: str, card: str, key: bytes) -> str:
-    body = json.dumps({"id": sid, "sha256": _sha(text), "card": str(card or "")},
+def sign(sid: str, text: str, card: str, key: bytes, base_sha256: str) -> str:
+    """HMAC over the section id, the override's hash, the card that approved
+    it, and the hash of the SHIPPED text it replaced. The last binds an
+    override to one shipped version: after an update rewrites that section,
+    the override no longer applies (see _load_override)."""
+    body = json.dumps({"id": sid, "sha256": _sha(text), "card": str(card or ""),
+                       "base_sha256": str(base_sha256 or "")},
                       sort_keys=True).encode("utf-8")
     return _hmac.new(key, body, hashlib.sha256).hexdigest()
+
+
+def shipped_sha(sid: str) -> str:
+    return _sha(shipped_text(sid))
 
 
 # ── validation (deterministic, code) ────────────────────────────────────────
@@ -295,6 +306,7 @@ def _load_override(sid: str) -> Optional[str]:
     cached = _LOAD_CACHE.get(sid)
     if cached and cached[0] == st:
         return cached[1]
+    _PAUSED.pop(sid, None)
     text = None
     reason = ""
     try:
@@ -309,8 +321,16 @@ def _load_override(sid: str) -> Optional[str]:
                 key = None
             if key is None:
                 reason = "the signing key is unavailable, so the override cannot be checked"
-            elif not _hmac.compare_digest(sign(sid, cand, meta.get("card", ""), key), meta["mac"]):
+            elif not _hmac.compare_digest(sign(sid, cand, meta.get("card", ""), key,
+                                               meta.get("base_sha256", "")), meta["mac"]):
                 reason = "the override's signature does not match (edited outside Friday?)"
+            elif meta.get("base_sha256") != shipped_sha(sid):
+                # An update changed this section's shipped text after the owner
+                # approved their version. Their version is paused, not lost:
+                # Settings shows both, and they decide again.
+                reason = ("an update changed this section after your version was approved, so your "
+                          "version is paused and the new shipped text is used")
+                _PAUSED[sid] = True
             else:
                 bad = validate(sid, cand)
                 if bad:
@@ -320,7 +340,8 @@ def _load_override(sid: str) -> Optional[str]:
     except Exception as e:  # unreadable, not UTF-8, bad JSON
         reason = f"the override could not be read ({type(e).__name__})"
     if text is None:
-        _PROBLEMS[sid] = f"ignored {path.name}: {reason}; using the shipped text"
+        _PROBLEMS[sid] = (reason if _PAUSED.get(sid)
+                          else f"ignored {path.name}: {reason}; using the shipped text")
     else:
         _PROBLEMS.pop(sid, None)
     _LOAD_CACHE[sid] = (st, text)
@@ -426,8 +447,9 @@ def write_override(sid: str, text: str, *, actor: str, card: str = "", reason: s
             raise InstructionError("the text is the same as the version in use")
         kept = _keep_previous(sid, before)
         _write_atomic(_active_path(sid), text.encode("utf-8"))
+        base = shipped_sha(sid)
         meta = {"id": sid, "card": str(card or ""), "actor": actor, "at": time.time(),
-                "mac": sign(sid, text, card, key)}
+                "base_sha256": base, "mac": sign(sid, text, card, key, base)}
         _write_atomic(_sig_path(sid), json.dumps(meta, sort_keys=True).encode("utf-8"))
         _LOAD_CACHE.pop(sid, None)
         row = {"at": meta["at"], "id": sid, "action": "write", "actor": actor, "card": str(card or ""),
@@ -487,9 +509,29 @@ def status() -> List[dict]:
             "changed_by": rows[-1]["actor"] if rows and text != shipped_text(sid) else "shipped",
             "changed_at": rows[-1]["at"] if rows and text != shipped_text(sid) else None,
             "chars": len(text), "cap_chars": None if s.get("locked") else cap_chars(sid),
-            "problem": _PROBLEMS.get(sid, ""),
+            "problem": _PROBLEMS.get(sid, ""), "paused": bool(_PAUSED.get(sid)),
+            "can_undo": bool(rows) and not s.get("locked"),
         })
     return out
+
+
+def detail(sid: str) -> dict:
+    """Everything the owner needs to judge one section: the shipped text, the
+    text in use, a stored override that is paused or ignored (and why), the
+    difference, and the history of changes. Read-only."""
+    shipped = shipped_text(sid)
+    in_use = load(sid) if sid in section_ids() else shipped
+    stored = None
+    try:
+        if _active_path(sid).exists():
+            stored = _read_text(_active_path(sid))
+    except OSError:
+        stored = None
+    return {"id": sid, "locked": is_locked(sid), "shipped": shipped, "in_use": in_use,
+            "stored_override": stored, "paused": bool(_PAUSED.get(sid)),
+            "problem": _PROBLEMS.get(sid, ""),
+            "diff": diff(shipped, in_use, label_a="shipped", label_b="in use") if in_use != shipped else "",
+            "history": history(sid)}
 
 
 def _reset_caches_for_tests() -> None:
@@ -499,3 +541,4 @@ def _reset_caches_for_tests() -> None:
         _SHIPPED.clear()
         _LOAD_CACHE.clear()
         _PROBLEMS.clear()
+        _PAUSED.clear()
