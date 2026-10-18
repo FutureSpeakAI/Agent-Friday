@@ -1596,6 +1596,10 @@ def _tool_learn_skill(inp):
             return f"Skill '{name}' restored to {folder}."
     except _skreg.SkillWriteRefused as refused:
         return f"[GOVERNANCE DENY] learn_skill: {refused}"
+    except ValueError:
+        # paths.contained: the skill's folder resolves outside the skills folder.
+        return (f"[GOVERNANCE DENY] learn_skill: '{name}' is not a plain folder inside the "
+                "skills folder, so Friday cannot change it.")
     except FileNotFoundError:
         return f"Skill '{name}' not found."
     except FileExistsError:
