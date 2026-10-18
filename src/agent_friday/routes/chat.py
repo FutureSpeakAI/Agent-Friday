@@ -390,6 +390,16 @@ def _conv_id_from(data):
     return _conv.resolve(((data or {}).get('conversation_id') or '').strip() or None)
 
 
+def _cloud_release_conversation(conversation_id):
+    """Name this request's conversation for held-detail cards (cloud_release.set_conversation keeps it
+    on the request, so a later request on the same thread does not inherit it). Never raises."""
+    try:
+        from agent_friday.services import cloud_release as _cr
+        _cr.set_conversation(conversation_id)
+    except Exception:
+        pass
+
+
 def _confirmed_action_response(message, session_ctx):
     """Return the observed result of a stored approval before model dispatch."""
     entry = resume_confirmed_action(session_ctx)
@@ -1403,6 +1413,9 @@ def chat():
         # Resolve the addressed conversation FIRST: the context build below reads
         # from it, and everything downstream persists into it.
         _conversation_id = _conv_id_from(data)
+        # This request's cloud calls belong to it: a held private detail gets at most one card per
+        # conversation (services/cloud_release.py; kept on the request, so it ends with it).
+        _cloud_release_conversation(_conversation_id)
         # Turn liveness (core.turn_begin). The client sends a turn_id and can
         # then ask "is my turn still working?" instead of assuming from a
         # stopwatch that it is not. Registered on THIS thread, which is the
@@ -3485,6 +3498,7 @@ def chat_send():
         data = request.get_json(silent=True) or {}
         # Same addressing rule as /api/chat: unaddressed callers reach Main.
         _conversation_id = _conv_id_from(data)
+        _cloud_release_conversation(_conversation_id)
         # Turn liveness (core.turn_begin). The client sends a turn_id and can
         # then ask "is my turn still working?" instead of assuming from a
         # stopwatch that it is not. Registered on THIS thread, which is the

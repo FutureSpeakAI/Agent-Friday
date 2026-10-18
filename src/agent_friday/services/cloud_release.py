@@ -419,7 +419,11 @@ def _on_decision(record: dict) -> None:
             return
     provider = str(payload.get("provider") or "")
     if status == "approved":
-        _release_once(hashes, provider)
+        conv = str(payload.get("conversation") or "") if payload.get("general") else ""
+        # A held-detail card asked in a conversation releases for that conversation only (what the
+        # card says); anything else (email money, no conversation) for RELEASE_TTL_S, as before.
+        if not conv:
+            _release_once(hashes, provider)
         rem = payload.get("remember") or {}
         scope = payload.get("scope") or {}
         if rem.get("thread") and scope.get("thread"):
@@ -431,9 +435,13 @@ def _on_decision(record: dict) -> None:
                 if it.get("hash"):
                     remember("text", _key(it["hash"], provider), "“%s” to %s"
                              % (_short(it.get("text")), provider or "any cloud model"))
+        if conv:
+            _release_for_conversation(conv, hashes, provider)
         _log.info("cloud release: owner sent %d paragraph(s) (thread=%s sender=%s)", len(hashes),
                   bool(rem.get("thread")), bool(rem.get("sender")))
     elif status in ("denied", "expired"):
+        # The exact words. The same content with a new time or count is not asked again in that
+        # conversation (its ledger); another conversation may ask once.
         _decline(hashes)
         _log.info("cloud release: %d paragraph(s) kept on this PC (%s)", len(hashes), status)
 
@@ -586,6 +594,136 @@ _SNAP: contextvars.ContextVar = contextvars.ContextVar("cloud_release_snap", def
 #: owner's "keep money paragraphs in email without asking" choice applies to those spans only.
 IN_MAIL: contextvars.ContextVar = contextvars.ContextVar("cloud_release_in_mail", default=False)
 
+# ── one card per conversation per distinct text (the per-turn background context guard) ──────
+#
+# Friday's background context is rebuilt every turn, and a part of it that changes each time (a clock,
+# a count, a rotating summary) would otherwise be a "new" text, and a new card, on every turn. So:
+#   * texts are compared by CONTENT (case, spacing and digits ignored: `content_key`) and provider;
+#   * a conversation shows at most one card for a given content and provider, whatever the answer (or
+#     none): the ledger "carded" remembers it for the conversation;
+#   * while a conversation has a card waiting for a provider, details held meanwhile wait for it (still
+#     kept on this PC, and the model is told), and are asked on a later turn once it is answered;
+#   * Send on a card asked in a conversation lets its EXACT words go for the rest of that conversation
+#     (what the card says); with no conversation, for RELEASE_TTL_S. The same content changed (a new
+#     time) stays on this PC and is not asked again in that conversation: the card says so;
+#   * Keep on this PC is for the exact words (and, through the ledger, the conversation's content).
+# Calls with no conversation (voice, background jobs) share one bucket that forgets after NO_CONV_TTL_S.
+# Inside a web request the conversation is kept on the request (flask.g), never on the thread.
+
+#: The conversation whose turn is being sent: set by the chat routes beside turn_plan.begin_turn.
+CONVERSATION: contextvars.ContextVar = contextvars.ContextVar("cloud_release_conversation", default=None)
+CARDED_CONVERSATIONS_MAX = 200
+CARDED_PER_CONVERSATION_MAX = 500
+NO_CONV_TTL_S = 6 * 60 * 60
+_DIGITS = re.compile(r"\d+")
+
+
+_G_KEY = "friday_cloud_release_conversation"
+
+
+def _in_request() -> bool:
+    try:
+        from flask import has_request_context
+        return bool(has_request_context())
+    except Exception:
+        return False
+
+
+def set_conversation(conversation_id):
+    """Name the conversation these cloud calls belong to (None: none). Inside a web request it is kept
+    on the request (flask.g), so it ends with the request and a later request on a reused thread never
+    inherits it; elsewhere it is this thread's context (returns the ContextVar token)."""
+    cid = (str(conversation_id).strip() or None) if conversation_id else None
+    if _in_request():
+        from flask import g
+        setattr(g, _G_KEY, cid)
+        return None
+    return CONVERSATION.set(cid)
+
+
+def _conversation() -> str:
+    if _in_request():
+        from flask import g
+        c = getattr(g, _G_KEY, None)     # never the thread's leftover ContextVar inside a request
+    else:
+        c = CONVERSATION.get()
+    if not c:
+        # A tool's own model call runs with the agent's conversation set (agent._CURRENT_CONVERSATION,
+        # set and reset around each tool call).
+        import sys
+        ag = sys.modules.get("agent_friday.services.agent")
+        try:
+            c = ag._CURRENT_CONVERSATION.get() if ag is not None else None
+        except Exception:
+            c = None
+    return str(c or "").strip()
+
+
+def content_key(text: str) -> str:
+    """The text's content for comparing cards: case, spacing and digits ignored, so a clock or a count
+    that changes every turn does not make it a new text. Never used to release anything: Send and
+    "always send" are for the exact words."""
+    t = _DIGITS.sub("#", " ".join(str(text or "").lower().split()))
+    return "c:" + _hash(t)
+
+
+def _ckey(text: str, provider: str) -> str:
+    return "%s@%s" % (content_key(text), provider or "?")
+
+
+def _carded(d: dict, conv: str, now: float) -> dict:
+    """This conversation's ledger: {content@provider: [time, approval_id]} (no-conversation entries age out)."""
+    out = {}
+    for k, v in dict(((d.get("carded") or {}).get(conv) or {})).items():
+        try:
+            at, aid = float(v[0] or 0), str(v[1] or "")
+        except Exception:
+            continue                     # a damaged row is dropped, not fatal
+        if conv or now - at < NO_CONV_TTL_S:
+            out[k] = [at, aid]
+    return out
+
+
+def _note_carded(conv: str, keys, approval_id) -> None:
+    now = time.time()
+    with _LOCK:
+        d = _read()
+        allc = dict(d.get("carded") or {})
+        rows = _carded(d, conv, now)
+        for k in keys:
+            rows[k] = [now, approval_id or ""]
+        allc.pop(conv, None)
+        allc[conv] = dict(list(rows.items())[-CARDED_PER_CONVERSATION_MAX:])
+        d["carded"] = dict(list(allc.items())[-CARDED_CONVERSATIONS_MAX:])
+        _write(d)
+
+
+def _conv_released(conv: str) -> set:
+    if not conv:
+        return set()
+    return set((_read().get("conv_released") or {}).get(conv) or [])
+
+
+def _release_for_conversation(conv: str, hashes, provider: str) -> None:
+    if not conv:
+        return
+    with _LOCK:
+        d = _read()
+        allr = dict(d.get("conv_released") or {})
+        keep = list(allr.pop(conv, None) or [])
+        keep += [_key(h, provider) for h in hashes if _key(h, provider) not in keep]
+        allr[conv] = keep[-CARDED_PER_CONVERSATION_MAX:]
+        d["conv_released"] = dict(list(allr.items())[-CARDED_CONVERSATIONS_MAX:])
+        _write(d)
+
+
+def _waiting_ids() -> set:
+    try:
+        from agent_friday.services import approvals as _ap
+        return {r.get("approval_id") for r in _ap.list_approvals(status="pending", kind=APPROVAL_KIND)}
+    except Exception:
+        return set()
+
 
 def _short(text, n: int = 60) -> str:
     t = " ".join(str(text or "").split())
@@ -638,7 +776,7 @@ def _released_keys() -> set:
     snap = _SNAP.get()
     if snap is not None:
         return snap
-    return _once_hashes() | _remembered_texts()
+    return _once_hashes() | _remembered_texts() | _conv_released(_conversation())
 
 
 def is_released(text: str, provider: str = "") -> bool:
@@ -677,7 +815,7 @@ class collecting:
         if _HELD.get() is None:
             self._tok = _HELD.set([])
             try:
-                snap = _once_hashes() | _remembered_texts()
+                snap = _once_hashes() | _remembered_texts() | _conv_released(_conversation())
             except Exception:
                 snap = None
             self._snap_tok = _SNAP.set(snap)
@@ -733,21 +871,43 @@ def offer_held(items: list, provider: str = "", model: str = "") -> dict | None:
         if not HELD_CARDS or provider in _PROBE_PROVIDERS or not to_cloud(provider, model):
             return None
         withhold_money = _choice() == "withhold"
+        conv = _conversation()
         with _LOCK:     # two calls sealing the same history at once raise one card, not two
             skip = _declined() | _pending()
-            released = _once_hashes() | _remembered_texts()
+            released = _once_hashes() | _remembered_texts() | _conv_released(conv)
             ask = [it for it in items if it["hash"] not in skip
                    and not _is_released_key(it["hash"], provider, released)
                    and not (withhold_money and it.get("mail") and is_money(it["text"]))]
             if not ask:
                 return None
-            return _raise_held_card(ask, provider, model)
+            # One card per conversation per distinct content and provider, and one waiting at a time.
+            d = _read()
+            carded = _carded(d, conv, time.time())
+            waiting = _waiting_ids()
+            busy = {k for c in (d.get("carded") or {}) for k, v in _carded(d, c, time.time()).items()
+                    if v[1] in waiting}
+            seen, fresh = set(), []
+            for it in ask:
+                k = _ckey(it["text"], provider)
+                if k in carded or k in busy or k in seen:
+                    continue
+                seen.add(k)
+                fresh.append(it)
+            if not fresh:
+                return None
+            suffix = "@%s" % (provider or "?")
+            if any(k.endswith(suffix) and v[1] in waiting for k, v in carded.items()):
+                return None     # this conversation's card for this provider is still on screen
+            rec = _raise_held_card(fresh, provider, model, conv)
+            if rec and rec.get("approval_id"):      # only a card that exists counts as shown
+                _note_carded(conv, [_ckey(it["text"], provider) for it in fresh], rec["approval_id"])
+            return rec
     except Exception as e:
         _log.warning("held-detail card not raised: %s", e)
         return None
 
 
-def _raise_held_card(items: list, provider: str, model: str) -> dict | None:
+def _raise_held_card(items: list, provider: str, model: str, conversation: str = "") -> dict | None:
     from agent_friday.services import approvals as _ap
     dest = provider or "the cloud provider"
     if model:
@@ -767,6 +927,7 @@ def _raise_held_card(items: list, provider: str, model: str) -> dict | None:
                    "field": it["field"]} for it in items],
         "provider": provider,
         "model": model,
+        "conversation": conversation,
     }
     # A fresh subject each time: create_approval returns an existing card for the same subject, and
     # the same words may need asking again once an earlier Send has run out. Waiting cards are not
@@ -775,9 +936,12 @@ def _raise_held_card(items: list, provider: str, model: str) -> dict | None:
     rec = _ap.create_approval(
         kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE, subject_id=subject,
         title=("Send %d private detail(s) to %s?" % (len(items), dest))[:200],
-        description=("Send lets exactly the text below go to %s on this conversation's next cloud calls. "
+        description=("Send lets exactly the text below go to %s on %s. If the same text comes back changed "
+                     "(a new time or number), it stays on this PC and this conversation does not ask again. "
                      "Keep on this PC keeps it here, and %s is told it was withheld. Your never-send list "
-                     "is never on a card: it stays refused." % (dest, "the model"))[:2000],
+                     "is never on a card: it stays refused."
+                     % (dest, "this conversation's next cloud calls" if conversation
+                        else "the next cloud calls in the next 30 minutes", "the model"))[:2000],
         action_description=("Send to %s:\n\n" % dest + "\n\n".join("“%s”" % t for t in texts))[:1000],
         payload=payload, force_gate=True, action_class="internal", requested_by="egress_gate")
     _mark_pending([it["hash"] for it in items], (rec or {}).get("approval_id"))
