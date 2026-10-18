@@ -13,6 +13,7 @@
  *   FRIDAY_URL=http://localhost:3219 PW_CHANNEL=msedge FRIDAY_MAIL_WRITES=1 npx playwright test tests/mail_parity.spec.ts
  */
 import { test, expect, type Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 const BASE = process.env.FRIDAY_URL || '';
 const WRITES = process.env.FRIDAY_MAIL_WRITES === '1';
@@ -105,7 +106,12 @@ test('mail is re-coloured for the dark theme, and "show original" is remembered 
     found = await page.locator('.fm-msg iframe').first().waitFor({ timeout: 15000 }).then(() => true, () => false);
   }
   expect(found, 'no HTML message among the first rows').toBe(true);
-  await page.waitForTimeout(1200);
+  // the message frame (adapted or original) has loaded its own document; its load handler has run
+  const loaded = (want: string) => page.waitForFunction((want: string) => {
+    const f = document.querySelector('.fm-msg iframe') as HTMLIFrameElement | null, d = f && f.contentDocument;
+    return !!d && f!.dataset.adapted === want && d.location.href === 'about:srcdoc' && d.readyState === 'complete';
+  }, want, { timeout: 5000 }).catch(() => { /* the expects below say what is wrong */ });
+  await loaded('1');
   const frame = () => page.evaluate(() => {
     const f = document.querySelector('.fm-msg iframe') as HTMLIFrameElement, d = f.contentDocument!, w = d.defaultView!;
     const lum = (s: string) => { const m = s.match(/[\d.]+/g); if (!m) return -1; const [r, g, b] = m.map(Number); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; };
@@ -117,14 +123,13 @@ test('mail is re-coloured for the dark theme, and "show original" is remembered 
   expect(a.body).toBeLessThan(0.15);
   const toggle = page.locator('[data-testid="fm-theme-toggle"]').first();
   await toggle.click();
-  await page.waitForTimeout(1000);
+  await loaded('0');
   const o = await frame();
   expect(o.adapted).toBe('0');
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('fm_show_original') || '{}'));
   expect(Object.keys(saved).length).toBe(1);
   await toggle.click();                                            // and back, so the next run starts adapted
-  await page.waitForTimeout(600);
-  expect(await page.evaluate(() => localStorage.getItem('fm_show_original'))).toBe('{}');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('fm_show_original'))).toBe('{}');
 });
 
 test('folders and labels down the side read Gmail itself', async ({ page }) => {
@@ -214,7 +219,7 @@ test('three panes fill the frame when there is room; a narrow frame shows one pa
     await page.setViewportSize({ width: w, height: h });
     await open(page);
     await page.locator('.fm-row').first().waitFor({ timeout: 90000 });
-    await page.waitForTimeout(500);
+    await settle(page, { root: '.fm', quietMs: 500, timeout: 3000 });
     expect(await page.locator('.fm').getAttribute('class'), `${w}×${h}`).toContain('fm-' + mode);
     const side = await box('.fm-side'), list = await box('.fm-listwrap'), read = await box('.fm-thread');
     if (mode === 'wide') {

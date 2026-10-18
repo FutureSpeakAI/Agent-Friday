@@ -53,7 +53,7 @@ test('twelve rows get badges and the rest are only counted; the next input clear
   const out = await run(page, { type: 'point', workspace: 'messages', id: 'pt_2', refs, badges: 'numbers' });
   expect(out.result.count).toBe(12);
   await expect(page.locator('[data-fr-point]')).toHaveCount(12);
-  await page.waitForTimeout(400);                       // the page arms its listeners a moment after the paint
+  await page.waitForTimeout(400);                       // the page arms its listeners a moment after the paint (a 300 ms timer, no signal): time is the behaviour under test
   await page.keyboard.press('j');
   await expect(page.locator('[data-fr-point]')).toHaveCount(0);
 });

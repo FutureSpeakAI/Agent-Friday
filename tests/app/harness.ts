@@ -7,6 +7,7 @@
  * and when something fails, say what a person would have seen.
  */
 import { expect, type Page, type TestInfo } from '@playwright/test';
+import { settle } from './helpers/settle';
 
 // The resolved target (scratch by default; live only read-only): target.js.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -59,7 +60,9 @@ export async function openApp(page: Page, timeout = 45000): Promise<Watcher> {
     fatal = watcher.errors.find(e => /is not defined|is not a function|Cannot read|Unexpected token|SyntaxError/i.test(e));
     if (fatal) break;
     if (Date.now() > deadline) break;
-    await page.waitForTimeout(250);
+    // Up to 250 ms for the mount itself; then look at the errors again.
+    await page.waitForFunction(() => document.querySelectorAll('.dock-btn').length >= 4, null, { timeout: 250 })
+      .catch(() => { /* not yet: the loop decides */ });
   }
 
   const seen = await page.evaluate(() => ({
@@ -110,7 +113,7 @@ export async function openWorkspace(page: Page, workspace: string) {
     `There is no "${workspace}" button in the dock, so a person cannot reach that screen at all.`,
   ).toHaveCount(1);
   await btn.click();
-  await page.waitForTimeout(1200); // let the workspace paint
+  await settle(page, { quietMs: 1000, timeout: 4800 }); // let the workspace paint
 }
 
 /**
@@ -153,7 +156,7 @@ export async function bootApp(page: Page) {
  * so this does not quietly give up: it says which spinner is still on screen.
  */
 export async function waitForSettled(page: Page, timeout = 45000) {
-  const stillLoading = async () => page.evaluate(() => {
+  const loadingTexts = () => {
     const vis = (e: Element) => {
       const r = e.getBoundingClientRect();
       return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
@@ -163,14 +166,17 @@ export async function waitForSettled(page: Page, timeout = 45000) {
       .map(e => (e.textContent || '').trim())
       .filter(t => /^(loading|fetching|generating)\b/i.test(t) || /loading[.…]{0,3}$/i.test(t))
       .slice(0, 5);
-  });
+  };
+  const stillLoading = async () => page.evaluate(loadingTexts);
 
   const deadline = Date.now() + timeout;
   let last: string[] = [];
   while (Date.now() < deadline) {
     last = await stillLoading();
     if (last.length === 0) return;
-    await page.waitForTimeout(500);
+    // Up to 500 ms for the last spinner to go; then read again (and keep what it still says).
+    await page.waitForFunction(`(${loadingTexts})().length === 0`, null, { timeout: 500 })
+      .catch(() => { /* still loading: the loop decides */ });
   }
   throw new Error(
     `This screen was still loading after ${Math.round(timeout / 1000)} seconds.\n` +

@@ -17177,7 +17177,7 @@ function SetupConnectionsPanel({ highlight, onLocalOnly }) {
           : <><span className="sc-sub" style={{ margin: 0 }}>You chose local AI only.</span>
               <button type="button" className="sc-btn quiet" onClick={() => localOnly(false)}>Show cloud options again</button></>}
       </div>
-      {said && <div role="status" className="sc-msgline ok">{said}</div>}
+      {said && <div role="status" className="sc-msgline ok" data-testid="connect-services-said">{said}</div>}
       <p className="sc-sub" style={{ marginTop: 10 }}>
         {(counts.connected || 0) + ' connected'}{counts.skipped ? ' · ' + counts.skipped + ' skipped' : ''}{counts.needs_attention ? ' · ' + counts.needs_attention + ' need attention' : ''}. {data.never}
       </p>

@@ -21,6 +21,7 @@
  * written only at that size proves nothing.
  */
 import { test, expect, type Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 // A ConversationWindow is found by its class: its width is the user's to choose now.
 const WIN = '.chat-win';
@@ -35,7 +36,7 @@ async function openWindows(page: Page, n: number): Promise<string[]> {
     for (const id of ids) (window as any).fridayOpenChatWindow(id, 'dock clearance');
     return ids;
   }, n);
-  await page.waitForTimeout(900);
+  await settle(page, { quietMs: 900, timeout: 3600 });
   return ids;
 }
 
@@ -72,7 +73,7 @@ test.describe('Chat windows and the dock', () => {
     // The React layer mounts the dock and the window host; wait for the dock
     // rather than a timeout, so a slow machine does not measure an empty page.
     await page.waitForSelector('.dock', { timeout: 30_000 });
-    await page.waitForTimeout(2500);
+    await settle(page, { quietMs: 1000, timeout: 10_000 });
   });
 
   test('no window ends below the top of the dock', async ({ page }) => {
@@ -112,9 +113,9 @@ test.describe('Chat windows and the dock', () => {
     await page.mouse.down();
     for (const y of [300, 600, 1200, 2400]) {
       await page.mouse.move(box!.x + 200, y);
-      await page.waitForTimeout(60);
+      await page.waitForTimeout(60);   // the pace of a hand dragging: time is the behaviour under test
     }
-    await page.waitForTimeout(150);
+    await settle(page, { root: WIN, quietMs: 150, timeout: 3000 });
     const after = await measure(page);
     await page.mouse.up();
 
@@ -140,7 +141,7 @@ test.describe('Chat windows and the dock', () => {
       let maxZ = 0;
       for (let n = 0; n < raises; n++) {
         (window as any).fridayOpenChatWindow(ids[n % ids.length]);
-        await new Promise(r => setTimeout(r, 20));
+        await new Promise(r => setTimeout(r, 20));   // separate raises, one after another: time is the behaviour under test
         for (const el of [...document.querySelectorAll(sel)] as HTMLElement[]) {
           maxZ = Math.max(maxZ, parseInt(getComputedStyle(el).zIndex || '0', 10));
         }
@@ -171,7 +172,7 @@ test.describe('Chat windows and the dock', () => {
       d.style.transition = 'none';
       d.style.transform = 'translateY(40%)';     // stuck 60% on screen
       window.dispatchEvent(new Event('resize'));
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 600));   // whatever the window does after the resize, late or not: time is the behaviour under test
       const dr = d.getBoundingClientRect();
       const win = document.querySelector('.chat-win') as HTMLElement;
       const wr = win.getBoundingClientRect();

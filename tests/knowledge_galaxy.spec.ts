@@ -13,6 +13,7 @@
  * the old Wiki tab address lands on Knowledge's Pages view.
  */
 import { test, expect, Page } from '@playwright/test';
+import { settle } from './app/helpers/settle';
 
 // SwiftShader (Playwright's default software GL) renders bloom at ~11fps
 // regardless of scene cost; ANGLE reflects real deployment (Chrome on a
@@ -64,15 +65,24 @@ const openDoc = (page: Page) =>
     return d ? (d.textContent || '').replace(/^wiki\//, '') : null;
   });
 
+/** Wait (up to `ms`) until a page is open and its node is the graph's focus; the caller's expects decide. */
+const docFocused = (page: Page, ms: number) =>
+  page.waitForFunction(() => {
+    const d = document.querySelector('.kw-doc .kw-mono');
+    const f = (window as any).__kgFocus && (window as any).__kgFocus();
+    return !!d && !!f && f.edgeFocus != null
+      && (window as any).kwNodeIdForPath((d.textContent || '').replace(/^wiki\//, '')) === f.edgeFocus;
+  }, null, { timeout: ms }).catch(() => { /* not focused: the caller's expects say so */ });
+
 async function openKnowledge(page: Page) {
   // The scene and the graph are waited for below; `load` would also wait on
   // every slow subresource of a busy server.
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#friday-scene-canvas', { timeout: 60000 });
-  await page.waitForTimeout(1200);
+  await page.waitForFunction(() => typeof (window as any).fridayOpenWorkspace === 'function', null, { timeout: 60000 });
   await page.evaluate(() => (window as any).fridayOpenWorkspace({ workspace: 'knowledge', view: 'split' }));
   await graphReady(page);
-  await page.waitForTimeout(6000);                    // entrance animation
+  await page.waitForTimeout(6000);                    // entrance animation, on the scene clock with no hook to wait on; the fps meter samples it: time is the behaviour under test
 }
 
 test.describe('Knowledge workspace', () => {
@@ -108,7 +118,7 @@ test.describe('Knowledge workspace', () => {
     let path: string | null = null;
     for (const p of picks) {
       await page.mouse.click(p.x, p.y);
-      await page.waitForTimeout(1500);
+      await docFocused(page, 1500);
       path = await openDoc(page);
       if (path) break;
     }
@@ -132,8 +142,13 @@ test.describe('Knowledge workspace', () => {
         .filter(r => /\.md$/.test(r.text) && !/(^|\/)_/.test(r.text));
       for (const t of [...document.querySelectorAll('.kw-side .kw-sec-t')] as HTMLElement[]) {
         if (listed().length >= 3) break;
+        const had = document.querySelectorAll('.kw-side .kw-linkrow').length;
         t.click();
-        await new Promise(res => setTimeout(res, 200));
+        // until the section's rows are listed (at most 1 s: an empty section adds none)
+        for (const end = performance.now() + 1000; performance.now() < end
+             && document.querySelectorAll('.kw-side .kw-linkrow').length === had;) {
+          await new Promise(res => requestAnimationFrame(res));
+        }
       }
       return listed().slice(0, 8).map(r => r.i);
     });
@@ -142,7 +157,7 @@ test.describe('Knowledge workspace', () => {
     for (const i of rows) {
       const before = await page.evaluate(() => (window as any).__kgFocus());
       await page.evaluate(i => (document.querySelectorAll('.kw-side .kw-linkrow')[i] as HTMLElement).click(), i);
-      await page.waitForTimeout(2500);
+      await docFocused(page, 2500);
       const path = await openDoc(page);
       const after = await page.evaluate(() => (window as any).__kgFocus());
       if (!path || !after.edgeFocus) continue;
@@ -160,9 +175,9 @@ test.describe('Knowledge workspace', () => {
     test.setTimeout(90000);
     await openKnowledge(page);
     await page.evaluate(() => (window as any).fridayNavigate({ workspace: 'knowledge', path: 'brain/bootstrap.md' }));
-    await page.waitForTimeout(2000);
+    await docFocused(page, 2000);
     await page.evaluate(() => (window as any).fridayNavigate({ workspace: 'knowledge', path: 'no-such-folder/_index.md' }));
-    await page.waitForTimeout(2000);
+    await expect(page.locator('[data-kw-bar]')).toContainText('not in the galaxy');
     const focus = await page.evaluate(() => (window as any).__kgFocus());
     expect(focus.edgeFocus).toBeNull();
     expect(focus.lit).toBe(0);
@@ -187,7 +202,7 @@ for (const [w, h] of [[1920, 1080], [2560, 1080], [1366, 768], [1080, 1920]]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.goto('/w/knowledge', { waitUntil: 'domcontentloaded' });
     await graphReady(page);
-    await page.waitForTimeout(2000);
+    await settle(page, { quietMs: 1000, timeout: 8000 });
     const m = await page.evaluate(() => {
       const r = (document.querySelector('[data-kw-bar]') as HTMLElement).getBoundingClientRect();
       return { top: r.top, bottom: r.bottom, h: r.height, vh: innerHeight,
@@ -215,7 +230,9 @@ test('the bottom bar is inside a fullscreen tab', async ({ browser }) => {
     document.body.appendChild(b);
   });
   await page.click('#go-fullscreen');                    // fullscreen needs a user gesture
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(() => !!document.fullscreenElement && innerHeight === screen.height, null, { timeout: 6000 })
+    .catch(() => { /* the expects below say what happened */ });
+  await settle(page, { quietMs: 500, timeout: 6000 });   // the layout follows the new size
   const m = await page.evaluate(() => {
     document.getElementById('go-fullscreen')!.remove();
     const r = (document.querySelector('[data-kw-bar]') as HTMLElement).getBoundingClientRect();

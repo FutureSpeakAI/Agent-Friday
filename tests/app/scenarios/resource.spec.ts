@@ -26,15 +26,23 @@ async function headroom(request: any): Promise<{ free: number; atRisk: boolean; 
 
 /** Hand the card back, so one scenario does not starve the next. */
 async function releaseModels() {
-  for (const m of ['gemma4:12b', 'gemma4:e2b',
-                   'hf.co/HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced:Q4_K_M']) {
+  const models = ['gemma4:12b', 'gemma4:e2b',
+                  'hf.co/HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced:Q4_K_M'];
+  for (const m of models) {
     try {
       await fetch('http://localhost:11434/api/generate', {
         method: 'POST', body: JSON.stringify({ model: m, keep_alive: 0 }),
       });
     } catch { /* best effort */ }
   }
-  await new Promise(r => setTimeout(r, 3000));
+  // Until Ollama lists none of them as loaded (at most 3 s, as before; best effort).
+  for (const end = Date.now() + 3000; Date.now() < end;) {
+    try {
+      const ps: any = await (await fetch('http://localhost:11434/api/ps')).json();
+      if (!(ps.models || []).some((x: any) => models.includes(x.name) || models.includes(x.model))) break;
+    } catch { break; }
+    await new Promise(r => setTimeout(r, 200));
+  }
 }
 
 test.afterEach(async () => { await releaseModels(); });
@@ -112,7 +120,7 @@ test('Scenario 18 — Friday answers while heavy work is running', async ({ requ
     'Research how newsrooms are currently using local AI models, and summarise the main patterns.',
     { timeoutMs: 600_000 });
 
-  await new Promise(r => setTimeout(r, 4000)); // let the heavy turn get going
+  await new Promise(r => setTimeout(r, 4000)); // let the heavy turn get going: the overlap in time is the behaviour under test
 
   const t0 = Date.now();
   const quick = await say(request, 'Quick one: what year did the Texas Tribune launch?');

@@ -35,7 +35,7 @@ test('a row Friday is taken to is outlined, and the outline goes on the next inp
   await expect(row).toHaveClass(/fr-st-hit/);
   const outline = await row.evaluate(e => getComputedStyle(e).outlineStyle + ' ' + getComputedStyle(e).outlineWidth);
   expect(outline).toBe('solid 2px');
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(800);   // the row arms "next input clears it" on a 600 ms timer, no signal: time is the behaviour under test
   await page.mouse.wheel(0, 40);
   await expect(row).not.toHaveClass(/fr-st-hit/);
 });

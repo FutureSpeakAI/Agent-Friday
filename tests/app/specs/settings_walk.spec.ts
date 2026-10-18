@@ -28,6 +28,7 @@ import { test, expect, GL_EMULATOR_ARGS } from '../fixtures';
 import type { Page } from '../fixtures';
 import type { Request } from '@playwright/test';
 import { BASE } from '../harness';
+import { settle } from '../helpers/settle';
 
 type Section = { id: string; label: string };
 const SECTIONS: Section[] = [
@@ -99,7 +100,7 @@ async function goSection(page: Page, s: Section) {
   await rail.getByRole('button', { name: s.label, exact: true }).click();
   await expect(rail.getByRole('button', { name: s.label, exact: true })).toHaveAttribute('aria-current', 'page');
   // Panels fetch their own data; give the section a moment to settle.
-  await page.waitForTimeout(900);
+  await settle(page, { root: '.fx-settings-sections', quietMs: 900, timeout: 3600 });
 }
 
 /** Tag every control in the open section and describe it. Deterministic order. */
