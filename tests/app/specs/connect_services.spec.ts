@@ -17,6 +17,7 @@
 import { test, expect, type Page } from '../fixtures';
 import type { BrowserContext, Locator } from '@playwright/test';
 import { settle } from '../helpers/settle';
+import { showSettingsTab } from '../helpers/settings_tab';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
@@ -55,10 +56,8 @@ test.describe('Connect your services in Settings (one app load)', () => {
 
   test.beforeEach(async () => {
     // Show the panel (again), as a visit from the rail does, and put it back the way a fresh visit shows it.
-    await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'connections' } })); });
     const panel = page.locator(PANEL).first();
-    await panel.waitFor({ timeout: 60_000 });
-    await expect(panel.locator('.sc-cat-title').first()).toBeVisible({ timeout: 30_000 });
+    await showSettingsTab(page, 'connections', panel.locator('.sc-cat-title').first());
     const back = panel.getByRole('button', { name: 'Show cloud options again' });
     if (await back.isVisible()) {
       await back.click();
