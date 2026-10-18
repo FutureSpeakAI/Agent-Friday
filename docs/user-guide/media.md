@@ -102,6 +102,91 @@ recognition, not a description). Media offers only what this PC can make, and
 names what it cannot, with the reason. Music is transcribed only when it is
 Friday's own, because the words of other people's songs are not reproduced.
 
+## What can become what
+
+Open a card and use **Turn this into…** in its side rail, or select a card in
+the Library and press **T**. Each choice makes a new Draft card. The new card
+lists the original under **Related** as "made from".
+
+| A card of this kind | Can become |
+|---|---|
+| Drafts, articles and documents you edit in Media | a podcast, slides, a post, a page, read aloud |
+| Other documents | an article, read aloud, slides |
+| Podcast episodes | an article, a post, captions, a video (a waveform, the captions burned in) |
+| Images and image sets | a video (a slow push on the keeper), a post, a page (a gallery), the words in it |
+| Decks and sheets | a page, an article, a podcast, narration, a narrated video |
+| Posts | an article |
+| Charts | a data podcast, slides, a post |
+| Codebases | a page, a podcast |
+| Audio | a transcript, captions, a video |
+| Music | a transcript and captions (only for Friday's own music), a video |
+| Video | a transcript, captions, the sound track, a still, a post |
+
+A choice this PC cannot make is listed as "Not ... here", with the reason.
+Other kinds, such as pages, show "Not offered for this kind: an episode about
+an episode is noise. Edit it instead."
+
+Turning a card into something new does not ask: it writes only on this PC.
+Publishing does ask (see [Publishing](#publishing)).
+
+## Making new things
+
+**+ New** in the header (or the **N** key) makes an empty Draft card called
+"Untitled" and opens it. You can also ask Friday to make something:
+
+- **Images.** When a local image model is installed, the picture is made on
+  this PC and nothing is sent. Otherwise Friday uses the cloud image service
+  you set up, which receives the prompt after the privacy check. With Local
+  only on and no local image model, Friday refuses: "Image generation is not
+  done: Local only is on and no on-device image model is installed, so the
+  prompt was not sent to a cloud provider."
+- **Video.** Video normally uses a cloud service, such as Google Veo. The prompt
+  leaves the PC, and so does the starting picture when you give one. With
+  Local only on, Friday refuses and sends nothing.
+- **Edits of your clips.** Stitching clips, adding music and exporting
+  versions (for example 16:9 or 9:16) run on this PC with FFmpeg.
+- **Decks and websites.** Friday writes the content, and a fixed template on
+  this PC turns it into one self-contained HTML file.
+- **Office files.** Friday makes and edits real .docx, .xlsx and .pptx files on
+  this PC. No Office install is needed, and nothing is sent.
+
+New files land in the creations folder and show up in Media.
+
+**Daily creation** is a built-in scheduled job, and it is on by default. Once a
+day, between 09:00 and 23:00, after 10 minutes without activity, Friday makes
+one piece of her own choosing. Most days it is writing or code art. Some days
+it is an image, a music clip or a short film, which use the same services as
+when you ask, so their prompts can go to a cloud service unless Local only is
+on. To stop it, switch off **Daily creation** under **Friday's built-in
+routines** in **Workflows**. See [Scheduled jobs](scheduled-jobs.md).
+
+## Provenance
+
+A card's side rail has a **Provenance** box:
+
+- **Made by**: who made it.
+- **From**: the sources it was made from.
+- **Credentials**: **Signed**, with the start of its fingerprint, or
+  **Unsigned**, "signed when it leaves".
+- **Versions**: the other versions of this card, or "This one".
+
+A **Related** box lists linked cards, such as the card this one was "made
+from".
+
+The credential is a record of who made the file and from what. It is signed
+with a key kept on this PC, so a later change to the file can be detected. It
+is not issued by an outside authority.
+
+## Cards in 3D
+
+The **3D** layout in the Library shows your creations folder in the 3D file
+browser. Documents and episodes are not in that folder; find them in the grid.
+
+**🧊 View in 3D**, on the bar above Media, shows every card in 3D. Choose an
+arrangement: **Clusters** (one ball per group), **Wall** (a curved wall, one
+section per group), **Carousel** (a ring you scroll through) or **Timeline**
+(newest nearest). Group by status, kind or project. **✕ Close 3D** goes back.
+
 ## Publishing
 
 **Publish...** always raises one approval card, and nothing leaves the PC until
@@ -109,6 +194,10 @@ you approve it. The card names where it goes, what leaves (the file and its
 credential, and nothing else), the sources, and how to undo. **Unpublish...**
 puts it back. See [Approvals and receipts](approvals-and-receipts.md). Connected
 publishing accounts are managed under **Settings > Connections**.
+
+A post card goes through its own approval card for each platform. See
+[Posting to your accounts](posting.md) for the composer, scheduling, the
+Pipeline board and the Calendar.
 
 ## Tidy and the recoverable trash
 
