@@ -5,6 +5,7 @@
 // and outlines the row with the 2px --fr-cyan ring and clears it on the next input; the provenance line under a
 // row names Friday's proposal with an Undo; Undo posts to the undo route once and the line says it was undone.
 import { test, expect, type Page } from '../fixtures';
+import { showSettingsTab } from '../helpers/settings_tab';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
@@ -28,9 +29,8 @@ async function openSettings(page: Page) {
 
 test('a row Friday is taken to is outlined, and the outline goes on the next input', async ({ page }) => {
   await openSettings(page);
-  await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); });
   const row = page.locator(`[data-st-key="${KEY}"]`);
-  await row.waitFor({ timeout: 30000 });
+  await showSettingsTab(page, 'appearance', row);
   expect(await page.evaluate(k => (window as any).FridaySettingRows.highlight(k), KEY)).toBe(true);
   await expect(row).toHaveClass(/fr-st-hit/);
   const outline = await row.evaluate(e => getComputedStyle(e).outlineStyle + ' ' + getComputedStyle(e).outlineWidth);
@@ -42,8 +42,8 @@ test('a row Friday is taken to is outlined, and the outline goes on the next inp
 
 test('the provenance line names Friday\'s proposal and Undo works once', async ({ page }) => {
   const writes = await openSettings(page);
-  await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); });
   const line = page.getByTestId('st-provenance').first();
+  await showSettingsTab(page, 'appearance', line);
   await expect(line).toContainText('Friday, by a proposal you accepted');
   await page.getByTestId('st-undo').first().click();
   await expect(line).toContainText('undone');

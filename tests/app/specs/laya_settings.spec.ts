@@ -10,6 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { test, expect, type Page } from '../fixtures';
+import { showSettingsTab } from '../helpers/settings_tab';
 
 const BASE = process.env.FRIDAY_BASE || '';
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
@@ -45,9 +46,8 @@ async function openLaya(page: Page) {
   await page.route('**/api/setup/status', r => r.fulfill(json({ initialized: true })));
   await page.goto(`${BASE}/w/settings`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof (window as any).fridayRunActions === 'function', null, { timeout: 60000 });
-  await page.evaluate(() => { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'laya' } })); });
   const root = page.locator('[data-laya-settings="ready"]');
-  await root.waitFor({ timeout: 60000 });
+  await showSettingsTab(page, 'laya', root);
   return root;
 }
 

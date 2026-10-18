@@ -40,6 +40,15 @@ def test_connect_services_boots_once_and_reads_its_own_status():
         assert "connect-services-said" in (ROOT / page).read_text(encoding="utf-8"), page
 
 
+def test_opening_a_settings_tab_survives_an_event_sent_before_settings_listens():
+    """An event sent before Settings mounted its listener was lost and the test waited out its budget
+    (laya_settings.spec.ts on CI). The specs that open a tab right after load send it until the tab shows."""
+    helper = (TESTS / "app" / "helpers" / "settings_tab.ts").read_text(encoding="utf-8")
+    assert "toPass(" in helper and "friday:settings-tab" in helper
+    for name in ("connect_services.spec.ts", "laya_settings.spec.ts", "settings_highlight.spec.ts"):
+        assert "showSettingsTab(page, " in (TESTS / "app" / "specs" / name).read_text(encoding="utf-8"), name
+
+
 def test_the_visibility_check_is_opt_in_local_and_used_beside_the_dom_checks():
     src = (TESTS / "app" / "vision.ts").read_text(encoding="utf-8")
     assert "process.env.FRIDAY_VISION_CHECK !== '1'" in src

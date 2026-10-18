@@ -663,13 +663,18 @@ def resume_task(task_id):
     if running:
         return jsonify({"error": "task is still running"}), 409
 
-    _task_set(task_id, status='running', result=None, ended=None)
+    if verdict.get('via') != 'web_task':
+        # A website task's own runner sets its status when it starts, and its
+        # resume is judged on the 'interrupted' status, so it is left alone.
+        _task_set(task_id, status='running', result=None, ended=None)
 
     def _run():
         from agent_friday.services import task_journal as _tj
         _tj.push_task(task_id)
         try:
             text, _trace = _tr.resume(task_id, confirm_pending=confirm)
+            if text == _tr.RESUMED_IN_BACKGROUND:
+                return      # its own runner records how it ends
             with TASKS_LOCK:
                 _still = (TASKS.get(task_id) or {}).get('status') in ('running', 'queued')
             # A ledger resume ran the task's own worker, which already

@@ -917,9 +917,23 @@ class BrowserSession:
 
     # -- URL rules --
 
-    def url_allowed(self, url: str, *, navigation: bool) -> tuple:
+    def url_allowed(self, url: str, *, navigation: bool, main_frame: bool = True) -> tuple:
         from agent_friday.services import web_safety
         u = (url or "").strip()
+        if navigation and main_frame and self.owner is not None and self.owner.task_id:
+            # A website task (services/web_tasks.py) opens only its plan's
+            # sites. Judged on every top-level navigation request the route
+            # sees (an address Friday opens, a link click) and on where any
+            # page lands (_check_landing). A server redirect hop is NOT seen
+            # by the route; web_tasks refuses redirect-shaped addresses for
+            # that reason. Other browser use is untouched.
+            try:
+                from agent_friday.services import web_tasks
+                ok, why = web_tasks.navigation_check(self.owner.task_id, u)
+            except Exception:
+                ok, why = False, "the website task's sites could not be checked"
+            if not ok:
+                return False, why
         low = u.lower()
         if low.startswith(("about:", "data:", "blob:")):
             return (True, "ok") if not navigation or low.startswith("about:blank") else \
@@ -940,7 +954,12 @@ class BrowserSession:
         try:
             if self.owner is not None:
                 self._authority("view")
-            ok, why = self.url_allowed(request.url, navigation=request.is_navigation_request())
+            try:
+                main = request.frame.parent_frame is None
+            except Exception:
+                main = True     # unknown frame: judged as strictly as the page itself
+            ok, why = self.url_allowed(request.url, navigation=request.is_navigation_request(),
+                                       main_frame=main)
         except Exception as e:
             ok, why = False, f"the address could not be checked ({e})"
         if not ok:
@@ -2021,6 +2040,101 @@ def tool_close() -> str:
         return (f"Closed {s.display_name}'s agent workspace." if closed
                 else f"{s.display_name}'s browser was not open.")
     return "Closed Friday's browser window." if closed else "Friday's browser was not open."
+
+
+# ── Proof of completion: the final picture of a website task ───────────────
+
+#: Hidden before the proof picture is taken: what a password, card or
+#: identity field holds never appears in a receipt (spec WS-E12).
+_PROOF_BLUR_CSS = (
+    "input[type=password], input[autocomplete^='cc-'], input[autocomplete='one-time-code'],"
+    " input[name*='card' i], input[name*='cvv' i], input[name*='cvc' i],"
+    " input[name*='iban' i], input[name*='ssn' i], input[name*='passport' i],"
+    " input[name*='account' i], input[name*='routing' i], input[name*='dob' i],"
+    " input[name*='birth' i], input[name*='licen' i], input[name*='tax' i],"
+    " input[autocomplete^='bday'], input[autocomplete='tel'], input[autocomplete='email'],"
+    " input[autocomplete^='street-address'], input[autocomplete^='address-line']"
+    " { filter: blur(12px) !important; color: transparent !important;"
+    " text-shadow: none !important; }")
+
+
+_PROOF_TEXT_JS = r"""() => {
+  const SKIP = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]),'
+    + ' [role="textbox"], script, style, template, noscript';
+  const root = document.body || document.documentElement;
+  if (!root) return '';
+  const seen = new Map();
+  const shown = (el) => {
+    if (seen.has(el)) return seen.get(el);
+    let ok = true;
+    if (el.closest(SKIP)) ok = false;
+    else if (el.checkVisibility && !el.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) ok = false;
+    else {
+      const r = el.getBoundingClientRect();
+      // Outside the document (pushed off to the left or above the top),
+      // not merely scrolled past.
+      if (r.width < 2 || r.height < 2 || r.right + window.scrollX < 0 || r.bottom + window.scrollY < 0) ok = false;
+      // Clipped away by an ancestor that hides its overflow (max-height:0 and the like).
+      for (let a = el.parentElement; ok && a && a !== document.body; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (/(hidden|clip)/.test(cs.overflow + cs.overflowX + cs.overflowY)) {
+          const ar = a.getBoundingClientRect();
+          if (ar.width < 2 || ar.height < 2 || r.right <= ar.left || r.left >= ar.right
+              || r.bottom <= ar.top || r.top >= ar.bottom) ok = false;
+        }
+      }
+    }
+    seen.set(el, ok);
+    return ok;
+  };
+  const out = [];
+  let total = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = walker.nextNode())) {
+    const el = n.parentElement;
+    const t = n.nodeValue;
+    if (!el || !t || !t.trim() || !shown(el)) continue;
+    out.push(t);
+    total += t.length;
+    if (total > 200000) break;
+  }
+  return out.join(' ');
+}"""
+
+
+def proof_text(s: "BrowserSession") -> str:
+    """The text a person can SEE on the live page, without anything a visitor
+    can type into: what a website task's proof of completion is checked
+    against. Hidden text (a form's not-yet-shown "Thank you!") and text Friday
+    typed into a comment box or a chat widget never count as proof."""
+    def read():
+        s._need_running()
+        return str(s._page.evaluate(_PROOF_TEXT_JS) or "")
+    return str(s.call(read, purpose="view") or "")
+
+
+def proof_picture(s: "BrowserSession", path: str) -> bool:
+    """Save a JPEG of the page for the owner's receipt, sensitive fields blurred.
+
+    Taken by Friday's code, never by the model, and never sent to any model.
+    """
+    def shot():
+        s._need_running()
+        handle = s._page.add_style_tag(content=_PROOF_BLUR_CSS)
+        try:
+            s._page.screenshot(path=str(path), type="jpeg", quality=70, full_page=False)
+        finally:
+            try:
+                handle.evaluate("el => el.remove()")
+            except Exception:
+                pass
+        return True
+    try:
+        return bool(s.call(shot, purpose="view"))
+    except Exception as e:
+        _log.info("proof picture not taken: %s", type(e).__name__)
+        return False
 
 
 # ── Approval: approving the card is what submits ────────────────────────────

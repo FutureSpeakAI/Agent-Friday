@@ -1,9 +1,10 @@
 """The governed tool door keeps its wrappers.
 
-`_execute_tool` is the one door every governed tool call goes through. Its two
-decorators bind browser ownership and drop a repeated Gemini Live call; a helper
-inserted between them and the function would take the wrappers instead and break
-every call. This reads the source, so it cannot be fooled by import order.
+`_execute_tool` is the one door every governed tool call goes through. Its
+decorators, outermost first: a website task's scope (only the browser, only its
+plan's sites), browser ownership, and dropping a repeated Gemini Live call; a
+helper inserted between them and the function would take the wrappers instead
+and break every call. This reads the source, so it cannot be fooled by import order.
 """
 import ast
 import pathlib
@@ -19,8 +20,9 @@ def _decorators(name):
     raise AssertionError(name + " not found")
 
 
-def test_the_tool_door_carries_both_wrappers():
-    assert _decorators("_execute_tool") == ["_bind_browser_dispatch", "_live_laya.idempotent_tool"]
+def test_the_tool_door_carries_its_wrappers():
+    assert _decorators("_execute_tool") == ["_web_task_scope", "_bind_browser_dispatch",
+                                            "_live_laya.idempotent_tool"]
 
 
 def test_the_learning_helper_is_a_plain_function():
