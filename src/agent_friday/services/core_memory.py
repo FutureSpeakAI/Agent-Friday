@@ -335,6 +335,13 @@ def _purge_text(text: str) -> None:
                 _write_jsonl(p, keep)
             except Exception:
                 pass
+    # The line's learning record (services/lesson_records) goes too. It holds
+    # only a hash of the line, but a deleted line leaves no trace behind.
+    try:
+        from agent_friday.services import lesson_records
+        lesson_records.purge("lesson", lesson_records.lesson_ref(text))
+    except Exception:
+        pass
 
 
 def _changed(actor: str, reason: str) -> None:

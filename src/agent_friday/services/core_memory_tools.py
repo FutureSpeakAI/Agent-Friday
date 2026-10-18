@@ -40,7 +40,8 @@ TOOLS = [
          "action": {"type": "string", "enum": ["add", "replace", "remove", "show"]},
          "target": {"type": "string", "enum": ["user", "friday"]},
          "text": {"type": "string", "description": "One line: the entry (add) or new wording (replace)."},
-         "old": {"type": "string", "description": "Text of the entry to change (replace, remove)."}},
+         "old": {"type": "string", "description": "Text of the entry to change (replace, remove)."},
+         "when": {"type": "string", "description": "For a friday lesson: when it applies."}},
          "required": ["action"]}},
 ]
 RINGS = {"update_core_memory": 1}
@@ -214,6 +215,11 @@ def _tool_update_core_memory(inp=None) -> str:
         if _read_outside_content(ctx):
             return _ask_first(target, action, inp,
                               "Friday read outside content in this conversation, so it may come from there.")
+    if target == "friday" and action in ("replace", "remove"):
+        # The whole line `old` points at, so its learning record is found.
+        _line, _miss = core_memory.resolve_line(target, inp.get("old") or "")
+        if _line and not _miss:
+            inp = dict(inp, old=_line)
     tok = core_memory.REVEAL_USER.set(not cloud)
     try:
         if action == "add":
@@ -226,6 +232,8 @@ def _tool_update_core_memory(inp=None) -> str:
         core_memory.REVEAL_USER.reset(tok)
     if not r.get("ok"):
         return str(r.get("error") or "NOT DONE.")
+    if target == "friday" and not r.get("unchanged"):
+        _record_lesson(action, inp, actor)
     if r.get("unchanged"):
         if r.get("duplicate_of"):
             return ("Not saved: your core memory already says this as "
@@ -236,6 +244,27 @@ def _tool_update_core_memory(inp=None) -> str:
     return (f"{verb} in core memory ({target}: {u.get('used', 0):,}/{u.get('cap', 0):,} chars). "
             "It takes effect from the next conversation; the user can see and undo it in "
             "Settings > Privacy & Data > Memory card.")
+
+
+def _record_lesson(action: str, inp: dict, actor: str) -> None:
+    """Give a FRIDAY.md change its learning record (services/lesson_records):
+    when it applies, what taught it (this call's conversation, turn, task),
+    and, for a rewording, the line it replaced. Best-effort; never blocks."""
+    try:
+        from agent_friday.services import lesson_records as _lr
+        when = str(inp.get("when") or "").strip() or "every conversation (always loaded)"
+        taught = _lr.current_taught_by(source=actor)
+        if action == "add":
+            _lr.note_taught("lesson", _lr.lesson_ref(inp.get("text") or ""),
+                            applies_when=when, taught_by=taught)
+        elif action == "replace":
+            old = _lr.record_id("lesson", _lr.lesson_ref(inp.get("old") or ""))
+            _lr.note_taught("lesson", _lr.lesson_ref(inp.get("text") or ""),
+                            applies_when=when, taught_by=taught, replaces=old)
+        elif action == "remove":
+            _lr.note_status("lesson", _lr.lesson_ref(inp.get("old") or ""), "retired")
+    except Exception:
+        pass
 
 
 #: The path a memory-card hit carries in search_wiki results.
