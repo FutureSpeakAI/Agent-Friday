@@ -331,6 +331,46 @@ def test_an_approved_skill_card_applies_the_change_through_the_signed_writer(ski
     assert registry.skill_owner("report-summary", skills_home) == registry.AGENT_AUTHOR
 
 
+def test_a_candidate_changed_on_disk_after_the_card_is_not_adopted(home):
+    """Security review finding 3: approval adopts exactly what the card showed."""
+    from agent_friday.services import approvals, instruction_files as inf, trials
+    cand, new = _candidate(trials)
+    out = trials.run_trial(cand["id"], run_one=_runner(lambda t, arm, rep: _grade(arm == "b" or t in REG)),
+                           pack=_pack())
+    rec = trials.load(cand["id"])
+    rec["candidate"]["instructions"][SID] = new.replace("First, in one line", "Swapped text")
+    trials.save(rec)
+    approvals.decide(out["card_id"], "approve", decided_by="owner:ui")
+    assert inf.load(SID) == inf.shipped_text(SID)
+    assert trials.load(cand["id"])["status"] == "approve_refused"
+
+
+def test_a_busy_seat_is_not_stored_and_is_run_again(home):
+    from agent_friday.services import trials
+    cand, _new = _candidate(trials)
+    state = {"busy": True}
+
+    def run_one(*, task, arm, repeat, overlay=None, out_dir=None, **kw):
+        if state["busy"] and task["id"] == "s0" and arm == "b":
+            return {"grade": {"status": "missing", "reason": "preempted"}, "outcome": "seat_busy"}
+        return {"grade": _grade(arm == "b" or task["id"] in REG), "outcome": "completed"}
+    out = trials.run_trial(cand["id"], run_one=run_one, pack=_pack())
+    assert out["status"] == "running"
+    state["busy"] = False
+    out = trials.run_trial(cand["id"], run_one=run_one, pack=_pack())
+    assert out["status"] == "carded" and out["result"]["missing"]["b"] == 0
+
+
+def test_an_unreadable_battery_counts_as_battery(monkeypatch):
+    import psutil
+    from agent_friday.services import trials
+
+    def boom():
+        raise OSError("no power info")
+    monkeypatch.setattr(psutil, "sensors_battery", boom)
+    assert trials.on_ac_power() is False
+
+
 def test_the_card_hook_is_registered_with_the_scheduler_roster():
     """A card left pending from before a restart must still adopt on approval:
     the scheduler's roster imports trial_job at startup, which loads trials."""

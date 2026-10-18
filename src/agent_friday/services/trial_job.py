@@ -77,6 +77,47 @@ class _Watcher:
             pass
 
 
+def seat_run_one(seat: Dict[str, str], yield_file: Optional[str] = None):
+    """An episode runner that takes the seat properly. Each episode child calls
+    the seat itself, so the seat is taken HERE, in the calling visible job:
+    through the Local AI queue (it waits while an interactive turn holds the
+    seat or the PC is not idle), then held by the scheduler for the length of
+    the episode. Used by the trial job and by SkillOpt's evaluator."""
+    from agent_friday.task_eval.runner import run_episode
+
+    def run_one(**kw):
+        from agent_friday.services import background_gate as _bg, local_scheduler as _ls
+        _bg.before_local_model_call(seat["model"])
+        grant = _ls.admit("practice_trial", model=seat["model"], cls="background",
+                          label="Practice-task trial")
+        try:
+            return run_episode(endpoint=seat["endpoint"], model=seat["model"],
+                               yield_file=yield_file, **kw)
+        finally:
+            try:
+                grant.release()
+            except Exception:
+                pass
+    return run_one
+
+
+def _sweep_stale_scratch(max_age_s: float = 86400.0) -> int:
+    """Scratch homes left by a child that outlived a crash of Friday itself
+    (they hold candidate text and a job file). Only our own prefix, only old."""
+    import shutil
+    n = 0
+    root = Path(tempfile.gettempdir())
+    for prefix in ("friday-trial-", "friday-skillopt-", "friday-grade-", "friday-scan-"):
+        for d in root.glob(prefix + "*"):
+            try:
+                if d.is_dir() and time.time() - d.stat().st_mtime > max_age_s:
+                    shutil.rmtree(d, ignore_errors=True)
+                    n += 1
+            except OSError:
+                pass
+    return n
+
+
 @visible_job('Practice-task trials', kind='trial', workspace='skills', deferrable=True)
 def run_pending_trials() -> dict:
     from agent_friday.services import trials
@@ -112,27 +153,10 @@ def run_pending_trials() -> dict:
     if why:
         out["skipped"] = why
         return out
+    _sweep_stale_scratch()
     yf = Path(tempfile.gettempdir()) / f"friday-trial-yield-{os.getpid()}"
     with _Watcher(yf) as w:
-        from agent_friday.task_eval.runner import run_episode
-
-        def run_one(**kw):
-            # Each episode child calls the seat itself, so the seat is taken
-            # HERE, in this visible job: through the Local AI queue (it waits
-            # while an interactive turn holds the seat or the PC is not idle),
-            # then held by the scheduler for the length of the episode.
-            from agent_friday.services import background_gate as _bg, local_scheduler as _ls
-            _bg.before_local_model_call(seat["model"])
-            grant = _ls.admit("practice_trial", model=seat["model"], cls="background",
-                              label="Practice-task trial")
-            try:
-                return run_episode(endpoint=seat["endpoint"], model=seat["model"],
-                                   yield_file=str(yf), **kw)
-            finally:
-                try:
-                    grant.release()
-                except Exception:
-                    pass
+        run_one = seat_run_one(seat, str(yf))
         for cand in pending:
             if cand.get("cloud"):
                 continue          # cloud trials run only when the owner starts them (HD2)

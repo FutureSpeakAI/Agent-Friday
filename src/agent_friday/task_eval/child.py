@@ -226,6 +226,13 @@ def run(job: dict) -> dict:
     rec["egress_refused"] = egress.refused()
     rec["transcript"] = [m for m in convo[1:]][-60:]
     if th.is_alive():
+        yf = job.get("yield_file")
+        if yf and os.path.exists(yf):
+            # The owner's turn arrived while a model call was in flight: the
+            # seat was theirs, so this is not the agent's failure.
+            rec["outcome"] = "seat_busy"
+            rec["infra_error"] = "preempted by an interactive turn"
+            return rec
         rec["outcome"] = "wall_cap" if state["first"] else "infra_error"
         rec["infra_error"] = "" if state["first"] else "the loop never reached the model"
         return rec
