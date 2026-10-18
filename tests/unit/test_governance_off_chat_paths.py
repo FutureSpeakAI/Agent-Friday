@@ -140,7 +140,6 @@ def test_a_skill_archive_or_restore_after_reading_outside_content_asks_off_chat(
     out = agent._execute_tool("learn_skill", {"action": "archive", "name": "helper-z"}, session_ctx=clean)
     assert "Saved for testing" in str(out), out
     assert (skills / "helper-z" / "SKILL.md").exists()
-    assert not (skills / "helper-z").exists()
 
 
 # ── Scheduled-job grants ────────────────────────────────────────────────────
@@ -437,6 +436,10 @@ REVIEWED_BUILTINS = {
                            "and writes a signed step locally; reaches no one",
     "avatar_signals_nightly": "counts the day's on-record activity from the local "
                               "ledger into a local file",
+    "practice_trials": "runs practice tasks in scratch child processes whose only tools are "
+                       "virtual and whose egress reaches only the local seat; it changes "
+                       "nothing real and adopts nothing (only the owner's on-screen click on "
+                       "a trial card does)",
 }
 
 

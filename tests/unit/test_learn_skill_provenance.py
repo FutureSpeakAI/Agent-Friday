@@ -515,6 +515,7 @@ def test_the_real_key_path_signs_and_caches_and_fails_closed(home, monkeypatch):
     monkeypatch.setattr(registry, "BUNDLED_DIR", home.parent / "bundled")
     monkeypatch.setattr(registry, "register_with_skillopt", lambda skill: True)
     monkeypatch.setattr(registry, "_KEY_CACHE", {"key": None, "at": 0.0, "failed_at": None})
+    monkeypatch.setattr(agent, "SKILL_CHANGES_WAIT_FOR_OWNER", False, raising=False)
     calls = []
     monkeypatch.setattr(action_gate, "_governance_key", lambda: calls.append(1) or KEY)
 

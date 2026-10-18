@@ -1527,8 +1527,12 @@ SKILL_CHANGES_WAIT_FOR_OWNER = True
 
 def _apply_learn_skill(inp, evidence=None):
     """Apply a skill change the owner approved on its trial card (services/trials).
-    The same registry path and the same "agent" actor as a direct change."""
-    return _tool_learn_skill(inp, _apply=True, _evidence=evidence)
+
+    This is the owner's decision being carried out (a click on a screen-only
+    card), not a model tool call, so it does not go through _execute_tool's
+    hook chain; the registry's own rules still decide what may be written
+    (the "agent" actor may change only skills Friday wrote)."""
+    return _learn_skill_impl(inp, _apply=True, _evidence=evidence)
 
 
 def _propose_skill_change(name, action, inp, evidence, skills_dir):
@@ -1571,7 +1575,14 @@ def _propose_skill_change(name, action, inp, evidence, skills_dir):
     return cand
 
 
-def _tool_learn_skill(inp, *, _apply=False, _evidence=None):
+def _tool_learn_skill(inp):
+    """The model's door to its own skills (see _learn_skill_impl). An allowed
+    create/modify/archive/restore is queued for a practice-task trial and the
+    owner's click (decision HD1); nothing on disk changes here."""
+    return _learn_skill_impl(inp)
+
+
+def _learn_skill_impl(inp, *, _apply=False, _evidence=None):
     """The model's door to its own skills, routed through the skill registry.
 
     Friday may create skills and change or archive the ones she wrote (signed
