@@ -25823,6 +25823,8 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   // sandboxed preview (static/friday_publish.js).
   if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return <window.FridayWorkspaceSwapCard a={a} busy={busy} onDecide={onDecide}/>;
   if (a && a.kind === 'publish_web' && window.FridayPublishCard) return <window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>;
+  // A tested change: the text now and the new text, the difference and the evidence (static/friday_trial_card.js).
+  if (a && a.kind === 'instruction_trial' && window.FridayTrialCard) return <window.FridayTrialCard a={a} busy={busy} onDecide={onDecide}/>;
   // A search that shares text from the conversation (privacy/public_query):
   // the exact text that would go out, where it goes, and Send / Don't send.
   const pq = a && a.payload && a.payload.public_query;

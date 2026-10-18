@@ -126,6 +126,14 @@ def _sweep_stale_scratch(max_age_s: float = 86400.0) -> int:
     return n
 
 
+def _stop_now(watcher) -> bool:
+    """Checked before every episode: an interactive turn, the PC leaving AC
+    power, or tonight's testing time used up all stop the run (resumable)."""
+    from agent_friday.services import trials
+    return (watcher.tripped.is_set() or not trials.on_ac_power()
+            or trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS)
+
+
 @visible_job('Practice-task trials', kind='trial', workspace='skills', deferrable=True)
 def run_pending_trials() -> dict:
     from agent_friday.services import trials
@@ -163,6 +171,6 @@ def run_pending_trials() -> dict:
             if w.tripped.is_set() or trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS:
                 break
             res = trials.run_trial(cand["id"], run_one=run_one, endpoint=seat["endpoint"],
-                                   model=seat["model"], should_yield=w.tripped.is_set)
+                                   model=seat["model"], should_yield=lambda: _stop_now(w))
             out["ran"].append({"id": cand["id"], "status": res.get("status")})
     return out

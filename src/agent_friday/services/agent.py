@@ -1516,7 +1516,7 @@ def _record_skill_status(name, status):
         pass
 
 
-#: Owner decision HD1 (2026-10-18, harness2 adoption spec): every change
+#: Every change
 #: Friday makes to her own skills waits for a practice-task test and the
 #: owner's click (services/trials). The governance checks still run at once,
 #: so a refused change is refused exactly as before; an allowed one is queued

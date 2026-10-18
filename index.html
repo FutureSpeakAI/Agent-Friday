@@ -3831,6 +3831,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_publish.js"></script>
     <!-- Friday's instructions: compare with the shipped text and undo (defines window.FridayInstructionsSettings). -->
     <script src="/static/friday_instructions.js"></script>
+    <!-- A tested change: both texts, the difference, the evidence, Keep current / Use new (defines window.FridayTrialCard). -->
+    <script src="/static/friday_trial_card.js"></script>
     <script src="/static/friday_sites.js"></script>
     <script src="/static/friday_bundles.js"></script>
     <script src="/static/friday_salon.js"></script>
@@ -67028,6 +67030,13 @@ function ApprovalCardBody({
   // A publish card shows what would go public, the scan, the licences and a
   // sandboxed preview (static/friday_publish.js).
   if (a && a.kind === 'publish_web' && window.FridayPublishCard) return /*#__PURE__*/React.createElement(window.FridayPublishCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
+  // A tested change to how Friday works: the text now and the new text, the
+  // difference and the evidence, Keep current / Use new (static/friday_trial_card.js).
+  if (a && a.kind === 'instruction_trial' && window.FridayTrialCard) return /*#__PURE__*/React.createElement(window.FridayTrialCard, {
     a: a,
     busy: busy,
     onDecide: onDecide
