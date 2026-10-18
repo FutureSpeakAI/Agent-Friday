@@ -116,3 +116,22 @@ def test_the_card_payload_carries_both_texts(tmp_path, monkeypatch):
     ch = trials.card_changes(cand)
     assert ch[0]["before"] == inf.shipped_text(sid) and ch[0]["after"] == new
     assert "+" in ch[0]["diff"] and "NEWLINE" in ch[0]["diff"]
+
+
+def test_a_change_too_long_to_show_cannot_be_adopted(tmp_path, monkeypatch):
+    """The card never cuts text silently: a change longer than the card can
+    show is marked, the card says so, and approving it adopts nothing."""
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "friday"))
+    from agent_friday.services import trials
+    rel = "skills/demo/SKILL.md"
+    long_text = "# demo\n" + ("x" * 80 + "\n") * 400 + "THE HIDDEN TAIL\n"
+    cand = {"current": {"files": {rel: "# demo\n"}}, "candidate": {"files": {rel: long_text}}}
+    ch = trials.card_changes(cand)
+    assert ch[0]["cut"] is True and "more characters not shown" in ch[0]["after"]
+    assert trials.too_long_to_show(cand) is True
+    short = {"current": {"files": {rel: "# demo\n"}}, "candidate": {"files": {rel: "# demo v2\n"}}}
+    assert trials.too_long_to_show(short) is False
+    card = json.loads(json.dumps(CARD))
+    card["payload"]["too_long"] = True
+    r = _render(card)
+    assert "too long to show in full" in r["text"]

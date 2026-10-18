@@ -457,8 +457,16 @@ def _summary(cand: dict) -> str:
     return "\n".join(lines)
 
 
-#: Longest text one side of a change may carry on the card.
+#: Longest text one side of a change may carry on the card. A change longer
+#: than this cannot be shown in full, so it cannot be adopted from the card.
 CARD_TEXT_MAX = 20000
+
+
+def _shown(text: str) -> str:
+    text = str(text or "")
+    if len(text) <= CARD_TEXT_MAX:
+        return text
+    return text[:CARD_TEXT_MAX] + f"\n... ({len(text) - CARD_TEXT_MAX} more characters not shown)"
 
 
 def card_changes(cand: dict) -> List[dict]:
@@ -475,21 +483,30 @@ def card_changes(cand: dict) -> List[dict]:
         except Exception:
             before, title = "", sid
         out.append({"what": "instruction", "id": sid, "title": title,
-                    "before": before[:CARD_TEXT_MAX], "after": str(after)[:CARD_TEXT_MAX]})
+                    "before": str(before or ""), "after": str(after)})
     cur_files = cand.get("current", {}).get("files") or {}
     new_files = cand.get("candidate", {}).get("files") or {}
     for rel in sorted(set(cur_files) | set(new_files)):
         out.append({"what": "file", "id": rel, "title": rel,
-                    "before": str(cur_files.get(rel, ""))[:CARD_TEXT_MAX],
-                    "after": str(new_files.get(rel, ""))[:CARD_TEXT_MAX],
+                    "before": str(cur_files.get(rel, "")),
+                    "after": str(new_files.get(rel, "")),
                     "removed": rel not in new_files, "added": rel not in cur_files})
     if cand.get("candidate", {}).get("restore"):
         out.append({"what": "restore", "id": cand["candidate"]["restore"], "title": "restore an archived skill",
                     "before": "", "after": "(the newest archived copy comes back)"})
     for c in out:
-        c["diff"] = "".join(difflib.unified_diff(c["before"].splitlines(True), c["after"].splitlines(True),
-                                                 fromfile="current", tofile="new"))
+        # The difference is taken over the full texts; what the card carries
+        # is cut only for length, and a cut change is marked so it cannot be
+        # adopted without the owner having seen all of it.
+        full = "".join(difflib.unified_diff(c["before"].splitlines(True), c["after"].splitlines(True),
+                                            fromfile="current", tofile="new"))
+        c["cut"] = max(len(c["before"]), len(c["after"]), len(full)) > CARD_TEXT_MAX
+        c["before"], c["after"], c["diff"] = _shown(c["before"]), _shown(c["after"]), _shown(full)
     return out
+
+
+def too_long_to_show(cand: dict) -> bool:
+    return any(c.get("cut") for c in card_changes(cand))
 
 
 def raise_card(cand: dict) -> Optional[dict]:
@@ -509,6 +526,7 @@ def raise_card(cand: dict) -> Optional[dict]:
         "buttons": ["Keep current", "Use new"], "preselected": None,
         "quiet_until_digest": not cand.get("owner_started"),
         "changes": card_changes(cand),
+        "too_long": too_long_to_show(cand),
         "undo": ("Settings > Privacy & Data > instructions: compare with the shipped text and undo"
                  if subj.get("kind") == "instruction" else
                  "the earlier version stays in the skill's own history folder (skills/<name>/_history)"
@@ -569,6 +587,11 @@ def _on_card_decided(card: Dict[str, Any]) -> None:
                 payload.get("content_hash") or "") or cand.get("content_hash") != payload.get("content_hash"):
             cand["status"] = "approve_refused"
             cand["adopted"] = {"ok": False, "error": "the change on disk is not the one the card showed"}
+            save(cand)
+            return
+        if too_long_to_show(cand):
+            cand["status"] = "approve_refused"
+            cand["adopted"] = {"ok": False, "error": "the change is too long to show in full on the card"}
             save(cand)
             return
         try:
