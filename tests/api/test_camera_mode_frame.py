@@ -111,6 +111,23 @@ def mode(monkeypatch, patch_app):
     return _set
 
 
+def _capture(patch_app):
+    """capture_requests, with the local seat answering in its own shape.
+
+    capture_requests stubs `_call_ollama` with a function that returns a bare
+    string, but chat() unpacks (reply, tool_trace) from it on the Local-only
+    path, so the turn would crash after the vision step and every payload
+    assertion would read an error body."""
+    seen = capture_requests(patch_app)
+
+    def fake_ollama(messages=None, *a, **k):
+        seen.append({"system": k.get("system") or (a[0] if a else "") or "",
+                     "messages": copy.deepcopy(messages if isinstance(messages, list) else [])})
+        return ("ok", [])
+    patch_app("_call_ollama", fake_ollama)
+    return seen
+
+
 def _conv(client):
     return client.post("/api/conversations", json={"title": "Camera"}).get_json()["conversation"]["id"]
 
@@ -123,7 +140,12 @@ def _stream(client, cid, message, **extra):
     done = [json.loads(line[6:]) for line in r.get_data(as_text=True).splitlines()
             if line.startswith("data: ") and '"done"' in line]
     assert done, "the stream ended without a done frame: %r" % r.get_data(as_text=True)[:400]
-    return done[-1]["payload"]
+    payload = done[-1]["payload"]
+    # A turn that crashed also ends with a done frame; its body proves nothing.
+    # (chat() answers an exception with "[Friday offline] ..." and no other keys.)
+    assert not payload.get("error") and "vision_events" in payload, "the turn failed: %r" % {
+        k: payload.get(k) for k in ("error", "response")}
+    return payload
 
 
 def _vision_kinds(payload):
@@ -193,7 +215,7 @@ def test_local_only_keeps_the_frame_on_the_machine_and_says_so(
         client, mode, patch_app, monkeypatch, genai_spy, ledger, local_describer):
     mode("local_only")
     route_to(monkeypatch, "local")
-    capture_requests(patch_app)
+    _capture(patch_app)
     cid = _conv(client)
 
     d = _stream(client, cid, "what am I holding?", image=FRAME_B64)
@@ -210,7 +232,7 @@ def test_local_only_uses_the_local_description_when_there_is_one(
         client, mode, patch_app, monkeypatch, genai_spy, ledger, local_describer):
     mode("local_only")
     route_to(monkeypatch, "local")
-    seen = capture_requests(patch_app)
+    seen = _capture(patch_app)
     local_describer["result"] = {"ok": True, "text": SEEN, "model": "seat-x"}
     cid = _conv(client)
 
