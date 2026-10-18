@@ -64,7 +64,8 @@ export default defineConfig({
     // scene as a tangle of wireframe boxes, and the vision judge correctly
     // but uselessly reports it as broken. This repo hit the same thing with
     // the 3D knowledge galaxy.
-    launchOptions: { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
+    launchOptions: { args: process.env.PW_GL === 'default' ? ['--enable-unsafe-swiftshader']
+      : ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],

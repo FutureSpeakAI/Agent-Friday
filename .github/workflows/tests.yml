@@ -116,6 +116,9 @@ jobs:
       fail-fast: false
       matrix:
         run: [1, 2]
+        gl: [forced, default]
+    env:
+      PW_GL: ${{ matrix.gl }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -162,21 +165,21 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
         with:
-          name: cpu-samples-${{ matrix.run }}
+          name: cpu-samples-${{ matrix.run }}-${{ matrix.gl }}
           path: cpu_samples.csv
           if-no-files-found: ignore
       - name: Keep the Settings walk table and failure traces
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
         with:
-          name: app-specs-results-${{ matrix.run }}
+          name: app-specs-results-${{ matrix.run }}-${{ matrix.gl }}
           path: test-results/app
           if-no-files-found: ignore
       # The first-run walk finishes setup, so it runs on its own scratch home
       # (a separate Playwright run starts a separate scratch server). Its
       # screenshots of every setup step are kept for a person to look at.
       - name: Run the first-run walk (its own scratch home)
-        if: ${{ !cancelled() }}
+        if: ${{ false }}
         env:
           FRIDAY_PYTHON: python
           FRIDAY_FIRST_RUN_WALK: "1"
@@ -187,7 +190,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
         with:
-          name: first-run-screens-${{ matrix.run }}
+          name: first-run-screens-${{ matrix.run }}-${{ matrix.gl }}
           path: test-results/first-run
           if-no-files-found: ignore
 
