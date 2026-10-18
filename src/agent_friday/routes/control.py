@@ -176,9 +176,13 @@ def decide_cloud_release(approval_id):
     """The money-paragraph card's answer: {decision: approve (Send) | deny (Keep on this PC),
     remember: {thread: bool, sender: bool}}."""
     from agent_friday.services import cloud_release as _cr
+    from agent_friday.services import screen_click as _sc
     data = request.get_json(silent=True) or {}
+    # Send lets private text leave the PC: only a click on the card on Friday's own page is
+    # "owner:ui". A request that merely claims it is the plain owner, and cloud_release refuses
+    # a Send from it (Keep on this PC is always accepted).
     out = _cr.decide(approval_id, str(data.get("decision") or "").strip().lower(),
-                     data.get("remember"), decided_by="owner:ui")
+                     data.get("remember"), decided_by=_sc.decided_by(request, "owner:ui"))
     if not out.get("ok"):
         return jsonify({"status": "error", "ok": False, "message": out.get("error")}), (
             404 if out.get("error") == "not found" else 400)

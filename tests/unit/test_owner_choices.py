@@ -523,7 +523,8 @@ def test_the_cards_render_their_choices_under_node():
     assert any("Remember for this thread" in t for t in got["ticks"])
     assert any("Remember for this sender" in t for t in got["ticks"])
     assert got["calls"][0] == ["/api/privacy/cloud-release/appr_1/decide",
-                               {"decision": "approve", "remember": {"thread": False, "sender": False}}]
+                               {"decision": "approve", "remember": {"thread": False, "sender": False,
+                                                                    "text": False}}]
     assert got["selects"][:2] == ["skip", "retry"]
     assert got["calls"][1] == ["/api/schedules/sch_1", {"on_held": "wait"}]
     assert got["del"] == "Delete…"
