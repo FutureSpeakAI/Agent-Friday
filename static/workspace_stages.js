@@ -57,8 +57,12 @@
     });
   }
 
+  // At most SYNC_MS after the first change, however busy the page is. A timer that restarted on every
+  // mutation never fired on a page that keeps changing (a clock, a status line, a live list): rows that
+  // arrived then never got their stage.
+  var SYNC_MS = 400;
   var timer = null;
-  function soon() { if (timer) clearTimeout(timer); timer = setTimeout(sync, 400); }
+  function soon() { if (!timer) timer = setTimeout(function () { timer = null; sync(); }, SYNC_MS); }
 
   function start() {
     if (typeof MutationObserver !== 'function' || typeof document === 'undefined') return;
