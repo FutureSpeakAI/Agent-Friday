@@ -1,8 +1,7 @@
 """Side-by-side trials: try a change on practice tasks, old way against new,
 then let the owner decide on a card where "keep what I have" can always win.
 
-Harness2 adoption spec HA2 (ftv/program/specs/harness2_adoption_STORM_2026-10-18.md
-§9). A *candidate* is a proposed change to one subject: an unlocked instruction
+A *candidate* is a proposed change to one subject: an unlocked instruction
 section, one of Friday's own skills, or a lesson. A *trial* runs the current
 version (arm A) and the candidate (arm B) on the same practice tasks, A B B A
 per task, graded by code (task_eval). A fixed rule, versioned and shown on the
@@ -10,10 +9,10 @@ card, recommends one of them; ties and thin evidence go to the current version.
 Only the owner's click on the screen adopts anything (the card kind is
 screen-only): a voice or typed "yes" decides nothing.
 
-What may never be a subject (spec HA-E03): locked instruction sections and the
+What may never be a subject: locked instruction sections and the
 policy texts (cLaws, action policy, honesty floor), SOUL.md (the owner writes
-Friday's personality; decision HD5) and SELF.md. Laya has no entry point here
-(HA-E20): her bars change only by the owner's click in Settings > Laya, whose
+Friday's personality; decision HD5) and SELF.md. Laya has no entry point here:
+her bars change only by the owner's click in Settings > Laya, whose
 own replay is the evidence; ``laya_bar_verdict`` is the same rule in code.
 
 Cards: a test the owner started raises its card at once. Everything else waits
@@ -126,7 +125,7 @@ def _remember_denied(h: str) -> None:
 def content_hash(subject: dict, overlay: dict, apply: Optional[dict] = None) -> str:
     """What the card is about: the subject, the candidate, AND how it would be
     applied. Checked again when the card is approved, so the change adopted is
-    exactly the one the owner saw (security review 2026-10-18, finding 3)."""
+    exactly the one the owner saw."""
     body = json.dumps({"subject": {"kind": subject.get("kind"), "id": subject.get("id")},
                        "overlay": overlay, "apply": apply or {}}, sort_keys=True, ensure_ascii=False,
                       default=str)
@@ -475,6 +474,41 @@ def _summary(cand: dict) -> str:
     return "\n".join(lines)
 
 
+#: Longest text one side of a change may carry on the card.
+CARD_TEXT_MAX = 20000
+
+
+def card_changes(cand: dict) -> List[dict]:
+    """What the owner is deciding, in full: for every instruction section or
+    file the candidate touches, the text in use now and the text it would
+    become. The card shows both, side by side, and the difference."""
+    import difflib
+    out: List[dict] = []
+    for sid, after in sorted((cand.get("candidate", {}).get("instructions") or {}).items()):
+        try:
+            from agent_friday.services import instruction_files as inf
+            before = inf.load(sid)
+            title = next((x.get("title", sid) for x in inf.sections() if x["id"] == sid), sid)
+        except Exception:
+            before, title = "", sid
+        out.append({"what": "instruction", "id": sid, "title": title,
+                    "before": before[:CARD_TEXT_MAX], "after": str(after)[:CARD_TEXT_MAX]})
+    cur_files = cand.get("current", {}).get("files") or {}
+    new_files = cand.get("candidate", {}).get("files") or {}
+    for rel in sorted(set(cur_files) | set(new_files)):
+        out.append({"what": "file", "id": rel, "title": rel,
+                    "before": str(cur_files.get(rel, ""))[:CARD_TEXT_MAX],
+                    "after": str(new_files.get(rel, ""))[:CARD_TEXT_MAX],
+                    "removed": rel not in new_files, "added": rel not in cur_files})
+    if cand.get("candidate", {}).get("restore"):
+        out.append({"what": "restore", "id": cand["candidate"]["restore"], "title": "restore an archived skill",
+                    "before": "", "after": "(the newest archived copy comes back)"})
+    for c in out:
+        c["diff"] = "".join(difflib.unified_diff(c["before"].splitlines(True), c["after"].splitlines(True),
+                                                 fromfile="current", tofile="new"))
+    return out
+
+
 def raise_card(cand: dict) -> Optional[dict]:
     """One screen-only card per change. Quiet until the weekly digest unless the
     owner started this test (HD3). Both buttons are always shown; "Recommended"
@@ -491,6 +525,11 @@ def raise_card(cand: dict) -> Optional[dict]:
         "untested": bool(res.get("untested")), "content_hash": cand["content_hash"],
         "buttons": ["Keep current", "Use new"], "preselected": None,
         "quiet_until_digest": not cand.get("owner_started"),
+        "changes": card_changes(cand),
+        "undo": ("Settings > Privacy & Data > instructions: compare with the shipped text and undo"
+                 if subj.get("kind") == "instruction" else
+                 "the earlier version stays in the skill's own history folder (skills/<name>/_history)"
+                 if subj.get("kind") == "skill" else ""),
     }
     card = approvals.create_approval(
         kind=CARD_KIND, subject_type="trial", subject_id=cand["id"],
@@ -534,7 +573,7 @@ def adopt(cand: dict, card_id: str) -> dict:
         ver = eng.storage(s["skill"]).read_version(s["version_id"])
         shown = (cand["candidate"].get("files") or {}).get(f"skills/{s['skill']}/SKILL.md")
         if ver is None or ver.content != shown:
-            # The stored version is not the text the card showed (re-check B).
+            # The stored version is not the text the card showed.
             return {"ok": False, "error": "the stored SkillOpt version differs from the card"}
         eng.promote_from_card(s["skill"], s["version_id"], float(s.get("score") or 0.0))
         return {"ok": True, "applied": f"SkillOpt version {s['version_id']} is now the champion"}

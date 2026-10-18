@@ -18,12 +18,19 @@ ROOT = Path(__file__).resolve().parents[2]
 ANSWERS = ROOT / "src" / "agent_friday" / "task_eval_grader" / "answers" / "dev"
 
 
+def _child_env():
+    """A grader child loads the tree under test, never another installed copy."""
+    import os
+    return dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONIOENCODING="utf-8")
+
+
 def _grade(tmp_path, episode: dict) -> dict:
     p = tmp_path / "episode.json"
     p.write_text(json.dumps(episode), encoding="utf-8")
     out = subprocess.run([sys.executable, "-m", "agent_friday.task_eval_grader", "grade",
                           "--episode", str(p), "--pack", "dev"],
-                         capture_output=True, text=True, encoding="utf-8", timeout=60, cwd=str(tmp_path))
+                         capture_output=True, text=True, encoding="utf-8", timeout=60, cwd=str(tmp_path),
+                         env=_child_env())
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout.strip().splitlines()[-1])
 

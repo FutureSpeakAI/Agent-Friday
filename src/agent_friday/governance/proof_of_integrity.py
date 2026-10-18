@@ -439,7 +439,7 @@ def get_governance_key() -> bytes:
     that process. Its scratch home has no key file, so without this it would
     read the owner's real key from the per-user OS keychain, or, if the
     keychain were empty, mint a new one INTO it and orphan every receipt the
-    live app signed (security review 2026-10-18, finding 1).
+    live app signed.
     """
     if os.environ.get("FRIDAY_TRIAL") == "1":
         # Any FRIDAY_TRIAL, even a stray one in the real app's environment,

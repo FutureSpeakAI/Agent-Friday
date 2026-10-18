@@ -332,7 +332,7 @@ def test_an_approved_skill_card_applies_the_change_through_the_signed_writer(ski
 
 
 def test_a_candidate_changed_on_disk_after_the_card_is_not_adopted(home):
-    """Security review finding 3: approval adopts exactly what the card showed."""
+    """Approval adopts exactly what the card showed."""
     from agent_friday.services import approvals, instruction_files as inf, trials
     cand, new = _candidate(trials)
     out = trials.run_trial(cand["id"], run_one=_runner(lambda t, arm, rep: _grade(arm == "b" or t in REG)),
@@ -405,3 +405,27 @@ def test_no_laya_code_path_reaches_the_trial_engine():
         if "trials" in text and ("import trials" in text or "services.trials" in text or "trials." in text):
             offenders.append(p.name)
     assert offenders == []
+
+
+def test_every_episode_checks_power_and_the_night_cap(monkeypatch):
+    """The trial job stops before the next episode when the PC leaves AC power
+    or tonight's testing time runs out, not only at the start of the run."""
+    import threading
+    from agent_friday.services import trial_job, trials
+
+    class W:
+        tripped = threading.Event()
+
+    power = {"ac": True}
+    used = {"s": 0}
+    monkeypatch.setattr(trials, "on_ac_power", lambda: power["ac"])
+    monkeypatch.setattr(trials, "night_seconds_used", lambda: used["s"])
+    assert trial_job._stop_now(W()) is False
+    power["ac"] = False
+    assert trial_job._stop_now(W()) is True
+    power["ac"] = True
+    used["s"] = trials.NIGHT_CAP_SECONDS
+    assert trial_job._stop_now(W()) is True
+    used["s"] = 0
+    W.tripped.set()
+    assert trial_job._stop_now(W()) is True
