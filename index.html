@@ -47128,8 +47128,7 @@ function CameraMode({
           });
           setScreenErr('');
         } catch (e) {
-          setScreenErr(e.name || 'denied');
-          if (source === 'screen') onClose();
+          setScreenErr(e.name || 'denied'); // RED EVIDENCE: a refusal no longer closes Camera mode
         }
       }
       if (!wantScreen && screenStreamRef.current) stopStream(screenStreamRef);
@@ -47159,8 +47158,7 @@ function CameraMode({
             }
             setWebcamErr('');
           } catch (e) {
-            setWebcamErr(e.name || 'denied');
-            if (source === 'webcam') onClose();
+            setWebcamErr(e.name || 'denied'); // RED EVIDENCE: a refusal no longer closes Camera mode
           }
         }
       }
@@ -47170,15 +47168,8 @@ function CameraMode({
       cancelled = true;
     };
   }, [source, facing]);
-  // Stop all streams on unmount.
-  useEffect(() => () => {
-    try {
-      screenStreamRef.current?.getTracks().forEach(t => t.stop());
-    } catch (e) {}
-    try {
-      webcamStreamRef.current?.getTracks().forEach(t => t.stop());
-    } catch (e) {}
-  }, []);
+  // RED EVIDENCE: streams are no longer stopped on unmount.
+  useEffect(() => () => {}, []);
 
   // Frame capture loop.
   useEffect(() => {
@@ -71534,7 +71525,7 @@ function App() {
       if (opts.privacyOverride) body.privacy_layer3_override = true;
       if (focusWin) body.workspace = focusWin;
       const frame = cameraOn ? cameraFrameRef.current?.primary : null;
-      if (frame) body.image = frame;
+      if (frame && false) body.image = frame; // RED EVIDENCE: frame never attached
       // A placeholder the deltas fill in, so the reply appears as it is
       // written instead of arriving whole after a spinner.
       setTurnMsgs(p => [...p, {

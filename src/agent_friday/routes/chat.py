@@ -106,6 +106,7 @@ _LOG = _logging.getLogger("friday.chat")
 #: connected: what is missing and where to add it, not a provider exception.
 _NO_VISION_KEY = ("[I can't look at images yet: no Google Gemini key is "
                   "connected. You can add one in Settings > Connections.]")
+_RED_LAST_VISION = [None]  # RED EVIDENCE only
 
 
 def _gemini_connected() -> bool:
@@ -1604,14 +1605,14 @@ def chat():
             from agent_friday.services.cloud_mode_policy import normalize_mode as _norm_mode
             _routing_mode = _norm_mode((settings_early.get('model_routing') or {})
                                        .get('mode'))
-            _mime = 'image/jpeg' if data.get('image') else 'image/png'
+            _mime = 'image/png'  # RED EVIDENCE: camera frames mislabelled
             _is_screen = data.get('screenshot') is not None
             _what = 'a screenshot of your desktop' if _is_screen else 'the camera frame'
             try:
                 _img_len = len(base64.b64decode(screenshot_b64))
             except Exception:
                 _img_len = 0
-            _prefer_local = _routing_mode in ('local_only', 'local_preferred')
+            _prefer_local = False  # RED EVIDENCE: Local only no longer keeps the frame local
 
             def _record(provider, action, reason):
                 try:
@@ -1690,6 +1691,11 @@ def chat():
                 except Exception as ve:
                     vision_description = f"[Vision unavailable: {ve}]"
                     _record('gemini', 'error', f'cloud vision failed: {ve}')
+        # RED EVIDENCE: the last frame's description sticks to later turns.
+        if vision_description is not None:
+            _RED_LAST_VISION[0] = vision_description
+        elif _RED_LAST_VISION[0] is not None:
+            vision_description = _RED_LAST_VISION[0]
 
         settings = _load_settings()
         personality = _load_agent_personality()
