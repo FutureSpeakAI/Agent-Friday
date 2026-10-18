@@ -506,6 +506,19 @@ def adopt(cand: dict, card_id: str) -> dict:
         except Exception:
             pass
         return {"ok": True, "applied": rows}
+    if subj["kind"] == "skill" and apply.get("skillopt"):
+        import agent_friday.skillopt_engine as sopt
+        s = apply["skillopt"]
+        sopt.get_engine().promote_from_card(s["skill"], s["version_id"], float(s.get("score") or 0.0))
+        return {"ok": True, "applied": f"SkillOpt version {s['version_id']} is now the champion"}
+    if subj["kind"] == "skill" and apply.get("skillopt_new_version"):
+        import agent_friday.skillopt_engine as sopt
+        s = apply["skillopt_new_version"]
+        eng = sopt.get_engine()
+        ver = eng.register_version(skill_name=s["skill"], content=s["content"], parent_version=s["parent"],
+                                   edit_summary=s.get("summary", ""), edit_source="autoresearch")
+        eng.promote_from_card(s["skill"], ver.version_id, 0.0)
+        return {"ok": True, "applied": f"SkillOpt version {ver.version_id} is now the champion"}
     if subj["kind"] == "skill":
         from agent_friday.services import agent as _agent
         return {"ok": True, "applied": _agent._apply_learn_skill(apply.get("learn_skill") or {},
