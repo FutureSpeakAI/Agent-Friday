@@ -142,6 +142,7 @@ jobs:
           studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
           calendar_freebusy.spec.ts calendar_rsvp.spec.ts calendar_delete.spec.ts
           activity_never_collapses.spec.ts connect_services.spec.ts laya_settings.spec.ts
+          camera_mode.spec.ts
       - name: Keep the Settings walk table and failure traces
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
