@@ -969,9 +969,12 @@ def content_platform_connect(name):
     # credential-store slot the adapter reads it from (simple_secret), never
     # in platforms.json, never logged and never echoed. It is not a login, so
     # it is not "verified" below: the browser sign-in that follows is.
+    # Sent inside `options` it goes the same way; secret-looking options are
+    # never written to platforms.json (platforms._sanitize_opts).
     app_secret = None
     if mod in _OAUTH_APP_FIELDS and not pasted:
-        app_secret = data.get("client_secret") or None   # pragma: allowlist secret
+        app_secret = (data.get("client_secret")   # pragma: allowlist secret
+                      or options.get("client_secret") or None)
         if app_secret is not None:
             app_secret = str(app_secret).strip()[:512] or None
     if options or pasted or app_secret:

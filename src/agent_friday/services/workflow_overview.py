@@ -526,7 +526,7 @@ def _job_view(rec, slug=None):
 
 def _auto_enabled_note(rec) -> str:
     """A built-in that was switched on for the owner says so on its row, with
-    when and why, while it stays on (services/scheduler.switch_on_automatically)."""
+    when and why, while it stays on (services/scheduler.enable_if_seeded_off)."""
     mark = (rec or {}).get("auto_enabled")
     if not isinstance(mark, dict) or not (rec or {}).get("enabled", True):
         return ""

@@ -565,8 +565,15 @@ def _schedule_fingerprint(rec) -> str:
     return hashlib.sha256(_json.dumps(_run_basis(rec), sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
 
 
-def update_schedule(sid, patch) -> dict | None:
-    """Patch an existing schedule (name/trigger/spec/task/enabled/notify/...)."""
+def update_schedule(sid, patch, *, by="owner") -> dict | None:
+    """Patch an existing schedule (name/trigger/spec/task/enabled/notify/...).
+
+    `by` says who switched it when the patch carries `enabled` (SWITCHED_BY):
+    "owner" for the owner's own screens and voice (the default), "tool" for a
+    model's tool call. Only an owner's off of a built-in stays off when Friday
+    would otherwise switch it on (builtin_switched_off_by_owner)."""
+    if by not in SWITCHED_BY:
+        by = "tool"
     dropped = None
     with _STORE_LOCK:
         cur = get_schedule(sid)
@@ -605,9 +612,11 @@ def update_schedule(sid, patch) -> dict | None:
         # was switched on automatically no longer describes it.
         if patch and "enabled" in patch:
             cur.pop("auto_enabled", None)
-            # Someone has switched this job since it was seeded, so its
-            # off is a choice, not its seed (builtin_switched_off_by_owner).
+            # Someone has switched this job since it was seeded, so its off
+            # is a choice, not its seed; whose choice decides whether it
+            # sticks (builtin_switched_off_by_owner).
             cur["switched_at"] = _time.time()
+            cur["switched_by"] = by
         # Re-enabling or rescheduling clears any pending retry backoff.
         if patch and ("enabled" in patch or "trigger" in patch or "spec" in patch):
             cur["retry_pending"] = False
@@ -776,34 +785,26 @@ def _seed_record(ref, meta) -> dict:
     }, source="builtin")
 
 
-def seed_builtin(ref) -> dict | None:
-    """The stored record of one registered built-in, seeding it first when
-    schedules.json has none yet. Never overwrites an existing record."""
-    meta = BUILTIN_TASKS.get(ref)
-    if not meta:
-        return None
-    sid = f"sch_{ref}"
-    with _STORE_LOCK:
-        recs = _read_store()
-        for r in recs:
-            if r.get("id") == sid or ((r.get("task") or {}).get("kind") == "builtin"
-                                      and (r.get("task") or {}).get("ref") == ref):
-                return dict(r)
-        rec = _seed_record(ref, meta)
-        recs.append(rec)
-        _write_store(recs)
-        return dict(rec)
+#: Who switched a job on or off (`switched_by`, stamped by update_schedule):
+#: the owner's own click, voice or settings screen; a model tool call (even
+#: in the owner's chat, the model chose the call); or Friday itself switching
+#: a seeded-off built-in on. Only the owner's off is the owner's decision.
+SWITCHED_BY = ("owner", "tool", "auto")
 
 
 def builtin_switched_off_by_owner(rec) -> bool:
-    """True when a built-in is off because someone switched it off, not
-    because it was seeded off. Every switch, including the Workflows toggle,
-    goes through update_schedule, which stamps `switched_at`; a record from
-    before that stamp existed counts as switched when it was ever updated
-    (a seeded record's `updated` equals its `created`)."""
+    """True when a built-in is off because the OWNER switched it off: not
+    because it was seeded off, and not because a model tool paused it. Every
+    switch goes through update_schedule, which stamps `switched_at` and
+    `switched_by`; a record from before `switched_by` existed counts as the
+    owner's when it was switched (`switched_at`) or ever updated (a seeded
+    record's `updated` equals its `created`)."""
     rec = rec or {}
     if rec.get("enabled", True):
         return False
+    by = rec.get("switched_by")
+    if by is not None:
+        return by == "owner"
     if rec.get("switched_at"):
         return True
     try:
@@ -812,14 +813,86 @@ def builtin_switched_off_by_owner(rec) -> bool:
         return True
 
 
-def switch_on_automatically(sid, reason) -> dict | None:
-    """Switch a job on through the same update the Workflows switch makes,
-    and record when and why it was switched on for the owner (shown on the
-    job's row). The owner switches it off again the ordinary way."""
-    rec = update_schedule(sid, {"enabled": True})
-    if not rec:
-        return None
-    return _patch_record(sid, auto_enabled={"at": _time.time(), "reason": str(reason)[:200]})
+class ScheduleStoreUnreadable(RuntimeError):
+    """schedules.json exists but could not be read or parsed just now."""
+
+
+def _read_store_checked() -> list:
+    """The stored schedules, or [] when there is no schedules.json yet.
+
+    Unlike _read_store, a file that exists but cannot be read or parsed (in
+    use by another writer, half-written, damaged) raises
+    ScheduleStoreUnreadable instead of reading as empty, so a caller that
+    writes the list back never replaces every schedule with what it alone
+    added."""
+    try:
+        raw = SCHEDULES_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        raise ScheduleStoreUnreadable(f"schedules.json could not be read: {e}") from e
+    try:
+        data = json.loads(raw)
+    except Exception as e:
+        raise ScheduleStoreUnreadable(f"schedules.json could not be parsed: {e}") from e
+    if isinstance(data, dict):
+        data = data.get("schedules")
+    if not isinstance(data, list):
+        raise ScheduleStoreUnreadable("schedules.json does not hold a list of schedules")
+    return data
+
+
+def enable_if_seeded_off(sid, reason, *, switch=True) -> dict:
+    """Switch a built-in on when, and only when, it is still in its seeded-off
+    state, as one step under the store lock: the read, the check and the write
+    see the same file, so an owner's off that lands at the same moment is
+    never overridden.
+
+    Never seeds a missing record and never writes when schedules.json exists
+    but cannot be read or parsed. `switch=False` only reports.
+
+    Returns {"state", "record"}; state is one of
+      on           already on (nothing written)
+      switched_on  it was seeded off and is now on (when and why recorded)
+      seeded_off   seeded off, and switch=False
+      owner_off    the owner switched it off: left off
+      missing      no such record (nothing written)
+      unreadable   schedules.json could not be read (nothing written)"""
+    dropped = None
+    with _STORE_LOCK:
+        try:
+            recs = _read_store_checked()
+        except ScheduleStoreUnreadable as e:
+            _log.warning("not switching %s on: %s", sid, e)
+            return {"state": "unreadable", "record": None}
+        cur = next((r for r in recs if isinstance(r, dict) and r.get("id") == sid), None)
+        if cur is None:
+            return {"state": "missing", "record": None}
+        if cur.get("enabled", True):
+            return {"state": "on", "record": dict(cur)}
+        if builtin_switched_off_by_owner(cur):
+            return {"state": "owner_off", "record": dict(cur)}
+        if not switch:
+            return {"state": "seeded_off", "record": dict(cur)}
+        # What update_schedule does for {"enabled": True}, on the record just read.
+        now = _time.time()
+        cur["enabled"] = True
+        cur["updated"] = now
+        cur["slots_from"] = now
+        cur["switched_at"] = now
+        cur["switched_by"] = "auto"
+        cur["auto_enabled"] = {"at": now, "reason": str(reason)[:200]}
+        cur["retry_pending"] = False
+        cur["not_before"] = 0
+        if cur.get("quiet_deferred"):
+            dropped = cur.get("quiet_deferred")
+            cur["quiet_deferred"] = None
+        _write_store(recs)
+        out = dict(cur)
+    if dropped is not None:
+        _notify_deferral_dropped(out, dropped, True)
+    _supersede_late_cards(sid)
+    return {"state": "switched_on", "record": out}
 
 
 def register_daily_job(name, hour, minute, fn):

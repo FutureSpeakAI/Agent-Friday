@@ -143,10 +143,10 @@ def media_previews_status():
 @media_bp.route('/api/media/<card_id>', methods=['GET'])
 def media_get(card_id):
     c = mi.get(card_id)
-    if c is None and str(card_id).startswith("post:"):
+    if c is None and mi.index_new_post_card(card_id):
         # A post made a moment ago (Quick Post's "Open full composer", a
-        # notice about a held post) may not be indexed yet: index posts once.
-        mi.reindex_posts_only()
+        # notice about a held post) may not be indexed yet: it was indexed
+        # just now (only for a post that exists, at most once a minute).
         c = mi.get(card_id)
     if c is None:
         return jsonify({"status": "not_found"}), 404

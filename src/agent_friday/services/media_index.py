@@ -1408,6 +1408,43 @@ def set_body(card_id: str, text: str) -> Dict[str, Any]:
     return {"status": "ok", "card": get(card_id)}
 
 
+#: A post card id: "post:" and twelve hex digits (_id_for).
+_POST_CARD_ID = re.compile(r"post:[0-9a-f]{12}")
+#: When each missing post card last asked for a reindex (index_new_post_card).
+_POST_CARD_TRIED: Dict[str, float] = {}
+_POST_CARD_TRIED_LOCK = threading.Lock()
+POST_CARD_RETRY_S = 60.0
+
+
+def index_new_post_card(card_id: str) -> bool:
+    """A post card that is not indexed yet: index posts, but only when the id
+    is a well-formed post card id, a post in the content store has that card
+    id, and this id has not asked in the last POST_CARD_RETRY_S. A request for
+    any other id costs no reindex. Returns True when posts were reindexed."""
+    cid = str(card_id or "")
+    if not _POST_CARD_ID.fullmatch(cid):
+        return False
+    try:
+        from agent_friday.services import content_pipeline as cp
+        ids = cp.list_post_ids()
+    except Exception:
+        return False
+    if not any(post_card_id(pid) == cid for pid in ids):
+        return False
+    now = time.time()
+    with _POST_CARD_TRIED_LOCK:
+        last = _POST_CARD_TRIED.get(cid)
+        if last is not None and now - last < POST_CARD_RETRY_S:
+            return False
+        if len(_POST_CARD_TRIED) > 1000:
+            for k, t in list(_POST_CARD_TRIED.items()):
+                if now - t >= POST_CARD_RETRY_S:
+                    _POST_CARD_TRIED.pop(k, None)
+        _POST_CARD_TRIED[cid] = now
+    reindex_posts_only()
+    return True
+
+
 def reindex_posts_only() -> None:
     with _LOCK:
         con = _connect()
