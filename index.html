@@ -60385,7 +60385,7 @@ function SettingsTabLaya({s, save} = {}) {
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key) => {
-    setBusy(key || path); setMsg(''); setMsgAt(path === 'replay' ? 'replay' : path === 'teach' ? 'teach' : 'bars');
+    setBusy(key || path); setMsg(''); setMsgAt(path === 'replay' ? 'replay' : path === 'teach' ? 'teach' : key === 'reset' ? 'reset' : 'bars');
     return apiFetch('/api/laya/settings/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
       .then(x => {
@@ -60410,8 +60410,15 @@ function SettingsTabLaya({s, save} = {}) {
   const two = v => Number(v).toFixed(2);
   // The outcome of a press sits beside the control that caused it, not at the top of a long tab.
   const note = where => msg && msgAt === where ? E('div', {role:'status', 'data-laya-note': where, style:{fontSize:11, color:'#f59e0b', marginTop:6}}, msg) : null;
-  if (err && !d) return E('div', {role:'status', style:dim}, err);
-  if (!d) return E('div', {style:dim}, 'Checking.');
+  // The panels that moved here from Privacy & Data render whatever /api/laya/settings answers: the off switches
+  // for learning and safe writes, and forget and wipe, never wait on the report card.
+  const moved = [
+    React.createElement(StSection, { title: "What Laya learns about you", key: 'moved-learn' }, E(LayaLearningPanel, {key: 'learn' + taught, s: st, save: sv})),
+    React.createElement(StSection, { title: "Instant answers (no model)", key: 'moved-reflex' }, E(LayaReflexPanel, {s: st, save: sv})),
+    React.createElement(StSection, { title: "Laya chat pilot", key: 'moved-pilot' }, E(LayaPilotPanel, {s: st, save: sv})),
+    React.createElement(StSection, { title: "Safe writes (off until you turn them on)", key: 'moved-safe' }, E(LayaSafeWritesPanel, null))];
+  if (err && !d) return E('div', {'data-laya-settings': 'error'}, E('div', {role:'status', style:dim}, err), moved);
+  if (!d) return E('div', {'data-laya-settings': 'loading'}, E('div', {style:dim}, 'Checking.'), moved);
   const w = d.what_runs || {};
   const v = w.versions || {};
   const m = w.matcher || {};
@@ -60496,14 +60503,15 @@ function SettingsTabLaya({s, save} = {}) {
       // click, asked twice; the server checks the click.
       E('div', {style:{display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', marginTop:8}},
         resetAsk ? [
-          E('span', {key:'q', style:dim}, 'Every bar goes back to how she shipped (' + two((bars.rows[0] || {}).shipped || 0.55) + ') and your bars go to shadow.'),
+          E('span', {key:'q', style:dim}, 'Every bar you set goes back to how she shipped (' + two((bars.rows[0] || {}).shipped || 0.55) + ') and your bars go to shadow. A score her own learning raised stays.'),
           E('button', {key:'y', type:'button', className:'settings-btn', style:{fontSize:11}, 'data-laya-action':'reset-bars', disabled: !!busy,
-            onClick: () => { setResetAsk(false); const b = {}; (bars.rows || []).forEach(r => { if (r.yours !== null && r.yours !== undefined) b[r.tool] = null; }); post('bars', {bars: b, mode: 'shadow'}, 'reset'); }},
+            onClick: () => { setResetAsk(false); post('bars', {reset: true}, 'reset'); }},
             'Yes, reset my bars'),
           E('button', {key:'n', type:'button', className:'settings-btn', style:{fontSize:11}, onClick: () => setResetAsk(false)}, 'Keep them')]
         : E('button', {type:'button', className:'settings-btn', style:{fontSize:11}, 'data-laya-action':'reset-bars-ask',
             disabled: !!busy || (bars.mode === 'shadow' && !(bars.rows || []).some(r => r.yours !== null && r.yours !== undefined)),
-            onClick: () => setResetAsk(true)}, 'Reset my bars to how she shipped'))),
+            onClick: () => setResetAsk(true)}, 'Reset my bars to how she shipped')),
+      note('reset')),
     React.createElement(StSection, { title: "Teach her a phrase", desc: 'Type something you say and pick what you mean by it. She keeps it like a correction: sealed in your vault on this PC, checked against her test questions before she uses it, and not at all if it reads as sensitive. To correct a phrase she learned, forget it below and teach the right one. By voice, correcting her right after a turn ("no, I meant my calendar") does the same.' },
       E('div', {style:{display:'flex', gap:8, flexWrap:'wrap', alignItems:'center'}},
         E('input', {type:'text', 'aria-label':'Phrase to teach', placeholder:'For example: pull up my week', value: teachText, maxLength: 200,
@@ -60515,10 +60523,7 @@ function SettingsTabLaya({s, save} = {}) {
           onClick: () => post('teach', {text: teachText, label: teachLabel}, 'teach')}, busy === 'teach' ? 'Teaching…' : 'Teach her')),
       note('teach')),
     // Moved here from Privacy & Data (Slice 2): the same panels, with the same settings and routes.
-    React.createElement(StSection, { title: "What Laya learns about you" }, E(LayaLearningPanel, {key: 'learn' + taught, s: st, save: sv})),
-    React.createElement(StSection, { title: "Instant answers (no model)" }, E(LayaReflexPanel, {s: st, save: sv})),
-    React.createElement(StSection, { title: "Laya chat pilot" }, E(LayaPilotPanel, {s: st, save: sv})),
-    React.createElement(StSection, { title: "Safe writes (off until you turn them on)" }, E(LayaSafeWritesPanel, null)),
+    moved,
     React.createElement(StSection, { title: "Coming next", desc: 'These arrive in later updates. Nothing here is switched on.' },
       E('div', {style:dim}, 'Export or import a tuning profile.'),
       E('div', {style:Object.assign({}, card, {marginTop:8}), 'data-laya-card':'train'},

@@ -29,15 +29,17 @@ def test_the_rail_opens_the_laya_tab(page):
     assert re.search(r"tab === 'laya' && /\*#__PURE__\*/React\.createElement\(SettingsTabLaya, \{ s: s, save: save \}\)", text)
 
 
-def test_every_section_is_titled_for_voice_in_order():
+def test_every_section_is_titled_for_voice_once():
+    # Source order differs from screen order (the moved panels are built first so they render even while the
+    # report card loads); the screen order is pinned by tests/app/specs/laya_settings.spec.ts.
     titles = re.findall(r'createElement\(StSection, \{\s*title: "([^"]+)"', _panel("index.html"))
-    assert titles == TITLES
+    assert sorted(titles) == sorted(TITLES) and len(titles) == len(set(titles))
 
 
 def test_voice_finds_the_tab_and_its_sections(monkeypatch):
     from agent_friday.services import desktop_targets as dt
     monkeypatch.chdir(ROOT)
-    assert dt.settings_parts().get("laya") == TITLES
+    assert sorted(dt.settings_parts().get("laya")) == sorted(TITLES)
     tabs = [{"id": "privacy", "label": "Privacy & Data"}, {"id": "laya", "label": "Laya"},
             {"id": "connections", "label": "Connections"}]
     monkeypatch.setattr(dt, "_manifest", lambda: {"workspaces": {"settings": {"sections": tabs}}})

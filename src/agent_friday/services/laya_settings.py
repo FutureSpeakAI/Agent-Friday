@@ -227,13 +227,12 @@ TEACH_NOTHING = "conversation"
 def teach_labels() -> List[dict]:
     """What a taught phrase may mean: every action the router can choose that may be a label
     (laya_personal._can_label), and "just talk to me" (no action)."""
-    lr = _router()
-    try:
+    try:                                                  # never the reason the tab cannot load
+        lr = _router()
         from agent_friday.services import laya_personal as lp
-        ok = lp._can_label
+        out = [{"id": t, "label": _label(t), "class": bar_class(t)} for t in lr.TOOLS if lp._can_label(t)]
     except Exception:
         return []
-    out = [{"id": t, "label": _label(t), "class": bar_class(t)} for t in lr.TOOLS if ok(t)]
     out.append({"id": TEACH_NOTHING, "label": "nothing: just talk to me", "class": "none"})
     return out
 

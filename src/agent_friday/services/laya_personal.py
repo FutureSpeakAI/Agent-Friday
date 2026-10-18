@@ -1182,16 +1182,40 @@ def teach_phrase(text: str, label: str, *, profile: Optional[str] = None) -> dic
     vault = vault_state()
     if vault == "no_key":
         return {"ok": False, "why": "Your vault has not been set up on this PC, so she has nowhere sealed to keep it."}
+    if vault == "open":
+        # The same words for the same action again are not more evidence: three clicks must never stand in for
+        # the three confirmations the graduation guard counts (Decision 13).
+        key = words.lower()
+        for r in store.load_rows(profile) or []:
+            if (not r.get("off") and r.get("label") == label
+                    and " ".join(str(r.get("text") or "").split()).lower() == key):
+                return {"ok": False, "why": "She already has that phrase for that action."}
     _kick_first_notice(profile)
+    flush_capture(CONTROL_FLUSH_S)                       # rows said before this click land first, in order
     ent = {"text": words, "surface": "typed", "decision": None, "tool": None, "confidence": None, "layer": "owner"}
-    _capture(profile, "correction", ent, label=label, outcome="meant", source="owner")
-    if vault == "locked":
-        flush_capture(CONTROL_FLUSH_S)
-        return {"ok": True, "text": "Taken. Your vault is locked, so it waits sealed and she reads it once the vault opens."}
-    if not flush_capture(CONTROL_FLUSH_S):
-        return {"ok": True, "text": "Taken. She is still writing it down; it appears under What she learned in a moment."}
-    return {"ok": True, "text": "Taken. She checks it against her test questions before she uses it; What she learned "
-                                "shows whether she kept it, and why if she did not."}
+    row = _make_row("correction", ent, label=label, outcome="meant", source="owner")
+    # Written now, on this click, so the answer is the writer's own result (deep sensitivity pass, a forgotten
+    # person, learning switched off meanwhile), never a guess; inside the same visible job the writer uses.
+    try:
+        from agent_friday.services.visible_jobs import note_inference, visible_job
+    except Exception:  # noqa: BLE001 - no door, no embedding: fail closed, as the writer does
+        return {"ok": False, "why": "She could not take it right now. Nothing was kept."}
+    res = None
+    try:
+        with visible_job("Laya learning", kind="laya_personal_embed", workspace="settings", queued=False):
+            note_inference("laya-reading-model", local=True)
+            res = _persist(profile, row)
+    except Exception as e:  # noqa: BLE001
+        _log.debug("a taught phrase was not kept: %s", type(e).__name__)
+        res = None
+    if res == "stored":
+        return {"ok": True, "text": "Kept. She checks it against her test questions before she uses it; What she "
+                                    "learned shows the result, and why if she sets it aside."}
+    if res == "staged":
+        return {"ok": True, "text": "Kept sealed. Your vault is locked, so she reads it once the vault opens."}
+    if res and res.startswith("dropped:"):
+        return {"ok": False, "why": "She did not keep it: " + res.split(":", 1)[1] + "."}
+    return {"ok": False, "why": "She did not keep it: a closer check turned it down. Nothing was stored."}
 
 
 #: Capture never runs on the turn's or the tool's thread: a row is queued and one daemon thread embeds it,
@@ -1201,17 +1225,21 @@ _capq: "queue.Queue" = queue.Queue(maxsize=200)
 _writer: List[Optional[threading.Thread]] = [None]
 
 
+def _make_row(kind: str, ent: dict, *, label: Optional[str], outcome: str, source: str) -> dict:
+    return {"id": "lr_" + uuid.uuid4().hex[:12], "at": now_fn(), "kind": kind, "weight": KIND_WEIGHT[kind],
+            "text": ent.get("text"), "vec": None, "label": label, "outcome": outcome, "source": source,
+            "surface": ent.get("surface"), "_epoch": _epoch[0],
+            "routed": {"decision": ent.get("decision"), "tool": ent.get("tool"),
+                       "confidence": ent.get("confidence"), "layer": ent.get("layer")},
+            "u1": {"status": "pending", "reason": "", "at": None}}
+
+
 def _capture(profile: str, kind: str, ent: dict, *, label: Optional[str], outcome: str, source: str) -> None:
     """Make one row and hand it to the writer. The words were checked by the fast pass already."""
     text = ent.get("text")
     if not text:
         return
-    row = {"id": "lr_" + uuid.uuid4().hex[:12], "at": now_fn(), "kind": kind, "weight": KIND_WEIGHT[kind],
-           "text": text, "vec": None, "label": label, "outcome": outcome, "source": source,
-           "surface": ent.get("surface"), "_epoch": _epoch[0],
-           "routed": {"decision": ent.get("decision"), "tool": ent.get("tool"),
-                      "confidence": ent.get("confidence"), "layer": ent.get("layer")},
-           "u1": {"status": "pending", "reason": "", "at": None}}
+    row = _make_row(kind, ent, label=label, outcome=outcome, source=source)
     if capture_inline:
         _persist(profile, row)
         return
@@ -1319,7 +1347,10 @@ def _persist(profile: str, row: dict) -> Optional[str]:
         _count("dropped_inactive")                        # learning went off, or the owner went off the record, since
         return None
     if not text or top_sensitivity(text, deep=True):
-        label = (row.get("routed") or {}).get("tool") or "act"
+        # Counted under the route it was about: what she routed it to, or, for a phrase the owner taught on the
+        # page (no routing of its own), the action it was taught for.
+        taught = row.get("label") if row.get("source") == "owner" and row.get("kind") == "correction" else None
+        label = (row.get("routed") or {}).get("tool") or taught or "act"
         with _lock:
             _skipped[label] = _skipped.get(label, 0) + 1
         return None

@@ -246,7 +246,9 @@ test('reset my bars asks first, then puts every bar back to how she shipped, in 
   expect((await reset).status()).toBe(200);
   await expect(read).toHaveValue('');
   await expect(root.locator('#laya-bars-mode')).toHaveValue('shadow');
-  await expect(root.locator('[data-laya-note="bars"]')).toHaveText('Your bars are back to how she shipped, in shadow.');
+  const done = root.locator('[data-laya-note="reset"]');               // beside the button that caused it
+  await expect(done).toHaveText('Your bars are back to how she shipped, in shadow.');
+  await expect(done).toBeInViewport();
   await expect(root.locator('[data-laya-action="reset-bars-ask"]')).toBeDisabled();   // nothing left to reset
   await shot(page, info, '12-laya-reset-done');
 });

@@ -72,6 +72,22 @@ def test_nothing_is_taught_while_learning_is_off_or_off_the_record(w, monkeypatc
     assert not ls.teach("pull up my week", "query_calendar")["ok"] and w.rows() == []
 
 
+def test_the_same_phrase_for_the_same_action_is_not_taught_twice(w):
+    assert ls.teach("pull up my week", "query_calendar")["ok"]
+    again = ls.teach("Pull up  my week", "query_calendar")
+    assert not again["ok"] and "already" in again["why"]
+    assert ls.teach("pull up my week", "check_email")["ok"]        # the same words for another action are a new lesson
+    assert [r["label"] for r in w.rows()] == ["query_calendar", "check_email"]
+
+
+def test_a_phrase_the_deep_check_turns_down_is_reported_as_not_kept(w, monkeypatch):
+    real = lp.top_sensitivity
+    monkeypatch.setattr(lp, "top_sensitivity", lambda text, deep=False: True if deep else real(text))
+    res = ls.teach("pull up my week", "query_calendar")
+    assert not res["ok"] and "did not keep" in res["why"] and w.rows() == []
+    assert lp._skipped.get("query_calendar") == 1, "counted under the action it was taught for, not as a change"
+
+
 def test_a_locked_vault_keeps_it_sealed_until_it_opens_and_says_so(w):
     w.key[0] = None                                      # locked: the staging key seals it
     res = ls.teach("pull up my week", "query_calendar")
@@ -111,6 +127,53 @@ def client(monkeypatch):
     return c
 
 
+def test_a_real_click_teaches_through_the_route_and_nobody_else_can(w, monkeypatch):
+    from agent_friday.routes import laya_settings as route
+    monkeypatch.setattr("agent_friday.services.screen_click.screen_session", lambda request: True)
+    local, who = [True], ["user"]
+    monkeypatch.setattr("agent_friday.core._is_local_request", lambda: local[0])
+    app = Flask("t2")
+
+    @app.before_request
+    def _who():
+        g.friday_principal = who[0]
+    app.register_blueprint(route.laya_settings_bp)
+    c = app.test_client()
+    body = {"text": "pull up my week", "label": "query_calendar"}
+    who[0] = "observer"
+    assert c.post("/api/laya/settings/teach", json=body).status_code == 403
+    who[0], local[0] = "user", False
+    assert c.post("/api/laya/settings/teach", json=body).status_code == 403
+    assert w.rows() == []
+    local[0] = True
+    r = c.post("/api/laya/settings/teach", json=body)
+    assert r.status_code == 200 and "pull up my week" not in r.get_data(as_text=True)
+    assert [(x["label"], x["source"]) for x in w.rows()] == [("query_calendar", "owner")]
+
+
+def test_reset_clears_every_stored_bar_even_one_the_page_did_not_show(tmp_path, monkeypatch):
+    import json
+    from agent_friday.routes import laya_settings as route
+    monkeypatch.setattr("agent_friday.core.FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr("agent_friday.core._is_local_request", lambda: True)
+    monkeypatch.setattr("agent_friday.services.laya.mutation_class", lambda t: "read" if t == "query_calendar" else "write")
+    clicked = [False]
+    monkeypatch.setattr("agent_friday.services.screen_click.screen_session", lambda request: clicked[0])
+    ls._cache.update(checked=0.0, mtime=None, path=None, data=None)
+    ls.set_bars({"query_calendar": 0.45, "set_chat_tray": 0.80}, mode="act")
+    app = Flask("t3")
+
+    @app.before_request
+    def _who():
+        g.friday_principal = "user"
+    app.register_blueprint(route.laya_settings_bp)
+    c = app.test_client()
+    assert c.post("/api/laya/settings/bars", json={"reset": True}).status_code == 403   # a stricter bar goes: a click
+    clicked[0] = True
+    assert c.post("/api/laya/settings/bars", json={"reset": True}).status_code == 200
+    assert json.loads(ls.bars_path().read_text(encoding="utf-8")) == {"mode": "shadow", "bars": {}}
+
+
 def test_teaching_takes_a_click_on_the_page(client):
     r = client.post("/api/laya/settings/teach", json={"text": "pull up my week", "label": "query_calendar"})
     assert r.status_code == 403 and client.seen == []
@@ -145,10 +208,17 @@ def test_the_laya_tab_receives_the_settings_the_moved_panels_use(page):
     assert "tab === 'laya' && /*#__PURE__*/React.createElement(SettingsTabLaya, { s: s, save: save })" in text
 
 
-def test_reset_asks_first_and_sends_every_bar_back_to_shipped_in_shadow():
+def test_reset_asks_first_and_asks_the_server_to_reset_everything():
     p = _fn("index.html", "SettingsTabLaya")
     assert "'Reset my bars to how she shipped'" in p and "'Yes, reset my bars'" in p and "setResetAsk(true)" in p
-    assert re.search(r"b\[r\.tool\] = null; \}\); post\('bars', \{bars: b, mode: 'shadow'\}, 'reset'\)", p)
+    assert "post('bars', {reset: true}, 'reset')" in p and "note('reset')" in p
+
+
+def test_the_moved_panels_render_even_while_the_report_card_cannot_load():
+    p = _fn("index.html", "SettingsTabLaya")
+    assert "if (err && !d) return E('div', {'data-laya-settings': 'error'}, E('div', {role:'status', style:dim}, err), moved);" in p
+    assert "if (!d) return E('div', {'data-laya-settings': 'loading'}, E('div', {style:dim}, 'Checking.'), moved);" in p
+    assert p.index("const moved = [") < p.index("if (err && !d)")
 
 
 def test_teach_picks_nothing_for_you_and_posts_to_its_own_route():
