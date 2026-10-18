@@ -123,6 +123,12 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
+      # Friday's server answers one request per connection (services/pooled_server.py), and on
+      # Windows each closed loopback connection holds its port for 2 minutes. The Settings walk
+      # reloads the page hundreds of times, which used up the runner's 16,384 dynamic ports, and the
+      # next page's requests failed with net::ERR_NO_BUFFER_SPACE. Give the runner the full range.
+      - name: Give the runner the full dynamic port range
+        run: netsh int ipv4 set dynamicport tcp start=10000 num=55535
       - name: Run the app specs
         env:
           FRIDAY_PYTHON: python
