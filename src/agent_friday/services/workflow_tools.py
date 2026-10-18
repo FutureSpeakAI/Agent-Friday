@@ -180,6 +180,14 @@ def read_skill(inp):
                                     _sr.fingerprint(skill))
     except Exception:
         pass
+    try:
+        # One use of a learned skill: its record credits this task's outcome
+        # to it when the task finishes (services/lesson_records).
+        from agent_friday.services import lesson_records
+        if skill_registry.friday_wrote(skill):
+            lesson_records.note_use("skill", skill.name)
+    except Exception:
+        pass
     return json.dumps({"found": True, "name": skill.name, "version": skill.version,
                        "description": skill.description, "procedure": skill.body,
                        "tool_chain": skill.tool_chain, "success_criteria": skill.success_criteria,

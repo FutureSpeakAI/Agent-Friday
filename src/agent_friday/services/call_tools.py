@@ -64,14 +64,12 @@ def _tool_call_mode(inp):
 TOOLS = [
     {"name": "call_mode",
      "description": (
-         "Friday standing back for a call on this computer: the webcam and mic are "
-         "released, the 3D scene holds still, the local brain seat is parked so its "
-         "VRAM and RAM are free, and a chip on screen says so. action=status says "
-         "whether Friday is standing back and how call mode is set; start stands "
-         "back now (optional app, e.g. 'Zoom'); end brings everything back; set_mode "
-         "changes the setting: automatic (stand back on its own when a call starts, "
-         "recommended), ask (ask first, once per call), or off. Say the result in one "
-         "plain sentence."),
+         "Friday standing back for a call on this computer: webcam and mic released, "
+         "the 3D scene still, the local brain seat parked to free its VRAM and RAM, a "
+         "chip on screen saying so. action: status (standing back or not, and the "
+         "setting); start (now; optional app, e.g. 'Zoom'); end (bring everything "
+         "back); set_mode (automatic: stand back when a call starts, recommended; ask: "
+         "ask first, once per call; off). Say the result in one plain sentence."),
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": list(ACTIONS)},
          "mode": {"type": "string", "enum": ["automatic", "ask", "off"]},
