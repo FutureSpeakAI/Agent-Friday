@@ -20237,6 +20237,7 @@ function SettingsLocks(){
   const post=(url,body)=>apiFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.json());
   const askHeld=path=>post('/api/locks/raw-holds/ask',{path}).then(x=>setMsg(x.ok?'A card asking about that file is on screen.':(x.message||'No card could be raised.'))).catch(()=>setMsg('Could not reach the server.'));
   const resetHeld=()=>post('/api/locks/raw-holds/reset').then(x=>setMsg(x.ok?'A card is on screen that says exactly what starting fresh lets go. Nothing changes until you approve it there.':'No card could be raised.')).catch(()=>setMsg('Could not reach the server.'));
+  const removeNever=entry=>post('/api/locks/never-send/remove',{entry}).then(x=>{setMsg(x.message||(x.ok?'Removed.':'It was not removed.'));if(x.ok)load();}).catch(()=>setMsg('Could not reach the server.'));
   return <StSection title="Locks" desc="How your things are locked on this PC, in plain words, and what that cannot stop.">
     {!d&&<div className="sc-sub">{msg||'Reading…'}</div>}
     {d&&<ul className="lk-lines">{(d.lines||[]).map(l=><li key={l.key} className={'lk-line lk-'+l.state}>
@@ -20244,6 +20245,7 @@ function SettingsLocks(){
       <div className="lk-words">{l.words}</div>
       {l.today_words&&<div className="lk-words">{l.today_words}</div>}
       {l.today&&l.today.length>0&&<ul className="lk-sub">{l.today.map(t=><li key={t.destination}>{t.destination+': '+t.sent+' sent'+(t.stopped?', '+t.stopped+' stopped':'')}</li>)}</ul>}
+      {l.never_send&&l.never_send.length>0&&<ul className="lk-sub" aria-label="Your never-send list">{l.never_send.map(n=><li key={n.entry}>{n.label+' '}<button type="button" className="btn" style={{fontSize:11}} aria-label={'Remove '+n.label+' from the never-send list'} onClick={()=>removeNever(n.entry)}>Remove</button></li>)}</ul>}
       {l.checks&&<ul className="lk-sub">{l.checks.map(c=><li key={c.name}>{c.name+': '+(c.ok===true?'checks out ('+c.count+' line'+(c.count===1?'':'s')+')':c.ok===false?'changed ('+c.why+')':'could not check')}</li>)}</ul>}
       {l.held_files&&l.held_files.length>0&&<ul className="lk-sub" aria-label="Held files">{l.held_files.map(f=><li key={f}>{f+' '}<button type="button" className="btn" style={{fontSize:11}} aria-label={'Ask me about '+f} onClick={()=>askHeld(f)}>Ask me about this file</button></li>)}</ul>}
       {l.can_reset&&<button type="button" className="btn" style={{fontSize:11,marginTop:6}} onClick={resetHeld}>Start the list fresh…</button>}
