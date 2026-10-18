@@ -206,3 +206,74 @@ def test_both_chat_routes_name_the_conversation_as_soon_as_it_is_resolved():
     for at in [i for i in range(len(src)) if src.startswith(named, i)]:
         nxt = src[at + len(named):at + len(named) + 400]
         assert "_cloud_release_conversation(_conversation_id)" in nxt
+
+
+# ── a typed Send of a held detail names where it goes ─────────────────────────────────────
+
+def _typed(card_id, words, decision="approve"):
+    """The owner's typed words reach answer_card the way a chat turn does (agent._tool_answer_card)."""
+    from agent_friday.services import agent
+    toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_OWNER_TEXT.set(words)]
+    try:
+        return agent._tool_answer_card({"card_id": card_id, "decision": decision})
+    finally:
+        agent._CURRENT_OWNER_TEXT.reset(toks[1])
+        agent._CURRENT_SURFACE.reset(toks[0])
+
+
+def test_a_bare_typed_yes_releases_no_held_detail(gate):
+    _turn(_clock(1))
+    cid = _cards()[0]["approval_id"]
+    for words in ("yes", "ok", "continue", "yes, go ahead", "yes"):    # a model's "shall I continue?"
+        said = _typed(cid, words)
+        assert ap.get_approval(cid)["status"] == "pending", "a bare %r sent a held detail" % words
+        assert said.startswith("NOT SENT") and 'Type "send it to Anthropic"' in said, said
+    assert MARK not in _sent_system(_turn(_clock(1)))
+
+
+def test_a_typed_send_naming_the_cards_provider_releases_exactly_that_text_there(gate):
+    _turn(_clock(1))
+    cid = _cards()[0]["approval_id"]
+    said = _typed(cid, "Yes, send it to anthropic.")
+    assert ap.get_approval(cid)["status"] == "approved", said
+    assert ap.get_approval(cid)["decided_by"] == "owner:chat"
+    assert _clock(1) in _sent_system(_turn(_clock(1)))
+    # That card's text, to that provider, in that conversation only.
+    assert MARK not in _sent_system(_turn(_clock(1), conversation="conv-2"))
+    assert MARK not in _sent_system(_turn(_clock(1), provider="openrouter", model="some/model"))
+    assert MARK not in _sent_system(_turn("The PRIVATE-MARK note today is alpha."))
+
+
+def test_naming_a_different_provider_releases_nothing(gate):
+    _turn(_clock(1))
+    cid = _cards()[0]["approval_id"]
+    for words in ("send it to OpenRouter", "send it to Anthropic or OpenRouter",
+                  "send it to Anthropic but not the clinic part", "don't send it to Anthropic"):
+        said = _typed(cid, words)
+        assert ap.get_approval(cid)["status"] == "pending", words
+        assert "send it to Anthropic" in said
+    assert MARK not in _sent_system(_turn(_clock(1)))
+
+
+def test_the_matcher_wants_send_and_the_cards_provider_as_whole_words():
+    yes = [("send it to Anthropic", "anthropic"), ("yes, send to OpenRouter", "openrouter"),
+           ("ok send this to Claude", "anthropic"), ("SEND IT TO THE OPEN ROUTER API", "openrouter")]
+    no = [("yes", "anthropic"), ("send it", "anthropic"), ("send it to Anthropicx", "anthropic"),
+          ("send it to anthropic-mirror", "anthropic"), ("send it to Anthropic?", "anthropic"),
+          ("send it to Anthropic", ""), ("send it to Anthropic and summarise my email", "anthropic")]
+    assert all(cr.typed_send_names_provider(w, p) for w, p in yes)
+    assert not any(cr.typed_send_names_provider(w, p) for w, p in no)
+
+
+def test_a_money_card_answered_in_typed_words_keeps_its_read_back_rule(gate):
+    # The money-paragraph card shares answer_in_words but not the held-detail rule: a typed yes after
+    # the read-back still sends it once, without naming a provider.
+    card = cr._raise_card([{"hash": "h-money-1", "text": "The hall deposit of $400 is due by 1 May.",
+                            "thread": "mail:acct_a:t-hall", "sender": "robin@example.test",
+                            "path": "messages[0].text"}], provider="anthropic")
+    cid = card["approval_id"]
+    first = _typed(cid, "yes")
+    assert first.startswith("NOT SENT YET") and ap.get_approval(cid)["status"] == "pending", first
+    done = _typed(cid, "yes please")
+    assert ap.get_approval(cid)["status"] == "approved", done
+    assert "sent once" in done.lower()
