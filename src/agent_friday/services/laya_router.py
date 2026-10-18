@@ -1328,7 +1328,7 @@ def _act_threshold() -> float:
 
 def _tier1(text: str) -> Route:
     _PROFILE.vec = None
-    r = _decide(_score(text), text, _act_threshold())
+    r = _decide(_score(text), text, _act_threshold(), **_bars_kw())
     pid = getattr(_PROFILE, "pid", None)
     if pid and r.decision == "tool":
         r = _graduation_guard(pid, text, r, getattr(_PROFILE, "vec", None))
@@ -1346,7 +1346,7 @@ def _no_new_action(text: str, r: Route, vec) -> Route:
         if vec is None:
             raise RuntimeError("no turn vector")
         labels, protos = _prototypes()
-        base = _decide(_rank(vec, labels, protos), text, _owner_threshold())
+        base = _decide(_rank(vec, labels, protos), text, _owner_threshold(), **_bars_kw())
         if base.decision in ("ask", "no_tool"):
             return base
         return r
@@ -1384,7 +1384,8 @@ def _graduation_guard(pid: str, text: str, r: Route, vec) -> Route:
         if vec is None:
             raise RuntimeError("no turn vector")
         labels, protos = _prototypes()
-        base = _decide(_rank(vec, labels, protos), text, _owner_threshold())
+        # The owner's own bars (Settings > Laya, set to act) are part of "the threshold in force".
+        base = _decide(_rank(vec, labels, protos), text, _owner_threshold(), **_bars_kw())
         if base.decision == "tool" and base.tool == r.tool:
             return r
         if laya_personal.graduation_ok(pid, vec, r.tool):
@@ -1401,10 +1402,15 @@ def _graduation_guard(pid: str, text: str, r: Route, vec) -> Route:
                      reason="the check on a learned guess could not run, so it asks")
 
 
-def _decide(ranked, text: str, act_threshold: float = ACT_THRESHOLD) -> Route:
+def _decide(ranked, text: str, act_threshold: float = ACT_THRESHOLD,
+            bars: Optional[Dict[str, float]] = None) -> Route:
     """The tier-1 decision from a ranking. Pure, so a personal phrasing can be
     re-scored against the shipped sets (services/laya_personal) with the very
-    rules the router uses."""
+    rules the router uses. ``bars`` are the owner's per-action act scores
+    (services/laya_settings.live_bars, empty unless the owner turned them to act):
+    one replaces ``act_threshold`` for its action, except that a threshold the
+    owner's own corrections raised still binds (learning only tightens). The
+    margin and the outward-search rule never change."""
     (best, conf, sim), runner = ranked[0], ranked[1]
     cands = [(l, round(c, 3)) for l, c, _ in ranked[:3]]
     margin = conf - runner[1]
@@ -1425,7 +1431,11 @@ def _decide(ranked, text: str, act_threshold: float = ACT_THRESHOLD) -> Route:
                      question=_ASK_OUTWARD.get(best, "Do you want me to look that up online?"),
                      candidates=cands,
                      reason="a guess at an outward search is asked, never run")
-    if conf >= act_threshold and margin >= MARGIN_THRESHOLD:
+    threshold = act_threshold
+    if bars and best in bars:
+        threshold = (max(float(bars[best]), act_threshold) if act_threshold > ACT_THRESHOLD + 1e-9
+                     else float(bars[best]))
+    if conf >= threshold and margin >= MARGIN_THRESHOLD:
         r = _with_args(best, template(text), round(conf, 3), "laya2", label, required,
                        reason="nearest prototype", text=text)
         r.candidates = cands
@@ -1463,6 +1473,12 @@ def _tier1_head(text: str) -> Route:
             # threshold and guards apply.
             if (r.decision == "tool" and getattr(_PROFILE, "pid", None)
                     and _act_threshold() > ACT_THRESHOLD and float(r.confidence or 0.0) < _act_threshold()):
+                return _tier1(text)
+            # A bar the owner RAISED binds the head too (Settings > Laya): below it, the prototypes decide.
+            # A lowered bar never makes the head bolder; its own certified threshold stands.
+            bars = getattr(_PROFILE, "bars", None) or {}
+            if (r.decision == "tool" and r.tool in bars and float(bars[r.tool]) > ACT_THRESHOLD
+                    and float(r.confidence or 0.0) < float(bars[r.tool])):
                 return _tier1(text)
             return r
     except Exception as e:  # noqa: BLE001
@@ -1597,6 +1613,31 @@ def _with_profile(profile_id, fn, *args):
         _PROFILE.pid = None
 
 
+def _with_profile_bars(profile_id, bars, fn, *args):
+    """``_with_profile`` plus the owner's per-action bars for this one call."""
+    _PROFILE.bars = bars or None
+    try:
+        return _with_profile(profile_id, fn, *args)
+    finally:
+        _PROFILE.bars = None
+
+
+def _bars_kw() -> dict:
+    """``{"bars": ...}`` for a ``_decide`` call when this worker call carries the owner's bars, else ``{}``
+    (so a call with no bars is exactly the call it always was)."""
+    bars = getattr(_PROFILE, "bars", None)
+    return {"bars": bars} if bars else {}
+
+
+def _live_bars() -> Optional[Dict[str, float]]:
+    """The owner's bars when they turned them to act (Settings > Laya), else None. Never raises."""
+    try:
+        from agent_friday.services import laya_settings
+        return laya_settings.live_bars() or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def note_learn(text: str, r: Route, surface: str, conversation_id: Optional[str] = None,
                owner: bool = False) -> None:
     """Offer a logged decision to the opt-in correction capture (services/laya_router_learn). Never raises."""
@@ -1684,7 +1725,8 @@ def route(text: str, *, tools: Optional[Sequence[str]] = None,
                           reason="encoder missing: Laya's reading model is not installed "
                                  "(Settings > Models)")
             else:
-                r = _pool().submit(_with_profile, PROFILE_CTX.get(), _tier1_head if use_head else _tier1,
+                r = _pool().submit(_with_profile_bars, PROFILE_CTX.get(), _live_bars(),
+                                   _tier1_head if use_head else _tier1,
                                    text).result(timeout=max(0.0, budget_ms) / 1000.0)
         except _FutureTimeout:
             r = Route("no_tool", layer="degraded", reason="encoder over budget")

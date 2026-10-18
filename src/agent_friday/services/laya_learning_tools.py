@@ -75,8 +75,21 @@ def _tool_laya_learning(inp=None) -> str:
     res = lp.run_control(op, str(turn["text"]))
     text = str(res.get("text") or ("Done." if res.get("ok") else "That did not work."))
     if res.get("ok"):
+        if op == "summary":
+            text = _with_replay_line(text)
         return ("LEARNED: " if op == "summary" else "DONE: ") + text
     return text if text.startswith(("NEEDS_SCREEN", "NOT DONE")) else "NOT DONE: " + text
+
+
+def _with_replay_line(text: str) -> str:
+    """The summary, plus one sentence on her last replay test (Settings > Laya) when there is one.
+    Counts only; no words of the owner. Rides the existing op, so it costs no tool tokens."""
+    try:
+        from agent_friday.services import laya_settings
+        line = laya_settings.spoken_report_line()
+    except Exception:
+        line = ""
+    return (text.rstrip() + " " + line) if line else text
 
 
 HANDLERS = {"laya_learning": _tool_laya_learning}
