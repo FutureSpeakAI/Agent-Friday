@@ -46,7 +46,11 @@ def test_a_scripted_episode_runs_the_real_loop_and_passes(tmp_path):
     assert [p["tool"] for p in ep["proposed"]][:3] == ["search_email", "read_email", "create_calendar_event"]
     assert ep["executed"][0]["tool"] == "search_email", "the read never reached the virtual world"
     assert ep["core_in_prompt"] is True
-    assert ep["egress_refused"] == []
+    # A scripted episode has no endpoint, so nothing at all is allowed. Code in
+    # the app may still try the loopback (a seat or health probe); the guard
+    # refuses it. Nothing tried to leave the machine.
+    loopback = ("dns:localhost", "dns:127.0.0.1", "127.0.0.1:", "localhost:", "::1:", "dns:::1")
+    assert all(str(r).startswith(loopback) for r in ep["egress_refused"]), ep["egress_refused"]
     assert res["grade"]["status"] == "graded" and res["grade"]["pass"] is True, res["grade"]
 
 

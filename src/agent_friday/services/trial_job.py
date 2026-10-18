@@ -117,8 +117,22 @@ def run_pending_trials() -> dict:
         from agent_friday.task_eval.runner import run_episode
 
         def run_one(**kw):
-            return run_episode(endpoint=seat["endpoint"], model=seat["model"],
-                               yield_file=str(yf), **kw)
+            # Each episode child calls the seat itself, so the seat is taken
+            # HERE, in this visible job: through the Local AI queue (it waits
+            # while an interactive turn holds the seat or the PC is not idle),
+            # then held by the scheduler for the length of the episode.
+            from agent_friday.services import background_gate as _bg, local_scheduler as _ls
+            _bg.before_local_model_call(seat["model"])
+            grant = _ls.admit("practice_trial", model=seat["model"], cls="background",
+                              label="Practice-task trial")
+            try:
+                return run_episode(endpoint=seat["endpoint"], model=seat["model"],
+                                   yield_file=str(yf), **kw)
+            finally:
+                try:
+                    grant.release()
+                except Exception:
+                    pass
         for cand in pending:
             if cand.get("cloud"):
                 continue          # cloud trials run only when the owner starts them (HD2)
