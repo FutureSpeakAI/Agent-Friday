@@ -35,6 +35,11 @@ TRIAL_KEY = b"t" * 32
 #: sha256 of the core-instructions constant as it stood in model_router at
 #: 5c542fce1 (main, 2026-10-18), before the move. The files must join to it.
 OLD_CONSTANT_SHA256 = "6c4f77dbf77812667d1d3d7dd9f5e9487ebeae142e76c5f107832d6a1799aec7"
+#: The shipped core since then. 80_self_improvement v2 (2026-10-18, decision
+#: HD1): "A new or edited skill takes effect on the next turn." became "...
+#: waits for a test and the owner's approval." because it no longer goes live
+#: at once. Every later change to a shipped section updates this pin.
+SHIPPED_CORE_SHA256 = "e4591f5ad1b23d532e96047c8eae478336e0f278bb00867443802f5c9a521d87"
 
 UNLOCKED = "50_say_before_acting"
 LOCKED = "20_autonomous_operation"
@@ -91,9 +96,11 @@ def _candidate() -> str:
 
 # ── the move is a no-op ─────────────────────────────────────────────────────
 
-def test_the_shipped_files_join_to_the_old_constant_byte_for_byte(home):
+def test_the_shipped_files_join_to_the_pinned_core_byte_for_byte(home):
     core = _core()
-    assert hashlib.sha256(core.encode("utf-8")).hexdigest() == OLD_CONSTANT_SHA256
+    assert hashlib.sha256(core.encode("utf-8")).hexdigest() == SHIPPED_CORE_SHA256
+    man = json.loads((SHIPPED / "manifest.json").read_text(encoding="utf-8"))
+    assert man["core_sha256"] == SHIPPED_CORE_SHA256
 
 
 @pytest.mark.parametrize("provider", ["local", "anthropic", "openai", "gemini"])
@@ -103,7 +110,7 @@ def test_the_live_path_starts_with_the_unchanged_core(home, provider, workspace)
                                          tools_block=False)
     core = _core()
     assert prompt.startswith(core)
-    assert hashlib.sha256(core.encode("utf-8")).hexdigest() == OLD_CONSTANT_SHA256
+    assert hashlib.sha256(core.encode("utf-8")).hexdigest() == SHIPPED_CORE_SHA256
 
 
 def _manifest_mismatches(folder: Path) -> list:

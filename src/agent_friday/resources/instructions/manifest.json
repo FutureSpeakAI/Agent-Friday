@@ -92,9 +92,9 @@
       "title": "Self-improvement (skills)",
       "slot": "always_on",
       "order": 8,
-      "version": 1,
-      "sha256": "7b0cda18e8ab4c211d838882b6309c8de01b8ff019f0e8bb5e1b6189ce52f8d5",
-      "chars": 301,
+      "version": 2,
+      "sha256": "b748a01899ab2d06ad90ae79147941b37d78c4054488c9673ee9f46544bef643",
+      "chars": 313,
       "locked": false,
       "owner": "shipped"
     },
@@ -123,7 +123,7 @@
       "owner": "shipped"
     }
   ],
-  "core_sha256": "6c4f77dbf77812667d1d3d7dd9f5e9487ebeae142e76c5f107832d6a1799aec7",
+  "core_sha256": "e4591f5ad1b23d532e96047c8eae478336e0f278bb00867443802f5c9a521d87",
   "policies": [
     {
       "id": "policy/action_permission",

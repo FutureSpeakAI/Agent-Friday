@@ -175,6 +175,11 @@ def run(job: dict) -> dict:
                 rec["first_model_call"] = True
                 log("first_model_call", at=state["t0"])
             rec["rounds"] += 1
+            yf = job.get("yield_file")
+            if yf and os.path.exists(yf):
+                # The owner started an interactive turn: the seat is theirs.
+                state["transport"] = "preempted by an interactive turn"
+                raise _Transport(state["transport"])
             try:
                 resp = inner(convo_, oai_tools_)
             except _Transport as e:

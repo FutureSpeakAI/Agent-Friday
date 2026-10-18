@@ -34,11 +34,12 @@ def _h(obj) -> str:
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def texts_hash(texts: Optional[Dict[str, str]]) -> str:
-    return _h({k: hashlib.sha256(v.encode("utf-8")).hexdigest() for k, v in sorted((texts or {}).items())})
+def texts_hash(texts: Optional[dict]) -> str:
+    """Hash of an arm: a {section: text} map or an overlay {"instructions": ..., "files": ...}."""
+    return _h(texts or {})
 
 
-def fingerprint(task: dict, arm_texts: Optional[Dict[str, str]], model: str, repeat: int, arm: str) -> str:
+def fingerprint(task: dict, arm_texts: Optional[dict], model: str, repeat: int, arm: str) -> str:
     return _h({"task": task["id"], "task_hash": task_hash(task), "texts": texts_hash(arm_texts),
                "model": model, "repeat": int(repeat), "arm": arm})[:32]
 
@@ -129,7 +130,7 @@ def run_pairs(*, run_dir: Path, tasks: List[dict], arm_texts: Dict[str, Optional
         if should_yield() or (deadline and time.time() > deadline) or (max_episodes is not None and ran >= max_episodes):
             complete = False
             break
-        res = run_one(task=task, arm=arm, repeat=rep, instructions=arm_texts.get(arm),
+        res = run_one(task=task, arm=arm, repeat=rep, overlay=arm_texts.get(arm),
                       out_dir=Path(run_dir) / "episodes" / fp)
         store(run_dir, fp, res)
         grades[(tid, rep, arm)] = res["grade"]

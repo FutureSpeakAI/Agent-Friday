@@ -40,6 +40,10 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "register_with_skillopt", lambda skill: True)
     # The governance key, fixed for the test (absent on the old code).
     monkeypatch.setattr(registry, "_provenance_key", lambda: KEY, raising=False)
+    # These tests pin what the registry writer does once a change is applied.
+    # Since decision HD1 the model's call is queued for a trial and the owner's
+    # click first (tests/unit/test_trials.py); here it applies directly.
+    monkeypatch.setattr(agent, "SKILL_CHANGES_WAIT_FOR_OWNER", False, raising=False)
     (friday / "skills").mkdir()
     return friday / "skills"
 

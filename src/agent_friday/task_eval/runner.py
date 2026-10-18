@@ -80,6 +80,25 @@ def write_candidate_instructions(home: Path, texts: Dict[str, str], key: bytes) 
             "mac": inf.sign(sid, text, "trial", key)}), encoding="utf-8")
 
 
+#: Where an overlay file may go inside the child's scratch home.
+OVERLAY_ROOTS = ("skills", "core_memory")
+
+
+def write_overlay_files(home: Path, files: Dict[str, str]) -> None:
+    """Arm files (a candidate skill, a lesson file) go into the CHILD's scratch
+    home only, at plain relative paths under skills/ or core_memory/."""
+    for rel, text in (files or {}).items():
+        p = str(rel).replace("\\", "/")
+        parts = p.split("/")
+        if p.startswith("/") or ":" in p or ".." in parts or parts[0] not in OVERLAY_ROOTS:
+            raise ValueError(f"overlay path {rel!r} is not allowed")
+        dest = home.joinpath(*parts)
+        if home.resolve() not in dest.resolve().parents:
+            raise ValueError(f"overlay path {rel!r} escapes the scratch home")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(str(text).encode("utf-8"))
+
+
 def grade_episode(episode_path: Path, *, pack: str = "dev", answers_dir: Optional[str] = None,
                   python: Optional[str] = None, timeout: int = 120) -> dict:
     """Ask the grader process. Any failure of the grader is MISSING."""
@@ -122,8 +141,15 @@ def run_episode(task: dict, *, arm: str, repeat: int, instructions: Optional[Dic
                 endpoint: str = "", model: str = "", scripted: Optional[List[dict]] = None,
                 out_dir: Path, pack: str = "dev", answers_dir: Optional[str] = None,
                 python: Optional[str] = None, keep_scratch: bool = False,
-                max_tokens: int = 2048, temperature: Optional[float] = None) -> dict:
-    """Run one episode and grade it. Returns {"episode": path, "grade": {...}, "outcome": ...}."""
+                max_tokens: int = 2048, temperature: Optional[float] = None,
+                overlay: Optional[dict] = None, yield_file: Optional[str] = None) -> dict:
+    """Run one episode and grade it. Returns {"episode": path, "grade": {...}, "outcome": ...}.
+
+    `overlay` is an arm: {"instructions": {section: text}, "files": {path: text}}.
+    `yield_file`: when that file exists the child stops at its next model call
+    and the episode is missing ("preempted"), so an interactive turn wins."""
+    if overlay:
+        instructions = dict(instructions or {}, **(overlay.get("instructions") or {}))
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="friday-trial-"))
@@ -132,9 +158,10 @@ def run_episode(task: dict, *, arm: str, repeat: int, instructions: Optional[Dic
     try:
         env = child_env(scratch, key)
         write_candidate_instructions(scratch / "friday", instructions or {}, key)
+        write_overlay_files(scratch / "friday", (overlay or {}).get("files") or {})
         job = {"task": task, "arm": arm, "repeat": repeat, "pack": pack, "endpoint": endpoint,
                "model": model, "scripted": scripted, "out": str(episode_path),
-               "max_tokens": max_tokens, "temperature": temperature}
+               "max_tokens": max_tokens, "temperature": temperature, "yield_file": yield_file}
         job_path = scratch / "job.json"
         job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
         backstop = IMPORT_ALLOWANCE_S + float(task.get("wall_seconds", 360)) + 60

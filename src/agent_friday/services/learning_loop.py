@@ -521,14 +521,23 @@ def pending_proposals() -> List[Dict[str, Any]]:
 
 
 def decide_proposal(skill_id: str, decision: str, *,
-                    pattern: Optional[str] = None) -> Dict[str, Any]:
+                    pattern: Optional[str] = None, decided_by: str = "owner") -> Dict[str, Any]:
     """The owner's decision on a skill's pending proposal.
 
     accept: apply it. edit: replace an "add" proposal's wording with the
     owner's, then apply it. reject: keep the active set as it is (a rejected
-    addition is never proposed again). defer: leave the card pending."""
+    addition is never proposed again). defer: leave the card pending.
+
+    The card is screen-only (approvals.SCREEN_ONLY_KINDS): accept and edit
+    take effect only when `decided_by` is the owner's click ("owner:ui");
+    reject is open to every channel."""
     if decision not in ("accept", "edit", "reject", "defer"):
         return {"ok": False, "error": "decision must be accept, edit, reject or defer"}
+    if decision in ("accept", "edit"):
+        from agent_friday.services import approvals as _ap
+        allowed = _ap.SCREEN_ONLY_KINDS.get(PROPOSAL_KIND)
+        if allowed is not None and decided_by not in allowed:
+            return {"ok": False, "error": "a learned heuristic is added only by a click on its card"}
     row = _skill_row(skill_id) if isinstance(skill_id, str) and skill_id else None
     card = _card(row["proposal_id"]) if row else None
     if not card or card.get("status") != "pending":
@@ -558,7 +567,7 @@ def decide_proposal(skill_id: str, decision: str, *,
     from agent_friday.services import approvals
     approvals.decide(card["approval_id"],
                      "deny" if decision == "reject" else "approve",
-                     note=f"learning loop: {decision}")
+                     decided_by=decided_by, note=f"learning loop: {decision}")
     after = _skill_row(skill_id) or {}
     return {"ok": True, "status": after.get("status")}
 
