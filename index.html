@@ -3829,6 +3829,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_code_studio.js"></script>
     <!-- Publish to web: the card body and the Settings section (defines window.FridayPublishCard). -->
     <script src="/static/friday_publish.js"></script>
+    <!-- Friday's instructions: compare with the shipped text and undo (defines window.FridayInstructionsSettings). -->
+    <script src="/static/friday_instructions.js"></script>
     <script src="/static/friday_sites.js"></script>
     <script src="/static/friday_bundles.js"></script>
     <script src="/static/friday_salon.js"></script>
@@ -59716,7 +59718,7 @@ function SettingsTabPrivacy({
   })), window.FridayPublishSettings ? /*#__PURE__*/React.createElement(window.FridayPublishSettings, {
     s: s,
     save: save
-  }) : null, /*#__PURE__*/React.createElement(StSection, {
+  }) : null, window.FridayInstructionsSettings ? /*#__PURE__*/React.createElement(window.FridayInstructionsSettings, null) : null, /*#__PURE__*/React.createElement(StSection, {
     title: "Conversation logging"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Log conversations and tool use",

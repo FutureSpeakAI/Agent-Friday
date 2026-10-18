@@ -142,6 +142,19 @@ Skills are portable. These routes require you to be signed in:
 - `GET /api/skills/<name>/export` downloads a skill as a `.zip`.
 - `POST /api/skills/reload` rescans the skills folders without a restart.
 
+### Learning records
+
+Each skill Friday writes, each lesson she adds to the Working-with-you side of
+the Memory card, and each learned heuristic has a record: when it applies (a
+skill's triggers, a lesson's "when", a heuristic's task type), what taught it
+(the conversation, turn and task ids it came from), and how it has done since
+(how often it was used, and how the tasks that used it ended). A reworded
+lesson keeps the record of the line it replaced, so old and new can be compared
+later. Records are read-only at `GET /api/learning/records`, and
+`GET /api/learning/records/compare?old=<id>&new=<id>` puts two side by side.
+Nothing changes on its own because of a record. A Memory card line you delete
+also deletes its record.
+
 ### Closed-loop learning
 
 Friday records the trajectory of skill runs and feeds the results to the

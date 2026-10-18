@@ -120,6 +120,10 @@ def repin_claws() -> str:
 #: Friday's own tools that act outside the conversation: other people, money,
 #: accounts, publishing, code execution, or no undo.
 OUTWARD_TOOLS = frozenset({
+    # services/web_tasks: proposing a website task is outward (it can lead to
+    # acting on a site as the owner); its plan card is the gate (SELF_GATED),
+    # and every browser step then passes this checkpoint itself.
+    "web_task_start",
     # draft_email is judged by argument (BY_ARGUMENT, classify): saving a
     # draft is an own-mailbox write; send=true is outward and its own card
     # is the gate (SELF_GATED).
@@ -189,6 +193,10 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
                         # only on an approved card for exactly what the page
                         # holds at that moment, and raises that card otherwise.
                         "browser_click", "browser_type",
+                        # services/web_tasks: proposes a website task; an acting
+                        # task starts only on the owner's yes on its plan card,
+                        # and each browser step then passes this gate itself.
+                        "web_task_start",
                         # services/item_actions: a batch, or a change that
                         # reaches past this PC, raises ONE card and runs on
                         # approval; one local change runs with an undo.

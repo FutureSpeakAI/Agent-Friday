@@ -4103,7 +4103,7 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
         _core_shipped = False
     # The shipped text is public, reviewed text. An approved override is the
     # owner's or a tested change's words: it is tier-classified like any other
-    # text rather than declared public (security re-check 2026-10-18, E).
+    # text rather than declared public.
     add(_core_text, _T1 if _core_shipped else classify(_core_text, _T1))
     # A job that passes no tools (the front page, a deep dive, a digest, the
     # calendar note) gets no tool catalogue: it is thousands of tokens of
