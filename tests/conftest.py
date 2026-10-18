@@ -418,14 +418,16 @@ def _task_and_orb_registries() -> list:
     """The two process-wide registries Activity reads besides the Local AI
     queue (services/activity_lane): the task records (``agent.TASKS``, which
     services/visible_jobs registers jobs into) and the process orbs
-    (``core.PROCESSES``). Only modules already imported are touched."""
+    (``core.PROCESSES``). Only modules already imported are touched, and a
+    test that puts a stand-in module in their place (one without the registry)
+    is left alone."""
     out = []
-    agent = sys.modules.get("agent_friday.services.agent")
-    if agent is not None:
-        out.append((agent.TASKS_LOCK, agent.TASKS))
-    core = sys.modules.get("agent_friday.core")
-    if core is not None:
-        out.append((core.PROCESSES_LOCK, core.PROCESSES))
+    for name, lock_attr, reg_attr in (("agent_friday.services.agent", "TASKS_LOCK", "TASKS"),
+                                      ("agent_friday.core", "PROCESSES_LOCK", "PROCESSES")):
+        mod = sys.modules.get(name)
+        lock, reg = getattr(mod, lock_attr, None), getattr(mod, reg_attr, None)
+        if lock is not None and isinstance(reg, dict):
+            out.append((lock, reg))
     return out
 
 
