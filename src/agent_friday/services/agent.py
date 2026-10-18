@@ -9974,21 +9974,12 @@ def _tool_web_task_start(inp):
 
 CLAUDE_TOOLS.append({
     "name": "web_task_start",
-    "description": (
-        "Do a multi-step errand on a website for the user (order, book, fill in, change a "
-        "setting) as a visible background task with a step limit and a proof receipt. Shows "
-        "the user a plan card first; nothing starts before their yes. Only sites on their "
-        "list; paying, sending, submitting and passwords always wait for them."),
+    "description": ("Run a website errand as a task after the user approves its plan card. "
+                    "success: [{text_present|url_contains: ...}]"),
     "input_schema": {"type": "object", "properties": {
-        "goal": {"type": "string", "description": "The errand, in the user's words."},
-        "start_url": {"type": "string"},
-        "sites": {"type": "array", "items": {"type": "string"}},
-        "data": {"type": "object", "description": "Values the user gave to type, by name."},
-        "success": {"type": "array", "items": {"type": "object"},
-                    "description": "Checks: {url_contains|url_matches|text_present: value}."},
-        "wants_to_act": {"type": "boolean", "description": "False for reading only."},
-        "max_steps": {"type": "integer"}, "max_minutes": {"type": "integer"},
-        "money_cap_usd": {"type": "number"}},
+        "goal": {"type": "string"}, "start_url": {"type": "string"}, "sites": {"type": "array"},
+        "data": {"type": "object"}, "success": {"type": "array"},
+        "wants_to_act": {"type": "boolean"}, "money_cap_usd": {"type": "number"}},
         "required": ["goal", "start_url"]},
 })
 CLAUDE_TOOL_HANDLERS["web_task_start"] = _tool_web_task_start

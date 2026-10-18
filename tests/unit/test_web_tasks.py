@@ -180,7 +180,7 @@ def test_done_needs_its_evidence_on_the_final_page_and_writes_a_signed_receipt(i
     assert r["evidence"]["quote"] == "HP 305 black cartridge added"
     assert r["final_picture"].endswith(".jpg") and "final-run_" in r["final_picture"]
     assert wt.verify_signed(r)
-    on_disk = json.loads((isolated / "tasks" / "t1" / "web_receipt.json").read_text())
+    on_disk = json.loads((isolated / "tasks" / "t1" / "web_receipt.json").read_text(encoding="utf-8"))
     assert wt.verify_signed(on_disk)
     on_disk["outcome"] = "done but edited"
     assert not wt.verify_signed(on_disk)
@@ -251,7 +251,7 @@ def test_typed_text_is_masked_in_the_journal():
     m = FakeModel([{"actions": [{"do": "type", "element": 3, "text": "12 Long Street"}]},
                    {"give_up": {"reason": "x"}}])
     wt.run("t7", plan(), ports(b, m))
-    raw = (wt._task_dir("t7") / "web_task.jsonl").read_text()
+    raw = (wt._task_dir("t7") / "web_task.jsonl").read_text(encoding="utf-8")
     assert "12 Long Street" not in raw
 
 
@@ -357,7 +357,7 @@ def test_a_tampered_plan_cannot_resume():
     wt.save_plan("t17", p, approved_by="owner:ui")
     assert wt.load_plan("t17")[0].goal == p.goal
     f = wt._task_dir("t17") / "web_task_plan.json"
-    body = json.loads(f.read_text())
+    body = json.loads(f.read_text(encoding="utf-8"))
     body["plan"]["sites"].append("evil.com")
     f.write_text(json.dumps(body))
     assert wt.load_plan("t17") is None
@@ -455,8 +455,8 @@ def test_an_edited_step_record_blocks_resume(monkeypatch):
     j = wt.Journal("tedit")
     j.append("card", approval_id="a1", title="Place order", outward=True)
     j.append("model", step=1)
-    lines = j.path.read_text().splitlines()
-    j.path.write_text(lines[1] + "\n")           # the "result unknown" card line removed
+    lines = j.path.read_text(encoding="utf-8").splitlines()
+    j.path.write_text(lines[1] + "\n", encoding="utf-8")           # the "result unknown" card line removed
     assert wt.resumability("tedit")["resumable"] is False
     out = wt.run("tedit", plan(), ports(FakeBrowser(SHOP), FakeModel([])), resume=True)
     assert out["receipt"] is None and "changed or cut" in out["result"]
@@ -473,9 +473,9 @@ def test_resume_restores_what_was_used_and_writes_the_interrupted_receipt(isolat
     assert out["receipt"]["outcome"] == "capped"
     assert out["receipt"]["used"]["steps"] <= 8
     receipts = sorted((isolated / "tasks" / "tcap").glob("web_receipt-*.json"))
-    outcomes = sorted(json.loads(r.read_text())["outcome"] for r in receipts)
+    outcomes = sorted(json.loads(r.read_text(encoding="utf-8"))["outcome"] for r in receipts)
     assert outcomes == ["capped", "interrupted"]
-    assert all(wt.verify_signed(json.loads(r.read_text())) for r in receipts)
+    assert all(wt.verify_signed(json.loads(r.read_text(encoding="utf-8"))) for r in receipts)
 
 
 def test_a_read_only_plan_stays_read_only_after_resume(monkeypatch):
@@ -773,12 +773,12 @@ def test_a_cut_journal_tail_is_detected_and_a_torn_line_is_dropped():
     j.append("start")
     j.append("card", approval_id="a1", title="Place order", outward=True)
     assert j.intact()
-    lines = j.path.read_text().splitlines()
-    j.path.write_text(lines[0] + "\n")               # the card line cut away
+    lines = j.path.read_text(encoding="utf-8").splitlines()
+    j.path.write_text(lines[0] + "\n", encoding="utf-8")               # the card line cut away
     assert not j.intact()
     j2 = wt.Journal("tn7b")
     j2.append("start")
-    with open(j2.path, "a") as f:
+    with open(j2.path, "a", encoding="utf-8") as f:
         f.write('{"kind": "act')                     # the process died mid-write
     assert j2.intact() and len(j2.entries()) == 1
     j2.append("model", step=1)
@@ -790,7 +790,7 @@ def test_records_keep_addresses_without_their_query():
     m = FakeModel([{"actions": [{"do": "open", "url": "https://shop.example.com/s?q=12+Long+Street"}]},
                    {"give_up": {"reason": "x"}}])
     out = wt.run("tq8", plan(), ports(b, m))
-    raw = (wt._task_dir("tq8") / "web_task.jsonl").read_text() + json.dumps(out["receipt"])
+    raw = (wt._task_dir("tq8") / "web_task.jsonl").read_text(encoding="utf-8") + json.dumps(out["receipt"])
     assert "Long" not in raw and "/s?…" in raw
 
 
