@@ -51,6 +51,9 @@ RELEASE_TTL_S = 30 * 60
 #: Paragraphs the owner kept on this PC are not asked about again (kept this many, newest).
 DECLINED_MAX = 1000
 REMEMBERED_MAX = 200
+#: Who may say Send: a click on the card on Friday's own page (owner:ui, screen_click), or the owner's
+#: own words after the exact text was read back (owner:voice / owner:chat, answer_in_words).
+SEND_DECIDERS = frozenset({"owner:ui", "owner:voice", "owner:chat"})
 
 _LOCK = threading.RLock()
 #: The pii lookup (placeholder -> real value) of the call being sealed, so a scrubbed sender can be named.
@@ -128,7 +131,7 @@ def remembered() -> list:
 
 def remember(scope: str, value: str, label: str = "") -> dict | None:
     value = str(value or "").strip()
-    if scope not in ("thread", "sender") or not value:
+    if scope not in ("thread", "sender", "text") or not value:
         return None
     with _LOCK:
         d = _read()
@@ -161,13 +164,24 @@ def _once_hashes(now=None) -> set:
     return {h for h, until in (d.get("once") or {}).items() if float(until or 0) > now}
 
 
-def _release_once(hashes) -> None:
+def _key(h: str, provider: str = "") -> str:
+    """A release is for the destination the card named: "<hash>@<provider>". A card that named
+    no provider releases to none ("@?" matches no destination). A bare key in the store is an
+    older release (any provider), still honoured until it runs out."""
+    return "%s@%s" % (h, provider or "?")
+
+
+def _is_released_key(h: str, provider: str, keys: set) -> bool:
+    return (bool(provider) and _key(h, provider) in keys) or h in keys
+
+
+def _release_once(hashes, provider: str = "") -> None:
     now = time.time()
     with _LOCK:
         d = _read()
         once = {h: u for h, u in (d.get("once") or {}).items() if float(u or 0) > now}
         for h in hashes:
-            once[h] = now + RELEASE_TTL_S
+            once[_key(h, provider)] = now + RELEASE_TTL_S
         d["once"] = once
         _write(d)
 
@@ -235,10 +249,10 @@ def _scopes() -> tuple:
             {r["value"] for r in rows if r.get("scope") == "sender"})
 
 
-def released(parsed) -> set:
+def released(parsed, provider: str = "") -> set:
     """The stripped paragraphs of this result the owner let go: a Send for these exact paragraphs (the
-    turn), or a remembered thread or sender (its money paragraphs). Empty unless the cautious consent is
-    in force; the gate still runs every other check on everything else."""
+    turn, to the provider its card named), or a remembered thread or sender (its money paragraphs).
+    The gate still runs every other check on everything else."""
     rows = _messages(parsed)
     if not rows:
         return set()
@@ -250,7 +264,7 @@ def released(parsed) -> set:
         for field in ("text", "snippet"):
             for p in _paras(m.get(field)):
                 ps = p.strip()
-                if _hash(ps) in once or (scoped and is_money(ps)):
+                if _is_released_key(_hash(ps), provider, once) or (scoped and is_money(ps)):
                     if not _never_offer(ps):
                         out.add(ps)
     return out
@@ -337,13 +351,15 @@ def _raise_card(items: list, provider: str = "") -> dict | None:
         "items": [{k: it[k] for k in ("hash", "text", "thread", "sender")} for it in items],
         "provider": provider,
     }
-    return _ap.create_approval(
+    rec = _ap.create_approval(
         kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE, subject_id=subject,
         title=("Send %d paragraph(s) about money from %s to the cloud model?" % (len(items), who))[:200],
         description=("Send lets exactly the text below go to the cloud model for this conversation. "
                      "Keep on this PC keeps it here, and the model is told it was withheld.")[:2000],
         action_description=("Send to the cloud model:\n\n" + shown)[:1000],
         payload=payload, force_gate=True, action_class="internal", requested_by="egress_gate")
+    _mark_pending([it["hash"] for it in items], (rec or {}).get("approval_id"))
+    return rec
 
 
 # ── the answer ──────────────────────────────────────────────────────────────
@@ -357,13 +373,31 @@ def decide(approval_id: str, decision: str, remember_scope=None, decided_by: str
         return {"ok": False, "error": "not found"}
     if decision not in ("approve", "deny"):
         return {"ok": False, "error": "decision is approve (Send) or deny (Keep on this PC)"}
+    if decision == "approve" and decided_by not in SEND_DECIDERS:
+        return {"ok": False, "error": "Send is a click on the card on Friday's screen"}
     want = remember_scope if isinstance(remember_scope, dict) else {}
     if rec.get("status") == "pending" and decision == "approve":
         _ap._patch(approval_id, payload=dict(rec.get("payload") or {},
                                              remember={"thread": bool(want.get("thread")),
-                                                       "sender": bool(want.get("sender"))}))
-    out, won = _ap.decide_with_outcome(approval_id, decision, decided_by=decided_by)
+                                                       "sender": bool(want.get("sender")),
+                                                       "text": bool(want.get("text"))}))
+    if decision == "approve":
+        # The server's own mark that THIS path decided it (the dedicated route after its screen
+        # check, or answer_in_words after a read-back). A card approved through any other route
+        # carries a label a request body could have claimed, so it releases nothing.
+        with _SEND_LOCK:
+            _SERVER_SEND.add(approval_id)
+    try:
+        out, won = _ap.decide_with_outcome(approval_id, decision, decided_by=decided_by)
+    finally:
+        with _SEND_LOCK:
+            _SERVER_SEND.discard(approval_id)
     return {"ok": True, "approval": out, "won": won}
+
+
+#: Approval ids being approved through decide() right now (see there). In-process only.
+_SERVER_SEND: set = set()
+_SEND_LOCK = threading.Lock()
 
 
 def _on_decision(record: dict) -> None:
@@ -372,14 +406,31 @@ def _on_decision(record: dict) -> None:
         return
     status = (record.get("status") or "").lower()
     hashes = [it.get("hash") for it in payload.get("items") or [] if it.get("hash")]
+    if status in ("approved", "denied", "expired"):
+        _clear_pending(hashes)
     if status == "approved":
-        _release_once(hashes)
+        with _SEND_LOCK:
+            ours = record.get("approval_id") in _SERVER_SEND
+        if not ours or record.get("decided_by") not in SEND_DECIDERS:
+            # Approved by a path that is not the owner's click or their own words after a read-back
+            # (another approvals route, a relayed or programmatic decision): nothing is released.
+            _log.warning("cloud release: a Send decided by %r outside the card's own path was not "
+                         "honoured; nothing released", record.get("decided_by"))
+            return
+    provider = str(payload.get("provider") or "")
+    if status == "approved":
+        _release_once(hashes, provider)
         rem = payload.get("remember") or {}
         scope = payload.get("scope") or {}
         if rem.get("thread") and scope.get("thread"):
             remember("thread", scope["thread"], "the email thread %s" % scope["thread"])
         if rem.get("sender") and scope.get("sender"):
             remember("sender", scope["sender"], "mail from %s" % scope["sender"])
+        if rem.get("text") and scope.get("text"):
+            for it in payload.get("items") or []:
+                if it.get("hash"):
+                    remember("text", _key(it["hash"], provider), "“%s” to %s"
+                             % (_short(it.get("text")), provider or "any cloud model"))
         _log.info("cloud release: owner sent %d paragraph(s) (thread=%s sender=%s)", len(hashes),
                   bool(rem.get("thread")), bool(rem.get("sender")))
     elif status in ("denied", "expired"):
@@ -505,6 +556,233 @@ def answer_in_words(approval_id: str, claimed: str, owner_words: str, *, spoken:
         + ("; from now on money paragraphs from this %s go without asking (Settings > Privacy & Data > "
            "Money paragraphs in email, Forget, takes it back)" % " and this ".join(kept) if kept else "")
         + ".")}
+
+
+# ── every held detail gets a card (owner ruling, 2026-10-17) ─────────────────────────────
+#
+# "No silent holds": whenever the gate keeps a private detail back from a cloud model (any consent
+# but "Cloud for everything", which holds nothing but the never-send floor), the owner sees a card
+# with EXACTLY the text that would go (as the cloud would receive it, identifiers already replaced)
+# and WHERE it would go (the provider and model, and which part of the request), with Send / Keep on
+# this PC and a tick to always send that exact text. Send lets those exact words go on this
+# conversation's next cloud calls (RELEASE_TTL_S); Keep on this PC is not asked again. The never-send
+# floor and hard identifiers are never offered: they stay refused, and the refusal says why
+# (egress_gate.NeverSendBlocked).
+#
+# The gate notes each held span (note_held) inside a collecting() scope opened by seal_outbound and by
+# _gate_text; the OUTERMOST scope raises at most one card for the spans not already on a waiting card,
+# declined, released or remembered. Money paragraphs from email keep their own card (offer, above),
+# and the owner's "keep them without asking" choice for those (email_cloud_release "withhold") holds.
+
+#: The gate's own self-test and probe battery seal planted text: never a card, never a release.
+_PROBE_PROVIDERS = frozenset({"selftest-cloud", "probe-cloud"})
+#: Off switch for the test suite's shared homes (tests opt in); always on in the product.
+HELD_CARDS = True
+#: Spans held in the current outermost gate call: None outside a collecting() scope.
+_HELD: contextvars.ContextVar = contextvars.ContextVar("cloud_release_held", default=None)
+#: The release store read once per outermost scope (every paragraph checks it).
+_SNAP: contextvars.ContextVar = contextvars.ContextVar("cloud_release_snap", default=None)
+#: True while the gate judges an email-shaped tool result (egress_gate._gate_text_held), so the
+#: owner's "keep money paragraphs in email without asking" choice applies to those spans only.
+IN_MAIL: contextvars.ContextVar = contextvars.ContextVar("cloud_release_in_mail", default=False)
+
+
+def _short(text, n: int = 60) -> str:
+    t = " ".join(str(text or "").split())
+    return t if len(t) <= n else t[:n - 1] + "…"
+
+
+def _mark_pending(hashes, approval_id) -> None:
+    if not approval_id:
+        return
+    with _LOCK:
+        d = _read()
+        pend = dict(d.get("pending") or {})
+        for h in hashes:
+            pend[h] = approval_id
+        d["pending"] = dict(list(pend.items())[-DECLINED_MAX:])
+        _write(d)
+
+
+def _clear_pending(hashes) -> None:
+    with _LOCK:
+        d = _read()
+        pend = dict(d.get("pending") or {})
+        if not any(h in pend for h in hashes):
+            return
+        for h in hashes:
+            pend.pop(h, None)
+        d["pending"] = pend
+        _write(d)
+
+
+def _pending() -> set:
+    """Hashes on a card that is still waiting (a card that expired or was decided clears its own)."""
+    pend = _read().get("pending") or {}
+    if not pend:
+        return set()
+    try:
+        from agent_friday.services import approvals as _ap
+        waiting = {r.get("approval_id") for r in _ap.list_approvals(status="pending", kind=APPROVAL_KIND)}
+        return {h for h, aid in pend.items() if aid in waiting}
+    except Exception:
+        return set(pend)
+
+
+def _remembered_texts() -> set:
+    return {r.get("value") for r in _read().get("remembered") or [] if r.get("scope") == "text"}
+
+
+def _released_keys() -> set:
+    """Send-once keys still in time, and "always send" keys: read once per outermost scope."""
+    snap = _SNAP.get()
+    if snap is not None:
+        return snap
+    return _once_hashes() | _remembered_texts()
+
+
+def is_released(text: str, provider: str = "") -> bool:
+    """Did the owner let exactly this text go to this provider (Send on its card, still in time, or
+    "always send this exact text")?"""
+    if provider in _PROBE_PROVIDERS:
+        return False
+    try:
+        return _is_released_key(_hash(str(text or "").strip()), provider, _released_keys())
+    except Exception:
+        return False
+
+
+def _part(field: str) -> str:
+    """Where in the request a held span sits, in plain words (`field` is the gate's own label)."""
+    f = str(field or "")
+    if f.startswith("system") or f == "voice_system_instruction":
+        return "Friday's background context for this request"
+    if "tool" in f:
+        return "a tool result in this conversation"
+    if f.startswith("message[") or f.startswith("live.text"):
+        return "this conversation"
+    if f.startswith("web_search"):
+        return "a web search"
+    return "this request (%s)" % f if f else "this request"
+
+
+class collecting:
+    """Context manager: collect what the gate holds back in this call; the outermost one offers it."""
+
+    def __init__(self, provider: str = "", model: str = ""):
+        self.provider, self.model = str(provider or ""), str(model or "")
+        self._tok = self._snap_tok = None
+
+    def __enter__(self):
+        if _HELD.get() is None:
+            self._tok = _HELD.set([])
+            try:
+                snap = _once_hashes() | _remembered_texts()
+            except Exception:
+                snap = None
+            self._snap_tok = _SNAP.set(snap)
+        return self
+
+    def __exit__(self, *exc):
+        if self._tok is None:
+            return False
+        items = _HELD.get() or []
+        _HELD.reset(self._tok)
+        _SNAP.reset(self._snap_tok)
+        if items and exc[0] is None:
+            offer_held(items, self.provider, self.model)
+        return False
+
+
+def note_held(text: str, field: str, provider: str) -> None:
+    """The gate held this span back from a cloud model. Never raises."""
+    try:
+        held = _HELD.get()
+        if held is None or not HELD_CARDS or provider in _PROBE_PROVIDERS:
+            return
+        t = str(text or "").strip()
+        if not t or _never_offer(t):
+            return
+        h = _hash(t)
+        if any(it["hash"] == h for it in held):
+            return
+        held.append({"hash": h, "text": t, "field": str(field or ""), "provider": str(provider or ""),
+                     "mail": bool(IN_MAIL.get())})
+    except Exception as e:
+        _log.debug("held span not noted: %s", e)
+
+
+def held_mark() -> int:
+    """How many spans are noted so far in this scope (-1 outside one)."""
+    held = _HELD.get()
+    return -1 if held is None else len(held)
+
+
+def held_back_to(mark: int) -> None:
+    """Take back every note made since `held_mark()` returned `mark` (the gate is about to judge a
+    value's parts instead of the whole value, or its lines)."""
+    held = _HELD.get()
+    if held is not None and 0 <= mark <= len(held):
+        del held[mark:]
+
+
+def offer_held(items: list, provider: str = "", model: str = "") -> dict | None:
+    """Raise one card for the held spans not already on a waiting card, declined, released or
+    remembered. Returns the card, or None. Never raises."""
+    try:
+        if not HELD_CARDS or provider in _PROBE_PROVIDERS or not to_cloud(provider, model):
+            return None
+        withhold_money = _choice() == "withhold"
+        with _LOCK:     # two calls sealing the same history at once raise one card, not two
+            skip = _declined() | _pending()
+            released = _once_hashes() | _remembered_texts()
+            ask = [it for it in items if it["hash"] not in skip
+                   and not _is_released_key(it["hash"], provider, released)
+                   and not (withhold_money and it.get("mail") and is_money(it["text"]))]
+            if not ask:
+                return None
+            return _raise_held_card(ask, provider, model)
+    except Exception as e:
+        _log.warning("held-detail card not raised: %s", e)
+        return None
+
+
+def _raise_held_card(items: list, provider: str, model: str) -> dict | None:
+    from agent_friday.services import approvals as _ap
+    dest = provider or "the cloud provider"
+    if model:
+        dest = "%s (%s)" % (dest, model)
+    parts = sorted({_part(it["field"]) for it in items})
+    # The card shows every character Send would let go: nothing is cut short.
+    texts = [it["text"] for it in items]
+    payload = {
+        "handler": HANDLER,
+        "general": True,
+        "what": texts,
+        "where": {"provider": provider, "model": model, "parts": parts},
+        "why": ("Your cloud setting keeps private details on this PC unless you say otherwise. These are "
+                "exactly the words that would go to %s, from %s." % (dest, "; ".join(parts))),
+        "scope": {"once": True, "thread": "", "sender": "", "text": True},
+        "items": [{"hash": it["hash"], "text": it["text"], "thread": "", "sender": "",
+                   "field": it["field"]} for it in items],
+        "provider": provider,
+        "model": model,
+    }
+    # A fresh subject each time: create_approval returns an existing card for the same subject, and
+    # the same words may need asking again once an earlier Send has run out. Waiting cards are not
+    # duplicated: their spans are skipped above (_pending).
+    subject = "held-" + uuid.uuid4().hex[:16]
+    rec = _ap.create_approval(
+        kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE, subject_id=subject,
+        title=("Send %d private detail(s) to %s?" % (len(items), dest))[:200],
+        description=("Send lets exactly the text below go to %s on this conversation's next cloud calls. "
+                     "Keep on this PC keeps it here, and %s is told it was withheld. Your never-send list "
+                     "is never on a card: it stays refused." % (dest, "the model"))[:2000],
+        action_description=("Send to %s:\n\n" % dest + "\n\n".join("“%s”" % t for t in texts))[:1000],
+        payload=payload, force_gate=True, action_class="internal", requested_by="egress_gate")
+    _mark_pending([it["hash"] for it in items], (rec or {}).get("approval_id"))
+    _log.info("held-detail card raised: %d item(s) for %s", len(items), provider)
+    return rec
 
 
 _REGISTERED = False

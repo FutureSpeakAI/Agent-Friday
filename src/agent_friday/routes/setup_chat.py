@@ -92,6 +92,8 @@ def setup_chat_begin():
 @setup_chat_bp.route("/api/setup-chat/answer", methods=["POST"])
 def setup_chat_answer():
     b = _body()
+    from agent_friday.services import screen_click
+    tok = sc.SCREEN_CLICK.set(bool(screen_click.screen_session(request)))
     try:
         return jsonify({"ok": True, **sc.answer(str(b.get("stage") or ""),
                                                 b.get("value"), str(b.get("text") or ""),
@@ -101,6 +103,8 @@ def setup_chat_answer():
     except sc.Conflict as e:
         return jsonify({"ok": False, "error": "conflict", "message": e.user_message,
                         **sc.view()}), 409
+    finally:
+        sc.SCREEN_CLICK.reset(tok)
 
 
 @setup_chat_bp.route("/api/setup-chat/skip-all", methods=["POST"])

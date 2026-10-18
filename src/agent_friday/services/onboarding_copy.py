@@ -219,9 +219,9 @@ finance, legal and family records, never goes, and a key or password you paste
 is withheld before anything keeps it. Everything else you type goes to the
 provider you chose. If you would rather be asked first, give the cautious
 answer instead ("Cloud for public things" in the setup chat, "Cloud with
-safeguards on" in Settings > Privacy & Data): then money, health, legal or
-identity details are kept on this computer and you are told, and where a card
-is offered it shows exactly what would go before you choose to send it."""
+safeguards on" in Settings > Privacy & Data): then, before money, health,
+legal or identity details go, a card shows you exactly what would be sent and
+where, and they stay on this computer unless you choose Send."""
 
 # FACT-FIX 1, continued -- the sentence the map needed and did not have.
 CLOUD_ACK_MAP = """\
