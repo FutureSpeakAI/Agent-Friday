@@ -124,7 +124,13 @@ def test_a_skill_archive_or_restore_after_reading_outside_content_asks_off_chat(
     assert (skills / "helper-x" / "SKILL.md").exists(), "an archive followed a web page with no decision"
     assert not (skills / "helper-y").exists(), "a restore followed a web page with no decision"
     assert "archived to" not in str(archived) and "restored to" not in str(restored)
-    assert "GOVERNANCE DENY" not in str(archived), "held for a decision, not refused as not hers"
+    assert "GOVERNANCE DENY" not in str(archived) + str(restored), \
+        "held for a decision, not refused as not hers"
+    # Both calls wait on the owner: a pending card (or confirmation) per call.
+    waiting = [json.dumps(r, default=str) for r in approvals.list_approvals(status="pending")]
+    waiting += [json.dumps(v, default=str) for v in agent._PENDING_CONFIRMATIONS.values()]
+    held = [w for w in waiting if "learn_skill" in w]
+    assert any("helper-x" in w for w in held) and any("helper-y" in w for w in held), held
 
     # Control: with nothing read, the same archive of her own skill just runs.
     clean = dict(OFF_CHAT_CONTEXTS["background task"], taint_key="t-skill-clean")
