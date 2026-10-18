@@ -15,12 +15,12 @@
  * satisfy a test. Slow — around 30-60s per screen — so this is the full tier,
  * never the smoke tier.
  */
-import { test, expect, SCENE_GL_ARGS } from '../fixtures';
+import { test, expect, GL_EMULATOR_ARGS } from '../fixtures';
 import { bootApp, openWorkspace, waitForSettled } from '../harness';
 import { judgeConfirmed, describeVerdict } from '../vision';
 
 // The judge looks at the scene: draw it through the full GL path.
-test.use({ launchOptions: { args: SCENE_GL_ARGS } });
+test.use({ launchOptions: { args: GL_EMULATOR_ARGS } });
 
 const SCREENS: { workspace: string | null; intent: string; reveal?: string }[] = [
   {
