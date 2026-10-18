@@ -122,17 +122,25 @@ def _short(v) -> Optional[str]:
 
 #: A cue ("applies when ...") is the model's own free text and is served by
 #: /api/learning/records, so it is kept short and stripped of contact details
-#: and of anything that looks like a name or a place (a capitalised word that
-#: does not start a sentence). The lesson text is never stored.
+#: and of anything that looks like a name or a place: every capitalised word
+#: (any script) except a short list of ordinary words, wherever it stands. A
+#: name written in lower case is not caught; the cue is also capped at
+#: CUE_MAX characters. The lesson text is never stored.
 CUE_MAX = 160
 _CUE_SCRUB = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+|\+?\d[\d ()./-]{6,}\d|https?://\S+")
-_CUE_WORD = re.compile(r"(?<![\w'\u2019-])[A-Z][\w'\u2019-]*")
+_CUE_WORD = re.compile(r"(?<![\w'\u2019-])[^\W\d_][\w'\u2019-]*")
 #: Capitalised words that are not names: Friday herself, days, months, a few
-#: common abbreviations.
+#: abbreviations, and the ordinary words a cue or a sentence starts with.
 _CUE_KEEP = frozenset({
     "I", "Friday", "Monday", "Tuesday", "Wednesday", "Thursday", "Saturday", "Sunday",
     "January", "February", "March", "April", "May", "June", "July", "August", "September",
-    "October", "November", "December", "AM", "PM", "OK", "PDF", "UTC", "CSV", "AI"})
+    "October", "November", "December", "AM", "PM", "OK", "PDF", "UTC", "CSV", "AI",
+    "When", "Whenever", "If", "Before", "After", "While", "During", "Until", "Once", "For",
+    "On", "In", "At", "By", "To", "From", "With", "Without", "About", "The", "A", "An",
+    "Any", "Every", "Each", "All", "Some", "This", "That", "These", "Those", "My", "Your",
+    "Always", "Never", "Only", "Not", "No", "Do", "Don't", "Then", "And", "Or", "But",
+    "Applies", "Use", "Ask", "Check", "Prefer", "Keep", "Make", "Send", "Reply", "Write",
+    "Read", "Open", "Find", "Look", "Say", "Tell", "Show", "Try", "Avoid", "Wait"})
 
 
 def _scrub_cue(v) -> Optional[str]:
@@ -140,11 +148,8 @@ def _scrub_cue(v) -> Optional[str]:
 
     def name(m):
         w = m.group(0)
-        if w in _CUE_KEEP:
+        if not w[0].isupper() or w in _CUE_KEEP:
             return w
-        before = s[:m.start()].rstrip()
-        if not before or before[-1] in ".!?:;\"(":
-            return w          # the first word of a sentence
         return "[name]"
     s = _CUE_WORD.sub(name, s)
     return s[:CUE_MAX] or None
