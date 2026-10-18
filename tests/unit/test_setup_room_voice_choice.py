@@ -25,9 +25,14 @@ def saved(monkeypatch):
     return seen
 
 
-def _run(value, saved):
+def _run(value, saved, click=True):
+    """`click`: the answer came from a press on Friday's own page (the route sets it)."""
     st, transcript = {"stage": "room_voice"}, []
-    sc._on_room_voice(st, transcript, value, "")
+    tok = sc.SCREEN_CLICK.set(click)
+    try:
+        sc._on_room_voice(st, transcript, value, "")
+    finally:
+        sc.SCREEN_CLICK.reset(tok)
     return st, transcript, saved
 
 
@@ -71,6 +76,32 @@ def test_letting_anyone_approve_is_saved(saved):
     assert s.get("value") is False
 
 
+@pytest.mark.parametrize("value", ["anyone", "no"])
+def test_letting_anyone_approve_needs_a_press_on_the_page(value, saved):
+    """Owner ruling 2026-10-17: loosening who may approve takes an on-screen click, the same
+    rule as Laya's mail changes. A spoken or relayed answer writes nothing and asks for it."""
+    st, transcript, s = _run(value, saved, click=False)
+    assert "value" not in s
+    assert st["stage"] == "room_voice", "the question waits for the press"
+    assert copy.ROOM_VOICE_NEEDS_CLICK in [m.get("text") for m in transcript]
+
+
+def test_typed_words_on_the_page_are_not_the_press(saved):
+    """Typing "anyone" in the setup box comes from the page too, but it is not the chip."""
+    st, transcript = {"stage": "room_voice"}, []
+    tok = sc.SCREEN_CLICK.set(True)
+    try:
+        sc._on_room_voice(st, transcript, None, "anyone")
+    finally:
+        sc.SCREEN_CLICK.reset(tok)
+    assert "value" not in saved and st["stage"] == "room_voice"
+
+
+def test_requiring_the_name_needs_no_press(saved):
+    _st, _t, s = _run("name", saved, click=False)
+    assert s.get("value") is True
+
+
 @pytest.mark.parametrize("value", ["skip", "", None, "something else"])
 def test_skipping_writes_nothing_and_keeps_the_careful_default(value, saved):
     _st, _t, s = _run(value, saved)
@@ -104,7 +135,11 @@ def test_a_failed_write_does_not_strand_setup(monkeypatch):
     monkeypatch.setattr(core, "_save_settings",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     st, transcript = {"stage": "room_voice"}, []
-    sc._on_room_voice(st, transcript, "anyone", "")
+    tok = sc.SCREEN_CLICK.set(True)
+    try:
+        sc._on_room_voice(st, transcript, "anyone", "")
+    finally:
+        sc.SCREEN_CLICK.reset(tok)
     assert st["stage"] == "brain_warm"
 
 

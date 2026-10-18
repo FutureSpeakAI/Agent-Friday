@@ -111,6 +111,14 @@ def test_the_card_answer_records_the_ticks_and_settings_lists_and_forgets_them(c
                  "items": [{"hash": "h1", "text": "The deposit of $400 is due.", "thread": "mail:a:t1",
                             "sender": "robin@example.test"}]})
     assert card["status"] == "pending"
+    from agent_friday.services import screen_click
+    # Send counts only as a click on the card on Friday's own page (screen_click); a request that
+    # merely calls the route is refused and the card keeps waiting.
+    monkeypatch.setattr(screen_click, "screen_session", lambda req: False)
+    r = client.post("/api/privacy/cloud-release/%s/decide" % card["approval_id"],
+                    json={"decision": "approve", "remember": {"thread": False, "sender": True}})
+    assert r.status_code == 400 and approvals.get_approval(card["approval_id"])["status"] == "pending"
+    monkeypatch.setattr(screen_click, "screen_session", lambda req: True)
     r = client.post("/api/privacy/cloud-release/%s/decide" % card["approval_id"],
                     json={"decision": "approve", "remember": {"thread": False, "sender": True}})
     assert r.status_code == 200, "the card's Send with its ticks has no answer route"
@@ -118,7 +126,8 @@ def test_the_card_answer_records_the_ticks_and_settings_lists_and_forgets_them(c
     cr = importlib.import_module("agent_friday.services.cloud_release")
     listed = client.get("/api/privacy/cloud-release").get_json()
     assert [(x["scope"], x["value"]) for x in listed["remembered"]] == [("sender", "robin@example.test")]
-    assert "h1" in cr._once_hashes()
+    # Released for the provider the card named (this one names none, so "h1@?": it goes to none).
+    assert any(k.split("@")[0] == "h1" for k in cr._once_hashes())
     rid = listed["remembered"][0]["id"]
     assert client.delete("/api/privacy/cloud-release/" + rid).status_code == 200
     assert client.get("/api/privacy/cloud-release").get_json()["remembered"] == []

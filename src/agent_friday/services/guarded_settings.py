@@ -50,7 +50,16 @@ def clamp(incoming: dict, current: Optional[dict]) -> dict:
     for key in GUARDED:
         if key in out or key in cur:
             out[key] = narrower(key, cur.get(key), out.get(key))
+    # Who may approve out loud in a room (owner ruling 2026-10-17): loosening it is the
+    # owner's click on the page only, so a whole-file write may keep it loose only where the
+    # file already has it loose. True (name required) is the default and the narrow side.
+    if ROOM_KEY in out and out[ROOM_KEY] is not True and cur.get(ROOM_KEY) is not False:
+        out[ROOM_KEY] = True
     return out
+
+
+#: Loosened only by the owner's click (core._save_settings_locked, routes/core_routes room_approvals).
+ROOM_KEY = "voice_room_approvals_require_name"
 
 
 def read(path: Any) -> Optional[dict]:

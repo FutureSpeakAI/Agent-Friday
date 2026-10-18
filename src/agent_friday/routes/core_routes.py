@@ -1906,6 +1906,16 @@ def api_settings():
                                 "error": "this setting changes only from the Settings page"}), 403
             _sw_owner = True
 
+        # Who may approve out loud in a room loosens the same way: the Settings > Voice
+        # control's own click on this page. A body that merely says owner_action is refused.
+        _room_owner = False
+        if data.get('owner_action') == 'room_approvals':
+            from agent_friday.services import screen_click as _screen_click_ra
+            if not _screen_click_ra.screen_session(request):
+                return jsonify({"status": "denied",
+                                "error": "this setting changes only from the Settings page"}), 403
+            _room_owner = True
+
         # FR-1 (toolcall-integrity-v5): a local model may only take Friday's
         # tool-using seat if it passes the structural conformance gate — see
         # services/model_seat_gate.py. Runs once per model (cached after);
@@ -1975,7 +1985,8 @@ def api_settings():
             new_settings,
             owner_routing_change=_routing_owner,
             owner_safe_writes_change=_sw_owner,
-            routing_change_via=_routing_via)
+            routing_change_via=_routing_via,
+            owner_room_approvals_change=_room_owner)
         if isinstance(new_settings, dict) and 'voice_engine' in new_settings:
             try:
                 from agent_friday.services import local_voice_readiness as _lvr_w

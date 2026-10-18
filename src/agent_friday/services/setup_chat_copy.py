@@ -215,11 +215,10 @@ POSTURE_MEANS = {
 POSTURE_MEANS_PUBLIC_NO_LOCAL = (
     "This PC can't run my thinking model, so our conversations go to the "
     "cloud with the safeguards on. Money, health, legal or identity details "
-    "are not sent quietly: I keep them on this PC and tell you, and where a "
-    "card is offered (mail, your private records) it shows exactly what "
-    "would go, so you choose Send or keep it here. Your never-send list is "
-    "never sent. Public things (news, web searches, briefings) use the "
-    "cloud too.")
+    "are not sent quietly: a card asks you first, showing exactly what would "
+    "go and where, and you choose Send or keep it on this PC. Your never-send "
+    "list is never sent, and I say why. Public things (news, web searches, "
+    "briefings) use the cloud too.")
 POSTURE_COSTS = {
     "local": "No cost. Needs a capable PC, and it's slower.",
     "public": "Your own cloud bill, for what uses the cloud.",
@@ -599,6 +598,12 @@ ROOM_VOICE_NAME = (
 ROOM_VOICE_ANYONE = (
     "Set: in a room, anyone I can hear may approve out loud. The cards "
     "themselves are unchanged, so you can still see every one on screen.")
+
+#: Letting anyone in the room approve loosens who may say yes, so it takes a press on screen.
+ROOM_VOICE_NEEDS_CLICK = (
+    "That one needs a press on the screen: tap \"Anyone in the room may "
+    "approve\" beside this chat. Until then, in a room, a spoken approval "
+    "has to say my name.")
 
 ROOM_VOICE_SKIPPED = (
     "Left as it is: in a room, a spoken approval says my name. It is in "

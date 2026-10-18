@@ -798,8 +798,63 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
 
 # ── Field-level gating ────────────────────────────────────────────────────────
 
+class _held_scope:
+    """Open (or join) the scope in which held spans are collected for one card
+    (services/cloud_release.collecting). A scope that cannot be opened is no
+    scope: the gate itself is unaffected, and fails closed as before."""
+
+    def __init__(self, provider: str, model: str = ""):
+        self._cm = None
+        try:
+            from agent_friday.services import cloud_release as _cr
+            self._cm = _cr.collecting(provider, model)
+        except Exception:
+            self._cm = None
+
+    def __enter__(self):
+        if self._cm is not None:
+            try:
+                self._cm.__enter__()
+            except Exception:
+                self._cm = None
+        return self
+
+    def __exit__(self, *exc):
+        if self._cm is not None:
+            try:
+                self._cm.__exit__(*exc)
+            except Exception as e:
+                _dlog.warning("held-detail card step failed: %s", e)
+        return False
+
+
+def _note_held(text: str, field: str, provider: str) -> None:
+    """Tell cloud_release a span was held back (no silent holds: the owner gets a card)."""
+    try:
+        from agent_friday.services import cloud_release as _cr
+        _cr.note_held(text, field, provider)
+    except Exception:
+        pass
+
+
+def _owner_released(text: str, provider: str) -> bool:
+    """The owner said Send for exactly this text (its card, still in time, or "always send")."""
+    try:
+        from agent_friday.services import cloud_release as _cr
+        return _cr.is_released(text, provider)
+    except Exception:
+        return False
+
+
 def _gate_text(text: str, provider: str, field: str,
                log_path: Path | None = None) -> str:
+    """See _gate_text_held; this opens the scope whose held spans become one card."""
+    with _held_scope(provider):
+        return _gate_text_held(text, provider, field, log_path)
+
+
+def _gate_text_held(text: str, provider: str, field: str,
+                    log_path: Path | None = None) -> str:
     """Gate a text string for a cloud provider, rescuing JSON field-wise.
 
     This is the wrapper every caller reaches. It runs the span-wise gate below
@@ -844,17 +899,26 @@ def _gate_text(text: str, provider: str, field: str,
                 _dlog.debug("email result for a local destination (%s): passed whole", provider)
                 return text
             mail = _try_json(text)
-            rel = _cr.released(mail) if mail is not None else set()
+            rel = _cr.released(mail, provider) if mail is not None else set()
             if rel:
                 rel_tok = _RELEASED.set(frozenset(rel))
     except Exception as e:
         _dlog.debug("cloud release lookup skipped: %s", e)
         mail = None
+    mail_tok = None
+    if mail is not None:
+        try:
+            from agent_friday.services import cloud_release as _cr2
+            mail_tok = (_cr2, _cr2.IN_MAIL.set(True))
+        except Exception:
+            mail_tok = None
     try:
         return _gate_text_inner(text, provider, field, log_path, mail)
     finally:
         if rel_tok is not None:
             _RELEASED.reset(rel_tok)
+        if mail_tok is not None:
+            mail_tok[0].IN_MAIL.reset(mail_tok[1])
 
 
 #: Paragraphs the owner released to the cloud for the email result being gated (services/cloud_release).
@@ -877,12 +941,24 @@ def destination_is_cloud(provider: str, model: str = "") -> bool:
 
 
 def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> str:
+    try:
+        from agent_friday.services import cloud_release as _cr
+        _mark = _cr.held_mark()
+    except Exception:
+        _cr, _mark = None, -1
     whole = _gate_text_span(text, provider, field, log_path)
     if whole == text:
         return whole                      # nothing withheld — no need to descend
     parsed = _try_json(text)
     if parsed is None:
         return whole                      # not JSON; the span pass already ran
+    # The whole-value pass above noted the JSON string (or its lines) as held; the field-wise walk
+    # below decides what is really held, field by field, so the card shows those fields only.
+    if _cr is not None:
+        try:
+            _cr.held_back_to(_mark)
+        except Exception:
+            pass
     gated = _gate_json_value(parsed, provider, field, log_path)
     if isinstance(gated, dict):
         # Say WHAT was withheld and WHY at the top of the result, not only as a marker inside a
@@ -989,7 +1065,7 @@ def _gate_text_span(text: str, provider: str, field: str,
                  _origin_reason(f"provider-echo:{provider}"), log_path)
             return text
     _released = _RELEASED.get()
-    if _released and _t_stripped in _released:
+    if (_released and _t_stripped in _released) or _owner_released(_t_stripped, provider):
         _log(provider, field, Tier.PUBLIC, "allow", "owner-released: you said Send on its card", log_path)
         return text
     tier = _classify_cloud(text)
@@ -1015,7 +1091,7 @@ def _gate_text_span(text: str, provider: str, field: str,
                 _p_origin = _PUBLIC_ORIGINS.get(_ps, "")
                 _p_echo = provider in _PROVIDER_ECHO.get(_ps, ())
                 _p_trusted = _ps in _TRUSTED_PARAS or _ps in _PUBLIC_PARAS or _p_echo
-            if not _p_trusted and _released and _ps in _released:
+            if not _p_trusted and ((_released and _ps in _released) or _owner_released(_ps, provider)):
                 _p_trusted = True
                 _log(provider, field, Tier.PUBLIC, "allow", "owner-released: you said Send on its card", log_path)
             if _p_trusted:
@@ -1039,12 +1115,17 @@ def _gate_text_span(text: str, provider: str, field: str,
                 appeals.append((len(gated), p, pt))
                 gated.append(_redact_placeholder(pt))
                 withheld += 1
+        _placeholders = {idx: gated[idx] for idx, _p, _t in appeals}
         if appeals:
             rescued = _run_appeals(appeals, gated, provider, field, log_path)
             withheld -= rescued
         nonempty = sum(1 for p in paras if p.strip())
         if (0 < withheld < nonempty) or (withheld == 0 and trusted > 0) or \
                 (withheld == 0 and appeals):
+            # No silent holds: each paragraph still held goes on the owner's card (cloud_release).
+            for idx, _p, _t in appeals:
+                if gated[idx] == _placeholders.get(idx):
+                    _note_held(_p, field, provider)
             # Either the split localized the signal (partial withholding), or
             # the whole-field signal came entirely from trusted self-authored
             # paragraphs. withheld == 0 with NO trusted paragraphs means the
@@ -1067,6 +1148,9 @@ def _gate_text_span(text: str, provider: str, field: str,
     if _run_appeals(_whole, _slot, provider, field, log_path) and _slot[0] is not None:
         return _slot[0]
 
+    # No silent holds: the whole field goes on the owner's card (cloud_release), exactly as the
+    # cloud would have received it.
+    _note_held(text, field, provider)
     if tier == Tier.SENSITIVE:
         _log(provider, field, tier, "drop", f"tier={Tier.NAMES[tier]}", log_path)
         return ""  # cloud gets nothing for SENSITIVE
@@ -1942,7 +2026,9 @@ def seal_outbound(
         _cr, _lk_tok = None, None
     _dest_tok = _DEST_CLOUD.set(True)       # judged cloud above, with the model
     try:
-        return _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=model)
+        # Everything this call holds back is offered on ONE card when the call is sealed.
+        with _held_scope(provider, model):
+            return _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=model)
     finally:
         _DEST_CLOUD.reset(_dest_tok)
         if _lk_tok is not None:

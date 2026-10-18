@@ -3995,14 +3995,16 @@ def _routing_mode_caller() -> str:
 def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False,
                    owner_safe_writes_change: bool = False,
-                   routing_change_via: str = ""):
+                   routing_change_via: str = "",
+                   owner_room_approvals_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
         return _save_settings_locked(data,
             _internal_cloud_consent_write=_internal_cloud_consent_write,
             owner_routing_change=owner_routing_change,
             owner_safe_writes_change=owner_safe_writes_change,
-            routing_change_via=routing_change_via)
+            routing_change_via=routing_change_via,
+            owner_room_approvals_change=owner_room_approvals_change)
 
 
 #: How an owner routing change was made, as `model_routing.mode_chosen_via`
@@ -4014,7 +4016,8 @@ ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified"
 def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False,
                    owner_safe_writes_change: bool = False,
-                   routing_change_via: str = ""):
+                   routing_change_via: str = "",
+                   owner_room_approvals_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -4199,6 +4202,25 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                 _routing_mode_caller())
             data = dict(data)
             data.pop("laya_safe_writes", None)
+    # WHO MAY APPROVE OUT LOUD IN A ROOM LOOSENS ONLY ON THE OWNER'S CLICK.
+    #
+    # `voice_room_approvals_require_name` False lets anyone the microphone hears approve a
+    # card by voice. Loosening it (anything but True) takes the Settings > Voice control's
+    # own `owner_action` on a click on Friday's page, or the setup chat's chip pressed on
+    # the page (owner_room_approvals_change); a plain settings save, a script or a model's
+    # tool has the key dropped and logged, the same rule as laya_safe_writes. Tightening
+    # (True) is always allowed.
+    if data and "voice_room_approvals_require_name" in data:
+        _new_rn = data.get("voice_room_approvals_require_name")
+        if _new_rn is not True and not (_new_rn is False and owner_room_approvals_change):
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "REFUSED a change of voice_room_approvals_require_name to %r: %s (caller %s); "
+                "the rest of the write is kept", _new_rn,
+                "not true or false" if not isinstance(_new_rn, bool) else "not an on-screen owner action",
+                _routing_mode_caller())
+            data = dict(data)
+            data.pop("voice_room_approvals_require_name", None)
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():

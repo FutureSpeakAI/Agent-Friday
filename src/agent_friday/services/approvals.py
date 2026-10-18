@@ -89,6 +89,20 @@ APPROVALS_FILE = FRIDAY_DIR / "approvals.json"
 
 _LOCK = threading.RLock()
 
+
+def _new_approval_id() -> str:
+    """A fresh card id: ``appr_`` and ten hex characters, never ten digits.
+
+    The id travels to cloud models inside tool results ("ONE card (appr_...)",
+    "SEAT_NEEDS_YES:appr_..."), and every outbound message goes through the PII
+    scrub (core._scrub_pii). Ten digits starting 2-9 read there as a US phone
+    number (core._PHONE_RE), so an all-digit suffix would reach the model as a
+    ``[PII:phone:...]`` placeholder instead of the card's id."""
+    while True:
+        suffix = uuid.uuid4().hex[:10]
+        if not suffix.isdigit():
+            return "appr_" + suffix
+
 STATUSES = ("pending", "auto_approved", "approved", "denied", "expired", "blocked")
 TERMINAL_STATUSES = ("auto_approved", "approved", "denied", "expired", "blocked")
 
@@ -502,7 +516,7 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     status = "blocked" if law1_blocked else ("pending" if gated else "auto_approved")
 
     record: Dict[str, Any] = {
-        "approval_id": f"appr_{uuid.uuid4().hex[:10]}",
+        "approval_id": _new_approval_id(),
         "kind": kind,
         "subject_type": subject_type,
         "subject_id": subject_id,
@@ -562,7 +576,7 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
     law1_blocked = bool(dissent.get("law1_blocked"))
     now = time.time()
     record: Dict[str, Any] = {
-        "approval_id": f"appr_{uuid.uuid4().hex[:10]}",
+        "approval_id": _new_approval_id(),
         "kind": kind, "subject_type": subject_type, "subject_id": subject_id,
         "title": (title or "")[:200], "description": (description or "")[:2000],
         "action_description": action_text[:1000],
@@ -759,6 +773,10 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if (decision == "approve" and _is_public_query_card(rec)
                 and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
             return dict(rec), False
+        if decision == "approve" and _is_cloud_release_card(rec) and not _cloud_release_send(approval_id):
+            # Send on a card that lets private text leave the PC is its own button on screen (or the
+            # owner's own words after a read-back), never another approvals route (cloud_release.decide).
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
@@ -768,6 +786,20 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     _feed("card_resolved", out)
     _fire_hook(out)
     return out, True
+
+
+def _is_cloud_release_card(rec: dict) -> bool:
+    return (rec.get("payload") or {}).get("handler") == "cloud_release"
+
+
+def _cloud_release_send(approval_id: str) -> bool:
+    """Is cloud_release.decide approving this card right now (its own path)?"""
+    try:
+        from agent_friday.services import cloud_release as _cr
+        with _cr._SEND_LOCK:
+            return approval_id in _cr._SERVER_SEND
+    except Exception:
+        return False
 
 
 def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
@@ -784,6 +816,9 @@ def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
             and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
         return ("A search card is sent only with its own Send button in the app, where you see the exact "
                 "text that would go out. It cannot be approved from here.")
+    if rec.get("status") == "pending" and _is_cloud_release_card(rec) and not _cloud_release_send(approval_id):
+        return ("Private text goes to the cloud only with its card's own Send button in the app, where you "
+                "see exactly the words and where they would go. It cannot be approved from here.")
     return ""
 
 
