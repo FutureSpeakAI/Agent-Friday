@@ -104,8 +104,18 @@ def manifest() -> dict:
 
 
 def sections() -> List[dict]:
-    """The prompt sections in the order they are joined (copies)."""
-    return [dict(s) for s in sorted(manifest()["sections"], key=lambda s: s["order"])]
+    """The prompt sections in the order they are joined (copies). A locked
+    section an edited manifest left out is put back from the code, in its
+    own place: the manifest can never drop a safety rule."""
+    from agent_friday.services.instruction_locked import LOCKED_ORDER
+    rows = [dict(s) for s in manifest()["sections"]]
+    have = {s["id"] for s in rows}
+    for sid, order in LOCKED_ORDER.items():
+        if sid not in have:
+            _PROBLEMS[sid] = "the manifest left out a locked section; the built-in text is used"
+            rows.append({"id": sid, "file": f"{sid}.md", "title": sid, "slot": "always_on",
+                         "order": order, "version": 1, "sha256": "", "locked": True, "owner": "shipped"})
+    return sorted(rows, key=lambda s: s["order"])
 
 
 def section_ids() -> List[str]:
@@ -145,6 +155,11 @@ def shipped_text(sid: str) -> str:
     a mismatch is a health row, not a change in what Friday is told."""
     from agent_friday.services.instruction_locked import LOCKED_SECTIONS
     with _LOCK:
+        if sid not in _SHIPPED and sid in LOCKED_SECTIONS:
+            try:
+                _entry(sid)
+            except KeyError:
+                _SHIPPED[sid] = LOCKED_SECTIONS[sid]
         if sid not in _SHIPPED:
             entry = _entry(sid)
             try:
@@ -194,7 +209,12 @@ def _history_dir() -> Path:
 
 
 def trial_mode() -> bool:
-    return os.environ.get("FRIDAY_TRIAL") == "1"
+    """A practice-task child: started by task_eval.runner with every one of
+    these set. The real app never runs with them, so a stray FRIDAY_TRIAL in
+    its environment alone cannot make it accept a self-signed override."""
+    e = os.environ
+    return (e.get("FRIDAY_TRIAL") == "1" and e.get("FRIDAY_TESTING") == "1"
+            and e.get("FRIDAY_NO_ARBITER") == "1" and bool(e.get("FRIDAY_HOME")))
 
 
 def _key() -> bytes:

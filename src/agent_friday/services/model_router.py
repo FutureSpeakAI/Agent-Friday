@@ -4095,7 +4095,16 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     # override of an unlocked section (services/instruction_files). This is
     # the live path on every normal turn, so a tested change must land HERE,
     # not only in the fallbacks of _get_friday_system_prompt.
-    add(core_instructions(), _T1)
+    _core_text = core_instructions()
+    try:
+        from agent_friday.services import instruction_files as _if_tier
+        _core_shipped = _core_text == _if_tier.shipped_core()
+    except Exception:
+        _core_shipped = False
+    # The shipped text is public, reviewed text. An approved override is the
+    # owner's or a tested change's words: it is tier-classified like any other
+    # text rather than declared public (security re-check 2026-10-18, E).
+    add(_core_text, _T1 if _core_shipped else classify(_core_text, _T1))
     # A job that passes no tools (the front page, a deep dive, a digest, the
     # calendar note) gets no tool catalogue: it is thousands of tokens of
     # pure cost there, and on a small local model it invites pretend calls.
