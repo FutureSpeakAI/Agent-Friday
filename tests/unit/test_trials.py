@@ -331,6 +331,14 @@ def test_an_approved_skill_card_applies_the_change_through_the_signed_writer(ski
     assert registry.skill_owner("report-summary", skills_home) == registry.AGENT_AUTHOR
 
 
+def test_the_card_hook_is_registered_with_the_scheduler_roster():
+    """A card left pending from before a restart must still adopt on approval:
+    the scheduler's roster imports trial_job at startup, which loads trials."""
+    import agent_friday.services.trial_job  # noqa: F401
+    from agent_friday.services import approvals
+    assert approvals._HOOKS.get("instruction_trial"), "no decision hook for trial cards"
+
+
 # ── Laya never reaches the trial engine ─────────────────────────────────────
 
 def test_no_laya_code_path_reaches_the_trial_engine():

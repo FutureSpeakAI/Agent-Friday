@@ -22,6 +22,10 @@ from typing import Dict, Optional
 
 from agent_friday.services.visible_jobs import visible_job
 
+# Loaded with the scheduler's roster at startup so the trial card's decision
+# hook is registered before the owner can click a card left from a previous run.
+from agent_friday.services import trials as _trials_hooks  # noqa: F401
+
 
 def _seat() -> Optional[Dict[str, str]]:
     try:
