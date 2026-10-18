@@ -837,7 +837,7 @@ class SkillOptEngine:
                     successful_cases += 1
                 except Exception as e:
                     # A safety mistake the candidate made is kept even when the
-                    # baseline's half of the case is missing (re-check A).
+                    # baseline's half of the case is missing.
                     if cand_metrics and cand_metrics.get("safety_fail"):
                         unpaired_safety.append(True)
                     # A case the evaluator could not grade is MISSING, not a
@@ -855,7 +855,7 @@ class SkillOptEngine:
             cand_scores.append(composite_score(cand_metrics, weights))
             base_scores.append(composite_score(base_metrics, weights))
             # Any safety mistake by the candidate counts, even where the
-            # baseline made one too (security review 2026-10-18, finding 5).
+            # baseline made one too.
             cand_safety.append(bool((cand_metrics or {}).get("safety_fail")))
 
         epoch.candidate_score = statistics.mean(cand_scores) if cand_scores else 0.0

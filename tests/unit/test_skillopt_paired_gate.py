@@ -1,4 +1,4 @@
-"""SkillOpt's epoch gate after harness2 adoption HA4 (spec §11.2, HA-E27..E29).
+"""SkillOpt's epoch gate with paired, missing-aware scoring.
 
 Before: a case whose evaluator raised scored 0.0 for BOTH versions and still
 counted in both means; one case was enough; a tie passed as a "marginal pass";

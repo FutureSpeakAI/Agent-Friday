@@ -19,6 +19,7 @@ Eval cases are the development practice tasks tagged with the skill's name.
 """
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -37,31 +38,65 @@ def cases_for(skill_name: str, pack: Optional[List[dict]] = None) -> List[dict]:
     return [{"task": t} for t in P.tasks_touching(tasks, [skill_name])]
 
 
+def night_gate() -> str:
+    """Why a practice episode may not start now ('' when it may): the same
+    conditions as the trial job, on AC power, within tonight's testing time,
+    and the PC idle with no interactive turn."""
+    from agent_friday.services import trials
+    if not trials.on_ac_power():
+        return "on battery"
+    if trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS:
+        return "tonight's testing time is used up"
+    from agent_friday.services.trial_job import _gate_blocks
+    return _gate_blocks()
+
+
 def make_evaluator(run_one: Optional[Callable[..., dict]] = None, *, endpoint: str = "",
-                   model: str = "") -> Callable[[str, str, dict], Dict[str, float]]:
+                   model: str = "", gate: Optional[Callable[[], str]] = None,
+                   spend: Optional[Callable[[float], None]] = None
+                   ) -> Callable[[str, str, dict], Dict[str, float]]:
+    """``gate`` is asked before every episode; a reason stops it (the case is
+    missing, not a zero). ``spend`` is told each episode's seconds, so SkillOpt
+    shares the trial job's nightly cap. Without ``run_one`` the evaluator takes
+    the seat like the trial job: through the Local AI queue, with a watcher
+    that drops a yield file the moment an interactive turn appears. Call
+    ``evaluator.close()`` when the run ends."""
+    close = lambda: None  # noqa: E731
     if run_one is None:
-        # The same seat-taking runner the trial job uses: through the Local AI
-        # queue, then held by the scheduler per episode (services/trial_job).
-        from agent_friday.services.trial_job import seat_run_one
-        run_one = seat_run_one({"endpoint": endpoint, "model": model})
+        from agent_friday.services import trial_job, trials
+        yf = Path(tempfile.gettempdir()) / f"friday-skillopt-yield-{os.getpid()}"
+        watcher = trial_job._Watcher(yf).__enter__()
+        close = lambda: watcher.__exit__(None, None, None)  # noqa: E731
+        run_one = trial_job.seat_run_one({"endpoint": endpoint, "model": model}, str(yf))
+        if gate is None:
+            gate = lambda: ("an interactive turn needs the seat"  # noqa: E731
+                            if watcher.tripped.is_set() else night_gate())
+        if spend is None:
+            spend = trials._spend_night
     counter = {"n": 0}
 
     def evaluator(skill_name: str, content: str, case: dict) -> Dict[str, float]:
         task = case.get("task")
         if not isinstance(task, dict):
             raise EvalMissing("the eval case names no practice task")
+        why = gate() if gate is not None else ""
+        if why:
+            raise EvalMissing(f"not run: {why}")
         counter["n"] += 1
         overlay = {"files": {f"skills/{skill_name}/SKILL.md": content}}
         with tempfile.TemporaryDirectory(prefix="friday-skillopt-") as d:
             res = run_one(task=task, arm="v", repeat=counter["n"], overlay=overlay, out_dir=Path(d))
+        wall = float((res or {}).get("wall_seconds") or 0.0)
+        if spend is not None:
+            spend(wall)
         g = (res or {}).get("grade") or {}
         if g.get("status") != "graded":
             raise EvalMissing(f"missing: {g.get('reason') or 'not graded'}")
-        wall = float((res or {}).get("wall_seconds") or 0.0)
         return {"accuracy": 1.0 if g.get("pass") else 0.0,
                 "completeness": float(g.get("score") or 0.0),
                 "latency_ms": wall * 1000.0, "cost_usd": 0.0,
                 "safety_fail": bool(g.get("safety_fail"))}
+    evaluator.close = close
     return evaluator
 
 
@@ -110,9 +145,12 @@ def queue_finding(skill_name: str, new_content: str, parent_version: str, summar
     return cand["id"]
 
 
-def install(*, endpoint: str = "", model: str = "") -> None:
-    """Wire all three into the engine singleton (called before a SkillOpt run)."""
+def install(*, endpoint: str = "", model: str = ""):
+    """Wire all three into the engine singleton (called before a SkillOpt run).
+    Returns the evaluator; call its ``close()`` when the run ends."""
     import agent_friday.skillopt_engine as sopt
-    sopt.set_evaluator(make_evaluator(endpoint=endpoint, model=model))
+    ev = make_evaluator(endpoint=endpoint, model=model)
+    sopt.set_evaluator(ev)
     sopt.set_recommender(recommend)
     sopt.set_candidate_sink(queue_finding)
+    return ev
