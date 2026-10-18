@@ -331,6 +331,70 @@ def test_an_approved_skill_card_applies_the_change_through_the_signed_writer(ski
     assert registry.skill_owner("report-summary", skills_home) == registry.AGENT_AUTHOR
 
 
+def test_a_candidate_changed_on_disk_after_the_card_is_not_adopted(home):
+    """Approval adopts exactly what the card showed."""
+    from agent_friday.services import approvals, instruction_files as inf, trials
+    cand, new = _candidate(trials)
+    out = trials.run_trial(cand["id"], run_one=_runner(lambda t, arm, rep: _grade(arm == "b" or t in REG)),
+                           pack=_pack())
+    rec = trials.load(cand["id"])
+    rec["candidate"]["instructions"][SID] = new.replace("First, in one line", "Swapped text")
+    trials.save(rec)
+    approvals.decide(out["card_id"], "approve", decided_by="owner:ui")
+    assert inf.load(SID) == inf.shipped_text(SID)
+    assert trials.load(cand["id"])["status"] == "approve_refused"
+
+
+def test_a_busy_seat_is_not_stored_and_is_run_again(home):
+    from agent_friday.services import trials
+    cand, _new = _candidate(trials)
+    state = {"busy": True}
+
+    def run_one(*, task, arm, repeat, overlay=None, out_dir=None, **kw):
+        if state["busy"] and task["id"] == "s0" and arm == "b":
+            return {"grade": {"status": "missing", "reason": "preempted"}, "outcome": "seat_busy"}
+        return {"grade": _grade(arm == "b" or task["id"] in REG), "outcome": "completed"}
+    out = trials.run_trial(cand["id"], run_one=run_one, pack=_pack())
+    assert out["status"] == "running"
+    state["busy"] = False
+    out = trials.run_trial(cand["id"], run_one=run_one, pack=_pack())
+    assert out["status"] == "carded" and out["result"]["missing"]["b"] == 0
+
+
+def test_a_seat_that_stays_busy_is_stored_as_missing_after_three_tries(home):
+    from agent_friday.services import trials
+
+    cand, _new = _candidate(trials)
+
+    def run_one(*, task, arm, repeat, overlay=None, out_dir=None, **kw):
+        if task["id"] == "s0" and arm == "b" and repeat == 0:
+            return {"grade": {"status": "missing", "reason": "seat busy"}, "outcome": "seat_busy"}
+        return {"grade": _grade(arm == "b" or task["id"] in REG), "outcome": "completed"}
+    for _ in range(3):
+        assert trials.run_trial(cand["id"], run_one=run_one, pack=_pack())["status"] == "running"
+    out = trials.run_trial(cand["id"], run_one=run_one, pack=_pack())
+    assert out["status"] == "carded"
+    assert out["result"]["missing"]["b"] == 1
+
+
+def test_an_unreadable_battery_counts_as_battery(monkeypatch):
+    import psutil
+    from agent_friday.services import trials
+
+    def boom():
+        raise OSError("no power info")
+    monkeypatch.setattr(psutil, "sensors_battery", boom)
+    assert trials.on_ac_power() is False
+
+
+def test_the_card_hook_is_registered_with_the_scheduler_roster():
+    """A card left pending from before a restart must still adopt on approval:
+    the scheduler's roster imports trial_job at startup, which loads trials."""
+    import agent_friday.services.trial_job  # noqa: F401
+    from agent_friday.services import approvals
+    assert approvals._HOOKS.get("instruction_trial"), "no decision hook for trial cards"
+
+
 # ── Laya never reaches the trial engine ─────────────────────────────────────
 
 def test_no_laya_code_path_reaches_the_trial_engine():
@@ -341,3 +405,27 @@ def test_no_laya_code_path_reaches_the_trial_engine():
         if "trials" in text and ("import trials" in text or "services.trials" in text or "trials." in text):
             offenders.append(p.name)
     assert offenders == []
+
+
+def test_every_episode_checks_power_and_the_night_cap(monkeypatch):
+    """The trial job stops before the next episode when the PC leaves AC power
+    or tonight's testing time runs out, not only at the start of the run."""
+    import threading
+    from agent_friday.services import trial_job, trials
+
+    class W:
+        tripped = threading.Event()
+
+    power = {"ac": True}
+    used = {"s": 0}
+    monkeypatch.setattr(trials, "on_ac_power", lambda: power["ac"])
+    monkeypatch.setattr(trials, "night_seconds_used", lambda: used["s"])
+    assert trial_job._stop_now(W()) is False
+    power["ac"] = False
+    assert trial_job._stop_now(W()) is True
+    power["ac"] = True
+    used["s"] = trials.NIGHT_CAP_SECONDS
+    assert trial_job._stop_now(W()) is True
+    used["s"] = 0
+    W.tripped.set()
+    assert trial_job._stop_now(W()) is True

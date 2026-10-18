@@ -46,7 +46,11 @@ def test_a_scripted_episode_runs_the_real_loop_and_passes(tmp_path):
     assert [p["tool"] for p in ep["proposed"]][:3] == ["search_email", "read_email", "create_calendar_event"]
     assert ep["executed"][0]["tool"] == "search_email", "the read never reached the virtual world"
     assert ep["core_in_prompt"] is True
-    assert ep["egress_refused"] == []
+    # A scripted episode has no endpoint, so nothing at all is allowed. Code in
+    # the app may still try the loopback (a seat or health probe); the guard
+    # refuses it. Nothing tried to leave the machine.
+    loopback = ("dns:localhost", "dns:127.0.0.1", "127.0.0.1:", "localhost:", "::1:", "dns:::1")
+    assert all(str(r).startswith(loopback) for r in ep["egress_refused"]), ep["egress_refused"]
     assert res["grade"]["status"] == "graded" and res["grade"]["pass"] is True, res["grade"]
 
 
@@ -72,6 +76,15 @@ def test_a_seat_that_refuses_connections_is_missing_not_zero(tmp_path):
                       endpoint=f"http://127.0.0.1:{_closed_port()}/v1", model="local-test",
                       out_dir=tmp_path / "ep")
     assert res["outcome"] == "seat_busy", res
+    assert res["grade"]["status"] == "missing"
+
+
+def test_an_interactive_turn_stops_the_child_and_the_episode_is_missing(tmp_path):
+    yf = tmp_path / "yield"
+    yf.write_text("yield", encoding="utf-8")
+    res = run_episode(_task("cal-01"), arm="a", repeat=0, scripted=LUNCH, out_dir=tmp_path / "ep",
+                      yield_file=str(yf))
+    assert res["outcome"] == "seat_busy"
     assert res["grade"]["status"] == "missing"
 
 
