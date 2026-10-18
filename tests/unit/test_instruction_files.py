@@ -305,11 +305,18 @@ def test_the_safety_sections_are_locked():
     assert {"20_autonomous_operation", "60_honest_degradation"} <= locked
 
 
+#: Modules that may name an instructions/active folder, and why.
+ACTIVE_WRITERS = {
+    "instruction_files.py": "the loader itself",
+    "runner.py": "task_eval's parent writes candidate text into a practice CHILD's scratch home only",
+}
+
+
 def test_only_the_loader_reads_the_active_overrides():
     pattern = re.compile(r"instructions[\"'/\\, ]+[\"']?active")
     offenders = []
     for p in SRC.rglob("*.py"):
-        if p.name == "instruction_files.py":
+        if p.name in ACTIVE_WRITERS and (p.name != "runner.py" or p.parent.name == "task_eval"):
             continue
         if pattern.search(p.read_text(encoding="utf-8-sig", errors="replace")):
             offenders.append(str(p.relative_to(ROOT)))
