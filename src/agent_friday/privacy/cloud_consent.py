@@ -44,8 +44,14 @@ What ``cloud_consent`` means
 "cloud_guarded" | None,
 "at": iso-str | None, "capability_snapshot": dict | None}``.
 ``is_unrestricted_cloud()`` (below) is True iff ``answered`` is True AND
-``choice == "cloud_unrestricted"``. Everything else — unanswered, answered
-"local_private" or "cloud_guarded", or any read failure — is gated. Choosing "local_private"
+``choice == "cloud_unrestricted"``, or the owner explicitly chose cloud only
+(Settings > Models, or the terminal setup's routing question) after their
+last recorded answer: choosing cloud only is consent; the factory default
+is not (see ``ROUTING_CONSENT_VIAS``). The app's first run has no
+cloud-only choice: its setup conversation asks where Friday may think, and
+that answer records the consent itself (``setup_steps.apply_posture``).
+Everything else — unanswered, answered "local_private" or "cloud_guarded",
+or any read failure — is gated. Choosing "local_private"
 does not mean local-only routing is force-enabled elsewhere; it means the
 one flag capable of turning every safeguard off at once stays off.
 
@@ -103,6 +109,35 @@ CHOICE_CLOUD = "cloud_unrestricted"
 CHOICE_GUARDED = "cloud_guarded"
 VALID_CHOICES = (CHOICE_LOCAL, CHOICE_CLOUD, CHOICE_GUARDED)
 
+#: Choosing cloud only IS consent: an explicit choice of "Cloud only", made by
+#: the owner in Settings > Models or at the terminal setup's routing question,
+#: counts the same as the recorded "Cloud for everything" answer. The factory
+#: default never counts. The evidence is the record `core._save_settings` writes
+#: on an owner routing change (`mode_chosen`, `mode_chosen_at`) plus HOW the
+#: change was made (`mode_chosen_via`), which a client can never send:
+#:
+#:   * "settings" -- the Settings > Models mode control (`routing_surface`
+#:     "settings_models"), clicked on Friday's own page (same-origin, with the
+#:     page's session token: `screen_click`); other mode buttons are not it;
+#:   * "setup"    -- the terminal setup wizard's routing question when it was
+#:     actually answered (not quick mode, not skipped), or a POST to
+#:     /api/setup/complete clicked on Friday's own page. The app's first run
+#:     does not use that route: it completes through the setup chat, whose
+#:     mode write is "posture" (below).
+#:
+#: Times are compared as aware datetimes; `mode_chosen_at` is written in UTC.
+#: A recorded answer whose time cannot be read wins (fails toward safeguards).
+#:
+#: Not consent: the setup chat's privacy answer writing the mode it implies
+#: ("posture": that answer records its own consent, which decides), a mode
+#: change whose request was not a click on the page ("unverified"), and a
+#: `mode_chosen` written before this record existed (no `via`). Each of those
+#: keeps every safeguard the recorded answer gives. Of the two explicit
+#: decisions -- the recorded answer and the cloud-only choice -- the later one
+#: wins; a tie goes to the recorded answer.
+ROUTING_CONSENT_VIAS = ("settings", "setup")
+SOURCE_CLOUD_ONLY_CHOICE = "cloud_only_choice"
+
 #: The bar for "this machine can actually run local models for the work in
 #: question", not merely "this machine can load the weights". `fits` (HR1/
 #: HR2, residency_policy.py) answers "does it load" and has a real `refused`
@@ -120,7 +155,8 @@ class ConsentStatus(NamedTuple):
     choice: str | None
     at: str | None
     capability_snapshot: dict | None
-    #: "settings" | "legacy_unrestricted_cloud_flag" | "unanswered" | "error-default"
+    #: "settings" | "cloud_only_choice" | "legacy_unrestricted_cloud_flag" |
+    #: "unanswered" | "error-default"
     source: str
 
     @property
@@ -131,6 +167,39 @@ class ConsentStatus(NamedTuple):
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _when(value) -> datetime | None:
+    """An ISO time as an aware datetime. `mode_chosen_at` is written in UTC; a naive
+    one (written before that) is read as this PC's local time. None when absent or
+    unreadable."""
+    try:
+        dt = datetime.fromisoformat(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo is not None else dt.astimezone()
+
+
+def _norm_mode(mode) -> str:
+    m = str(mode or "").strip().lower() or "cloud_only"
+    return "local_preferred" if m == "smart" else m
+
+
+def cloud_only_choice(cfg: dict | None) -> str | None:
+    """When the owner explicitly chose cloud only and it is still the mode:
+    the time of that choice (as written), else None. See ROUTING_CONSENT_VIAS."""
+    if not isinstance(cfg, dict):
+        return None
+    if not str(cfg.get("mode") or "").strip():
+        return None
+    if _norm_mode(cfg.get("mode")) != "cloud_only":
+        return None
+    if _norm_mode(cfg.get("mode_chosen")) != "cloud_only" or not cfg.get("mode_chosen"):
+        return None
+    if str(cfg.get("mode_chosen_via") or "") not in ROUTING_CONSENT_VIAS:
+        return None
+    at = cfg.get("mode_chosen_at")
+    return str(at) if _when(at) is not None else None
 
 
 def resolve(config: dict | None = None) -> ConsentStatus:
@@ -150,15 +219,31 @@ def resolve(config: dict | None = None) -> ConsentStatus:
         if not isinstance(cfg, dict):
             cfg = {}
 
+        recorded = None
         cc = cfg.get("cloud_consent")
         if isinstance(cc, dict) and cc.get("answered") is True:
             choice = cc.get("choice")
             if choice not in VALID_CHOICES:
                 choice = None
-            return ConsentStatus(answered=choice is not None, choice=choice,
-                                 at=cc.get("at"),
-                                 capability_snapshot=cc.get("capability_snapshot"),
-                                 source="settings")
+            recorded = ConsentStatus(answered=choice is not None, choice=choice,
+                                     at=cc.get("at"),
+                                     capability_snapshot=cc.get("capability_snapshot"),
+                                     source="settings")
+
+        # Choosing cloud only is consent; the later explicit decision wins.
+        chose_at = cloud_only_choice(cfg)
+        if chose_at is not None:
+            answered = recorded is not None and recorded.answered
+            rec_at = _when(recorded.at) if answered else None
+            # A recorded answer whose time cannot be read wins: it fails toward the safeguards.
+            if not answered or (rec_at is not None and _when(chose_at) > rec_at):
+                return ConsentStatus(
+                    answered=True, choice=CHOICE_CLOUD, at=chose_at,
+                    capability_snapshot=(recorded.capability_snapshot
+                                         if recorded is not None else None),
+                    source=SOURCE_CLOUD_ONLY_CHOICE)
+        if recorded is not None:
+            return recorded
 
         # Grandfather-in: the legacy standalone flag WAS this same
         # decision under a different name.

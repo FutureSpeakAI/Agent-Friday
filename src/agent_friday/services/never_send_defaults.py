@@ -1,0 +1,188 @@
+"""Card numbers and bank or account numbers: on every never-send list by default.
+
+Two entries join the owner's never-send list on every install, new and existing:
+
+* ``[card numbers]``             -- a payment-card number: digits in a row or in card groups
+                                    (4-4-4-4, 4-6-5, 4-6-4) that start with a card network's
+                                    prefix, have that network's length and pass the card
+                                    checksum, so order and tracking numbers, phone numbers,
+                                    timestamps and spaced lists of numbers do not trip it;
+* ``[bank and account numbers]`` -- an IBAN (its own checksum), and a number written as a bank or
+                                    account number: after "account number", "acct", "a/c",
+                                    "routing number", "ABA number" or "sort code".
+
+A hit stops the whole cloud call, like every never-send entry, and a turn that quoted one keeps
+stopping later calls that carry it in their history: the floor's rule, by design.
+
+They are entries like any other: the never-send floor (``judgment_gate.never_send_hits``, run by
+``egress_gate`` before every cloud call in every mode, "Cloud for everything" included) refuses a
+payload that holds one, and the owner can remove either (Settings > Privacy & Data > Locks). The
+brackets mark a kind of number rather than literal text; the floor matches them by pattern.
+
+The migration runs once per install (``MARK`` in ``privacy_shield.json``'s ``defaults_applied``):
+it adds whichever entry is missing, then never again, so a removal sticks. When it added anything
+it says so once in Activity (emitter NS1). An unreadable shield file is left exactly as it is and
+the migration tries again on the next start.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from datetime import datetime, timezone
+
+_log = logging.getLogger("friday.never_send_defaults")
+
+CARD = "[card numbers]"
+BANK = "[bank and account numbers]"
+ENTRIES = (CARD, BANK)
+LABELS = {CARD: "Card numbers", BANK: "Bank and account numbers"}
+SOURCE = "default"
+MARK = "numbers-2026-10"
+NOTICE_KEY = "never-send-defaults-numbers"
+
+#: A card number as people write one: 13-19 digits in a row, or grouped the way cards print
+#: (4-4-4-4 with an optional 1-3 digit tail, 4-6-5 or 4-6-4). Not any run of spaced numbers, so a
+#: table of small numbers or a list of years is not read as a card. A run after "+" is a phone
+#: number in international form, never a card. The match is only a candidate: ``_card_iin_ok``
+#: and the checksum decide.
+_CARD_RE = re.compile(
+    r"(?<!\+)\b(?:\d{13,19}"
+    r"|\d{4}([ -])\d{4}\1\d{4}\1\d{4}(?:\1\d{1,3})?"
+    r"|\d{4}([ -])\d{6}\2\d{4,5})\b")
+
+#: Card networks by issuer prefix (IIN) and the lengths each network issues. About one random
+#: digit run in ten passes the checksum, so the prefix and length carry most of the weight:
+#: an order number, a byte count or a millisecond timestamp rarely has both.
+#: (low, high) are inclusive prefix ranges compared on the first len(str(low)) digits.
+_CARD_NETWORKS = (
+    ((4, 4), (13, 16, 19)),                      # Visa
+    ((51, 55), (16,)),                           # Mastercard
+    ((2221, 2720), (16,)),                       # Mastercard 2-series
+    ((34, 34), (15,)), ((37, 37), (15,)),        # American Express
+    ((6011, 6011), (16, 17, 18, 19)),            # Discover
+    ((644, 649), (16, 17, 18, 19)),              # Discover
+    ((65, 65), (16, 17, 18, 19)),                # Discover
+    ((622126, 622925), (16, 17, 18, 19)),        # Discover (co-branded UnionPay range)
+    ((300, 305), (14,)), ((36, 36), (14,)),      # Diners Club International
+    ((38, 39), (14,)),                           # Diners Club
+    ((3528, 3589), (16, 17, 18, 19)),            # JCB
+)
+
+
+def _card_iin_ok(digits: str) -> bool:
+    """True when `digits` starts with a card network's prefix and has a length it issues."""
+    n = len(digits)
+    for (low, high), lengths in _CARD_NETWORKS:
+        width = len(str(low))
+        if n in lengths and low <= int(digits[:width]) <= high:
+            return True
+    return False
+
+
+_IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b")
+_LABELLED_RE = re.compile(
+    r"(?i)\b(?:(?:bank\s+)?account\s*(?:number|no\.?|num\.?|#)|acct\.?\s*(?:number|no\.?|#)?|a/c\s*(?:no\.?|number)?"
+    r"|routing\s*(?:number|no\.?|#)|aba\s*(?:routing\s*)?(?:number|no\.?|#)|sort\s*code)"
+    r"\s*(?:is\s*)?[:#]?\s*(\d[\d -]{4,32}\d)")
+
+
+def _luhn(digits: str) -> bool:
+    total, alt = 0, False
+    for ch in reversed(digits):
+        d = ord(ch) - 48
+        if alt:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+        alt = not alt
+    return total % 10 == 0
+
+
+def _iban_ok(raw: str) -> bool:
+    s = raw.replace(" ", "").upper()
+    if not 15 <= len(s) <= 34:
+        return False
+    moved = s[4:] + s[:4]
+    try:
+        return int("".join(str(int(c, 36)) for c in moved)) % 97 == 1
+    except ValueError:
+        return False
+
+
+def has_card_number(text: str) -> bool:
+    for m in _CARD_RE.finditer(text or ""):
+        digits = re.sub(r"\D", "", m.group(0))
+        if 13 <= len(digits) <= 19 and _card_iin_ok(digits) and _luhn(digits):
+            return True
+    return False
+
+
+def has_bank_number(text: str) -> bool:
+    t = text or ""
+    for m in _IBAN_RE.finditer(t):
+        # The match may run on into a following capitalised word; try each shorter grouping too.
+        parts = m.group(0).split(" ")
+        if any(_iban_ok(" ".join(parts[:k])) for k in range(len(parts), 0, -1)):
+            return True
+    for m in _LABELLED_RE.finditer(t):
+        if len(re.sub(r"\D", "", m.group(1))) >= 6:
+            return True
+    return False
+
+
+_DETECT = {CARD: has_card_number, BANK: has_bank_number}
+
+
+def is_category(entry) -> bool:
+    return str(entry or "").strip().casefold() in {e.casefold() for e in ENTRIES}
+
+
+def category_hit(entry: str, text: str) -> bool:
+    """True when `text` holds a number of the kind the category entry names."""
+    key = next((e for e in ENTRIES if e.casefold() == str(entry or "").strip().casefold()), None)
+    return bool(key and _DETECT[key](text))
+
+
+def migrate() -> list:
+    """Once per install: add the missing default entries, mark it done, say so once. Returns what
+    was added. Never raises; an unreadable shield file is left alone and retried next start."""
+    try:
+        from agent_friday.services import privacy_shield_store as ps
+        if ps.default_applied(MARK):
+            return []
+        added = ps.add("never_send", list(ENTRIES), source=SOURCE)
+        ps.mark_default_applied(MARK, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    except Exception as e:  # noqa: BLE001 - the floor's own checks still run; this retries next start
+        _log.warning("default never-send entries were not added: %s", type(e).__name__)
+        return []
+    if added:
+        _log.info("never-send list: added %d default entr%s", len(added), "y" if len(added) == 1 else "ies")
+        _notify(added)
+    return added
+
+
+def _notify(added: list) -> None:
+    names = " and ".join(LABELS.get(a, a).lower() for a in added)
+    try:
+        import agent_friday.notifications_engine as _ne
+        _ne.push(title="Card and bank numbers are on your never-send list", body=(
+            "Friday now refuses to send %s to any cloud model, whatever you chose for the cloud. "
+            "They are entries on your never-send list like any other; you can remove either in "
+            "Settings > Privacy & Data > Locks." % names),
+            priority="low", source="privacy", kind="never_send_defaults", tier="fyi",
+            emitter="NS1", dedupe_key=NOTICE_KEY, target={"workspace": "settings", "tab": "privacy"})
+    except Exception as e:  # noqa: BLE001
+        _log.warning("never-send defaults notice not shown: %s", e)
+
+
+def listing() -> list:
+    """The never-send list for the Locks page: [{entry, label, kind}] with the owner's own words for
+    their entries and a plain name for a category. Read on this PC only."""
+    from agent_friday.services import privacy_shield_store as ps
+    out = []
+    for e in ps.entries("never_send"):
+        key = next((c for c in ENTRIES if c.casefold() == e.strip().casefold()), None)
+        out.append({"entry": e, "label": LABELS[key] if key else e,
+                    "kind": "category" if key else "words"})
+    return out

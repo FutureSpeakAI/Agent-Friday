@@ -36,6 +36,7 @@ const SECTIONS: Section[] = [
   { id: 'intelligence', label: 'Models' },
   { id: 'costs', label: 'Spending' },
   { id: 'privacy', label: 'Privacy & Data' },
+  { id: 'laya', label: 'Laya' },
   { id: 'connections', label: 'Connections' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'advanced', label: 'Advanced' },
@@ -68,7 +69,9 @@ const GUARDED = /phone|twilio|texting|sms|voicemail|your cell|computer control|v
  */
 const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspaces|published pages|google accounts|texting registration|model browser|your knowledge|permission|grant|pre-approved sends/i;
 /** Sections that are accounts and phone lines from top to bottom: opened and listed, never changed. */
-const LOOK_ONLY_SECTIONS = new Set(['connections']);
+// Laya: her bars change how a later spec's turns are routed on this shared scratch server, so the walk lists
+// them and leaves them; tests/app/specs/laya_settings.spec.ts changes and reads them back, then resets them.
+const LOOK_ONLY_SECTIONS = new Set(['connections', 'laya']);
 
 /** The only free-text fields the walk types into. Everything else is present-only. */
 const TEXT_OK = /^(name|language|speaking style)\b/i;

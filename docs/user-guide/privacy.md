@@ -43,9 +43,12 @@ vault records kept local). Friday tells you once what that means and then does
 what you chose; she does not ask again or lecture.
 
 **Choosing Cloud only yourself is consent too.** Picking **Cloud only** in
-**Settings > Models** (or the cloud answer in setup) counts the same as Cloud
-for everything, and Settings says so on the button. The starting setting is
-not consent: a fresh install starts on Cloud only without anyone choosing it,
+**Settings > Models** (or at the routing question of the terminal setup,
+`friday setup`) counts the same as Cloud for everything, and Settings says
+so on the button. In the setup conversation there is no Cloud only button:
+your answer to where Friday may think is recorded as your consent. The
+starting setting is not consent: a fresh install starts on Cloud only
+without anyone choosing it,
 so until you answer, the consent is "not answered" and every safeguard stays
 on. Of your answer here and a later choice of Cloud only, the later one counts.
 
@@ -97,7 +100,9 @@ Two related protections work differently:
 - **Card numbers and bank or account numbers** are on your never-send list from
   the start, as two entries: **Card numbers** and **Bank and account numbers**.
   So they are refused under every choice, Cloud for everything included. Friday
-  recognises a card number by its checksum, an IBAN by its checksum, and a
+  recognises a card number by its network's prefix, its length and its
+  checksum (so order numbers, phone numbers and timestamps are not mistaken
+  for one), an IBAN by its checksum, and a
   number written as an account, routing or sort-code number. You can remove
   either entry on **Settings > Privacy & Data > Locks**; Friday told you once
   in Activity when they were added.

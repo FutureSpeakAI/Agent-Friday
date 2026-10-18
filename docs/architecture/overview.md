@@ -57,11 +57,13 @@ raises. The recorded choice is one of `local_private`, `cloud_guarded` or
 `cloud_unrestricted`. Unanswered, unreadable or broken consent all resolve to
 "gated", which keeps every safeguard on (the same as `cloud_guarded`). Only
 `cloud_unrestricted` widens the egress gate's tier policy (section 2).
-Choosing Cloud only is consent too (owner ruling 2026-10-17): when
+Choosing Cloud only is consent too: when
 `model_routing.mode` and `mode_chosen` are both `cloud_only` and
 `mode_chosen_via` is `settings` (the Settings > Models control, clicked on
 Friday's own page: `screen_click.screen_session`) or `setup` (the terminal
-wizard, or setup completion clicked on the page), `resolve()` answers
+wizard's routing question, or `POST /api/setup/complete` clicked on the
+page; the app's first run completes through the setup chat instead),
+`resolve()` answers
 `cloud_unrestricted` with source `cloud_only_choice`, unless a recorded answer
 is later (a tie goes to the recorded answer). `core._save_settings` writes
 `mode_chosen_via` only on an owner routing change and strips it from client
@@ -192,8 +194,8 @@ Card numbers and bank or account numbers ARE part of the floor by default:
 `services/never_send_defaults.py` adds the entries `[card numbers]` and
 `[bank and account numbers]` to every never-send list once per install
 (migration from scheduler start, Activity notice NS1, a removed entry is
-never re-added), and `never_send_hits` matches them by pattern (card
-checksum, IBAN checksum, numbers written after an account, routing or
+never re-added), and `never_send_hits` matches them by pattern (a card network's prefix and
+length plus the card checksum, IBAN checksum, numbers written after an account, routing or
 sort-code label). The owner removes either on the Locks page
 (`POST /api/locks/never-send/remove`, screen click only). SSNs and
 credentials (`hard_identifier_hits`) are not part of the floor. In prose they

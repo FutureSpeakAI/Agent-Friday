@@ -61,6 +61,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: pytest tests/security tests/test_egress_adversarial.py tests/test_judgment_gate.py -q
 
+      # The workspace / Laya contract: every workspace has a manifest, gate classes
+      # agree, and the Laya coverage ratchet never goes down. It lives outside
+      # tests/unit, so it ran only when someone remembered to run it.
+      - name: Run the workspace and Laya contract test
+        if: ${{ !cancelled() }}
+        run: pytest tests/test_laya_workspace_contracts.py -q
+
   guards:
     name: repository guards
     runs-on: ubuntu-latest
@@ -134,7 +141,7 @@ jobs:
           point_and_chips.spec.ts settings_highlight.spec.ts step_panel.spec.ts
           studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
           calendar_freebusy.spec.ts calendar_rsvp.spec.ts calendar_delete.spec.ts
-          activity_never_collapses.spec.ts connect_services.spec.ts
+          activity_never_collapses.spec.ts connect_services.spec.ts laya_settings.spec.ts
       - name: Keep the Settings walk table and failure traces
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml

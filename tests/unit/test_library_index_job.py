@@ -447,7 +447,9 @@ def test_the_manifest_declares_every_job_the_library_starts():
     assert set(jobs) == {"library_index", "library_reindex", "library_stage"}
     assert jobs["library_index"]["entry"] == jobs["library_reindex"]["entry"] == \
         "agent_friday.services.library.indexer:Indexer._run"
-    assert jobs["library_stage"]["entry"] == "agent_friday.services.library.staging:Stager._one"
+    # The entry names the function that opens the visible job (the contract test reads it there);
+    # Stager._one only loops over _draft_once while a hold pauses the draft.
+    assert jobs["library_stage"]["entry"] == "agent_friday.services.library.staging:Stager._draft_once"
     assert all(j["model_class"] in ("encoder", "brain") for j in jobs.values())
 
 

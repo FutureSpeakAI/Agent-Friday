@@ -46,6 +46,7 @@ EXPECTED_TABS = [
     ("intelligence", "Models"),
     ("costs", "Spending"),
     ("privacy", "Privacy & Data"),
+    ("laya", "Laya"),
     ("connections", "Connections"),
     ("appearance", "Appearance"),
     ("advanced", "Advanced"),
