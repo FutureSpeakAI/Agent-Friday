@@ -190,29 +190,61 @@ def modes(settings: Optional[dict] = None) -> List[dict]:
         ("voice_routing", "Spoken tool routing", "act" if str(s.get("voice_tool_routing") or "laya") == "laya" else "off",
          "Opens screens and runs reads you ask for by voice, without waking the brain.", "voice"),
         ("chat_routing", "Typed tool routing", "act" if str(s.get("chat_tool_routing") or "") == "laya" else "off",
-         "The same, for what you type in chat.", "privacy"),
+         "The same, for what you type in chat.", ("laya", "Instant answers (no model)")),
         ("approval_check", "Approval check's second opinion", _gate_mode(s),
-         "Can add a check before an action. She can never approve one.", "privacy"),
+         "Can add a check before an action. She can never approve one.", ("privacy", "What needs your sign-off")),
         ("tool_head", "Trained tool head", _three(s.get("laya_tool_head"), "shadow"),
          "Inert until a trained head is certified on this PC.", None),
         ("live_reflex", "Live-call reflex", _three(s.get("voice_live_reflex"), "shadow"),
          "Quick routing beside a live cloud call.", "voice"),
         ("safe_writes", "Safe writes on mail", _safe_writes_mode(),
-         "Puts the approval card up for mail changes you point at. You approve every card.", "privacy"),
+         "Puts the approval card up for mail changes you point at. You approve every card.",
+         ("laya", "Safe writes (off until you turn them on)")),
         ("personal_learning", "Learning from your corrections", "act" if s.get("laya_personal_learning", True) is not False else "off",
-         "What she learns can only make her more careful.", "privacy"),
+         "What she learns can only make her more careful.", ("laya", "What Laya learns about you")),
         ("calibration", "Confidence scoring", "shadow",
          "Measures how far her confidence can be believed. It never changes a decision.", None),
         ("bars", "Your confidence bars", (bars["mode"] if bars["bars"] else "off"),
-         "Your own act score per action. Off until you set one.", "laya"),
+         "Your own act score per action. Off until you set one.", ("laya", "Confidence bars")),
     ]
     out = []
     for cid, label, mode, what, where in rows:
         if cid in NEVER_ACT and mode == "act":     # cannot happen from the mappings above; held here anyway
             mode = "suggest"
+        tab, section = (where if isinstance(where, tuple) else (where, None))
         out.append({"id": cid, "label": label, "mode": mode, "meaning": MODE_MEANING.get(mode, "Set by hand in the settings file."),
-                    "what": what, "change_in": where, "never_act": cid in NEVER_ACT})
+                    "what": what, "change_in": tab, "change_section": section, "never_act": cid in NEVER_ACT})
     return out
+
+
+# ---------------------------------------------------------------------------
+#  teach her a phrase (Slice 2)
+# ---------------------------------------------------------------------------
+
+TEACH_NOTHING = "conversation"
+
+
+def teach_labels() -> List[dict]:
+    """What a taught phrase may mean: every action the router can choose that may be a label
+    (laya_personal._can_label), and "just talk to me" (no action)."""
+    lr = _router()
+    try:
+        from agent_friday.services import laya_personal as lp
+        ok = lp._can_label
+    except Exception:
+        return []
+    out = [{"id": t, "label": _label(t), "class": bar_class(t)} for t in lr.TOOLS if ok(t)]
+    out.append({"id": TEACH_NOTHING, "label": "nothing: just talk to me", "class": "none"})
+    return out
+
+
+def teach(text: str, label: str, profile: Optional[str] = None) -> dict:
+    """Teach her one phrasing, typed by the owner on this page: it becomes a gold correction row through the same
+    capture, sensitivity and test-question checks as a spoken correction (laya_personal.teach_phrase)."""
+    if label not in {r["id"] for r in teach_labels()}:
+        return {"ok": False, "why": "Pick one of her actions, or \"nothing: just talk to me\"."}
+    from agent_friday.services import laya_personal as lp
+    return lp.teach_phrase(text, label, profile=profile)
 
 
 # ---------------------------------------------------------------------------
@@ -892,4 +924,4 @@ def overview() -> dict:
             "report": {"take_rate": take_rate(rows), "replay": last_replay(),
                        "bars_preview": (bars_preview(rows, cur["bars"], learned=learned_threshold(_current_profile()))
                                         if cur["bars"] else None)},
-            "bars": bars_view()}
+            "bars": bars_view(), "teach_labels": teach_labels()}

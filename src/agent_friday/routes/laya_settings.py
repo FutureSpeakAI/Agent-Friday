@@ -3,6 +3,7 @@
     GET  /api/laya/settings          what runs, her modes, the report card, the bars
     POST /api/laya/settings/replay   {}                        replay your own labelled turns, plain and reshuffled
     POST /api/laya/settings/bars     {bars: {tool: n|null}, mode?: "shadow"|"act"}
+    POST /api/laya/settings/teach    {text, label}             teach her a phrase (a click only)
 
 LOCAL ONLY, owner only, like /api/laya/learning: the replay reads the owner's sealed history and the
 report card describes how their own requests were decided, so an observer credential and a remote
@@ -64,6 +65,26 @@ def replay():
     res = dict(res)
     res.pop("cases", None)
     return jsonify(dict(res, status="ok", message=""))
+
+
+@laya_settings_bp.route("/api/laya/settings/teach", methods=["POST"])
+def teach():
+    """Teach her a phrase: {text, label}. A click on Friday's own page only (it changes what she keeps, like confirm
+    and forget on /api/laya/learning). The reply never repeats the words."""
+    from agent_friday.services import screen_click
+    if not screen_click.screen_session(request):
+        return jsonify({"status": "error", "message": "Teaching her a phrase needs a click on the screen, in Friday's own page."}), 403
+    body = _body()
+    text, label = body.get("text"), body.get("label")
+    if not isinstance(text, str) or not isinstance(label, str):
+        return jsonify({"status": "error", "message": "Send the phrase as text and what it means as label."}), 400
+    try:
+        res = ls.teach(text, label)
+    except Exception:  # noqa: BLE001 - a fixed sentence, never an exception's text
+        return jsonify({"status": "error", "message": "She could not take that phrase."}), 500
+    if not res.get("ok"):
+        return jsonify({"status": "error", "message": res.get("why") or "She could not take that phrase."}), 400
+    return jsonify({"status": "ok", "message": res.get("text") or "Taken."})
 
 
 @laya_settings_bp.route("/api/laya/settings/bars", methods=["POST"])

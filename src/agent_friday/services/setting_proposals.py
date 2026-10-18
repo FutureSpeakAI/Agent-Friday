@@ -518,7 +518,7 @@ def tool(inp) -> str:
 ROW_HOMES = {
     "settings.display.start_screen": ("appearance", "Show my day", ("show my day", "start screen", "landing screen", "my day on the start screen")),
     "settings.calls.stand_back": ("voice", "Calls", ("calls", "call mode", "stand back for calls", "standing back for calls")),
-    "settings.laya.personal_learning": ("privacy", "Laya learns from my corrections", ("laya learning", "personal learning", "learn from my corrections", "what laya learned")),
+    "settings.laya.personal_learning": ("laya", "Laya learns from my corrections", ("laya learning", "personal learning", "learn from my corrections", "what laya learned")),
     "settings.accessibility.big_mode": ("voice", "Big mode", ("big mode", "large targets", "big buttons")),
     "settings.hologram.window.depth_strength": ("voice", "Depth effect", ("depth effect", "depth strength", "hologram depth")),
     "settings.hologram.window.parallax_strength": ("voice", "Parallax strength", ("parallax", "parallax strength")),
