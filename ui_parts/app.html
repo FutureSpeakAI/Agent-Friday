@@ -13748,14 +13748,16 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
       else if(action==='now'){
         const r=await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'});
         const d=await r.json().catch(()=>({}));
-        flash(d&&d.ok===false?(d.message||d.reason||'Publish failed'):'Approve the card to publish — it shows the exact text and where it goes');
+        // When something stops it going out, its notice is the whole answer.
+        flash(d&&d.ok===false?(d.message||d.reason||'Publish failed'):(d&&d.publisher&&d.publisher.notice)||'Approve the card to publish — it shows the exact text and where it goes');
         if(d&&d.ok!==false)fridayPublisherNotice(d);
       }else if(action==='schedule'){
         const sc={timezone:Intl.DateTimeFormat().resolvedOptions().timeZone};
         if(schedAt)sc.publish_at=new Date(schedAt).toISOString();else sc.optimal_time=true;
         const r=await fetch('/api/content/posts/'+id+'/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sc)});
         const d=await r.json().catch(()=>({}));
-        if(d&&d.conflicts&&d.conflicts.length)flash('⚠ Scheduled with '+d.conflicts.length+' conflict warning(s) — see the Calendar');
+        if(d&&d.ok!==false&&d.publisher&&d.publisher.notice)flash(d.publisher.notice);
+        else if(d&&d.conflicts&&d.conflicts.length)flash('⚠ Scheduled with '+d.conflicts.length+' conflict warning(s) — see the Calendar');
         else flash(d&&d.ok===false?(d.message||'Schedule failed'):'📅 Scheduled');
         if(d&&d.ok!==false)fridayPublisherNotice(d);
         setSchedOpen(false);
@@ -14253,8 +14255,8 @@ function QuickPostModal({payload,onClose}){
         fridayNavigate({workspace:'media',card:cardRef.current});onClose();return;
       }
       await fetch('/api/content/posts/'+id+'/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platforms:sel})}).catch(()=>{});
-      if(mode==='now'){const d=await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'}).then(r=>r.json()).catch(()=>({}));flash(d&&d.ok===false?(d.message||d.error||'Could not post it'):'Approve the card to publish — it shows the exact text and where it goes');if(d&&d.ok!==false)fridayPublisherNotice(d)}
-      else{const d=await fetch('/api/content/posts/'+id+'/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({optimal_time:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone})}).then(r=>r.json()).catch(()=>({}));flash(d&&d.ok===false?(d.message||d.error||'Could not schedule it'):'📅 Scheduled at the next optimal slot');if(d&&d.ok!==false)fridayPublisherNotice(d)}
+      if(mode==='now'){const d=await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'}).then(r=>r.json()).catch(()=>({}));flash(d&&d.ok===false?(d.message||d.error||'Could not post it'):(d&&d.publisher&&d.publisher.notice)||'Approve the card to publish — it shows the exact text and where it goes');if(d&&d.ok!==false)fridayPublisherNotice(d)}
+      else{const d=await fetch('/api/content/posts/'+id+'/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({optimal_time:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone})}).then(r=>r.json()).catch(()=>({}));flash(d&&d.ok===false?(d.message||d.error||'Could not schedule it'):(d&&d.publisher&&d.publisher.notice)||'📅 Scheduled at the next optimal slot');if(d&&d.ok!==false)fridayPublisherNotice(d)}
       setTimeout(onClose,1200);
     }catch(e){flash('Request failed')}
     setBusy(false);

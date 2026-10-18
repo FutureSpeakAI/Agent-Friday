@@ -2,8 +2,9 @@
 //
 // SCRATCH server only (FRIDAY_BASE must be set; the live :3000 is refused). Synthetic posts go to the in-memory
 // mock platform, which reaches no network. What is proved, one screen state at a time:
-//  1. scheduling a post while the owner has switched the Content publisher off says the post won't go out, with
-//     an "Open Workflows" button (the publisher's part of the answer is given in its real words: see below);
+//  1. scheduling a post, or pressing Publish…, while the owner has switched the Content publisher off says the post
+//     won't go out, with an "Open Workflows" button, and no toast beside it says the post goes out after all (the
+//     publisher's part of the answer is given in its real words: see below);
 //  2. Workflows lists the Content publisher as on after it was switched on automatically, with the note saying
 //     when and why, and its switch turns it off (the job's row is given in its real shape: see below);
 //  3. "Check connection" on a connected account says nothing was posted;
@@ -114,6 +115,8 @@ const AUTO_NOTE = (at: Date) => {
     + ' because a post was scheduled for a connected account. You can switch it off here.';
 };
 const OFF_NOTICE = "This post won't go out: the Content publisher is switched off. Turn it on in Workflows.";
+/** What Media says when a post is armed and nothing stops it: words that would contradict the off notice. */
+const CONTRADICTS = /asks again before it goes|^Scheduled\.|A card is asking you first|leaves this computer only when you approve|^Publishing\./;
 
 test('Workflows lists the Content publisher as on after it was switched on automatically, says why, and its switch turns it off', async ({ page }, info) => {
   test.setTimeout(300_000);
@@ -184,12 +187,46 @@ test('a post scheduled while the Content publisher is switched off says it will 
     await openCard(page, post.card);
     await scheduleFromCard(page);
     await expect.poll(() => scheduled, { timeout: 30_000, message: 'the post was not scheduled' }).toBe(1);
-    await expect(page.locator(TOASTS).filter({ hasText: /^Scheduled\./ })).toBeVisible({ timeout: 15_000 });
     const notice = page.locator(TOASTS).filter({ hasText: OFF_NOTICE });
     await expect(notice, 'no notice that the post will not go out').toBeVisible({ timeout: 15_000 });
     await keep(notice);
     await expect(notice.getByRole('button', { name: 'Open Workflows' })).toBeVisible();
+    // The notice is the whole answer: no toast beside it may say the post goes out after all.
+    await expect(page.locator(TOASTS).filter({ hasText: CONTRADICTS }),
+      'a toast says the post will go out while the notice says it will not').toHaveCount(0);
     await shot(page, info, 'posting-1-notice-publisher-off', undefined, notice);
+  } finally {
+    await api(page, 'DELETE', '/api/content/posts/' + encodeURIComponent(post.id)).catch(() => {});
+  }
+});
+
+test('Publish… on a post while the Content publisher is switched off shows only the notice (stubbed: nothing is armed)', async ({ page }, info) => {
+  test.setTimeout(300_000);
+  await setUp(page);
+  await openApp(page, '/w/media', () => page.evaluate(() => typeof (window as any).fridayToast === 'function'));
+  const post = await newPost(page, 'publish-owner-off');
+  try {
+    // The publish route is answered here, in the shape services/media_index._publish_post sends when a card is
+    // waiting and the publisher check says the job is off. Nothing is armed and nothing reaches a network.
+    const publishPaths = new Set(['/api/media/' + encodeURIComponent(post.card) + '/publish', '/api/media/' + post.card + '/publish']);
+    let asked = 0;
+    await page.route(u => publishPaths.has(u.pathname), route => {
+      asked += 1;
+      return route.fulfill({ json: { status: 'pending', message: 'A card is asking you first, for each place it goes.',
+        targets: [{ target_id: 'tgt_synthetic', platform: 'mock', state: 'waiting for your approval' }],
+        publisher: { on: false, auto_enabled: false, notice: OFF_NOTICE,
+          action: { label: 'Open Workflows', target: { workspace: 'workflows' } } } } });
+    });
+    await openCard(page, post.card);
+    await page.getByRole('button', { name: 'Publish…', exact: true }).first().click();
+    await expect.poll(() => asked, { timeout: 30_000, message: 'Publish… sent nothing' }).toBe(1);
+    const notice = page.locator(TOASTS).filter({ hasText: OFF_NOTICE });
+    await expect(notice, 'no notice that the post will not go out').toBeVisible({ timeout: 15_000 });
+    await keep(notice);
+    await expect(notice.getByRole('button', { name: 'Open Workflows' })).toBeVisible();
+    await expect(page.locator(TOASTS).filter({ hasText: CONTRADICTS }),
+      'a toast says the post will go out while the notice says it will not').toHaveCount(0);
+    await shot(page, info, 'posting-1b-publish-notice-publisher-off', undefined, notice);
   } finally {
     await api(page, 'DELETE', '/api/content/posts/' + encodeURIComponent(post.id)).catch(() => {});
   }
