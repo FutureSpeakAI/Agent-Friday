@@ -340,6 +340,7 @@ def load_skills(dirs=None) -> list:
     by_name = {}
     legacy = {}
     agents = {}
+    unverified = {}
     for d in dirs:
         try:
             d = Path(d)
@@ -362,6 +363,11 @@ def load_skills(dirs=None) -> list:
                                 sk.name = child.name
                                 sk.meta[AUTHOR_KEY] = AGENT_AUTHOR
                                 agents[sk.name] = sk
+                            elif d != BUNDLED_DIR and (child / PROVENANCE_NAME).exists():
+                                # A record that does not verify (no key right
+                                # now, or stale): not Friday's, and it still
+                                # never wins a name from another skill.
+                                unverified[sk.name] = sk
                             else:
                                 by_name[sk.name] = sk
                         except Exception:
@@ -376,8 +382,9 @@ def load_skills(dirs=None) -> list:
     # folder skills take precedence; fold in legacy ones not already present
     for name, sk in legacy.items():
         by_name.setdefault(name, sk)
-    # Friday's own skills come last: they never take a name already held.
-    for name, sk in agents.items():
+    # Friday's own skills (and folders whose record cannot be verified) come
+    # last: they never take a name already held.
+    for name, sk in list(unverified.items()) + list(agents.items()):
         by_name.setdefault(name, sk)
     return list(by_name.values())
 
@@ -402,7 +409,11 @@ def get_skill(name, dirs=None) -> Optional[Skill]:
 # ── matching / injection ────────────────────────────────────────
 
 def match_skills(message, dirs=None, limit=3) -> list:
-    """Return skills whose triggers appear in the message, best first."""
+    """Return skills whose triggers appear in the message, best first.
+
+    Every matching skill that is not Friday's own ranks ahead of hers, so
+    skills she wrote can never crowd one of the owner's out of the limited
+    slots by copying its triggers (2026-10-18 review)."""
     msg = (message or "").lower()
     scored = []
     for s in load_skills(dirs):
@@ -410,10 +421,10 @@ def match_skills(message, dirs=None, limit=3) -> list:
             continue
         hits = [t for t in s.triggers if t and t.lower() in msg]
         if hits:
-            # score: number of triggers hit, tie-broken by longest match
-            scored.append((len(hits), max(len(h) for h in hits), s))
-    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-    return [s for _, _, s in scored[:limit]]
+            # score: not-Friday's first, then triggers hit, then longest match
+            scored.append((0 if friday_wrote(s) else 1, len(hits), max(len(h) for h in hits), s))
+    scored.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+    return [x[3] for x in scored[:limit]]
 
 
 def build_injection(message, dirs=None, limit=3, max_body=1200) -> str:
@@ -576,8 +587,11 @@ class SkillWriteRefused(PermissionError):
     not be proven to be exactly what she meant."""
 
 
-_KEY_CACHE = {"key": None, "at": 0.0}
+_KEY_CACHE = {"key": None, "at": 0.0, "failed_at": None}
 _KEY_TTL_S = 300.0
+#: A failed read is remembered this long, so a missing keychain is not asked
+#: once per skill folder on every turn.
+_KEY_FAIL_TTL_S = 30.0
 
 
 def _provenance_key() -> bytes:
@@ -588,9 +602,16 @@ def _provenance_key() -> bytes:
     now = _time.monotonic()
     if _KEY_CACHE["key"] and now - _KEY_CACHE["at"] < _KEY_TTL_S:
         return _KEY_CACHE["key"]
+    failed = _KEY_CACHE.get("failed_at")
+    if failed is not None and now - failed < _KEY_FAIL_TTL_S:
+        raise RuntimeError("governance key unavailable (recent failure)")
     from agent_friday.governance.action_gate import _governance_key
-    key = _governance_key()
-    _KEY_CACHE.update(key=key, at=now)
+    try:
+        key = _governance_key()
+    except Exception:
+        _KEY_CACHE.update(key=None, failed_at=now)
+        raise
+    _KEY_CACHE.update(key=key, at=now, failed_at=None)
     return key
 
 
@@ -660,16 +681,25 @@ def _clean_evidence(evidence):
         for k, v in evidence.items():
             if v in (None, ""):
                 continue
-            out[str(k)[:40]] = str(v)[:_EVIDENCE_TEXT_MAX]
+            out[_flat(k, 40)] = _flat(v, _EVIDENCE_TEXT_MAX)
         return out or None
-    return str(evidence)[:_EVIDENCE_TEXT_MAX] or None
+    return _flat(evidence, _EVIDENCE_TEXT_MAX) or None
+
+
+def _ledger_lines(path: Path) -> list:
+    """The ledger's lines, split on "\\n" ONLY. str.splitlines() also splits
+    on U+2028/U+2029/U+0085, which would let a reason break one line into
+    unparseable fragments (2026-10-18 review); lines are written ASCII-escaped
+    as well, so such characters never reach the file raw."""
+    try:
+        raw = Path(path).read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    return [ln.rstrip("\r") for ln in raw.split("\n") if ln.strip()]
 
 
 def _last_line(path: Path) -> Optional[str]:
-    try:
-        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except OSError:
-        return None
+    lines = _ledger_lines(path)
     return lines[-1] if lines else None
 
 
@@ -681,8 +711,8 @@ def _append_ledger(folder, action, *, reason="", evidence=None, actor="owner",
     only: no caller in this module opens a ledger any other way."""
     path = Path(folder) / LEDGER_NAME
     prev = _last_line(path)
-    entry = {"ts": _now_iso(), "action": action, "actor": str(actor or "owner")[:40],
-             "reason": str(reason or "")[:_EVIDENCE_TEXT_MAX] or None,
+    entry = {"ts": _now_iso(), "action": action, "actor": _flat(actor or "owner", 40),
+             "reason": _flat(reason, _EVIDENCE_TEXT_MAX) or None,
              "evidence": _clean_evidence(evidence),
              "prev": hashlib.sha256(prev.encode("utf-8")).hexdigest() if prev else _GENESIS}
     if sha256:
@@ -693,19 +723,12 @@ def _append_ledger(folder, action, *, reason="", evidence=None, actor="owner",
         entry["mac"] = _mac(entry, _provenance_key())
     except Exception:
         entry["mac"] = None
-    line = json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n"
+    line = json.dumps(entry, ensure_ascii=True, sort_keys=True) + "\n"
     with open(path, "a", encoding="utf-8", newline="\n") as stream:
         stream.write(line)
         stream.flush()
         os.fsync(stream.fileno())
     return entry
-
-
-def _ledger_lines(path: Path) -> list:
-    try:
-        return [ln for ln in Path(path).read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except OSError:
-        return []
 
 
 def _entry_signed(entry: dict) -> bool:
@@ -773,14 +796,33 @@ def skill_owner(name, root=None) -> Optional[str]:
     root = Path(root) if root is not None else SKILLS_DIR
     safe = _safe_name(name)
     folder = root / safe
+    key = _name_key(safe)
     if (root / f"{safe}.yaml").exists() or (root / f"{safe}.yml").exists():
         return "owner"
+    # Names are compared case- and form-insensitively (NFKC + casefold): on a
+    # case-insensitive disk "Weekly-Review" IS the owner's "weekly-review"
+    # folder, and elsewhere a look-alike would still crowd the owner's skill.
+    try:
+        for child in (root.iterdir() if root.is_dir() else []):
+            stem = child.stem if child.suffix.lower() in (".yaml", ".yml") else child.name
+            if child.name == safe or child.name.startswith("."):
+                continue
+            if _name_key(stem) == key and (child.is_dir() or child.suffix.lower() in (".yaml", ".yml")):
+                if not (child.is_dir() and _provenance_ok(child, child.name)):
+                    return "owner"
+    except OSError:
+        return "owner"
     for s in load_skills([root, BUNDLED_DIR]):
-        if s.name in (name, safe) and not friday_wrote(s):
+        if not friday_wrote(s) and (s.name in (name, safe) or _name_key(s.name) == key):
             return "owner"
     if folder.exists():
         return AGENT_AUTHOR if _provenance_ok(folder, safe) else "owner"
     return None
+
+
+def _name_key(name) -> str:
+    import unicodedata
+    return _safe_name(unicodedata.normalize("NFKC", str(name or ""))).casefold().replace("_", "-")
 
 
 def _flat(v, cap) -> str:
@@ -849,6 +891,10 @@ def agent_save_skill(name, fields, *, reason="", evidence=None, root=None):
             raise SkillWriteRefused(
                 f"'{safe}' is not a skill Friday wrote, so Friday cannot change it. "
                 "Only the owner can edit it.")
+        if owner is None and _name_reserved(safe, root):
+            raise SkillWriteRefused(
+                f"the name '{safe}' belongs to a skill that is not Friday's (archived, or kept "
+                "for a workflow), so Friday cannot take it. Choose another name.")
         probe = Skill(name=safe, description=want["description"], body=want["body"],
                       triggers=want["triggers"], tool_chain=want["tool_chain"],
                       success_criteria=want["success_criteria"], version=want["version"],
@@ -866,6 +912,31 @@ def agent_save_skill(name, fields, *, reason="", evidence=None, root=None):
     return folder, (action or ("update" if owner == AGENT_AUTHOR else "create"))
 
 
+#: Names Friday may never create: the workflow "keep as procedure" path owns them.
+_RESERVED_PREFIXES = ("workflow-", "workflow_")
+
+
+def _name_reserved(safe: str, root: Path) -> bool:
+    """A new name Friday may not take: a workflow's, or one with an archived
+    copy that is not hers (taking it would block the owner's restore)."""
+    key = _name_key(safe)
+    if any(key.startswith(p.replace("_", "-")) for p in _RESERVED_PREFIXES):
+        return True
+    base = Path(root) / ARCHIVE_DIRNAME
+    try:
+        names = [p.name for p in base.iterdir() if p.is_dir()] if base.is_dir() else []
+    except OSError:
+        return True
+    for n in names:
+        if _name_key(n) != key:
+            continue
+        for copy in _archived_copies(n, root):
+            # Only a copy Friday wrote AND archived herself leaves the name free.
+            if not (_provenance_ok(copy, n) and _archived_by_agent(copy)):
+                return True
+    return False
+
+
 def _archived_copies(name, root) -> list:
     base = Path(root) / ARCHIVE_DIRNAME / _safe_name(name)
     if not base.is_dir():
@@ -881,7 +952,7 @@ def list_archived(root=None) -> list:
     return sorted(p.name for p in base.iterdir() if p.is_dir() and _archived_copies(p.name, root))
 
 
-def archive_skill(name, *, reason="", evidence=None, actor="owner", root=None) -> Path:
+def archive_skill(name, *, actor, reason="", evidence=None, root=None) -> Path:
     """Move a skill folder, with its history, ledger and provenance, into
     ``.archive/<name>/<stamp>/``. Nothing is deleted. ``actor="agent"`` may
     archive only a skill Friday wrote."""
@@ -915,7 +986,7 @@ def _archived_by_agent(copy: Path) -> bool:
             and _entry_signed(last))
 
 
-def restore_skill(name, *, reason="", evidence=None, actor="owner", root=None) -> Path:
+def restore_skill(name, *, actor, reason="", evidence=None, root=None) -> Path:
     """Move the newest archived copy of ``name`` back into place. Refuses if
     a live skill already answers to the name. ``actor="agent"`` may restore
     only a copy Friday wrote AND archived herself: a skill of hers the owner
