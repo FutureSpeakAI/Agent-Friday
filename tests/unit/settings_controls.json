@@ -3348,7 +3348,7 @@
   "note": "By design measurement-only: labels never change a verdict; they score keyword vs Laya."
  },
  {
-  "section": "Privacy & Data",
+  "section": "Laya",
   "panel": "Laya chat pilot",
   "label": "Try Laya chat preparation",
   "kind": "toggle",
@@ -3362,7 +3362,7 @@
   "note": ""
  },
  {
-  "section": "Privacy & Data",
+  "section": "Laya",
   "panel": "Laya chat pilot",
   "label": "Refresh measurements",
   "kind": "button",
@@ -3374,7 +3374,7 @@
   "note": "Read-only refresh."
  },
  {
-  "section": "Privacy & Data",
+  "section": "Laya",
   "panel": "Instant answers (no model)",
   "label": "Run a plain yes to a waiting question right away",
   "kind": "toggle",
@@ -3388,7 +3388,7 @@
   "note": "Default on: the outcome is the one the ordinary turn gives, without a model round."
  },
  {
-  "section": "Privacy & Data",
+  "section": "Laya",
   "panel": "Instant answers (no model)",
   "label": "Open it right away / Ask the model every time",
   "kind": "choice",
