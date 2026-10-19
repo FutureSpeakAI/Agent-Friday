@@ -32,8 +32,7 @@ _SECRET_HINTS = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
 #: Variables that point into the owner's own profile; a child gets scratch
 #: copies (or none) instead.
 _PROFILE_VARS = ("HOME", "USERPROFILE", "PYTHONPATH", "PYTHONHOME", "APPDATA", "LOCALAPPDATA",
-                 "TEMP", "TMP", "TMPDIR", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME",
-                 "XDG_DATA_HOME", "XDG_CACHE_HOME")
+                 "TEMP", "TMP", "TMPDIR", "HOMEDRIVE", "HOMEPATH", "HOMESHARE")
 
 
 def _src_root() -> str:
@@ -52,7 +51,7 @@ def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Di
     env = {}
     for k, v in os.environ.items():
         up = k.upper()
-        if up.startswith(("FRIDAY_", "ONEDRIVE")) or up in _PROFILE_VARS:
+        if up.startswith(("FRIDAY_", "ONEDRIVE", "XDG_")) or up in _PROFILE_VARS:
             continue
         if not keep_cloud_keys and any(h in up for h in _SECRET_HINTS):
             continue
