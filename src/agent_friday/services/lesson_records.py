@@ -123,9 +123,10 @@ def _short(v) -> Optional[str]:
 #: A cue ("applies when ...") is the model's own free text and is served by
 #: /api/learning/records, so it is kept short and stripped of contact details
 #: and of anything that looks like a name or a place: every capitalised word
-#: (any script) except a short list of ordinary words, wherever it stands. A
-#: name written in lower case is not caught; the cue is also capped at
-#: CUE_MAX characters. The lesson text is never stored.
+#: (in any script that has capitals) except a short list of ordinary words,
+#: wherever it stands. A name written in lower case, or in a script without
+#: capitals, is not caught; the cue is also capped at CUE_MAX characters. The
+#: lesson text is never stored.
 CUE_MAX = 160
 _CUE_SCRUB = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+|\+?\d[\d ()./-]{6,}\d|https?://\S+")
 _CUE_WORD = re.compile(r"(?<![\w'\u2019-])[^\W\d_][\w'\u2019-]*")
