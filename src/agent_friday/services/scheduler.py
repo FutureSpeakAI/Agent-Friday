@@ -601,6 +601,13 @@ def update_schedule(sid, patch) -> dict | None:
             # A changed timetable, or a job switched back on, counts its slots
             # from now: a slot that passed before the change is not "missed".
             cur["slots_from"] = cur["updated"]
+        # A switch on or off is the newest word on the job: a note that it
+        # was switched on automatically no longer describes it.
+        if patch and "enabled" in patch:
+            cur.pop("auto_enabled", None)
+            # Someone has switched this job since it was seeded, so its
+            # off is a choice, not its seed (builtin_switched_off_by_owner).
+            cur["switched_at"] = _time.time()
         # Re-enabling or rescheduling clears any pending retry backoff.
         if patch and ("enabled" in patch or "trigger" in patch or "spec" in patch):
             cur["retry_pending"] = False
@@ -748,6 +755,71 @@ def register_builtin_task(ref, fn, *, label, default_trigger="daily",
         "weekday_only": weekday_only,
         "default_enabled": default_enabled,
     }
+
+
+def _seed_record(ref, meta) -> dict:
+    """The record a built-in is first given (its seed state)."""
+    sid = f"sch_{ref}"
+    return _normalize_record({
+        "id": sid,
+        "name": meta["label"],
+        "trigger": meta["default_trigger"],
+        "spec": meta["default_spec"],
+        "task": ({"kind": "builtin", "ref": ref, "local_only": True}
+                 if sid in LOCAL_ONLY_BY_DEFAULT
+                 else {"kind": "builtin", "ref": ref}),
+        # Most builtins seed on; a few (the content publisher) are
+        # maintenance for a feature the owner may never touch, and a
+        # job nobody asked for should not run by default.
+        "enabled": _default_enabled(meta),
+        "notify": meta["notify"],
+    }, source="builtin")
+
+
+def seed_builtin(ref) -> dict | None:
+    """The stored record of one registered built-in, seeding it first when
+    schedules.json has none yet. Never overwrites an existing record."""
+    meta = BUILTIN_TASKS.get(ref)
+    if not meta:
+        return None
+    sid = f"sch_{ref}"
+    with _STORE_LOCK:
+        recs = _read_store()
+        for r in recs:
+            if r.get("id") == sid or ((r.get("task") or {}).get("kind") == "builtin"
+                                      and (r.get("task") or {}).get("ref") == ref):
+                return dict(r)
+        rec = _seed_record(ref, meta)
+        recs.append(rec)
+        _write_store(recs)
+        return dict(rec)
+
+
+def builtin_switched_off_by_owner(rec) -> bool:
+    """True when a built-in is off because someone switched it off, not
+    because it was seeded off. Every switch, including the Workflows toggle,
+    goes through update_schedule, which stamps `switched_at`; a record from
+    before that stamp existed counts as switched when it was ever updated
+    (a seeded record's `updated` equals its `created`)."""
+    rec = rec or {}
+    if rec.get("enabled", True):
+        return False
+    if rec.get("switched_at"):
+        return True
+    try:
+        return float(rec.get("updated") or 0) - float(rec.get("created") or 0) > 1.0
+    except (TypeError, ValueError):
+        return True
+
+
+def switch_on_automatically(sid, reason) -> dict | None:
+    """Switch a job on through the same update the Workflows switch makes,
+    and record when and why it was switched on for the owner (shown on the
+    job's row). The owner switches it off again the ordinary way."""
+    rec = update_schedule(sid, {"enabled": True})
+    if not rec:
+        return None
+    return _patch_record(sid, auto_enabled={"at": _time.time(), "reason": str(reason)[:200]})
 
 
 def register_daily_job(name, hour, minute, fn):
@@ -2323,21 +2395,7 @@ def _seed_and_reconcile():
             sid = f"sch_{ref}"
             if sid in existing_kinds:
                 continue
-            rec = _normalize_record({
-                "id": sid,
-                "name": meta["label"],
-                "trigger": meta["default_trigger"],
-                "spec": meta["default_spec"],
-                "task": ({"kind": "builtin", "ref": ref,
-                          "local_only": True}
-                         if sid in LOCAL_ONLY_BY_DEFAULT
-                         else {"kind": "builtin", "ref": ref}),
-                # Most builtins seed on; a few (the content publisher) are
-                # maintenance for a feature the owner may never touch, and a
-                # job nobody asked for should not run by default.
-                "enabled": _default_enabled(meta),
-                "notify": meta["notify"],
-            }, source="builtin")
+            rec = _seed_record(ref, meta)
             recs.append(rec)
             added += 1
         # Apply the local-only default to schedules that ALREADY exist and have

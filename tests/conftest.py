@@ -927,6 +927,43 @@ def _notices_and_approvals_do_not_outlive_their_file():
         _put_back(p, before.get(p))
 
 
+def _schedules_file() -> Path:
+    """The schedules.json the scheduler reads: its own path once it is loaded
+    (a test that points it at tmp has put it back by the time this runs)."""
+    sch = sys.modules.get("agent_friday.services.scheduler")
+    if sch is not None and getattr(sch, "SCHEDULES_FILE", None):
+        return Path(sch.SCHEDULES_FILE)
+    from agent_friday.paths import friday_home
+    return friday_home() / "schedules.json"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _schedules_do_not_outlive_their_file():
+    """Each test file leaves schedules.json as it found it.
+
+    Same leak as settings.json above, another store. Arming a post (schedule,
+    post now, release) switches the Content publisher job on when it is still
+    in its seeded-off state (services/publisher.ensure_publisher_running), and
+    it can only do that once the job is registered. A file that registers the
+    builtins (publisher.start(), e.g. tests/unit/test_content_publisher.py)
+    leaves that registration in the worker, so a later file that arms a post
+    through the routes (tests/api/test_content_routes.py) wrote an enabled
+    sch_content_publisher into the shared home's schedules.json, and every
+    later file on that worker saw the job on. Which files share a worker is
+    up to --dist loadfile (tests/unit/test_schedules_do_not_leak_between_files.py
+    runs a registrar, an arming file and a probe in one process).
+
+    The bytes, or the file's absence, are put back when the test file ends.
+    """
+    path = _schedules_file()
+    try:
+        before = path.read_bytes()
+    except FileNotFoundError:
+        before = None
+    yield
+    _put_back(path, before)
+
+
 @pytest.fixture(autouse=True)
 def _interruption_state_per_test(tmp_path):
     """The hour's interruption count (services/interruption_policy) starts empty in every test, so

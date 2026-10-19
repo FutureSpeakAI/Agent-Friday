@@ -55,9 +55,10 @@ from agent_friday.routes._errors import api_error, error_text, public_result
 
 content_pipeline_bp = Blueprint("content_pipeline", __name__)
 
-# Where the OAuth callback drops the user afterwards — the Accounts tab of the
-# Content workspace (useNavTarget deep-link params; the SPA resolves them).
-_ACCOUNTS_DEEPLINK = "/?workspace=content&tab=accounts"
+# Where the OAuth callback drops the user afterwards — Settings, Connections,
+# where the publishing accounts are listed now (the Content workspace's old
+# Accounts tab redirects to Media, which has no accounts).
+_ACCOUNTS_DEEPLINK = "/?workspace=settings&tab=connections"
 
 # ── OAuth state registry (§12.2: state bound + single-use, loopback only) ────
 _OAUTH_STATES: Dict[str, Dict[str, Any]] = {}
@@ -123,6 +124,18 @@ def _raise_publish_cards(post_id: str) -> Dict[str, Any]:
         return _pub.request_publish_approval(post_id)
     except Exception as e:
         return {"ok": False, "error": error_text(e, "Couldn't raise the approval card")}
+
+
+def _publisher_check(post_id: str) -> Dict[str, Any]:
+    """Make sure the job that sends armed posts is running, or say plainly why
+    this post will not go out (services/publisher.ensure_publisher_running).
+    Sends and approves nothing."""
+    try:
+        from agent_friday.services import publisher as _pub
+        return _pub.ensure_publisher_running(post_id)
+    except Exception as e:
+        return {"on": False, "auto_enabled": False, "action": None,
+                "notice": error_text(e, "Couldn't check the Content publisher")}
 
 
 def _kick_publisher() -> Dict[str, Any]:
@@ -326,6 +339,13 @@ def content_posts_create():
         provenance=data.get("provenance") or {},
         license=data.get("license") or {},
         tags=data.get("tags") or [])
+    if res.get("ok") and (res.get("post") or {}).get("id"):
+        # The post's card in Media, where the composer opens it.
+        try:
+            from agent_friday.services import media_index
+            res["media_card"] = media_index.post_card_id(res["post"]["id"])
+        except Exception:
+            pass
     return jsonify(public_result(res, "Couldn't create the post"))
 
 
@@ -424,6 +444,7 @@ def content_post_schedule(post_id):
         exclude_post=post_id)
     res["resolved_optimal"] = resolved_optimal
     res["approval"] = _raise_publish_cards(post_id)
+    res["publisher"] = _publisher_check(post_id)
     return jsonify(public_result(res, "Couldn't schedule the post"))
 
 
@@ -435,6 +456,7 @@ def content_post_publish_now(post_id):
     res = store.publish_now(post_id)
     if res.get("ok"):
         res["approval"] = _raise_publish_cards(post_id)
+        res["publisher"] = _publisher_check(post_id)
         res["dispatch"] = _kick_publisher()
     return jsonify(public_result(res, "Couldn't publish the post"))
 
@@ -457,6 +479,7 @@ def content_post_release(post_id):
     res = store.release_held(post_id, target_id=data.get("target_id"))
     if res.get("ok"):
         res["approval"] = _raise_publish_cards(post_id)
+        res["publisher"] = _publisher_check(post_id)
         res["dispatch"] = _kick_publisher()
     return jsonify(public_result(res, "Couldn't release the post"))
 
@@ -842,6 +865,79 @@ def content_platforms():
                     "platforms": plats})
 
 
+#: OAuth platforms whose sign-in flow (authorize URL, loopback callback,
+#: encrypted token store) is built but needs the owner's own developer app:
+#: the fields that app gives them. The id/key is not secret and lives in
+#: platforms.json; the secret goes to the credential store (simple_secret).
+_OAUTH_APP_FIELDS: Dict[str, tuple] = {
+    "linkedin": ("client_id", "client_secret"),
+    "x_twitter": ("client_id", "client_secret"),
+    "instagram": ("client_id", "client_secret"),
+    "reddit": ("client_id", "client_secret"),
+    "tiktok": ("client_key", "client_secret"),
+}
+_FIELD_WORDS = {"client_id": "client ID", "client_key": "client key",
+                "client_secret": "client secret"}
+
+#: Platforms that cannot be connected from here, and why, in plain words.
+#: YouTube's sign-in is Google's: its consent page returns to the Google
+#: accounts callback, which keeps the Google account but never links it to
+#: YouTube publishing, so offering it would end in a page that does nothing.
+_NOT_CONNECTABLE: Dict[str, str] = {
+    "youtube": ("YouTube can't be connected from here yet: its sign-in goes "
+                "through Google, and linking a Google account to YouTube "
+                "publishing isn't finished."),
+}
+
+
+def _redirect_uri_for(mod: str) -> str:
+    """The callback address the owner registers in their developer app: the
+    one the adapter actually sends."""
+    try:
+        adapter = platform_registry.get_adapter(mod)
+        fn = getattr(adapter, "_redirect_uri", None)
+        if callable(fn):
+            return str(fn())
+        import importlib
+        m = importlib.import_module(f"agent_friday.services.platforms.{mod}")
+        return str(getattr(m, "_REDIRECT_URI", "") or getattr(m, "DEFAULT_REDIRECT_URI", ""))
+    except Exception:
+        return ""
+
+
+def _overrides(adapter, attr: str) -> bool:
+    from agent_friday.services.platforms.base import PlatformAdapter
+    if attr in vars(adapter):
+        return True
+    return getattr(type(adapter), attr, None) is not getattr(PlatformAdapter, attr, None)
+
+
+def _account_check(adapter) -> Dict[str, Any]:
+    """Check the saved credential WITHOUT posting anything: the adapter's own
+    account lookup (Medium's GET /v1/me via verify_credentials, a profile or
+    follower read elsewhere). → {checked, ok, account, error}; checked is
+    False when the adapter has no such lookup."""
+    verify = getattr(adapter, "verify_credentials", None)
+    if callable(verify):
+        try:
+            res = verify()
+        except Exception:
+            res = {"ok": False, "error": "check_failed"}
+        res = res if isinstance(res, dict) else {"ok": False}
+        return {"checked": True, "ok": bool(res.get("ok")),
+                "account": str(res.get("account") or ""),
+                "error": "" if res.get("ok") else str(res.get("error") or "")}
+    if _overrides(adapter, "fetch_account_metrics"):
+        try:
+            got = adapter.fetch_account_metrics()
+        except Exception:
+            got = None
+        return {"checked": True, "ok": got is not None, "account": "",
+                "error": "" if got is not None
+                else str(getattr(adapter, "_last_error", "") or "")}
+    return {"checked": False, "ok": None, "account": "", "error": ""}
+
+
 @content_pipeline_bp.route("/api/content/platforms/<name>/connect", methods=["POST"])
 def content_platform_connect(name):
     """Begin auth (§4.1): OAuth adapters return a connect_url + bound state;
@@ -853,20 +949,34 @@ def content_platform_connect(name):
         return jsonify(public_result({"ok": False,
                         "error": platform_registry.import_error(name)
                         or f"unknown platform: {name}"}, "Couldn't connect the platform"))
+    mod = platform_registry._norm(name)
+    if mod in _NOT_CONNECTABLE:
+        return jsonify({"ok": False, "mode": adapter.auth_mode,
+                        "message": _NOT_CONNECTABLE[mod]})
     options = dict(data.get("options")) if isinstance(data.get("options"), dict) else {}
     # The Accounts tab posts the non-secret identity fields at the TOP level
-    # ({identifier, secret} for Bluesky, {instance, secret} for Mastodon) —
+    # ({identifier, secret} for Bluesky, {instance, secret} for Mastodon,
+    # {client_id, client_secret} for an OAuth platform's developer app) —
     # fold them into the platform options, otherwise the adapter never learns
-    # its handle/instance and the connection can never actually work.
+    # its handle/instance/app and the connection can never actually work.
     for k in ("identifier", "handle", "instance", "base_url", "pds", "tier",
-              "client_id", "redirect_uri"):
+              "client_id", "client_key", "redirect_uri"):
         v = data.get(k)
         if v is not None and k not in options:
-            options[k] = v
+            options[k] = str(v).strip() if isinstance(v, str) else v
     pasted = data.get("secret") or data.get("token")   # pragma: allowlist secret
-    if options or pasted:
+    # An OAuth platform's developer-app secret is stored in the same
+    # credential-store slot the adapter reads it from (simple_secret), never
+    # in platforms.json, never logged and never echoed. It is not a login, so
+    # it is not "verified" below: the browser sign-in that follows is.
+    app_secret = None
+    if mod in _OAUTH_APP_FIELDS and not pasted:
+        app_secret = data.get("client_secret") or None   # pragma: allowlist secret
+        if app_secret is not None:
+            app_secret = str(app_secret).strip()[:512] or None
+    if options or pasted or app_secret:
         cfg = platform_registry.configure_platform(
-            name, options, secret_value=pasted or None)
+            name, options, secret_value=(pasted or app_secret or None))
         if not cfg.get("ok"):
             return jsonify(public_result(cfg, "Couldn't connect the platform"))
         if pasted:
@@ -883,14 +993,11 @@ def content_platform_connect(name):
                 except Exception:
                     verified = False
             else:
-                # Token-paste (Mastodon etc.): probe the token live where the
-                # adapter can (verify_credentials-backed account metrics).
-                probe = getattr(adapter, "fetch_account_metrics", None)
-                if callable(probe):
-                    try:
-                        verified = probe() is not None
-                    except Exception:
-                        verified = False
+                # Token-paste (Mastodon, Medium etc.): check the token live
+                # with the adapter's own account lookup, which posts nothing.
+                chk = _account_check(adapter)
+                if chk["checked"]:
+                    verified = bool(chk["ok"])
             st = adapter.status()
             out = {"ok": True, "mode": "token", "status": st}
             if verified is not None:
@@ -912,6 +1019,16 @@ def content_platform_connect(name):
     # Tokenless / manual adapters: no browser hop needed.
     with _OAUTH_LOCK:
         _OAUTH_STATES.pop(state, None)
+    if mod in _OAUTH_APP_FIELDS:
+        # The sign-in flow exists but needs the owner's own developer app.
+        fields = _OAUTH_APP_FIELDS[mod]
+        return jsonify({"ok": False, "mode": adapter.auth_mode, "needs": "client",
+                        "fields": list(fields),
+                        "redirect_uri": _redirect_uri_for(mod),
+                        "message": f"{adapter.label} needs your own developer app "
+                                   "before it can connect. Enter the app's "
+                                   + " and ".join(_FIELD_WORDS[f] for f in fields)
+                                   + ", then press Save and sign in."})
     if adapter.auth_mode in ("token", "app_password"):
         return jsonify(public_result({"ok": True, "mode": adapter.auth_mode,
                         "needs": "secret",
@@ -985,29 +1102,45 @@ def content_platform_disconnect(name):
 
 @content_pipeline_bp.route("/api/content/platforms/<name>/test", methods=["POST"])
 def content_platform_test(name):
-    """Connection test (§10.1): a private/self test post where the adapter
-    supports one, otherwise a refresh + status probe."""
+    """Check connection (§10.1). Posts NOTHING: it refreshes the saved
+    credential and, where the adapter has one, runs its account lookup (a
+    read). The answer says what was checked and that nothing was posted."""
     adapter = platform_registry.get_adapter(name)
     if adapter is None:
         return jsonify(public_result({"ok": False,
                         "error": platform_registry.import_error(name)
                         or f"unknown platform: {name}"}, "Couldn't test the platform"))
-    tester = getattr(adapter, "test_post", None) or getattr(adapter, "test", None)
-    if callable(tester):
-        try:
-            res = tester()
-            if isinstance(res, dict):
-                return jsonify(public_result(res, "Couldn't test the platform"))
-        except Exception as e:
-            return api_error(e, "Couldn't test the platform", 200, shape="ok")
+    label = str(getattr(adapter, "label", "") or name)
     try:
         usable = bool(adapter.refresh())
     except Exception:
         usable = False
+    chk = _account_check(adapter) if usable else {
+        "checked": False, "ok": None, "account": "", "error": ""}
     st = adapter.status()
-    return jsonify(public_result({"ok": bool(usable and st.get("connected")),
+    account = chk.get("account") or str(st.get("account") or "")
+    if chk["checked"] and chk["ok"]:
+        ok = True
+        message = (f"Connected to {label}" + (f" as {account}" if account else "")
+                   + ". Nothing was posted.")
+    elif chk["checked"] and st.get("connected"):
+        ok = False
+        why = chk.get("error") or st.get("last_error") or "no answer"
+        message = (f"{label} did not accept the saved credential ({why}). "
+                   "Nothing was posted.")
+    elif usable and st.get("connected"):
+        ok = True
+        message = (f"A credential is saved for {label}"
+                   + (f" ({account})" if account else "")
+                   + f", but {label} has no way to check it without posting, so "
+                   "it was not checked. Nothing was posted.")
+    else:
+        ok = False
+        message = f"{label} is not connected. Nothing was posted."
+    return jsonify(public_result({"ok": ok,
                     "connected": bool(st.get("connected")),
-                    "status": st}, "Couldn't test the platform"))
+                    "checked": bool(chk["checked"]), "posted": False,
+                    "message": message, "status": st}, "Couldn't test the platform"))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
