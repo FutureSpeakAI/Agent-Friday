@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tests.library_fixtures import isolate_library, release_library, write_docs
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +69,7 @@ def test_the_screen_click_adds_what_the_card_listed_and_queues_reading(tmp_path,
     write_docs(tmp_path / "Reporting", {"a.txt": "hello there"})
     _tool({"action": "library_add", "path": str(tmp_path / "Reporting")})
     card = _card("library_add_request")
-    rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
     assert won
     scopes = grants.active_scopes("owner")
     assert [s["path"] for s in scopes] == [str((tmp_path / "Reporting").resolve())]
@@ -99,7 +100,7 @@ def test_remove_and_forget_name_the_document_and_need_the_click(tmp_path):
     assert "smith-file" in card["title"]
     rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="voice")
     assert not won and len(st.list_documents()) == 1
-    rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
     assert won and st.list_documents() == []
     assert _tool({"action": "library_remove", "document": "smith"}).startswith("No card raised")
 

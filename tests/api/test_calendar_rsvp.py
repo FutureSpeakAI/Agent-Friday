@@ -77,7 +77,9 @@ def google(monkeypatch):
 def _page():
     """The headers Friday's own page sends on a click: same-origin browser metadata and its session token."""
     import agent_friday.core as core
-    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": core._current_api_token()}
+    from tests.desk_press_support import desk_key    # a press on this PC's screen (services/desk_press)
+    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": core._current_api_token(),
+            "X-Friday-Desk": desk_key()}
 
 
 def test_nothing_is_sent_without_the_owners_confirmation(client, google):

@@ -43,6 +43,7 @@ from tests.screen_fixtures import Page, ref, report
 from tests.unit.test_laya_safe_writes import (  # noqa: F401  (fixtures are used by name)
     CONV, ON_CASES, _cards, _go, _mode, _pending, _route, _stage, chat, gmail, settings_file)
 from tests.unit.test_voice_card_readback import CALL, _Call
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 _REAL = {n: getattr(gm, n) for n in ("apply_action", "modify_threads", "undo", "snapshot_messages")}
 _REAL_LIST = ap.list_approvals
@@ -157,14 +158,14 @@ def test_b1_every_verb_round_trips_exactly_over_multi_message_conversations(real
     _go(text, stage)
     assert _snap() == before, "nothing changes before the card is answered"
     card = _pending()[0]
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete", rec
     assert _snap() != before, "the approved change really happened, so the round trip is not vacuous (%s)" % action
     assert all(_snap()[k] == before[k] for k in before if k.startswith("x_")), "only the three rows move"
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)
     assert out["status"] == "pending_approval"
-    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     undone = ia.wait_for(out["approval_id"], 10)
     assert undone["status"] == "complete", undone
     assert _snap() == before, "undo puts every MESSAGE back exactly (%s)" % action
@@ -176,11 +177,11 @@ def test_b1_a_sent_reply_never_gains_a_label_it_did_not_lose(real_mail, monkeypa
     Page(monkeypatch)
     _go("archive these", stage)
     cid = _pending()[0]["approval_id"]
-    ap.decide(cid, "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(cid, "approve", decided_by="owner:ui")
     rec = ia.wait_for(cid, 10)
     assert MAIL["m2"]["labels"] == {"SENT"} and MAIL["m1"]["labels"] == set() and MAIL["m3"]["labels"] == {"UNREAD", "STARRED"}
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)
-    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(out["approval_id"], 10)
     assert MAIL["m2"]["labels"] == {"SENT"}, "undo never gives the owner's own reply an INBOX"
     assert MAIL["m1"]["labels"] == {"INBOX"} and MAIL["m3"]["labels"] == {"INBOX", "UNREAD", "STARRED"}
@@ -209,7 +210,7 @@ def test_n9_a_conversation_that_cannot_be_read_at_run_time_is_left_alone_not_cha
     before = _snap()
     FAIL_GET.add("t2")                                      # readable when proposed, not when approved
     card = _pending()[0]
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "partial", rec
     by = {i["id"]: i for i in rec["items"]}
@@ -219,7 +220,7 @@ def test_n9_a_conversation_that_cannot_be_read_at_run_time_is_left_alone_not_cha
     assert not [c for c in CALLS if c == ("thread_modify", "t2")], "no thread-level fallback"
     FAIL_GET.clear()
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)
-    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(out["approval_id"], 10)
     assert _snap() == before
 
@@ -248,14 +249,14 @@ def test_n4_a_reply_that_arrives_before_approval_is_not_changed(real_mail, monke
         "arrives before you approve is not changed" in card["action_description"]
     assert set(card["payload"]["messages"]["acct_work"]["t1"]) == {"m1", "m2", "m3"}
     _put("m_new", "t1", "INBOX", "UNREAD")                  # a reply lands after the card, before the yes
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete"
     assert MAIL["m_new"]["labels"] == {"INBOX", "UNREAD"}, "the new reply was never on the card"
     assert "INBOX" not in MAIL["m1"]["labels"] and "INBOX" not in MAIL["m3"]["labels"]
     assert "m_new" not in rec["undo"]["email"]["acct_work"]["t1"]["messages"]
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)
-    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(out["approval_id"], 10)
     assert MAIL["m1"]["labels"] == {"INBOX"} and MAIL["m2"]["labels"] == {"SENT"}
     assert MAIL["m3"]["labels"] == {"INBOX", "UNREAD", "STARRED"} and MAIL["m_new"]["labels"] == {"INBOX", "UNREAD"}
@@ -962,7 +963,7 @@ def test_l4_a_newer_message_is_left_out_and_the_card_says_so(real_mail, monkeypa
     # the card's own text on screen (its action line; the description is the fixed approve sentence and the rows)
     assert "newer message" in card["action_description"] and "left out" in card["action_description"]
     assert not any("eve@late.example" in line for line in card["payload"]["lines"]), "the left-out sender is not shown"
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     ia.wait_for(card["approval_id"], 10)
     assert MAIL["m_new"]["labels"] == {"INBOX", "UNREAD"}, "the newer message was never touched"
     assert "INBOX" not in MAIL["m1"]["labels"]
@@ -1046,7 +1047,7 @@ def test_n_mj1_the_reflex_path_answers_no_card_from_a_typed_reply(chat, gmail, m
 
 def test_n_mj1_the_button_still_approves_and_a_typed_no_can_decline(chat, gmail, monkeypatch):
     cid = _arm(gmail, monkeypatch)
-    ap.decide(cid, "approve", decided_by="owner:ui")                                         # the Approve button's route
+    with pressed(): ap.decide(cid, "approve", decided_by="owner:ui")                                         # the Approve button's route
     assert ia.wait_for(cid, 10)["status"] == "complete"
     gmail.calls.clear()
     stage = _stage(selected=(3, 4))
@@ -1850,7 +1851,7 @@ def test_mj4_a_card_free_change_is_in_the_turn_receipt_without_subjects_and_undo
     # the existing Undo path puts every message back exactly (m3 was already starred and stays so)
     undo = ia.undo(change["receipt_id"], conversation_id=CONV)
     assert undo["status"] == "pending_approval"
-    ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
     assert ia.wait_for(undo["approval_id"], 10)["status"] == "complete"
     assert _snap() == before
 
@@ -1864,7 +1865,7 @@ def test_mj4_a_card_that_was_approved_is_not_listed_as_card_free(real_mail, monk
     try:
         _go("archive this", stage)
         cid = _pending()[0]["approval_id"]
-        ap.decide(cid, "approve", decided_by="owner:ui")
+        with pressed(): ap.decide(cid, "approve", decided_by="owner:ui")
         ia.wait_for(cid, 10)
     finally:
         turn_plan.begin_turn(None)
@@ -1951,7 +1952,7 @@ def test_fn_md2_a_label_the_change_created_is_removed_by_undo_when_it_is_empty(c
     rec = journal.get(out["receipt_id"])
     assert rec["labels_created"] == ["Taxes 2026"] and rec["undo"]["created_labels"] == {"acct_work": "Label_new"}
     undo = ia.undo(out["receipt_id"], conversation_id=CONV)
-    ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
     done = ia.wait_for(undo["approval_id"], 10)
     assert ("delete_label", "acct_work", "Label_new") in gmail.calls and "removed the label" in done["summary"]
     assert not [l for l in gmail.labels["acct_work"] if l["name"] == "Taxes 2026"]
@@ -1961,7 +1962,7 @@ def test_fn_md2_a_label_that_still_holds_mail_stays_and_undo_says_so(chat, gmail
     gmail.label_empty = False
     out = ia.propose_email("label", thread_ids=["acct_work:t1"], label="Taxes 2026")
     undo = ia.undo(out["receipt_id"], conversation_id=CONV)
-    ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(undo["approval_id"], "approve", decided_by="owner:ui")
     done = ia.wait_for(undo["approval_id"], 10)
     assert "left in place" in done["summary"] and [l for l in gmail.labels["acct_work"] if l["name"] == "Taxes 2026"]
 

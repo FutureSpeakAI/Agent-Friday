@@ -206,7 +206,10 @@ class TestRunAndReceipts:
         ids = {a["approval_id"] for a in list_resp.get_json()["approvals"]}
         assert approval_id in ids
 
-        decide_resp = client.post(f"/api/approvals/{approval_id}/decide", json={"decision": "approve"})
+        # Approving is a press on the card in Friday's page on this PC (services/desk_press).
+        from tests.desk_press_support import desk_headers
+        decide_resp = client.post(f"/api/approvals/{approval_id}/decide", json={"decision": "approve"},
+                                  headers=desk_headers())
         assert decide_resp.status_code == 200
         assert decide_resp.get_json()["approval"]["status"] == "approved"
 

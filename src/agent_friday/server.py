@@ -177,6 +177,39 @@ ROUTE_LABELS = {
 BLUEPRINT_REPORT: dict = {'registered': [], 'skipped': [], 'blueprint_count': 0}
 
 
+def network_bind_warning(bind_host: str) -> list:
+    """The box printed at start-up when FRIDAY_BIND_HOST is not loopback.
+
+    That switch is a developer option, not a way to use Friday from a phone or a
+    laptop: there is no pairing, no per-device rights and no way to remove one
+    device, and anyone signed in acts as the owner for everything except a press
+    on an approval card, which counts only on this PC's own screen. The supported
+    design for other devices is a separate paired gateway, not this bind."""
+    width = 62
+    rows = [
+        "UNSAFE: FRIDAY_BIND_HOST is a developer-only switch",
+        "",
+        "FRIDAY_BIND_HOST=%s" % str(bind_host)[:43],
+        "puts Friday on the network. It is NOT a supported way to",
+        "use Friday from a phone or laptop, and it is not safe on a",
+        "network other people use:",
+        "  - every signed-in device can read your conversations,",
+        "    mail, files and vault, and acts as you;",
+        "  - one shared password, no pairing, no way to remove a",
+        "    single device;",
+        "  - approval cards (send, pay, run a command, website",
+        "    plans) still need a press on THIS PC's screen: a tap",
+        "    from another device approves nothing.",
+        "",
+        "Unset FRIDAY_BIND_HOST to go back to this PC only.",
+    ]
+    out = ["  ╔" + "═" * width + "╗"]
+    for r in rows:
+        out.append("  ║  " + r.ljust(width - 2)[:width - 2] + "║")
+    out.append("  ╚" + "═" * width + "╝")
+    return out
+
+
 def _route_leaf(dotted: str) -> str:
     """'agent_friday.routes.jobs' -> 'jobs'."""
     return dotted.rsplit('.', 1)[-1]
@@ -1090,6 +1123,10 @@ if __name__ == '__main__':
     _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
     _ssl_context = None
     if bind_host not in _LOOPBACK_HOSTS:
+        print()
+        for _line in network_bind_warning(bind_host):
+            print(_line)
+        print()
         # Refuse to start a network-exposed
         # server with no remote auth key. The request-time guard already denies
         # keyless remote requests (fail-closed), but refusing to boot at all is
@@ -1319,6 +1356,18 @@ if __name__ == '__main__':
         _la.boot(_port)
     except Exception as _la_err:
         print(f"  Local address: skipped ({_la_err})")
+    # The desk key (services/desk_press): a per-launch secret Friday's page fetches
+    # from 127.0.0.1 only, so a press on an approval card can prove it was made on
+    # this PC's screen. Always loopback, whatever FRIDAY_BIND_HOST says.
+    try:
+        from agent_friday.services import desk_press as _dp
+        _dp_port = _dp.start(_port, tls=bool(_ssl_context))
+        if _dp_port:
+            print(f"  Desk key: served on 127.0.0.1:{_dp_port} only (presses from other devices never count)")
+        else:
+            print("  Desk key: UNAVAILABLE - no press on an approval card can be confirmed until Friday restarts")
+    except Exception as _dp_err:
+        print(f"  Desk key: UNAVAILABLE ({_dp_err}) - approval presses cannot be confirmed")
     # Say out loud, once, any store Friday cannot open or cannot vouch for
     # (services/integrity_report): log, /api/health and one Needs-you card.
     try:

@@ -2403,8 +2403,12 @@ def answer_card(card_id: str, claimed: str, owner_words: str, *, room_mode: bool
     else:
         if typed_decision(owner_words, rec["approval_id"]) != want:
             return _not_recorded(want, room_mode)
+        # A typed answer is never the screen's press, whatever the turn calls its surface.
+        typed_surface = str(surface or "chat")
+        if typed_surface in ("ui", "screen"):
+            typed_surface = "chat"
         out, won = ap.decide_with_outcome(rec["approval_id"], want,
-                                          decided_by="owner:%s" % (surface or "chat"))
+                                          decided_by="owner:%s" % typed_surface)
         status = (out or {}).get("status")
     if not won:
         return {"ok": False, "text": "That card was already decided (%s)." % status}

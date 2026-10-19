@@ -345,18 +345,34 @@ def test_a_child_that_answers_too_much_is_stopped_and_not_buffered(monkeypatch):
 
 def test_a_screen_identity_needs_a_browser_click_of_this_server_and_its_session_token(monkeypatch):
     import agent_friday.core as core
+    from flask import request
     from agent_friday.services import screen_click
+    from tests.desk_press_support import desk_key
+    tok = core._current_api_token()
+
+    def judged(headers, claimed="owner:ui"):
+        # A real request from this PC's loopback, as the page's press arrives
+        # (services/desk_press: a press also needs this launch's desk key).
+        with core.app.test_request_context("/api/approvals/x/decide", method="POST", headers=headers,
+                                           base_url="http://localhost:3000",
+                                           environ_base={"REMOTE_ADDR": "127.0.0.1"}):
+            return screen_click.screen_session(request), screen_click.decided_by(request, claimed)
+
+    page = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:3000", "X-Friday-Token": tok,
+            "X-Friday-Desk": desk_key()}
+    assert judged(page) == (True, "owner:ui")
+    no_desk = {k: v for k, v in page.items() if k != "X-Friday-Desk"}
+    assert judged(no_desk) == (False, "owner")            # the page, but not shown to be on this PC
+    no_token = {k: v for k, v in page.items() if k != "X-Friday-Token"}
+    assert judged(no_token) == (False, "owner")
+    bare = {"X-Friday-Token": tok}
+    assert judged(bare)[1] == "owner"
+    foreign = dict(page, Origin="http://evil.example")
+    assert judged(foreign)[1] == "owner"
+    # A body cannot name the voice path either: only the server's own voice route writes that label.
+    assert judged(bare, "owner:voice")[1] == "owner"
     R = lambda **h: types.SimpleNamespace(headers=h, host="localhost:3000")
-    page = R(**{"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:3000", "X-Friday-Token": core._API_SESSION_TOKEN})
-    assert screen_click.screen_session(page) and screen_click.decided_by(page, "owner:ui") == "owner:ui"
-    no_token = R(**{"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:3000"})
-    assert not screen_click.screen_session(no_token) and screen_click.decided_by(no_token, "owner:ui") == "owner"
-    bare = R(**{"X-Friday-Token": core._API_SESSION_TOKEN})
-    assert screen_click.decided_by(bare, "owner:ui") == "owner"
-    foreign = R(**{"Sec-Fetch-Site": "same-origin", "Origin": "http://evil.example", "X-Friday-Token": core._API_SESSION_TOKEN})
-    assert screen_click.decided_by(foreign, "owner:ui") == "owner"
-    assert screen_click.decided_by(bare, "owner:voice") == "owner:voice"          # an audit label, accepted by no screen-only card
-    assert screen_click.is_cross_site(R(**{"Sec-Fetch-Site": "cross-site"})) and not screen_click.is_cross_site(bare)
+    assert screen_click.is_cross_site(R(**{"Sec-Fetch-Site": "cross-site"})) and not screen_click.is_cross_site(R(**bare))
 
 
 def test_the_approval_route_downgrades_an_unverified_screen_claim():

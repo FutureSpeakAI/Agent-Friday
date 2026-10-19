@@ -19,6 +19,7 @@ import pytest
 from agent_friday.services import approvals as ap
 from agent_friday.services import cloud_release as cr
 from agent_friday.services import egress_gate as eg
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 pytestmark = pytest.mark.held_cards
 
@@ -80,7 +81,7 @@ def test_the_same_detail_is_not_asked_twice_while_its_card_waits(gate):
 def test_send_lets_exactly_those_words_go_next_time(gate):
     _seal(PUBLIC + "\n\n" + PRIVATE)
     card = _cards()[0]
-    out = cr.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): out = cr.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert out["ok"]
     sent = _seal(PUBLIC + "\n\n" + PRIVATE)["messages"][0]["content"]
     assert PRIVATE in sent
@@ -99,7 +100,7 @@ def test_keep_on_this_pc_is_not_asked_again_and_stays_held(gate):
 def test_always_send_this_exact_text_is_remembered(gate):
     _seal(PRIVATE)
     card = _cards()[0]
-    cr.decide(card["approval_id"], "approve", {"text": True}, decided_by="owner:ui")
+    with pressed(): cr.decide(card["approval_id"], "approve", {"text": True}, decided_by="owner:ui")
     # the once-release runs out; the remembered text still goes
     data = json.loads((gate / "cloud_release.json").read_text(encoding="utf-8"))
     data["once"] = {}
@@ -123,7 +124,7 @@ def test_a_send_that_is_not_the_owners_click_or_words_is_refused(gate):
 def test_a_send_is_for_the_provider_the_card_named(gate):
     _seal(PRIVATE)
     card = _cards()[0]
-    cr.decide(card["approval_id"], "approve", {"text": True}, decided_by="owner:ui")
+    with pressed(): cr.decide(card["approval_id"], "approve", {"text": True}, decided_by="owner:ui")
     assert PRIVATE in _seal(PRIVATE)["messages"][0]["content"]
     other = _seal(PRIVATE, provider="openrouter", model="some/model")["messages"][0]["content"]
     assert MARK not in other, "a Send to one provider let the text go to another"

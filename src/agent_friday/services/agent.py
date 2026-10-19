@@ -12811,7 +12811,7 @@ def _deny_awaiting_card(session_id):
         return None
     try:
         from agent_friday.services import approvals as _appr
-        _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat")
+        _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat", source="typed")
     except Exception as e:
         _log.warning("could not deny confirmation card %s: %s", aid, e)
         return None

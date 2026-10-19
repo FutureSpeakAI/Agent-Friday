@@ -1074,8 +1074,9 @@ def _google_redirect_uri(cfg, client_type=None):
     """Canonical OAuth redirect URI for this client config.
 
     Never derived from request.host_url. A user may reach Friday via a
-    hosts-file alias (e.g. http://agent.friday/), a tunnel or a LAN host (the
-    app binds 0.0.0.0 when a tunnel password is set), and Google's
+    hosts-file alias (e.g. http://agent.friday/), a reverse proxy, or a LAN
+    host (only if FRIDAY_BIND_HOST is set, a developer-only switch; Friday
+    binds 127.0.0.1 otherwise and never starts a tunnel to itself), and Google's
     secure-response-handling policy rejects ANY plain-HTTP non-loopback
     redirect_uri outright with Error 400 invalid_request (checked against the
     literal URI, not something DNS/propagation ever fixes). Pinned to loopback

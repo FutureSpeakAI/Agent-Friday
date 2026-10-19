@@ -28,7 +28,11 @@ SCHEDULED = {"is_background_task": True, "schedule_id": "sch_weekly_status", "ta
 def client(app):
     import agent_friday.core as core
     c = app.test_client()
-    c.environ_base["HTTP_X_FRIDAY_TOKEN"] = core._current_api_token()
+    # Friday's page on this PC: its token, a press's browser metadata and the desk key
+    # (services/desk_press), which making a pre-approval demands.
+    from tests.desk_press_support import desk_headers as _desk
+    for _k, _v in _desk().items():
+        c.environ_base["HTTP_" + _k.upper().replace("-", "_")] = _v
     return c
 
 

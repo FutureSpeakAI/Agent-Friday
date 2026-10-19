@@ -442,7 +442,7 @@ Set these for the process that starts Friday. Provider keys are listed under
 | Variable | Default | Meaning |
 |---|---|---|
 | `FRIDAY_PORT` | `3000` | Port. If it is busy the server tries the next ten. The server records the port it bound in `~/.friday/friday_server.port`, and the tray follows it. |
-| `FRIDAY_BIND_HOST` | `127.0.0.1` | Bind address. Binding to anything else needs a login key unless `FRIDAY_ALLOW_KEYLESS_BIND` is set. |
+| `FRIDAY_BIND_HOST` | `127.0.0.1` | Bind address. **Unsafe, developer-only.** It is not a supported way to use Friday from another device: every signed-in device acts as you, with one shared password and no way to remove a single device. Approval cards still need a press on this PC's own screen, so a tap from another device approves nothing. Binding to anything else needs a login key unless `FRIDAY_ALLOW_KEYLESS_BIND` is set. |
 | `FRIDAY_TLS_CERT`, `FRIDAY_TLS_KEY` | unset | Serve HTTPS directly. `FRIDAY_REQUIRE_TLS` refuses to start remotely without it; `FRIDAY_SKIP_TLS_WARN` silences the warning. |
 | `FRIDAY_USERNAME` | `admin` | Login username for remote access. |
 | `FRIDAY_REMOTE_KEY` | falls back to `FRIDAY_PASSWORD` | Login key for remote access. |

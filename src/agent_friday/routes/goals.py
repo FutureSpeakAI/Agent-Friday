@@ -58,6 +58,38 @@ from agent_friday.user_errors import message_only
 goals_bp = Blueprint("goals", __name__)
 
 
+# ── A press on this PC's own screen ────────────────────────────────────────
+# Approving a card over HTTP is a press on a card in Friday's page, and it counts
+# only when that page is open on this PC (services/screen_click.screen_session:
+# loopback with no forwarding evidence, a local Host, this launch's desk key).
+# A tap through a tunnel, a proxy or a LAN bind, a script on this PC, or a page
+# that never fetched the desk key approves nothing. Declining stays open to every
+# channel. Voice and a typed reply have their own paths and their own rules.
+
+def _press_required(approval_id, decision):
+    """None when this decision may go ahead, else the response that refuses it."""
+    if decision != "approve" or _screen_click.screen_session(request):
+        return None
+    if approval_id is not None and not _approvals.get_approval(approval_id):
+        return jsonify({"ok": False, "error": "not found"}), 404
+    from agent_friday.services import desk_press as _dp
+    return jsonify({"ok": False, "error": "needs_desktop_press", "code": _dp.REFUSAL_CODE,
+                    "message": _screen_click.refusal_words(request)
+                    or "Approve this with a press on the card, on the computer Friday runs on."}), 403
+
+
+@goals_bp.route("/api/desk/where", methods=["GET"])
+@login_required
+def desk_where():
+    """Where Friday's page on this PC fetches this launch's desk key: a port on
+    127.0.0.1 and the launch's epoch (services/desk_press). Neither is secret: a
+    browser on another device cannot reach that address."""
+    from agent_friday.services import desk_press as _dp
+    resp = jsonify(_dp.where())
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  Goals CRUD
 # ═══════════════════════════════════════════════════════════════════════════
@@ -223,6 +255,9 @@ def decide_approval_route(approval_id):
     if decision not in ("approve", "deny"):
         return jsonify({"ok": False, "error": "decision must be 'approve' or 'deny'"}), 400
     by = _screen_click.decided_by(request, data.get("decided_by", "owner"))
+    refused = _press_required(approval_id, decision)
+    if refused is not None:
+        return refused
     why = _approvals.refusal_for(approval_id, decision, by)
     if why:
         return jsonify({"ok": False, "error": "needs_approve_button", "message": why}), 403
@@ -317,6 +352,9 @@ def list_governance_grants():
 @login_required
 def create_governance_grant():
     from agent_friday.governance import action_gate
+    refused = _press_required(None, "approve")      # a standing yes for outward work is an approval
+    if refused is not None:
+        return refused
     body = request.get_json(silent=True) or {}
     try:
         g = action_gate.create_grant(
@@ -425,6 +463,9 @@ def list_send_grants():
 @_page_token_required
 def create_send_grant():
     from agent_friday.governance import send_grants
+    refused = _press_required(None, "approve")      # a pre-approved send is an approval made in advance
+    if refused is not None:
+        return refused
     body = request.get_json(silent=True) or {}
     try:
         if body.get("scope") == "skill":
@@ -455,6 +496,9 @@ def reapprove_send_grant(grant_id):
     made is approved again for the job or skill as it is now. For a skill the
     page sends the list it shows, as for a first approval."""
     from agent_friday.governance import send_grants
+    refused = _press_required(None, "approve")
+    if refused is not None:
+        return refused
     body = request.get_json(silent=True) or {}
     try:
         g = send_grants.reapprove(grant_id, body.get("recipients"), by="owner")
@@ -476,6 +520,11 @@ def set_send_grant_options():
     body = request.get_json(silent=True) or {}
     if "voice_may_use" not in body:
         return jsonify({"error": "say voice_may_use: true or false"}), 400
+    if bool(body["voice_may_use"]):
+        # Letting voice spend pre-approvals widens who may send; turning it off is open to the page.
+        refused = _press_required(None, "approve")
+        if refused is not None:
+            return refused
     return jsonify({"options": send_grants.set_voice_may_use(bool(body["voice_may_use"]), by="owner")})
 
 
