@@ -56,8 +56,8 @@ def test_chat_voice_mode_and_the_relay_carry_no_absolute_cap():
 
 
 def test_the_base_persona_and_the_default_soul_are_adaptive():
-    assert "like texting" not in mr.FRIDAY_SYSTEM_PROMPT
-    assert core.ADAPTIVE_LENGTH_LINE in " ".join(mr.FRIDAY_SYSTEM_PROMPT.split())
+    assert "like texting" not in mr.core_instructions()
+    assert core.ADAPTIVE_LENGTH_LINE in " ".join(mr.core_instructions().split())
     assert core.LEGACY_LENGTH_LINE not in inspect.getsource(soul)
 
 

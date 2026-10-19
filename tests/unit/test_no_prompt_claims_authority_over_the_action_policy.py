@@ -11,7 +11,7 @@ An assembled prompt can carry two directives that contradict each other:
 
 What this file pins:
 
-* (A) lives in exactly one place, `FRIDAY_SYSTEM_PROMPT`'s "== AUTONOMOUS
+* (A) lives in exactly one place, the core instructions' "== AUTONOMOUS
   OPERATION ==" block in `services/model_router.py`. It is human-authored
   prompt text, not ingested content.
 
@@ -94,9 +94,9 @@ def _offending(text):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_the_base_prompt_constant_claims_no_authority_over_actions():
-    found = _offending(mr.FRIDAY_SYSTEM_PROMPT)
+    found = _offending(mr.core_instructions())
     assert not found, (
-        "FRIDAY_SYSTEM_PROMPT grants blanket authority over real-world "
+        "The core instructions grant blanket authority over real-world "
         "actions, contradicting the action policy: %s" % found)
 
 
@@ -105,7 +105,7 @@ def test_the_base_prompt_still_permits_uninterrupted_internal_work():
     "should I continue?" nagging between internal, reversible steps -- only
     a stop before real-world actions. Removing the contradiction must not turn
     Friday into something that asks permission to think."""
-    low = mr.FRIDAY_SYSTEM_PROMPT.lower()
+    low = mr.core_instructions().lower()
     assert "should i continue" in low, (
         "the prompt no longer tells Friday to avoid mid-task nagging")
 

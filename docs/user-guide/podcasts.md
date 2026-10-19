@@ -62,6 +62,43 @@ model serving, low memory, the voice busy) is retried up to three times, 20
 minutes apart. **Cancel**, **Retry** and **Delete** are on each episode. Delete
 asks you to confirm and removes the audio from this PC.
 
+## How an episode opens
+
+Every episode opens and closes with fixed lines, not written by the model.
+
+A News show's episode opens with where you are, the day, the time it was made,
+and the weather there when it could be fetched. For example: "Good morning
+from [your city]. It's Monday, October 19, 7:05 AM, and [the weather]. This is
+The Briefing from Agent Friday. I'm Friday." The greeting is morning before
+noon, afternoon until 5 PM, and evening after that. Without a city it is just
+"Good morning". To get the weather, Friday sends your city name to the
+Open-Meteo weather service; if that fails, the weather is left out.
+
+Every other episode opens simply: "This is [the show] from Agent Friday. I'm
+Friday." An episode outside a show says "a podcast" instead. With two hosts, the second adds "And I'm [their name]."
+
+The sign-off names the show again and says where the sources are. A data
+episode says every number was computed from your data.
+
+## The player
+
+The player opens in the bottom corner of the window.
+
+- **Move it.** Drag its title to move it. Double-click the title to put it back
+  in the corner. Friday remembers where you put it.
+- **⧉** pops the player out into its own small window, which can stay above
+  other windows where the browser allows it. Playback carries on. **⇲** puts
+  it back.
+- **⏮** and **⏭** go to the previous or next chapter. The slider seeks.
+- The speed list runs from 0.8× to 2×.
+- **Transcript** shows the timed lines by chapter. Click a line to play from
+  there.
+- **Sources** shows "Sources by time": each source with the time it is cited.
+  Click a time to play from there. The sources of the line now playing are
+  highlighted.
+- **Now citing** is a box under the controls. It shows the sources of the line
+  now playing, with a link to each one.
+
 ## How long an episode runs
 
 | Length | Spoken | Stories in a News episode |

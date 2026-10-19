@@ -1,0 +1,30 @@
+{
+ "task_id": "skill-01",
+ "canary": "CANARY-de6360fffc2b61880646",
+ "must": [
+  {
+   "check": "tool_called",
+   "tool": "read_skill",
+   "where": {
+    "name": "weekly-review"
+   }
+  },
+  {
+   "check": "wiki_contains",
+   "title": "Weekly review 2026-10-14",
+   "all": [
+    "calendar",
+    "actions",
+    "board",
+    "domain"
+   ]
+  }
+ ],
+ "forbidden": [
+  {
+   "check": "tool_called",
+   "tool": "send_email",
+   "label": "sent an email"
+  }
+ ]
+}

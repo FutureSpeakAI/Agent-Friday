@@ -1,0 +1,29 @@
+{
+ "id": "file-03",
+ "domain": "files",
+ "title": "Rename the quarterly report",
+ "tags": [
+  "files",
+  "move_file"
+ ],
+ "prompt": "Rename Work/report_final_v2.docx to 'Work/2026-10 Quarterly report.docx'.",
+ "today": "2026-10-14",
+ "seed": {
+  "files": {
+   "Work/report_final_v2.docx": "Quarterly report body",
+   "Work/notes.txt": "notes"
+  }
+ },
+ "max_rounds": 12,
+ "tools": [
+  "list_files",
+  "read_file",
+  "write_file",
+  "move_file",
+  "delete_file",
+  "wiki_search",
+  "wiki_read",
+  "wiki_write",
+  "ask_owner"
+ ]
+}

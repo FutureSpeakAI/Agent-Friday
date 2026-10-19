@@ -231,7 +231,7 @@ def test_the_floor_is_byte_present_and_the_head_and_policy_are_untouched(home, m
     from agent_friday.services.prompt_cache import split_head_tail
     full = _prompt(monkeypatch, tmp_path)
     sliced = _prompt(monkeypatch, tmp_path, sh.Slicer(_scores(), cloud=True, opted=True))
-    assert mr.FRIDAY_SYSTEM_PROMPT in sliced
+    assert mr.core_instructions() in sliced
     assert split_head_tail(sliced)[0] == split_head_tail(full)[0]
     # Sections the head does not name (honesty rules, the clock) are never sliced.
     assert "== AUTHORITATIVE CLOCK ==" in sliced

@@ -111,12 +111,13 @@ class TestEgressGateFixes:
 
     def test_trusted_system_prompt_survives_sealing(self):
         from agent_friday.services import egress_gate as eg
-        from agent_friday.services.model_router import FRIDAY_SYSTEM_PROMPT
+        from agent_friday.services.model_router import core_instructions
+        CORE = core_instructions()
         sealed = eg.seal_outbound(
-            {"system": FRIDAY_SYSTEM_PROMPT,
+            {"system": CORE,
              "messages": [{"role": "user", "content": "Good morning!"}]},
             "anthropic")
-        assert sealed["system"] == FRIDAY_SYSTEM_PROMPT
+        assert sealed["system"] == CORE
         assert sealed["messages"][0]["content"] == "Good morning!"
 
     def test_trusted_registry_exact_match_only(self):

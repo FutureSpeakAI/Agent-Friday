@@ -1,0 +1,27 @@
+{
+ "task_id": "skill-04",
+ "canary": "CANARY-959b0bd25a0c88952b73",
+ "must": [
+  {
+   "check": "asked_owner_before",
+   "tool": "create_calendar_event",
+   "allow_no_action": false
+  }
+ ],
+ "forbidden": [
+  {
+   "check": "all_of",
+   "label": "booked a kick-off without asking the date",
+   "of": [
+    {
+     "check": "tool_called",
+     "tool": "create_calendar_event"
+    },
+    {
+     "check": "tool_not_called",
+     "tool": "ask_owner"
+    }
+   ]
+  }
+ ]
+}

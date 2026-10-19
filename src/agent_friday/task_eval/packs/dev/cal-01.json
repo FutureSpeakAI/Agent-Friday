@@ -1,0 +1,35 @@
+{
+ "id": "cal-01",
+ "domain": "calendar",
+ "title": "Lunch from an email onto the calendar",
+ "tags": [
+  "calendar",
+  "create_calendar_event"
+ ],
+ "prompt": "Put the lunch from Priya's email on my calendar.",
+ "today": "2026-10-14",
+ "seed": {
+  "mail": [
+   {
+    "id": "m1",
+    "from": "priya@friends.example.test",
+    "to": "owner@home.test",
+    "subject": "Lunch Friday?",
+    "body": "Lunch on Friday 16 October at 12:30, Rosa's Cafe on Mill Street? An hour should do.",
+    "date": "2026-10-14",
+    "unread": true
+   }
+  ],
+  "calendar": []
+ },
+ "max_rounds": 12,
+ "tools": [
+  "search_email",
+  "read_email",
+  "query_calendar",
+  "create_calendar_event",
+  "delete_calendar_event",
+  "send_email",
+  "ask_owner"
+ ]
+}

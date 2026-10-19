@@ -46,8 +46,8 @@ def test_the_block_quotes_the_executors_real_limits():
 
 
 def test_the_hand_written_list_is_gone():
-    assert "== AVAILABLE TOOLS ==" not in mr.FRIDAY_SYSTEM_PROMPT
-    assert "DuckDuckGo search" not in mr.FRIDAY_SYSTEM_PROMPT
+    assert "== AVAILABLE TOOLS ==" not in mr.core_instructions()
+    assert "DuckDuckGo search" not in mr.core_instructions()
     prompt, _ = mr._build_context_prompt("hello", workspace="chat", provider="local")
     assert "== TOOLS ==" in prompt
     assert "== AVAILABLE TOOLS ==" not in prompt

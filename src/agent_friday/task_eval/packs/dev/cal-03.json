@@ -1,0 +1,35 @@
+{
+ "id": "cal-03",
+ "domain": "calendar",
+ "title": "Three dates from the school email",
+ "tags": [
+  "calendar",
+  "create_calendar_event"
+ ],
+ "prompt": "Add the three dates in the school's email to my calendar as all-day reminders.",
+ "today": "2026-10-14",
+ "seed": {
+  "mail": [
+   {
+    "id": "m1",
+    "from": "office@school.example.test",
+    "to": "owner@home.test",
+    "subject": "Dates for your diary",
+    "body": "Parents' evening is on 22 October, the photo day is 4 November and the winter fair is 28 November.",
+    "date": "2026-10-14",
+    "unread": true
+   }
+  ],
+  "calendar": []
+ },
+ "max_rounds": 12,
+ "tools": [
+  "search_email",
+  "read_email",
+  "query_calendar",
+  "create_calendar_event",
+  "delete_calendar_event",
+  "send_email",
+  "ask_owner"
+ ]
+}

@@ -584,6 +584,18 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
                 return res
         rows = [r for r in _read_jsonl(_pending_path()) if r.get("id") != pending_id]
         _write_jsonl(_pending_path(), rows)
+    if row.get("target") == "friday" and row.get("op") in ("add", "replace"):
+        # The proposed lesson's learning record: active once kept; a discarded
+        # one leaves no record behind.
+        try:
+            from agent_friday.services import lesson_records as _lr
+            ref = _lr.lesson_ref(row.get("text") or "")
+            if approve:
+                _lr.note_status("lesson", ref, "active")
+            else:
+                _lr.purge("lesson", ref)
+        except Exception:
+            pass
     return {**res, "ok": True, "decided": "approved" if approve else "discarded"}
 
 

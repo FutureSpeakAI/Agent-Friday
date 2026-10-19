@@ -144,6 +144,11 @@ ALLOW_MODULE_PREFIXES: Dict[str, str] = {
         "first-run setup chat: the setup wizard is its own visible surface",
     "agent_friday.cli":
         "a command-line command, not the desktop app: the terminal is its surface",
+    "agent_friday.task_eval.child":
+        "a practice-episode child process with a scratch home: it is started only by a "
+        "parent that is itself visible (the app's trial job under visible_job, or a "
+        "builder's console via tools/task_eval); a job registered here would land in "
+        "the child's own throwaway task registry, which nobody can see",
 }
 
 #: Attribute names that look distinctive but belong to the standard library

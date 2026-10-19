@@ -225,9 +225,10 @@ class TestValidationGate:
         # candidate == tolerance * best (exactly on boundary → should pass tolerance check)
         best = 0.80
         candidate = REGRESSION_TOLERANCE * best   # = 0.76
-        # But is it >= baseline? Use baseline == candidate so baseline check doesn't bite.
+        # A baseline well below it, so neither the baseline check nor the
+        # tie rule (harness2 HA-E27: a gain under 0.5% keeps the baseline) bites.
         ok, reason = gate.evaluate(candidate_score=candidate,
-                                   baseline_score=candidate - 0.001,
+                                   baseline_score=candidate * 0.9,
                                    best_score=best)
         assert ok is True
 
@@ -240,15 +241,16 @@ class TestValidationGate:
         assert ok is False
         assert "baseline" in reason.lower()
 
-    def test_marginal_improvement_passes(self, gate):
-        # candidate slightly above baseline but improvement < 0.5%
+    def test_marginal_improvement_keeps_the_baseline(self, gate):
+        # candidate slightly above baseline but improvement < 0.5%: a tie,
+        # which keeps the baseline (harness2 adoption HA-E27; it used to pass).
         baseline = 0.80
         candidate = baseline + 0.001   # ~0.125% improvement
         ok, reason = gate.evaluate(candidate_score=candidate,
                                    baseline_score=baseline,
                                    best_score=baseline)
-        assert ok is True
-        assert "marginal" in reason.lower()
+        assert ok is False
+        assert "tie" in reason.lower()
 
     def test_clear_improvement_passes(self, gate):
         ok, reason = gate.evaluate(candidate_score=0.85, baseline_score=0.78, best_score=0.78)
@@ -263,14 +265,14 @@ class TestValidationGate:
 
     def test_perfect_scores(self, gate):
         ok, reason = gate.evaluate(candidate_score=1.0, baseline_score=1.0, best_score=1.0)
-        # 1.0 >= 0.95 * 1.0 ✓; 1.0 >= 1.0 ✓; improvement = 0 → marginal pass
-        assert ok is True
+        # improvement = 0: a tie keeps the baseline (harness2 HA-E27; it used to pass)
+        assert ok is False and "tie" in reason
 
     def test_all_zero_scores(self, gate):
         # baseline=0, best=0 → the 1e-6 guard prevents division by zero
         ok, reason = gate.evaluate(candidate_score=0.0, baseline_score=0.0, best_score=0.0)
-        # candidate=0.0 >= 0.95*0.0=0.0 → passes tolerance; 0.0 >= 0.0 baseline → marginal
-        assert ok is True
+        # no division by zero, and a tie keeps the baseline (harness2 HA-E27)
+        assert ok is False and "tie" in reason
 
     def test_regression_factor_exactly_095(self, gate):
         # Verify the exact factor used is REGRESSION_TOLERANCE (0.95)
@@ -636,7 +638,7 @@ class TestSkillOptEngine:
             return {"accuracy": 0.1}  # very low → regression
 
         engine.evaluator = bad_evaluator
-        epoch = engine.run_epoch("demo", ver2.version_id, [{"inputs": {}}])
+        epoch = engine.run_epoch("demo", ver2.version_id, [{"inputs": {}}] * 6)
         assert epoch.decision == "rejected"
 
 

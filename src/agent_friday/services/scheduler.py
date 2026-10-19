@@ -2513,6 +2513,19 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] learning_epoch unavailable: {e}")
 
+    # practice-task trials (harness2 adoption HA2) — tests queued changes old
+    # way against new on the brain seat that is already loaded, only when the
+    # PC is idle and on AC power, at most 3 seat-hours a night; a deferrable
+    # visible job that yields to any interactive turn. Silent: each tested
+    # change raises its own card, and the week's summary is one card.
+    try:
+        from agent_friday.services.trial_job import run_pending_trials
+        register_builtin_task("practice_trials", run_pending_trials,
+                              label="Practice-task trials", default_trigger="idle_daily",
+                              default_spec={"idle_after_s": 1800}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] practice_trials unavailable: {e}")
+
     # goal-milestones tick (A3) — advance any due, still-pending milestone on
     # every active goal. Silent: each advanced milestone already produces its
     # own receipt/work_log entry and (when gated) an approval notification;

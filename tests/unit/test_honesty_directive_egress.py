@@ -42,7 +42,7 @@ def test_directive_survives_in_the_real_assembled_system_prompt():
 
 def test_directive_registered_as_trusted_text():
     """WO-1 asked for the directive to be `register_trusted_text`-exempt, the
-    same mechanism FRIDAY_SYSTEM_PROMPT uses — belt-and-suspenders alongside
+    same mechanism the core instructions use — belt-and-suspenders alongside
     the paragraph split. Confirm the registration actually happened."""
     assert mr.REFUSAL_HONESTY_DIRECTIVE.strip() in egress_gate._TRUSTED_TEXTS
 

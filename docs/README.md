@@ -48,6 +48,17 @@ document it is.
 | [PDF documents](user-guide/pdf-documents.md) | Reading scans with local OCR, filling forms into a new file, and signing only on an approval card. |
 | [Skills](user-guide/skills.md) | The skill system, versioned optimisation, and the auto-research loop. |
 | [Cloud work orders](user-guide/cloud-work-orders.md) | A cloud model hands this PC a plan to carry out locally (off by default). |
+| [The holographic desktop](user-guide/desktop.md) | Friday's 15 structures and weekly Evolution, helper orbs, the ocean of dots, flash safety, the widget (F9), View in 3D, and Big mode. |
+| [Keyboard shortcuts](user-guide/keyboard-shortcuts.md) | Every desktop shortcut and what it does. |
+| [Customize a workspace](user-guide/customize-workspaces.md) | Reshaping a workspace by talking to Friday: the Studio, quick actions, snapshots, version history and undo. |
+| [Friday in your browser](user-guide/browser-tabs.md) | Workspaces and chats in their own tabs, links straight to an item, asking Friday to open something, several tabs, and Friday's own browser. |
+| [Posting to your accounts](user-guide/posting.md) | Which accounts connect today, the post composer, scheduling, approvals, held posts, retries and the publishing pause. |
+| [News](user-guide/news.md) | How stories are chosen, source trust, Discuss a story, and your media diet. |
+| [How Friday checks her own answers](user-guide/self-review.md) | The per-reply scores, the Weekly Self-Improvement card, and what the scores do and do not change. |
+| [Knowledge, Trust and deep research](user-guide/knowledge-and-trust.md) | The Knowledge workspace, the Trust workspace, and deep research with checked quotes. |
+| [People](user-guide/people.md) | Relationship memory from mail and calendar, follow-ups, reply nudges, LinkedIn import and Google Contacts. |
+| [Home, Code, Sites, Health, Finance and Family](user-guide/more-workspaces.md) | Home in Simple and Classic, the Code Salon, Sites, and the read-only Health, Finance and Family screens. |
+| [What Friday is doing, and what she did](user-guide/activity-and-records.md) | Task cards and their controls, What Friday did, task records, Changes Friday made, the context log, and learning that waits for you. |
 | [Local voice, GPU tier](user-guide/local-voice-gpu-tier.md) | The NVIDIA NeMo voice tier behind the same WebSocket contract as the CPU tier. |
 
 ## Reference

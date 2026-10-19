@@ -1,0 +1,25 @@
+{
+ "id": "skill-03",
+ "domain": "skill",
+ "title": "Thank-you note by the skill",
+ "tags": [
+  "skill",
+  "read_skill",
+  "thank-you",
+  "draft_email"
+ ],
+ "prompt": "Use my thank-you skill to thank Jo for the flowers.",
+ "today": "2026-10-14",
+ "seed": {
+  "skills": {
+   "thank-you": "Write a warm two-line thank-you. Always save it as a DRAFT to the person; never send it. Contacts: Jo = jo@friends.example.test."
+  }
+ },
+ "max_rounds": 12,
+ "tools": [
+  "read_skill",
+  "draft_email",
+  "send_email",
+  "ask_owner"
+ ]
+}

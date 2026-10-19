@@ -28,6 +28,16 @@ REQUIRED_PATTERNS = (
     "agent_friday/VOICE_DEMO.md",
     "agent_friday/resources/model_shortlist.json",
     "agent_friday/resources/bonsai2-tiers.json",
+    # Friday's core instructions (services/instruction_files): without them
+    # the prompt has no identity, rules or tool guidance at all.
+    "agent_friday/resources/instructions/manifest.json",
+    "agent_friday/resources/instructions/10_identity.md",
+    "agent_friday/resources/instructions/20_autonomous_operation.md",
+    "agent_friday/resources/instructions/60_honest_degradation.md",
+    "agent_friday/resources/instructions/95_packages.md",
+    "agent_friday/resources/instructions/policy/action_permission.md",
+    "agent_friday/resources/instructions/policy/claws.md",
+    "agent_friday/resources/instructions/policy/honest_limits.md",
 )
 
 

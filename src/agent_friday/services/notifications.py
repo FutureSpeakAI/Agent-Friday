@@ -430,19 +430,46 @@ def _skillopt_llm_researcher(skill_name, context):
     return {"hypotheses": hypotheses, "edits": edits}
 
 
+@visible_job('Skill optimisation (nightly)', kind='skillopt', workspace='skills', deferrable=True)
 def _skillopt_nightly():
-    """Nightly closed-loop tick: run SkillOpt auto-research over drifted skills."""
+    """Nightly closed-loop tick: run SkillOpt auto-research over drifted skills.
+    Shown in the Local AI queue; runs only on AC power, within tonight's
+    testing time, with the PC idle and a local model serving, and every
+    practice episode checks the same again (services/skillopt_evaluator)."""
+    from agent_friday.services import skillopt_evaluator as _sev
+    from agent_friday.services.trial_job import _seat
+    why = _sev.night_gate()
+    _s = _seat()
+    if why or not _s:
+        print(f"  [skillopt] skipped: {why or 'no local model is serving'}")
+        return {"skipped": why or "no local model is serving"}
     try:
         import agent_friday.skillopt_engine as _sopt
         _sopt.set_researcher(_skillopt_llm_researcher)
     except Exception as e:
         print(f"  [skillopt] researcher wiring failed: {e}")
+    # The practice-task scorer, the owner's card for a recommendation, and a
+    # queued trial for each auto-research edit (services/skillopt_evaluator).
+    # Without this the engine can neither score nor change anything.
+    try:
+        _ev = _sev.install(endpoint=_s["endpoint"], model=_s["model"])
+    except Exception as e:
+        # Without the scorer the engine can neither score nor change anything.
+        print(f"  [skillopt] scorer wiring failed: {e}")
+        return {"skipped": "the scorer could not be wired"}
     try:
         import agent_friday.skill_capture as _skcap
         result = _skcap.run_nightly()
         print(f"  [skillopt] nightly research: {result}")
+        return {"result": str(result)[:500]}
     except Exception as e:
         print(f"  [skillopt] nightly failed: {e}")
+        return {"error": str(e)[:300]}
+    finally:
+        try:
+            _ev.close()
+        except Exception:
+            pass
 
 
 # ── Weekly self-improvement ─────────────────────────────────────────────────

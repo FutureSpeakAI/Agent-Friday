@@ -910,10 +910,14 @@ def _round_trip_ok(content: bytes, safe: str, want: dict) -> bool:
             and sk.version == want["version"] and sk.license == "MIT")
 
 
-def agent_save_skill(name, fields, *, reason="", evidence=None, root=None):
+def agent_save_skill(name, fields, *, reason="", evidence=None, root=None, check_only=False):
     """Friday's create/update. Writes only a new name or a skill she wrote,
     signs the provenance record, ledgers it, and returns (folder, action).
-    Raises SkillWriteRefused for anything else, with the files untouched."""
+    Raises SkillWriteRefused for anything else, with the files untouched.
+
+    ``check_only=True`` runs every check and writes nothing, returning
+    (None, action): a change that waits for the owner (services/trials) is
+    refused at once exactly as a direct write would be."""
     root = Path(root) if root is not None else SKILLS_DIR
     safe = _safe_name(name)
     want = _agent_fields(fields)
@@ -941,6 +945,8 @@ def agent_save_skill(name, fields, *, reason="", evidence=None, root=None):
             raise SkillWriteRefused(
                 "the skill text would not read back as written (it may try to change the "
                 "skill's name, source or permissions). Nothing was written.")
+        if check_only:
+            return None, ("update" if owner == AGENT_AUTHOR else "create")
         folder, action, _content = _write_manifest(
             safe, description=want["description"], body=want["body"],
             triggers=want["triggers"], tool_chain=want["tool_chain"],
@@ -1000,10 +1006,11 @@ def list_archived(root=None) -> list:
     return sorted(p.name for p in base.iterdir() if p.is_dir() and _archived_copies(p.name, root))
 
 
-def archive_skill(name, *, actor, reason="", evidence=None, root=None) -> Path:
+def archive_skill(name, *, actor, reason="", evidence=None, root=None, check_only=False) -> Path:
     """Move a skill folder, with its history, ledger and provenance, into
     ``.archive/<name>/<stamp>/``. Nothing is deleted. ``actor="agent"`` may
-    archive only a skill Friday wrote."""
+    archive only a skill Friday wrote. ``check_only`` checks and moves nothing,
+    returning the live folder."""
     root = Path(root) if root is not None else SKILLS_DIR
     safe = _safe_name(name)
     with _SKILL_WRITE_LOCK:
@@ -1013,6 +1020,8 @@ def archive_skill(name, *, actor, reason="", evidence=None, root=None) -> Path:
         folder = _skill_dir(root, safe)
         if not (folder.is_dir() and _find_manifest(folder)):
             raise FileNotFoundError(f"skill not found: {safe}")
+        if check_only:
+            return folder
         stamp = _now_iso().replace(":", "").replace(".", "").replace("-", "")
         dest = _archive_dir(root, safe, stamp)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1034,7 +1043,7 @@ def _archived_by_agent(copy: Path) -> bool:
             and _entry_signed(last))
 
 
-def restore_skill(name, *, actor, reason="", evidence=None, root=None) -> Path:
+def restore_skill(name, *, actor, reason="", evidence=None, root=None, check_only=False) -> Path:
     """Move the newest archived copy of ``name`` back into place. Refuses if
     a live skill already answers to the name. ``actor="agent"`` may restore
     only a copy Friday wrote AND archived herself: a skill of hers the owner
@@ -1053,6 +1062,8 @@ def restore_skill(name, *, actor, reason="", evidence=None, root=None) -> Path:
                 "so only the owner can restore it.")
         if folder.exists() or skill_owner(safe, root) is not None:
             raise FileExistsError(f"a live skill already uses the name: {safe}")
+        if check_only:
+            return source
         shutil.move(str(source), str(folder))
         _append_ledger(folder, "restore", reason=reason, evidence=evidence, actor=actor)
         try:

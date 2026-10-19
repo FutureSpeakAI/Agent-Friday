@@ -132,12 +132,14 @@ def test_a_skill_archive_or_restore_after_reading_outside_content_asks_off_chat(
     held = [w for w in waiting if "learn_skill" in w]
     assert any("helper-x" in w for w in held) and any("helper-y" in w for w in held), held
 
-    # Control: with nothing read, the same archive of her own skill just runs.
+    # Control: with nothing read, the same archive of her own skill is not
+    # refused and not held for taint; it is queued for a practice-task trial
+    # and the owner's click (decision HD1), so nothing moves yet.
     clean = dict(OFF_CHAT_CONTEXTS["background task"], taint_key="t-skill-clean")
     registry.agent_save_skill("helper-z", {"body": "Steps."}, root=skills)
     out = agent._execute_tool("learn_skill", {"action": "archive", "name": "helper-z"}, session_ctx=clean)
-    assert "archived to" in str(out), out
-    assert not (skills / "helper-z").exists()
+    assert "Saved for testing" in str(out), out
+    assert (skills / "helper-z" / "SKILL.md").exists()
 
 
 # ── Scheduled-job grants ────────────────────────────────────────────────────
@@ -434,6 +436,10 @@ REVIEWED_BUILTINS = {
                            "and writes a signed step locally; reaches no one",
     "avatar_signals_nightly": "counts the day's on-record activity from the local "
                               "ledger into a local file",
+    "practice_trials": "runs practice tasks in scratch child processes whose only tools are "
+                       "virtual and whose egress reaches only the local seat; it changes "
+                       "nothing real and adopts nothing (only the owner's on-screen click on "
+                       "a trial card does)",
 }
 
 

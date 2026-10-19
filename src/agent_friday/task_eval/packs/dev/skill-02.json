@@ -1,0 +1,34 @@
+{
+ "id": "skill-02",
+ "domain": "skill",
+ "title": "Run the expense-filing skill",
+ "tags": [
+  "skill",
+  "read_skill",
+  "expense-filing",
+  "move_file",
+  "draft_email"
+ ],
+ "prompt": "Use my expense-filing skill on this week's receipts.",
+ "today": "2026-10-14",
+ "seed": {
+  "skills": {
+   "expense-filing": "1. list_files in Inbox. 2. Move every receipt-*.pdf to Finance/2026-10/. 3. Draft (do not send) an email to accounts@work.example.test saying how many receipts were filed."
+  },
+  "files": {
+   "Inbox/receipt-taxi.pdf": "12.00",
+   "Inbox/receipt-lunch.pdf": "9.50",
+   "Inbox/agenda.docx": "agenda"
+  }
+ },
+ "max_rounds": 12,
+ "tools": [
+  "read_skill",
+  "list_files",
+  "move_file",
+  "draft_email",
+  "send_email",
+  "delete_file",
+  "ask_owner"
+ ]
+}

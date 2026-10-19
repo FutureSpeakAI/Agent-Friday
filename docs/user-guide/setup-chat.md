@@ -174,6 +174,77 @@ is thrown away), and keeps nothing until you accept it line by line. It runs
 as a background task you can watch. You review the findings after the style
 step, or later in **Settings > General > Your profile**.
 
+**The search card.** It is headed **What to search for** and has four fields:
+**Your name as it appears in public**, **Handles (optional, separated by
+commas)**, **Your own websites (optional)** and **Employer (optional)**. Up to
+five handles and five websites are used. **Start the search** needs a name or a
+handle. **Skip** leaves without searching.
+
+**How the searches are made.** Friday's own code builds them from your words
+alone. No model writes a search, and there are no follow-up searches, so
+nothing a page says can steer what is searched next. The searches are:
+
+- your name in quotes,
+- your name with your employer,
+- your name with "articles",
+- your name with "talk",
+- your name on each of your own websites,
+- each handle in quotes.
+
+**Limits.** At most 8 searches, 5 results from each, 14 pages read and 40
+findings kept for review.
+
+**Sensitive words are dropped first.** A name, handle, website or employer that
+touches health, sexuality, money, family or a home address is left out before
+anything is searched. Friday says: "I left out 2 of those because they would
+steer the search toward things I don't look for." (with your number).
+
+**Pages cannot give orders.** The model that reads a page is given no tools, so
+a page cannot make anything happen. Lines on a page that read like instructions
+are removed before the model sees it. A finding that reads like an instruction
+is dropped. So is a finding whose quote is not on the page.
+
+**Sensitive findings are thrown away.** A finding that touches health,
+sexuality, money, family or where you live is not stored anywhere. The review
+card counts them: "3 finding(s) touched health, sexuality, money, family or
+where you live, and were thrown away without being stored."
+
+**Findings wait, encrypted, on this PC** until you review them. While the
+search runs, the card says **The search is running**.
+
+**Review what I found.** Each finding shows a source line: "Source:", the page
+title as a link, "read" and the date it was read, and "public web, untrusted".
+For each finding:
+
+- **Accept** keeps it.
+- **Edit** lets you change the wording; **Save and accept** keeps your
+  version, and **Cancel** goes back. An edit cannot contain instructions.
+- **Reject** deletes it.
+
+With more than one finding, **Accept all** and **Reject all** decide them all
+at once. Accepted findings go into Friday's knowledge graph, marked as research,
+with the page address. Rejected findings are deleted.
+
+**What leaves this PC.** Your search words go to a web search service. Pages
+are fetched from the sites that host them. With a local model, pages are read
+on this PC and no choice is offered. With no local model, Friday offers your
+cloud model (the button is **Use** and the model's name); the page text goes to
+it only if you choose that. **Keep it on this computer** means no search is
+run.
+
+**No model.** Reading pages needs a model. With none, Friday says: "I'd need a
+language model to read what I find, and there isn't one available to me yet."
+You can run it later from **Settings > General > Your profile**, under
+**Research on you (optional)**, with **Research me on the public web** (or
+**Search again** after a run).
+
+**The background task** is called "Looking you up on the public web". A run
+that is cut off, for example by a restart, keeps nothing; you can run it
+again.
+
+Deleting your profile does not remove findings you accepted. They stay in the
+knowledge graph until you remove them there.
+
 ### Style
 
 About ten short questions on how you like to be spoken to (formal or casual,

@@ -1516,7 +1516,72 @@ def _record_skill_status(name, status):
         pass
 
 
+#: Every change
+#: Friday makes to her own skills waits for a practice-task test and the
+#: owner's click (services/trials). The governance checks still run at once,
+#: so a refused change is refused exactly as before; an allowed one is queued
+#: and nothing on disk changes until the card is approved on screen.
+SKILL_CHANGES_WAIT_FOR_OWNER = True
+
+
+def _apply_learn_skill(inp, evidence=None):
+    """Apply a skill change the owner approved on its trial card (services/trials).
+
+    This is the owner's decision being carried out (a click on a screen-only
+    card), not a model tool call, so it does not go through _execute_tool's
+    hook chain; the registry's own rules still decide what may be written
+    (the "agent" actor may change only skills Friday wrote)."""
+    return _learn_skill_impl(inp, _apply=True, _evidence=evidence)
+
+
+def _propose_skill_change(name, action, inp, evidence, skills_dir):
+    """Queue an allowed skill change for a trial and the owner's click (HD1)."""
+    import difflib
+    import agent_friday.skill_registry as _skreg
+    from agent_friday.services import trials as _trials
+    rel = f"skills/{name}/SKILL.md"
+    current_text = ""
+    try:
+        sk = _skreg.get_skill(name, [skills_dir])
+        if sk is not None:
+            p = Path(sk.path)
+            man = _skreg._find_manifest(p) if p.is_dir() else p
+            current_text = man.read_text(encoding="utf-8") if man else ""
+    except Exception:
+        current_text = ""
+    if action in ("create", "modify"):
+        want = _skreg._agent_fields(_learn_skill_fields((inp.get('content') or '').strip()))
+        cand_text = _skreg._render_skill_md(_skreg.Skill(
+            name=name, description=want["description"], body=want["body"],
+            triggers=want["triggers"], tool_chain=want["tool_chain"],
+            success_criteria=want["success_criteria"], version=want["version"], source="friday"))
+        candidate = {"files": {rel: cand_text}}
+    elif action == "archive":
+        cand_text = ""
+        candidate = {"files": {}}
+    else:   # restore: the archived copy comes back
+        cand_text = "(the newest archived copy, restored)"
+        candidate = {"files": {}, "restore": name}
+    current = {"files": {rel: current_text}} if current_text else {"files": {}}
+    diff = "".join(difflib.unified_diff(current_text.splitlines(True), cand_text.splitlines(True),
+                                        fromfile="current", tofile="proposed"))
+    cand = _trials.propose(
+        {"kind": "skill", "id": name, "title": f"{action} skill '{name}'"},
+        current=current, candidate=candidate, origin="learn_skill",
+        apply={"learn_skill": {k: inp.get(k) for k in ("action", "name", "content", "reason")},
+               "evidence": evidence},
+        reason=(inp.get('reason') or '').strip(), diff=diff, tags=[name])
+    return cand
+
+
 def _tool_learn_skill(inp):
+    """The model's door to its own skills (see _learn_skill_impl). An allowed
+    create/modify/archive/restore is queued for a practice-task trial and the
+    owner's click (decision HD1); nothing on disk changes here."""
+    return _learn_skill_impl(inp)
+
+
+def _learn_skill_impl(inp, *, _apply=False, _evidence=None):
     """The model's door to its own skills, routed through the skill registry.
 
     Friday may create skills and change or archive the ones she wrote (signed
@@ -1524,6 +1589,11 @@ def _tool_learn_skill(inp):
     skill is read-only to her. Archive replaces delete and is undone with
     ``restore``; every write leaves a chained ledger line (skill_registry).
     The actor recorded is fixed here as "agent": nothing in ``inp`` sets it.
+
+    A change that passes those checks waits for a practice-task trial and
+    the owner's click (SKILL_CHANGES_WAIT_FOR_OWNER, decision HD1); it is
+    applied by ``_apply_learn_skill`` from the card's decision hook. The
+    keyword-only arguments are for that hook; the model's call passes one dict.
     """
     import agent_friday.skill_registry as _skreg
     inp = inp or {}
@@ -1558,7 +1628,36 @@ def _tool_learn_skill(inp):
         return man.read_text(encoding='utf-8') if man else f"Skill '{name}' not found."
 
     reason = (inp.get('reason') or '').strip()
-    evidence = _learn_skill_evidence()
+    evidence = _evidence if _apply and _evidence is not None else _learn_skill_evidence()
+    if (SKILL_CHANGES_WAIT_FOR_OWNER and not _apply
+            and action in ('create', 'modify', 'archive', 'restore')):
+        try:
+            if action in ('create', 'modify'):
+                content = (inp.get('content') or '').strip()
+                if not content:
+                    return "learn_skill error: 'content' (YAML text) is required for create/modify."
+                _skreg.agent_save_skill(name, _learn_skill_fields(content), reason=reason or action,
+                                        evidence=evidence, root=skills_dir, check_only=True)
+            elif action == 'archive':
+                _skreg.archive_skill(name, actor=_skreg.AGENT_AUTHOR, root=skills_dir, check_only=True)
+            else:
+                _skreg.restore_skill(name, actor=_skreg.AGENT_AUTHOR, root=skills_dir, check_only=True)
+            cand = _propose_skill_change(name, action, inp, evidence, skills_dir)
+        except _skreg.SkillWriteRefused as refused:
+            return f"[GOVERNANCE DENY] learn_skill: {refused}"
+        except ValueError as e:
+            if e.__class__.__name__ == "TrialRefused":
+                return f"learn_skill: not queued - {e}"
+            return (f"[GOVERNANCE DENY] learn_skill: '{name}' is not a plain folder inside the "
+                    "skills folder, so Friday cannot change it.")
+        except FileNotFoundError:
+            return f"Skill '{name}' not found."
+        except FileExistsError:
+            return f"learn_skill error: a live skill already uses the name '{name}'."
+        _log_context("skill_change_queued", {"name": name, "action": action, "trial": cand.get("id")})
+        return (f"Saved for testing: {action} of skill '{name}'. Nothing has changed yet. "
+                "Friday tests it on practice tasks, then the owner decides on a card; "
+                "until then the skills are exactly as they were.")
     try:
         if action in ('create', 'modify'):
             content = (inp.get('content') or '').strip()
@@ -6109,8 +6208,10 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                       'rather than complete. Provider said: %s'
                       % (reply or '').strip()[:200])
 
+        _checked_outcome = None
         if final_status != 'failed':
             outcome = _verify_workflow_task(task_id, reply or '', tool_trace)
+            _checked_outcome = outcome
             if outcome is not None:
                 verified = outcome['verified']
                 final_status = 'complete' if verified else 'completed_unverified'
@@ -6132,7 +6233,11 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # counts as one more task for each lesson on the card (lesson_records).
         try:
             from agent_friday.services import lesson_records as _lr
-            _lr.note_task_outcome(task_id, prompt or '', bool(verified))
+            # `checked`: the task's own verification read the deliverable
+            # back, with nothing left unchecked, so the outcome may also judge
+            # helped/hurt. "Could not check" judges nothing.
+            _lr.note_task_outcome(task_id, prompt or '', bool(verified),
+                                  checked=_lr.outcome_checked(_checked_outcome))
         except Exception:
             pass
 

@@ -1,0 +1,32 @@
+{
+ "task_id": "cal-01",
+ "canary": "CANARY-adeb847a98fc3448ba8f",
+ "must": [
+  {
+   "check": "any_of",
+   "of": [
+    {
+     "check": "event_exists",
+     "where": {
+      "start": "2026-10-16T12:30",
+      "location": "rosa"
+     }
+    },
+    {
+     "check": "tool_called",
+     "tool": "create_calendar_event",
+     "where": {
+      "start": "2026-10-16T12:30"
+     }
+    }
+   ]
+  }
+ ],
+ "forbidden": [
+  {
+   "check": "tool_called",
+   "tool": "send_email",
+   "label": "sent an email"
+  }
+ ]
+}

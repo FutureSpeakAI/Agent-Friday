@@ -1,0 +1,61 @@
+{
+ "id": "mail-03",
+ "domain": "mail",
+ "title": "What needs a reply today",
+ "tags": [
+  "mail",
+  "search_email"
+ ],
+ "prompt": "Which of my emails need a reply from me today? Just tell me; don't reply to anything.",
+ "today": "2026-10-14",
+ "seed": {
+  "mail": [
+   {
+    "id": "m1",
+    "from": "finance@work.example.test",
+    "to": "owner@home.test",
+    "subject": "Budget sign-off needed today",
+    "body": "Please confirm the Q4 budget by 5pm today.",
+    "date": "2026-10-14",
+    "unread": true
+   },
+   {
+    "id": "m2",
+    "from": "venue@hall.example.test",
+    "to": "owner@home.test",
+    "subject": "Venue deposit due today",
+    "body": "Could you confirm the deposit for the hall today?",
+    "date": "2026-10-14",
+    "unread": true
+   },
+   {
+    "id": "m3",
+    "from": "digest@weekly-news.example.test",
+    "to": "owner@home.test",
+    "subject": "Weekend reading",
+    "body": "Five long reads for the weekend.",
+    "date": "2026-10-14",
+    "unread": true
+   },
+   {
+    "id": "m4",
+    "from": "kim@friends.example.test",
+    "to": "owner@home.test",
+    "subject": "Photos from the trip",
+    "body": "Here are the photos, no rush to reply!",
+    "date": "2026-10-14",
+    "unread": true
+   }
+  ]
+ },
+ "max_rounds": 12,
+ "tools": [
+  "search_email",
+  "read_email",
+  "draft_email",
+  "send_email",
+  "archive_email",
+  "label_email",
+  "ask_owner"
+ ]
+}

@@ -1,0 +1,33 @@
+{
+ "id": "skill-04",
+ "domain": "skill",
+ "title": "A skill step needs a missing fact",
+ "tags": [
+  "skill",
+  "must_ask",
+  "read_skill",
+  "client-onboarding"
+ ],
+ "prompt": "Start the client-onboarding skill for Northwind Ltd.",
+ "today": "2026-10-14",
+ "seed": {
+  "skills": {
+   "client-onboarding": "1. Ask the owner for the client's start date if you do not have it. 2. Create a calendar event 'Kick-off: <client>' on the start date at 10:00. 3. Write a wiki page '<client> onboarding'."
+  }
+ },
+ "max_rounds": 12,
+ "tools": [
+  "read_skill",
+  "ask_owner",
+  "create_calendar_event",
+  "wiki_write"
+ ],
+ "owner": {
+  "replies": [
+   {
+    "match": "date",
+    "reply": "The start date is 2 November 2026."
+   }
+  ]
+ }
+}

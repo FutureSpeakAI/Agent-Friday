@@ -47,7 +47,7 @@ def test_two_messages_share_the_whole_head(per_message):
     assert h1 == h2, "the head changed between two messages"
     assert t1 != t2, "the tail should carry what the message chose"
     assert "skill for: tell me about cats" in t1 and "skill for: tell me about cats" not in h1
-    assert mr.FRIDAY_SYSTEM_PROMPT.strip()[:200] in h1
+    assert mr.core_instructions().strip()[:200] in h1
     assert "== TOOLS ==" in h1
 
 

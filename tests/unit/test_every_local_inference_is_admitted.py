@@ -35,6 +35,10 @@ EXEMPT = {
         "a 16-token health probe the owner opens; it is a diagnostic of the provider, not work",
     ("routing/ollama_manager.py", "OllamaManager.probe_generate"):
         "a ten-token liveness probe for the model health panel",
+    ("task_eval/child.py", "_http_send"):
+        "a practice-episode child with a scratch home: its own scheduler is a throwaway; the "
+        "parent trial job (services/trial_job) admits the seat through the Local AI queue before "
+        "every episode and a watcher stops the child the moment an interactive turn appears",
 }
 
 MINIMUM_SITES = 12      # the scan must find at least this many, or it is looking at nothing
