@@ -492,7 +492,7 @@ def undo(sid: str, *, actor: str = "undo") -> dict:
             _LOAD_CACHE.pop(sid, None)
             row = {"at": time.time(), "id": sid, "action": "undo", "actor": actor, "card": "",
                    "reason": "back to the shipped text", "before_sha256": _sha(current),
-                   "after_sha256": _sha(previous), "before_file": kept}
+                   "after_sha256": _sha(shipped_text(sid)), "before_file": kept}
             _append_history(row)
             return row
     row = write_override(sid, previous, actor=actor, card="", reason="undo")
