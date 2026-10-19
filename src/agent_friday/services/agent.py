@@ -9241,6 +9241,13 @@ def _cc_rate_ok():
         if len(_CC_ACTION_TS) >= _CC_MAX_PER_SEC:
             return False
         _CC_ACTION_TS.append(now)
+    try:
+        # A click or key Friday makes on this PC's screen must never count as the owner's
+        # press on an approval card (services/desk_press refuses presses for a few seconds).
+        from agent_friday.services import desk_press as _dp_cc
+        _dp_cc.note_machine_input()
+    except Exception:
+        return False        # cannot mark it: do not act
     return True
 
 

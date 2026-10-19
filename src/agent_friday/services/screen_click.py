@@ -31,10 +31,6 @@ SCREEN = "owner:ui"
 #: code, a tool's surface name or a chat turn can never stand in for a press.
 _G_FLAG = "_friday_desk_press"
 
-#: Decision labels only the server itself writes. A request body naming one is the plain owner,
-#: so a receipt can never say "a standing grant" or "the system" decided what a page decided.
-_SERVER_ONLY_PREFIXES = ("grant:", "system:", "friday:")
-
 
 def is_browser_click(request) -> bool:
     """True for a same-origin request from a browser page of this server."""
@@ -97,23 +93,50 @@ def refusal_words(request) -> str:
     return ""
 
 
-def granted_press() -> bool:
-    """True while the current request was granted the screen's identity by `decided_by`
-    and still passes `screen_session`. False outside a request."""
+def press_refusal(request, fallback: str = "Do this with a press in Friday's page, on the computer Friday runs on."):
+    """None when this request is a press on this PC's own screen, else the coded 403 to answer.
+
+    The code tells Friday's page to fetch this launch's desk key and press once more."""
+    if screen_session(request):
+        return None
+    from flask import jsonify
+    from agent_friday.services import desk_press
+    return jsonify({"ok": False, "status": "error", "error": "needs_desktop_press", "code": desk_press.REFUSAL_CODE,
+                    "message": refusal_words(request) or fallback}), 403
+
+
+def granted_press(approval_id=None) -> bool:
+    """True while the current request was verified as a press by `decided_by` FOR THIS CARD
+    and still passes `screen_session`. A decision hook that runs inside the request and decides
+    some other card does not inherit the press. False outside a request."""
     try:
         from flask import g, has_request_context, request
         if not has_request_context():
             return False
-        return bool(getattr(g, _G_FLAG, False)) and screen_session(request)
+        granted = getattr(g, _G_FLAG, None)
+        if not granted:
+            return False
+        if granted != "*" and (approval_id is None or str(approval_id) not in granted):
+            return False
+        return screen_session(request)
     except Exception:  # noqa: BLE001
         return False
 
 
-def decided_by(request, claimed: str = "owner") -> str:
+#: The only decision labels a request body may name. Everything else (another channel's label,
+#: a label in another case, a server-only label) is the plain owner, so a receipt's source is
+#: worked out from the request, never from what the request says about itself.
+_BODY_LABELS = frozenset({"owner", "owner:caption"})
+
+
+def decided_by(request, claimed: str = "owner", *, for_ids=None) -> str:
     """The identity a decision carries. The screen's identity is never taken from the body:
     it is given only to a verified press (same-origin page, the page's session token, on this
-    PC's desktop) and a body that claims it without one is the plain owner. Other channel labels
-    (voice, text message, caption) are audit labels; no screen-only card accepts them."""
+    PC's desktop) and a body that claims it without one is the plain owner. The caption's own
+    button keeps its audit label; any other label a body names is the plain owner.
+
+    ``for_ids``: the card ids this press decides (one card, or a batch's list). The press is
+    granted to those cards only."""
     claimed = str(claimed or "owner")
     pressed = screen_session(request)
     if pressed:
@@ -121,19 +144,9 @@ def decided_by(request, claimed: str = "owner") -> str:
         # may carry the screen's identity, and its receipt says desktop_press.
         try:
             from flask import g
-            setattr(g, _G_FLAG, True)
+            setattr(g, _G_FLAG, "*" if for_ids is None else frozenset(str(i) for i in for_ids))
         except Exception:  # noqa: BLE001 - without the mark the press is not taken
             pressed = False
     if claimed == SCREEN:
         return SCREEN if pressed else "owner"
-    if claimed.startswith(_SERVER_ONLY_PREFIXES) or "voice" in claimed.lower():
-        return "owner"          # a standing grant, the system, Friday herself or voice: never a request body's word
-    try:
-        from agent_friday.services import approvals
-        if claimed in approvals.LAYA_CARD_APPROVERS:
-            return "owner"      # the voice label is granted by the server's own voice path, never by a request body
-        if any(claimed in allowed for allowed in approvals.SCREEN_ONLY_KINDS.values()):
-            return "owner"      # any label a screen-only card accepts is granted by the server, never claimed
-    except Exception:       # noqa: BLE001
-        return "owner"
-    return claimed
+    return claimed if claimed in _BODY_LABELS else "owner"

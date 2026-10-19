@@ -197,9 +197,10 @@ def network_bind_warning(bind_host: str) -> list:
         "    mail, files and vault, and acts as you;",
         "  - one shared password, no pairing, no way to remove a",
         "    single device;",
-        "  - approval cards (send, pay, run a command, website",
-        "    plans) still need a press on THIS PC's screen: a tap",
-        "    from another device approves nothing.",
+        "  - pressing Approve on a card (send, pay, run a command,",
+        "    website plans) counts only on THIS PC's screen; a tap",
+        "    from another device approves nothing. Typed, spoken",
+        "    and text-message replies follow their own rules.",
         "",
         "Unset FRIDAY_BIND_HOST to go back to this PC only.",
     ]

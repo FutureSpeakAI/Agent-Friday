@@ -119,11 +119,37 @@ def test_a_body_that_claims_the_screen_without_a_press_is_the_plain_owner():
         assert sc.decided_by(request, "owner:ui") == "owner"
 
 
-@pytest.mark.parametrize("label", ["grant:g1", "system:expiry", "friday:withdrawn", "owner:/voice/"])
-def test_a_body_cannot_claim_a_label_only_the_server_writes(label):
+@pytest.mark.parametrize("label", ["grant:g1", "system:expiry", "friday:withdrawn", "owner:/voice/",
+                                   "owner:sms", "owner:chat", "Owner:UI", "anything-else"])
+def test_a_body_cannot_name_another_channel_or_a_server_label(label):
+    """A receipt's source is worked out from the request, never from what the request says
+    about itself: a desktop press that claims to be a text message is still recorded as a press."""
     with _ctx(_desk()):
         from flask import request
         assert sc.decided_by(request, label) == "owner"
+
+
+def test_a_press_is_granted_to_its_own_card_only(store):
+    """A decision hook running inside the press's request cannot spend the press on another card."""
+    mine, other = _card(kind="web_task_plan", sid="mine"), _card(kind="web_task_plan", sid="other")
+    with _ctx(_desk()):
+        from flask import request
+        by = sc.decided_by(request, "owner:ui", for_ids=[mine["approval_id"]])
+        rec_other, won_other = ap.decide_with_outcome(other["approval_id"], "approve", decided_by="owner:ui")
+        rec_mine, won_mine = ap.decide_with_outcome(mine["approval_id"], "approve", decided_by=by)
+    assert won_other is False and rec_other["status"] == "pending"
+    assert won_mine is True and rec_mine["status"] == "approved"
+
+
+def test_no_press_counts_just_after_friday_moved_the_mouse_or_typed(monkeypatch):
+    """Computer Control could otherwise press Approve on this PC's own screen."""
+    from agent_friday.services import desk_press as dp
+    monkeypatch.setattr(dp, "_last_machine_input", 0.0)
+    with _ctx(_desk()):
+        from flask import request
+        assert sc.screen_session(request) is True
+        dp.note_machine_input()
+        assert sc.screen_session(request) is False
 
 
 # ── Forged labels never approve a screen-only card ────────────────────────
@@ -329,19 +355,25 @@ _JS_END = "})();\n"
 
 _JS_HARNESS = r"""
 const calls = [];
-let stale = false;
+let stale = false;          // after a restart: a new token, a new door port and a new desk key
+const json = (o, status) => Promise.resolve(new Response(JSON.stringify(o), {status: status || 200}));
 globalThis.window = {
   __FRIDAY_API_TOKEN: 'tok-123',
   location: {href: 'PAGE/', origin: 'PAGE', hostname: 'HOSTNAME'},
   fetch: (input, init) => {
     const url = String(input instanceof Request ? input.url : input);
     const h = new Headers((init && init.headers) || (input instanceof Request ? input.headers : undefined));
-    calls.push({url, desk: h.get('X-Friday-Desk'), mode: init && init.mode});
-    if (url === '/api/desk/where') return Promise.resolve(new Response(JSON.stringify({port: 4567, epoch: 'e1'})));
-    if (url === 'http://127.0.0.1:4567/desk-key') return Promise.resolve(new Response(JSON.stringify({key: stale ? 'desk-new' : 'desk-abc'})));
-    if (url === '/api/approvals/a1/decide' && h.get('X-Friday-Desk') !== (stale ? 'desk-new' : 'desk-abc'))
-      return Promise.resolve(new Response(JSON.stringify({code: 'desk_proof_required'}), {status: 403}));
-    return Promise.resolve(new Response('{}'));
+    calls.push({url, desk: h.get('X-Friday-Desk'), token: h.get('X-Friday-Token'), mode: init && init.mode});
+    const port = stale ? 4568 : 4567, key = stale ? 'desk-new' : 'desk-abc', tok = stale ? 'tok-456' : 'tok-123';
+    if (url === '/api/session/token') return json({token: tok});
+    if (url === '/api/desk/where') return json({port, epoch: stale ? 'e2' : 'e1'});
+    if (url === 'http://127.0.0.1:' + port + '/desk-key') return json({key});
+    if (url.startsWith('http://127.0.0.1:')) return Promise.reject(new TypeError('connection refused'));
+    if (url === '/api/approvals/a1/decide') {
+      if (h.get('X-Friday-Token') !== tok) return json({code: 'session_token_required'}, 403);
+      if (h.get('X-Friday-Desk') !== key) return json({code: 'desk_proof_required'}, 403);
+    }
+    return json({});
   },
 };
 BLOCK
@@ -384,9 +416,9 @@ def test_the_page_on_this_pc_sends_the_desk_key_only_on_its_own_state_changes(tm
     assert decide[0]["desk"] == "desk-abc"
     assert [c for c in calls if c["url"] == "/api/lanes/summary"][0]["desk"] is None        # reads carry nothing
     assert [c for c in calls if c["url"] == "https://evil.example/x"][0]["desk"] is None    # never leaves the origin
-    # After a restart the press is refused once for the old key, the page fetches the
-    # new key and presses again, and that press goes through.
-    assert [c["desk"] for c in decide[1:]] == ["desk-abc", "desk-new"]
+    # After a restart (new token, new door port, new key) the press is refused once, the
+    # page fetches the new token and the new key and presses again, and that press goes through.
+    assert [(c["token"], c["desk"]) for c in decide[1:]] == [("tok-123", "desk-abc"), ("tok-456", "desk-new")]
     assert out["last"] == 200
 
 

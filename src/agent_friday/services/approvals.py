@@ -782,10 +782,10 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     # label in code, a tool's surface, a chat turn, a request that never pressed)
     # decides as the plain owner, which no screen-only card accepts.
     decided_by = str(decided_by or "owner")
-    if decided_by == SCREEN_LABEL and not _press_granted():
+    if decided_by == SCREEN_LABEL and not _press_granted(approval_id):
         decided_by = "owner"
     named = source if source in _CALLER_SOURCES else ""
-    source, check = decision_source(decided_by)
+    source, check = decision_source(decided_by, approval_id)
     if named and source != "desktop_press":
         # The caller knows the channel better than the label does (a typed "no" in chat is
         # decided as the plain owner). It can name a channel; it can never name a press.
@@ -835,10 +835,10 @@ _MESSAGE_SURFACES = frozenset({"sms", "text", "telegram", "discord", "channel", 
 _CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday"})
 
 
-def _press_granted() -> bool:
+def _press_granted(approval_id=None) -> bool:
     try:
         from agent_friday.services import screen_click as _sc
-        return _sc.granted_press()
+        return _sc.granted_press(approval_id)
     except Exception:
         return False
 
@@ -855,7 +855,7 @@ def _request_press_check() -> Optional[dict]:
         return None
 
 
-def decision_source(decided_by: str) -> tuple:
+def decision_source(decided_by: str, approval_id=None) -> tuple:
     """(source, check) for a decision's receipt: WHERE it was made, in a fixed word.
 
     desktop_press        a press on this PC's own screen (verified: local, local Host, desk key)
@@ -893,7 +893,7 @@ def decision_source(decided_by: str) -> tuple:
     if label in ("owner", "owner:caption") or not label:
         if check is None:
             return "in_process", None
-        if _press_granted():
+        if _press_granted(approval_id):
             # A verified press on a decide route that did not claim the screen (the caption's button).
             return "desktop_press", check
         if not check.get("page"):

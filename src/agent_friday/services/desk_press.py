@@ -118,11 +118,30 @@ def host_is_local(request) -> bool:
         return False
 
 
+#: Seconds after Friday's own mouse or keyboard action (Computer Control) during which no
+#: press counts: a click Friday made on this PC's screen is not the owner's press.
+MACHINE_INPUT_QUIET_S = 5.0
+_last_machine_input = 0.0
+
+
+def note_machine_input() -> None:
+    """Called by every Computer Control action that moves the mouse, clicks or types."""
+    global _last_machine_input
+    import time
+    _last_machine_input = time.time()
+
+
+def machine_input_recent() -> bool:
+    import time
+    return (time.time() - _last_machine_input) < MACHINE_INPUT_QUIET_S
+
+
 def check(request) -> dict:
     """Each part of the desk test, by name, for a refusal message and the receipt.
 
     Never raises: a part that cannot be read is False."""
-    out = {"local": False, "host_local": False, "desk_key": False}
+    out = {"local": False, "host_local": False, "desk_key": False, "no_machine_input": False}
+    out["no_machine_input"] = not machine_input_recent()
     try:
         import agent_friday.core as core
         out["local"] = bool(core._is_local_request())
@@ -134,9 +153,10 @@ def check(request) -> dict:
 
 
 def on_this_desk(request) -> bool:
-    """Loopback with no forwarding evidence, a local Host, and this launch's desk key."""
+    """Loopback with no forwarding evidence, a local Host, this launch's desk key, and no
+    mouse or keyboard action by Friday herself in the last few seconds."""
     c = check(request)
-    return bool(c["local"] and c["host_local"] and c["desk_key"])
+    return bool(c["local"] and c["host_local"] and c["desk_key"] and c["no_machine_input"])
 
 
 # ── The side door ──────────────────────────────────────────────────────────
@@ -319,6 +339,10 @@ def where() -> dict:
 
 
 def connect_source() -> str:
-    """The CSP connect-src entry that lets Friday's page reach the side door."""
-    p = port()
-    return "http://127.0.0.1:%d" % p if p else ""
+    """The CSP connect-src entry that lets Friday's page reach the side door.
+
+    Any port on 127.0.0.1, not this launch's: the door opens on a new port each launch,
+    and a tab left open across a restart keeps the policy it was served with, so an exact
+    port would lock that tab out of the new door (and out of every press) until a reload.
+    Loopback is this PC; it is not a way out to anyone else."""
+    return "http://127.0.0.1:*" if port() else ""

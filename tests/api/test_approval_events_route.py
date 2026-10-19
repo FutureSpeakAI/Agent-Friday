@@ -59,11 +59,15 @@ def test_two_tabs_racing_exactly_one_decides(app):
         start = threading.Barrier(2)
         answers = {}
 
+        # A body names only the screen or the plain owner (screen_click.decided_by), so the two
+        # tabs are told apart by the label each one's decision carries.
+        label = {"tab-a": "owner:ui", "tab-b": "owner"}
+
         def tab(name, decision):
             client = app.test_client()
             start.wait()
             r = client.post("/api/approvals/%s/decide" % rec["approval_id"],
-                            json={"decision": decision, "decided_by": name}, headers=desk_headers())
+                            json={"decision": decision, "decided_by": label[name]}, headers=desk_headers())
             answers[name] = (r.status_code, r.get_json())
 
         ts = [threading.Thread(target=tab, args=("tab-a", "approve")),
@@ -77,7 +81,7 @@ def test_two_tabs_racing_exactly_one_decides(app):
         lost = [n for n, (_, b) in answers.items() if b["already_decided"]]
         assert len(won) == 1 and len(lost) == 1 and won != lost
         final = ap.get_approval(rec["approval_id"])
-        assert final["decided_by"] == won[0]
+        assert final["decided_by"] == label[won[0]]
         assert answers[lost[0]][1]["approval"]["status"] == final["status"]
         assert len(fired) == 1
     finally:

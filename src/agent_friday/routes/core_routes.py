@@ -1894,6 +1894,16 @@ def api_settings():
             # question and its answer (services/local_voice_readiness), never by a settings write.
             new_settings = {k: v for k, v in new_settings.items()
                             if k not in ('voice_engine_choice', 'voice_switch_back')}
+        if isinstance(new_settings, dict) and (bool(new_settings.get('computer_control_enabled'))
+                                               or 'approvals_policy' in new_settings):
+            # Turning Computer Control on (Friday could then press a card on this PC's screen) and
+            # changing which kinds of action wait for approval are approvals in their own right:
+            # a press on this PC's own screen (services/desk_press), never a write from elsewhere.
+            from agent_friday.services import screen_click as _screen_click_ap
+            _refused_ap = _screen_click_ap.press_refusal(
+                request, "Change this with a press in Settings, on the computer Friday runs on.")
+            if _refused_ap is not None:
+                return _refused_ap
 
         # Laya's safe writes widen only on the owner's own click on this server's page: a
         # same-origin browser request that carries the page's rotating token (the check the

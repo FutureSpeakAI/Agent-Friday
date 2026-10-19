@@ -72,10 +72,8 @@ def _press_required(approval_id, decision):
         return None
     if approval_id is not None and not _approvals.get_approval(approval_id):
         return jsonify({"ok": False, "error": "not found"}), 404
-    from agent_friday.services import desk_press as _dp
-    return jsonify({"ok": False, "error": "needs_desktop_press", "code": _dp.REFUSAL_CODE,
-                    "message": _screen_click.refusal_words(request)
-                    or "Approve this with a press on the card, on the computer Friday runs on."}), 403
+    return _screen_click.press_refusal(
+        request, "Approve this with a press on the card, on the computer Friday runs on.")
 
 
 @goals_bp.route("/api/desk/where", methods=["GET"])
@@ -254,7 +252,7 @@ def decide_approval_route(approval_id):
     decision = (data.get("decision") or "").strip().lower()
     if decision not in ("approve", "deny"):
         return jsonify({"ok": False, "error": "decision must be 'approve' or 'deny'"}), 400
-    by = _screen_click.decided_by(request, data.get("decided_by", "owner"))
+    by = _screen_click.decided_by(request, data.get("decided_by", "owner"), for_ids=[approval_id])
     refused = _press_required(approval_id, decision)
     if refused is not None:
         return refused

@@ -4860,8 +4860,8 @@ OWN_PAGE_CSP = "; ".join((
 
 
 def _own_page_csp():
-    """OWN_PAGE_CSP, plus the one loopback address the page may also fetch from: this
-    launch's desk-key door (services/desk_press), on its exact port, when it is open."""
+    """OWN_PAGE_CSP, plus the loopback address the page may also fetch from: the desk-key
+    door (services/desk_press.connect_source), when it is open."""
     try:
         from agent_friday.services import desk_press as _dp
         extra = _dp.connect_source()
@@ -4946,7 +4946,7 @@ def _isolation_headers(resp):
 @app.after_request
 def _apply_isolation_headers(resp):
     # A page that sent a desk key from an earlier launch (Friday restarted under an
-    # open tab) is told so, and fetches this launch's key before it tries again.
+    # open tab) is told so, and fetches this launch's key (and token) for its next press.
     try:
         from agent_friday.services import desk_press as _dp
         if _dp.stale(request):

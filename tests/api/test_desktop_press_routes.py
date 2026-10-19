@@ -184,6 +184,80 @@ def test_letting_voice_use_pre_approvals_needs_a_press_but_turning_it_off_does_n
     assert r.status_code == 200 and seen == [False]
 
 
+# ── Other ways to say yes in advance ───────────────────────────────────────
+
+def test_a_file_grant_made_directly_needs_a_press_on_this_desktop(client, monkeypatch):
+    """The same consent as approving a file-access card (a screen-only kind)."""
+    from agent_friday.services import file_grants as fg
+    made = []
+    monkeypatch.setattr(fg, "create_file_grant", lambda path, **kw: made.append(path) or {"id": "fg1", "type": "grant"})
+    body = {"path": "C:/synthetic/notes.txt", "scope": "file"}
+    r = client.post("/api/privacy/file-grants", json=body, headers=page_headers())
+    assert r.status_code == 403 and made == []
+    r = client.post("/api/privacy/file-grants", json=body, headers=desk_headers())
+    assert r.status_code == 200 and made == ["C:/synthetic/notes.txt"]
+
+
+def test_re_signing_a_file_grant_line_needs_a_press_on_this_desktop(client, monkeypatch):
+    from agent_friday.services import file_grants as fg
+    done = []
+    monkeypatch.setattr(fg, "reattest", lambda sha, confirmed_by: done.append(sha) or {"ok": True})
+    body = {"line_sha256": "ab" * 32, "confirmed_by": "owner"}
+    r = client.post("/api/privacy/file-grants/reattest", json=body, headers=page_headers())
+    assert r.status_code == 403 and done == []
+
+
+def test_computer_control_is_granted_only_by_a_press_on_this_desktop(client, monkeypatch):
+    """Computer Control could press a card on this PC's screen, so granting it is a press."""
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "_load_settings", lambda: {"computer_control_enabled": True}, raising=False)
+    from agent_friday.routes import control as rc
+    monkeypatch.setattr(rc, "_load_settings", lambda: {"computer_control_enabled": True})
+    monkeypatch.setattr(rc, "_cc_persist", lambda on: None)
+    rc._CC_PERMISSION.clear()
+    try:
+        r = client.post("/api/control/permission", json={"action": "grant"}, headers=page_headers())
+        assert r.status_code == 403 and not rc._CC_PERMISSION.is_set()
+    finally:
+        rc._CC_PERMISSION.clear()
+
+
+def test_letting_friday_act_in_an_app_needs_a_press_but_narrowing_does_not(client, monkeypatch):
+    from agent_friday.services import desktop_grants as dg
+    set_to = []
+    monkeypatch.setattr(dg, "set_grant", lambda app, tier: set_to.append(tier) or {app: tier})
+    r = client.post("/api/control/app-grants", json={"app": "browser.exe", "tier": "act"}, headers=page_headers())
+    assert r.status_code == 403 and set_to == []
+    r = client.post("/api/control/app-grants", json={"app": "browser.exe", "tier": "none"}, headers=page_headers())
+    assert r.status_code == 200 and set_to == ["none"]
+
+
+@pytest.mark.parametrize("settings", [{"computer_control_enabled": True},
+                                      {"approvals_policy": {"outward": {"gated": False}}}])
+def test_settings_that_loosen_approval_need_a_press_on_this_desktop(client, monkeypatch, settings):
+    from agent_friday.routes import core_routes as cr
+    saved = []
+    monkeypatch.setattr(cr, "_save_settings", lambda new, **kw: saved.append(new) or dict(new))
+    r = client.post("/api/settings", json={"settings": settings}, headers=page_headers())
+    assert r.status_code == 403 and saved == []
+
+
+def test_a_money_paragraph_send_is_refused_from_another_device_with_the_retry_code(client):
+    card = _card(kind="cloud_release_test", payload={"handler": "cloud_release"})
+    r = client.post("/api/privacy/cloud-release/%s/decide" % card["approval_id"],
+                    json={"decision": "approve"}, headers=page_headers())
+    assert r.status_code == 403 and r.get_json().get("code") == "desk_proof_required"
+    assert _status(card["approval_id"]) == "pending"
+
+
+def test_editing_a_share_cards_words_needs_a_press_on_this_desktop(client):
+    """An edit changes the words a later Send releases."""
+    card = _share_card()
+    r = client.post("/api/local-context/%s/act" % card["approval_id"],
+                    json={"action": "edit", "text": "different words"}, headers=page_headers())
+    assert r.status_code == 403
+
+
 # ── Where the key comes from, and that the main server never sends it ─────
 
 def test_the_page_learns_where_the_desk_door_is_but_never_the_key(client):
@@ -198,9 +272,11 @@ def test_the_page_learns_where_the_desk_door_is_but_never_the_key(client):
         assert desk_key() not in body
         page = client.get("/")
         assert desk_key() not in page.get_data(as_text=True)
-        csp = page.headers.get("Content-Security-Policy", "")
-        if page.status_code == 200 and csp:
-            assert "http://127.0.0.1:%d" % port in csp
+        import agent_friday.core as core
+        # Any loopback port: a tab left open across a restart must reach the new door.
+        assert "connect-src 'self' http://127.0.0.1:*" in core._own_page_csp()
+        if page.status_code == 200:
+            assert "http://127.0.0.1:*" in page.headers.get("Content-Security-Policy", "")
     finally:
         dp.stop()
 

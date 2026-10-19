@@ -126,15 +126,15 @@ def decide_batch(batch_id):
     ids = data.get("approval_ids")
     if not isinstance(ids, list):
         return jsonify({"ok": False, "error": "name the approvals this batch lists (approval_ids)"}), 400
-    if decision == "approve" and not _screen_click.screen_session(request):
+    if decision == "approve":
         # A batch is approved only by a press on its card in Friday's page on this PC
         # (routes/goals._press_required has the same rule for one card). Declining is open.
-        from agent_friday.services import desk_press as _dp
-        return jsonify({"ok": False, "error": "needs_desktop_press", "code": _dp.REFUSAL_CODE,
-                        "message": _screen_click.refusal_words(request)
-                        or "Approve this with a press on the card, on the computer Friday runs on."}), 403
+        refused = _screen_click.press_refusal(
+            request, "Approve this with a press on the card, on the computer Friday runs on.")
+        if refused is not None:
+            return refused
     out = batches.decide_batch(
         batch_id, ids, decision,
-        decided_by=_screen_click.decided_by(request, data.get("decided_by", "owner")),
+        decided_by=_screen_click.decided_by(request, data.get("decided_by", "owner"), for_ids=ids),
         note=str(data.get("note") or ""))
     return jsonify(out), (200 if out.get("ok") else 409)
