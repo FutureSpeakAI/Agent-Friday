@@ -118,6 +118,26 @@ const OFF_NOTICE = "This post won't go out: the Content publisher is switched of
 /** What Media says when a post is armed and nothing stops it: words that would contradict the off notice. */
 const CONTRADICTS = /asks again before it goes|^Scheduled\.|A card is asking you first|leaves this computer only when you approve|^Publishing\./;
 
+/** Record every Friday toast shown from now on, including one that expires before anything looks at it (a short
+ *  toast leaves after ~4 s, so a count taken later, or a retrying count, would miss it). */
+async function watchToasts(page: Page) {
+  await page.evaluate(() => {
+    const seen: string[] = (window as any).__postingToastsSeen = [];
+    new MutationObserver(ms => {
+      for (const m of ms) for (const n of Array.from(m.addedNodes)) {
+        if (!(n instanceof HTMLElement)) continue;
+        const els = n.id === 'friday-toast-host' ? Array.from(n.querySelectorAll('[role="status"]'))
+          : (n.getAttribute('role') === 'status' && n.parentElement && n.parentElement.id === 'friday-toast-host' ? [n] : []);
+        for (const el of els) seen.push(el.textContent || '');
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+}
+
+async function toastsSeen(page: Page): Promise<string[]> {
+  return page.evaluate(() => ((window as any).__postingToastsSeen || []) as string[]);
+}
+
 test('Workflows lists the Content publisher as on after it was switched on automatically, says why, and its switch turns it off', async ({ page }, info) => {
   test.setTimeout(300_000);
   await setUp(page);
@@ -185,15 +205,18 @@ test('a post scheduled while the Content publisher is switched off says it will 
       await route.fulfill({ response: res, json: d });
     });
     await openCard(page, post.card);
+    await watchToasts(page);
     await scheduleFromCard(page);
     await expect.poll(() => scheduled, { timeout: 30_000, message: 'the post was not scheduled' }).toBe(1);
     const notice = page.locator(TOASTS).filter({ hasText: OFF_NOTICE });
     await expect(notice, 'no notice that the post will not go out').toBeVisible({ timeout: 15_000 });
     await keep(notice);
     await expect(notice.getByRole('button', { name: 'Open Workflows' })).toBeVisible();
-    // The notice is the whole answer: no toast beside it may say the post goes out after all.
-    await expect(page.locator(TOASTS).filter({ hasText: CONTRADICTS }),
-      'a toast says the post will go out while the notice says it will not').toHaveCount(0);
+    // The notice is the whole answer: no toast beside it, at any moment, may say the post goes out after all.
+    const seen = await toastsSeen(page);
+    expect(seen.some(t => t.includes(OFF_NOTICE)), 'the toast watcher did not see the notice itself').toBe(true);
+    expect(seen.filter(t => CONTRADICTS.test(t)),
+      'a toast said the post will go out while the notice says it will not').toEqual([]);
     await shot(page, info, 'posting-1-notice-publisher-off', undefined, notice);
   } finally {
     await api(page, 'DELETE', '/api/content/posts/' + encodeURIComponent(post.id)).catch(() => {});
@@ -218,14 +241,17 @@ test('Publish… on a post while the Content publisher is switched off shows onl
           action: { label: 'Open Workflows', target: { workspace: 'workflows' } } } } });
     });
     await openCard(page, post.card);
+    await watchToasts(page);
     await page.getByRole('button', { name: 'Publish…', exact: true }).first().click();
     await expect.poll(() => asked, { timeout: 30_000, message: 'Publish… sent nothing' }).toBe(1);
     const notice = page.locator(TOASTS).filter({ hasText: OFF_NOTICE });
     await expect(notice, 'no notice that the post will not go out').toBeVisible({ timeout: 15_000 });
     await keep(notice);
     await expect(notice.getByRole('button', { name: 'Open Workflows' })).toBeVisible();
-    await expect(page.locator(TOASTS).filter({ hasText: CONTRADICTS }),
-      'a toast says the post will go out while the notice says it will not').toHaveCount(0);
+    const seen = await toastsSeen(page);
+    expect(seen.some(t => t.includes(OFF_NOTICE)), 'the toast watcher did not see the notice itself').toBe(true);
+    expect(seen.filter(t => CONTRADICTS.test(t)),
+      'a toast said the post will go out while the notice says it will not').toEqual([]);
     await shot(page, info, 'posting-1b-publish-notice-publisher-off', undefined, notice);
   } finally {
     await api(page, 'DELETE', '/api/content/posts/' + encodeURIComponent(post.id)).catch(() => {});
