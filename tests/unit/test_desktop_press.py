@@ -212,6 +212,15 @@ def test_the_receipt_names_a_page_without_the_desk_key(store):
     assert won and rec.get("decided_source") == "page_without_desk_key"
 
 
+def test_a_caller_can_name_its_channel_but_never_a_press(store):
+    typed = _card(sid="typed-no")
+    rec, won = ap.decide_with_outcome(typed["approval_id"], "deny", decided_by="owner", source="typed")
+    assert won and rec.get("decided_source") == "typed"
+    forged = _card(sid="forged")
+    rec, won = ap.decide_with_outcome(forged["approval_id"], "deny", decided_by="owner", source="desktop_press")
+    assert won and rec.get("decided_source") == "in_process"
+
+
 def test_an_expired_card_says_the_system_decided(store):
     card = _card()
     ap._expire_due(float(card["expires_at"] or 0) + 10**9, notify=False)
