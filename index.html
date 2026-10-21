@@ -33117,6 +33117,8 @@ function GoalsCard() {
         E('span', { style: { fontSize: 11, color: g.status === 'needs_owner' ? '#f59e0b' : '#9ab' } }, g.state_words),
         E('span', { style: { fontSize: 10, color: '#888' } }, g.done + ' of ' + g.total + ' done' + (g.deadline ? ' · due ' + String(g.deadline).slice(0, 10) : '') + (g.budget_cap_mψ ? ' · ' + g.spent_mψ + ' of ' + g.budget_cap_mψ + ' mψ' : ''))),
       g.risk && g.risk.length > 0 && E('div', { style: { fontSize: 11, color: '#f59e0b' } }, 'At risk: ' + g.risk.join('; ') + '.'),
+      g.health && E('div', { 'data-goal-health': g.health.level, style: { fontSize: 11, color: g.health.level === 'poor' ? '#f59e0b' : g.health.level === 'watch' ? '#cdd' : '#9ab' } },
+        'Health: ' + g.health.words + '. ' + (g.health.signals || []).filter(s => s.key !== 'progress').map(s => s.words).join(' ')),
       g.completion && E('div', { style: { fontSize: 11, color: '#9ab' } }, g.completion.verified ? 'Met: every step passed its own check.' : 'Met on judgment, not on an automatic check' + (g.completion.note ? ' (' + g.completion.note + ')' : '') + '.'),
       g.milestones.filter(m => m.waits).map(m => E('div', { key: m.milestone_id, style: { fontSize: 11, color: '#cdd', marginTop: 2 } }, m.waits,
         m.can_restart && btn('Start it again', () => restart(g, m), { 'aria-label': 'Start ' + m.name + ' again' }))),

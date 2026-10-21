@@ -5355,6 +5355,14 @@ def _task_set(task_id, **fields):
         name = snap.get('name')
         created = snap.get('created')
         ended = snap.get('ended')
+    if 'verified' in fields:
+        # §17.11: the task's ledger records whether its result was checked.
+        try:
+            from agent_friday.services import task_ledger as _tl
+            _tl.note_verification(task_id, verified=bool(fields.get('verified')),
+                                  evidence=fields.get('verification_evidence'))
+        except Exception:
+            pass
     # Disk BEFORE memory (TV1: the journal is the source of truth, TASKS is
     # its cache). This used to update TASKS first and write afterwards, so a
     # reader polling /api/tasks could see a terminal status that state.json
@@ -6927,8 +6935,20 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
                 runner=None, pin_to_seat=False, workflow_context=None,
                 chain_retry=0, parent_task_id=None, task_id=None, inherited_policy=None,
-                crew_context=None, job=None, local_only_result=False):
+                crew_context=None, job=None, local_only_result=False,
+                principal=None, goal_ancestry=None, expected_outputs=None, verification_plan=None):
     """Spawn a background task.
+
+    principal / goal_ancestry / expected_outputs / verification_plan (§17.6):
+        whose task it is, which goal and milestone it serves, what it should
+        produce and how that is checked. Set by callers that know (goals);
+        principal and goal ancestry are inherited from the parent task and are
+        never read from a model-written description.
+
+    A task spawned while another task runs is that task's subagent (§17.14):
+    if the parent is scoped, its scope must allow subagents and the child
+    may be no broader than the parent (no scope given = the parent's scope);
+    otherwise PermissionError and nothing is spawned.
 
     job: optional dict describing this task in the Local AI queue:
         ``kind`` (e.g. "wiki_distill"), ``key`` (dedupe: a second request with
@@ -7034,6 +7054,21 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     with TASKS_LOCK:
         if task_id in TASKS:
             return task_id
+    # §17.14: a child is no broader than the task that spawns it.
+    _parent_id = parent_task_id
+    if _parent_id is None:
+        try:
+            _parent_id = _journal().current_task()
+        except Exception:
+            _parent_id = None
+    if _parent_id:
+        from agent_friday.services import subagents as _sa
+        _ok, _why, _inherit = _sa.nested_spawn_check(_parent_id, scope)
+        if not _ok:
+            raise PermissionError(_why)
+        scope = scope or _inherit
+    with TASKS_LOCK:
+        _parent_rec = dict(TASKS.get(_parent_id) or {}) if _parent_id else {}
     if scope:
         try:
             from agent_friday.services.subagents import register_scope_for_task
@@ -7080,6 +7115,14 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'parent_task_id': parent_task_id,
             'scope': scope,
             'tools': tools,
+            # §17.6: whose task, which goal it serves, what it should produce
+            # and how that is checked. Inherited from the parent task; never
+            # parsed from a description a model wrote.
+            'principal': (principal or _parent_rec.get('principal')
+                          or (("crew:" + str(crew_context.get("agent_id"))) if crew_context else "owner")),
+            'goal_ancestry': goal_ancestry or _parent_rec.get('goal_ancestry'),
+            'expected_outputs': expected_outputs,
+            'verification_plan': verification_plan,
             **{k: v for k, v in (workflow_context or {}).items() if k in _WORKFLOW_CONTEXT_FIELDS},
             'model': model,
             'pin_to_seat': bool(pin_to_seat and model),
@@ -7133,7 +7176,9 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         _tj.append(task_id, "created", name=name, description=description,
                    prompt=(prompt or '')[:4000], chain=chain, chain_step=chain_step,
                    model=model, run_id=(workflow_context or {}).get('run_id'),
-                   conversation_id=conversation_id, schedule_id=schedule_id)
+                   conversation_id=conversation_id, schedule_id=schedule_id,
+                   principal=TASKS[task_id]['principal'], goal_ancestry=TASKS[task_id]['goal_ancestry'],
+                   parent_task_id=parent_task_id, scope=scope)
         _tj.index_put(task_id, name, 'queued', TASKS[task_id]['created'])
         stored = _tj.write_state(task_id, TASKS[task_id])
         if workflow_context and not stored and not TASKS[task_id].get('off_record'):
@@ -7466,6 +7511,7 @@ def _descendant_options(rec, *, step=None, retry=0):
                "pin_to_seat": rec.get("pin_to_seat", False),
                "parent_task_id": rec.get("task_id"), "chain_retry": retry,
                "scope": rec.get("scope"),
+               "principal": rec.get("principal"), "goal_ancestry": rec.get("goal_ancestry"),
                "inherited_policy": {"cloud_pin": rec.get("cloud_pin"), "local_only": rec.get("local_only")}}
     if rec.get("run_id") and step is not None:
         options["task_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL,
@@ -8149,8 +8195,15 @@ def _tool_spawn_task(inp):
         _model = res.model
         _pin = bool(res.is_local and _model)
 
-    tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
-                      model=_model, pin_to_seat=_pin,
+    # §17.14: a task spawned from inside another task is that task's
+    # subagent: the nested-spawn check in _spawn_task needs to know whose.
+    try:
+        _parent = _journal().current_task()
+    except Exception:
+        _parent = None
+    try:
+        tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
+                      model=_model, pin_to_seat=_pin, parent_task_id=_parent,
                       # WHERE THIS TASK REPORTS. `_spawn_task` has taken this
                       # since it was written and this caller never passed it, so
                       # a task spawned from a chat belonged to nobody: its
@@ -8159,6 +8212,8 @@ def _tool_spawn_task(inp):
                       # set by `_execute_tool` for precisely this, and
                       # `_tool_start_workflow` already reads it.
                       conversation_id=_CURRENT_CONVERSATION.get())
+    except PermissionError as e:
+        return json.dumps({'status': 'refused', 'message': "Did not spawn '%s': %s" % (name, e)})
     return json.dumps({
         'task_id': tid,
         'status': 'running',

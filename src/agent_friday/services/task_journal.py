@@ -734,8 +734,23 @@ def checkpoint(iteration: int, phase: str, summary: str, *, session_ctx=None, ta
                  summary=_cap(summary, _SUMMARY_CAP))
 
 
+def _to_ledger(fn_name: str, session_ctx, task_id, **kw) -> None:
+    """Feed the task's compact ledger (§17.11: cost, routes, decisions,
+    approvals, blockers). Never raises; a task with no ledger is skipped."""
+    try:
+        tid = resolve_task_id(session_ctx, task_id)
+        if not tid:
+            return
+        from agent_friday.services import task_ledger as _tl
+        getattr(_tl, fn_name)(tid, **kw)
+    except Exception:
+        pass
+
+
 def model_call(*, model, provider, seat, tokens_in=None, tokens_out=None, cost_usd=None,
                duration_ms=None, iteration=None, stop_reason=None, session_ctx=None, task_id=None):
+    _to_ledger("note_model_call", session_ctx, task_id, model=model, provider=provider, seat=seat,
+               tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd)
     return _emit("model_call", session_ctx, task_id, model=model, provider=provider, seat=seat,
                  tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd,
                  duration_ms=duration_ms, iteration=iteration, stop_reason=stop_reason)
@@ -765,6 +780,8 @@ def decision(point: str, chosen, *, reason=None, alternatives=None, session_ctx=
     """A choice Friday's own code made at a known line, with the reason it
     already held. Points: seat_select, ladder_fallback, retry, gate, approval,
     spend_cap, chain_advance, evaluate."""
+    _to_ledger("note_decision", session_ctx, task_id, point=point, chosen=_cap(chosen, 200),
+               reason=_cap(reason, 300))
     return _emit("decision", session_ctx, task_id, point=point, chosen=_cap(chosen, _SUMMARY_CAP * 2),
                  alternatives=[_cap(a, _SUMMARY_CAP) for a in (alternatives or [])][:8] or None,
                  reason=_cap(reason, _TEXT_CAP // 4))

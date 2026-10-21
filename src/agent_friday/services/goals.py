@@ -1108,6 +1108,15 @@ def _default_executor(goal: Dict[str, Any], milestone: Dict[str, Any], *,
             orb_icon="🎯",
             scope=None if hard_gate_approved else "goal-milestone",
             task_id=milestone.get("_task_id"),
+            # §17.6: whose task, which goal, what it should produce and how
+            # it is checked; the record carries these, not a parsed description.
+            principal=str(goal.get("principal") or goal.get("owner") or "owner"),
+            goal_ancestry={"goal_id": goal.get("goal_id"), "milestone_id": milestone.get("milestone_id")},
+            expected_outputs=(milestone.get("outcome") or milestone.get("success_criteria")
+                              or goal.get("success_criteria") or None),
+            verification_plan=("the owner confirms it" if (goal.get("verification_mode") or "auto") == "manual"
+                               else "Friday checks the result against: "
+                               + str(milestone.get("success_criteria") or goal.get("success_criteria") or "")[:300]),
         )
     except Exception as e:
         # _spawn_task fails CLOSED when a required scope can't be applied —
@@ -2327,6 +2336,8 @@ def summary(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]
         "approval_required": bool(goal.get("approval_required")),
         "allowed_routes": list(goal.get("allowed_routes") or []),
         "moves": goal_state.owner_moves(status),
+        # §17.15: how it is doing, in words (no made-up percentage).
+        "health": goal_state.health(goal, now),
         "milestones": rows,
     }
 

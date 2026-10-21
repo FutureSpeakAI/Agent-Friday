@@ -55,10 +55,80 @@ def _journal():
     return _tj
 
 
+def _book() -> Dict[str, Any]:
+    """The §17.11 bookkeeping half of the ledger: what Friday's own code
+    decided, which cards the task raised, what stopped it, what it cost,
+    which models it ran on, and whether its result was checked."""
+    return {"decisions": [], "approvals": [], "blockers": [],
+            "cost": {"calls": 0, "tokens_in": 0, "tokens_out": 0, "usd": 0.0},
+            "routes": [], "verification": None}
+
+
+#: How many entries of each list the ledger keeps (newest), so it stays compact.
+_BOOK_KEEP = 40
+
+
 def new(goal: str) -> Dict[str, Any]:
     return {"version": VERSION, "goal": (goal or "").strip()[:4000], "plan": [],
             "done": [], "facts": [], "files": [], "next": "", "rounds": 0,
-            "compactions": 0, "updated": time.time()}
+            "compactions": 0, "updated": time.time(), **_book()}
+
+
+def _fill(led: Dict[str, Any]) -> Dict[str, Any]:
+    """A ledger written before the bookkeeping fields gets them, empty."""
+    for k, v in _book().items():
+        led.setdefault(k, v)
+    return led
+
+
+def note_decision(task_id: Optional[str], *, point: str, chosen: Any, reason: Any = None) -> None:
+    """A decision the task's code made; approvals, route choices and stops
+    are filed where §17.11 lists them."""
+    led = load(task_id)
+    if led is None:
+        return
+    entry = {"point": str(point)[:40], "chosen": _one_line(chosen, 200), "at": time.time()}
+    if reason:
+        entry["reason"] = _one_line(reason, 300)
+    if point == "approval":
+        led["approvals"] = (led["approvals"] + [entry])[-_BOOK_KEEP:]
+    elif point in ("seat_select", "ladder_fallback"):
+        led["routes"] = (led["routes"] + [{"route": entry["chosen"], "why": point, "at": entry["at"]}])[-_BOOK_KEEP:]
+    elif point in ("spend_cap", "gate", "stop", "blocked"):
+        led["blockers"] = (led["blockers"] + [entry])[-_BOOK_KEEP:]
+    led["decisions"] = (led["decisions"] + [entry])[-_BOOK_KEEP:]
+    save(task_id, led)
+
+
+def note_model_call(task_id: Optional[str], *, model: Any = None, provider: Any = None, seat: Any = None,
+                    tokens_in: Any = None, tokens_out: Any = None, cost_usd: Any = None) -> None:
+    led = load(task_id)
+    if led is None:
+        return
+    c = led["cost"]
+    c["calls"] = int(c.get("calls") or 0) + 1
+    for key, val in (("tokens_in", tokens_in), ("tokens_out", tokens_out)):
+        try:
+            c[key] = int(c.get(key) or 0) + int(val or 0)
+        except (TypeError, ValueError):
+            pass
+    try:
+        c["usd"] = round(float(c.get("usd") or 0) + float(cost_usd or 0), 6)
+    except (TypeError, ValueError):
+        pass
+    route = "/".join(str(x) for x in (provider, model) if x)
+    if route and (not led["routes"] or led["routes"][-1].get("route") != route):
+        led["routes"] = (led["routes"] + [{"route": route, "why": "ran", "seat": seat, "at": time.time()}])[-_BOOK_KEEP:]
+    save(task_id, led)
+
+
+def note_verification(task_id: Optional[str], *, verified: bool, evidence: Any = None) -> None:
+    led = load(task_id)
+    if led is None:
+        return
+    led["verification"] = {"verified": bool(verified), "evidence": _one_line(evidence, 300) if evidence else None,
+                           "at": time.time()}
+    save(task_id, led)
 
 
 # One live object per task, so the loop (compaction absorbing summaries) and
@@ -86,7 +156,7 @@ def load(task_id: Optional[str]) -> Optional[Dict[str, Any]]:
         led = None
     if isinstance(led, dict) and led.get("version") == VERSION:
         with _LOCK:
-            _LIVE.setdefault(task_id, led)
+            _LIVE.setdefault(task_id, _fill(led))
             return _LIVE[task_id]
     return None
 
