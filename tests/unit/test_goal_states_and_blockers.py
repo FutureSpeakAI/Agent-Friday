@@ -119,7 +119,7 @@ def test_a_goal_met_on_an_overridden_check_is_not_called_verified(monkeypatch):
 
 
 def test_a_met_goal_can_be_archived_and_reopened():
-    g = _goal()
+    g = _goal(milestones=[{"name": "Draft"}])      # not late, so not at risk
     goals.transition_goal(g["goal_id"], "met_unverified")
     archived = goals.transition_goal(g["goal_id"], "archived")
     assert archived["status"] == "archived"
@@ -375,7 +375,9 @@ def test_a_hold_is_shown_but_does_not_move_the_goal(monkeypatch):
     g = _goal(success_criteria="")
     goals.run_due_milestones()
     assert _m(g["goal_id"])["hold"]
-    assert goals.get_goal(g["goal_id"])["status"] == "active"
+    # Its step is late by design (that is what makes it due), so the goal is
+    # at risk; the hold itself moves it to neither "waiting" nor "needs you".
+    assert goals.get_goal(g["goal_id"])["status"] in ("active", "at_risk")
 
 
 def test_stopping_for_the_same_reason_again_and_again_is_no_progress():
