@@ -35,6 +35,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "_VAULT_ENCRYPTION_STATE", {"enabled": False}, raising=False)
     from agent_friday.services import agent
     monkeypatch.setattr(agent, "_get_vault_key", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(agent, "_VAULT_KEY_READY", True, raising=False)
     from agent_friday.services import keystore
     monkeypatch.setattr(keystore, "describe", lambda: {"exists": True, "wrap": "none"})
     (tmp_path / "vault").mkdir()
@@ -148,6 +149,11 @@ def test_retention_is_read_from_the_stores_own_setting(home, monkeypatch):
     monkeypatch.setattr(task_journal, "settings", lambda: {"retention_days": 30, "encrypt_at_rest": True})
     stores = {s["key"]: s for s in pm.view()["stores"]}
     assert stores["tasks"]["retention_words"] == "Kept 30 days, then deleted."
+    # The key store's root key sits unwrapped in Friday's folder (fixture): not "yes".
+    assert stores["tasks"]["encrypted"] == "partly"
+    from agent_friday.services import keystore
+    monkeypatch.setattr(keystore, "describe", lambda: {"exists": True, "wrap": "passphrase"})
+    stores = {s["key"]: s for s in pm.view()["stores"]}
     assert stores["tasks"]["encrypted"] == "yes"
     monkeypatch.setattr(task_journal, "settings", lambda: {"retention_days": 0, "encrypt_at_rest": False})
     stores = {s["key"]: s for s in pm.view()["stores"]}
@@ -160,6 +166,25 @@ def test_the_vault_line_follows_the_real_lock(home, monkeypatch):
     import agent_friday.core as core
     monkeypatch.setattr(core, "_VAULT_ENCRYPTION_STATE", {"enabled": True}, raising=False)
     assert {s["key"]: s for s in pm.view()["stores"]}["vault"]["encrypted"] == "yes"
+    (home / "finance").mkdir()
+    (home / "finance" / "statement.md").write_text("synthetic readable record", encoding="utf-8")
+    vault = {s["key"]: s for s in pm.view()["stores"]}["vault"]
+    assert vault["encrypted"] == "partly" and "still readable" in vault["encrypted_words"]
+
+
+def test_the_vault_line_does_not_guess_before_startup_has_looked(home, monkeypatch):
+    pm = _map()
+    from agent_friday.services import agent
+    monkeypatch.setattr(agent, "_VAULT_KEY_READY", False, raising=False)
+    assert {s["key"]: s for s in pm.view()["stores"]}["vault"]["encrypted"] == "unknown"
+
+
+def test_wiki_sections_chosen_without_a_passphrase_are_not_called_encrypted(home, monkeypatch):
+    pm = _map()
+    from agent_friday.services import wiki_engine
+    monkeypatch.setattr(wiki_engine, "_wiki_encrypted_sections", lambda: {"health"})
+    wiki = {s["key"]: s for s in pm.view()["stores"]}["wiki"]
+    assert wiki["encrypted"] == "no" and "not encrypted yet" in wiki["encrypted_words"]
 
 
 def test_mail_friday_sent_is_counted_by_recipient(home):
@@ -220,13 +245,17 @@ def test_a_call_under_cloud_for_everything_is_counted_as_a_call(home):
 def test_private_data_access_counts_allowed_and_refused_private_rows_only(home):
     pm = _map()
     with open(home / "vault" / "access-log.jsonl", "w", encoding="utf-8") as fh:
-        for row in ({"timestamp": NOW - 60, "tier": "TIER_2", "allowed": True},
-                    {"timestamp": NOW - 50, "tier": "TIER_3", "allowed": False},
-                    {"timestamp": NOW - 40, "tier": "TIER_1", "allowed": True},
-                    {"timestamp": NOW - 30 * 86400, "tier": "TIER_3", "allowed": True}):
+        for row in ({"timestamp": NOW - 60, "tier": "TIER_2", "allowed": True, "detail": "assemble_prompt"},
+                    # check_action writes each decision twice; the second carries this detail.
+                    {"timestamp": NOW - 60, "tier": "TIER_2", "allowed": True, "detail": "check_action: send_email"},
+                    {"timestamp": NOW - 50, "tier": "TIER_3", "allowed": False, "detail": "x"},
+                    {"timestamp": NOW - 40, "tier": "TIER_1", "allowed": True, "detail": "x"},
+                    {"timestamp": NOW - 30 * 86400, "tier": "TIER_3", "allowed": True, "detail": "x"}):
             fh.write(json.dumps(row) + "\n")
+    with open(home / "vault" / "access-log.1.jsonl", "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"timestamp": NOW - 3600, "tier": "TIER_3", "allowed": True, "detail": "y"}) + "\n")
     va = pm.view()["vault_access"]
-    assert (va["allowed_7_days"], va["refused_7_days"]) == (1, 1)
+    assert (va["allowed_7_days"], va["refused_7_days"]) == (2, 1)
 
 
 def test_keys_are_not_called_protected_when_their_key_sits_beside_them(home, monkeypatch):
@@ -243,8 +272,11 @@ def test_anything_unlisted_in_the_folder_is_counted_under_everything_else(home):
     pm = _map()
     (home / "browser-profile").mkdir()
     (home / "browser-profile" / "Cookies").write_bytes(b"x" * 100)
+    (home / "vault" / "coparenting").mkdir()
+    (home / "vault" / "coparenting" / "notes.md").write_bytes(b"y" * 20)
     rest = {s["key"]: s for s in pm.view()["stores"]}["everything_else"]
-    assert "browser-profile" in rest["where"] and rest["bytes"] == 100
+    assert "browser-profile" in rest["where"] and "vault/coparenting" in rest["where"]
+    assert rest["bytes"] == 120
 
 
 def test_the_map_does_not_carry_the_folder_path(home):

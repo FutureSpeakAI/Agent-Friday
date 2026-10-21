@@ -70,7 +70,7 @@ test('the privacy map shows each store, each destination, and the honest limit',
   for (const s of ['Your conversations', 'Where: conversations', 'Kept until you delete it.', 'Readable on this disk',
                    'Anthropic (Claude)', '2 items sent (1 with parts withheld), 1 stopped before leaving', '1 from background work',
                    'Calls to tool servers you added (MCP)', 'a@example.com: 1', 'Synthetic service: Read things',
-                   'In the last 7 days, private data was let through 3 times and refused 1 time.', 'can still keep their own records',
+                   'In the last 7 days, private data was used by a model on this PC or allowed to the cloud 3 times, and refused 1 time.', 'When you go off the record.', 'can still keep their own records',
                    'The honest limit.', 'This map lists what Friday itself keeps and sends.']) {
     assert.ok(text.includes(s), 'missing: ' + s);
   }
