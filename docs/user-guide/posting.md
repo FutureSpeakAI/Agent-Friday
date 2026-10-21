@@ -21,16 +21,35 @@ platform has a card that says what Friday can and cannot do there.
   mode**, enter your publication address, and choose **Enable manual handoff**.
   Friday then prepares a ready-to-paste package on this PC, and you publish it
   in Substack yourself.
+- **Medium.** Choose **Enable manual mode**, paste a Medium integration token
+  in **Paste access token**, then **Save & connect**. Friday checks the token
+  with Medium's own account lookup, which posts nothing, and says "✓ Connected
+  — session verified" only when Medium accepts it.
+- **LinkedIn, X / Twitter, Instagram, Reddit and TikTok.** These need your own
+  developer app on the platform. Choose **🔗 Connect**. The card says
+  "Create an app in [platform]'s developer site, set its redirect address to"
+  an address it shows, "then enter its details here." Make the app, enter its
+  **Client ID** (for TikTok, its **Client key**) and **Client secret**, then
+  choose **Save and sign in**. Friday opens the platform's sign-in page in a
+  new window; sign in there and approve access, and the card refreshes when
+  you come back. If your browser blocks the window, allow pop-ups for Friday
+  and press **🔗 Connect** again. The client secret is stored encrypted on
+  this PC and is never shown again or logged.
+- **YouTube** cannot be connected yet. **🔗 Connect** says: "YouTube can't be
+  connected from here yet: its sign-in goes through Google, and linking a
+  Google account to YouTube publishing isn't finished."
 
-LinkedIn, X / Twitter, Instagram, YouTube, Reddit and TikTok also have cards.
-They cannot be connected from the app yet. **🔗 Connect** on those cards shows
-"The connect flow is not available yet." In the composer their chips show
-"connect ↗" and cannot be picked.
+In the composer, a platform that is not connected shows "connect ↗" on its
+chip and cannot be picked.
 
 Passwords and tokens are stored encrypted on this PC. On a connected card,
-**Test post** checks that the connection still works; it does not publish
-anything. **Disconnect** asks first, then withdraws Friday's access on the
-platform where it can, and deletes the stored credential.
+**Check connection** checks the saved sign-in and posts nothing. Where the
+platform has a way to look up your account, Friday asks it, and says
+"Connected to [platform] as [account]. Nothing was posted." or that the
+platform did not accept the saved credential. Where it has no such lookup,
+Friday says a credential is saved but was not checked. **Disconnect** asks
+first, then withdraws Friday's access on the platform where it can, and
+deletes the stored credential.
 
 ## Making a post
 
@@ -42,7 +61,8 @@ A post is a card in [Media](media.md). You can start one in three ways:
 - From another workspace, choose **Share / Post…** in its send menu, or
   **📤 Share / Post…** on a creation in the gallery. This opens a quick post:
   pick the platforms, check the preview, then choose **📅 Schedule (next
-  optimal)** or **🚀 Post now**.
+  optimal)** or **🚀 Post now**. **Open full composer →** saves the post as a
+  draft and opens its card in Media.
 - Ask Friday (see [Ask by voice or chat](#ask-by-voice-or-chat)).
 
 ## The composer
@@ -90,14 +110,17 @@ review, Scheduled and Published. Drag a card to another column, or select it
 and press **]** to move it one stage on.
 
 - **Into Scheduled** asks for a date and time. Friday asks again, on an
-  approval card, before the post goes.
+  approval card, before the post goes. If something will stop the post going
+  out (see [When posts go out](#when-posts-go-out)), you see only that notice,
+  not "Scheduled. Friday asks again before it goes."
 - **Into Published** raises the approval card. Nothing leaves until you approve.
 - Moving a scheduled post back to Draft or Idea takes it off the schedule.
 
 **Calendar** shows only cards with a time. Choose **2 weeks** or **Month**. The
 legend shows Published, Scheduled and Needs you by. Drag a scheduled card to
 another day to move it; it keeps its time of day, and a message confirms the
-new day and time. A published card cannot be moved. Click a card for its
+new day and time (or, if the post won't go out, the notice says why). A
+published card cannot be moved. Click a card for its
 details, with **Open** and **Publish now…**.
 
 ## Approvals
@@ -109,8 +132,18 @@ post, or at the latest when the post is due.
 
 The approval covers exactly those words and that media. If Friday has to retry
 the same words after a temporary failure, your approval still covers it.
-Changed words, or a post sent again after it failed for good or was declined,
-get a new card.
+Changed words or media, or a post sent again after it failed for good or was
+declined, get a new card.
+
+### Late posts ask again
+
+A scheduled post that is more than a day late does not go out on an approval
+you gave before then. Its card asks again, and says "When: it was due [time]
+(UTC) and did not go out then; it goes as soon as you approve". A notification,
+"A late post asks you again", says the same: "It goes only if you approve it
+again; or reschedule it." This also holds if you choose **🚀 Post now**,
+reschedule it, or choose **Publish anyway…** on a late post: the old approval
+still doesn't count, and a new card asks you.
 
 A scheduled job of yours can schedule posts on its own only with a grant. Make
 one in **Settings > Privacy & Data**, under **Scheduled jobs: what they may do
@@ -127,20 +160,67 @@ held, not changed. You get a notice, "Post held — review before publishing",
 that names the platform and says "post held — it looks like it contains private
 data". A post is also held when the check itself cannot run.
 
-In Media, a held post's card shows **Held for you** and sits in In review.
-Media has no button to release a held post yet, and Friday cannot release one.
+In Media, a held post's card shows **Held for you** and sits in In review. The
+notice's **Open the post in Media** opens that card.
+
+To send it anyway, choose **Publish anyway…** on the card. Friday shows why it
+was held and asks "Publish it anyway?" before anything changes. Releasing it
+sends nothing by itself: the post is checked again for harmful content, and
+its approval card still asks you before it goes out. A post the harmful-content
+check blocks is not sent, and if the check cannot run the post is held again.
+Friday cannot release a held post for you.
+
+**Publish anyway…** covers the words and media that were held, nothing else.
+If you edit them afterwards, the privacy check applies again, and the post is
+held again if it still looks private; the reason then ends "(changed after you
+released it)".
+
 If nobody acts on a held post for 7 days, it is cancelled and nothing is sent.
 
 ## When posts go out
 
 Scheduled posts are sent by a built-in job, **Content publisher**, which runs
-every 15 minutes. It starts switched off. Turn it on under **Friday's built-in
-routines** in **Workflows** (see [Scheduled jobs](scheduled-jobs.md)), or a
-scheduled post does not go out at its time.
+every 15 minutes. It starts switched off, and switches itself on the first
+time you schedule or post to a connected account (or to Substack's manual
+hand-off). You get a notification, "Content publisher turned on": "It sends
+your scheduled posts, each only once you have approved it. You can switch it
+off in Workflows." If posts are already waiting, it also says how many: "2
+posts you already approved are due now and go out on its next run, after the
+usual checks." and "3 posts more than a day late will ask you again before
+going out." Switching it on sends nothing: each post still waits for its
+approval card, and a late post asks again (see
+[Late posts ask again](#late-posts-ask-again)).
+
+If Friday can't save the switch-on, the post doesn't go out and you are told:
+"This post won't go out until the Content publisher is on: Friday tried to
+switch it on but couldn't save the change. Turn it on in Workflows." with
+**Open Workflows**. If Friday can't read its list of jobs just then, it says
+"This post may not go out" and asks you to check Workflows.
+
+The job shows as on under **Friday's built-in routines** in **Workflows** (see
+[Scheduled jobs](scheduled-jobs.md)), with a note that it was switched on
+automatically, when and why. You can switch it off there.
+
+If you switch it off yourself, it stays off. Scheduling a post then shows "This
+post won't go out: the Content publisher is switched off. Turn it on in
+Workflows." with **Open Workflows**. **🚀 Post now** says "The Content
+publisher is switched off, so if this post can't go out straight away it won't
+be tried again." Friday also tells you
+when something else will stop a post: publishing switched off in Settings, all
+publishing paused, or none of its platforms connected. Each of these notices
+has a button that opens the place to fix it. When a post won't go out, the
+notice is the whole answer: the screen doesn't also say "Scheduled".
+
+Only your own switch-off stays off. A scheduled or background job can't pause
+the Content publisher. If you ask Friday in chat to pause it, she does, and a
+notification says "The Content publisher was paused from a chat": "Scheduled
+posts won't go out while it is paused. Scheduling a post switches it back on;
+to keep it off, switch it off in Workflows."
 
 - A post can go out up to about 15 minutes after its time.
 - The PC must be on and Friday running. A post missed while the PC was off goes
-  out at the first run after Friday is running again, once approved.
+  out at the first run after Friday is running again, once approved. If it is
+  by then more than a day late, it asks you again first.
 - **🚀 Post now** does not wait for the job: the post goes out right after you
   approve it.
 - **Mastodon** can hold a post on its own schedule. When the time is at least
@@ -159,7 +239,11 @@ scheduled post does not go out at its time.
   not sent again. If it is not, the post is retried as above. If the platform
   offers no way to check, Friday does not resend, and tells you it failed.
 - **Sign-in problems.** Friday tries to refresh the sign-in once. If that fails,
-  it stops and tells you to reconnect the account.
+  it stops and tells you to reconnect the account in Settings, Connections.
+  The notice's **Open Connections** takes you there.
+
+Notices about a failed or blocked post have **Open the post in Media**, which
+opens that post's card.
 
 ## Pause all publishing
 
@@ -175,10 +259,12 @@ pausing does not recall it.
   and schedules it. You can name a time ("tonight", "friday 3pm") or let her
   pick the best time.
 - "Reschedule that post to tonight." Friday moves it and warns about clashes
-  on the same platform.
+  on the same platform. For a late post whose approval is too old, what Friday
+  is told back says it "will ask you again (more than a day late)", not that
+  it is approved.
 - "What's queued?" or "Did my Mastodon post go out?" Friday lists upcoming and
   held posts and recent history, or one post's status on each platform. Friday
-  cannot release a held post.
+  cannot release a held post; use **Publish anyway…** on its card.
 - "Turn this blog post into posts for Bluesky and Mastodon." Friday writes a
   draft for each platform. Drafts only: you review and schedule them.
 
@@ -187,11 +273,14 @@ Every post made this way still waits for its approval card.
 ## What stays on your PC, and what can leave
 
 - **On this PC:** drafts, previews, the schedule, held posts, and your stored
-  passwords and tokens.
+  passwords, tokens and client secrets.
 - **Leaves the PC:** a post's text and media, to the platform, after you
-  approve. Connecting sends your handle and app password to Bluesky, or your
-  token to your Mastodon server, to check them. The per-platform rewrite may
-  use a cloud model, as described above.
+  approve. Connecting sends your handle and app password to Bluesky, your
+  token to your Mastodon server, or your token to Medium, to check them.
+  **Check connection** asks the platform about your account and posts nothing.
+  For LinkedIn, X / Twitter, Instagram, Reddit and TikTok you sign in on the
+  platform's own page. The per-platform rewrite may use a cloud model, as
+  described above.
 - **Needs your approval:** every post, to every platform, unless a grant you
   made covers it.
 
