@@ -393,6 +393,28 @@ def _fresh_swr_cache():
     swr_cache.invalidate("")
 
 
+@pytest.fixture(autouse=True)
+def _own_action_ledger(tmp_path_factory, monkeypatch):
+    """Every test writes to an action ledger of its own (services/action_ledger.py).
+    Receipts, decisions and activity rows from one test must not show up in the
+    next one's reads, and a test that breaks the chain on purpose must not hold
+    the outward actions of the tests after it. FRIDAY_LEDGER_DIR is honoured
+    only with FRIDAY_TESTING=1."""
+    monkeypatch.setenv("FRIDAY_LEDGER_DIR", str(tmp_path_factory.mktemp("ledger")))
+    try:
+        from agent_friday.services import action_ledger, action_journal
+        action_ledger.reset_caches()
+        action_journal.reset()
+    except Exception:
+        pass
+    yield
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.reset_caches()
+    except Exception:
+        pass
+
+
 class NetworkModelDownload(RuntimeError):
     """A test reached for a Hugging Face host: a network model download."""
 
