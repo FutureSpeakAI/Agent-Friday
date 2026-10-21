@@ -70,6 +70,15 @@ def test_a_status_check_is_not_a_use(store):
     assert row["last_used"] is None
 
 
+def test_only_credentials_are_recorded_and_loads_are_not_uses(store):
+    cs.set_provider_key("example", FAKE_KEY)
+    canary = store / "security" / "health_canary.bin"
+    cs.write_secret(canary, b"x")
+    cs.read_secret(canary)                                   # sealed data, not a credential
+    assert cs.get_provider_key("example", use=False) == FAKE_KEY   # the boot-time load
+    assert cs._USE == {}
+
+
 def test_use_is_written_at_most_every_ten_minutes(store, monkeypatch):
     cs.set_provider_key("example", FAKE_KEY)
     writes = []
