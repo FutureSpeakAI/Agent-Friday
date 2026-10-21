@@ -174,10 +174,12 @@ def stop_everything_resume():
                         "error": "Resume is a press of the Resume button on Friday's own screen."}), 403
     try:
         st = _gs.resume(by="owner", source="button")
-    except _gs.ResumeHeld as e:
-        return jsonify({"status": "held", "code": "resume_receipt_failed", "error": str(e)}), 503
-    return jsonify({"status": "ok", "stopped": False, "message": st.get("text", "Resumed."),
-                    "save_error": st.get("save_error")})
+    except _gs.ResumeHeld:
+        return jsonify({"status": "held", "code": "resume_receipt_failed",
+                        "error": "Nothing resumed: the resume receipt could not be written. "
+                                 "Everything is still stopped; try again."}), 503
+    return jsonify({"status": "ok", "stopped": False, "message": _gs.RESUMED_TEXT,
+                    "saved": not st.get("save_error")})
 
 
 # ── File permissions (WO-17) ────────────────────────────────────────────────

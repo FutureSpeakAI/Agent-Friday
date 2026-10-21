@@ -58,16 +58,27 @@ SOURCES = ("button", "keyboard", "typed", "voice", "tool", "tray", "test", "othe
 REFUSAL = ("[NOT RUN] Everything is stopped: the owner pressed Stop. Nothing new runs until "
            "they press Resume on Friday's own screen.")
 SPOKEN_STOPPED = "Stopped everything. Press Resume on the screen when you want me back."
+RESUMED_TEXT = ("Resumed. New and queued work can run again; what was stopped stays stopped, "
+                "and computer control stays off until you turn it on in Settings.")
 
 #: "stop everything", "stop it all", "halt all work", "emergency stop", "everybody stop".
 #: Anchored at the start, so "don't stop everything" or "how do I stop everything" never match.
+#: Matched against the words with every run of spaces and commas folded to one space
+#: (``_fold``), so the pattern has no repeated whitespace class to backtrack over.
 STOP_PHRASE = re.compile(
-    r"^(?:(?:um+|uh+|ok(?:ay)?|hey|friday|please|now)[\s,]+)*"
-    r"(?:(?:stop|halt|freeze|cancel)\s+(?:everything|it\s+all|all\s+of\s+it|all(?:\s+(?:the\s+)?(?:work|tasks|jobs))?)"
-    r"(?:\s+(?:now|right\s+now|immediately))?"
-    r"|emergency\s+stop|everybody\s+stop|stop\s+all\s+work)"
-    r"(?:[\s,]+(?:friday|please|now))*\s*[.!]*\s*$",
+    r"^(?:(?:um+|uh+|ok|okay|hey|friday|please|now) )*"
+    r"(?:(?:stop|halt|freeze|cancel) (?:everything|it all|all of it|all(?: the)?(?: (?:work|tasks|jobs))?)"
+    r"(?: (?:now|right now|immediately))?"
+    r"|emergency stop|everybody stop|stop all work)"
+    r"(?: (?:friday|please|now))*[.!]*$",
     re.I)
+_FOLD = re.compile(r"[\s,]+")
+#: Longer than any stop phrase: anything this long is a sentence, not the command.
+_MAX_STOP_WORDS_LEN = 80
+
+
+def _fold(text: str) -> str:
+    return _FOLD.sub(" ", text[:_MAX_STOP_WORDS_LEN + 1]).strip()
 
 
 class EverythingStopped(RuntimeError):
@@ -166,7 +177,9 @@ def refusal(what: str = "") -> str:
 
 
 def is_stop_everything(text: Any) -> bool:
-    return isinstance(text, str) and bool(STOP_PHRASE.match(text.strip()))
+    if not isinstance(text, str) or len(text.strip()) > _MAX_STOP_WORDS_LEN:
+        return False
+    return bool(STOP_PHRASE.match(_fold(text)))
 
 
 def on_stop(fn: Callable[[], Any]) -> Callable[[], None]:
@@ -320,7 +333,8 @@ def stop(*, by: str = "owner", source: str = "button", reason: str = "") -> Dict
         try:
             halted[name] = fn()
         except Exception as exc:
-            halted[name] = "error: %s" % (str(exc)[:120] or type(exc).__name__)
+            _log.warning("stop: the %s lane failed: %s", name, exc)
+            halted[name] = "error"
     receipt_error = None
     try:
         _receipt("stop" if not was else "stop_again", by=str(by or "owner"), source=source,
@@ -364,9 +378,7 @@ def resume(*, by: str = "owner", source: str = "button") -> Dict[str, Any]:
         turn_queue.clear_background_pause("global_stop")
     except Exception:
         pass
-    out = dict(state(), stopped=False,
-               text="Resumed. New and queued work can run again; what was stopped stays stopped, "
-                    "and computer control stays off until you turn it on in Settings.")
+    out = dict(state(), stopped=False, text=RESUMED_TEXT)
     if save_error:
         out["save_error"] = save_error
     return out

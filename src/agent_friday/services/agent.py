@@ -16356,6 +16356,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     _sink = _DS.get()
                     with _stream_fn(**kwargs) as _stream:
                         for _ev in _stream:
+                            if core.GLOBAL_STOP.is_set():
+                                # Stop everything (services/global_stop): leaving the
+                                # `with` closes the stream mid-reply.
+                                from agent_friday.services import global_stop as _gs_stream
+                                raise _gs_stream.EverythingStopped("the rest of this reply")
                             if _sink is None or getattr(_ev, "type", None) != "content_block_delta":
                                 continue
                             _delta = getattr(_ev, "delta", None)
