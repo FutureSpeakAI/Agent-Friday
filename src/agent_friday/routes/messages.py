@@ -419,12 +419,21 @@ def _is_owner(actor):
 
 
 def _reaches_gmail(action, items) -> bool:
-    """The change is made in Gmail itself as well as in Friday (so it passes the checkpoint)."""
+    """The change is made in Gmail itself as well as in Friday (so it passes the checkpoint): a
+    Gmail action on a conversation in an account that allows changes. (One that does not changes
+    Friday's record only, or is refused, and gets no receipt for a change that never happens.)"""
     from agent_friday.services import gmail_mailbox as gm
     if action not in gm.ACTIONS and action not in gm.TRASH_ACTIONS:
         return False
-    return any(isinstance(it, dict) and it.get("account_id") and it.get("thread_id")
-               for it in (items if isinstance(items, list) else []))
+    accounts = {str(it.get("account_id")) for it in (items if isinstance(items, list) else [])
+                if isinstance(it, dict) and it.get("account_id") and it.get("thread_id")}
+    for aid in accounts:
+        try:
+            if gm.can_modify(aid):
+                return True
+        except Exception:  # noqa: BLE001 - cannot tell: assume it may reach Gmail
+            return True
+    return False
 
 
 def _apply_local(st, action, data):

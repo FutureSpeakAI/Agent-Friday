@@ -46,10 +46,12 @@ def claims_owner(actor) -> bool:
 
 
 def pressed(request) -> bool:
-    """This request is the owner's press in Friday's page on this PC."""
+    """This request is the owner's press in Friday's page on this PC: exactly the check every
+    owner-only route answers with (services/owner_press), so the two can never disagree
+    (with the desk-press check, that includes this launch's desk key)."""
     try:
-        from agent_friday.services import screen_click
-        return bool(screen_click.screen_session(request))
+        from agent_friday.services import owner_press
+        return owner_press.refusal(request, "") is None
     except Exception:  # noqa: BLE001 - a check that cannot run is not a press
         return False
 
@@ -90,7 +92,8 @@ def held(action: str, target: str, nothing_done: str):
     try:
         _gate.record_external(action, surface=SURFACE, target=str(target or "")[:300])
     except _gate.Held as e:
-        print(f"  [mail] {action} held by the action gate: {type(e).__name__}")
+        # The reason stays in Friday's own log; the answer carries a fixed sentence.
+        print(f"  [mail] {action} held by the action gate: {e}")
         return jsonify({"status": "error", "held": True,
                         "message": nothing_done + ": the action checkpoint held this change (its "
                                                   "integrity check or signed receipt failed), so "

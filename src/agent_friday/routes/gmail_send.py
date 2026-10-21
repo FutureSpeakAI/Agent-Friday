@@ -146,12 +146,31 @@ def _mailbox_call(fn):
             "Couldn't change the mailbox")), 502
 
 
-def _owner_mail_change(action, target, nothing_done):
+def _may_change_gmail(account_id) -> bool:
+    """The account allowed Friday to change Gmail. One that did not is refused by Gmail's own
+    permission check below (NotPermitted, with the reconnect words), so no checkpoint receipt is
+    written for a change that cannot happen."""
+    try:
+        from agent_friday.services import gmail_mailbox as gm
+        return bool(gm.can_modify(account_id))
+    except Exception:  # noqa: BLE001 - cannot tell: treat it as able to change Gmail
+        return True
+
+
+def _owner_mail_change(action, target, nothing_done, account_id=None):
     """None when this is the owner's press and the action checkpoint let the change through,
     else the 403 to answer (nothing has changed). services/mail_owner says why."""
     from agent_friday.services import mail_owner
-    return (mail_owner.not_the_owners_press(request, nothing_done)
-            or mail_owner.held(action, target, nothing_done))
+    refused = mail_owner.not_the_owners_press(request, nothing_done)
+    if refused is not None:
+        return refused
+    if account_id is not None and not _may_change_gmail(account_id):
+        return None
+    return mail_owner.held(action, target, nothing_done)
+
+
+def _str_list(value) -> list:
+    return [str(v) for v in value] if isinstance(value, list) else []
 
 
 @gmail_send_bp.route("/api/mail/labels", methods=["GET", "POST"])
@@ -162,8 +181,8 @@ def mail_labels():
         aid = (request.args.get("account") or "").strip()
         return _mailbox_call(lambda gm: {"labels": gm.list_labels(aid)})
     body = request.get_json(silent=True) or {}
-    aid = (body.get("account_id") or "").strip()
-    refused = _owner_mail_change("gmail:create_label", aid, "No label was made")
+    aid = str(body.get("account_id") or "").strip()
+    refused = _owner_mail_change("gmail:create_label", aid, "No label was made", account_id=aid)
     if refused:
         return refused
     return _mailbox_call(lambda gm: {"label": gm.create_label(aid, body.get("name") or "")})
@@ -176,13 +195,15 @@ def mail_modify():
     The owner's press only, through the action checkpoint."""
     from agent_friday.services import mail_owner
     b = request.get_json(silent=True) or {}
-    aid = (b.get("account_id") or "").strip()
-    tids = b.get("thread_ids") if isinstance(b.get("thread_ids"), list) else []
-    what = "+%s -%s" % (",".join(map(str, b.get("add") or [])), ",".join(map(str, b.get("remove") or [])))
-    refused = _owner_mail_change("gmail:label", mail_owner.gmail_target(aid, tids, what[:120]), "No label was changed")
+    aid = str(b.get("account_id") or "").strip()
+    tids = _str_list(b.get("thread_ids"))
+    add, remove = _str_list(b.get("add")), _str_list(b.get("remove"))
+    what = "+%s -%s" % (",".join(add), ",".join(remove))
+    refused = _owner_mail_change("gmail:label", mail_owner.gmail_target(aid, tids, what[:120]), "No label was changed",
+                                 account_id=aid)
     if refused:
         return refused
-    return _mailbox_call(lambda gm: gm.modify_threads(aid, tids, b.get("add") or [], b.get("remove") or []))
+    return _mailbox_call(lambda gm: gm.modify_threads(aid, tids, add, remove))
 
 
 @gmail_send_bp.route("/api/mail/modify/undo", methods=["POST"])
@@ -191,9 +212,10 @@ def mail_modify_undo():
     through the action checkpoint (putting Gmail back is a change to Gmail)."""
     from agent_friday.services import mail_owner
     b = request.get_json(silent=True) or {}
-    aid = (b.get("account_id") or "").strip()
+    aid = str(b.get("account_id") or "").strip()
     changed = b.get("changed") if isinstance(b.get("changed"), dict) else {}
-    refused = _owner_mail_change("gmail:undo", mail_owner.gmail_target(aid, list(changed)), "Nothing was put back")
+    refused = _owner_mail_change("gmail:undo", mail_owner.gmail_target(aid, list(changed)), "Nothing was put back",
+                                 account_id=aid)
     if refused:
         return refused
     return _mailbox_call(lambda gm: gm.undo(aid, changed))

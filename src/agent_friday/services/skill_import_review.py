@@ -350,7 +350,7 @@ def install_approved(record: dict) -> dict:
         except _gate.Held as e:
             # The card and the notice carry a fixed sentence; the exception's own text (which can
             # quote a file path or an OS error) stays in the log.
-            _log.info("skill import held by the action gate: %s", type(e).__name__)
+            _log.info("skill import held by the action gate: %s", e)
             out = {"ok": False, "why": "the action checkpoint held the install (its integrity check or "
                                        "signed receipt failed); nothing was installed"}
             ap.mark_used(record["approval_id"], KIND, out)
