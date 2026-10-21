@@ -145,6 +145,67 @@ jobs:
             ${{ runner.temp }}/fresh/*.log
           if-no-files-found: ignore
 
+  # The same fresh-install check on machines that are not the runner's default:
+  #   locale-de-DE   the user's formats switched to German (decimal comma,
+  #                  dd.MM.yyyy) and the temporary folder under a non-ASCII
+  #                  name. The system locale and display language need a reboot
+  #                  a hosted runner cannot take, so they stay English; the
+  #                  release evidence says so.
+  #   standard-user  run as a local account that is not an administrator
+  #                  (packaging/windows/tests/run-as-standard-user.ps1). The
+  #                  hosts-file step needs an administrator on a real PC too and
+  #                  is recorded as skipped, by name.
+  # Minimum RAM is not a leg: a hosted runner cannot be given less memory, and a
+  # per-process cap would not be the same machine. MACHINE.json records the RAM.
+  clean-machine:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [locale-de-DE, standard-user]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installer
+          path: artifact
+      # Set-Culture writes the user's formats; every process started after this
+      # step reads them. The temp folder name holds u-umlaut, o-umlaut and
+      # sharp s, written from char codes so this file stays ASCII.
+      - name: German formats and a non-ASCII temp folder for this user
+        if: matrix.leg == 'locale-de-DE'
+        shell: pwsh
+        run: |
+          Set-Culture de-DE
+          $t = 'C:\fridayci\Pr' + [char]0xFC + 'fung Gr' + [char]0xF6 + [char]0xDF + 'e'
+          New-Item -ItemType Directory -Force -Path $t | Out-Null
+          "TEMP=$t" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8NoBOM
+          "TMP=$t"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8NoBOM
+      - name: Install, first run, uninstall, reinstall with German formats
+        if: matrix.leg == 'locale-de-DE'
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\verify-clean-install.ps1 -Setup $exe.FullName -WorkDir "$env:RUNNER_TEMP\clean" -ExpectCulture de-DE
+          exit $LASTEXITCODE
+      - name: Install, first run, uninstall, reinstall as a standard user
+        if: matrix.leg == 'standard-user'
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\run-as-standard-user.ps1 -Setup $exe.FullName -WorkDir "$env:RUNNER_TEMP\clean"
+          exit $LASTEXITCODE
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: clean-machine-evidence-${{ matrix.leg }}
+          path: |
+            ${{ runner.temp }}/clean/*.json
+            ${{ runner.temp }}/clean/*.log
+          if-no-files-found: ignore
+
   upgrade:
     needs: build
     runs-on: windows-latest
@@ -227,11 +288,16 @@ jobs:
         run: |
           python3 scripts/release_gate.py --repo "${{ github.repository }}" --sha "${{ github.sha }}" \
             --workflow tests.yml --workflow codeql.yml --alerts-ref "$TAG_REF" \
-            --wait-minutes 110 --poll-seconds 60
+            --wait-minutes 110 --poll-seconds 60 --record "$RUNNER_TEMP/release-gate.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-gate-record
+          path: ${{ runner.temp }}/release-gate.json
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [tests-green, fresh-install, upgrade]
+    needs: [tests-green, fresh-install, clean-machine, upgrade]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -270,6 +336,27 @@ jobs:
           python3 scripts/release_manifest.py build --version "${{ github.ref_name }}" \
             --out artifact/release-manifest.json artifact/AgentFriday-Setup-*.exe
           cat artifact/release-manifest.json
+      # One record of what this release was proven on, attached to the release:
+      # the gate's green runs, every leg's checks and machine, the installer's
+      # SHA-256, and what no leg covers. Refuses when any leg is missing or failed.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: "*-evidence*"
+          path: evidence
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-gate-record
+          path: gate
+      - name: Write the release evidence record
+        run: |
+          exe=$(ls artifact/AgentFriday-Setup-*.exe | head -n1)
+          python3 scripts/release_evidence.py --dir evidence --gate gate/release-gate.json \
+            --sha "${{ github.sha }}" --tag "${{ github.ref_name }}" --installer "$exe" \
+            --require fresh-install-evidence \
+            --require clean-machine-evidence-locale-de-DE \
+            --require clean-machine-evidence-standard-user \
+            --require-prefix upgrade-evidence- \
+            --out artifact/release-evidence.json
       # Beta 1.0.x replaces the 5.x line, so it is the latest release: the README's
       # Download link (releases/latest) must land on it, and GitHub skips
       # pre-releases for "latest". Published, never a draft.
@@ -288,6 +375,6 @@ jobs:
           tagged=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)
           test "$tagged" = "$GITHUB_SHA" || { echo "the tag now names $tagged, not the gated $GITHUB_SHA"; exit 1; }
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
-            artifact/release-manifest.json \
+            artifact/release-manifest.json artifact/release-evidence.json \
             --repo "${{ github.repository }}" --verify-tag --latest \
             --title "Agent Friday Beta 1.2 (update 2)" --notes-file "$RUNNER_TEMP/notes.md"
