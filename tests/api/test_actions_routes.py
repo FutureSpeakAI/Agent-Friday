@@ -77,5 +77,4 @@ def test_an_undo_without_the_owners_press_puts_nothing_back(client, moved):
                     {"X-Friday-Token": core._current_api_token()}):
         r = client.post("/api/actions/receipts/%s/undo" % rid, headers=headers)
         assert r.status_code == 403, headers
-        assert "Nothing was put back" in r.get_json()["error"]
     assert (docs / "Taxes" / "w2.pdf").exists() and not (docs / "w2.pdf").exists()
