@@ -86,6 +86,29 @@ def test_a_new_install_set_up_by_the_terminal_setup_first_keeps_the_cap(real_set
     assert _card(core) == "not_needed"
 
 
+def test_a_new_install_set_up_by_the_terminal_setup_keeps_the_cap_after_a_partial_save(real_settings):
+    core = real_settings
+    getattr(core, "install_origin", lambda: None)()
+    core.SETTINGS_FILE.write_text(json.dumps({"agent_name": "TEST AGENT"}), encoding="utf-8")
+    core._invalidate_settings_cache()
+    core._load_settings()
+    core._save_settings({"cost_budget": {"loop_guard_enabled": True}})
+    core._invalidate_settings_cache()
+    assert getattr(sc, "daily_cap", lambda _s: None)(core._load_settings()) == 2.0
+
+
+def test_a_route_the_terminal_setup_kept_releases_no_routine_job(real_settings):
+    from agent_friday.services import cloud_intent
+    core = real_settings
+    getattr(core, "install_origin", lambda: None)()
+    core.SETTINGS_FILE.write_text(json.dumps({"agent_name": "TEST AGENT", "model_routing": {
+        "mode": "cloud_only", "mode_chosen": "cloud_only", "mode_chosen_via": "kept"}}),
+        encoding="utf-8")
+    core._invalidate_settings_cache()
+    assert cloud_intent.mode_was_chosen() is False
+    assert cloud_intent.background_route("news", local_serving=False).route != "cloud"
+
+
 def test_the_cap_is_said_in_plain_words(real_settings):
     core = real_settings
     s = core._load_settings()
@@ -235,11 +258,10 @@ def test_the_boot_shows_the_card_and_it_is_a_registered_notice():
 
 # ── reaching it pauses, with a card ──────────────────────────────────────────
 
-def test_reaching_the_cap_pauses_with_a_card_in_plain_words(friday_dir, monkeypatch):
+def test_reaching_the_cap_pauses_with_a_card_in_plain_words(friday_dir, tmp_path, monkeypatch):
     from agent_friday.services import cost_meter as cm, spend_guard as sg
     cm.reset_for_tests()
-    if cm.DB_PATH.exists():
-        cm.DB_PATH.unlink()
+    monkeypatch.setattr(cm, "DB_PATH", tmp_path / "costs.db")     # spend of its own
     cm.reset_for_tests()
     sg.reset_for_tests()
     monkeypatch.setattr(sg, "HALT_LOG", friday_dir / "spend_halts_a17.jsonl")
@@ -267,9 +289,6 @@ def test_reaching_the_cap_pauses_with_a_card_in_plain_words(friday_dir, monkeypa
         assert any(t.startswith("Paused by your spending cap: a research step") for t in titles)
         assert sg.status().get("plain"), "Settings > Spending gets the cap in plain words"
     finally:
-        cm.reset_for_tests()
-        if cm.DB_PATH.exists():
-            cm.DB_PATH.unlink()          # the spend recorded here must not reach later tests
         cm.reset_for_tests()
 
 

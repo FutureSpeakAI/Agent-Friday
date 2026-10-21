@@ -141,7 +141,7 @@ def test_the_terminal_setup_offers_no_stored_route_on_a_new_install():
 
 def test_the_models_payload_says_whether_a_route_was_picked():
     src = (REPO / "src/agent_friday/routes/intelligence.py").read_text(encoding="utf-8")
-    assert '"routing_mode_picked": not _route_pick_pending(settings)' in src
+    assert '"routing_mode_picked": not _route_pick_pending(None)' in src
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="node is not on PATH")
