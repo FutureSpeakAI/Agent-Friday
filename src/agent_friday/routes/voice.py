@@ -605,6 +605,11 @@ def _injection_text(text: str, kind: str) -> str:
     body = text if kind in _INJECT_APPROVED_AS_SHOWN else _gate_voice_tool_result(text, kind)
     if kind in ("declined", "notice"):
         body = body + "]"
+    elif kind not in _INJECT_APPROVED_AS_SHOWN and body:
+        # Work and tool output is data, never instructions: the one envelope
+        # (services/untrusted_input), around what the gate let through.
+        from agent_friday.services.untrusted_input import wrap as _data_envelope
+        body = _data_envelope(body)
     return _INJECT_LEADS.get(kind, _INJECT_LEADS["result"]) + body
 
 
@@ -6042,6 +6047,11 @@ if sock is not None:
                             if refused is not None:
                                 return refused
                             _voice_orb_finish(_orb_id, fname, fargs, result, _took * 1000.0)
+                            # What the tool returned reaches the model as data, never as
+                            # instructions: the one envelope (services/untrusted_input),
+                            # put on after the egress gate has judged the output itself.
+                            from agent_friday.services.untrusted_input import wrap as _data_envelope
+                            result = _data_envelope(result)
                             _kw = {"name": fname, "response": {"result": result}}
                             if fid is not None:
                                 _kw["id"] = fid

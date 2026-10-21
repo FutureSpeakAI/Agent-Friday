@@ -115,6 +115,7 @@ from agent_friday.services.model_router import (
 from agent_friday.services import tool_hooks as _hooks
 from agent_friday.services import taint as _taint_mod
 from agent_friday.services import reasoning_trace as _rtrace
+from agent_friday.services import untrusted_input as _untrusted
 from agent_friday.services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -15495,7 +15496,7 @@ def _screenshot_result_to_block(tool_use_id, result):
         "type": "tool_result",
         "tool_use_id": tool_use_id,
         "content": [
-            {"type": "text", "text": data.get('note', 'Screenshot captured.')},
+            {"type": "text", "text": _untrusted.wrap(data.get('note', 'Screenshot captured.'))},
             {"type": "image", "source": {
                 "type": "base64",
                 "media_type": data.get('media_type', 'image/png'),
@@ -16681,7 +16682,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tu.id,
-                    "content": result,
+                    # What the tool returned is data, never instructions: one envelope for every
+                    # result (services/untrusted_input). The trace and ledger above keep it raw.
+                    "content": _untrusted.wrap(result),
                 })
             convo.append({"role": "user", "content": tool_results})
             if _tool_changes:
@@ -17572,7 +17575,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     result = _compact_result(result)
                 except Exception:
                     pass
-            convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
+            # The tool's output is data, never instructions (services/untrusted_input),
+            # wrapped after compaction so the envelope itself is never compacted away.
+            convo.append({"role": "tool", "tool_call_id": tcid, "content": _untrusted.wrap(result)})
 
     # Reached only when a tool loop really did spend its whole budget: a
     # tool-less call always returns from the final-answer branch above, and

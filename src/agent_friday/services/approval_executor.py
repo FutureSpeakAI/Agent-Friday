@@ -210,21 +210,25 @@ def _on_decision(record: dict) -> None:
                   detail={"ok": ok, "took_ms": took,
                           "result": str(result)[:800]})
 
+    # The action's output is replayed with the conversation, so it goes back in
+    # the one data envelope (services/untrusted_input): what a tool returned is
+    # never read later as something Friday or the owner said.
+    from agent_friday.services.untrusted_input import wrap as _data_envelope
     if search_card:
         # A search card's report names the card, not the query, and its result
         # is PII-scrubbed: the transcript replays to cloud seats.
         _post_back(record, _scrubbed(
             ("Approved search (card %s) result:\n\n%s" if ok else
-             "You approved search card %s, but it did not go through: %s")
-            % (aid, str(result)[:600 if ok else 400])))
+             "You approved search card %s, but it did not go through:\n\n%s")
+            % (aid, _data_envelope(str(result)[:600 if ok else 400]))))
         if not ok:
             _log.warning("approved search card %s failed", aid)
     elif ok:
         _post_back(record, "Approved action result: %s\n\n%s"
-                   % (_describe(tool, args), str(result)[:600]))
+                   % (_describe(tool, args), _data_envelope(str(result)[:600])))
     else:
-        _post_back(record, "You approved %s, but it did not go through: %s"
-                   % (_describe(tool, args), str(result)[:400]))
+        _post_back(record, "You approved %s, but it did not go through:\n\n%s"
+                   % (_describe(tool, args), _data_envelope(str(result)[:400])))
         _log.warning("approved action %s failed: %s", tool, result)
 
 
