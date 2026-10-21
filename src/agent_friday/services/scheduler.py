@@ -857,7 +857,9 @@ def enable_if_seeded_off(sid, reason, *, switch=True) -> dict:
       seeded_off   seeded off, and switch=False
       owner_off    the owner switched it off: left off
       missing      no such record (nothing written)
-      unreadable   schedules.json could not be read (nothing written)"""
+      unreadable   schedules.json could not be read (nothing written)
+      unwritable   it was seeded off, but writing schedules.json failed:
+                   still off"""
     dropped = None
     with _STORE_LOCK:
         try:
@@ -887,7 +889,14 @@ def enable_if_seeded_off(sid, reason, *, switch=True) -> dict:
         if cur.get("quiet_deferred"):
             dropped = cur.get("quiet_deferred")
             cur["quiet_deferred"] = None
-        _write_store(recs)
+        try:
+            _write_store(recs)
+        except Exception as e:
+            # e.g. os.replace refused on Windows while another process holds
+            # schedules.json: the job is still off, and the caller must say so.
+            _log.warning("could not switch %s on: schedules.json could not be written: %s",
+                         sid, e)
+            return {"state": "unwritable", "record": None}
         out = dict(cur)
     if dropped is not None:
         _notify_deferral_dropped(out, dropped, True)

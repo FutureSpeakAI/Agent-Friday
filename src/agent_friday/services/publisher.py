@@ -453,6 +453,14 @@ def ensure_publisher_running(post_id: str) -> Dict[str, Any]:
             _notify("Friday couldn't check the Content publisher",
                     out["notice"], priority="high", actions=_workflows_action(),
                     dedupe=f"content-publisher-unknown:{post_id}")
+        elif registered and state == "unwritable":
+            out["notice"] = ("This post won't go out until the Content publisher is on: "
+                             "Friday tried to switch it on but couldn't save the change. "
+                             "Turn it on in Workflows.")
+            out["action"] = {"label": "Open Workflows", "target": {"workspace": "workflows"}}
+            _notify("Friday couldn't switch the Content publisher on",
+                    out["notice"], priority="high", actions=_workflows_action(),
+                    dedupe=f"content-publisher-unwritable:{post_id}")
         elif registered and state == "missing":
             out["notice"] = ("This post won't go out yet: the Content publisher job isn't "
                              "set up. Restarting Friday sets it up; then check Workflows.")
@@ -757,13 +765,16 @@ def _auth_read() -> Dict[str, Any]:
         return {}
 
 
-def _auth_update(tid: str, **fields) -> Dict[str, Any]:
+def _auth_update(tid: str, *, stamp: bool = True, **fields) -> Dict[str, Any]:
+    """Merge `fields` into a target's record. `at` (when the decision was
+    remembered, which the overdue rule reads) moves only when `stamp`."""
     import json
     with _AUTH_LOCK:
         data = _auth_read()
         rec = dict(data.get(tid) or {})
         rec.update(fields)
-        rec["at"] = time.time()
+        if stamp or "at" not in rec:
+            rec["at"] = time.time()
         data[tid] = rec
         path = _auth_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -783,7 +794,8 @@ def _spend_authorization(tid: str) -> None:
     arming of this target is a new round with a new card."""
     try:
         rec = _auth_get(tid)
-        _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None)
+        _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None,
+                     decision_due=None, decision_round=None)
     except Exception:
         _log.debug("could not spend the publish authorization", exc_info=True)
 
@@ -857,18 +869,52 @@ def released_text_sha(target: Dict[str, Any], post: Dict[str, Any]) -> str:
 #: posts did not go out while the Content publisher was off, so the first
 #: switch-on would otherwise send weeks-old approvals at once.
 OVERDUE_GRACE_S = 24 * 3600
+#: request_publish_approval's state for a target whose earlier decision is
+#: too old to count: its card asks again when the publisher reaches it.
+ASK_AGAIN_STATE = "will ask you again (more than a day late)"
 
 
 def _due_at(target: Dict[str, Any], post: Dict[str, Any]) -> Optional[float]:
     return _epoch(target.get("publish_at")) or _epoch((post.get("schedule") or {}).get("publish_at"))
 
 
+def _decision_due(rec: Dict[str, Any]) -> Optional[float]:
+    """The due time this round's card showed when it was raised (recorded by
+    _note_card_due), or None. A decision is judged against the time it was
+    made for: posting now, rescheduling, re-arming or releasing a target moves
+    its publish_at but not the time its old card approved."""
+    if rec.get("decision_round") != int(rec.get("round") or 0):
+        return None
+    try:
+        return float(rec["decision_due"]) if rec.get("decision_due") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _note_card_due(target: Dict[str, Any], post: Dict[str, Any]) -> None:
+    """A card is being raised for this target's current round: remember the
+    due time it shows (without restamping any remembered decision)."""
+    tid = str(target.get("id"))
+    rec = _auth_get(tid)
+    _auth_update(tid, stamp=False, decision_due=_due_at(target, post),
+                 decision_round=int(rec.get("round") or 0))
+
+
 def _fresh_after(target: Dict[str, Any], post: Dict[str, Any],
-                 now: Optional[float] = None) -> Optional[float]:
+                 now: Optional[float] = None,
+                 rec: Optional[Dict[str, Any]] = None) -> Optional[float]:
     """For a target overdue by more than OVERDUE_GRACE_S, the earliest time a
-    decision may have been made to count now; None when it is not overdue."""
+    decision may have been made to count now; None when it is not overdue.
+
+    Lateness runs from the earlier of the target's publish_at and, given its
+    record `rec`, the due time this round's card was raised for
+    (_decision_due), so re-timing a late post does not make its old approval
+    count again."""
     now = time.time() if now is None else now
     due = _due_at(target, post)
+    decided_for = _decision_due(rec) if rec else None
+    if decided_for is not None:
+        due = decided_for if due is None else min(due, decided_for)
     if due is None or now - due <= OVERDUE_GRACE_S:
         return None
     return now - OVERDUE_GRACE_S
@@ -892,11 +938,12 @@ def _backlog(now: Optional[float] = None) -> Dict[str, int]:
                 due = _due_at(t, post)
                 if due is None or due > now:
                     continue
-                if now - due > OVERDUE_GRACE_S:
+                rec = _auth_get(str(t.get("id")))
+                if _fresh_after(t, post, now, rec) is not None:
                     overdue.add(pid)
                     continue
                 texts = _final_texts(t, post)
-                if _covered(_auth_get(str(t.get("id"))), _text_sha(texts), _media_sha(t, post)):
+                if _covered(rec, _text_sha(texts), _media_sha(t, post)):
                     approved.add(pid)
                     continue
                 card = _latest_card(action_gate.external_subject(
@@ -1019,6 +1066,8 @@ def _ask(target: Dict[str, Any], post: Dict[str, Any], texts: List[str],
     named = None
     if latest and not latest.get("consumed") and latest.get("status") != "expired":
         named = latest.get("approval_id")
+    else:
+        _note_card_due(target, post)
     words = _card_words(target, post, texts, rewritten)
     v = action_gate.authorize_external(
         PUBLISH_ACTION, detail, requested_by="publisher", approval_id=named, **words)
@@ -1057,7 +1106,7 @@ def _ask_again_overdue(target: Dict[str, Any], post: Dict[str, Any],
     tid = str(target.get("id"))
     rec = _auth_get(tid)
     _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None,
-                 reasked_due=due)
+                 reasked_due=due, decision_due=None, decision_round=None)
     when = target.get("publish_at") or (post.get("schedule") or {}).get("publish_at")
     _log.info("publish target %s is overdue (due %s): asking again", tid, when)
     _notify("A late post asks you again",
@@ -1078,8 +1127,8 @@ def _authorize_publish(target: Dict[str, Any], post: Dict[str, Any],
     platform = str(target.get("platform") or "")
     sha = _text_sha(texts)
     media_sha = _media_sha(target, post)
-    fresh_after = _fresh_after(target, post, now)
     rec = _auth_get(tid)
+    fresh_after = _fresh_after(target, post, now, rec)
     via = None
     if _covered(rec, sha, media_sha, fresh_after):
         via = str(rec.get("via"))
@@ -1144,27 +1193,43 @@ def request_publish_approval(post_id: str) -> Dict[str, Any]:
             sha = _text_sha(texts)
             media_sha = _media_sha(target, post)
             row = {"target_id": tid, "platform": platform}
-            if _covered(_auth_get(tid), sha, media_sha, _fresh_after(target, post)):
+            rec = _auth_get(tid)
+            fresh_after = _fresh_after(target, post, rec=rec)
+            if _covered(rec, sha, media_sha, fresh_after):
                 row["state"] = "approved"
             elif decided.startswith("grant_") and _grant_valid(decided):
                 _auth_update(tid, sha=sha, media_sha=media_sha, via=decided,
-                             series=_series(post), post_id=post_id, platform=platform)
+                             series=_series(post), post_id=post_id, platform=platform,
+                             decision_due=_due_at(target, post),
+                             decision_round=int(rec.get("round") or 0))
                 row["state"] = "covered by a grant"
+            elif fresh_after is not None and _covered(rec, sha, media_sha):
+                # Decided before it fell more than a day behind: dispatch
+                # asks again (_authorize_publish), so it is not approved.
+                row["state"] = ASK_AGAIN_STATE
             else:
                 detail = _detail(target, post, texts)
                 latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
                 if latest is None or latest.get("consumed") or latest.get("status") == "expired":
                     _ensure_decision_hook()
+                    _note_card_due(target, post)
                     action_gate.authorize_external(
                         PUBLISH_ACTION, detail, requested_by="publisher",
                         **_card_words(target, post, texts, False))
                     latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
-                row["state"] = {"approved": "approved", "denied": "declined",
-                                "blocked": "declined"}.get(
-                    str((latest or {}).get("status")),
-                    "waiting for your approval" if latest else "unavailable")
-                if latest:
-                    row["approval_id"] = latest.get("approval_id")
+                stale = bool(latest and fresh_after is not None
+                             and latest.get("status") == "approved"
+                             and not latest.get("consumed")
+                             and float(latest.get("decided_at") or 0) < fresh_after)
+                if stale:
+                    row["state"] = ASK_AGAIN_STATE
+                else:
+                    row["state"] = {"approved": "approved", "denied": "declined",
+                                    "blocked": "declined"}.get(
+                        str((latest or {}).get("status")),
+                        "waiting for your approval" if latest else "unavailable")
+                    if latest:
+                        row["approval_id"] = latest.get("approval_id")
             out["targets"].append(row)
     except Exception as e:
         _log.debug("raising publish cards failed", exc_info=True)

@@ -893,6 +893,9 @@ def release_held(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any
     unchanged for everything the user did NOT release."""
     try:
         now = _now_iso()
+        # Imported before taking the store lock: a first import of the
+        # publisher runs its module code, which must not run under _LOCK.
+        from agent_friday.services import publisher as _pub
         with _LOCK, _connect() as con:
             row = _fetch_post_row(con, post_id)
             if not row:
@@ -908,7 +911,6 @@ def release_held(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any
             # fingerprint goes with it, and the publisher honours the release
             # only while the target still sends exactly them (an edit made
             # while the post stays HELD for a sibling is not released).
-            from agent_friday.services import publisher as _pub
             held_post = _get_post_locked(con, post_id)
             for t in to_release:
                 payload = {k: t.get(k) for k in _TARGET_PAYLOAD_KEYS}
