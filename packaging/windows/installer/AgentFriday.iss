@@ -1121,13 +1121,37 @@ begin
     Result := Pos('Agent Friday local address', String(Text)) > 0;
 end;
 
+// Export first (north star 27.10): a Friday Bundle, made and verified by
+// Friday's own command line, before anything is removed. If it cannot be
+// made, the uninstall stops and nothing is removed.
+function MakeBundleFirst(Dest: String; Visible: Boolean): Boolean;
+var
+  Py, Params: String;
+  Code, Show: Integer;
+begin
+  Result := False;
+  Py := ExpandConstant('{app}\python\python.exe');
+  if not FileExists(Py) then Exit;
+  Params := '-m agent_friday.cli bundle create --out "' + Dest + '"';
+  if Visible then Show := SW_SHOW else Show := SW_HIDE;
+  if Exec(Py, Params, ExpandConstant('{app}\app'), Show, ewWaitUntilTerminated, Code) then
+    Result := (Code = 0);
+  Log('bundle create exited ' + IntToStr(Code));
+end;
+
 function InitializeUninstall(): Boolean;
+var
+  BundleTo: String;
 begin
   Result := True;
   RemoveEverything := False;
   if UninstallSilent then
   begin
     RemoveEverything := ExpandConstant('{param:REMOVEDATA|0}') = '1';
+    // /BUNDLETO=<folder> with FRIDAY_BUNDLE_PASSPHRASE set: bundle first.
+    BundleTo := ExpandConstant('{param:BUNDLETO|}');
+    if BundleTo <> '' then
+      Result := MakeBundleFirst(BundleTo, False);
     Exit;
   end;
   // Default button is Yes = keep.
@@ -1140,6 +1164,22 @@ begin
     if MsgBox('Delete your notes, conversations and settings, and the passphrase that unlocks them?' + #13#10#13#10 +
               'This cannot be undone.', mbError, MB_YESNO or MB_DEFBUTTON2) = IDYES then
       RemoveEverything := True;
+  end;
+  if RemoveEverything then
+  begin
+    if MsgBox('Before anything is removed, save everything in one encrypted file (a Friday Bundle) ' +
+              'that you can restore on another PC? A window opens and asks you for a passphrase.' + #13#10#13#10 +
+              'Choose Yes to make the bundle first (recommended).',
+              mbConfirmation, MB_YESNO or MB_DEFBUTTON1) = IDYES then
+    begin
+      BundleTo := ExpandConstant('{userdocs}\Friday Bundles');
+      if not MakeBundleFirst(BundleTo, True) then
+      begin
+        MsgBox('The Friday Bundle could not be made, so nothing was removed. ' +
+               'Run the uninstaller again when you want to try once more.', mbError, MB_OK);
+        Result := False;
+      end;
+    end;
   end;
 end;
 

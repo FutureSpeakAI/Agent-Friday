@@ -1480,6 +1480,26 @@ examples:
     p_doc.add_argument("--out", metavar="PATH",
                        help="Also copy the report (.txt) to this file, to attach by hand")
 
+    # Friday Bundle (services/friday_bundle.py): encrypted backup and restore
+    p_bundle = sub.add_parser("bundle", help="Make or check a Friday Bundle (encrypted backup)")
+    p_bundle.add_argument("bundle_cmd", choices=["create", "verify"])
+    p_bundle.add_argument("file", nargs="?", help="The bundle (verify) or where to write it (create)")
+    p_bundle.add_argument("--out", metavar="PATH", help="Folder or file to write (create)")
+    p_bundle.add_argument("--only", metavar="CATS",
+                          help="Comma-separated categories to include (default: all)")
+    p_bundle.add_argument("--exclude", metavar="CATS", help="Comma-separated categories to leave out")
+    p_restore = sub.add_parser("restore", help="Restore a Friday Bundle onto this machine")
+    p_restore.add_argument("file", help="The .fridaybundle file")
+    p_restore.add_argument("--home", metavar="PATH", help="Data folder to restore into "
+                                                           "(default: Friday's own)")
+    p_restore.add_argument("--only", metavar="CATS", help="Comma-separated categories to restore")
+    p_restore.add_argument("--replace", action="store_true",
+                           help="Move an existing data folder aside (never deleted) and restore")
+    p_restore.add_argument("--dry-run", action="store_true", dest="dry_run",
+                           help="Check the bundle and say what would happen; write nothing")
+    p_restore.add_argument("--allow-newer", action="store_true", dest="allow_newer",
+                           help="Restore a bundle made by a newer Friday")
+
     # safe mode (services/safe_mode.py)
     sub.add_parser("safe", help="Start Friday in safe mode: extensions and the cloud off")
     p_safe = sub.add_parser("safe-mode", help="Start in safe mode next time, or leave it")
@@ -1993,6 +2013,90 @@ def cmd_doctor_report(out=None):
     return 1 if bad else 0
 
 
+def _bundle_passphrase(confirm: bool) -> str:
+    """The bundle passphrase: FRIDAY_BUNDLE_PASSPHRASE (unattended runs) or typed."""
+    import getpass
+    env = os.environ.get("FRIDAY_BUNDLE_PASSPHRASE", "")
+    if env:
+        return env
+    pw = getpass.getpass("Bundle passphrase (12 characters or more): ")
+    if confirm and getpass.getpass("Type it again: ") != pw:
+        print("The two passphrases differ. Nothing was written.")
+        return ""
+    return pw
+
+
+def _cats(raw):
+    from agent_friday.services import friday_bundle as fb
+    if not raw:
+        return None
+    got = [c.strip() for c in raw.split(",") if c.strip()]
+    bad = [c for c in got if c not in fb.CATEGORIES]
+    if bad:
+        raise SystemExit("Unknown categories: %s (known: %s)" % (", ".join(bad), ", ".join(fb.CATEGORIES)))
+    return got
+
+
+def cmd_bundle(args):
+    from agent_friday.services import friday_bundle as fb
+    if args.bundle_cmd == "verify":
+        if not args.file:
+            print("Name the bundle to check.")
+            return 2
+        try:
+            r = fb.verify(Path(args.file), _bundle_passphrase(False))
+        except fb.BundleError as e:
+            print("NOT VERIFIED: %s" % e)
+            return 1
+        print("Verified %s: %d files, made %s. Every file matches its manifest."
+              % (r["bundle_id"], r["files"], r["created_at"]))
+        for k, v in sorted(r["by_category"].items()):
+            print("  %-14s %d" % (k, v))
+        return 0
+    cats = _cats(args.only) or list(fb.CATEGORIES)
+    for c in _cats(args.exclude) or []:
+        if c in cats:
+            cats.remove(c)
+    dest = Path(args.out or args.file or (Path.home() / "Documents" / "Friday Bundles")).expanduser()
+    if dest.suffix != fb.SUFFIX:
+        dest = dest / ("friday-%s%s" % (time.strftime("%Y%m%d-%H%M%S"), fb.SUFFIX))
+    pw = _bundle_passphrase(True)
+    if not pw:
+        return 1
+    try:
+        m = fb.create(dest, pw, categories=cats)
+        v = fb.verify(dest, pw)
+        from agent_friday.paths import friday_home
+        fb._remember(Path(friday_home()), dest, m["bundle_id"], verified=v["ok"])
+    except fb.BundleError as e:
+        print("No bundle was made: %s" % e)
+        return 1
+    print("Made and verified %s (%d files) at %s." % (m["bundle_id"], len(m["files"]), dest))
+    print("Keep the passphrase: without it the bundle cannot be opened.")
+    return 0
+
+
+def cmd_restore(args):
+    from agent_friday.services import friday_bundle as fb
+    if args.home:
+        os.environ["FRIDAY_HOME"] = str(Path(args.home).expanduser())
+    try:
+        r = fb.restore(Path(args.file), _bundle_passphrase(False),
+                       home=Path(args.home).expanduser() if args.home else None,
+                       only=_cats(args.only), replace=args.replace, dry_run=args.dry_run,
+                       allow_newer=args.allow_newer)
+    except fb.BundleError as e:
+        print("NOT RESTORED: %s" % e)
+        return 1
+    print(json.dumps(r, indent=1, sort_keys=True, default=str))
+    if r.get("dry_run"):
+        return 0
+    ok = (r.get("checked_in_place") or {}).get("files_match") and \
+        ((r.get("checked_in_place") or {}).get("ledger") or {}).get("ok", True)
+    print("Restored. Outward actions are held until you press Resume on the Doctor page.")
+    return 0 if ok else 1
+
+
 def cmd_safe_mode(state):
     from agent_friday.services import safe_mode
     if state == "status":
@@ -2041,6 +2145,10 @@ def main():
         rv = cmd_start()
     elif cmd == "safe-mode":
         rv = cmd_safe_mode(args.state)
+    elif cmd == "bundle":
+        rv = cmd_bundle(args)
+    elif cmd == "restore":
+        rv = cmd_restore(args)
     elif cmd == "health":
         rv = cmd_health(exit_code=getattr(args, "exit_code", False))
     elif cmd == "update":

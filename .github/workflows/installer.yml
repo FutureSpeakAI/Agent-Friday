@@ -198,9 +198,37 @@ jobs:
             ${{ runner.temp }}/upgrade/setup-upgrade.log
           if-no-files-found: ignore
 
+  # Export first, a real uninstall that leaves nothing, and a restore of the
+  # bundle on the same clean machine (north star 27.10, 27.6, 34.3-7).
+  bundle-uninstall-restore:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installer
+          path: artifact
+      - name: Install, seed, uninstall with a bundle first, check nothing is left, reinstall, restore
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\verify-bundle-uninstall-restore.ps1 -Setup $exe.FullName -WorkDir "$env:RUNNER_TEMP\bur"
+          exit $LASTEXITCODE
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle-uninstall-restore-evidence
+          path: |
+            ${{ runner.temp }}/bur/*.json
+            ${{ runner.temp }}/bur/*.log
+            ${{ runner.temp }}/bur/*.err
+          if-no-files-found: ignore
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fresh-install, upgrade]
+    needs: [fresh-install, upgrade, bundle-uninstall-restore]
     runs-on: ubuntu-latest
     permissions:
       contents: write

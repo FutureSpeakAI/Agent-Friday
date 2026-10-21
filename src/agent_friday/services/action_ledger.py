@@ -323,7 +323,7 @@ def _move_anchor_locked(seq: int, h: str, *, force: bool = False) -> None:
             return                              # unreadable: leave it; verify() holds
         if stored is not None:
             aseq, ahash = stored
-            if seq < aseq or _hash_at(aseq) != ahash:
+            if aseq > 0 and (seq < aseq or _hash_at(aseq) != ahash):
                 return                          # the chain lost the anchored record
             _STATE["anchor_seq"] = cur = aseq
     if not force and cur is not None and seq <= cur:
@@ -338,12 +338,20 @@ def _move_anchor_locked(seq: int, h: str, *, force: bool = False) -> None:
 
 def reset_anchor_to_tip() -> None:
     """After a restore (the restore is the owner's own act): the anchor names
-    the restored ledger's newest entry."""
+    the restored ledger's newest entry (an empty one needs none: the first
+    durable entry sets it)."""
     with _TLOCK:
         _check_dir()
         with _lock():
             seq, h = _read_tip_locked()
-            _move_anchor_locked(seq, h, force=True)
+            if seq > 0:
+                _move_anchor_locked(seq, h, force=True)
+            else:
+                try:
+                    _anchor_set(0, GENESIS)
+                    _STATE["anchor_seq"] = 0
+                except Exception:
+                    pass
             _STATE["max_seen"] = seq
 
 
@@ -957,7 +965,7 @@ def _verify_files(key: Optional[bytes]) -> dict:
         problems.append({"segment": "anchor", "line": 0, "seq": None,
                          "reason": "the ledger's anchor could not be read (%s)" % type(e).__name__,
                          "raw_sha256": ""})
-    if anchor:
+    if anchor and anchor[0] > 0:
         aseq, ahash = anchor
         if last_seq < aseq:
             problems.append({"segment": "anchor", "line": 0, "seq": aseq,

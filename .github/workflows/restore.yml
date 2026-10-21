@@ -1,0 +1,129 @@
+name: restore
+
+# A Friday Bundle made on one fresh machine restores onto a different fresh
+# machine (north star 27.1, 27.6, 34.3-7). Machine A seeds a realistic data
+# folder and makes the bundle; machine B, a separate runner that never saw A,
+# restores it and checks every file, the vault opening with the passphrase
+# the bundle carried, the receipts verifying under the governance key the
+# bundle carried, and outward actions held until resumed. A changed bundle is
+# refused and writes nothing.
+
+on:
+  pull_request:
+    paths:
+      - "src/agent_friday/services/friday_bundle.py"
+      - "src/agent_friday/services/action_ledger.py"
+      - "src/agent_friday/services/vault_passphrase.py"
+      - "src/agent_friday/privacy/vault_crypto.py"
+      - "src/agent_friday/governance/proof_of_integrity.py"
+      - "src/agent_friday/cli.py"
+      - "tests/clean_machine/**"
+      - ".github/workflows/restore.yml"
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  make-bundle:
+    name: machine A (windows) seeds and makes a bundle
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine bundle passphrase
+      SEED_VAULT_PASSPHRASE: ci clean machine vault passphrase
+      PYTHONUTF8: "1"
+    steps:
+      - run: echo "FRIDAY_HOME=$env:RUNNER_TEMP\a\.friday" >> $env:GITHUB_ENV
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[windows]" keyring
+      - name: Seed a data folder
+        run: python tests/clean_machine/seed_home.py --expected "$env:RUNNER_TEMP\out\expected.json"
+      - name: Make the bundle (and verify it)
+        run: python -m agent_friday.cli bundle create --out "$env:RUNNER_TEMP\out\ci.fridaybundle"
+      - name: The bundle verifies on its own
+        run: python -m agent_friday.cli bundle verify "$env:RUNNER_TEMP\out\ci.fridaybundle"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+
+  restore-windows:
+    name: machine B (a different windows runner) restores it
+    needs: make-bundle
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine bundle passphrase
+      PYTHONUTF8: "1"
+    steps:
+      - run: echo "FRIDAY_HOME=$env:RUNNER_TEMP\b\.friday" >> $env:GITHUB_ENV
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[windows]" keyring
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle
+          path: bundle
+      - name: Nothing of machine A is here
+        shell: pwsh
+        run: |
+          if (Test-Path $env:FRIDAY_HOME) { throw "not a clean machine" }
+          $t = cmdkey /list | Select-String 'agent-friday'
+          if ($t) { throw "this machine already holds agent-friday credentials: $t" }
+      - name: Restore
+        run: python -m agent_friday.cli restore bundle\ci.fridaybundle
+      - name: Check everything that should travel did, and nothing else
+        run: python tests/clean_machine/check_restore.py --expected bundle\expected.json
+      - name: A changed bundle is refused and writes nothing
+        shell: pwsh
+        run: |
+          $src = "bundle\ci.fridaybundle"; $bad = "$env:RUNNER_TEMP\bad.fridaybundle"
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path $src))
+          $bytes[[int]($bytes.Length / 2)] = $bytes[[int]($bytes.Length / 2)] -bxor 1
+          [IO.File]::WriteAllBytes($bad, $bytes)
+          $env:FRIDAY_HOME = "$env:RUNNER_TEMP\c\.friday"
+          python -m agent_friday.cli restore $bad
+          if ($LASTEXITCODE -eq 0) { throw "a changed bundle was restored" }
+          if (Test-Path "$env:RUNNER_TEMP\c\.friday\settings.json") { throw "a changed bundle wrote files" }
+
+  restore-ubuntu:
+    name: machine C (ubuntu) restores the windows bundle
+    needs: make-bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine bundle passphrase
+      SEED_VAULT_PASSPHRASE: ci clean machine vault passphrase
+      PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+    steps:
+      - run: echo "FRIDAY_HOME=$RUNNER_TEMP/c/.friday" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bundle
+          path: bundle
+      - name: Restore
+        run: python -m agent_friday.cli restore bundle/ci.fridaybundle
+      - name: Check (no keychain on this runner, so the vault passphrase is typed)
+        run: python tests/clean_machine/check_restore.py --expected bundle/expected.json --vault-passphrase-from-env

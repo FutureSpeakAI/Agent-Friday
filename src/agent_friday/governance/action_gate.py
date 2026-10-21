@@ -1387,6 +1387,9 @@ def outward_hold() -> Optional[str]:
     outward decision, after the cLaws check:
 
     * Friday is in safe mode (services/safe_mode.py);
+    * Friday was restored from a Friday Bundle and the owner has not yet
+      resumed outward actions on this device (services/friday_bundle.py,
+      north star §27.6);
     * the action ledger has a break the owner has not looked at
       (services/action_ledger.hold_reason): a receipt changed, removed or
       reordered on disk.
@@ -1398,6 +1401,13 @@ def outward_hold() -> Optional[str]:
             return _sm.refusal("connectors")
     except Exception as e:  # noqa: BLE001 - fail closed
         return "safe mode could not be checked (%s)" % type(e).__name__
+    try:
+        from agent_friday.services import friday_bundle
+        why = friday_bundle.restore_hold()
+        if why:
+            return why
+    except Exception as e:  # noqa: BLE001 - fail closed
+        return "the restore state could not be checked (%s)" % type(e).__name__
     try:
         from agent_friday.services import action_ledger
         why = action_ledger.hold_reason()

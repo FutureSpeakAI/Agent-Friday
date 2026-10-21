@@ -126,3 +126,89 @@ def safe_mode_set():
                         "restart_needed": plan["next_start_safe"] != plan["active"]})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "Safe mode could not be set for the next start.")
+
+
+# ── Backup and restore (services/friday_bundle.py) ──────────────────────────
+
+import threading as _threading
+
+_BUNDLE_JOB: dict = {"state": "idle"}
+_BUNDLE_LOCK = _threading.Lock()
+
+
+def _press_here():
+    from agent_friday.core import _is_local_request
+    from agent_friday.services import screen_click
+    return _is_local_request() and screen_click.screen_session(request)
+
+
+@doctor_bp.route("/api/restore/state", methods=["GET"])
+@login_required
+def restore_state():
+    from agent_friday.services import friday_bundle
+    why = friday_bundle.restore_hold()
+    return jsonify({"status": "ok", "held": bool(why), "why": why})
+
+
+@doctor_bp.route("/api/restore/resume", methods=["POST"])
+@login_required
+def restore_resume():
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Resume on Friday's own page, on this PC."}), 403
+    from agent_friday.services import friday_bundle
+    try:
+        done = friday_bundle.resume_after_restore("owner:ui")
+        return jsonify({"status": "ok", "resumed": done})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "Outward actions could not be resumed.")
+
+
+@doctor_bp.route("/api/bundle/create", methods=["POST"])
+@login_required
+def bundle_create():
+    """Make a Friday Bundle in Documents/Friday Bundles, then verify it. Runs in
+    the background; GET /api/bundle/status follows it. The passphrase is used
+    in memory and never stored."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Make a bundle from Friday's own page, on this PC."}), 403
+    from agent_friday.services import friday_bundle as fb
+    body = request.get_json(silent=True) or {}
+    pw = body.get("passphrase") or ""
+    if not isinstance(pw, str) or len(pw) < fb.MIN_PASSPHRASE:
+        return jsonify({"status": "error", "error": "The passphrase must be at least %d characters."
+                        % fb.MIN_PASSPHRASE}), 400
+    cats = body.get("categories") or list(fb.CATEGORIES)
+    if not isinstance(cats, list) or not all(c in fb.CATEGORIES for c in cats):
+        return jsonify({"status": "error", "error": "Unknown category."}), 400
+    with _BUNDLE_LOCK:
+        if _BUNDLE_JOB.get("state") == "running":
+            return jsonify({"status": "error", "error": "A bundle is already being made."}), 409
+        _BUNDLE_JOB.clear()
+        _BUNDLE_JOB.update(state="running", started=__import__("time").time())
+
+    def _run():
+        import time as _t
+        from pathlib import Path as _P
+
+        from agent_friday.paths import friday_home
+        dest_dir = _P.home() / "Documents" / "Friday Bundles"
+        dest = dest_dir / ("friday-%s%s" % (_t.strftime("%Y%m%d-%H%M%S"), fb.SUFFIX))
+        try:
+            m = fb.create(dest, pw, categories=cats)
+            v = fb.verify(dest, pw)
+            fb._remember(_P(friday_home()), dest, m["bundle_id"], verified=v["ok"])
+            _BUNDLE_JOB.update(state="done", bundle_id=m["bundle_id"], file=dest.name,
+                               files=len(m["files"]), verified=v["ok"])
+        except Exception as e:  # noqa: BLE001
+            _BUNDLE_JOB.update(state="failed", error=str(e) if isinstance(e, fb.BundleError)
+                               else "The bundle could not be made (%s)." % type(e).__name__)
+    _threading.Thread(target=_run, name="friday-bundle", daemon=True).start()
+    return jsonify({"status": "ok", "state": "running"})
+
+
+@doctor_bp.route("/api/bundle/status", methods=["GET"])
+@login_required
+def bundle_status():
+    return jsonify({"status": "ok", **{k: v for k, v in _BUNDLE_JOB.items()}})

@@ -34,6 +34,24 @@
   <p id="safe-note" role="status"></p>
 </section>
 
+<section id="restore" aria-labelledby="restore-h" hidden>
+  <h2 id="restore-h">After a restore</h2>
+  <p id="restore-why" role="status"></p>
+  <p>Check that your services are connected again (Settings, Connect your services), then let Friday act again on this PC.</p>
+  <button id="resume" type="button">Resume outward actions</button>
+  <p id="restore-note" role="status"></p>
+</section>
+
+<section aria-labelledby="bundle-h">
+  <h2 id="bundle-h">Backup: Friday Bundle</h2>
+  <p>One encrypted file with your memory, vault, settings, skills, workspaces, receipts and conversations. Service sign-ins are not included; you reconnect them after a restore. It is saved in Documents, Friday Bundles. Without the passphrase it cannot be opened, by anyone.</p>
+  <label>Passphrase (12 characters or more) <input id="bp1" type="password" autocomplete="new-password"></label><br>
+  <label>Type it again <input id="bp2" type="password" autocomplete="new-password"></label><br>
+  <button id="make" type="button">Make a bundle</button>
+  <p id="bundle-note" role="status"></p>
+  <p>To restore on another PC: install Friday, do not set it up, then run <code>friday restore &lt;file&gt;</code>.</p>
+</section>
+
 <section aria-labelledby="rep-h">
   <h2 id="rep-h">Report</h2>
   <button id="run" type="button">Run the checks</button>
@@ -115,6 +133,35 @@
       show(d.report, d.text); history();
     });
   });
+  function restoreState() {
+    api('/api/restore/state').then(({ d }) => {
+      $('restore').hidden = !d.held;
+      text($('restore-why'), d.why || '');
+    });
+  }
+  $('resume').addEventListener('click', () => {
+    api('/api/restore/resume', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+      text($('restore-note'), ok ? 'Friday may act again on this PC.' : (d.error || 'Not resumed.'));
+      restoreState();
+    });
+  });
+  function bundlePoll() {
+    api('/api/bundle/status').then(({ d }) => {
+      if (d.state === 'running') { text($('bundle-note'), 'Making the bundle...'); setTimeout(bundlePoll, 2000); return; }
+      if (d.state === 'done') text($('bundle-note'), 'Made and verified: ' + d.file + ' (' + d.files + ' files).');
+      else if (d.state === 'failed') text($('bundle-note'), d.error || 'The bundle could not be made.');
+    });
+  }
+  $('make').addEventListener('click', () => {
+    const a = $('bp1').value, b = $('bp2').value;
+    if (a !== b) { text($('bundle-note'), 'The two passphrases differ.'); return; }
+    api('/api/bundle/create', { method: 'POST', body: JSON.stringify({ passphrase: a }) }).then(({ ok, d }) => {
+      $('bp1').value = ''; $('bp2').value = '';
+      if (!ok) { text($('bundle-note'), d.error || 'Not started.'); return; }
+      bundlePoll();
+    });
+  });
+  restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
   safeState(); history();
