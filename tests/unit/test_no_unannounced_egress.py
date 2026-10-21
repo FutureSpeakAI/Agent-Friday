@@ -198,11 +198,25 @@ def _calls_any(seg: str, names) -> bool:
 def test_every_google_write_goes_through_a_recorded_client():
     """Checked per function: the function that writes builds its client
     through egress_record, or gets it from a factory that does."""
-    factories = {name for _p, name, seg in _FUNCS if "egress_record" in seg}
-    for _ in range(3):                    # a helper that gets its client from a factory is one too
-        factories |= {name for _p, name, seg in _FUNCS if _calls_any(seg, factories)}
+    # Factories: functions that wrap with egress_record, and (per module) the
+    # helpers that get their client from one. A factory from another module
+    # counts only when called through that module (cw._service, not a
+    # same-named local _service).
+    direct = {(p, name) for p, name, seg in _FUNCS if "egress_record" in seg}
+    def ok(p, seg):
+        for fp, fname in direct:
+            if fp == p and re.search(r"(?<![\w.])" + re.escape(fname) + r"\(", seg):
+                return True
+            if fp != p and re.search(r"\b\w+\." + re.escape(fname) + r"\(", seg) \
+                    and fp.stem in seg.replace("\\", "/"):
+                return True
+        return False
+    local = {(p, name) for p, name, seg in _FUNCS if ok(p, seg)}
+    def ok2(p, seg):
+        return ok(p, seg) or any(lp == p and re.search(r"(?<![\w.])" + re.escape(ln) + r"\(", seg)
+                                 for lp, ln in local)
     bad = [f"{p.relative_to(SRC)}:{name}" for p, name, seg in _FUNCS
-           if _GOOGLE_WRITE.search(seg) and "egress_record" not in seg and not _calls_any(seg, factories)
+           if _GOOGLE_WRITE.search(seg) and "egress_record" not in seg and not ok2(p, seg)
            and _MARK not in seg]
     assert bad == [], "Calendar/Tasks/Contacts writes with no egress record: %s" % bad
 
@@ -211,9 +225,12 @@ def test_every_google_write_goes_through_a_recorded_client():
 def test_every_known_send_path_records_itself(pattern, needs, what):
     """Checked per function: the function that sends records the send itself,
     or calls a helper of its module that does."""
-    recorders = {name for _p, name, seg in _FUNCS if needs in seg}
+    # A helper counts only when it is defined in the same module as the caller.
+    recorders = {(p, name) for p, name, seg in _FUNCS if needs in seg}
+    def via_helper(p, seg):
+        return any(rp == p and re.search(r"(?<![\w.])" + re.escape(rn) + r"\(", seg) for rp, rn in recorders)
     bad = [f"{p.relative_to(SRC)}:{name}" for p, name, seg in _FUNCS
-           if pattern.search(seg) and needs not in seg and not _calls_any(seg, recorders) and _MARK not in seg
+           if pattern.search(seg) and needs not in seg and not via_helper(p, seg) and _MARK not in seg
            and p.name != "egress_gate.py" and "platforms" not in p.parts]
     assert bad == [], f"{what} with no egress record in: {bad}"
 
@@ -252,3 +269,22 @@ def test_a_tool_server_call_keeps_no_secret(ledger):
     row = _calls(ledger)[0]
     assert row["result"] == "sent_unconfirmed" and row["destination"] == "a program on this PC (synthetic)"
     assert secret not in (sts.read(row["payload_fingerprint"]) or {}).get("text", "")
+
+
+def test_a_tool_call_keeps_no_password_or_address_login(ledger):
+    from agent_friday import mcp_client
+    from agent_friday.services import sent_text_store as sts
+
+    class _Server:
+        status = "running"
+        url = "https://tools.example.invalid/mcp"
+
+        def call_tool(self, tool, arguments, timeout=None):
+            return "ok"
+    mgr = mcp_client.MCPManager.__new__(mcp_client.MCPManager)
+    mgr.servers = {"synthetic": _Server()}
+    pw = "hunter" + "2!-synthetic"  # pragma: allowlist secret (synthetic)
+    mgr.call("synthetic", "connect", {"db": {"password": pw}, "dsn": "postgres://u:" + pw + "@db.example.invalid/x",
+                                       "note": "keep me"})
+    kept = sts.read(_calls(ledger)[0]["payload_fingerprint"])["text"]
+    assert pw not in kept and "keep me" in kept
