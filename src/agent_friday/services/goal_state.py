@@ -297,16 +297,29 @@ def continuation_hold(goal: Dict[str, Any], milestone: Dict[str, Any], *,
     est = int(milestone.get("cost_estimate_mψ") or 0)
     if cap and int(goal.get("spent_mψ") or 0) + est > cap:
         return blocker("budget_exhausted", f"Starting “{name}” would go over the goal's budget.")
-    minutes = int(((goal.get("budget") or {}) if isinstance(goal.get("budget"), dict) else {}).get("runtime_minutes") or 0)
-    if minutes and float(goal.get("spent_runtime_s") or 0) >= minutes * 60:
-        return blocker("budget_exhausted", f"This goal has used its {minutes} minutes of work.",
-                       type="runtime")
+    used_up = runtime_hold(goal)
+    if used_up:
+        return used_up
     criteria = (milestone.get("success_criteria") or goal.get("success_criteria") or "").strip()
     if not criteria:
         return blocker("needs_user_input",
                        f"I don't know what would prove “{name}” done, so I won't start it on my "
                        "own. Say what result you expect.", type="no_expected_evidence")
     return route_hold(goal)
+
+
+def runtime_hold(goal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The runtime-budget blocker once a goal has used its minutes of work
+    (§17.2). Checked on the tick and before every dispatch."""
+    b = goal.get("budget") if isinstance(goal.get("budget"), dict) else {}
+    try:
+        minutes = int(b.get("runtime_minutes") or 0)
+    except (TypeError, ValueError):
+        minutes = 0
+    if minutes and float(goal.get("spent_runtime_s") or 0) >= minutes * 60:
+        return blocker("budget_exhausted", f"This goal has used its {minutes} minutes of work.",
+                       type="runtime")
+    return None
 
 
 ROUTE_MODES = ("local_only", "local_preferred", "cloud_preferred", "cloud_only")

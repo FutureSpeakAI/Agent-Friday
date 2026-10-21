@@ -147,6 +147,11 @@ def define_goal_route():
     body = request.get_json(silent=True)
     if not isinstance(body, dict) or not isinstance(body.get("goal"), dict):
         return jsonify({"ok": False, "error": "send {goal, summary_id}"}), 400
+    # The owner's yes to the summary is a click in Friday's own window: a
+    # program on this PC can draft a goal, but cannot confirm one for them.
+    if not _screen_click.screen_session(request):
+        return jsonify({"ok": False, "error": "needs_screen_click",
+                        "message": "Confirm a new goal from the Goals card in Friday's window."}), 403
     try:
         goal = _goals.define_goal(body["goal"], body.get("summary_id"))
     except goal_definition.DefinitionRefused as e:
@@ -168,6 +173,15 @@ def update_goal_route(goal_id):
     patch = request.get_json(silent=True) or {}
     if not isinstance(patch, dict):
         return jsonify({"ok": False, "error": "send a JSON object"}), 400
+    if "autonomy" in patch:
+        # Letting Friday do more on her own is the owner's click, never a
+        # request from a program (tightening needs no click).
+        from agent_friday.services import goal_definition
+        current = _goals.get_goal(goal_id)
+        if current is not None and goal_definition.loosens(current.get("autonomy"), patch["autonomy"]) \
+                and not _screen_click.screen_session(request):
+            return jsonify({"ok": False, "error": "needs_screen_click",
+                            "message": "Allow more from the Goals card in Friday's window."}), 403
     try:
         goal = _goals.update_goal(goal_id, patch)
     except ValueError as e:

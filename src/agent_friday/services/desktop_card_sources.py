@@ -133,7 +133,10 @@ def _goals(now):
         if isinstance(policy, dict) and isinstance(policy.get("on"), list):
             moment = ("needs_owner" if state in {"interrupted", "needs_owner"} else
                       "at_risk" if state == "at_risk" else "progress")
-            notify = moment in policy["on"]
+            # A step stopped until the owner says so always shows: muting it
+            # would leave work waiting where nobody looks.
+            notify = moment in policy["on"] or any(
+                (m.get("blocker") or {}).get("needs_confirmation") for m in milestones)
         records.append(_record(goal.get("goal_id") or "", goal.get("title") or "Goal", body,
             updated=updated, priority=90 if state in {"interrupted", "needs_owner"} else
                      75 if state in {"waiting", "at_risk"} else 60,
