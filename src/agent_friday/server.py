@@ -479,6 +479,11 @@ if not _TESTING:
     # can be repaired. Decided once for this process; each part below asks.
     from agent_friday.services import safe_mode as _safe
     if _safe.active():
+        _safe.install_network_guard()
+        if _safe.state().get("how") == "failed_starts":
+            # entered because starts kept failing: it stays until the owner
+            # leaves it, so one good safe start does not slip back out
+            _safe.set_next_start(True)
         print("  SAFE MODE (%s): extensions and the cloud are off, schedules are "
               "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. "
               "Leave it there or with `friday safe-mode off`, then restart."
@@ -519,6 +524,8 @@ if not _TESTING:
     def _ledger_boot():
         try:
             from agent_friday.services import action_ledger as _al
+            # check what is there before anything is written to it
+            _al.verify(force=True, migrate=False)
             _al.migrate_legacy()
             rep = _al.verify(force=True)
             if not rep.get("ok"):

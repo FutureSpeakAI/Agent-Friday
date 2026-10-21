@@ -95,8 +95,10 @@ def api_ledger_verify():
 @ledger_bp.route("/api/ledger/acknowledge", methods=["POST"])
 @login_required
 def api_ledger_acknowledge():
+    from agent_friday.core import _is_local_request
     from agent_friday.services import screen_click
-    if not screen_click.screen_session(request):
+    # this PC only: a page reached through a tunnel or the LAN is not a press here
+    if not (_is_local_request() and screen_click.screen_session(request)):
         return jsonify({"status": "error", "code": "press_required",
                         "error": "Acknowledge this on Friday's own page, on this PC."}), 403
     try:

@@ -345,7 +345,21 @@ CHECKS = (
 # ── errors, drift, performance ──────────────────────────────────────────────
 
 _EXC = re.compile(r"\b([A-Z][A-Za-z0-9_]*(?:Error|Exception))\b")
-_LOGGER = re.compile(r"\b(ERROR|CRITICAL)\b[^\w]*([a-z_][a-z0-9_.]{2,80})")
+#: friday.log's own format (core/__init__.py): "<time> LEVEL    logger.name — message"
+_LOGGER = re.compile(r"^\S+ (ERROR|CRITICAL)\s+([A-Za-z_][A-Za-z0-9_.]{0,80}) \u2014 ")
+#: Loggers reported by name; any other is counted as "other".
+_LOGGER_PREFIXES = ("agent_friday", "friday", "werkzeug", "flask", "urllib3", "root")
+
+
+def _exception_name(t: str) -> str:
+    """A built-in exception's name as it is; anything else (a class a library
+    or an extension named) is counted, not named."""
+    import builtins
+    return t if isinstance(getattr(builtins, t, None), type) else "other_exception"
+
+
+def _logger_name(n: str) -> str:
+    return n if n.split(".")[0] in _LOGGER_PREFIXES else "other_logger"
 
 
 def _tail(p: Path, n: int = 2_000_000) -> str:
@@ -364,16 +378,17 @@ def _errors() -> dict:
     by_logger: dict[str, int] = {}
     text = _tail(_home() / "friday.log")
     for line in text.splitlines():
-        m = _LOGGER.search(line)
+        m = _LOGGER.match(line)
         if m:
-            name = m.group(2)
-            if name.startswith("agent_friday") or name.count(".") == 0:
-                by_logger[name] = by_logger.get(name, 0) + 1
+            name = _logger_name(m.group(2))
+            by_logger[name] = by_logger.get(name, 0) + 1
             for t in _EXC.findall(line):
+                t = _exception_name(t)
                 by_type[t] = by_type.get(t, 0) + 1
     crash = _tail(_home() / "logs" / "crashes.log")
     fatal = sum(crash.count(m) for m in ("Fatal Python error:", "Windows fatal exception:"))
     for t in _EXC.findall(crash):
+        t = _exception_name(t)
         by_type[t] = by_type.get(t, 0) + 1
     top = lambda d: [{"signature": k, "count": v}  # noqa: E731
                      for k, v in sorted(d.items(), key=lambda kv: -kv[1])[:20]]

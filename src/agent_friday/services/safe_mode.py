@@ -135,6 +135,72 @@ def plan() -> dict:
             "next_start_safe": bool(nxt), "disabled": list(DISABLED) if now["active"] else []}
 
 
+_GUARD = {"installed": False}
+
+
+def _local_host(host) -> bool:
+    import ipaddress
+    h = str(host or "").strip().strip("[]").lower()
+    if h in ("localhost", "") or h.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(h.split("%")[0]).is_loopback
+    except ValueError:
+        return False
+
+
+def install_network_guard() -> bool:
+    """In safe mode, refuse every connection that leaves this machine, for the
+    whole process: one seam under every library (model SDKs, Google APIs, web
+    search, downloads, peers), so a path nobody listed still cannot reach the
+    cloud. Loopback stays open (the page, a local model). Returns whether the
+    guard is in place."""
+    if not active() or _GUARD["installed"]:
+        return _GUARD["installed"]
+    import socket
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+    real_gai = socket.getaddrinfo
+
+    def _check(addr):
+        host = addr[0] if isinstance(addr, tuple) and addr else addr
+        if isinstance(host, (bytes, bytearray)):
+            host = host.decode("ascii", "replace")
+        if isinstance(host, str) and not _local_host(host) and "/" not in host:
+            raise OSError("safe mode: no connection leaves this machine (%s)" % host)
+
+    def connect(self, addr, *a, **k):
+        if getattr(self, "family", None) in (socket.AF_INET, getattr(socket, "AF_INET6", -1)):
+            _check(addr)
+        return real_connect(self, addr, *a, **k)
+
+    def connect_ex(self, addr, *a, **k):
+        if getattr(self, "family", None) in (socket.AF_INET, getattr(socket, "AF_INET6", -1)):
+            _check(addr)
+        return real_connect_ex(self, addr, *a, **k)
+
+    def getaddrinfo(host, *a, **k):
+        h = host.decode("ascii", "replace") if isinstance(host, (bytes, bytearray)) else host
+        if h is not None and not _local_host(h):
+            raise socket.gaierror("safe mode: no name lookup for %s" % h)
+        return real_gai(host, *a, **k)
+
+    socket.socket.connect = connect
+    socket.socket.connect_ex = connect_ex
+    socket.getaddrinfo = getaddrinfo
+    _GUARD.update(installed=True, real=(real_connect, real_connect_ex, real_gai))
+    return True
+
+
+def remove_network_guard() -> None:
+    """Tests only: put the socket functions back."""
+    if not _GUARD.get("installed"):
+        return
+    import socket
+    socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo = _GUARD["real"]
+    _GUARD.update(installed=False, real=None)
+
+
 def reset_for_tests() -> None:
     with _LOCK:
         _DECIDED.clear()

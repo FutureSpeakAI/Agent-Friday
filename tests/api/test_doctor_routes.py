@@ -39,8 +39,12 @@ def _plant():
         "command": str(home.parent / PATH_BIT / "server.exe"), "env": {"TOKEN": PRIVATE_FACT}}}}),
         encoding="utf-8")
     with open(home / "friday.log", "a", encoding="utf-8") as f:
-        f.write(f"2026-10-21 09:00:00 ERROR agent_friday.services.probe: ValueError: could not "
+        # friday.log's own format, a line naming private things, an INFO line
+        # with "ERROR" in its words, and an extension's own exception class
+        f.write(f"2026-10-21T09:00:00 ERROR    agent_friday.services.probe \u2014 ValueError: could not "
                 f"read {home.parent / PATH_BIT} for {EMAIL} ({PRIVATE_FACT})\n")
+        f.write(f"2026-10-21T09:00:01 INFO     agent_friday.chat \u2014 ERROR wilhelmina said hi\n")
+        f.write(f"2026-10-21T09:00:02 ERROR    wilhelmina_plugin \u2014 WilhelminaVaultError: nope\n")
     return settings_p, old
 
 
@@ -68,7 +72,9 @@ def test_the_report_has_the_five_parts_and_nothing_personal(client):
         assert "user_name" in rep["drift"]["settings_changed_from_default"] or \
             rep["drift"].get("settings_unknown_key_count", 0) >= 1
         blob = json.dumps(rep) + text
-        for bit in (NAME, "Wilhelmina", EMAIL, PRIVATE_FACT, SERVER, PATH_BIT, "quinces",
+        assert any(e["signature"] == "other_exception" for e in rep["errors"]["exception_types"])
+        assert any(e["signature"] == "other_logger" for e in rep["errors"]["loggers"])
+        for bit in (NAME, "Wilhelmina", "wilhelmina", EMAIL, PRIVATE_FACT, SERVER, PATH_BIT, "quinces",
                     str(friday_home()), os.path.expanduser("~")):
             assert bit not in blob, bit
     finally:
@@ -157,3 +163,17 @@ def test_the_observer_cannot_read_the_doctor(client):
     for path in ("/api/doctor/reports", "/api/safe-mode", "/doctor"):
         assert client.get(path, headers={obs.HEADER: tok}).status_code == 403, path
     assert client.post("/api/doctor/report", headers={obs.HEADER: tok}, json={}).status_code == 403
+
+
+def test_nothing_here_answers_a_page_reached_from_another_machine(client):
+    from agent_friday.core import _current_api_token
+    remote = {"REMOTE_ADDR": "203.0.113.7"}
+    press = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
+             "X-Friday-Token": _current_api_token()}
+    r = client.post("/api/safe-mode", json={"next_start": False}, headers=press, environ_base=remote)
+    assert r.status_code in (401, 403)
+    r = client.post("/api/ledger/acknowledge", json={"reviewed": []}, headers=press, environ_base=remote)
+    assert r.status_code in (401, 403)
+    r = client.get("/doctor", environ_base=remote)
+    assert r.status_code in (302, 401, 403)
+    assert _current_api_token().encode() not in r.data

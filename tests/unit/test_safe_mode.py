@@ -178,3 +178,22 @@ def test_every_background_part_the_server_starts_asks_safe_mode_first():
             if not re.search(r"allows\(\"[a-z_]+\"\)", window):
                 missing.append(needle)
     assert not missing, "started without asking safe mode: %s" % missing
+
+
+def test_in_safe_mode_no_connection_leaves_the_machine(safe):
+    import socket
+    from agent_friday.services import safe_mode
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    try:
+        assert safe_mode.install_network_guard()
+        with pytest.raises(OSError):
+            socket.create_connection(("203.0.113.9", 443), timeout=1)
+        with pytest.raises(OSError):
+            socket.getaddrinfo("api.anthropic.com", 443)
+        c = socket.create_connection(srv.getsockname(), timeout=2)   # loopback stays open
+        c.close()
+    finally:
+        safe_mode.remove_network_guard()
+        srv.close()

@@ -44,6 +44,8 @@ def doctor_page():
     from flask import Response
 
     from agent_friday import core
+    if not core._is_local_request():
+        return "The Doctor opens on this PC only.", 403
     try:
         html = _page_path().read_text(encoding="utf-8")
     except OSError:
@@ -61,6 +63,9 @@ def doctor_page():
 @doctor_bp.route("/api/doctor/report", methods=["POST"])
 @login_required
 def doctor_report():
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     try:
         rep = doctor.save()
         return jsonify({"status": "ok", "report": rep, "text": doctor.render_text(rep)})
@@ -98,8 +103,11 @@ def safe_mode_state():
 @doctor_bp.route("/api/safe-mode", methods=["POST"])
 @login_required
 def safe_mode_set():
+    from agent_friday.core import _is_local_request
     from agent_friday.services import screen_click
-    if not screen_click.screen_session(request):
+    # this PC only: safe mode is never switched from a page reached through a
+    # tunnel or the LAN
+    if not (_is_local_request() and screen_click.screen_session(request)):
         return jsonify({"status": "error", "code": "press_required",
                         "error": "Choose this on Friday's own page, on this PC."}), 403
     body = request.get_json(silent=True) or {}
