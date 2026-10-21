@@ -18,6 +18,7 @@ backend/API-first.
                                                    {"confirm_unknown_outcome": true}
                                                    from a click on Friday's own page
   GET    /api/goals/<goal_id>/receipts            signed proof-of-work receipts
+  GET    /api/goals/summary                       the Goals card (?finished=1 adds archived)
   GET    /api/goals/review                        latest weekly review doc
   POST   /api/goals/review/run                    force-run the weekly review job now
 
@@ -85,6 +86,14 @@ def list_goals_route():
         return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)} or 'live'"}), 400
     return jsonify({"ok": True, "goals": _goals.list_goals(status=status),
                     "unreadable": _goals.unreadable_goals()})
+
+
+@goals_bp.route("/api/goals/summary", methods=["GET"])
+def goals_summary_route():
+    """The Goals card: every goal with its state, what each milestone waits
+    on, and the moves the owner can make (§17.13)."""
+    include = request.args.get("finished") in ("1", "true", "yes")
+    return jsonify({"ok": True, **_goals.summaries(include_finished=include)})
 
 
 @goals_bp.route("/api/goals", methods=["POST"])

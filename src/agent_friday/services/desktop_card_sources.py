@@ -335,7 +335,7 @@ def card_for(kind, source_id, observations, *, prefix="auto", now):
                   updated_at=row["updated_at"])
     return {"id": automatic_id(kind, source_id, now) if prefix == "auto" else stable_id(prefix, kind, source_id), "title": row["title"], "body": row["body"],
             "type": kind, "origin": "tracked" if prefix == "track" else "automatic", "priority": row["priority"],
-            "actions": [{"label": "Open " + ("Activity" if kind in {"task", "activity"} else "Tasks" if kind == "goal" else KINDS[kind][0]), **target}],
+            "actions": [{"label": "Open " + ("Activity" if kind in {"task", "activity"} else "Goals" if kind == "goal" else KINDS[kind][0]), **target}],
             "source": source, "created_at": row["updated_at"] or now, "updated_at": row["updated_at"],
             "expires_at": row["expires_at"]}
 

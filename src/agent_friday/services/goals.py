@@ -2161,6 +2161,8 @@ def restart_milestone(goal_id: str, milestone_id: str, *,
 
 def blocker_words(milestone: Dict[str, Any]) -> str:
     """One plain sentence about what a milestone waits on, or ""."""
+    if milestone.get("status") in ("done", "in_progress"):
+        return ""
     b = milestone.get("blocker") or {}
     if b.get("text"):
         return str(b["text"])
@@ -2175,6 +2177,55 @@ def blocker_words(milestone: Dict[str, Any]) -> str:
     if status == "verifying" and milestone.get("approval_id"):
         return f"“{milestone.get('name')}” is done and waits for you to confirm it."
     return ""
+
+
+def summary(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
+    """One goal as the Goals card shows it (§17.13: what the owner can do
+    with it, and what each milestone waits on)."""
+    status = goal.get("status") or "proposed"
+    milestones = [m for m in goal.get("milestones") or [] if isinstance(m, dict)]
+    rows = []
+    for m in milestones:
+        b = m.get("blocker") or {}
+        stopped = m.get("status") == "blocked" and b.get("type") in _OWNER_BLOCKERS
+        rows.append({
+            "milestone_id": m.get("milestone_id"), "name": m.get("name"), "status": m.get("status"),
+            "due": m.get("due"), "category": goal_state.category_of(m),
+            "waits": blocker_words(m),
+            "can_restart": bool(stopped),
+            "restart_needs_confirmation": bool(stopped and b.get("needs_confirmation", True)),
+            "can_run": m.get("status") == "pending" and status in LIVE_STATUSES,
+            "verified": bool((m.get("verification") or {}).get("status") == "ok"
+                             and not (m.get("verification") or {}).get("human_override")),
+        })
+    return {
+        "goal_id": goal.get("goal_id"), "title": goal.get("title"),
+        "description": goal.get("description") or "",
+        "success_criteria": goal.get("success_criteria") or "",
+        "status": status, "state_words": goal_state.STATE_WORDS.get(status, status),
+        "done": sum(1 for m in milestones if m.get("status") == "done"), "total": len(milestones),
+        "deadline": goal.get("deadline"), "budget_cap_mψ": int(goal.get("budget_cap_mψ") or 0),
+        "spent_mψ": int(goal.get("spent_mψ") or 0),
+        "risk": goal_state.risk_reasons(goal, now) if status == "at_risk" else [],
+        "completion": goal.get("completion"),
+        "approval_required": bool(goal.get("approval_required")),
+        "allowed_routes": list(goal.get("allowed_routes") or []),
+        "moves": goal_state.owner_moves(status),
+        "milestones": rows,
+    }
+
+
+def summaries(*, include_finished: bool = False) -> Dict[str, Any]:
+    out = []
+    for g in list_goals():
+        if not include_finished and g.get("status") in ("archived",):
+            continue
+        out.append(summary(g))
+    order = {s: i for i, s in enumerate(("needs_owner", "at_risk", "waiting", "active", "approved",
+                                         "proposed", "paused", "failed", "met_unverified",
+                                         "met_verified", "abandoned", "archived"))}
+    out.sort(key=lambda s: (order.get(s["status"], 99), str(s["title"] or "")))
+    return {"goals": out, "unreadable": unreadable_goals()}
 
 
 def run_due_milestones(*, max_per_tick: int = 5) -> Dict[str, Any]:
