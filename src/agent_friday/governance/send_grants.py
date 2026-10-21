@@ -878,6 +878,10 @@ def use_refusal(tool_name: str, args, ctx=None) -> str:
     does not screen as TIER_1. Fails closed: an error is a reason."""
     if _is_voice(ctx) and not options().get("voice_may_use"):
         return VOICE_WHY
+    if _is_voice(ctx) and not ((ctx or {}).get("owner_local") or (ctx or {}).get("voice_owner_local")):
+        # Voice may spend a pre-approval only on a call from Friday's own page on this PC
+        # (the desk key on the socket, routes/voice.py), never through a tunnel or a forward.
+        return VOICE_WHY
     try:
         tier = content_tier(args)
     except Exception as e:

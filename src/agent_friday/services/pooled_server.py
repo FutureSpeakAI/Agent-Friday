@@ -174,6 +174,26 @@ class _OneRequestHandler(WSGIRequestHandler):
     worker."""
     protocol_version = "HTTP/1.0"
 
+    def log_request(self, code="-", size="-"):
+        """Never write a query string to the log: a voice socket carries the page token
+        (`t`) and this launch's desk key (`dk`) there (services/desk_press)."""
+        saved_line = getattr(self, "requestline", "")
+        had_path = hasattr(self, "path")
+        saved_path = getattr(self, "path", "")
+        try:
+            parts = saved_line.split(" ")
+            if len(parts) >= 2 and "?" in parts[1]:
+                parts[1] = parts[1].split("?", 1)[0] + "?[query withheld]"
+                self.requestline = " ".join(parts)
+            if had_path and "?" in str(saved_path):
+                # werkzeug logs `self.path` when it has one, `requestline` otherwise.
+                self.path = str(saved_path).split("?", 1)[0] + "?[query withheld]"
+            super().log_request(code, size)
+        finally:
+            self.requestline = saved_line
+            if had_path:
+                self.path = saved_path
+
 
 class PooledWSGIServer(BaseWSGIServer):
     """BaseWSGIServer (single-threaded) with a fixed pre-started worker pool."""

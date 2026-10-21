@@ -809,10 +809,11 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
         if decision == "approve" and screen_only is not None and decided_by not in screen_only:
             return dict(rec), False
-        if decision == "approve" and source == "voice" and voice_off_this_desk():
+        if decision == "approve" and source == "voice" and not voice_on_this_desk():
             # A spoken yes counts only from a voice call on Friday's own page on this PC
-            # (the desk key on the socket, routes/voice.py). Voice through a tunnel or a
-            # forward may decline, never approve.
+            # (the desk key on the socket, routes/voice.py), proved positively: a voice
+            # decision made with no voice call's context (a thread, a hook, a future fast
+            # path) does not approve either. Voice through a tunnel may decline, never approve.
             return dict(rec), False
         if (decision == "approve" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
                 and decided_by not in LAYA_CARD_APPROVERS):
@@ -847,6 +848,20 @@ _MESSAGE_SURFACES = frozenset({"sms", "text", "telegram", "discord", "channel", 
 #: Sources a caller may name for its own decision (decide(source=...)). Never desktop_press:
 #: that one is only ever worked out from a verified press.
 _CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday"})
+
+
+def voice_on_this_desk() -> bool:
+    """Positive proof for a spoken approval: the decision is made inside a voice call's
+    tool call, and that call is the owner's own page on this PC."""
+    try:
+        from agent_friday.services.agent import _CURRENT_TOOL_CONTEXT
+        ctx = _CURRENT_TOOL_CONTEXT.get() or {}
+    except Exception:
+        return False
+    surface = str(ctx.get("surface") or "")
+    if not (ctx.get("is_voice") or surface.startswith("voice")):
+        return False
+    return bool(ctx.get("owner_local") or ctx.get("voice_owner_local"))
 
 
 def voice_off_this_desk() -> bool:

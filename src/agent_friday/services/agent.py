@@ -4766,7 +4766,8 @@ def _tool_answer_card(inp):
     from agent_friday.services import item_actions as _ia
     inp = inp or {}
     surface = _CURRENT_SURFACE.get() or "chat"
-    if (surface.startswith("voice") and str(inp.get("decision") or "").lower() != "decline"):
+    _dec = str(inp.get("decision") or "").strip().lower()
+    if (surface.startswith("voice") and _dec not in ("decline", "deny", "no", "reject", "cancel")):
         from agent_friday.services import approvals as _appr_desk
         if _appr_desk.voice_off_this_desk():
             # services/approvals refuses it too; this says why, in words Friday can speak.

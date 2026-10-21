@@ -4683,6 +4683,9 @@ if sock is not None:
                                          "provider": _prov,
                                          "is_voice": True,
                                          "surface": "voice-local",
+                                         # The owner on this PC (desk key on the socket): only then
+                                         # may a spoken yes approve (services/approvals).
+                                         "owner_local": bool(_owner_voice),
                                          "owner_text": str(user_text or "")[:4000],
                                          "owner_text_at": _time.time(),
                                          # The local mind or an honest failure,
