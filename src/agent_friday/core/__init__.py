@@ -1101,6 +1101,7 @@ def _setup_friday_logging() -> None:
             datefmt="%Y-%m-%dT%H:%M:%S",
         ))
         root.addHandler(sh)
+        _install_log_redaction()
         return
 
     try:
@@ -1124,6 +1125,22 @@ def _setup_friday_logging() -> None:
     sh.setLevel(logging.WARNING)
     sh.setFormatter(logging.Formatter("[FRIDAY] %(levelname)s %(message)s"))
     root.addHandler(sh)
+    _install_log_redaction()
+
+
+def _install_log_redaction() -> None:
+    """Every handler of the "friday" logger passes the one redaction filter (secrets out,
+    the request's correlation id in: services/log_redaction). A filter that cannot be
+    installed is said once on stderr; logging itself keeps working."""
+    try:
+        from agent_friday.services import log_redaction
+        log_redaction.install(logging.getLogger("friday"))
+    except Exception as e:  # noqa: BLE001
+        try:
+            sys.stderr.write("[FRIDAY] the log redaction filter could not be installed (%s)\n"
+                             % type(e).__name__)
+        except Exception:
+            pass
 
 
 if not _TESTING:
@@ -4719,6 +4736,40 @@ def _frame_gate_reason():
             return ("I couldn't check where that request came from, so I refused it. "
                     "Reload Friday's page and try again.")
         return None
+
+
+@app.before_request
+def _begin_correlation():
+    """One correlation id for this request, before anything else runs (services/correlation):
+    the caller's X-Request-Id when it is a plain token, else a new one. Every friday.log line
+    and decision receipt this request writes carries it, and the answer names it."""
+    try:
+        from agent_friday.services import correlation as _corr
+        _corr.begin(request.headers.get(_corr.REQUEST_HEADER))
+    except Exception:  # noqa: BLE001 - an id is a label; its absence blocks nothing
+        pass
+    return None
+
+
+@app.after_request
+def _answer_correlation(resp):
+    try:
+        from agent_friday.services import correlation as _corr
+        cid = _corr.current()
+        if cid:
+            resp.headers[_corr.RESPONSE_HEADER] = cid
+    except Exception:  # noqa: BLE001
+        pass
+    return resp
+
+
+@app.teardown_request
+def _end_correlation(_exc=None):
+    try:
+        from agent_friday.services import correlation as _corr
+        _corr.clear()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @app.before_request
