@@ -13261,6 +13261,19 @@ def _resolve_tool_name(name):
     return None, sorted(near)[:6]
 
 
+def _resolution_may_run(resolved, tool_input, session_ctx=None) -> bool:
+    """A misnamed call may run under the resolved name only when that tool is internal for
+    these arguments (governance/action_gate.classify). Anything else, or a classification that
+    cannot run, is not run under a guessed name."""
+    try:
+        from agent_friday.governance import action_gate as _ag
+        cls, _why = _ag.classify(resolved, tool_input if isinstance(tool_input, dict) else {},
+                                 session_ctx)
+        return cls == _ag.INTERNAL
+    except Exception:
+        return False
+
+
 def _restore_placeholders(value, pii_lookup):
     """`value` with every [PII:kind:hash] tag from this turn put back.
 
@@ -13491,9 +13504,19 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
+        if resolved and not _resolution_may_run(resolved, tool_input, session_ctx):
+            # BD-11a / NS-32.21-1: a misnamed call is never resolved to a tool that acts
+            # outside (sends, buys, writes where it is not internal, reaches someone). The model
+            # is told the exact name; that call then passes every gate as itself.
+            print(f"  [tools] '{name}' is not registered; '{resolved}' matches it but acts "
+                  f"outside, so it was not run under a guessed name")
+            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so nothing ran. The "
+                    f"closest tool is '{resolved}', which acts outside this computer, so it is "
+                    f"never run under a guessed name. If '{resolved}' is what you meant, call it "
+                    f"by that exact name.")
         if resolved:
             print(f"  [tools] '{name}' is not registered; resolved to "
-                  f"'{resolved}' (unambiguous match)")
+                  f"'{resolved}' (unambiguous match, internal)")
             name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
         else:
             # A bare "Unknown tool: x" is a dead end: it says the call failed
