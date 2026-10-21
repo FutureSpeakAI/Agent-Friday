@@ -12,11 +12,16 @@ import pytest
 
 @pytest.fixture
 def gs(tmp_path, monkeypatch):
-    from agent_friday.services import global_stop
+    from agent_friday.services import global_stop, agent, local_image
     monkeypatch.setattr(global_stop, "_path", lambda: tmp_path / "global_stop.json")
+    monkeypatch.setattr(agent, "_HAS_PYAUTOGUI", False, raising=False)
+    monkeypatch.setattr(local_image, "interrupt_comfy", lambda timeout=10: False)
+    had_perm, had_kill = agent._CC_PERMISSION.is_set(), agent._CC_KILL.is_set()
     global_stop._reset_for_tests()
     yield global_stop
     global_stop._reset_for_tests()
+    (agent._CC_PERMISSION.set if had_perm else agent._CC_PERMISSION.clear)()
+    (agent._CC_KILL.set if had_kill else agent._CC_KILL.clear)()
 
 
 def _page():
@@ -97,3 +102,19 @@ def test_a_press_through_a_tunnel_or_forward_does_not_resume(client, gs):
         r = client.post("/api/stop-everything/resume", json={}, headers=h)
         assert r.status_code == 403, extra
     assert gs.active()
+
+
+def test_a_press_from_another_machine_on_the_lan_does_not_resume(client, gs):
+    client.post("/api/stop-everything", json={})
+    r = client.post("/api/stop-everything/resume", json={}, headers=_page(),
+                    environ_base={"REMOTE_ADDR": "192.168.1.20"})
+    assert r.status_code != 200
+    assert gs.active()
+
+
+def test_file_analysis_waits_while_stopped(client, gs):
+    import io
+    client.post("/api/stop-everything", json={})
+    r = client.post("/api/analyze", data={"file": (io.BytesIO(b"hello"), "a.txt")},
+                    content_type="multipart/form-data")
+    assert r.status_code == 423

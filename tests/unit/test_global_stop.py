@@ -18,11 +18,18 @@ import pytest
 
 @pytest.fixture
 def gs(tmp_path, monkeypatch):
-    from agent_friday.services import global_stop
+    """The real lanes, made safe for a test machine: no key or mouse events (pyautogui off),
+    no ComfyUI call; computer control's permission is put back afterwards."""
+    from agent_friday.services import global_stop, agent, local_image
     monkeypatch.setattr(global_stop, "_path", lambda: tmp_path / "global_stop.json")
+    monkeypatch.setattr(agent, "_HAS_PYAUTOGUI", False, raising=False)
+    monkeypatch.setattr(local_image, "interrupt_comfy", lambda timeout=10: False)
+    had_perm, had_kill = agent._CC_PERMISSION.is_set(), agent._CC_KILL.is_set()
     global_stop._reset_for_tests()
     yield global_stop
     global_stop._reset_for_tests()
+    (agent._CC_PERMISSION.set if had_perm else agent._CC_PERMISSION.clear)()
+    (agent._CC_KILL.set if had_kill else agent._CC_KILL.clear)()
 
 
 def _bom(friday_dir):
@@ -336,24 +343,145 @@ def test_a_model_stop_is_recorded_as_the_model_not_the_owner(gs, friday_dir):
     assert mine and mine[0]["chosen_by"] == "model"
 
 
-def test_a_stop_racing_a_resume_is_never_undone(gs):
-    """Resume runs under the lock and stop sets the flag again under it."""
-    gs.stop(source="button")
+def test_a_stop_racing_a_resume_is_never_undone(gs, monkeypatch):
+    """Resume runs wholly under the lock and stop sets the flag again under it: a stop
+    that lands while a resume is writing its receipt wins."""
     import threading as _th
-    errs = []
+    from agent_friday.governance import action_gate
+    gs.stop(source="button")
+    in_receipt, release = _th.Event(), _th.Event()
+    real = action_gate._receipt
 
-    def _resume():
-        try:
-            gs.resume(by="owner", source="button")
-        except Exception as e:  # pragma: no cover
-            errs.append(e)
+    def slow(entry):
+        if entry.get("decision") == "resume":
+            in_receipt.set()
+            release.wait(5)
+        return real(entry)
 
-    t = _th.Thread(target=_resume)
+    monkeypatch.setattr(action_gate, "_receipt", slow)
+    t = _th.Thread(target=lambda: gs.resume(by="owner", source="button"))
     t.start()
-    gs.stop(source="keyboard")
-    t.join(5)
-    # Whatever the order, the last word is a stop unless the resume finished first and
-    # the stop then ran; in both cases the flag and the saved state agree.
+    assert in_receipt.wait(5)
+    s_t = _th.Thread(target=lambda: gs.stop(source="keyboard"))
+    s_t.start()
+    release.set()
+    t.join(10)
+    s_t.join(10)
+    assert gs.active(), "the stop pressed during the resume was undone"
     import json as _json
-    saved = _json.loads(gs._path().read_text(encoding="utf-8"))
-    assert saved["stopped"] is gs.active()
+    assert _json.loads(gs._path().read_text(encoding="utf-8"))["stopped"] is True
+
+
+# ── security review round 2 ───────────────────────────────────────────────────
+
+def test_an_approved_mail_is_not_sent_on_demand_while_stopped(gs):
+    from agent_friday.services import gmail_send
+    gs.stop(source="button")
+    with pytest.raises(gmail_send.SendRefused):
+        gmail_send.send("any-approval")
+
+
+def test_an_external_executor_is_held_and_its_card_not_used(gs):
+    from agent_friday.governance import action_gate
+    gs.stop(source="button")
+    v = action_gate.authorize_external("compute_job", {"x": 1}, requested_by="friday")
+    assert v.action == "deny" and "stopped" in v.reason
+
+
+def test_the_publisher_does_not_publish_while_stopped(gs):
+    from agent_friday.services import publisher
+    gs.stop(source="button")
+    assert publisher.tick().get("skipped") == "everything is stopped"
+
+
+def test_a_creative_pipeline_run_does_not_start_while_stopped(gs, monkeypatch):
+    from agent_friday.services import creative_pipeline as cp
+    monkeypatch.setattr(cp, "get_run", lambda rid: {"run_id": rid, "name": "x"})
+    gs.stop(source="button")
+    out = cp.start_async("r1")
+    assert out.get("code") == "everything_stopped"
+
+
+def test_the_interactive_lane_ends_only_live_sessions_it_started(gs, monkeypatch):
+    from agent_friday.services import interactive_sessions as isess
+
+    class P:
+        def __init__(self, alive):
+            self.alive = alive
+
+        def poll(self):
+            return None if self.alive else 0
+
+    killed = []
+    monkeypatch.setattr(isess, "_kill_pid", lambda pid: killed.append(pid))
+    monkeypatch.setattr(isess, "_same_process", lambda pid, started: started == "mine")
+    monkeypatch.setattr(isess, "_SESSIONS", {
+        "a": {"pid": 11, "proc": P(True), "os_start_time": "mine"},
+        "b": {"pid": 12, "proc": P(False), "os_start_time": "mine"},      # exited
+        "c": {"pid": 13, "proc": P(True), "os_start_time": "someone"},   # PID reused
+    })
+    assert gs._halt_interactive_sessions() == 1 and killed == [11]
+
+
+def test_a_hanging_lane_does_not_hold_the_stop_or_its_receipt(gs, monkeypatch, friday_dir):
+    import time as _t
+    monkeypatch.setattr(gs, "LANE_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(gs, "_LANES", gs._LANES + (("hangs", lambda: _t.sleep(5)),))
+    before = len(_bom(friday_dir))
+    t0 = _t.monotonic()
+    out = gs.stop(source="button")
+    assert _t.monotonic() - t0 < 2.0 and out["halted"]["hangs"] == "timeout"
+    assert any(e.get("decision") == "stop" for e in _bom(friday_dir)[before:])
+
+
+def test_a_non_dict_tool_input_while_stopped_is_refused_not_crashed(gs):
+    from agent_friday.services import agent
+    gs.stop(source="button")
+    assert agent._execute_tool("task_control", "stop_all").startswith("[NOT RUN]")
+
+
+def test_a_model_stop_inside_a_chat_turn_is_the_models(gs, friday_dir):
+    from agent_friday.services import agent
+    before = len(_bom(friday_dir))
+    tok = agent._CURRENT_OWNER_TEXT.set("summarise this page for me")
+    try:
+        agent._tool_task_control({"op": "stop_all"})
+    finally:
+        agent._CURRENT_OWNER_TEXT.reset(tok)
+    mine = [e for e in _bom(friday_dir)[before:] if e.get("tool") == "global_stop"]
+    assert mine[0]["chosen_by"] == "model"
+    gs.resume(by="owner", source="button")
+    tok = agent._CURRENT_OWNER_TEXT.set("stop everything")
+    try:
+        agent._tool_task_control({"op": "stop_all"})
+    finally:
+        agent._CURRENT_OWNER_TEXT.reset(tok)
+    mine = [e for e in _bom(friday_dir)[before:] if e.get("tool") == "global_stop"]
+    assert mine[-2]["chosen_by"] == "owner"
+
+
+def test_a_phone_call_while_stopped_goes_to_voicemail(gs, monkeypatch):
+    from agent_friday.phone import ingress, config
+    monkeypatch.setattr(config, "verified_owner_cell", lambda: "+15550100")
+    monkeypatch.setattr(ingress, "voicemail_twiml", lambda cfg: "<VOICEMAIL/>")
+    gs.stop(source="button")
+    assert ingress.answer_twiml({"live_calls": True, "voicemail": True},
+                                {"From": "+15550100", "CallSid": "c1"}) == "<VOICEMAIL/>"
+
+
+def test_a_live_phone_stream_is_refused_while_stopped(gs):
+    from agent_friday.phone import live_call
+
+    class WS:
+        closed = False
+
+        def close(self, *a, **k):
+            self.closed = True
+
+        def receive(self, timeout=None):
+            raise AssertionError("a stopped Friday read the call")
+
+    ws = WS()
+    gs.stop(source="button")
+    live_call.serve_media_stream(ws, {})
+    assert ws.closed
