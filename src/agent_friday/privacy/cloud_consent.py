@@ -130,7 +130,8 @@ VALID_CHOICES = (CHOICE_LOCAL, CHOICE_CLOUD, CHOICE_GUARDED)
 #:
 #: Not consent: the setup chat's privacy answer writing the mode it implies
 #: ("posture": that answer records its own consent, which decides), a mode
-#: change whose request was not a click on the page ("unverified"), and a
+#: change whose request was not a click on the page ("unverified"), a route the
+#: terminal setup kept without asking ("kept", north-star A16), and a
 #: `mode_chosen` written before this record existed (no `via`). Each of those
 #: keeps every safeguard the recorded answer gives. Of the two explicit
 #: decisions -- the recorded answer and the cloud-only choice -- the later one

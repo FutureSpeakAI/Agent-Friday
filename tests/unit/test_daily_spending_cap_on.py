@@ -17,6 +17,9 @@ from agent_friday.services import spending_caps as sc
 
 REPO = Path(__file__).resolve().parents[2]
 
+#: These tests decide "new install" the way a real home does (tests/conftest.py).
+pytestmark = pytest.mark.new_install
+
 
 @pytest.fixture
 def real_settings(tmp_path, monkeypatch):
@@ -155,6 +158,30 @@ def test_the_card_is_never_queued_twice_even_when_settings_json_is_rewritten(rea
     assert _card(core) == "shown" and _push_card() is False
 
 
+def test_the_card_is_not_shown_once_the_owner_has_set_a_cap(real_settings, monkeypatch):
+    core = real_settings
+    _existing(core, {"cost_budget": {}})
+    assert _card(core) == "pending"
+    core._save_settings({"cost_budget": {"hard_stop_daily": 4.0, "hard_stop_daily_enabled": True}})
+    core._invalidate_settings_cache()
+    pushed = []
+    import agent_friday.notifications_engine as ne
+    monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw) or kw)
+    assert _push_card() is False and pushed == []
+    assert _card(core) == "not_needed"
+
+
+def test_a_save_onto_a_rewritten_store_never_switches_an_existing_install_on(real_settings):
+    """A store rewritten without cost_budget (config.yaml), saved again before
+    the migration persists, must not take the defaults' cap."""
+    core = real_settings
+    _existing(core, {"cost_budget": {}})
+    core.SETTINGS_FILE.write_text(json.dumps({"agent_name": "TEST AGENT"}), encoding="utf-8")
+    core._invalidate_settings_cache()
+    core._save_settings({"agent_name": "TEST AGENT 2"})
+    assert _on_disk(core)["cost_budget"]["hard_stop_daily_enabled"] is False
+
+
 def test_an_existing_install_with_no_cost_block_at_all_is_not_switched_on(real_settings):
     core = real_settings
     s = _existing(core, {})
@@ -240,6 +267,9 @@ def test_reaching_the_cap_pauses_with_a_card_in_plain_words(friday_dir, monkeypa
         assert any(t.startswith("Paused by your spending cap: a research step") for t in titles)
         assert sg.status().get("plain"), "Settings > Spending gets the cap in plain words"
     finally:
+        cm.reset_for_tests()
+        if cm.DB_PATH.exists():
+            cm.DB_PATH.unlink()          # the spend recorded here must not reach later tests
         cm.reset_for_tests()
 
 

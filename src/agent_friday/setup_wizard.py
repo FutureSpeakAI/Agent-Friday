@@ -1924,7 +1924,8 @@ def main():
         # Answered at the terminal by the owner: a setup choice, and choosing cloud only
         # there is consent (privacy/cloud_consent.ROUTING_CONSENT_VIAS). Quick mode or a
         # skipped routing screen kept the mode without asking: not consent.
-        block["mode_chosen_via"] = "setup" if answered else "unverified"
+        # A16: a kept route is recorded as such ("kept"), never as a pick.
+        block["mode_chosen_via"] = "setup" if answered else "kept"
         config["model_routing"] = block
 
     # Defaults that server expects

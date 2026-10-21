@@ -2212,6 +2212,7 @@ def _degraded_settings() -> "_DegradedSettings":
             out = _DegradedSettings(_copy.deepcopy(_SETTINGS_LAST_GOOD["value"]))
         else:
             out = _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
+            out.from_defaults = True
             # North-star A17: the defaults carry the daily cap on, which only a
             # new install chose to start with. An existing install read while
             # its file is unreadable must not get a cap it never set.
@@ -3846,6 +3847,9 @@ def update_install_choices_state(**fields) -> None:
     """Merge `fields` into the install-origin record (atomic replace)."""
     with _INSTALL_ORIGIN_LOCK:
         cur = install_choices_state()
+        known = _INSTALL_ORIGIN_CACHE.get(str(install_origin_file()))
+        if known and "install" not in cur:
+            cur["install"] = known
         cur.update(fields)
         p = install_origin_file()
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -3873,12 +3877,22 @@ def install_origin() -> str:
     fresh = not (Path(SETTINGS_FILE).exists() or (home / ".setup_complete").exists()
                  or (home / "costs.db").exists() or (home / "config.yaml").exists())
     origin = NEW_INSTALL if fresh else EXISTING_INSTALL
+    # Kept for this process even if the record cannot be written now (a
+    # sharing lock, say): the answer must not change once anything acted on
+    # it. The write is tried again by update_install_choices_state's callers.
+    _INSTALL_ORIGIN_CACHE[key] = origin
     try:
         update_install_choices_state(install=origin,
                                      decided_at=datetime.now().isoformat(timespec="seconds"))
     except Exception:
-        return EXISTING_INSTALL
+        pass
     return origin
+
+
+#: How the terminal setup records a route it kept without asking (quick mode,
+#: a skipped routing screen). Not a pick (A16) and not consent (it is not one
+#: of privacy/cloud_consent.ROUTING_CONSENT_VIAS).
+ROUTE_KEPT_VIA = "kept"
 
 
 def route_pick_pending(settings=None) -> bool:
@@ -3887,8 +3901,8 @@ def route_pick_pending(settings=None) -> bool:
     The pick is the owner's own routing change (Settings, the setup chat,
     setup completion, an answered terminal-setup routing question), which
     records `model_routing.mode_chosen` for the stored mode. A mode the
-    terminal setup kept without asking (`mode_chosen_via` "unverified") is not
-    a pick. An install that already existed is never pending: its stored
+    terminal setup kept without asking (`mode_chosen_via` ROUTE_KEPT_VIA) is
+    not a pick. An install that already existed is never pending: its stored
     route is its choice."""
     try:
         if install_origin() != NEW_INSTALL:
@@ -3900,7 +3914,7 @@ def route_pick_pending(settings=None) -> bool:
         chosen = str(mr.get("mode_chosen") or "").strip().lower()
         if not mode or chosen != mode:
             return True
-        return str(mr.get("mode_chosen_via") or "") == "unverified"
+        return str(mr.get("mode_chosen_via") or "") == ROUTE_KEPT_VIA
     except Exception:
         return False
 
@@ -4036,8 +4050,7 @@ def _load_settings_raw():
         out = _degraded_settings()
         try:
             import logging as _lg
-            _have_last = ({k: v for k, v in out.items()
-                           if k != DEGRADED_READ_KEY} != DEFAULT_SETTINGS)
+            _have_last = not getattr(out, "from_defaults", False)
             _lg.getLogger("friday.settings").error(
                 "settings.json exists but could not be read (%s: %s) — %s. "
                 "A save of anything derived from this read is refused. "
@@ -4371,6 +4384,18 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             data.pop("voice_room_approvals_require_name", None)
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
+    # North-star A17: the defaults' daily cap is a new install's. A save onto a
+    # store with no cost_budget (rewritten by config.yaml, lost, or never
+    # migrated) on an install that existed writes the cap down as off, as it
+    # was, never the default's on.
+    if not isinstance(existing.get("cost_budget"), dict):
+        try:
+            _keep_off = install_origin() != NEW_INSTALL
+        except Exception:
+            _keep_off = True
+        if _keep_off:
+            merged["cost_budget"] = dict(merged.get("cost_budget") or {},
+                                         hard_stop_daily_enabled=False)
     for k, v in (data or {}).items():
         if (k in _DEEP_MERGED_BLOCKS and isinstance(v, dict)
                 and isinstance(existing.get(k), dict)):

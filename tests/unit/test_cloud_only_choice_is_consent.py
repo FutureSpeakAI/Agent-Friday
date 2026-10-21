@@ -226,7 +226,9 @@ def test_the_choice_time_is_written_in_utc(online):
 def test_the_terminal_wizard_counts_only_an_answered_routing_screen():
     from pathlib import Path
     src = (Path(core.__file__).resolve().parents[1] / "setup_wizard.py").read_text(encoding="utf-8")
-    assert 'block["mode_chosen_via"] = "setup" if answered else "unverified"' in src
+    # A kept route is "kept" (north-star A16): neither consent nor a pick.
+    assert 'block["mode_chosen_via"] = "setup" if answered else "kept"' in src
+    assert "kept" not in cc.ROUTING_CONSENT_VIAS
     assert 'config["_routing_answered"] = True' in src
 
 

@@ -170,6 +170,13 @@ def _load_config() -> dict:
 
 def _save_config(config: dict):
     """Write config to both config.yaml and settings.json."""
+    # North-star A16/A17: decide whether this is a new install before this
+    # command writes settings.json itself.
+    try:
+        from agent_friday import core as _core
+        _core.install_origin()
+    except Exception:
+        pass
     # The command line is not the owner's click on the Settings page: a guarded setting
     # (Laya's safe writes) is written no wider than settings.json holds it now.
     from agent_friday.services import guarded_settings

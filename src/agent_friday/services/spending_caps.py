@@ -436,6 +436,12 @@ def push_daily_cap_card_if_pending() -> bool:
     s = _settings()          # runs the migration, which queues the card
     if _card_state() != "pending":
         return False
+    if daily_cap(s) is not None or "cloud_daily_stop" in (
+            _block(s, "spending_caps").get("answered") or {}):
+        # The person has set or answered the cap since the card was queued:
+        # its words ("yours has no daily cap") would no longer be true.
+        _set_card_state("not_needed")
+        return False
     try:
         import agent_friday.notifications_engine as _ne
         _ne.push(title=CARD_TITLE, body=card_body(s), priority="high",

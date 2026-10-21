@@ -376,6 +376,39 @@ def federation_on(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _homes_are_existing_installs(request, monkeypatch):
+    """Every home a test points FRIDAY_DIR at is an EXISTING install (north-star
+    A16/A17): its first settings keep the choices tests were written against
+    (no daily spending cap; no route reported as unpicked). costs.db is the
+    shared home's in every test, so a $2 cap on by default in a temp home would
+    pause whichever test reached a paid choke point after earlier tests had
+    recorded spend. Tests of new-install behaviour opt in with the
+    `new_install` marker."""
+    if request.node.get_closest_marker("new_install") is not None:
+        yield
+        return
+    try:
+        from agent_friday import core
+    except Exception:
+        yield
+        return
+    real = getattr(core, "install_origin", None)
+    if real is None:
+        yield
+        return
+
+    def _existing_unless_recorded():
+        if not core.install_choices_state().get("install"):
+            try:
+                core.update_install_choices_state(install=core.EXISTING_INSTALL)
+            except Exception:
+                return core.EXISTING_INSTALL
+        return real()
+    monkeypatch.setattr(core, "install_origin", _existing_unless_recorded)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _held_detail_cards_off(request, monkeypatch):
     """The gate raises a card for every private detail it holds back (services/cloud_release,
     owner ruling 2026-10-17). Hundreds of tests seal private text through a shared scratch home;

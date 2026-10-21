@@ -1572,7 +1572,8 @@ def _intelligence_payload() -> dict:
         # North-star A16: False on a new install until the owner picks a route.
         # The page then presses no mode button and says what runs meanwhile;
         # routing_mode is still how Friday routes in the meantime.
-        "routing_mode_picked": not _route_pick_pending(settings),
+        # Read from the stored settings: the offline overlay moves the mode.
+        "routing_mode_picked": not _route_pick_pending(None),
         # The vault posture, stated where a user can see it. A privacy control
         # that disables itself silently is worse than one that is absent; this
         # is the surface that makes `vault_local_only: false` visible without
