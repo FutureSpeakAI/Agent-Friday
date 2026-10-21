@@ -157,13 +157,23 @@ def _segment_index(p: Path) -> int:
 
 
 def segments() -> list[Path]:
-    """Sealed segments, oldest first, then the live file (when present)."""
+    """Sealed segments, oldest first, then the live file (when present).
+    One directory read each (os.scandir), not a stat per name: this runs on
+    every append and every hold check, and a stat is slow on Windows."""
     d = ledger_dir()
-    sd = d / SEGMENTS_DIR
-    out = sorted(sd.glob("actions-*.jsonl"), key=_segment_index) if sd.is_dir() else []
-    live = d / LIVE_NAME
-    if live.exists():
-        out.append(live)
+    out = []
+    try:
+        with os.scandir(d / SEGMENTS_DIR) as it:
+            names = [e.name for e in it if e.name.startswith("actions-") and e.name.endswith(".jsonl")]
+        out = sorted((d / SEGMENTS_DIR / n for n in names), key=_segment_index)
+    except OSError:
+        pass
+    try:
+        with os.scandir(d) as it:
+            if any(e.name == LIVE_NAME for e in it):
+                out.append(d / LIVE_NAME)
+    except OSError:
+        pass
     return out
 
 
@@ -651,7 +661,9 @@ def _append_locked(key: bytes, items: list, durable: bool) -> dict:
             _seal_live_locked(d, live)
     except OSError:
         pass                                   # sealed next time
-    pre_stats = _stats()
+    # the file stats a cached verify result covers: only worth reading when
+    # there is such a result to keep current
+    pre_stats = _stats() if _STATE.get("verified") else None
     out = None
     written = 0
     with open(live, "ab") as f:
@@ -683,7 +695,8 @@ def _append_locked(key: bytes, items: list, durable: bool) -> dict:
     with _CACHE_LOCK:
         cached = _STATE.get("verified")
         kinds = {k for k, _r in items}
-        if (cached and cached[0] == pre_stats and not pending and cached[1].get("ok")
+        if (cached and pre_stats is not None and cached[0] == pre_stats and not pending
+                and cached[1].get("ok")
                 and not kinds & ({"integrity_ack", "migration_complete"} | set(FLAG_KINDS))):
             rep = dict(cached[1])
             rep.update(records=rep.get("records", 0) + written, last_seq=seq, tip=prev)
@@ -1015,20 +1028,27 @@ def _tail_digest(p: Path) -> str:
 
 
 def _stats() -> tuple:
+    """(name, size, mtime_ns) of every ledger file and the head: a cache key
+    that changes whenever any of them changes. From directory reads
+    (os.scandir carries the sizes and times on Windows without opening each
+    file). An edit that puts back a file's size and mtime is caught by the
+    full re-read at least every FULL_RECHECK_S and at every start."""
     out = []
-    for p in segments():
+    d = ledger_dir()
+    for where, keep in ((d / SEGMENTS_DIR, lambda n: n.startswith("actions-") and n.endswith(".jsonl")),
+                        (d, lambda n: n in (LIVE_NAME, HEAD_NAME))):
         try:
-            st = p.stat()
-            out.append((p.name, st.st_size, st.st_mtime_ns,
-                        _tail_digest(p) if p.name == LIVE_NAME else ""))
+            with os.scandir(where) as it:
+                for e in it:
+                    if keep(e.name):
+                        try:
+                            st = e.stat()
+                            out.append((e.name, st.st_size, st.st_mtime_ns))
+                        except OSError:
+                            out.append((e.name, -1, -1))
         except OSError:
-            out.append((p.name, -1, -1, ""))
-    try:
-        st = head_path().stat()
-        out.append((HEAD_NAME, st.st_size, st.st_mtime_ns, ""))
-    except OSError:
-        pass
-    return tuple(out)
+            pass
+    return tuple(sorted(out))
 
 
 def stats_token() -> tuple:
