@@ -68,14 +68,21 @@ def test_a_break_is_shown_held_and_cleared_only_by_the_owners_press(client):
     assert r.status_code == 403
     assert _outward().action == "deny"
 
+    # the acknowledgement names what the owner reviewed
     r = client.post("/api/ledger/acknowledge", json={}, headers=_press(client))
+    assert r.status_code == 400
+    shown = [p for p in rep["problems"] if not p["acknowledged"]]
+    r = client.post("/api/ledger/acknowledge", json={"reviewed": shown}, headers=_press(client))
     assert r.status_code == 200, r.get_data(as_text=True)
     assert r.get_json()["acknowledged"] >= 1
     assert _outward().action != "deny"
 
-    # a new change holds again
+    # a new change holds again, and an acknowledgement of the old review is refused
     p.write_text(p.read_text(encoding="utf-8").replace("probe_two", "probe_TWO"), encoding="utf-8")
     action_ledger.reset_caches()
+    assert _outward().action == "deny"
+    r = client.post("/api/ledger/acknowledge", json={"reviewed": shown}, headers=_press(client))
+    assert r.status_code == 409
     assert _outward().action == "deny"
 
 

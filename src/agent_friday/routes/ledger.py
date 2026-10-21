@@ -101,7 +101,16 @@ def api_ledger_acknowledge():
                         "error": "Acknowledge this on Friday's own page, on this PC."}), 403
     try:
         body = request.get_json(silent=True) or {}
-        out = action_ledger.acknowledge(by="owner:ui", note=str(body.get("note") or "")[:200])
+        reviewed = body.get("reviewed")
+        if not isinstance(reviewed, list):
+            return jsonify({"status": "error", "code": "review_first",
+                            "error": "Review the ledger first: the acknowledgement names what you saw."}), 400
+        try:
+            out = action_ledger.acknowledge(by="owner:ui", note=str(body.get("note") or "")[:200],
+                                            reviewed=reviewed[:action_ledger.MAX_PROBLEMS])
+        except action_ledger.StaleReview:
+            return jsonify({"status": "error", "code": "review_again",
+                            "error": "The ledger changed since you reviewed it. Review it again."}), 409
         return jsonify({"status": "ok", **out})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The acknowledgement could not be written.")

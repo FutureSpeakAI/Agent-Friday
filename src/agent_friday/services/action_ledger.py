@@ -29,26 +29,48 @@ key signs nothing else. Changing any byte of a line, removing a line, or
 reordering lines breaks the chain at that line; ``verify()`` names it.
 
 When the live file passes ``SEGMENT_MAX`` bytes it is sealed into
-``ledger/segments/actions-NNNNNN.jsonl`` and the chain continues in a new live
-file. Nothing is ever deleted (an append-only store, LESSONS L34).
+``ledger/segments/actions-NNNNNN.jsonl`` (never over an existing one) and the
+chain continues in a new live file. Nothing is ever deleted (an append-only
+store, LESSONS L34).
 
-``ledger/head.json`` holds the newest seq and hash, signed. A head ahead of the
-file means lines were cut off the end. When an append finds that, it first
-writes a ``truncation_detected`` entry, so the break stays on the record after
-the head moves on.
+Records cut off the end
+-----------------------
+A hash chain alone cannot see its own end being cut off. Three things do:
+
+* ``ledger/head.json``, the newest seq and hash, signed. An append that finds
+  the head ahead of the file first writes a ``truncation_detected`` entry.
+* The anchor: the newest seq and hash of a durable entry (a decision, a
+  revocation, an acknowledgement), kept OUTSIDE the data folder, in the OS
+  keychain (service ``agent-friday``, one account per data folder). A ledger
+  behind its anchor, or missing while an anchor exists, is a break; a copy of
+  the folder from earlier cannot pass. Without a keychain backend the anchor
+  falls back to the vault folder (weaker; ``summary()`` says so).
+* What this process itself wrote: a ledger that goes below the highest seq
+  this process saw is a break.
 
 What a break does
 -----------------
 ``hold_reason()`` returns a sentence while the ledger has a break the owner has
-not acknowledged. The action gate holds every outward action on it, with that
-sentence. The owner reviews the break in Activity and acknowledges it with a
-press on this PC; the acknowledgement is itself a signed entry naming the exact
-line (segment, line number, SHA-256 of the line as found). A later change to
-that line, or a new break, holds again.
+not acknowledged, while it cannot be checked (no key, no file access), or while
+an old receipt file is still waiting to be brought in. The action gate holds
+every outward action on it, with that sentence. The owner reviews the breaks in
+Activity and acknowledges exactly the ones shown, with a press on this PC; the
+acknowledgement is itself a signed entry naming each one (its seq, the SHA-256
+of the line as found, and the reason). A later change to that line, or a new
+break, holds again. A break found between the review and the press refuses the
+acknowledgement ("review again").
+
+The old receipt files
+---------------------
+Brought in once (``migrate_legacy``), then a signed ``migration_complete``
+entry. After that, an old receipt file that appears again is NOT read: it is
+moved whole to ``ledger/quarantine/`` and a ``legacy_reappeared`` entry is a
+break the owner must look at. Planting an old-format file can never put
+"history" into the ledger.
 
 Tests: with ``FRIDAY_TESTING=1`` the directory may be moved with
-``FRIDAY_LEDGER_DIR`` (the root conftest gives every test its own). The real app
-ignores that variable.
+``FRIDAY_LEDGER_DIR`` (the root conftest gives every test its own) and the
+anchor lives in this process's memory. The real app ignores both.
 """
 from __future__ import annotations
 
@@ -72,31 +94,46 @@ LOCK_NAME = ".lock"
 PRINCIPAL = "owner"          # A11: one principal now; the field is here for later
 
 #: How long a full re-verification result stays good before the hold check
-#: re-reads every line again (an edit that keeps size and mtime is caught then).
+#: re-reads every line again.
 FULL_RECHECK_S = 600.0
-#: Problems kept in one report.
+#: How long an ordinary entry may go without moving the anchor. Durable
+#: entries (decisions, revocations, acknowledgements) move it at once.
+ANCHOR_EVERY_S = 30.0
+#: Problems listed in one report (the count says how many there are).
 MAX_PROBLEMS = 50
+#: Entries that are themselves a break the owner must look at.
+FLAG_KINDS = ("truncation_detected", "torn_tail", "legacy_reappeared")
 
+ANCHOR_SERVICE = "agent-friday"
 _KEY_INFO = b"agent-friday/action-ledger/v1"
 
 _TLOCK = threading.RLock()
-_STATE: dict[str, Any] = {
-    "dir": None,            # the directory the caches below belong to
-    "tip": None,            # (seq, hash, live_size, live_mtime_ns)
-    "verified": None,       # cached report + the file stats it covered
-    "full_at": 0.0,
-    "migrated": False,
-}
+_CACHE_LOCK = threading.Lock()
+_TEST_ANCHORS: dict[str, str] = {}
+_STATE: dict[str, Any] = {}
+
+
+def _fresh_state(d: Optional[str]) -> dict:
+    return {"dir": d, "tip": None, "verified": None, "full_at": 0.0,
+            "migrated": False, "seg_cache": {}, "max_seen": 0,
+            "anchor_at": 0.0, "anchor_seq": None}
+
+
+_STATE.update(_fresh_state(None))
 
 
 class LedgerError(RuntimeError):
-    """The ledger could not be written (no key, no disk, lock timeout)."""
+    """The ledger could not be written or read (no key, no disk, lock timeout)."""
 
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 
+def _testing() -> bool:
+    return os.environ.get("FRIDAY_TESTING") == "1"
+
+
 def ledger_dir() -> Path:
-    if os.environ.get("FRIDAY_TESTING") == "1":
+    if _testing():
         override = os.environ.get("FRIDAY_LEDGER_DIR", "").strip()
         if override:
             return Path(override)
@@ -112,10 +149,18 @@ def head_path() -> Path:
     return ledger_dir() / HEAD_NAME
 
 
+def _segment_index(p: Path) -> int:
+    try:
+        return int(p.stem.split("-")[-1])
+    except ValueError:
+        return -1
+
+
 def segments() -> list[Path]:
     """Sealed segments, oldest first, then the live file (when present)."""
     d = ledger_dir()
-    out = sorted((d / SEGMENTS_DIR).glob("actions-*.jsonl")) if (d / SEGMENTS_DIR).is_dir() else []
+    sd = d / SEGMENTS_DIR
+    out = sorted(sd.glob("actions-*.jsonl"), key=_segment_index) if sd.is_dir() else []
     live = d / LIVE_NAME
     if live.exists():
         out.append(live)
@@ -129,14 +174,16 @@ def _seg_label(p: Path) -> str:
 def _check_dir() -> Path:
     """Reset the in-process caches when the directory changed (tests, restore)."""
     d = ledger_dir()
-    if _STATE["dir"] != str(d):
-        _STATE.update(dir=str(d), tip=None, verified=None, full_at=0.0, migrated=False)
+    if _STATE.get("dir") != str(d):
+        _STATE.clear()
+        _STATE.update(_fresh_state(str(d)))
     return d
 
 
 def reset_caches() -> None:
     with _TLOCK:
-        _STATE.update(dir=None, tip=None, verified=None, full_at=0.0, migrated=False)
+        _STATE.clear()
+        _STATE.update(_fresh_state(None))
 
 
 # ── Keys and hashing ────────────────────────────────────────────────────────
@@ -176,6 +223,115 @@ def _head_sig(key: bytes, seq: int, h: str) -> str:
     return _hmac.new(key, f"head:{seq}:{h}".encode("ascii"), hashlib.sha256).hexdigest()
 
 
+def entry_ok(e: dict, key: Optional[bytes]) -> bool:
+    """This one line is as the ledger wrote it: its hash matches its body and
+    its signature matches this device's key. (Its place in the chain is
+    verify()'s to judge.)"""
+    if not isinstance(e, dict) or key is None:
+        return False
+    try:
+        h = e.get("hash")
+        return (isinstance(h, str) and body_hash(e) == h and e.get("kid") == key_id(key)
+                and _hmac.compare_digest(_sign(key, h), str(e.get("sig"))))
+    except Exception:
+        return False
+
+
+# ── The anchor outside the data folder ──────────────────────────────────────
+
+def _anchor_account() -> str:
+    try:
+        where = str(ledger_dir().resolve())
+    except OSError:
+        where = str(ledger_dir())
+    return "action-ledger:" + hashlib.sha256(where.encode("utf-8")).hexdigest()[:16]
+
+
+def _anchor_file() -> Path:
+    from agent_friday.paths import friday_home
+    return Path(friday_home()) / "vault" / ".action-ledger-anchor"
+
+
+def anchor_get() -> tuple[Optional[tuple[int, str]], str]:
+    """((seq, hash) or None, where it lives: keychain | file | memory | none).
+    Raises when an anchor exists but cannot be read (the caller holds)."""
+    acct = _anchor_account()
+    if _testing() and os.environ.get("FRIDAY_LEDGER_ANCHOR") != "keyring":
+        raw = _TEST_ANCHORS.get(acct)
+        return (_parse_anchor(raw) if raw else None), "memory"
+    try:
+        import keyring
+        from keyring.errors import NoKeyringError
+    except ImportError:
+        keyring, NoKeyringError = None, ()
+    if keyring is not None:
+        try:
+            raw = keyring.get_password(ANCHOR_SERVICE, acct)
+            return (_parse_anchor(raw) if raw else None), "keychain"
+        except NoKeyringError:
+            pass
+    p = _anchor_file()
+    if p.exists():
+        from agent_friday.services import credential_store
+        return _parse_anchor(credential_store.read_secret(p).decode("ascii")), "file"
+    return None, "none"
+
+
+def _parse_anchor(raw: str) -> tuple[int, str]:
+    d = json.loads(raw)
+    return int(d["seq"]), str(d["hash"])
+
+
+def _anchor_set(seq: int, h: str) -> str:
+    raw = json.dumps({"seq": int(seq), "hash": h})
+    acct = _anchor_account()
+    if _testing() and os.environ.get("FRIDAY_LEDGER_ANCHOR") != "keyring":
+        _TEST_ANCHORS[acct] = raw
+        return "memory"
+    try:
+        import keyring
+        from keyring.errors import NoKeyringError
+    except ImportError:
+        keyring, NoKeyringError = None, ()
+    if keyring is not None:
+        try:
+            keyring.set_password(ANCHOR_SERVICE, acct, raw)
+            return "keychain"
+        except NoKeyringError:
+            pass
+    from agent_friday.services import credential_store
+    p = _anchor_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    credential_store.write_secret(p, raw.encode("ascii"))
+    return "file"
+
+
+def _move_anchor_locked(seq: int, h: str, *, force: bool = False) -> None:
+    """Move the anchor forward to (seq, h). Never backwards unless `force`
+    (the owner acknowledged the loss, or a restore). Best effort: a failure
+    leaves the old anchor, which can only make a later check stricter."""
+    cur = _STATE.get("anchor_seq")
+    if not force and cur is not None and seq <= cur:
+        return
+    try:
+        _anchor_set(seq, h)
+        _STATE["anchor_seq"] = seq
+        _STATE["anchor_at"] = time.time()
+    except Exception:
+        pass
+
+
+def reset_anchor_to_tip() -> None:
+    """After a restore (the restore is the owner's own act): the anchor names
+    the restored ledger's newest entry."""
+    with _TLOCK:
+        _check_dir()
+        with _lock():
+            seq, h = _read_tip_locked()
+            _move_anchor_locked(seq, h, force=True)
+            _STATE["max_seen"] = seq
+
+
 # ── Cross-process lock ──────────────────────────────────────────────────────
 
 class _FileLock:
@@ -184,26 +340,30 @@ class _FileLock:
     def __init__(self, path: Path, timeout: float = 15.0):
         self.path, self.timeout, self.fh = path, timeout, None
 
+    def _try(self) -> bool:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                self.fh.seek(0)
+                msvcrt.locking(self.fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.fh = open(self.path, "a+b")
         deadline = time.monotonic() + self.timeout
-        while True:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    self.fh.seek(0)
-                    msvcrt.locking(self.fh.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(self.fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return self
-            except OSError:
-                if time.monotonic() > deadline:
-                    self.fh.close()
-                    self.fh = None
-                    raise LedgerError("the ledger is locked by another process")
-                time.sleep(0.02)
+        while not self._try():
+            if time.monotonic() > deadline:
+                self.fh.close()
+                self.fh = None
+                raise LedgerError("the ledger is locked by another process")
+            time.sleep(0.02)
+        return self
 
     def __exit__(self, *exc):
         try:
@@ -225,6 +385,35 @@ def _lock() -> _FileLock:
     return _FileLock(ledger_dir() / LOCK_NAME)
 
 
+_HELD_HERE = threading.local()
+
+
+def _someone_else_writing() -> bool:
+    """True while another process holds the write lock (it may be mid-line)."""
+    if getattr(_HELD_HERE, "n", 0):
+        return False
+    p = ledger_dir() / LOCK_NAME
+    if not p.exists():
+        return False
+    lk = _FileLock(p, timeout=0)
+    try:
+        lk.fh = open(p, "a+b")
+    except OSError:
+        return False
+    try:
+        if lk._try():
+            lk.__exit__()
+            return False
+        lk.fh.close()
+        return True
+    except Exception:
+        try:
+            lk.fh.close()
+        except Exception:
+            pass
+        return False
+
+
 # ── Reading lines ───────────────────────────────────────────────────────────
 
 def _ends_cleanly(path: Path) -> bool:
@@ -239,45 +428,70 @@ def _ends_cleanly(path: Path) -> bool:
         return True
 
 
-def _read_tip_locked() -> tuple[int, str]:
-    """The newest (seq, hash) on disk: the last line that reads as an entry.
-    An unreadable or torn line after it is verify()'s to report; the chain
-    goes on from the last good one."""
-    for p in reversed(segments()):
-        skip_first = not _ends_cleanly(p)
-        for raw in _reverse_lines(p):
-            if skip_first:
-                skip_first = False
-                continue
-            e = _safe_json(raw)
-            if isinstance(e, dict) and isinstance(e.get("seq"), int) and isinstance(e.get("hash"), str):
-                return e["seq"], e["hash"]
-    return 0, GENESIS
-
-
-def _iter_lines(path: Path) -> Iterator[tuple[Optional[dict], bytes, int]]:
-    """(entry or None when unreadable, raw bytes, 1-based line number)."""
-    try:
-        fh = open(path, "rb")
-    except OSError:
-        return
-    with fh:
+def _iter_lines(path: Path) -> Iterator[tuple[Optional[dict], bytes, int, bool]]:
+    """(entry or None when unreadable, raw bytes, 1-based line number,
+    terminated). Raises OSError when the file cannot be opened."""
+    with open(path, "rb") as fh:
         n = 0
         for raw in fh:
             n += 1
-            if not raw.endswith(b"\n"):
-                yield None, raw, n            # a torn tail
-                continue
-            raw = raw[:-1]
+            terminated = raw.endswith(b"\n")
+            if terminated:
+                raw = raw[:-1]
             if raw.endswith(b"\r"):
                 raw = raw[:-1]
             if not raw.strip():
                 continue
+            if not terminated:
+                yield None, raw, n, False
+                continue
             try:
                 e = json.loads(raw)
-                yield (e if isinstance(e, dict) else None), raw, n
+                yield (e if isinstance(e, dict) else None), raw, n, True
             except ValueError:
-                yield None, raw, n
+                yield None, raw, n, True
+
+
+def _reverse_lines(path: Path) -> Iterator[bytes]:
+    size = path.stat().st_size
+    with open(path, "rb") as f:
+        pos, rest = size, b""
+        while pos > 0:
+            step = min(262144, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + rest
+            parts = buf.split(b"\n")
+            rest = parts[0]
+            for line in reversed(parts[1:]):
+                if line.strip():
+                    yield line.rstrip(b"\r")
+        if rest.strip():
+            yield rest.rstrip(b"\r")
+
+
+def _safe_json(raw: bytes):
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
+def _read_tip_locked() -> tuple[int, str]:
+    """The newest (seq, hash) on disk: the last line that reads as an entry."""
+    for p in reversed(segments()):
+        skip_first = not _ends_cleanly(p)
+        try:
+            for raw in _reverse_lines(p):
+                if skip_first:
+                    skip_first = False
+                    continue
+                e = _safe_json(raw)
+                if isinstance(e, dict) and isinstance(e.get("seq"), int) and isinstance(e.get("hash"), str):
+                    return e["seq"], e["hash"]
+        except OSError:
+            continue
+    return 0, GENESIS
 
 
 # ── Writing ─────────────────────────────────────────────────────────────────
@@ -297,6 +511,23 @@ def _replace(src: Path, dst: Path) -> None:
     os.replace(src, dst)
 
 
+def _move_no_overwrite(src: Path, dst: Path) -> None:
+    """Rename src to dst, refusing (FileExistsError) when dst exists."""
+    if dst.exists():
+        raise FileExistsError(str(dst))
+    if os.name == "nt":
+        for i in range(20):
+            try:
+                os.rename(src, dst)          # never replaces on Windows
+                return
+            except PermissionError:
+                time.sleep(0.01 * (i + 1))
+        os.rename(src, dst)
+    else:
+        os.link(src, dst)                    # fails if dst exists
+        os.unlink(src)
+
+
 def _read_head() -> Optional[dict]:
     try:
         h = json.loads(head_path().read_text(encoding="utf-8"))
@@ -307,7 +538,7 @@ def _read_head() -> Optional[dict]:
 
 def _write_head(key: bytes, seq: int, h: str) -> None:
     p = head_path()
-    tmp = p.with_name(p.name + f".{os.getpid()}.tmp")
+    tmp = p.with_name(p.name + f".{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         tmp.write_text(json.dumps({"seq": seq, "hash": h, "kid": key_id(key),
                                    "sig": _head_sig(key, seq, h)}), encoding="utf-8")
@@ -354,50 +585,54 @@ def _repair_torn_tail_locked(live: Path) -> Optional[dict]:
             "sha256": hashlib.sha256(torn).hexdigest()}
 
 
-def _append_locked(key: bytes, kind: str, rec: dict, durable: bool,
-                   more: Optional[list] = None) -> dict:
-    """Write `(kind, rec)` (and then each of `more`, a list of (kind, rec)) in
-    one open of the live file. Caller holds both locks."""
+def _seal_live_locked(d: Path, live: Path) -> None:
+    sd = d / SEGMENTS_DIR
+    sd.mkdir(parents=True, exist_ok=True)
+    n = max([_segment_index(p) for p in sd.glob("actions-*.jsonl")] + [0]) + 1
+    for _ in range(1000):
+        dst = sd / f"actions-{n:06d}.jsonl"
+        try:
+            _move_no_overwrite(live, dst)
+            return
+        except FileExistsError:
+            n += 1
+
+
+def _append_locked(key: bytes, items: list, durable: bool) -> dict:
+    """Write each (kind, rec) of `items` in one open of the live file. The
+    caller holds both locks."""
     d = ledger_dir()
     d.mkdir(parents=True, exist_ok=True)
     live = d / LIVE_NAME
-    # the tip: from the cache when the live file is exactly as this process
-    # left it, otherwise from disk
     tip = _STATE.get("tip")
     try:
         st = live.stat()
         stat_now = (st.st_size, st.st_mtime_ns)
     except OSError:
         stat_now = (0, 0)
+    pending: list = []
     if tip is None or (tip[2], tip[3]) != stat_now:
         torn = _repair_torn_tail_locked(live) if stat_now[0] else None
         seq, prev = _read_tip_locked()
-        pending = []
         if torn:
             pending.append(("torn_tail", torn))
         head = _read_head()
         if head and isinstance(head.get("seq"), int) and head["seq"] > seq:
             pending.append(("truncation_detected",
                             {"head_seq": head["seq"], "head_hash": head.get("hash"),
-                             "found_seq": seq,
-                             "missing": head["seq"] - seq}))
+                             "found_seq": seq, "missing": head["seq"] - seq}))
     else:
-        seq, prev, pending = tip[0], tip[1], []
-    # seal the live file when it is full
+        seq, prev = tip[0], tip[1]
     try:
         if live.exists() and live.stat().st_size >= SEGMENT_MAX:
-            sd = d / SEGMENTS_DIR
-            sd.mkdir(parents=True, exist_ok=True)
-            n = len(list(sd.glob("actions-*.jsonl"))) + 1
-            _replace(live, sd / f"actions-{n:06d}.jsonl")
+            _seal_live_locked(d, live)
     except OSError:
         pass                                   # sealed next time
-    out = None
     pre_stats = _stats()
+    out = None
     written = 0
     with open(live, "ab") as f:
-        for k, r in pending + [(kind, rec)] + list(more or []):
-            written += 1
+        for k, r in pending + list(items):
             ts, t = _now()
             seq += 1
             entry = {"v": VERSION, "seq": seq, "ts": ts, "t": t, "kind": k,
@@ -408,25 +643,40 @@ def _append_locked(key: bytes, kind: str, rec: dict, durable: bool,
             f.write(canon(entry) + b"\n")
             prev = entry["hash"]
             out = entry
+            written += 1
         f.flush()
         if durable:
             os.fsync(f.fileno())
     st = live.stat()
     _STATE["tip"] = (seq, prev, st.st_size, st.st_mtime_ns)
+    _STATE["max_seen"] = max(_STATE.get("max_seen") or 0, seq)
     _write_head(key, seq, prev)
+    if durable or time.time() - (_STATE.get("anchor_at") or 0.0) > ANCHOR_EVERY_S:
+        _move_anchor_locked(seq, prev)
     # Keep a verified result current across this process's own appends, so
     # the hold check does not re-read the whole ledger for each action. Only
     # when nothing else touched the files since that result, and only for
     # ordinary entries: a break flag or an acknowledgement changes the verdict.
-    cached = _STATE.get("verified")
-    if (cached and cached[0] == pre_stats and not pending
-            and kind not in ("integrity_ack",)):
-        rep = dict(cached[1])
-        rep.update(records=rep.get("records", 0) + written, last_seq=seq, tip=prev)
-        _STATE["verified"] = (_stats(), rep)
-    else:
-        _STATE["verified"] = None
+    with _CACHE_LOCK:
+        cached = _STATE.get("verified")
+        kinds = {k for k, _r in items}
+        if (cached and cached[0] == pre_stats and not pending and cached[1].get("ok")
+                and not kinds & ({"integrity_ack", "migration_complete"} | set(FLAG_KINDS))):
+            rep = dict(cached[1])
+            rep.update(records=rep.get("records", 0) + written, last_seq=seq, tip=prev)
+            _STATE["verified"] = (_stats(), rep)
+        else:
+            _STATE["verified"] = None
     return out
+
+
+def _guarded_append(key: bytes, items: list, durable: bool) -> dict:
+    with _lock():
+        _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
+        try:
+            return _append_locked(key, items, durable)
+        finally:
+            _HELD_HERE.n -= 1
 
 
 def append(kind: str, rec: dict, *, durable: bool = False) -> dict:
@@ -439,8 +689,7 @@ def append(kind: str, rec: dict, *, durable: bool = False) -> dict:
     with _TLOCK:
         _check_dir()
         _ensure_migrated()
-        with _lock():
-            return _append_locked(key, kind, rec, durable)
+        return _guarded_append(key, [(kind, rec)], durable)
 
 
 def try_append(kind: str, rec: dict, **kw) -> Optional[dict]:
@@ -453,62 +702,65 @@ def try_append(kind: str, rec: dict, **kw) -> Optional[dict]:
 
 # ── Reading entries ─────────────────────────────────────────────────────────
 
-def _reverse_lines(path: Path) -> Iterator[bytes]:
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return
-    with open(path, "rb") as f:
-        pos, rest = size, b""
-        while pos > 0:
-            step = min(262144, pos)
-            pos -= step
-            f.seek(pos)
-            buf = f.read(step) + rest
-            parts = buf.split(b"\n")
-            rest = parts[0]
-            for line in reversed(parts[1:]):
-                if line.strip():
-                    yield line.rstrip(b"\r")
-        if rest.strip():
-            yield rest.rstrip(b"\r")
-
-
 def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
             limit: Optional[int] = None,
-            where: Optional[Callable[[dict], bool]] = None) -> list[dict]:
+            where: Optional[Callable[[dict], bool]] = None,
+            verified: bool = False, strict: bool = False) -> list[dict]:
     """Entries (whole lines), optionally filtered by kind and a predicate.
-    Never raises; an unreadable line is skipped here (verify() reports it)."""
+
+    `verified`: only lines whose hash and signature hold under this device's
+    key (for readers that act on what they read, such as Undo).
+    `strict`: raise LedgerError instead of returning what could be read (for
+    readers that must fail closed, such as revoked grants). Otherwise never
+    raises, and an unreadable line is skipped (verify() reports it)."""
     want = set(kinds) if kinds else None
-    out: list[dict] = []
-    try:
-        with _TLOCK:
-            _check_dir()
-            _ensure_migrated()
-        segs = segments()
-        order = reversed(segs) if newest_first else segs
-        for p in order:
-            if newest_first:
-                it = (_safe_json(raw) for raw in _reverse_lines(p))
-            else:
-                it = (e for e, _r, _n in _iter_lines(p))
-            for e in it:
-                if not isinstance(e, dict):
-                    continue
-                if want is not None and e.get("kind") not in want:
-                    continue
-                if where is not None:
-                    try:
-                        if not where(e):
-                            continue
-                    except Exception:
+    key = None
+    if verified:
+        try:
+            key = _key()
+        except Exception:
+            if strict:
+                raise LedgerError("the ledger key is not available")
+            return []
+    with _TLOCK:
+        _check_dir()
+        _ensure_migrated()
+    for attempt in range(2):
+        out: list[dict] = []
+        try:
+            segs = segments()
+            order = list(reversed(segs)) if newest_first else segs
+            for p in order:
+                it = ((_safe_json(raw) for raw in _reverse_lines(p)) if newest_first
+                      else (e for e, _r, _n, _t in _iter_lines(p)))
+                for e in it:
+                    if not isinstance(e, dict):
                         continue
-                out.append(e)
-                if limit is not None and len(out) >= limit:
-                    return out
-    except Exception:
-        return out
-    return out
+                    if want is not None and e.get("kind") not in want:
+                        continue
+                    if verified and not entry_ok(e, key):
+                        continue
+                    if where is not None:
+                        try:
+                            if not where(e):
+                                continue
+                        except Exception:
+                            continue
+                    out.append(e)
+                    if limit is not None and len(out) >= limit:
+                        return out
+            return out
+        except FileNotFoundError:
+            if attempt == 0:
+                continue                      # sealed while reading: list again
+            if strict:
+                raise LedgerError("a ledger segment vanished while it was read")
+            return out
+        except Exception as e:  # noqa: BLE001
+            if strict:
+                raise LedgerError("the ledger could not be read (%s)" % type(e).__name__)
+            return out
+    return []
 
 
 def records(kind: str, *, newest_first: bool = False, limit: Optional[int] = None) -> list[dict]:
@@ -521,94 +773,212 @@ def records(kind: str, *, newest_first: bool = False, limit: Optional[int] = Non
     return out
 
 
-def _safe_json(raw: bytes):
-    try:
-        return json.loads(raw)
-    except ValueError:
-        return None
-
-
 # ── Verification ────────────────────────────────────────────────────────────
 
-def _problem(seg: Path, n: int, raw: bytes, reason: str, seq=None) -> dict:
-    return {"segment": _seg_label(seg), "line": n, "seq": seq, "reason": reason,
+def _problem(label: str, n: int, raw: bytes, reason: str, seq=None) -> dict:
+    return {"segment": label, "line": n, "seq": seq, "reason": reason,
             "raw_sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def _verify_files(key: Optional[bytes]) -> dict:
-    """Walk every line of every segment. The whole report, uncached."""
+def _ack_key(p: dict) -> tuple:
+    """What an acknowledgement names: the record and the line as found (not
+    the file it sits in, which changes when a segment is sealed)."""
+    if p.get("seq") is not None:
+        return ("seq", p.get("seq"), p.get("raw_sha256"), p.get("reason"))
+    return ("line", p.get("segment"), p.get("line"), p.get("raw_sha256"), p.get("reason"))
+
+
+def _walk(path: Path, key: Optional[bytes], is_live: bool) -> dict:
+    """One file's lines: their internal links, hashes and signatures. The link
+    from the file before is checked by the caller (first_seq, first_prev)."""
     kid = key_id(key) if key else None
-    problems: list[dict] = []
-    total, prev, last_seq = 0, GENESIS, 0
-    acks: list[dict] = []
-    flagged: list[dict] = []              # truncation_detected / torn_tail entries
-    foreign = 0
-    for p in segments():
-        for e, raw, n in _iter_lines(p):
-            if e is None:
-                problems.append(_problem(p, n, raw, "unreadable line"))
-                continue
-            total += 1
-            seq = e.get("seq")
-            reasons = []
-            if not isinstance(seq, int) or seq != last_seq + 1:
-                reasons.append("out of order (expected record %d, found %s)" % (last_seq + 1, seq))
-            if e.get("prev") != prev:
+    label = _seg_label(path)
+    res = {"records": 0, "first_seq": None, "first_prev": None, "first_line": 1,
+           "first_raw": b"", "last_seq": None, "last_hash": None,
+           "problems": [], "acks": [], "flagged": [], "foreign": 0}
+    last_seq = last_hash = None
+    rows = list(_iter_lines(path))
+    for idx, (e, raw, n, terminated) in enumerate(rows):
+        if e is None:
+            if (is_live and not terminated and idx == len(rows) - 1
+                    and _someone_else_writing()):
+                continue                         # another process is mid-line
+            res["problems"].append(_problem(label, n, raw,
+                                            "unreadable line" if terminated
+                                            else "an unfinished write"))
+            continue
+        res["records"] += 1
+        seq = e.get("seq")
+        reasons = []
+        if res["first_seq"] is None:
+            res["first_seq"], res["first_prev"] = seq, e.get("prev")
+            res["first_line"], res["first_raw"] = n, raw
+        else:
+            if not isinstance(seq, int) or last_seq is None or seq != last_seq + 1:
+                reasons.append("out of order (expected record %s, found %s)"
+                               % ((last_seq or 0) + 1, seq))
+            if e.get("prev") != last_hash:
                 reasons.append("does not follow the record before it")
-            try:
-                if body_hash(e) != e.get("hash"):
-                    reasons.append("changed after it was written")
-            except Exception:
-                reasons.append("cannot be read as a record")
-            if key is not None:
-                if e.get("kid") != kid:
-                    foreign += 1
-                    reasons.append("signed with a key this device does not hold")
-                elif not _hmac.compare_digest(_sign(key, str(e.get("hash"))), str(e.get("sig"))):
-                    reasons.append("signature does not match")
-            for r in reasons:
-                problems.append(_problem(p, n, raw, r, seq if isinstance(seq, int) else None))
-            if isinstance(seq, int):
-                last_seq = seq
-            prev = e.get("hash") if isinstance(e.get("hash"), str) else prev
-            if not reasons and e.get("kind") == "integrity_ack":
-                acks.append(e.get("rec") or {})
-            if not reasons and e.get("kind") in ("truncation_detected", "torn_tail"):
-                flagged.append(e)
-    # a head ahead of the file: lines cut off the end since the last append
+        try:
+            if body_hash(e) != e.get("hash"):
+                reasons.append("changed after it was written")
+        except Exception:
+            reasons.append("cannot be read as a record")
+        if key is not None:
+            if e.get("kid") != kid:
+                res["foreign"] += 1
+                reasons.append("signed with a key this device does not hold")
+            elif not _hmac.compare_digest(_sign(key, str(e.get("hash"))), str(e.get("sig"))):
+                reasons.append("signature does not match")
+        for r in reasons:
+            res["problems"].append(_problem(label, n, raw, r, seq if isinstance(seq, int) else None))
+        if isinstance(seq, int):
+            last_seq = seq
+        if isinstance(e.get("hash"), str):
+            last_hash = e["hash"]
+        if not reasons and e.get("kind") == "integrity_ack":
+            res["acks"].append(e.get("rec") or {})
+        if not reasons and e.get("kind") in FLAG_KINDS:
+            res["flagged"].append({"seq": seq, "kind": e.get("kind"), "rec": e.get("rec") or {},
+                                   "hash": e.get("hash")})
+    res["last_seq"], res["last_hash"] = last_seq, last_hash
+    return res
+
+
+def _hash_at(seq: int) -> Optional[str]:
+    for p in segments():
+        try:
+            for e, _raw, _n, _t in _iter_lines(p):
+                if isinstance(e, dict) and e.get("seq") == seq:
+                    return e.get("hash")
+        except OSError:
+            continue
+    return None
+
+
+def _flag_reason(f: dict) -> str:
+    r = f.get("rec") or {}
+    if f.get("kind") == "truncation_detected":
+        return "%s record(s) were missing from the end when Friday next wrote" % r.get("missing")
+    if f.get("kind") == "legacy_reappeared":
+        return "an old receipt file appeared after the switch (%s); it was set aside, not read" % r.get("from")
+    return "an unfinished write was set aside (%s bytes)" % r.get("bytes")
+
+
+def _verify_files(key: Optional[bytes]) -> dict:
+    """Every line of every segment, the head, the anchor and what this process
+    wrote. The whole report."""
+    problems: list[dict] = []
+    total, last_seq, last_hash = 0, 0, GENESIS
+    acks: list[dict] = []
+    flagged: list[dict] = []
+    foreign = 0
+    segs = segments()
+    cache = _STATE.setdefault("seg_cache", {})
+    for i, p in enumerate(segs):
+        is_live = p.name == LIVE_NAME
+        try:
+            st = p.stat()
+            sig = (p.name, st.st_size, st.st_mtime_ns, _tail_digest(p))
+        except OSError:
+            sig = None
+        hit = cache.get(str(p)) if (sig and not is_live) else None
+        if hit and hit[0] == sig and hit[1] == (key_id(key) if key else None):
+            r = hit[2]
+        else:
+            r = _walk(p, key, is_live)
+            if sig and not is_live:
+                cache[str(p)] = (sig, key_id(key) if key else None, r)
+        if r["records"]:
+            if r["first_seq"] != last_seq + 1:
+                problems.append(_problem(_seg_label(p), r["first_line"], r["first_raw"],
+                                         "out of order (expected record %d, found %s)"
+                                         % (last_seq + 1, r["first_seq"]),
+                                         r["first_seq"] if isinstance(r["first_seq"], int) else None))
+            if r["first_prev"] != last_hash:
+                problems.append(_problem(_seg_label(p), r["first_line"], r["first_raw"],
+                                         "does not follow the record before it",
+                                         r["first_seq"] if isinstance(r["first_seq"], int) else None))
+            if isinstance(r["last_seq"], int):
+                last_seq = r["last_seq"]
+            if r["last_hash"]:
+                last_hash = r["last_hash"]
+        total += r["records"]
+        problems.extend(r["problems"])
+        acks.extend(r["acks"])
+        flagged.extend(r["flagged"])
+        foreign += r["foreign"]
+    if key is None:
+        problems.append({"segment": "key", "line": 0, "seq": None,
+                         "reason": "signatures cannot be checked: the governance key is unavailable",
+                         "raw_sha256": ""})
+    # the head: lines cut off the end since the last append
     head = _read_head()
     if head and isinstance(head.get("seq"), int):
-        if key is not None and head.get("kid") == kid and not _hmac.compare_digest(
+        hraw = canon(head)
+        if key is not None and head.get("kid") == key_id(key) and not _hmac.compare_digest(
                 _head_sig(key, head["seq"], str(head.get("hash"))), str(head.get("sig"))):
-            problems.append({"segment": HEAD_NAME, "line": 0, "seq": head.get("seq"),
-                             "reason": "the ledger head was changed",
-                             "raw_sha256": hashlib.sha256(canon(head)).hexdigest()})
+            problems.append(_problem(HEAD_NAME, 0, hraw, "the ledger head was changed", head.get("seq")))
         elif head["seq"] > last_seq:
-            problems.append({"segment": HEAD_NAME, "line": 0, "seq": head["seq"],
-                             "reason": "%d record(s) missing from the end" % (head["seq"] - last_seq),
-                             "raw_sha256": hashlib.sha256(canon(head)).hexdigest()})
-    for e in flagged:
-        r = e.get("rec") or {}
-        reason = ("%s record(s) were missing from the end when Friday next wrote" % r.get("missing")
-                  if e.get("kind") == "truncation_detected"
-                  else "an unfinished write was set aside (%s bytes)" % r.get("bytes"))
-        problems.append({"segment": "entry", "line": 0, "seq": e.get("seq"),
-                         "reason": reason, "raw_sha256": e.get("hash")})
-    acked = {(a.get("segment"), a.get("line"), a.get("raw_sha256"), a.get("reason"))
-             for ack in acks for a in (ack.get("problems") or []) if isinstance(a, dict)}
+            problems.append(_problem(HEAD_NAME, 0, hraw, "%d record(s) missing from the end"
+                                     % (head["seq"] - last_seq), head["seq"]))
+    # the anchor outside the data folder
+    anchor_where = "none"
+    try:
+        anchor, anchor_where = anchor_get()
+    except Exception as e:  # noqa: BLE001
+        anchor = None
+        anchor_where = "unreadable"
+        problems.append({"segment": "anchor", "line": 0, "seq": None,
+                         "reason": "the ledger's anchor could not be read (%s)" % type(e).__name__,
+                         "raw_sha256": ""})
+    if anchor:
+        aseq, ahash = anchor
+        if last_seq < aseq:
+            problems.append({"segment": "anchor", "line": 0, "seq": aseq,
+                             "reason": "%d record(s) missing: the ledger is behind the record "
+                                       "kept outside the data folder" % (aseq - last_seq),
+                             "raw_sha256": ahash})
+        elif _hash_at(aseq) != ahash:
+            problems.append({"segment": "anchor", "line": 0, "seq": aseq,
+                             "reason": "the record kept outside the data folder was replaced",
+                             "raw_sha256": ahash})
+    seen = _STATE.get("max_seen") or 0
+    if last_seq < seen:
+        problems.append({"segment": "process", "line": 0, "seq": seen,
+                         "reason": "%d record(s) this session wrote are gone" % (seen - last_seq),
+                         "raw_sha256": ""})
+    for f in flagged:
+        problems.append({"segment": "entry", "line": 0, "seq": f.get("seq"),
+                         "reason": _flag_reason(f), "raw_sha256": f.get("hash")})
+    acked = {tuple(a.get("key")) for ack in acks for a in (ack.get("problems") or [])
+             if isinstance(a, dict) and isinstance(a.get("key"), list)}
     for pr in problems:
-        pr["acknowledged"] = (pr["segment"], pr["line"], pr["raw_sha256"], pr["reason"]) in acked
+        pr["acknowledged"] = list(_ack_key(pr)) in [list(k) for k in acked]
     open_problems = [pr for pr in problems if not pr["acknowledged"]]
     return {
-        "records": total, "last_seq": last_seq, "tip": prev,
+        "records": total, "last_seq": last_seq, "tip": last_hash,
         "key_available": key is not None,
+        "anchor": anchor_where,
         "intact": not problems,
         "ok": not open_problems,
-        "problems": problems[:MAX_PROBLEMS],
+        "problems": open_problems[:MAX_PROBLEMS] + [p for p in problems if p["acknowledged"]][:MAX_PROBLEMS],
         "problem_count": len(problems),
         "open_problem_count": len(open_problems),
         "foreign_records": foreign,
+        "segments": len(segs),
+        "bytes": sum((p.stat().st_size for p in segs if p.exists()), 0),
     }
+
+
+def _tail_digest(p: Path) -> str:
+    try:
+        size = p.stat().st_size
+        with open(p, "rb") as f:
+            f.seek(max(0, size - 65536))
+            return hashlib.sha256(f.read()).hexdigest()[:16]
+    except OSError:
+        return ""
 
 
 def _stats() -> tuple:
@@ -616,84 +986,128 @@ def _stats() -> tuple:
     for p in segments():
         try:
             st = p.stat()
-            out.append((p.name, st.st_size, st.st_mtime_ns))
+            out.append((p.name, st.st_size, st.st_mtime_ns,
+                        _tail_digest(p) if p.name == LIVE_NAME else ""))
         except OSError:
-            out.append((p.name, -1, -1))
+            out.append((p.name, -1, -1, ""))
     try:
         st = head_path().stat()
-        out.append((HEAD_NAME, st.st_size, st.st_mtime_ns))
+        out.append((HEAD_NAME, st.st_size, st.st_mtime_ns, ""))
     except OSError:
         pass
     return tuple(out)
 
 
+def stats_token() -> tuple:
+    """Changes whenever any ledger file changes: a cache key for readers."""
+    with _TLOCK:
+        _check_dir()
+    return _stats()
+
+
 def verify(*, force: bool = True) -> dict:
-    """Check every line: order, links, hashes, signatures, the head, and which
-    breaks the owner has acknowledged. `force=False` reuses the last result
-    while no ledger file changed and it is younger than FULL_RECHECK_S."""
+    """Check every line: order, links, hashes, signatures, the head, the anchor,
+    and which breaks the owner has acknowledged. `force=False` reuses the last
+    result while no ledger file changed and it is younger than FULL_RECHECK_S.
+    The files are read without holding the write lock."""
     with _TLOCK:
         _check_dir()
         _ensure_migrated()
         stats = _stats()
-        cached = _STATE.get("verified")
-        fresh = time.time() - _STATE.get("full_at", 0.0) < FULL_RECHECK_S
+        with _CACHE_LOCK:
+            cached = _STATE.get("verified")
+            fresh = time.time() - (_STATE.get("full_at") or 0.0) < FULL_RECHECK_S
         if not force and cached and cached[0] == stats and fresh:
             return dict(cached[1])
-        try:
-            key = _key()
-        except Exception:
-            key = None
-        t0 = time.perf_counter()
-        report = _verify_files(key)
-        report["verify_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-        report["checked_at"] = _now()[0]
-        _STATE["verified"] = (stats, report)
-        _STATE["full_at"] = time.time()
-        return dict(report)
+    try:
+        key = _key()
+    except Exception:
+        key = None
+    t0 = time.perf_counter()
+    report = _verify_files(key)
+    report["verify_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    report["checked_at"] = _now()[0]
+    if key is not None:                          # a result without the key is never kept
+        with _CACHE_LOCK:
+            if _stats() == stats:
+                _STATE["verified"] = (stats, report)
+                _STATE["full_at"] = time.time()
+    return dict(report)
+
+
+def _legacy_present() -> list[Path]:
+    try:
+        return [p for _k, ps in _legacy_stores() for p in ps if p.is_file()]
+    except Exception:
+        return []
 
 
 def hold_reason() -> Optional[str]:
-    """A sentence when an outward action must wait for the owner to look at a
-    break in the ledger; None while it is intact (or every break is
-    acknowledged). A ledger that cannot be checked at all holds too."""
+    """A sentence when an outward action must wait for the owner to look at
+    the ledger; None while it is intact (or every break is acknowledged). A
+    ledger that cannot be checked holds too, and so does an old receipt file
+    not yet brought in."""
     try:
         r = verify(force=False)
     except Exception as e:  # noqa: BLE001 - any failure to check holds
         return "the action ledger could not be checked (%s)" % type(e).__name__
-    if r.get("ok"):
-        return None
-    first = next((p for p in r.get("problems", []) if not p.get("acknowledged")), {})
-    return ("the action ledger was changed on disk (%s, record %s: %s); "
-            "open Activity to review it" % (first.get("segment"), first.get("seq"),
-                                            first.get("reason")))
+    if not r.get("ok"):
+        first = next((p for p in r.get("problems", []) if not p.get("acknowledged")), {})
+        if first.get("segment") == "key":
+            return "the action ledger cannot be checked: the governance key is unavailable"
+        return ("the action ledger was changed on disk (%s, record %s: %s); "
+                "open Activity to review it" % (first.get("segment"), first.get("seq"),
+                                                first.get("reason")))
+    if _legacy_present():
+        return "older receipt files are still being brought into the action ledger"
+    return None
 
 
-def acknowledge(by: str, note: str = "") -> dict:
-    """Record that the owner has seen every open break. The caller has checked
-    that this is the owner's press on this PC."""
-    total = 0
+class StaleReview(LedgerError):
+    """The breaks open now are not the ones the owner reviewed."""
+
+
+def acknowledge(by: str, note: str = "", *, reviewed: Optional[list] = None) -> dict:
+    """Record that the owner has looked at the breaks they reviewed. The caller
+    has checked that this is the owner's press on this PC. `reviewed` is the
+    list of problems the page showed (each with seq/segment/line, raw_sha256
+    and reason); when the breaks open now differ, nothing is recorded and
+    StaleReview is raised. Only breaks shown are acknowledged."""
     r = verify(force=True)
-    # Twice at most: writing the acknowledgement can itself first record a
-    # break found on the way in (records cut off the end), which the owner is
-    # acknowledging by the same press.
-    for _round in range(2):
-        open_ = [{k: p.get(k) for k in ("segment", "line", "raw_sha256", "reason", "seq")}
-                 for p in r.get("problems", []) if not p.get("acknowledged")]
-        if not open_:
-            break
-        append("integrity_ack", {"problems": open_, "by": str(by)[:40],
-                                 "note": str(note)[:200]}, durable=True)
-        total += len(open_)
-        r = verify(force=True)
-    return {"acknowledged": total, "report": r}
+    if r.get("problems") and any(p.get("segment") == "key" for p in r["problems"]):
+        raise LedgerError("the ledger cannot be checked without the governance key")
+    open_now = [p for p in r.get("problems", []) if not p.get("acknowledged")]
+    shown = {tuple(_ack_key(p)) for p in (reviewed or []) if isinstance(p, dict)}
+    now = {tuple(_ack_key(p)) for p in open_now}
+    if reviewed is None or not now or now != shown:
+        if not now:
+            return {"acknowledged": 0, "report": r}
+        raise StaleReview("the ledger changed since it was reviewed; review it again")
+    items = [{"key": list(_ack_key(p)), "seq": p.get("seq"), "reason": p.get("reason")}
+             for p in open_now]
+    key = _key()
+    with _TLOCK:
+        _check_dir()
+        out = _guarded_append(key, [("integrity_ack", {"problems": items, "by": str(by)[:40],
+                                                         "note": str(note)[:200]})], True)
+        with _lock():
+            seq, h = _read_tip_locked()
+        # the owner accepted what is gone: the anchor and this process's own
+        # high-water mark move to what is here now
+        with _lock():
+            _move_anchor_locked(seq, h, force=True)
+        _STATE["max_seen"] = seq
+    del out
+    return {"acknowledged": len(items), "report": verify(force=True)}
 
 
 def summary() -> dict:
     """What Activity and the Doctor show: counts and state, no content."""
     r = verify(force=False)
     return {k: r.get(k) for k in ("records", "last_seq", "intact", "ok", "key_available",
-                                  "problem_count", "open_problem_count", "verify_ms",
-                                  "checked_at", "foreign_records")}
+                                  "anchor", "problem_count", "open_problem_count",
+                                  "verify_ms", "checked_at", "foreign_records",
+                                  "segments", "bytes")}
 
 
 # ── The stores this ledger replaced ─────────────────────────────────────────
@@ -777,22 +1191,27 @@ def _legacy_check(kind: str, rec: dict) -> Optional[bool]:
     return None
 
 
-def _migrated_counts_locked() -> dict:
+def _migration_state_locked() -> dict:
     counts: dict[str, int] = {}
     done: set = set()
+    complete = False
     for p in segments():
-        for e, _raw, _n in _iter_lines(p):
+        for e, _raw, _n, _t in _iter_lines(p):
             if not isinstance(e, dict):
                 continue
             r = e.get("rec") or {}
-            if e.get("kind") == "migration":
+            k = e.get("kind")
+            if k == "migration_complete":
+                complete = True
+                continue
+            if k == "migration":
                 if r.get("file_sha256"):
                     done.add(r.get("file_sha256"))
                 continue
             m = r.get("_migrated") if isinstance(r, dict) else None
             if isinstance(m, dict) and m.get("file_sha256"):
                 counts[m["file_sha256"]] = counts.get(m["file_sha256"], 0) + 1
-    return {"counts": counts, "done": done}
+    return {"counts": counts, "done": done, "complete": complete}
 
 
 def _file_sha256(p: Path) -> str:
@@ -803,66 +1222,6 @@ def _file_sha256(p: Path) -> str:
     return h.hexdigest()
 
 
-def migrate_legacy() -> dict:
-    """Bring every old receipt file into the ledger, once. Each legacy line
-    becomes an entry of its kind with `_migrated` (where it came from, its line
-    number, whether its own signature held). The old file is then moved, whole
-    and unchanged, to ledger/legacy/, and a `migration` entry records its
-    SHA-256 so the original can still be checked against the chain.
-    Resumable: a file half imported when Friday stopped continues from the
-    first line not yet in the ledger. Idempotent: a file already done is
-    recognised by its digest."""
-    key = _key()
-    moved = []
-    with _TLOCK:
-        _check_dir()
-        with _lock():
-            state = _migrated_counts_locked()
-            legacy_dir = ledger_dir() / "legacy"
-            for kind, paths in _legacy_stores():
-                for p in paths:
-                    if not p.is_file():
-                        continue
-                    digest = _file_sha256(p)
-                    if digest in state["done"]:
-                        _move_legacy(p, legacy_dir, digest)
-                        continue
-                    already = state["counts"].get(digest, 0)
-                    n_lines = n_imported = n_unreadable = 0
-                    batch: list = []
-                    for _e, raw, n in _iter_lines(p):
-                        n_lines += 1
-                        try:
-                            rec = json.loads(raw)
-                        except ValueError:
-                            rec = None
-                        if not isinstance(rec, dict):
-                            n_unreadable += 1
-                            rec = {"unreadable": True,
-                                   "raw_sha256": hashlib.sha256(raw).hexdigest()}
-                        if n_lines <= already:
-                            continue
-                        rec = dict(rec)
-                        rec["_migrated"] = {"from": _rel(p), "line": n,
-                                            "file_sha256": digest,
-                                            "legacy_verified": _legacy_check(kind, rec)}
-                        batch.append((kind, rec))
-                        n_imported += 1
-                        if len(batch) >= 2000:
-                            _append_locked(key, batch[0][0], batch[0][1], False, batch[1:])
-                            batch = []
-                    if batch:
-                        _append_locked(key, batch[0][0], batch[0][1], False, batch[1:])
-                    kept = _move_legacy(p, legacy_dir, digest)
-                    _append_locked(key, "migration", {
-                        "store": kind, "from": _rel(p), "file_sha256": digest,
-                        "lines": n_lines, "imported": n_imported + already,
-                        "unreadable": n_unreadable, "kept_as": kept}, durable=True)
-                    moved.append({"store": kind, "from": _rel(p), "lines": n_lines})
-            _STATE["migrated"] = True
-    return {"migrated": moved}
-
-
 def _rel(p: Path) -> str:
     try:
         from agent_friday.paths import friday_home
@@ -871,30 +1230,112 @@ def _rel(p: Path) -> str:
         return Path(p).name
 
 
-def _move_legacy(p: Path, legacy_dir: Path, digest: str) -> str:
-    legacy_dir.mkdir(parents=True, exist_ok=True)
-    dst = legacy_dir / f"{digest[:12]}-{p.name}"
+def _set_aside(p: Path, where: Path, digest: str) -> str:
+    """Move a file whole and unchanged under `where`; never over another."""
+    where.mkdir(parents=True, exist_ok=True)
+    dst = where / f"{digest[:12]}-{p.name}"
     try:
         if dst.exists():
-            # the same bytes are already kept; this copy is the same file
             if _file_sha256(dst) == digest:
-                os.remove(p)
-                return f"legacy/{dst.name}"
-            dst = legacy_dir / f"{digest[:12]}-{int(time.time())}-{p.name}"
-        _replace(p, dst)
+                os.remove(p)                  # the same bytes are already kept
+                return f"{where.name}/{dst.name}"
+            dst = where / f"{digest[:12]}-{int(time.time() * 1000)}-{p.name}"
+        _move_no_overwrite(p, dst)
     except OSError:
-        return _rel(p)                      # left where it was; tried again next time
-    return f"legacy/{dst.name}"
+        return _rel(p)                        # left where it was; tried again next time
+    return f"{where.name}/{dst.name}"
+
+
+def migrate_legacy() -> dict:
+    """Bring every old receipt file into the ledger, once.
+
+    Each legacy line becomes an entry of its kind with `_migrated` (where it
+    came from, its line number, whether its own signature held). The old file
+    is then moved, whole and unchanged, to ledger/legacy/, and a `migration`
+    entry records its SHA-256 so the original can still be checked. When every
+    file is in, a `migration_complete` entry closes the door: an old file that
+    appears after it is moved to ledger/quarantine/ unread, and a
+    `legacy_reappeared` entry is a break for the owner to look at.
+
+    Resumable: a file half imported when Friday stopped continues from the
+    first line not yet in the ledger. Idempotent: a file already done is
+    recognised by its digest. Called at every start; on a fresh ledger with no
+    old files it only writes `migration_complete`."""
+    key = _key()
+    moved = []
+    with _TLOCK:
+        _check_dir()
+        _STATE["migrated"] = True
+        with _lock():
+            _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
+            try:
+                present = _legacy_present()
+                empty = not any(p.exists() and p.stat().st_size for p in segments())
+                if not present and not empty:
+                    return {"migrated": moved}
+                state = _migration_state_locked() if not empty else {"counts": {}, "done": set(),
+                                                                     "complete": False}
+                d = ledger_dir()
+                for kind, paths in _legacy_stores():
+                    for p in paths:
+                        if not p.is_file():
+                            continue
+                        digest = _file_sha256(p)
+                        if state["complete"]:
+                            kept = _set_aside(p, d / "quarantine", digest)
+                            _append_locked(key, [("legacy_reappeared", {
+                                "store": kind, "from": _rel(p), "file_sha256": digest,
+                                "kept_as": kept})], True)
+                            moved.append({"store": kind, "from": _rel(p), "quarantined": True})
+                            continue
+                        if digest in state["done"]:
+                            _set_aside(p, d / "legacy", digest)
+                            continue
+                        already = state["counts"].get(digest, 0)
+                        n_lines = n_imported = n_unreadable = 0
+                        batch: list = []
+                        for _e, raw, n, _t in _iter_lines(p):
+                            n_lines += 1
+                            rec = _safe_json(raw)
+                            if not isinstance(rec, dict):
+                                n_unreadable += 1
+                                rec = {"unreadable": True,
+                                       "raw_sha256": hashlib.sha256(raw).hexdigest()}
+                            if n_lines <= already:
+                                continue
+                            rec = dict(rec)
+                            rec["_migrated"] = {"from": _rel(p), "line": n, "file_sha256": digest,
+                                                "legacy_verified": _legacy_check(kind, rec)}
+                            batch.append((kind, rec))
+                            n_imported += 1
+                            if len(batch) >= 2000:
+                                _append_locked(key, batch, False)
+                                batch = []
+                        if batch:
+                            _append_locked(key, batch, False)
+                        kept = _set_aside(p, d / "legacy", digest)
+                        _append_locked(key, [("migration", {
+                            "store": kind, "from": _rel(p), "file_sha256": digest,
+                            "lines": n_lines, "imported": n_imported + already,
+                            "unreadable": n_unreadable, "kept_as": kept})], True)
+                        moved.append({"store": kind, "from": _rel(p), "lines": n_lines})
+                if not state["complete"] and not _legacy_present():
+                    _append_locked(key, [("migration_complete",
+                                          {"files": len([m for m in moved if not m.get("quarantined")])})],
+                                   True)
+            finally:
+                _HELD_HERE.n -= 1
+    return {"migrated": moved}
 
 
 def _ensure_migrated() -> None:
     """Called under _TLOCK by every read and write: the first use in a process
-    imports anything still in an old file."""
+    deals with anything still in an old file."""
     if _STATE.get("migrated"):
         return
     _STATE["migrated"] = True               # set first: migrate_legacy appends
     try:
-        if any(p.is_file() for _k, ps in _legacy_stores() for p in ps):
+        if _legacy_present():
             migrate_legacy()
     except Exception:
         _STATE["migrated"] = False          # try again on the next use

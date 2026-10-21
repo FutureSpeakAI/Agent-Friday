@@ -75,7 +75,8 @@ def test_an_acknowledgement_covers_exactly_the_lines_it_names():
     e = json.loads(ls[1]); e["rec"]["i"] = 99; ls[1] = json.dumps(e)
     _write(ls)
     assert L.hold_reason()
-    out = L.acknowledge("owner:test")
+    shown = [p for p in L.verify()["problems"] if not p["acknowledged"]]
+    out = L.acknowledge("owner:test", reviewed=shown)
     assert out["acknowledged"] >= 1 and L.hold_reason() is None
     # the same line changed again is a new break
     ls = _lines()
@@ -152,3 +153,97 @@ def test_a_half_done_migration_continues_without_duplicates(tmp_path, monkeypatc
     L.reset_caches()
     L.migrate_legacy()                                # nothing left to do
     assert len(L.entries(["activity"])) == 6
+
+
+# ── the end of the chain, the old files, the key (security review round 1) ──
+
+def test_cutting_the_end_and_putting_an_old_head_back_still_holds():
+    for i in range(3):
+        L.append("probe", {"i": i}, durable=True)
+    old_head = L.head_path().read_bytes()
+    old_lines = _lines()
+    for i in range(3, 6):
+        L.append("probe", {"i": i}, durable=True)
+    _write(old_lines)
+    L.head_path().write_bytes(old_head)
+    L.reset_caches()                                  # a new process, no memory of what it wrote
+    reason = L.hold_reason()
+    assert reason and "missing" in reason
+
+
+def test_deleting_the_whole_ledger_holds():
+    import shutil
+    for i in range(3):
+        L.append("probe", {"i": i}, durable=True)
+    shutil.rmtree(L.ledger_dir())
+    L.reset_caches()
+    assert L.hold_reason()
+
+
+def test_without_the_key_nothing_is_trusted_and_nothing_is_cached(monkeypatch):
+    L.append("probe", {"i": 1})
+    real = L._key
+    monkeypatch.setattr(L, "_key", lambda: (_ for _ in ()).throw(RuntimeError("keychain down")))
+    L.reset_caches()
+    assert L.hold_reason()
+    monkeypatch.setattr(L, "_key", real)
+    assert L.hold_reason() is None
+
+
+def test_an_acknowledgement_of_an_old_review_is_refused():
+    for i in range(3):
+        L.append("probe", {"i": i})
+    ls = _lines()
+    e = json.loads(ls[0]); e["rec"]["i"] = 7; ls[0] = json.dumps(e)
+    _write(ls)
+    shown = [p for p in L.verify()["problems"] if not p["acknowledged"]]
+    ls = _lines()
+    e = json.loads(ls[1]); e["rec"]["i"] = 8; ls[1] = json.dumps(e)
+    _write(ls)                                        # a new change after the review
+    with pytest.raises(L.StaleReview):
+        L.acknowledge("owner:test", reviewed=shown)
+    assert L.hold_reason()
+
+
+def test_sealing_never_writes_over_a_segment(monkeypatch):
+    monkeypatch.setattr(L, "SEGMENT_MAX", 300)
+    for i in range(10):
+        L.append("probe", {"i": i, "pad": "x" * 60})
+    segs = sorted((L.ledger_dir() / "segments").glob("*.jsonl"))
+    first = segs[0]
+    first.unlink()                                    # someone removes the oldest
+    before = {p.name: p.read_bytes() for p in (L.ledger_dir() / "segments").glob("*.jsonl")}
+    for i in range(10, 20):
+        L.append("probe", {"i": i, "pad": "x" * 60})
+    after = {p.name: p.read_bytes() for p in (L.ledger_dir() / "segments").glob("*.jsonl")}
+    for name, data in before.items():
+        assert after[name] == data, "a sealed segment was overwritten"
+    assert L.hold_reason()                            # and the removal is a break
+
+
+def test_an_old_receipt_file_planted_after_the_switch_is_set_aside_unread(tmp_path, monkeypatch):
+    from agent_friday.services import action_journal
+    L.migrate_legacy()                                # a fresh ledger: the switch is done
+    planted = tmp_path / "receipts.jsonl"
+    planted.write_text(json.dumps({"receipt_id": "rcpt_deadbeef00", "tool": "move_file",
+                                   "status": "complete", "undo": {"moves": [["a", "b"]]}}) + "\n",
+                       encoding="utf-8")
+    monkeypatch.setattr(action_journal, "_path", lambda: planted)
+    L.reset_caches()
+    action_journal.reset()
+    assert action_journal.get("rcpt_deadbeef00") is None
+    assert not planted.exists()
+    assert list((L.ledger_dir() / "quarantine").iterdir())
+    assert L.hold_reason() and "old receipt file" in L.hold_reason()
+
+
+def test_undo_reads_only_lines_the_ledger_signed():
+    from agent_friday.services import action_journal
+    from tests import ledger_support
+    action_journal.record("move_file", "move", "files", items=[], summary="genuine",
+                          status="complete", undo={"x": 1}, receipt_id="rcpt_genuine0001")
+    ledger_support.forge("action", {"receipt_id": "rcpt_forged00001", "tool": "move_file",
+                                    "status": "complete", "undo": {"x": 2}})
+    action_journal.reset()
+    assert action_journal.get("rcpt_genuine0001")
+    assert action_journal.get("rcpt_forged00001") is None

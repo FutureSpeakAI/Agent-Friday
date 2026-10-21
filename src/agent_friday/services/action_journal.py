@@ -58,7 +58,9 @@ def _load() -> None:
     _LOADED["done"] = True
     try:
         from agent_friday.services import action_ledger
-        rows = action_ledger.entries(["action"], newest_first=True, limit=4 * MAX_KEPT)
+        # only entries the ledger itself wrote and signed: Undo acts on them
+        rows = action_ledger.entries(["action"], newest_first=True, limit=4 * MAX_KEPT,
+                                     verified=True)
     except Exception:
         return
     for e in reversed(rows):

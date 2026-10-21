@@ -76,11 +76,12 @@
     };
     const acknowledge = () => {
       setBusy(true);
-      fetch('/api/ledger/acknowledge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      const shown = ((report && report.problems) || []).filter(p => !p.acknowledged);
+      fetch('/api/ledger/acknowledge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewed: shown }) })
         .then(r => r.json().then(d => ({ ok: r.ok, d })))
         .then(({ ok, d }) => {
           setBusy(false);
-          if (!ok) { setNote(d.error || 'Not recorded.'); return; }
+          if (!ok) { setNote(d.error || 'Not recorded.'); if (d.code === 'review_again') review(); return; }
           setReport(d.report || null);
           setNote('Recorded. Outward actions can go ahead again.');
         }).catch(() => { setBusy(false); setNote('Not recorded.'); });

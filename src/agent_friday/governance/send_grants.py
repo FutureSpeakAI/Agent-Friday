@@ -240,6 +240,9 @@ def _write(rows: list) -> None:
     tmp.replace(p)
 
 
+_REVOKED_CACHE: dict = {}
+
+
 def _log(event: str, **fields) -> None:
     row = {"at": time.time(), "event": event, **fields}
     # the one action ledger (services/action_ledger.py), kind "send_grant";
@@ -249,11 +252,13 @@ def _log(event: str, **fields) -> None:
     action_ledger.append("send_grant", row, durable=(event == "revoked"))
 
 
-def _log_rows(limit=None) -> list:
-    """The log, newest first, from the action ledger."""
+def _log_rows(limit=None, strict=False) -> list:
+    """The log, newest first, from the action ledger. `strict` raises when the
+    ledger cannot be read in full (revocations fail closed)."""
     from agent_friday.services import action_ledger
     out = []
-    for e in action_ledger.entries(["send_grant"], newest_first=True, limit=limit):
+    for e in action_ledger.entries(["send_grant"], newest_first=True, limit=limit,
+                                   strict=strict):
         rec = e.get("rec")
         if isinstance(rec, dict):
             out.append({k: v for k, v in rec.items() if k != "_migrated"})
@@ -501,10 +506,18 @@ def _revoked_in_log() -> set:
     """Grant ids the log says were revoked. A grant restored from an earlier
     copy of send_grants.json (rows are signed one by one, with no generation)
     would otherwise come back to life."""
+    from agent_friday.services import action_ledger
+    token = action_ledger.stats_token()
+    hit = _REVOKED_CACHE.get("v")
+    if hit and hit[0] == token:
+        return set(hit[1])
     out = set()
-    for row in _log_rows():
+    # Fails closed: a ledger that cannot be read raises, and the caller treats
+    # every grant as unusable rather than one revoked grant as live.
+    for row in _log_rows(strict=True):
         if row.get("event") == "revoked" and row.get("grant_id"):
             out.add(str(row["grant_id"]))
+    _REVOKED_CACHE["v"] = (token, frozenset(out))
     return out
 
 
