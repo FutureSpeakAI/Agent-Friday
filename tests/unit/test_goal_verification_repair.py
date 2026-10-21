@@ -316,14 +316,21 @@ class TestEscalation:
         kinds = [r["kind"] for r in updated["receipts"]]
         assert "milestone_human_approved_override" in kinds
 
-    def test_denying_an_escalation_marks_milestone_failed(self, monkeypatch):
+    def test_denying_an_escalation_stops_the_milestone_for_the_owner(self, monkeypatch):
+        """A refused result stops the milestone on a typed reason the owner can
+        start again from (it is never stuck), and the next attempt asks on a new card."""
         g = _make_goal()
         mid = g["milestones"][0]["milestone_id"]
         goals.set_executor(_executor_recording_hints())
         monkeypatch.setattr(goals.qa_gates, "evaluate_text", _verdict_sequence(False))
         result = goals.run_milestone(g["goal_id"], mid)
         goals.approvals.decide(result["approval_id"], "deny")
-        assert goals.get_goal(g["goal_id"])["milestones"][0]["status"] == "failed"
+        ms = goals.get_goal(g["goal_id"])["milestones"][0]
+        assert ms["status"] == "blocked" and ms["blocker"]["type"] == "result_refused"
+        out = goals.restart_milestone(g["goal_id"], mid, confirm_unknown_outcome=True)
+        assert out["ok"] is True
+        again = out["run"]
+        assert again.get("approval_id") and again["approval_id"] != result["approval_id"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -363,10 +370,12 @@ class TestManualVerificationMode:
         assert ms["status"] == "done"
         assert ms["verification"]["passed"] is True
 
-    def test_manual_mode_denial_marks_failed(self, monkeypatch):
+    def test_manual_mode_denial_stops_for_the_owner(self, monkeypatch):
         goals.set_executor(_executor_recording_hints())
         g = _make_goal(verification_mode="manual")
         mid = g["milestones"][0]["milestone_id"]
         result = goals.run_milestone(g["goal_id"], mid)
         goals.approvals.decide(result["approval_id"], "deny")
-        assert goals.get_goal(g["goal_id"])["milestones"][0]["status"] == "failed"
+        ms = goals.get_goal(g["goal_id"])["milestones"][0]
+        assert ms["status"] == "blocked" and ms["blocker"]["type"] == "result_refused"
+        assert ms["blocker"]["needs_confirmation"] is True
