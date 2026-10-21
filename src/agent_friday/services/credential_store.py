@@ -300,8 +300,104 @@ def write_secret(path: Path, data: bytes, *, harden: bool = True) -> str:
 
 
 def read_secret(path: Path) -> bytes:
-    """Read and decrypt a secret written by write_secret()."""
-    return unprotect(Path(path).read_bytes())
+    """Read and decrypt a secret written by write_secret(). A successful read is noted as
+    the credential's last use (its name and the time, never its value: `note_use`)."""
+    out = unprotect(Path(path).read_bytes())
+    note_use(path)
+    return out
+
+
+# ── when each credential was last used (BD-08, NS-26.5-4) ────────────────────
+# Names and times only. Kept in security/credential_use.json, written at most once every
+# _USE_FLUSH_S per credential, so a key read on every model call costs one disk write per
+# ten minutes, not one per call.
+_USE_FILE_NAME = "credential_use.json"
+_USE_FLUSH_S = 600
+_USE: dict = {}
+_USE_FLUSHED: dict = {}
+
+
+def _credential_name(path) -> str:
+    """A credential's name: its path under Friday's data folder, with forward slashes."""
+    p = Path(path)
+    try:
+        return p.resolve().relative_to(Path(core.FRIDAY_DIR).resolve()).as_posix()
+    except Exception:
+        return p.name
+
+
+def _use_file() -> Path:
+    return _SECURITY_DIR / _USE_FILE_NAME
+
+
+def _read_use() -> dict:
+    try:
+        doc = json.loads(_use_file().read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in (doc.get("last_used") or {}).items()}
+    except Exception:
+        return {}
+
+
+def note_use(path) -> None:
+    """Record that the credential at `path` was just used. Never raises; never the value."""
+    try:
+        import time as _t
+        name = _credential_name(path)
+        _USE[name] = _now_iso()
+        now = _t.monotonic()
+        if now - _USE_FLUSHED.get(name, -1e9) < _USE_FLUSH_S:
+            return
+        _USE_FLUSHED[name] = now
+        doc = {"last_used": {**_read_use(), **_USE}}
+        _SECURITY_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _use_file().with_name(_USE_FILE_NAME + ".tmp")
+        tmp.write_text(json.dumps(doc, indent=1, sort_keys=True), encoding="utf-8")
+        tmp.replace(_use_file())
+    except Exception:
+        pass
+
+
+def _credential_kind(name: str) -> str:
+    if name.startswith("providers/keys/"):
+        return "AI provider key"
+    if name.startswith("google_accounts/"):
+        return "Google account sign-in"
+    if name.startswith("mcp_oauth/"):
+        return "tool server sign-in"
+    if name.startswith("platforms/"):
+        return "publishing platform sign-in"
+    if name == "google_token.json":
+        return "Google sign-in (older format)"
+    return "credential"
+
+
+def inventory() -> list:
+    """Every credential Friday holds, without a single value: what it is, whose it is, how it
+    is protected, when it was last set or changed, and when it was last used. For Settings >
+    Privacy & Data > Security (GET /api/security/credentials)."""
+    used = {**_read_use(), **_USE}
+    sets = {}
+    for e in read_audit(limit=5000):
+        if e.get("event") == "set" and e.get("provider"):
+            sets["providers/keys/%s.key" % e["provider"]] = e.get("ts")
+    out = []
+    for p in _credential_files():
+        name = _credential_name(p)
+        try:
+            blob = p.read_bytes()
+            st = p.stat()
+        except OSError:
+            continue
+        changed = datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()
+        out.append({
+            "name": name,
+            "kind": _credential_kind(name),
+            "owner": "you",
+            "protection": looks_protected(blob) or "not encrypted (written by an older version)",
+            "last_changed": sets.get(name) or changed,
+            "last_used": used.get(name),
+        })
+    return out
 
 
 def harden_permissions(path: Path) -> None:
@@ -644,7 +740,7 @@ def provider_key_status(provider: str) -> str:
     if not path.exists():
         return "missing"
     try:
-        read_secret(path)
+        unprotect(path.read_bytes())       # a status check is not a use (read_secret notes use)
         return "connected"
     except Exception:
         return "present_but_unreadable"

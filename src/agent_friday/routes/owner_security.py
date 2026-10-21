@@ -137,6 +137,21 @@ def security_keystore_status():
     return jsonify({"ok": True, **keystore_status()})
 
 
+@owner_security_bp.route("/api/security/credentials", methods=["GET"])
+@login_required
+def security_credentials():
+    """Every credential Friday holds: what it is, whose, how protected, last changed, last
+    used. Names and times only; never a value (credential_store.inventory)."""
+    from agent_friday.services import credential_store as cs
+    try:
+        return jsonify({"ok": True, "credentials": cs.inventory(),
+                        "protection": cs.protection_method()})
+    except Exception as e:
+        _log.error("credential inventory failed: %s", type(e).__name__)
+        return jsonify({"ok": False, "message": "The list of credentials could not be read (%s)."
+                                                % type(e).__name__}), 500
+
+
 @owner_security_bp.route("/api/security/keystore/wrap", methods=["POST"])
 @login_required
 def security_keystore_wrap():
