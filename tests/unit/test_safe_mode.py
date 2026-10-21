@@ -221,3 +221,12 @@ def test_in_safe_mode_commands_run_nothing(safe):
     v = action_gate.authorize("run_command", {"command": "git remote update"},
                               {"session_id": "s", "authenticated": True})
     assert v.action == "deny" and "safe mode" in v.reason
+
+
+def test_in_safe_mode_no_browser_or_program_is_opened_by_a_tool(safe):
+    from agent_friday.governance import action_gate
+    from agent_friday.services import agent
+    for tool in ("open_url", "browser_open", "browse_web", "open_path", "run_sandboxed"):
+        assert tool in agent.CLAUDE_TOOL_HANDLERS, tool
+        v = action_gate._decide(tool, action_gate.INTERNAL, "local", {"session_id": "s"}, False)
+        assert v.action == "deny" and "safe mode" in v.reason, tool
