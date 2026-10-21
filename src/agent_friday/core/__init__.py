@@ -4954,9 +4954,22 @@ def _idempotency_begin():
         return jsonify({"status": "error", "code": "bad_idempotency_key",
                         "message": "Idempotency-Key must be 8 to 128 letters, digits, '.', '_', ':' or '-'. "
                                    "Nothing was run."}), 400
-    principal = getattr(g, "friday_principal", "user") or "user"
-    token = request.headers.get("X-Friday-Token") or ""
-    decision, got = _idem.begin(key, principal, token,
+    # Who is asking, so one caller's key never answers another: the principal, where the request
+    # comes from (this PC or not, and its address), whether it carries the page's valid session
+    # token (its validity, not its value, so a rotation does not split one page's retries), and
+    # its session cookie.
+    try:
+        _local = bool(_is_local_request())
+    except Exception:  # noqa: BLE001
+        _local = False
+    try:
+        _tok_ok = bool(_api_token_valid(request.headers.get("X-Friday-Token")))
+    except Exception:  # noqa: BLE001
+        _tok_ok = False
+    caller = "%s|%s|%s|%s|%s" % (getattr(g, "friday_principal", "user") or "user", _local,
+                                 request.remote_addr or "", _tok_ok,
+                                 request.cookies.get(app.config.get("SESSION_COOKIE_NAME") or "session") or "")
+    decision, got = _idem.begin(key, caller, "",
                                 _idem.fingerprint(request.method, request.path, request.get_data(cache=True)))
     if decision == "run":
         g._idempotency_scope = got
