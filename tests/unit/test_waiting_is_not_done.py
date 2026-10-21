@@ -107,7 +107,9 @@ def test_a_task_with_a_card_still_pending_stays_waiting(task, monkeypatch):
         agent.TASKS[tid]["status"] = "waiting_approval"
     _cards(monkeypatch, [_card("approved", ok=True), dict(_card("pending"), approval_id="ap-2")])
     assert agent.settle_waiting_task(tid) is None
-    running = dict(_card("approved"), consumed=True, used_detail={})     # the checkpoint used it; it runs
+    import time as _t
+    # claimed by the card runner, used by the checkpoint, its tool still running
+    running = dict(_card("approved"), consumed=True, used_detail={}, executing_at=_t.time())
     _cards(monkeypatch, [running])
     assert agent.settle_waiting_task(tid) is None, "an approved card still running is not settled"
     with agent.TASKS_LOCK:
@@ -123,6 +125,29 @@ def test_only_the_tasks_own_tool_cards_count(task, monkeypatch):
                          dict(_card("denied", kind="cloud_spill", tool=None), approval_id="ap-spill")])
     monkeypatch.setattr(agent, "_advance_task_chain", lambda *a: None)
     assert agent.settle_waiting_task(tid) == "complete"
+
+
+def test_a_card_that_never_reports_back_does_not_keep_the_task_waiting_forever(task, monkeypatch):
+    import time as _t
+    tid, _said = task
+    with agent.TASKS_LOCK:
+        agent.TASKS[tid]["status"] = "waiting_approval"
+    stale = dict(_card("approved"), consumed=True, used_detail={}, executing_at=_t.time() - 7200)
+    _cards(monkeypatch, [stale])
+    assert agent.settle_waiting_task(tid) == "failed", "a run that never reported back is not waited on forever"
+    with agent.TASKS_LOCK:
+        agent.TASKS[tid]["status"] = "waiting_approval"
+    retried = dict(_card("approved"), consumed=True, used_detail={})    # used by the task's own retry
+    _cards(monkeypatch, [retried])
+    monkeypatch.setattr(agent, "_advance_task_chain", lambda *a: None)
+    assert agent.settle_waiting_task(tid) == "completed_unverified"
+
+
+def test_a_waiting_notice_never_counts_as_the_runs_result(monkeypatch):
+    """The waiting notice is its own message, so the run's result is still posted later."""
+    import inspect
+    src = inspect.getsource(agent._report_workflow_completion)
+    assert "workflow_waiting_id" in src and "workflow-run:{rid}:waiting:" in src
 
 
 def test_a_card_decided_while_the_task_still_ran_is_settled_when_it_finishes(task, monkeypatch):
