@@ -56,6 +56,7 @@ window.addEventListener('error',function(e){
 <script src="/static/js/friday_topbar_slot.js"></script>
 <!-- Settings > Privacy > When a cloud provider fails (A6). -->
 <script src="/static/js/friday_cloud_fallback_order.js" defer></script>
+<script src="/static/js/friday_route_why.js" defer></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -16260,7 +16261,7 @@ function ChatSurface(props) {
       marginLeft: 3,
       color: '#f59e0b'
     }
-  }, "\u26A0") : null)))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, pausePending.kind === 'privacy_hold' ? /*#__PURE__*/React.createElement(PrivacyHoldCard, {
+  }, "\u26A0") : null), m.role === 'friday' && m.route && window.FridayRouteWhy ? /*#__PURE__*/React.createElement(window.FridayRouteWhy, { route: m.route }) : null))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, pausePending.kind === 'privacy_hold' ? /*#__PURE__*/React.createElement(PrivacyHoldCard, {
     hold: pausePending.hold,
     msg: pausePending.message,
     onChoose: id => {
@@ -17215,6 +17216,7 @@ function ConversationWindow({
           model: d.model || (d.friday_msg || {}).model,
           seat: d.seat,
           fallback_chain: d.fallback_chain || [],
+          route: d.route || (d.friday_msg || {}).route || null,
           trace_id: d.trace_id || streamTraceId || null,
           reasoning_sources: d.reasoning_sources || [],
           offer_cloud_switch: !!d.offer_cloud_switch,
@@ -71645,6 +71647,7 @@ function App() {
         model: d.model,
         seat: d.seat,
         fallback_chain: d.fallback_chain || [],
+        route: d.route || (d.friday_msg || {}).route || null,
         trace_id: d.trace_id || streamTraceId || null,
         reasoning_sources: d.reasoning_sources || [],
         // local_only mode refused (no local seat available) rather than
