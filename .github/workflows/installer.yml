@@ -225,6 +225,11 @@ jobs:
         with:
           name: installer
           path: artifact
+      # The clean-machine record (§34.3-8) ships with the release it proves.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: clean-machine-evidence
+          path: artifact
       - name: The notes carry the build sequence
         run: |
           # The updater orders releases by the "Build sequence: N" line in the
@@ -260,6 +265,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
-            artifact/release-manifest.json \
+            artifact/release-manifest.json artifact/clean-machine-evidence.json \
             --repo "${{ github.repository }}" --verify-tag --latest \
             --title "Agent Friday Beta 1.2 (update 2)" --notes-file "$RUNNER_TEMP/notes.md"

@@ -93,6 +93,9 @@ jobs:
     name: leg (${{ matrix.leg }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
+    # A beta (A19) only records: a failing leg is in the evidence, not a block.
+    # A public release tag never sets report_only (installer.yml).
+    continue-on-error: ${{ inputs.report_only == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -168,6 +171,10 @@ jobs:
       - name: One evidence record over every leg
         run: |
           want=$(cut -d' ' -f1 installer/AgentFriday-Setup-*.exe.sha256 | tr -d '\r\n' | tr 'A-F' 'a-f')
+          # Without the build's own hash every leg could have installed anything.
+          if ! [[ "$want" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the build's setup program hash is missing or malformed"; exit 1
+          fi
           python3 scripts/clean_machine_evidence.py --dir legs --sha "${{ github.sha }}" \
             --installer-sha256 "$want" --out evidence/clean-machine-evidence.json \
             ${{ inputs.report_only && '--report-only' || '' }}

@@ -108,7 +108,19 @@ finally {
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object { try { (Invoke-CimMethod -InputObject $_ -MethodName GetOwner).User -eq $UserName } catch { $false } } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    # The task holds the account's password; it goes even if the leg threw.
+    Unregister-ScheduledTask -TaskName 'friday-standard-user-leg' -Confirm:$false -ErrorAction SilentlyContinue
+    $sid = $null
+    try { $sid = (Get-LocalUser -Name $UserName -ErrorAction Stop).SID.Value } catch { }
     Remove-LocalUser -Name $UserName -ErrorAction SilentlyContinue
+    # The profile (and with it a per-user install the leg could not uninstall)
+    # and its ProfileList entry, then the shared folder.
+    if ($sid) {
+        Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+            Where-Object { $_.SID -eq $sid } |
+            ForEach-Object { try { Remove-CimInstance -InputObject $_ -ErrorAction Stop } catch { Write-Host "profile not removed: $($_.Exception.Message)" } }
+    }
+    Remove-Item -LiteralPath $shared -Recurse -Force -ErrorAction SilentlyContinue
 }
 if (-not (Test-Path (Join-Path $WorkDir 'RESULT.json'))) { Write-Host 'FAILED: the standard-user leg wrote no RESULT.json'; exit 1 }
 if ($null -eq $exit) { exit 1 }

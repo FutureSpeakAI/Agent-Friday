@@ -58,13 +58,35 @@ def test_the_release_build_calls_it_and_the_release_waits_for_it():
     assert job["with"]["called"] is True and job["needs"] == "build"
     assert "clean-machine" in inst["jobs"]["release"]["needs"]
     # A beta tag only records (A19); a public tag must pass.
-    assert "contains(github.ref_name, '-')" in str(job["with"]["report_only"])
+    ro = str(job["with"]["report_only"])
+    assert "contains(github.ref_name, '-')" in ro
+    assert "!startsWith(github.ref, 'refs/tags/v')" in ro and "||" in ro
+    # The record ships with the release it proves (§34.3-8).
+    rel = INSTALLER.read_text(encoding="utf-8").split("\n  release:", 1)[1]
+    assert "name: clean-machine-evidence" in rel and "artifact/clean-machine-evidence.json" in rel
 
 
 def test_called_by_the_release_it_tests_the_release_build_not_its_own():
     wf = _workflow()
     assert wf["jobs"]["build"]["if"] == "${{ inputs.called != true }}"
     assert "needs.build.result == 'skipped'" in wf["jobs"]["leg"]["if"]
+
+
+def test_a_beta_only_records_and_a_missing_build_hash_fails():
+    wf = _workflow()
+    # A19: a failing leg does not block a beta; a public tag never sets report_only.
+    assert wf["jobs"]["leg"]["continue-on-error"] == "${{ inputs.report_only == true }}"
+    run = " ".join(s.get("run", "") for s in wf["jobs"]["evidence"]["steps"])
+    assert "^[0-9a-f]{64}$" in run and "exit 1" in run
+
+
+def test_the_standard_user_leg_leaves_nothing_behind():
+    src = (REPO / "packaging/windows/tests/clean-machine/run-as-standard-user.ps1").read_text(encoding="utf-8-sig")
+    fin = src.split("finally {", 1)[1]
+    for step in ("Unregister-ScheduledTask -TaskName 'friday-standard-user-leg'",
+                 "Remove-LocalUser", "Win32_UserProfile", "Remove-CimInstance",
+                 "Remove-Item -LiteralPath $shared"):
+        assert step in fin, step
 
 
 def test_two_windows_images_get_the_full_fresh_install_check():        # §34.3-1
