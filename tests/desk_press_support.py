@@ -50,3 +50,17 @@ def pressed():
                                        environ_base={"REMOTE_ADDR": "127.0.0.1"}):
         assert screen_click.decided_by(request, "owner:ui") == "owner:ui", "the stand-in press did not verify"
         yield
+
+
+@contextmanager
+def voice_call_on_this_desk(owner_local: bool = True):
+    """Stand in for a voice call's tool call: a spoken decision is made inside one, and it
+    approves only when that call is the owner's own page on this PC (the desk key on the
+    voice socket; services/approvals.voice_on_this_desk)."""
+    from agent_friday.services import agent
+    tok = agent._CURRENT_TOOL_CONTEXT.set({"surface": "voice-local", "is_voice": True,
+                                           "owner_local": bool(owner_local)})
+    try:
+        yield
+    finally:
+        agent._CURRENT_TOOL_CONTEXT.reset(tok)

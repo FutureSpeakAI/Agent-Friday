@@ -4792,6 +4792,14 @@ def _tool_answer_card(inp):
     from agent_friday.services import item_actions as _ia
     inp = inp or {}
     surface = _CURRENT_SURFACE.get() or "chat"
+    _dec = str(inp.get("decision") or "").strip().lower()
+    if (surface.startswith("voice") and _dec not in ("decline", "deny", "no", "reject", "cancel")):
+        from agent_friday.services import approvals as _appr_desk
+        if _appr_desk.voice_off_this_desk():
+            # services/approvals refuses it too; this says why, in words Friday can speak.
+            return ("NOT RECORDED: a spoken yes approves a card only on a voice call from "
+                    "Friday's own page on this PC. Ask them to press Approve on the screen; "
+                    "saying no still declines it.")
     try:
         from agent_friday.services import cloud_release as _cr
         if _cr.is_card(str(inp.get("card_id") or "")):

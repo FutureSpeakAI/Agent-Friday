@@ -1082,7 +1082,8 @@ def test_a_voice_call_that_is_not_this_pcs_own_cannot_ask_or_answer(monkeypatch,
 def test_the_voice_sessions_know_whether_they_are_the_owners_own_call():
     vs = (ROOT / "src" / "agent_friday" / "routes" / "voice.py").read_text(encoding="utf-8")
     assert '"owner_local": bool(_owner_voice)' in vs and '"owner_local": _owner_local_live' in vs
-    assert "_owner_local_live = bool(_is_local_request())" in vs
+    # The owner's own call: loopback, a local Host and this launch's desk key on the socket.
+    assert "_owner_local_live = _voice_on_this_desk()" in vs
     ve = (ROOT / "src" / "agent_friday" / "services" / "voice_engine.py").read_text(encoding="utf-8")
     assert ve.count('"voice_owner_local": bool((session or {}).get("owner_local"))') == 2
     assert 'ctx["owner_local"] = bool(session.get("owner_local"))' in ve
