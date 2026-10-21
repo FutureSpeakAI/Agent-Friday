@@ -7,6 +7,7 @@ import io
 import pytest
 
 from agent_friday.services import studio_files as sf
+from tests.desk_press_support import desk_headers      # an approve is a press on this PC's screen
 
 
 @pytest.fixture(autouse=True)
@@ -206,7 +207,7 @@ def test_delete_waits_for_approval_then_recycles(client, docs, monkeypatch):
     monkeypatch.setattr(sf, "_recycle", lambda p: recycled.append(p.name))
     aid = _request(client, op="delete", root="documents", path="notes.md")
     assert recycled == [] and (docs / "notes.md").exists()
-    d = client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"})
+    d = client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"}, headers=desk_headers())
     assert d.status_code == 200
     assert recycled == ["notes.md"]
     from agent_friday.services import approvals
@@ -226,21 +227,21 @@ def test_denied_change_touches_nothing(client, docs, monkeypatch):
 def test_rename_and_move_run_only_after_approval(client, docs):
     aid = _request(client, op="rename", root="documents", path="Album/two.txt", new_name="deux.txt")
     assert (docs / "Album" / "two.txt").exists()
-    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"})
+    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"}, headers=desk_headers())
     assert (docs / "Album" / "deux.txt").exists() and not (docs / "Album" / "two.txt").exists()
     aid = _request(client, op="move", root="documents", path="Album/deux.txt",
                    dest_root="documents", dest_path="")
-    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"})
+    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"}, headers=desk_headers())
     assert (docs / "deux.txt").exists()
 
 
 def test_copy_runs_only_after_approval_and_never_overwrites(client, docs):
     aid = _request(client, op="copy", root="documents", path="notes.md", dest_root="documents", dest_path="")
     assert not (docs / "notes (copy).md").exists()
-    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"})
+    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"}, headers=desk_headers())
     assert (docs / "notes (copy).md").read_text(encoding="utf-8") == (docs / "notes.md").read_text(encoding="utf-8")
     aid = _request(client, op="copy", root="documents", path="notes.md", dest_root="documents", dest_path="Album")
-    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"})
+    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"}, headers=desk_headers())
     assert (docs / "Album" / "notes.md").exists()
     r = client.post("/api/studio-files/request-change",
                     json={"op": "copy", "root": "documents", "path": "Album", "dest_root": "documents", "dest_path": ""})

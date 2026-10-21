@@ -4,6 +4,7 @@ import json
 import pytest
 
 from agent_friday.phone import config
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 FAKE_SECRET = "fakesecret" + "c" * 22        # pragma: allowlist secret
 
@@ -30,7 +31,8 @@ def test_status_is_off_by_default_and_carries_no_secret(client, phone_home):
 
 
 def test_a_secret_goes_in_and_only_its_status_comes_back(client, phone_home):
-    r = client.post("/api/phone/secret", json={"name": "auth_token", "value": FAKE_SECRET})
+    r = client.post("/api/phone/secret", json={"name": "auth_token", "value": FAKE_SECRET},
+                    headers=desk_headers())
     assert r.status_code == 200 and FAKE_SECRET not in r.get_data(as_text=True)
     assert config.get_secret("auth_token") == FAKE_SECRET
     assert client.delete("/api/phone/secret/auth_token").get_json()["status"] == "missing"
@@ -66,12 +68,25 @@ def test_writes_need_same_origin_json(client, phone_home):
 
 
 def test_config_validation_is_reported(client, phone_home):
-    r = client.post("/api/phone/config", json={"patch": {"owner_cell_verified": True}})
+    from tests.desk_press_support import desk_headers      # whose cell may approve: a press on this PC
+    r = client.post("/api/phone/config", json={"patch": {"owner_cell_verified": True}}, headers=desk_headers())
     assert r.status_code == 400
-    r = client.post("/api/phone/config", json={"patch": {"owner_cell": "(512) 555-0111"}})
+    r = client.post("/api/phone/config", json={"patch": {"owner_cell": "(512) 555-0111"}}, headers=desk_headers())
     assert r.get_json()["config"]["owner_cell"] == "+15125550111"
 
 
+def test_text_message_approvals_and_the_owners_cell_need_a_press_on_this_desktop(client, phone_home):
+    """A header-stripped tunnel looks local; it must not be able to name its own cell as the
+    owner's or switch on approvals by text message."""
+    from tests.desk_press_support import page_headers
+    for patch in ({"sms_approvals": True}, {"owner_cell": "(512) 555-0111"}):
+        r = client.post("/api/phone/config", json={"patch": patch}, headers=page_headers())
+        assert r.status_code == 403, patch
+    assert config.load()["sms_approvals"] is False and not config.load()["owner_cell"]
+    r = client.post("/api/phone/verify/start", json={"method": "sms"}, headers=page_headers())
+    assert r.status_code == 403
+
+
 def test_test_text_needs_a_verified_cell(client, phone_home):
-    r = client.post("/api/phone/test-sms", json={})
+    r = client.post("/api/phone/test-sms", json={}, headers=desk_headers())
     assert r.status_code == 400 and "verify" in r.get_json()["error"]

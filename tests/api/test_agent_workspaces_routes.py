@@ -92,8 +92,9 @@ def test_actual_screen_gate_requires_token_and_same_origin_browser_headers(clien
     monkeypatch.setattr(state.routes.core, "_api_token_valid", state.real_token_valid)
     body = {"enabled": False, "generation": state.permission["generation"]}
     assert client.put("/api/browser/workspaces/permission", json=body).status_code == 403
+    from tests.desk_press_support import desk_key
     headers = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-               "X-Friday-Token": state.routes.core._current_api_token()}
+               "X-Friday-Token": state.routes.core._current_api_token(), "X-Friday-Desk": desk_key()}
     response = client.put("/api/browser/workspaces/permission", json=body, headers=headers)
     assert response.status_code == 200
     assert state.stops == [True]

@@ -21,6 +21,7 @@ import pytest
 from agent_friday.services import approvals
 from agent_friday.services import file_grant_requests as fgr
 from agent_friday.services import file_grants as fg
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 ROOT = Path(__file__).resolve().parents[2]
 TEXT = ("The old permissions file, which has a line no current key signed, is set "
@@ -115,7 +116,7 @@ def test_approved_on_screen_the_old_file_is_kept_byte_for_byte_and_nothing_is_gr
     before = fg._ledger_path().read_bytes()
     out = fgr.request_fresh_start()
 
-    rec, won = approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): rec, won = approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
 
     assert won
     (aside,) = _set_aside(tmp_path)
@@ -134,7 +135,7 @@ def test_starting_fresh_keeps_never_send_marks_that_still_verify(tmp_path):
     deny = fg.create_deny_mark(str(keep), "file")
     out = fgr.request_fresh_start()
 
-    approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
 
     state = fg._load_state(force=True)
     assert state.suspended is False and state.grants == {}
@@ -176,7 +177,7 @@ def test_starting_fresh_keeps_a_deny_beside_an_unreadable_line(tmp_path):
     before = fg._ledger_path().read_bytes()
     out = fgr.request_fresh_start()
 
-    approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
 
     (aside,) = _set_aside(tmp_path)
     assert aside.read_bytes() == before, "the unreadable line was not kept in the file set aside"

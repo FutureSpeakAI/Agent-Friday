@@ -381,6 +381,22 @@ def _held_detail_cards_off(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_leftover_machine_input():
+    """A test that runs a real Computer Control tool marks Friday's own mouse or keyboard action
+    (services/desk_press), and for a few seconds no press counts. The next test starts clean."""
+    import sys as _sys
+    dp = _sys.modules.get("agent_friday.services.desk_press")
+    if dp is not None:
+        dp._last_machine_input = 0.0
+        dp._machine_active = 0
+    yield
+    dp = _sys.modules.get("agent_friday.services.desk_press")
+    if dp is not None:
+        dp._last_machine_input = 0.0
+        dp._machine_active = 0
+
+
+@pytest.fixture(autouse=True)
 def _fresh_swr_cache():
     """Cached panel data must not carry from one test into the next."""
     try:

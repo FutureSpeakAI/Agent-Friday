@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from agent_friday.services import approvals, media_diet
+from tests.desk_press_support import desk_headers      # an approve is a press on this PC's screen
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +27,7 @@ def test_the_media_diet_shows_rules_proposals_and_receipts(client):
     assert d["rules"] == [] and d["pending"][0]["approval_id"] == rec["approval_id"]
     assert "+ Never cite Fox News" in d["pending"][0]["diff"]
     assert client.post("/api/approvals/%s/decide" % rec["approval_id"],
-                       json={"decision": "approve"}).status_code == 200
+                       json={"decision": "approve"}, headers=desk_headers()).status_code == 200
     d = client.get("/api/news/media-diet").get_json()
     assert d["pending"] == [] and d["rules"][0]["outlet"] == "foxnews.com"
     assert client.delete("/api/news/media-diet/rule", json={"outlet": "Fox News"}).get_json()["removed"]

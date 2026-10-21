@@ -29,6 +29,7 @@ from agent_friday.services import approvals
 from agent_friday.services import egress_gate as eg
 from agent_friday.services import file_grant_requests as fgr
 from agent_friday.services import file_grants as fg
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 ROOT = Path(__file__).resolve().parents[2]
 OLD_KEY = "retired-session-secret-for-this-test"   # pragma: allowlist secret
@@ -179,7 +180,7 @@ def test_approving_the_card_on_screen_creates_exactly_the_listed_grants(tmp_path
     a, b = _file(tmp_path, "a.txt"), _file(tmp_path, "b.txt", "Other notes.")
     card = fgr.request_access([{"path": str(a)}, {"path": str(b)}])
 
-    rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): rec, won = approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
 
     assert won and rec["status"] == "approved"
     assert {g["path"] for g in fg.list_grants()} == {str(a.resolve()), str(b.resolve())}
@@ -276,7 +277,7 @@ def test_re_granting_the_retired_line_goes_through_the_approval_card(tmp_path, m
     out = fgr.regrant_notice(notice["id"])
     assert out["ok"] and fg.list_grants() == [], "re-grant must wait for the card"
 
-    approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
 
     grants = fg.list_grants()
     assert [g["path"] for g in grants] == [str(p.resolve())]

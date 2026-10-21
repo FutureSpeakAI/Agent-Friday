@@ -59,6 +59,13 @@ def cc_permission():
     data = request.get_json(force=True, silent=True) or {}
     action = data.get('action', '')
     if action == 'grant':
+        # Letting Friday move the mouse and type would let it press an approval card on this
+        # PC's own screen, so granting it is itself a press on this PC's screen.
+        from agent_friday.services import screen_click as _sc
+        refused = _sc.press_refusal(request, "Grant Computer Control with a press in Settings, on "
+                                             "the computer Friday runs on.")
+        if refused is not None:
+            return refused
         # Experimental opt-in gate: refuse unless the feature is enabled in
         # Settings → Experimental (defaults OFF for new users).
         try:
@@ -104,6 +111,14 @@ def cc_app_grants():
                         "origin": cur["origin"]})
     data = request.get_json(force=True, silent=True) or {}
     app = data.get('app', '')
+    if not data.get('remove') and str(data.get('tier') or '').strip().lower() in ('observe', 'act'):
+        # Widening what Friday may see or do in an app (a browser holding Friday's own page among
+        # them) is a press on this PC's screen. Narrowing and removing are open.
+        from agent_friday.services import screen_click as _sc
+        refused = _sc.press_refusal(request, "Change app permissions with a press in Settings, on "
+                                             "the computer Friday runs on.")
+        if refused is not None:
+            return refused
     try:
         if data.get('remove'):
             apps = _dg.remove_grant(app)
@@ -178,11 +193,17 @@ def decide_cloud_release(approval_id):
     from agent_friday.services import cloud_release as _cr
     from agent_friday.services import screen_click as _sc
     data = request.get_json(silent=True) or {}
-    # Send lets private text leave the PC: only a click on the card on Friday's own page is
-    # "owner:ui". A request that merely claims it is the plain owner, and cloud_release refuses
-    # a Send from it (Keep on this PC is always accepted).
-    out = _cr.decide(approval_id, str(data.get("decision") or "").strip().lower(),
-                     data.get("remember"), decided_by=_sc.decided_by(request, "owner:ui"))
+    decision = str(data.get("decision") or "").strip().lower()
+    # Send lets private text leave the PC: only a press on the card in Friday's own page, on
+    # this PC's own screen, is "owner:ui" (services/desk_press). Any other request is refused
+    # with the code that has the page fetch the desk key; Keep on this PC is always accepted.
+    if decision == "approve":
+        refused = _sc.press_refusal(request, "Send this with its own button on the card, on the "
+                                             "computer Friday runs on.")
+        if refused is not None:
+            return refused
+    out = _cr.decide(approval_id, decision,
+                     data.get("remember"), decided_by=_sc.decided_by(request, "owner:ui", for_ids=[approval_id]))
     if not out.get("ok"):
         return jsonify({"status": "error", "ok": False, "message": out.get("error")}), (
             404 if out.get("error") == "not found" else 400)
@@ -277,6 +298,13 @@ def create_file_grant():
     """Create a grant. body: {path, scope: 'file'|'folder'|'glob',
     never_send_override?: bool, ack_never_send_matches?: [str],
     expiry_days? (required for folder/glob, max 30)}."""
+    # A grant lets a file's contents reach a model: the same consent as approving a file-access
+    # card, so the same press on this PC's own screen (services/desk_press).
+    from agent_friday.services import screen_click as _sc
+    refused = _sc.press_refusal(request, "Grant file access with a press in Settings, on the "
+                                         "computer Friday runs on.")
+    if refused is not None:
+        return refused
     data = request.get_json(force=True, silent=True) or {}
     path = (data.get('path') or '').strip()
     scope = (data.get('scope') or 'file').strip().lower()
@@ -350,6 +378,12 @@ def reattest_file_grant():
     this ledger has used is refused (400), because what it says is unknown.
     """
     from agent_friday.services import file_grants as _fg
+    from agent_friday.services import screen_click as _sc
+    # Re-signing a line brings a grant back into force: a press on this PC's own screen.
+    refused = _sc.press_refusal(request, "Confirm this with a press in Settings, on the computer "
+                                         "Friday runs on.")
+    if refused is not None:
+        return refused
     data = request.get_json(silent=True) or {}
     sha = (data.get("line_sha256") or "").strip()
     who = (data.get("confirmed_by") or "").strip()

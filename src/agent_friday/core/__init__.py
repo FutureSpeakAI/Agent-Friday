@@ -4859,6 +4859,19 @@ OWN_PAGE_CSP = "; ".join((
 ))
 
 
+def _own_page_csp():
+    """OWN_PAGE_CSP, plus the loopback address the page may also fetch from: the desk-key
+    door (services/desk_press.connect_source), when it is open."""
+    try:
+        from agent_friday.services import desk_press as _dp
+        extra = _dp.connect_source()
+    except Exception:
+        extra = ""
+    if not extra:
+        return OWN_PAGE_CSP
+    return OWN_PAGE_CSP.replace("connect-src 'self'", "connect-src 'self' " + extra, 1)
+
+
 def _split_csp(value):
     return [p.strip() for p in (value or "").split(";") if p.strip()]
 
@@ -4912,7 +4925,7 @@ def _isolation_headers(resp):
         ctype = (resp.mimetype or "").lower()
         if request.endpoint in OWN_PAGE_ENDPOINTS and ctype in _MARKUP_TYPES:
             if not resp.headers.get("Content-Security-Policy"):
-                resp.headers["Content-Security-Policy"] = OWN_PAGE_CSP
+                resp.headers["Content-Security-Policy"] = _own_page_csp()
             resp.headers["Cache-Control"] = "no-store"
             resp.headers.setdefault("X-Content-Type-Options", "nosniff")
             resp.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -4932,6 +4945,14 @@ def _isolation_headers(resp):
 
 @app.after_request
 def _apply_isolation_headers(resp):
+    # A page that sent a desk key from an earlier launch (Friday restarted under an
+    # open tab) is told so, and fetches this launch's key (and token) for its next press.
+    try:
+        from agent_friday.services import desk_press as _dp
+        if _dp.stale(request):
+            resp.headers["X-Friday-Desk-Stale"] = "1"
+    except Exception:
+        pass
     return _isolation_headers(resp)
 
 

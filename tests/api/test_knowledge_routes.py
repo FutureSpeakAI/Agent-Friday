@@ -13,6 +13,7 @@ import pytest
 
 from agent_friday.services import knowledge_folders as kf
 from tests.library_fixtures import isolate_library, release_library
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 
 class RealDialogOpened(BaseException):
@@ -55,7 +56,9 @@ def _env(tmp_path, monkeypatch):
 def _as_the_page(client):
     import agent_friday.core as core
     client.environ_base.update({"HTTP_SEC_FETCH_SITE": "same-origin", "HTTP_ORIGIN": "http://localhost",
-                                "HTTP_X_FRIDAY_TOKEN": core._API_SESSION_TOKEN})
+                                "HTTP_X_FRIDAY_TOKEN": core._API_SESSION_TOKEN,
+                                # a press on this PC's screen (services/desk_press)
+                                "HTTP_X_FRIDAY_DESK": __import__("tests.desk_press_support", fromlist=["x"]).desk_key()})
 
 
 class _Proc:
@@ -175,8 +178,8 @@ def test_recording_a_local_scope_is_the_existing_library_add_and_the_cloud_grant
     assert fg.list_grants() == []                                          # reading here grants the cloud nothing
     ev = [e for e in fg._load_state().library.values()]
     assert ev and ev[0]["source"] == "you" and ev[0]["path"] == str(d.resolve())
-    r2 = client.post("/api/privacy/file-grants", json={"path": str(d), "scope": "folder", "expiry_days": 30})
+    r2 = client.post("/api/privacy/file-grants", json={"path": str(d), "scope": "folder", "expiry_days": 30}, headers=desk_headers())
     assert r2.status_code == 200 and r2.get_json()["grant"]["type"] == "folder"
     assert len(fg.list_grants()) == 1 and len(fg._load_state().library) == 1
-    over = client.post("/api/privacy/file-grants", json={"path": str(d), "scope": "folder", "expiry_days": 31})
+    over = client.post("/api/privacy/file-grants", json={"path": str(d), "scope": "folder", "expiry_days": 31}, headers=desk_headers())
     assert over.status_code == 400                                         # never longer than 30 days

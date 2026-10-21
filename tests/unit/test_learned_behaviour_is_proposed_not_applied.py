@@ -24,6 +24,7 @@ import pytest
 from agent_friday.services import approvals
 from agent_friday.services import learning_loop as ll
 from agent_friday.services import user_model as um
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 
 @pytest.fixture(autouse=True)
@@ -101,7 +102,7 @@ def test_promotion_is_idempotent_while_the_card_is_pending():
 def test_owner_accept_adds_the_heuristic():
     sid = _ready_skill()
     ll.promote(threshold=0.5, min_trials=3)
-    res = ll.decide_proposal(sid, "accept", decided_by="owner:ui")
+    with pressed(): res = ll.decide_proposal(sid, "accept", decided_by="owner:ui")
     assert res["ok"] is True
     assert sid in [s["skill_id"] for s in ll.active_skills()]
     assert "test first" in ll.render_heuristics_prompt()
@@ -111,14 +112,14 @@ def test_approving_the_card_directly_adds_the_heuristic():
     sid = _ready_skill()
     ll.promote(threshold=0.5, min_trials=3)
     # The card is screen-only now (harness2 adoption HA-E17): the owner's click.
-    approvals.decide(_cards()[0]["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide(_cards()[0]["approval_id"], "approve", decided_by="owner:ui")
     assert sid in [s["skill_id"] for s in ll.active_skills()]
 
 
 def test_owner_edit_adds_the_owners_wording():
     sid = _ready_skill()
     ll.promote(threshold=0.5, min_trials=3)
-    res = ll.decide_proposal(sid, "edit", pattern="Write the failing test first.", decided_by="owner:ui")
+    with pressed(): res = ll.decide_proposal(sid, "edit", pattern="Write the failing test first.", decided_by="owner:ui")
     assert res["ok"] is True
     assert ll.render_heuristics_prompt() == "• Write the failing test first."
 
@@ -145,7 +146,7 @@ def test_owner_defer_leaves_the_proposal_pending():
 def test_decay_proposes_removal_instead_of_retiring():
     sid = _ready_skill()
     ll.promote(threshold=0.5, min_trials=3)
-    ll.decide_proposal(sid, "accept", decided_by="owner:ui")
+    with pressed(): ll.decide_proposal(sid, "accept", decided_by="owner:ui")
     for _ in range(20):
         ll.record_trial(sid, success=False, satisfaction=0.05)
     changes = ll.promote(threshold=0.5, retire=0.4)
@@ -154,7 +155,7 @@ def test_decay_proposes_removal_instead_of_retiring():
     removal = [c for c in _cards() if c["payload"]["change"] == "remove"]
     assert len(removal) == 1 and removal[0]["status"] == "pending"
     assert removal[0]["payload"]["diff"].startswith("- ")
-    ll.decide_proposal(sid, "accept", decided_by="owner:ui")
+    with pressed(): ll.decide_proposal(sid, "accept", decided_by="owner:ui")
     assert ll.active_skills() == []
     assert _status(sid) == "retired"
 

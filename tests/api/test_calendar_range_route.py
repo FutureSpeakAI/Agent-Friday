@@ -68,7 +68,9 @@ def test_the_calendar_list_says_which_are_on(client, views):
 def _page():
     """The headers Friday's own page sends on a click: same-origin browser metadata and its session token."""
     import agent_friday.core as core
-    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": core._current_api_token()}
+    from tests.desk_press_support import desk_key    # a press on this PC's screen (services/desk_press)
+    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": core._current_api_token(),
+            "X-Friday-Desk": desk_key()}
 
 
 def test_switching_a_calendar_writes_friday_only(client, views, tmp_path):

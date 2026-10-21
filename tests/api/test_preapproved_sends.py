@@ -37,11 +37,13 @@ SCHEDULED = {"is_background_task": True, "schedule_id": "sch_weekly_status", "ta
 
 @pytest.fixture
 def client(app):
-    """The test client as Friday's own page: it carries the page's X-Friday-Token,
-    which the send-grant routes demand even from loopback."""
-    import agent_friday.core as core
+    """The test client as Friday's own page on this PC: it carries the page's X-Friday-Token,
+    which the send-grant routes demand even from loopback, and a press's browser metadata
+    and desk key, which making a pre-approval demands (services/desk_press)."""
+    from tests.desk_press_support import desk_headers
     c = app.test_client()
-    c.environ_base["HTTP_X_FRIDAY_TOKEN"] = core._current_api_token()
+    for k, v in desk_headers().items():
+        c.environ_base["HTTP_" + k.upper().replace("-", "_")] = v
     return c
 
 

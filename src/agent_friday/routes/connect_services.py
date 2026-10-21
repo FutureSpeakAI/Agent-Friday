@@ -78,6 +78,13 @@ def connection_endpoint():
 
 @connect_services_bp.route("/api/setup/connections/mcp", methods=["POST"])
 def connection_mcp_add():
+    # An MCP server is a command or an address Friday will run or call as the owner: a press
+    # on this PC's own screen (services/desk_press), not only a request that looks local.
+    from agent_friday.services import screen_click
+    refused = screen_click.press_refusal(
+        request, "Add a connector with a press in Settings, on the computer Friday runs on.")
+    if refused is not None:
+        return refused
     b = _body()
     try:
         return jsonify({"ok": True, **cx.add_mcp(str(b.get("name") or ""),
