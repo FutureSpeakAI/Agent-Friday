@@ -20345,7 +20345,7 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Privacy check" desc={("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")}>
       <PrivacyCheckLayers/>
     </StSection>
-    <StSection title="When a cloud provider fails" desc="If a cloud provider fails, Friday says so and offers the other one; she never switches on her own. An order set here lets her move along it, and she still tells you each time.">
+    <StSection title="When a cloud provider fails" desc={"If a cloud provider fails, " + fridayName() + " says so and offers the other one; she never switches on her own. An order set here lets her move along it, and she still tells you each time."}>
       {window.FridayCloudFallbackOrder?React.createElement(window.FridayCloudFallbackOrder):null}
     </StSection>
     <StSection title="Library" desc="Documents you add to the Library are read and indexed on this PC. Nothing is sent anywhere unless you turn on cloud answers below. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key.">
