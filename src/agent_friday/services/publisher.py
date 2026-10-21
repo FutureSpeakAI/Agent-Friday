@@ -1070,7 +1070,12 @@ def _run_target(target: Dict[str, Any]) -> str:
         from agent_friday.services import egress_gate as _eg
         platform = str(target.get("platform") or "")
         _eg.record_service_send("publishing", ("publish:" + platform)[:80], destination=_destination(platform),
-                                content={"platform": platform, "post": prepared},
+                                content={"platform": platform, "post": {
+                                    k: prepared.get(k) for k in ("title", "body", "text", "texts", "segments",
+                                                                 "hashtags", "mentions", "caption", "link")
+                                    if prepared.get(k) is not None},
+                                    "assets": [{k: a.get(k) for k in ("id", "sha256", "kind", "bytes") if k in a}
+                                               for a in (prepared.get("assets") or []) if isinstance(a, dict)]},
                                 result="sent" if pub.get("ok") else "failed", part="post")
     except Exception:
         pass

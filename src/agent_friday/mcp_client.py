@@ -1053,10 +1053,21 @@ class MCPManager:
             from agent_friday.services import egress_gate as _eg
             url = getattr(sp, "url", None)
             dest = (urlparse(str(url)).hostname or str(url)) if url else f"a program on this PC ({server})"
-            failed = isinstance(out, str) and out.startswith("[mcp")
-            _eg.record_service_send("mcp", f"mcp:{server}"[:80], destination=dest,
-                                    content={"tool": tool, "arguments": arguments},
-                                    result="failed" if failed else "sent", part=f"tool {tool}"[:60])
+            # "unavailable" never reached the server; an error after the call
+            # went out (a timeout, a server error) may have been acted on.
+            if isinstance(out, str) and out.startswith("[mcp") and "unavailable" in out[:80]:
+                result = "failed"
+            elif isinstance(out, str) and out.startswith("[mcp"):
+                result = "sent_unconfirmed"
+            else:
+                result = "sent"
+            try:
+                from agent_friday.services.credential_paths import redact_secrets
+                kept = redact_secrets(json.dumps({"tool": tool, "arguments": arguments}, default=str))
+            except Exception:
+                kept = {"tool": tool, "arguments": "(not kept: could not be checked for secrets)"}
+            _eg.record_service_send("mcp", f"mcp:{server}"[:80], destination=dest, content=kept,
+                                    result=result, part=f"tool {tool}"[:60])
         except Exception:
             pass
         return out

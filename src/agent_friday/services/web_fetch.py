@@ -203,9 +203,14 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
             from agent_friday.services import egress_gate as _eg
             host = urlparse(str(url or "")).hostname or "a website"
             via = rec.get("via")
+            # A network error may be before or after the address left.
+            result = "sent_unconfirmed" if rec.get("error_kind") == "network" else "sent"
+            hops = [h for h in (urlparse(str(u)).hostname for u in (rec.get("redirect_chain") or [])) if h]
             _eg.record_service_send("web_fetch", ("web:" + host)[:80],
-                                    destination=("Firecrawl, for " + host) if via == "firecrawl" else host,
-                                    content={"url": url}, result="sent", part="address",
+                                    destination=(("Firecrawl, for " + host) if via == "firecrawl" else host)
+                                    + (" (then " + ", ".join(dict.fromkeys(hops[1:])) + ")" if len(hops) > 1 else ""),
+                                    content={"url": url, "redirects": rec.get("redirect_chain") or []},
+                                    result=result, part="address",
                                     note="" if rec.get("ok") else str(rec.get("error_kind") or "")[:40])
     except Exception:
         pass

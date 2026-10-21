@@ -475,6 +475,7 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
 
 
 def _release(svc, series_id, keep_event_id=None) -> dict:
+    # egress: recorded by the client it is given (_write_setup -> calendar_write._service, egress_record)
     released, left = [], []
     for item in _series_events(svc, series_id):
         eid = item.get("id")

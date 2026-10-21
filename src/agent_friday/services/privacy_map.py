@@ -64,13 +64,17 @@ DESTINATION_WORDS = {
 #: calls, Calendar/Tasks/Contacts changes, posts, published pages, web pages
 #: Friday opens and web/news searches are now each a send in that list (P4).
 NOT_RECORDED = (
-    {"key": "messaging", "what": "Texts and chat messages (SMS, Telegram, Discord)",
-     "record": "Each message is checked by the privacy gate first; it is not yet a line in this list."},
+    {"key": "messaging", "what": "Texts, chat messages and phone calls (SMS, Telegram, Discord, calls)",
+     "record": "Each message is checked by the privacy gate first; none is yet a line in this list."},
     {"key": "browser", "what": "Pages opened in a real browser window for you",
      "record": "The browser's own history keeps them; they are not yet a line in this list."},
+    {"key": "mailbox", "what": "Changes to your own mailbox (labels, read or unread, archive, trash) and drafts",
+     "record": "Each is an action with its own receipt and undo (System > Friday's changes), not a line here."},
+    {"key": "feeds", "what": "News feeds Friday reads (Google News may be asked about your area)",
+     "record": "The feed addresses go to those sites; they are not yet a line in this list."},
     {"key": "connector_reads", "what": "Reading your own mail, calendar, tasks and contacts",
      "record": ("Friday asks your own accounts for your own data; those requests are not listed here. "
-                "Every change she makes to them is.")},
+                "Calendar, Tasks and Contacts changes she makes are.")},
 )
 
 HONEST_LIMIT = (

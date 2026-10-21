@@ -495,10 +495,12 @@ def _record_egress(payload: dict, raw: str, result: str) -> None:
     and, by default (A20), kept encrypted with the receipt."""
     try:
         from agent_friday.services import egress_gate as _eg
+        from email.utils import getaddresses
         n = 0
         for key in ("to", "cc", "bcc"):
             v = payload.get(key) or []
-            n += len([x for x in (v if isinstance(v, list) else str(v).split(",")) if str(x).strip()])
+            items = [str(x) for x in v] if isinstance(v, list) else [str(v)]
+            n += len([a for _name, a in getaddresses(items) if a.strip()])
         _eg.record_service_send("mail", "gmail", destination="gmail.googleapis.com", content=raw,
                                 result=result, recipients=n, part="message")
     except Exception:

@@ -42,9 +42,22 @@ class _Request:
         return getattr(self._req, name)
 
 
+def _is_resource(obj: Any) -> bool:
+    """A googleapiclient Resource (a collection whose methods build
+    requests), as opposed to a request, a batch, None or anything else."""
+    return obj is not None and type(obj).__name__ == "Resource" and not hasattr(obj, "execute")
+
+
 class _Resource:
     def __init__(self, res: Any, rec: "recorded", path: str):
         self._res, self._rec, self._path = res, rec, path
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        closer = getattr(self._res, "__exit__", None)
+        return closer(*exc) if closer else False
 
     def __getattr__(self, name):
         attr = getattr(self._res, name)
@@ -53,13 +66,15 @@ class _Resource:
 
         def call(*a, **kwargs):
             out = attr(*a, **kwargs)
-            if name in WRITE_METHODS:
+            if name in WRITE_METHODS and hasattr(out, "execute"):
                 return _Request(out, self._rec, f"{self._path}.{name}", kwargs)
-            # A sub-resource (events().instances, people().connections) or a
-            # read request: wrap resources so their writes are seen too.
-            if hasattr(out, "execute"):
-                return out
-            return _Resource(out, self._rec, f"{self._path}.{name}")
+            # Only a sub-resource (events().instances, people().connections)
+            # is wrapped, so its writes are seen too. Reads, list_next (None
+            # at the last page) and batches pass through untouched; writes are
+            # not sent in batches through these clients (the guard test).
+            if _is_resource(out):
+                return _Resource(out, self._rec, f"{self._path}.{name}")
+            return out
         return call
 
 
@@ -83,13 +98,21 @@ class recorded:
         except Exception:
             pass
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        closer = getattr(self._svc, "__exit__", None)
+        return closer(*exc) if closer else False
+
     def __getattr__(self, name):
         attr = getattr(self._svc, name)
         if not callable(attr):
             return attr
 
         def call(*a, **kwargs):
-            return _Resource(attr(*a, **kwargs), self, name)
+            out = attr(*a, **kwargs)
+            return _Resource(out, self, name) if _is_resource(out) else out
         return call
 
 

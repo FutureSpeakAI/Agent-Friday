@@ -200,6 +200,7 @@ def verify_key(key: str | None = None) -> dict:
     Returns which endpoints answered, the error code for those that did not,
     and any rate-limit/quota headers the API volunteered.
     """
+    # egress: not recorded: the owner's key check sends only the fixed word "test", no data of theirs
     import requests
     k = (key or brave_key() or "").strip()
     if not k:
@@ -431,6 +432,7 @@ def _firecrawl_search(query: str, count: int) -> dict:
 
 
 def _brave(query: str, count: int) -> dict:
+    # egress: recorded by search() via _record_query, for each backend tried
     import requests
     key = brave_key()
     r = requests.get(

@@ -855,6 +855,10 @@ def record_service_send(channel: str, provider: str, *, destination: str = "", c
     try:
         if channel not in SERVICE_CHANNELS:
             channel = "other"
+        if _off_record_now(unknown=True):
+            # Off the record the ledger keeps that a send happened and by
+            # which channel, not where (a website's or a tool server's name).
+            provider, destination = channel, "(off the record)"
         cur = _CALL.get()
         token = _CALL.set({"call_id": "eg-" + uuid.uuid4().hex[:16], "provider": str(provider or channel)[:80],
                            "model": "", "via": "service:" + channel, "fields": 0, "withheld": 0,
@@ -864,10 +868,11 @@ def record_service_send(channel: str, provider: str, *, destination: str = "", c
         try:
             from agent_friday.services import context_manifest as _cm
             _cm.tally(_CALL.get(), part or channel, "SERVICE",
-                      "allow" if result in ("sent", "sent_with_parts_withheld") else "block")
+                      "allow" if result in ("sent", "sent_with_parts_withheld", "sent_unconfirmed") else "block")
         except Exception:
             pass
-        left = result in ("sent", "sent_with_parts_withheld")
+        # "sent_unconfirmed": it went out and no answer came back (a timeout).
+        left = result in ("sent", "sent_with_parts_withheld", "sent_unconfirmed")
         # Only what actually left is fingerprinted and kept.
         return _close_call(token, content if left else None, result=str(result or "sent")[:40], note=note)
     except Exception as e:
