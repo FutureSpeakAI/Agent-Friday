@@ -1375,6 +1375,10 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     a signed receipt of the action is written. Raises `Held` if either fails,
     so the caller stops before anything leaves the machine.
     """
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): held; the decision is not spent.
+        raise Held("everything is stopped (the owner pressed Stop); nothing was sent")
     try:
         ok, why = verify_claws()
     except Exception as e:
@@ -1422,7 +1426,8 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
         import agent_friday.core as _core_gs
         if _core_gs.GLOBAL_STOP.is_set():
             # Stop everything (services/global_stop): held, and the card is not used up.
-            return Verdict("deny", OUTWARD, "held: everything is stopped (the owner pressed Stop)")
+            # "card", not "deny": callers wait (as for a card) instead of recording a decline.
+            return Verdict("card", OUTWARD, "held: everything is stopped (the owner pressed Stop)")
     except Exception:
         pass
     try:

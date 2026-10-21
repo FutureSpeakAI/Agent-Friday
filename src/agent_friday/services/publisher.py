@@ -391,6 +391,9 @@ def tick(now=None) -> Dict[str, Any]:
         counts: Dict[str, int] = {}
         confirmed_posts: List[str] = []
         for t in targets:
+            if _core_gs.GLOBAL_STOP.is_set():
+                # Stopped mid-pass: what is not sent yet waits for Resume (claims recover).
+                break
             outcome = _dispatch_target(t)
             counts[outcome] = counts.get(outcome, 0) + 1
             if outcome == "confirmed":

@@ -385,7 +385,10 @@ def test_an_external_executor_is_held_and_its_card_not_used(gs):
     from agent_friday.governance import action_gate
     gs.stop(source="button")
     v = action_gate.authorize_external("compute_job", {"x": 1}, requested_by="friday")
-    assert v.action == "deny" and "stopped" in v.reason
+    # "card": the caller waits, as for a card, rather than recording a decline.
+    assert v.action == "card" and "stopped" in v.reason
+    with pytest.raises(action_gate.Held):
+        action_gate.record_external("send_email", surface="test", approval_id="a1")
 
 
 def test_the_publisher_does_not_publish_while_stopped(gs):
@@ -414,11 +417,9 @@ def test_the_interactive_lane_ends_only_live_sessions_it_started(gs, monkeypatch
 
     killed = []
     monkeypatch.setattr(isess, "_kill_pid", lambda pid: killed.append(pid))
-    monkeypatch.setattr(isess, "_same_process", lambda pid, started: started == "mine")
     monkeypatch.setattr(isess, "_SESSIONS", {
-        "a": {"pid": 11, "proc": P(True), "os_start_time": "mine"},
-        "b": {"pid": 12, "proc": P(False), "os_start_time": "mine"},      # exited
-        "c": {"pid": 13, "proc": P(True), "os_start_time": "someone"},   # PID reused
+        "a": {"pid": 11, "proc": P(True), "os_start_time": "t"},
+        "b": {"pid": 12, "proc": P(False), "os_start_time": "t"},   # exited: its PID may be someone else's now
     })
     assert gs._halt_interactive_sessions() == 1 and killed == [11]
 
@@ -485,3 +486,40 @@ def test_a_live_phone_stream_is_refused_while_stopped(gs):
     gs.stop(source="button")
     live_call.serve_media_stream(ws, {})
     assert ws.closed
+
+
+def test_held_mail_taken_just_before_a_stop_goes_back(gs, monkeypatch):
+    """Stop lands after _tick took the due rows: they are put back, held, for after Resume."""
+    from agent_friday.services import gmail_send
+    store = {"rows": [{"approval_id": "x", "due": 1, "to": ["a@example.com"]}]}
+    sent = []
+    monkeypatch.setattr(gmail_send, "_load_held", lambda: list(store["rows"]))
+    monkeypatch.setattr(gmail_send, "_save_held", lambda rows: store.update(rows=list(rows)))
+
+    def _deliver(*a, **k):
+        sent.append(a)
+
+    monkeypatch.setattr(gmail_send, "_deliver", _deliver)
+    real_save = gmail_send._save_held
+
+    def save_then_stop(rows):
+        real_save(rows)
+        gs.stop(source="button")          # the stop lands between taking the rows and sending
+
+    monkeypatch.setattr(gmail_send, "_save_held", save_then_stop)
+    gmail_send._tick(now=2)
+    assert sent == [] and [r["approval_id"] for r in store["rows"]] == ["x"]
+
+
+def test_the_resume_route_itself_refuses_without_a_press(gs):
+    """The route's own check, not an earlier gate: a request with no page press."""
+    import agent_friday.core as core
+    from agent_friday.routes import control
+    gs.stop(source="button")
+    with core.app.test_request_context("/api/stop-everything/resume", method="POST",
+                                       environ_base={"REMOTE_ADDR": "127.0.0.1"}):
+        view = getattr(control.stop_everything_resume, "__wrapped__", control.stop_everything_resume)
+        resp = view()
+    body, code = (resp if isinstance(resp, tuple) else (resp, 200))
+    assert code == 403 and body.get_json()["code"] == "resume_needs_press"
+    assert gs.active()
