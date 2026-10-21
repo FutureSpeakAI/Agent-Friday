@@ -86,3 +86,16 @@ def test_the_list_reports_unreadable_goals(client):
     goals_mod._goal_path(goal["goal_id"]).write_text("{", encoding="utf-8")
     body = client.get("/api/goals").get_json()
     assert [u["goal_id"] for u in body.get("unreadable", [])] == [goal["goal_id"]]
+
+
+def test_a_request_cannot_post_a_milestone_as_already_running_or_done(client):
+    goal = client.post("/api/goals", json={"title": "Synthetic goal", "status": "active",
+                                           "milestones": [{"name": "Posted as done", "status": "done",
+                                                           "done_at": "2026-01-01T00:00:00Z"}]}
+                       ).get_json()["goal"]
+    assert goal["milestones"][0]["status"] == "pending"
+    added = client.post(f"/api/goals/{goal['goal_id']}/milestones",
+                        json={"name": "Posted as running", "status": "in_progress",
+                              "run": {"task_id": "task_x"}}).get_json()["goal"]
+    m = added["milestones"][-1]
+    assert m["status"] == "pending" and not m.get("run")
