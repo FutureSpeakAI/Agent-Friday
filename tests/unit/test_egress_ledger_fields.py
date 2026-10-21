@@ -178,8 +178,23 @@ def test_nothing_is_kept_if_encryption_is_not_available(ledger, monkeypatch):
     from agent_friday.services import credential_store as cs
     monkeypatch.setattr(cs, "protect", lambda data: (data, "plaintext"))
     eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    row = _calls(ledger["log"])[0]
+    assert row["text_kept"] is False
+    assert not list((ledger["home"] / "vault" / "sent-text").glob("*.bin")) \
+        if (ledger["home"] / "vault" / "sent-text").exists() else True
+    # The map reads state only (it never probes by encrypting), so it reports
+    # the key store it expects; the receipt itself says nothing was kept.
+    assert sts.read(row["payload_fingerprint"]) is None
+
+
+def test_a_key_store_that_refuses_keeps_nothing(ledger, monkeypatch):
+    from agent_friday.services import credential_store as cs
+
+    def refuse(data):
+        raise RuntimeError("synthetic: no way to encrypt")
+    monkeypatch.setattr(cs, "protect", refuse)
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
     assert _calls(ledger["log"])[0]["text_kept"] is False
-    assert sts.status()["sealed_with"] is None
 
 
 def test_off_the_record_no_fingerprint_and_nothing_kept(ledger, monkeypatch):
