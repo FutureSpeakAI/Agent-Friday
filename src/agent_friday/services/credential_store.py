@@ -1,4 +1,4 @@
-﻿"""
+"""
 credential_store — encryption-at-rest for OAuth tokens and other secrets.
 
 Multi-account Google support stores live access/refresh tokens on disk. Plaintext
@@ -299,11 +299,13 @@ def write_secret(path: Path, data: bytes, *, harden: bool = True) -> str:
     return method
 
 
-def read_secret(path: Path) -> bytes:
+def read_secret(path: Path, *, use: bool = True) -> bytes:
     """Read and decrypt a secret written by write_secret(). A successful read is noted as
-    the credential's last use (its name and the time, never its value: `note_use`)."""
+    the credential's last use (its name and the time, never its value: `note_use`); a read
+    that is not a use (a status check, the boot-time load, a re-encryption) passes use=False."""
     out = unprotect(Path(path).read_bytes())
-    note_use(path)
+    if use:
+        note_use(path)
     return out
 
 
@@ -338,21 +340,29 @@ def _read_use() -> dict:
         return {}
 
 
+_USE_LOCK = __import__("threading").Lock()
+
+
 def note_use(path) -> None:
-    """Record that the credential at `path` was just used. Never raises; never the value."""
+    """Record that the credential at `path` was just used. Never raises; never the value.
+    Only files that are credentials count (not a health-check canary or other sealed data)."""
     try:
         import time as _t
         name = _credential_name(path)
+        if _credential_kind(name) == "credential":
+            return
         _USE[name] = _now_iso()
         now = _t.monotonic()
-        if now - _USE_FLUSHED.get(name, -1e9) < _USE_FLUSH_S:
-            return
-        _USE_FLUSHED[name] = now
-        doc = {"last_used": {**_read_use(), **_USE}}
-        _SECURITY_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _use_file().with_name(_USE_FILE_NAME + ".tmp")
-        tmp.write_text(json.dumps(doc, indent=1, sort_keys=True), encoding="utf-8")
-        tmp.replace(_use_file())
+        with _USE_LOCK:
+            if now - _USE_FLUSHED.get(name, -1e9) < _USE_FLUSH_S:
+                return
+            doc = {"last_used": {**_read_use(), **_USE}}
+            _SECURITY_DIR.mkdir(parents=True, exist_ok=True)
+            # one writer at a time in this process, and a name of its own across processes
+            tmp = _use_file().with_name("%s.%d.tmp" % (_USE_FILE_NAME, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True), encoding="utf-8")
+            tmp.replace(_use_file())
+            _USE_FLUSHED[name] = now
     except Exception:
         pass
 
@@ -377,14 +387,15 @@ def inventory() -> list:
     Privacy & Data > Security (GET /api/security/credentials)."""
     used = {**_read_use(), **_USE}
     sets = {}
-    for e in read_audit(limit=5000):
+    for e in read_audit(category="provider_key", limit=5000):
         if e.get("event") == "set" and e.get("provider"):
             sets["providers/keys/%s.key" % e["provider"]] = e.get("ts")
     out = []
     for p in _credential_files():
         name = _credential_name(p)
         try:
-            blob = p.read_bytes()
+            with open(p, "rb") as fh:
+                blob = fh.read(64)                 # the envelope's mark is all that is needed
             st = p.stat()
         except OSError:
             continue
@@ -712,13 +723,14 @@ def set_provider_key(provider: str, key: str) -> str:
     return method
 
 
-def get_provider_key(provider: str) -> str | None:
-    """Decrypt and return a stored provider key, or None if absent/unreadable."""
+def get_provider_key(provider: str, *, use: bool = True) -> str | None:
+    """Decrypt and return a stored provider key, or None if absent/unreadable. `use=False` for a
+    read that is not a use of the key (the boot-time load, a re-encryption)."""
     path = _provider_key_path(provider)
     if not path.exists():
         return None
     try:
-        return read_secret(path).decode("utf-8")
+        return read_secret(path, use=use).decode("utf-8")
     except Exception:
         return None
 
@@ -849,7 +861,7 @@ def _verify_reencrypted_blob(path: Path, expected_sha256: str) -> bool:
         f"sys.path.insert(0, {src_dir!r})\n"
         "from agent_friday.services.credential_store import read_secret\n"
         "try:\n"
-        "    val = read_secret(sys.argv[1])\n"
+        "    val = read_secret(sys.argv[1], use=False)\n"
         "    print(hashlib.sha256(val).hexdigest())\n"
         "except Exception:\n"
         "    print('VERIFY_FAILED')\n"
@@ -941,7 +953,7 @@ def reencrypt_stale_provider_keys(names: list[str] | None = None) -> dict:
             pass
         old_plain = None
         try:
-            old_plain = get_provider_key(name)
+            old_plain = get_provider_key(name, use=False)
         except Exception:
             pass
         if old_plain is None:
@@ -1084,7 +1096,7 @@ def bootstrap_provider_env_detail() -> dict:
         candidates += 1
         if os.environ.get(env_key) and not _came_from_a_launch_script(env_key):
             continue
-        val = get_provider_key(provider)
+        val = get_provider_key(provider, use=False)
         if val:
             os.environ[env_key] = val
             loaded += 1
