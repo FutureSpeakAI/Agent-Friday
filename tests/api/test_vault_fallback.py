@@ -119,8 +119,11 @@ def test_router_refuse_flag_is_honored(monkeypatch):
 
 def _plain_ladder(monkeypatch, routing):
     import agent_friday.routing.ollama_manager as ollama_manager
-    from agent_friday.services import provider_fallback
-    provider_fallback._reset_for_tests()
+    try:
+        from agent_friday.services import provider_fallback
+        provider_fallback._reset_for_tests()
+    except ImportError:  # the old tree: run, and fail by assertion
+        pass
     from agent_friday.services import one_key
     monkeypatch.setattr(one_key, "anthropic_ready", lambda: True)
     monkeypatch.setattr(ollama_manager, "get_manager",
@@ -137,10 +140,10 @@ def _plain_ladder(monkeypatch, routing):
 
 def test_non_vault_cloud_failure_offers_the_other_provider_instead_of_switching(monkeypatch):
     """A6: Anthropic failing no longer moves the call to the other cloud provider on its own."""
-    from agent_friday.services import provider_fallback
     cloud, openai, _local = _plain_ladder(monkeypatch, {"mode": "cloud_only"})
-    with pytest.raises(provider_fallback.ProviderSwitchWithheld) as e:
+    with pytest.raises(Exception) as e:
         agent_mod._generate_agent(PLAIN_MSG, system="sys")
+    assert type(e.value).__name__ == "ProviderSwitchWithheld", e.value
     assert cloud.calls == 1, "plain request should try the routed cloud provider first"
     assert openai.calls == 0, "no silent move to another cloud provider"
     assert e.value.failed == "anthropic" and e.value.alternative == "openai"

@@ -10,12 +10,17 @@ import agent_friday.routes.chat as chat_mod
 
 @pytest.fixture(autouse=True)
 def _quiet(monkeypatch):
-    from agent_friday.services import provider_fallback as pf
     from agent_friday import notifications_engine as ne
-    pf._reset_for_tests()
+    try:
+        from agent_friday.services import provider_fallback as pf
+    except ImportError:  # the old tree: the tests run and fail by assertion
+        pf = None
+    if pf is not None:
+        pf._reset_for_tests()
     monkeypatch.setattr(ne, "push", lambda **kw: {}, raising=False)
     yield
-    pf._reset_for_tests()
+    if pf is not None:
+        pf._reset_for_tests()
 
 
 def _page():
