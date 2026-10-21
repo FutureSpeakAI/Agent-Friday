@@ -912,6 +912,32 @@ class MCPServerHTTP:
         }
 
 
+import re as _re
+
+#: Argument names whose values are credentials, whatever their format.
+_SECRET_KEY = _re.compile(r"(pass(word|wd|phrase)?|secret|token|api[_-]?key|apikey|auth|authorization|"
+                          r"credential|private[_-]?key|cookie|session|bearer)", _re.I)
+_URL_USERINFO = _re.compile(r"(?<=://)[^/@\s:]+:[^/@\s]+@")
+
+
+def _scrubbed_for_keeping(obj):
+    """What a tool call sent, safe to keep with its receipt (A20 keeps the
+    content): values under credential-like names withheld, user:password@ in
+    addresses withheld, then vendor-format keys withheld by the shared filter."""
+    def walk(v, key=""):
+        if key and _SECRET_KEY.search(str(key)):
+            return "[withheld: credential]"
+        if isinstance(v, dict):
+            return {k: walk(x, k) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [walk(x) for x in v]
+        if isinstance(v, str):
+            return _URL_USERINFO.sub("[withheld]@", v)
+        return v
+    from agent_friday.services.credential_paths import redact_secrets
+    return redact_secrets(json.dumps(walk(obj), default=str))
+
+
 class MCPManager:
     """Owns the set of configured MCP servers and routes calls to them."""
 
@@ -1062,8 +1088,7 @@ class MCPManager:
             else:
                 result = "sent"
             try:
-                from agent_friday.services.credential_paths import redact_secrets
-                kept = redact_secrets(json.dumps({"tool": tool, "arguments": arguments}, default=str))
+                kept = _scrubbed_for_keeping({"tool": tool, "arguments": arguments})
             except Exception:
                 kept = {"tool": tool, "arguments": "(not kept: could not be checked for secrets)"}
             _eg.record_service_send("mcp", f"mcp:{server}"[:80], destination=dest, content=kept,

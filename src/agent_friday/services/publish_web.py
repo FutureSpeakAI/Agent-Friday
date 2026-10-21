@@ -745,6 +745,14 @@ def unpublish(slug: str) -> bool:
                 except Exception:
                     pass
             except Exception:
+                try:
+                    from agent_friday.services import egress_gate as _eg
+                    _eg.record_service_send("web_publish", ("publish-web:" + str(entry.get("adapter")))[:80],
+                                            destination=str(entry.get("url") or entry.get("adapter") or ""),
+                                            content={"take_down": slug}, part="take down",
+                                            result="sent_unconfirmed")
+                except Exception:
+                    pass
                 # Remote timeouts can be ambiguous. Keep the local receipt and
                 # mirror so a failed request cannot be presented as taken down.
                 raise UserFacingValueError("Remote take-down was not confirmed. The saved publication remains listed; check the host before retrying.") from None

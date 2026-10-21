@@ -72,6 +72,13 @@ NOT_RECORDED = (
      "record": "Each is an action with its own receipt and undo (System > Friday's changes), not a line here."},
     {"key": "feeds", "what": "News feeds Friday reads (Google News may be asked about your area)",
      "record": "The feed addresses go to those sites; they are not yet a line in this list."},
+    {"key": "other_sends", "what": ("One-click unsubscribes, sends to linked Friday devices (federation), "
+                                    "and pages read for job searches"),
+     "record": "Each goes to that site or device; none is yet a line in this list."},
+    {"key": "fetch_hops", "what": "The steps of a page fetch that did not finish",
+     "record": ("A page Friday opens is listed under its first address. When the fetch fails after a "
+                "redirect, or Firecrawl is tried before a direct fetch, those other addresses are not "
+                "listed separately.")},
     {"key": "connector_reads", "what": "Reading your own mail, calendar, tasks and contacts",
      "record": ("Friday asks your own accounts for your own data; those requests are not listed here. "
                 "Calendar, Tasks and Contacts changes she makes are.")},

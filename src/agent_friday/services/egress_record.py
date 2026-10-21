@@ -32,8 +32,10 @@ class _Request:
     def execute(self, *a, **k):
         try:
             out = self._req.execute(*a, **k)
-        except Exception:
-            self._rec._record(self._method, self._kwargs, "failed")
+        except Exception as e:
+            # A timeout may have been acted on by the service; a refusal was not.
+            unsure = isinstance(e, (TimeoutError, OSError)) or "timed out" in str(e).lower()
+            self._rec._record(self._method, self._kwargs, "sent_unconfirmed" if unsure else "failed")
             raise
         self._rec._record(self._method, self._kwargs, "sent")
         return out

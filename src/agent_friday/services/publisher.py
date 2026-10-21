@@ -1074,7 +1074,8 @@ def _run_target(target: Dict[str, Any]) -> str:
                                     k: prepared.get(k) for k in ("title", "body", "text", "texts", "segments",
                                                                  "hashtags", "mentions", "caption", "link")
                                     if prepared.get(k) is not None},
-                                    "assets": [{k: a.get(k) for k in ("id", "sha256", "kind", "bytes") if k in a}
+                                    "assets": [{k: a.get(k) for k in ("id", "filename", "content_hash", "sha256",
+                                                                      "kind", "alt_text", "bytes") if k in a}
                                                for a in (prepared.get("assets") or []) if isinstance(a, dict)]},
                                 result="sent" if pub.get("ok") else "failed", part="post")
     except Exception:
