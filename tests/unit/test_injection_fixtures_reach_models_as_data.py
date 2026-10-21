@@ -35,7 +35,7 @@ except ImportError:  # the old tree a red run is aimed at: its assertions fail, 
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "prompt_injection"
 CANARY = "CANARY-7Q2"
-MEDIA = sorted(p.name for p in FIXTURES.iterdir() if p.suffix != ".md")
+MEDIA = sorted(p.name for p in FIXTURES.iterdir() if p.name != "README.md")
 
 
 def _fixture(name: str) -> str:
