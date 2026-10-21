@@ -34,14 +34,31 @@ def test_a_draft_creates_nothing_and_says_what_it_needs(client):
     assert goals_mod.list_goals() == []
 
 
+def _screen():
+    import agent_friday.core as core
+    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
+            "X-Friday-Token": core._current_api_token()}
+
+
 def test_define_creates_only_the_goal_whose_summary_was_confirmed(client):
     sid = client.post("/api/goals/draft", json=SPEC).get_json()["summary_id"]
     changed = dict(SPEC, completion_condition="something else")
-    assert client.post("/api/goals/define", json={"goal": changed, "summary_id": sid}).status_code == 409
-    assert client.post("/api/goals/define", json={"goal": {"title": "x"}, "summary_id": sid}).status_code == 409
+    assert client.post("/api/goals/define", json={"goal": changed, "summary_id": sid}, headers=_screen()).status_code == 409
+    assert client.post("/api/goals/define", json={"goal": {"title": "x"}, "summary_id": sid}, headers=_screen()).status_code == 409
     assert goals_mod.list_goals() == []
-    ok = client.post("/api/goals/define", json={"goal": SPEC, "summary_id": sid})
+    ok = client.post("/api/goals/define", json={"goal": SPEC, "summary_id": sid}, headers=_screen())
     assert ok.status_code == 201
     g = ok.get_json()["goal"]
     assert g["status"] == "approved" and g["schema_version"] == 2
     assert client.post("/api/goals/draft", json=["not", "an", "object"]).status_code == 400
+
+
+def test_only_a_click_in_fridays_window_confirms_a_goal_or_lets_it_do_more(client):
+    sid = client.post("/api/goals/draft", json=SPEC).get_json()["summary_id"]
+    refused = client.post("/api/goals/define", json={"goal": SPEC, "summary_id": sid})
+    assert refused.status_code == 403 and goals_mod.list_goals() == []
+    gid = client.post("/api/goals/define", json={"goal": SPEC, "summary_id": sid}, headers=_screen()).get_json()["goal"]["goal_id"]
+    assert client.patch(f"/api/goals/{gid}", json={"autonomy": {"send": "on_its_own"}}).status_code == 403
+    assert goals_mod.get_goal(gid)["autonomy"]["send"] == "ask_me"
+    assert client.patch(f"/api/goals/{gid}", json={"autonomy": {"send": "never"}}).status_code == 200
+    assert client.patch(f"/api/goals/{gid}", json={"autonomy": {"send": "on_its_own"}}, headers=_screen()).status_code == 200
