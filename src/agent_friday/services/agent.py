@@ -553,13 +553,20 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     # (services/provider_fallback). Outside the try above on purpose: a filter
     # that failed must not leave the old silent ladder in place.
     from agent_friday.services import provider_fallback as _pf
-    attempts, _pf_withheld = _pf.filter_ladder(attempts, routing_cfg)
+    try:  # a codebase turn on a guest's key never moves to the owner's key
+        from agent_friday.services import codebases as _cb_pf
+        _pf_locked = bool(_cb_pf.guest_key_for_turn(session_ctx))
+    except Exception:
+        _pf_locked = False
+    attempts, _pf_withheld = _pf.filter_ladder(attempts, routing_cfg, locked=_pf_locked)
     _pf_watch = _pf.LadderWatch(_pf_withheld, routing_cfg)
+    _pf_before = list(attempts)
     try:
         from agent_friday.services.model_router import _health_order
         attempts = _health_order(attempts, routed_provider_name)
     except Exception:
         pass
+    _pf_watch.reordered(_pf_before, attempts)
 
     # A TURN PINNED TO ITS SEAT RUNS THERE OR FAILS. The local voice path
     # promises the owner a local mind; a dead or busy seat must surface as an

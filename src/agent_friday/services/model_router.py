@@ -707,7 +707,9 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     from agent_friday.services import provider_fallback as _pf
     attempts, _pf_withheld = _pf.filter_ladder(attempts, routing_cfg)
     _pf_watch = _pf.LadderWatch(_pf_withheld, routing_cfg)
+    _pf_before = list(attempts)
     attempts = _health_order(attempts, routed_provider_name)
+    _pf_watch.reordered(_pf_before, attempts)
 
     errors = []
     for name, fn, use_model in attempts:

@@ -1069,17 +1069,26 @@ def _privacy_hold_turn(fn):
 _PASTED_KEYS_ENV = "friday.pasted_key_kinds"
 
 
-def _provider_offer_for(exc, provider, routed_local):
+def _guest_turn(sess_ctx) -> bool:
+    """A codebase turn on a guest's key never moves to the owner's key (salon spec 4.7)."""
+    try:
+        from agent_friday.services import codebases as _cb
+        return bool(_cb.guest_key_for_turn(sess_ctx))
+    except Exception:
+        return False
+
+
+def _provider_offer_for(exc, provider, routed_local, sess_ctx=None):
     """The offer for a turn whose Anthropic call failed, or None. Only for a provider
     failure (not Friday's own bug), only when OpenRouter can serve, and never when the
     owner already chose OpenRouter for this turn. Announced like a ladder's withheld move."""
     try:
         from agent_friday.services import provider_fallback as _pf, one_key as _ok
-        if routed_local or provider != 'cloud' or _pf.CHOSEN.get():
+        if routed_local or provider != 'cloud' or _pf.CHOSEN.get() or _guest_turn(sess_ctx):
             return None
         if not _pf.looks_like_provider_failure(exc) or not _ok.openrouter_ready():
             return None
-        err = error_text(exc, "the call failed")
+        err = _pf.short_error(exc)
         _pf.announce("withheld", "anthropic", "openai", err)
         return _pf.ProviderSwitchWithheld("anthropic", "openai", err).offer()
     except Exception:
@@ -2550,7 +2559,8 @@ def chat():
         # A6: the owner pressed "Use OpenRouter for this" on a provider offer. This
         # one turn goes there, named in the route; nothing else changes.
         from agent_friday.services import provider_fallback as _pf_turn
-        if (not _routed_local) and _provider == 'cloud' and _pf_turn.CHOSEN.get() == 'openai':
+        if ((not _routed_local) and _provider == 'cloud' and _pf_turn.CHOSEN.get() == 'openai'
+                and not _guest_turn(_sess_ctx)):
             from agent_friday.services import one_key as _ok_choice
             if _ok_choice.openrouter_ready():
                 _route_info = dict(
@@ -3389,7 +3399,8 @@ def chat():
         _LOG.exception("chat turn failed")
         # A6: Anthropic failed and OpenRouter is set up. Friday does not switch on her
         # own: the reply says what failed and offers the other provider as a button.
-        _offer = _provider_offer_for(e, locals().get('_provider'), locals().get('_routed_local'))
+        _offer = _provider_offer_for(e, locals().get('_provider'), locals().get('_routed_local'),
+                                     locals().get('_sess_ctx'))
         if _offer is not None:
             return jsonify({"status": "ok", "response": _offer["text"], "local_fallback": _offer,
                             "model": "", "seat": "cloud",

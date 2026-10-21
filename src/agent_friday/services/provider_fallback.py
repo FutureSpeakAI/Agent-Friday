@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import logging
+import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -111,13 +112,38 @@ def chosen(provider: Optional[str]):
         CHOSEN.reset(tok)
 
 
+_STATUS = re.compile(r"\b(4\d\d|5\d\d)\b")
+
+
+def short_error(error: Any) -> str:
+    """What failed, in a few safe words: the error's class, an HTTP status if one is in it,
+    and a known provider word. Never the raw message (it can carry request ids, base URLs
+    or a partly masked key); the full text goes to the log only."""
+    if error is None:
+        return ""
+    if isinstance(error, str):
+        name, text = "", error
+    else:
+        name, text = type(error).__name__, str(error)
+    low = text.lower()
+    bits = [name] if name and name not in ("RuntimeError", "Exception") else []
+    m = _STATUS.search(text)
+    if m:
+        bits.append("HTTP " + m.group(1))
+    for word in ("overloaded", "rate limit", "timed out", "empty response", "unavailable"):
+        if word in low:
+            bits.append(word)
+            break
+    return ", ".join(bits) or "it did not answer"
+
+
 class ProviderSwitchWithheld(RuntimeError):
     """The cloud provider failed and Friday did not move to the other one on her own."""
 
     def __init__(self, failed: str, alternative: str, error: str = "") -> None:
         self.failed = failed
         self.alternative = alternative
-        self.error = str(error or "")[:300]
+        self.error = short_error(error)
         super().__init__(self.text())
 
     def text(self) -> str:
@@ -139,11 +165,12 @@ class ProviderSwitchWithheld(RuntimeError):
                 ]}
 
 
-def filter_ladder(attempts: Sequence[tuple], routing_cfg: Optional[dict] = None
-                  ) -> Tuple[List[tuple], List[tuple]]:
+def filter_ladder(attempts: Sequence[tuple], routing_cfg: Optional[dict] = None, *,
+                  locked: bool = False) -> Tuple[List[tuple], List[tuple]]:
     """Split a ladder into (kept, withheld). The head is never touched. A later cloud
     leg of a different provider than the first cloud leg is kept only when the owner
-    allowed that move (in advance, or for this call)."""
+    allowed that move (in advance, or for this call). ``locked`` (a turn on a guest's
+    key) keeps no other cloud provider at all: it never moves to the owner's key."""
     attempts = list(attempts or [])
     if not attempts:
         return attempts, []
@@ -159,13 +186,29 @@ def filter_ladder(attempts: Sequence[tuple], routing_cfg: Optional[dict] = None
             kept.append(leg)
             continue
         ok, _why = allowed(first_cloud, prov, routing_cfg)
+        if locked and prov != first_cloud:
+            withheld.append(leg)
+            continue
+        if not ok and first_cloud == "anthropic" and prov == "openai" and _no_anthropic_key():
+            # Not a failure: with no Anthropic key at all, the OpenAI-compatible leg is the
+            # owner's only cloud (services/one_key, "one key is enough").
+            ok = True
         (kept if ok else withheld).append(leg)
     return kept, withheld
 
 
-_PROVIDER_WORDS = ("overloaded", "rate limit", "rate_limit", "too many requests", "timed out",
-                   "timeout", "connection", "service unavailable", "bad gateway", "internal server error",
-                   " 429", " 500", " 502", " 503", " 504", " 529", "api key", "authentication")
+def _no_anthropic_key() -> bool:
+    try:
+        from agent_friday.services import one_key
+        return not one_key.anthropic_ready()
+    except Exception:
+        return False
+
+
+_PROVIDER_WORDS = ("overloaded", "rate limit", "rate_limit", "too many requests",
+                   "service unavailable", "bad gateway", "internal server error",
+                   "error code: 429", "error code: 500", "error code: 502", "error code: 503",
+                   "error code: 504", "error code: 529")
 
 
 def looks_like_provider_failure(exc: BaseException) -> bool:
@@ -173,10 +216,12 @@ def looks_like_provider_failure(exc: BaseException) -> bool:
     providers use. A bug in a tool is not offered as a reason to change provider."""
     mod = type(exc).__module__ or ""
     name = type(exc).__name__
-    if mod.split(".")[0] in ("anthropic", "httpx", "requests", "urllib3", "openai"):
+    if name in ("LocalUnavailable", "NoCloudIntent", "UserFacingError", "EverythingStopped"):
+        return False
+    if mod.split(".")[0] in ("anthropic", "openai"):
         return True
-    if any(k in name for k in ("APIError", "APIStatusError", "RateLimit", "Overloaded",
-                               "APIConnection", "Timeout", "ConnectionError")):
+    if any(k in name for k in ("APIStatusError", "RateLimitError", "OverloadedError",
+                               "APIConnectionError", "APITimeoutError", "InternalServerError")):
         return True
     text = " " + str(exc).lower()
     return any(w in text for w in _PROVIDER_WORDS)
@@ -192,10 +237,22 @@ class LadderWatch:
         self.failed: Optional[str] = None
         self.error = ""
 
+    def reordered(self, before: Sequence[tuple], after: Sequence[tuple]) -> None:
+        """Health ordering put a different cloud provider first (the routed one is marked
+        down). Allowed only by the owner's order, which filter_ladder already applied; it is
+        announced, never silent."""
+        def first_cloud(legs):
+            return next((LEG_PROVIDER[l[0]] for l in legs if l[0] in LEG_PROVIDER), None)
+        b, a = first_cloud(before), first_cloud(after)
+        if b and a and a != b:
+            _ok, why = allowed(b, a, self.cfg)
+            announce("switched", b, a, "marked down after repeated failures", why=why or "owner_order")
+
     def leg_failed(self, leg_name: str, error: Any) -> None:
         prov = LEG_PROVIDER.get(leg_name)
         if prov and self.failed is None:
-            self.failed, self.error = prov, str(error or "")[:300]
+            _log.warning("cloud leg %s failed: %s", leg_name, error)
+            self.failed, self.error = prov, short_error(error)
 
     def leg_succeeded(self, leg_name: str) -> None:
         prov = LEG_PROVIDER.get(leg_name)
@@ -221,9 +278,9 @@ def announce(kind: str, failed: str, alternative: str, error: str = "", *, why: 
     now = time.time()
     with _ANNOUNCE_LOCK:
         last = _ANNOUNCED.get(key, 0.0)
-        if now - last < _ANNOUNCE_EVERY_S:
-            return
-        _ANNOUNCED[key] = now
+        fold = now - last < _ANNOUNCE_EVERY_S
+        if not fold:
+            _ANNOUNCED[key] = now
     f, a = provider_label(failed), provider_label(alternative)
     if kind == "switched":
         title = f"{f} failed; this answer came from {a}"
@@ -240,6 +297,9 @@ def announce(kind: str, failed: str, alternative: str, error: str = "", *, why: 
                      reason=(error or why)[:200], alternatives=[alternative])
     except Exception:
         pass
+    if fold:
+        _log.warning("%s (notice folded into the one shown in the last five minutes)", title)
+        return
     try:
         # The seat notice's place (E31: "answered by a different model than you chose"),
         # with one tap to the order the owner sets.
