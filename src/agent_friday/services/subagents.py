@@ -312,15 +312,13 @@ def register_scope_for_task(task_id: str, scope: str, *, budget_from: str | None
         if task_id in _SCOPED_TASKS:
             # Never reset a live task's step count or clock.
             return _SCOPED_TASKS[task_id]["scope"]
-        spawned, steps = time.time(), 0
+        rec = {"scope": sc, "name": scope, "spawned": time.time(), "steps": 0}
         parent = _SCOPED_TASKS.get(budget_from) if budget_from else None
         if parent is not None:
-            # A subagent shares its parent's budget: it starts with what the
-            # parent has already used, so spawning cannot multiply it.
-            spawned, steps = parent["spawned"], parent["steps"]
-        _SCOPED_TASKS[task_id] = {
-            "scope": sc, "name": scope, "spawned": spawned, "steps": steps,
-        }
+            # A subagent shares its parent's budget: one counter for the
+            # whole family (the root's), so spawning cannot multiply it.
+            rec["shared"] = parent.get("shared") or parent
+        _SCOPED_TASKS[task_id] = rec
     return sc
 
 
@@ -334,10 +332,11 @@ def scope_check(task_id: str, tool_name: str, ring: int) -> tuple:
         rec = _SCOPED_TASKS.get(task_id)
         if rec is None:
             return True, ""
-        rec["steps"] += 1
-        steps = rec["steps"]
+        budget = rec.get("shared") or rec
+        budget["steps"] += 1
+        steps = budget["steps"]
         sc = rec["scope"]
-        spawned = rec["spawned"]
+        spawned = budget["spawned"]
     if sc.max_steps and steps > sc.max_steps:
         return False, (f"subagent scope '{sc.name}': step budget "
                        f"({sc.max_steps}) exhausted")

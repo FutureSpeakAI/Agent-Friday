@@ -101,6 +101,9 @@ def note_decision(task_id: Optional[str], *, point: str, chosen: Any, reason: An
         elif point in ("spend_cap", "gate", "stop", "blocked"):
             led["blockers"] = (led["blockers"] + [entry])[-_BOOK_KEEP:]
         led["decisions"] = (led["decisions"] + [entry])[-_BOOK_KEEP:]
+    if point in ("approval", "spend_cap", "gate", "stop", "blocked"):
+        # A card raised or a stop: on disk at once (the task may end here).
+        save(task_id, led)
 
 
 def note_model_call(task_id: Optional[str], *, model: Any = None, provider: Any = None, seat: Any = None,
@@ -204,8 +207,9 @@ def note_pending(task_id: Optional[str], name: str, args: Any) -> None:
     led = load(task_id)
     if led is None:
         return
-    led["pending"] = {"name": str(name), "args": _one_line(tier_safe(_one_line(args, 600)), 300),
-                      "at": time.time()}
+    pending = {"name": str(name), "args": _one_line(tier_safe(_one_line(args, 600)), 300), "at": time.time()}
+    with _LOCK:                           # save() serialises under the same lock
+        led["pending"] = pending
     save(task_id, led)
 
 
@@ -214,8 +218,9 @@ def note_tool(task_id: Optional[str], name: str, args: Any, result: Any) -> None
     led = load(task_id)
     if led is None:
         return
-    record_step(led, name, args, result)
-    led["pending"] = None
+    with _LOCK:                           # save() serialises under the same lock
+        record_step(led, name, args, result)
+        led["pending"] = None
     save(task_id, led)
 
 

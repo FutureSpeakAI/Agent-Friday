@@ -5363,6 +5363,17 @@ def _task_set(task_id, **fields):
                                   evidence=fields.get('verification_evidence'))
         except Exception:
             pass
+    elif new_status != prev_status and 'status' in fields:
+        # Any end (a stop, an error, a spend cap) writes the ledger's
+        # bookkeeping, which is otherwise written with the task's steps.
+        try:
+            if _journal().is_terminal(new_status):
+                from agent_friday.services import task_ledger as _tl
+                _led = _tl.load(task_id)
+                if _led is not None:
+                    _tl.save(task_id, _led)
+        except Exception:
+            pass
     # Disk BEFORE memory (TV1: the journal is the source of truth, TASKS is
     # its cache). This used to update TASKS first and write afterwards, so a
     # reader polling /api/tasks could see a terminal status that state.json
@@ -6936,7 +6947,7 @@ def _principal_of(value) -> str:
     v = str(value or "")
     if re.fullmatch(r"crew:[A-Za-z0-9_.-]{1,64}", v):
         return v
-    return "owner"
+    return "crew:unknown" if v.startswith("crew:") else "owner"
 
 
 def _spawn_task(name, prompt, description='', on_complete=None,
@@ -6945,7 +6956,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                 runner=None, pin_to_seat=False, workflow_context=None,
                 chain_retry=0, parent_task_id=None, task_id=None, inherited_policy=None,
                 crew_context=None, job=None, local_only_result=False,
-                principal=None, goal_ancestry=None, expected_outputs=None, verification_plan=None):
+                principal=None, goal_ancestry=None, expected_outputs=None, verification_plan=None,
+                continuation=False):
     """Spawn a background task.
 
     principal / goal_ancestry / expected_outputs / verification_plan (§17.6):
@@ -7066,7 +7078,10 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     # §17.14: a child is no broader than the task that spawns it. A task
     # spawned while another task runs is that task's child (its lineage, its
     # stop, its outside-content flag), whether or not the caller said so.
-    _continuation = parent_task_id is not None
+    # A continuation (chain step, follow-up, retry, requeue: _descendant_options
+    # says so) keeps its parent's scope; anything else a task starts is its
+    # subagent, even when the caller names the parent.
+    _continuation = bool(continuation) and parent_task_id is not None
     if parent_task_id is None:
         try:
             parent_task_id = _journal().current_task() or None
@@ -7533,6 +7548,7 @@ def _descendant_options(rec, *, step=None, retry=0):
                "parent_task_id": rec.get("task_id"), "chain_retry": retry,
                "scope": rec.get("scope"),
                "principal": rec.get("principal"), "goal_ancestry": rec.get("goal_ancestry"),
+               "continuation": True,
                "inherited_policy": {"cloud_pin": rec.get("cloud_pin"), "local_only": rec.get("local_only")}}
     if rec.get("run_id") and step is not None:
         options["task_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL,
