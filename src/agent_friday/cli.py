@@ -1470,8 +1470,20 @@ examples:
     p_cfg.add_argument("value", nargs="*")
 
     # status / doctor / check
-    for alias in ("status", "doctor", "check"):
+    for alias in ("status", "check"):
         sub.add_parser(alias, help="System health check")
+    p_doc = sub.add_parser("doctor", help="System health check; --report writes the "
+                                          "local Doctor report (no content, never sent)")
+    p_doc.add_argument("--report", action="store_true",
+                       help="Write the Doctor report (versions, checks, errors, drift, "
+                            "performance) under ~/.friday/doctor/reports and print it")
+    p_doc.add_argument("--out", metavar="PATH",
+                       help="Also copy the report (.txt) to this file, to attach by hand")
+
+    # safe mode (services/safe_mode.py)
+    sub.add_parser("safe", help="Start Friday in safe mode: extensions and the cloud off")
+    p_safe = sub.add_parser("safe-mode", help="Start in safe mode next time, or leave it")
+    p_safe.add_argument("state", choices=["on", "off", "status"])
 
     # health (post-install subsystem check, no server required)
     p_health = sub.add_parser("health", help="Post-install subsystem health check")
@@ -1964,6 +1976,37 @@ def _exit_code(rv) -> int:
         return 0
 
 
+def cmd_doctor_report(out=None):
+    """Write the Doctor report and print it. Local only; nothing is sent."""
+    from agent_friday.services import doctor
+    rep = doctor.save()
+    txt = doctor.render_text(rep)
+    print(txt)
+    print("Kept as %s (.json and .txt) in Friday's doctor/reports folder." % rep["id"])
+    if out:
+        dest = Path(out).expanduser()
+        if dest.is_dir():
+            dest = dest / (rep["id"] + ".txt")
+        dest.write_text(txt, encoding="utf-8")
+        print("Copied to %s. Attach it yourself if you want to share it." % dest)
+    bad = [c for c in rep.get("checks", []) if c.get("state") in ("broken", "misconfigured")]
+    return 1 if bad else 0
+
+
+def cmd_safe_mode(state):
+    from agent_friday.services import safe_mode
+    if state == "status":
+        p = safe_mode.plan()
+    else:
+        p = safe_mode.set_next_start(state == "on")
+    print("This process: %s. Next start: %s." % (
+        "safe mode" if p["active"] else "normal",
+        "safe mode" if p["next_start_safe"] else "normal"))
+    if state != "status":
+        print("Restart Friday for it to take effect.")
+    return 0
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -1989,8 +2032,15 @@ def main():
         rv = cmd_tools()
     elif cmd == "config":
         rv = cmd_config(args)
+    elif cmd == "doctor" and getattr(args, "report", False):
+        rv = cmd_doctor_report(out=getattr(args, "out", None))
     elif cmd in ("status", "doctor", "check"):
         rv = cmd_status()
+    elif cmd == "safe":
+        os.environ["FRIDAY_SAFE_START"] = "1"
+        rv = cmd_start()
+    elif cmd == "safe-mode":
+        rv = cmd_safe_mode(args.state)
     elif cmd == "health":
         rv = cmd_health(exit_code=getattr(args, "exit_code", False))
     elif cmd == "update":

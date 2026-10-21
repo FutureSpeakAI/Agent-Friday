@@ -1005,14 +1005,15 @@ def stats_token() -> tuple:
     return _stats()
 
 
-def verify(*, force: bool = True) -> dict:
+def verify(*, force: bool = True, migrate: bool = True) -> dict:
     """Check every line: order, links, hashes, signatures, the head, the anchor,
     and which breaks the owner has acknowledged. `force=False` reuses the last
     result while no ledger file changed and it is younger than FULL_RECHECK_S.
     The files are read without holding the write lock."""
     with _TLOCK:
         _check_dir()
-        _ensure_migrated()
+        if migrate:
+            _ensure_migrated()
         stats = _stats()
         with _CACHE_LOCK:
             cached = _STATE.get("verified")
@@ -1101,9 +1102,10 @@ def acknowledge(by: str, note: str = "", *, reviewed: Optional[list] = None) -> 
     return {"acknowledged": len(items), "report": verify(force=True)}
 
 
-def summary() -> dict:
-    """What Activity and the Doctor show: counts and state, no content."""
-    r = verify(force=False)
+def summary(*, migrate: bool = True) -> dict:
+    """What Activity and the Doctor show: counts and state, no content.
+    `migrate=False` (the Doctor) only reads."""
+    r = verify(force=False, migrate=migrate)
     return {k: r.get(k) for k in ("records", "last_seq", "intact", "ok", "key_available",
                                   "anchor", "problem_count", "open_problem_count",
                                   "verify_ms", "checked_at", "foreign_records",

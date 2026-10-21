@@ -1689,6 +1689,12 @@ def _run_task_inner(rec):
         raise
     except Exception:
         pass                      # never block the roster on our own bug
+    # Safe mode (services/safe_mode.py): schedules are paused. Skipped like a
+    # stand-down, never failed and never run late.
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("scheduler")
+    if _why:
+        raise StoodDown(_why)
     task = rec.get("task") or {}
     kind = task.get("kind", "builtin")
     if kind == "builtin":

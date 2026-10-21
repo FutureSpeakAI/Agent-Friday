@@ -210,6 +210,11 @@ def check_for_update() -> dict:
         "latest_url": None,
         "reason": "",
     }
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("update_check")
+    if _why:
+        result["reason"] = _why
+        return result
 
     # Settings are deliberately NOT consulted here, and the absence is the
     # point. `model_routing.mode` (local_only / cloud_only)

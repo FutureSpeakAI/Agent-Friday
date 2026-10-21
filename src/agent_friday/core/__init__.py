@@ -4383,7 +4383,12 @@ def _apply_offline_routing_overlay(settings):
     try:
         with _NETWORK_LOCK:
             offline = NETWORK_STATE["status"] == "offline"
-        if not offline or not settings.get("offline_auto_local", True):
+        try:
+            from agent_friday.services import safe_mode as _sm
+            safe = _sm.active()          # safe mode: local only for this run
+        except Exception:
+            safe = False
+        if not safe and (not offline or not settings.get("offline_auto_local", True)):
             return settings
         mr = dict(settings.get("model_routing") or {})
         if mr.get("mode") != "local_only" or mr.get("fallback_to_cloud") is not False:

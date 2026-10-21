@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Friday™ Doctor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { background:#04070e; color:#dfe7ef; font:14px/1.5 system-ui, sans-serif; margin:0; padding:24px; }
+  h1 { font-size:20px; color:#00d4ff; margin:0 0 4px; }
+  p.lead { color:#9aa8b8; margin:0 0 18px; max-width:760px; }
+  section { border:1px solid rgba(0,212,255,0.2); border-radius:8px; padding:14px 16px; margin:0 0 16px; max-width:900px; }
+  h2 { font-size:15px; margin:0 0 8px; }
+  button { background:rgba(0,212,255,0.12); color:#00d4ff; border:1px solid rgba(0,212,255,0.45); border-radius:6px; padding:6px 12px; font:inherit; cursor:pointer; margin-right:8px; }
+  button:focus-visible, a:focus-visible { outline:2px solid #fbbf24; outline-offset:2px; }
+  table { border-collapse:collapse; width:100%; font:12px/1.4 'JetBrains Mono', monospace; }
+  td, th { text-align:left; padding:3px 8px; border-bottom:1px solid rgba(255,255,255,0.06); }
+  .healthy { color:#3effa1 } .degraded, .unverified { color:#fbbf24 } .broken, .misconfigured { color:#f87171 }
+  .blocked_by_policy, .unavailable_by_configuration, .unavailable_by_hardware { color:#9aa8b8 }
+  pre { white-space:pre-wrap; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; font:12px/1.4 'JetBrains Mono', monospace; max-height:420px; overflow:auto; }
+  a { color:#00d4ff; }
+  .safe { border-color:rgba(251,191,36,0.5); }
+</style>
+</head>
+<body>
+<main>
+<h1>Doctor</h1>
+<p class="lead">A check of Friday on this PC: versions, the state of each part, error signatures, settings drift and speed. It contains no conversations, memories, file names, addresses or vault content. Friday never sends it anywhere. To share it, save the file and attach it yourself.</p>
+
+<section id="safe" aria-labelledby="safe-h">
+  <h2 id="safe-h">Safe mode</h2>
+  <p id="safe-state" role="status">Checking...</p>
+  <button id="safe-on" type="button">Start in safe mode next time</button>
+  <button id="safe-off" type="button">Leave safe mode at the next start</button>
+  <p id="safe-note" role="status"></p>
+</section>
+
+<section aria-labelledby="rep-h">
+  <h2 id="rep-h">Report</h2>
+  <button id="run" type="button">Run the checks</button>
+  <span id="files"></span>
+  <div id="out" role="region" aria-live="polite"></div>
+</section>
+
+<section aria-labelledby="hist-h">
+  <h2 id="hist-h">Earlier reports</h2>
+  <ul id="hist"></ul>
+</section>
+</main>
+<script>
+(function () {
+  'use strict';
+  const tok = window.__FRIDAY_API_TOKEN || '';
+  const api = (url, opts) => fetch(url, Object.assign({}, opts || {}, {
+    headers: Object.assign({ 'X-Friday-Token': tok, 'Content-Type': 'application/json' }, (opts || {}).headers || {})
+  })).then(r => r.json().then(d => ({ ok: r.ok, d })));
+  const $ = id => document.getElementById(id);
+  const text = (el, s) => { el.textContent = s; };
+
+  function safeState() {
+    api('/api/safe-mode').then(({ d }) => {
+      const now = d.active ? 'This run is in safe mode (' + (d.why || '') + '): extensions and the cloud are off, schedules are paused, outward actions are held.'
+                           : 'This run is a normal start.';
+      const next = d.next_start_safe ? ' The next start will be in safe mode.' : ' The next start will be normal.';
+      text($('safe-state'), now + next);
+      $('safe').className = d.active ? 'safe' : '';
+    });
+  }
+  function setNext(on) {
+    api('/api/safe-mode', { method: 'POST', body: JSON.stringify({ next_start: on }) }).then(({ ok, d }) => {
+      text($('safe-note'), ok ? (d.restart_needed ? 'Saved. Restart Friday for it to take effect.' : 'Saved.') : (d.error || 'Not saved.'));
+      safeState();
+    });
+  }
+  function row(c) {
+    const tr = document.createElement('tr');
+    [c.id, c.domain, c.state, c.code].forEach((v, i) => {
+      const td = document.createElement('td'); td.textContent = v == null ? '' : String(v);
+      if (i === 2) td.className = String(v);
+      tr.appendChild(td);
+    });
+    return tr;
+  }
+  function show(rep, txt) {
+    const out = $('out'); out.textContent = '';
+    const t = document.createElement('table');
+    const head = document.createElement('tr');
+    ['check', 'domain', 'state', 'code'].forEach(h => { const th = document.createElement('th'); th.textContent = h; head.appendChild(th); });
+    t.appendChild(head);
+    (rep.checks || []).forEach(c => t.appendChild(row(c)));
+    out.appendChild(t);
+    const pre = document.createElement('pre'); pre.textContent = txt || ''; out.appendChild(pre);
+    const f = $('files'); f.textContent = '';
+    ['txt', 'json'].forEach(k => {
+      const a = document.createElement('a'); a.href = '/api/doctor/reports/' + rep.id + '.' + k;
+      a.textContent = 'Save as .' + k; a.setAttribute('download', rep.id + '.' + k);
+      f.appendChild(a); f.appendChild(document.createTextNode('  '));
+    });
+  }
+  function history() {
+    api('/api/doctor/reports').then(({ d }) => {
+      const ul = $('hist'); ul.textContent = '';
+      (d.reports || []).forEach(r => {
+        const li = document.createElement('li');
+        const a = document.createElement('a'); a.href = '/api/doctor/reports/' + r.id + '.txt'; a.textContent = r.generated_at;
+        li.appendChild(a);
+        li.appendChild(document.createTextNode(' ' + Object.entries(r.summary || {}).map(([k, v]) => v + ' ' + k).join(', ')));
+        ul.appendChild(li);
+      });
+    });
+  }
+  $('run').addEventListener('click', () => {
+    text($('out'), 'Running...');
+    api('/api/doctor/report', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+      if (!ok) { text($('out'), d.error || 'The report could not be made.'); return; }
+      show(d.report, d.text); history();
+    });
+  });
+  $('safe-on').addEventListener('click', () => setNext(true));
+  $('safe-off').addEventListener('click', () => setNext(false));
+  safeState(); history();
+})();
+</script>
+</body>
+</html>

@@ -621,6 +621,11 @@ def search(query: str, count: int = 10) -> dict:
     `_normalise_rows` for the day that cost.
     """
     q = (query or "").strip()
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("web")
+    if _why:
+        return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
+                "backend": "none", "detail": _why}
     if not q:
         return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
                 "backend": "none", "detail": "empty query"}

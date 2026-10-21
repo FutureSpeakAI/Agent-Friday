@@ -15436,6 +15436,10 @@ def _mcp_boot() -> None:
     global _MCP_MANAGER
     if _MCPManager is None:
         return
+    from agent_friday.services import safe_mode as _sm
+    if not _sm.allows("mcp"):
+        print("  [mcp] safe mode: no MCP server is started")
+        return
     try:
         cfg = _load_mcp_servers()
         # Extension security: scan every configured server before launch and
@@ -15465,6 +15469,10 @@ def _mcp_reload() -> dict:
     global _MCP_MANAGER
     if _MCPManager is None:
         return {"error": "MCP client module unavailable"}
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("mcp")
+    if _why:
+        return {"error": _why}
     # Unregister every server's tools.
     for name in list(_MCP_SERVER_TOOLS.keys()):
         _mcp_unregister_server_tools(name)

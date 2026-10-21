@@ -783,6 +783,12 @@ def require(provider, purpose: str, model: str = "", *, base_url=None) -> CloudT
     purpose = str(purpose or "model call")
     if _is_local(provider, model, base_url):
         return CloudToken("local", name, purpose, model, "", "")
+    # Safe mode (services/safe_mode.py): no cloud at all, whatever the mode or
+    # the turn's intent.
+    from agent_friday.services import safe_mode as _sm
+    if not _sm.allows("cloud"):
+        _log.warning("refused a cloud call in safe mode: %s -> %s (%s)", purpose, name, model)
+        raise NoCloudIntent(name, purpose, model, "safe_mode")
     mode = routing_mode()
     cur = current()
     if _pin():

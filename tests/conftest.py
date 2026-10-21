@@ -407,6 +407,12 @@ def _own_action_ledger(tmp_path_factory, monkeypatch):
         action_journal.reset()
     except Exception:
         pass
+    try:
+        # safe mode is decided once per process; each test decides afresh
+        from agent_friday.services import safe_mode
+        safe_mode.reset_for_tests()
+    except Exception:
+        pass
     yield
     try:
         from agent_friday.services import action_ledger

@@ -1320,6 +1320,15 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             return Verdict("allow", klass, why + " (some details came from content read)")
         return Verdict("card" if tainted else "allow", klass, why)
     if klass == OBSERVE:
+        # Safe mode (services/safe_mode.py): connectors are off, so a read at
+        # a connected service is held too.
+        try:
+            from agent_friday.services import safe_mode as _sm
+            _why = _sm.refusal("connector_reads")
+        except Exception:
+            _why = None
+        if _why:
+            return Verdict("deny", klass, f"held: {_why}")
         # A read at a connected service: runs unasked, receipted as observe.
         # A detail from outside content could be data being smuggled out
         # through the query, so that still goes to a card.
@@ -1377,11 +1386,18 @@ def outward_hold() -> Optional[str]:
     """Why every outward action waits right now, or None. Read on every
     outward decision, after the cLaws check:
 
+    * Friday is in safe mode (services/safe_mode.py);
     * the action ledger has a break the owner has not looked at
       (services/action_ledger.hold_reason): a receipt changed, removed or
       reordered on disk.
 
     A check that cannot run holds: the reason names what failed."""
+    try:
+        from agent_friday.services import safe_mode as _sm
+        if _sm.active():
+            return _sm.refusal("connectors")
+    except Exception as e:  # noqa: BLE001 - fail closed
+        return "safe mode could not be checked (%s)" % type(e).__name__
     try:
         from agent_friday.services import action_ledger
         why = action_ledger.hold_reason()

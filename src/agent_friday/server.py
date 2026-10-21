@@ -129,7 +129,7 @@ ROUTE_MODULES = [
     'actions', 'agent_workspaces', 'activity', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
     'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code', 'compute',
     'connect_services', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_memory', 'core_routes', 'desktop',
-    'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
+    'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'doctor', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'inbox_cleanup', 'insights',
     'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
@@ -475,6 +475,14 @@ def _residency_boot():
 
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────
 if not _TESTING:
+    # Safe mode (services/safe_mode.py): extensions and the cloud off, so Friday
+    # can be repaired. Decided once for this process; each part below asks.
+    from agent_friday.services import safe_mode as _safe
+    if _safe.active():
+        print("  SAFE MODE (%s): extensions and the cloud are off, schedules are "
+              "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. "
+              "Leave it there or with `friday safe-mode off`, then restart."
+              % _safe.state().get("why"))
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
@@ -499,7 +507,7 @@ if not _TESTING:
     try:
         from agent_friday.services import publish_hosting as _ph
         from agent_friday.services import publish_web as _pw
-        if _pw.list_published() and _ph.enabled():
+        if _safe.allows("publish_hosting") and _pw.list_published() and _ph.enabled():
             _ph.ensure_started()
     except Exception as _ph_err:
         print(f"  Published pages: hosting not started ({_ph_err})")
@@ -528,8 +536,9 @@ if not _TESTING:
     # silence: a job that stopped has to say it stopped.
     try:
         from agent_friday.services import reconcile as _reconcile
-        threading.Thread(target=_reconcile.run_at_boot, daemon=True,
-                         name="boot-reconcile").start()
+        if _safe.allows("reconcile_resume"):
+            threading.Thread(target=_reconcile.run_at_boot, daemon=True,
+                             name="boot-reconcile").start()
     except Exception as _rc_err:
         print(f"  Reconciliation: unavailable ({_rc_err})")
 
@@ -538,8 +547,9 @@ if not _TESTING:
     # there is no first-run request.
     try:
         from agent_friday.services import first_run_models as _frm
-        threading.Thread(target=_frm.run_at_boot, daemon=True,
-                         name="first-run-models-boot").start()
+        if _safe.allows("first_run_models"):
+            threading.Thread(target=_frm.run_at_boot, daemon=True,
+                             name="first-run-models-boot").start()
     except Exception as _frm_err:
         print(f"  First-run models: unavailable ({_frm_err})")
 
@@ -560,7 +570,8 @@ if not _TESTING:
     # publisher module lands — a missing/broken module never blocks boot.
     try:
         from agent_friday.services import publisher as _content_publisher
-        _content_publisher.start()
+        if _safe.allows("publisher"):
+            _content_publisher.start()
     except Exception as _cp_err:
         print(f"  Content publisher: skipped ({_cp_err})")
     # Task journal (docs/design/active/task-visibility.md TV8): rebuild the
@@ -575,14 +586,16 @@ if not _TESTING:
               + (f", {_n_int} marked interrupted" if _n_int else ""))
     except Exception as _tj_err:
         print(f"  Task journal: restore skipped ({_tj_err})")
-    start_scheduler()
+    if _safe.allows("scheduler"):
+        start_scheduler()
     try:
         from agent_friday.services import call_watch as _call_watch
-        _call_watch.start()
+        if _safe.allows("call_watch"):
+            _call_watch.start()
     except Exception as _cw_err:
         print(f"  Call watch: not started ({_cw_err})")
 
-    if _notif_engine:
+    if _notif_engine and _safe.allows("notifications_loop"):
         threading.Thread(target=_notification_trigger_loop, daemon=True).start()
 
     # THE EMBEDDER IS LOADED AT BOOT, NOT ON THE USER'S FIRST SENTENCE.
@@ -623,13 +636,15 @@ if not _TESTING:
                      name="warm-embedder").start()
 
     # Persistent news archive: grow the per-day article store on the RSS cadence.
-    threading.Thread(target=_news_archiver_loop, daemon=True).start()
+    if _safe.allows("news"):
+        threading.Thread(target=_news_archiver_loop, daemon=True).start()
 
     # Podcast render worker: finishes episodes left mid-render by a restart and
     # renders queued ones when the idle gate allows (services/podcast_engine.py).
     try:
         from agent_friday.services import podcast_engine as _podcast_engine
-        _podcast_engine.start_worker()
+        if _safe.allows("podcasts"):
+            _podcast_engine.start_worker()
     except Exception as _pw_e:
         print(f"  Podcasts: render worker not started ({_pw_e})")
 
@@ -648,7 +663,8 @@ if not _TESTING:
     # full creations folder (services/media_index.py).
     try:
         from agent_friday.services import media_index as _media_index
-        _media_index.start_background()
+        if _safe.allows("media_index"):
+            _media_index.start_background()
     except Exception as _mi_e:
         print(f"  Media: library indexer not started ({_mi_e})")
 
@@ -656,26 +672,30 @@ if not _TESTING:
     # read when Friday last stopped (services/library/runtime.py).
     try:
         from agent_friday.services.library import runtime as _library_runtime
-        _library_runtime.start_background()
+        if _safe.allows("library_runtime"):
+            _library_runtime.start_background()
     except Exception as _lib_e:
         print(f"  Library: background reading not started ({_lib_e})")
 
     # Offline-first resilience: probe connectivity every 30s, auto-switch to
     # local inference when offline, flush the queue + refresh feeds when back.
-    threading.Thread(target=_network_monitor_loop, daemon=True).start()
+    if _safe.allows("network_monitor"):
+        threading.Thread(target=_network_monitor_loop, daemon=True).start()
 
     # MCP connectors: launch configured MCP servers and register their tools.
     _mcp_boot()
 
     # Predictive workspaces: pre-warm the workspaces this moment usually wants,
     # then keep them warm as the time-of-day shifts.
-    threading.Thread(target=_prewarm_predicted_boot, daemon=True).start()
-    threading.Thread(target=_predictive_prewarm_loop, daemon=True).start()
+    if _safe.allows("predictive_prewarm"):
+        threading.Thread(target=_prewarm_predicted_boot, daemon=True).start()
+        threading.Thread(target=_predictive_prewarm_loop, daemon=True).start()
 
     # Ambient connector-health monitoring: watch every connector (Google +
     # MCP) and push a notification on a connected->down edge.
     from agent_friday.services.connectors import connector_health_monitor_loop
-    threading.Thread(target=connector_health_monitor_loop, daemon=True).start()
+    if _safe.allows("connectors"):
+        threading.Thread(target=connector_health_monitor_loop, daemon=True).start()
 
     # Credential sweep: read every credential Friday holds and say what is
     # wrong, hourly and locally.
@@ -686,7 +706,8 @@ if not _TESTING:
     # MCP server, a disabled Google API as working. This is the standing
     # version of that enumeration.
     from agent_friday.services.credential_sweep import sweep_loop
-    threading.Thread(target=sweep_loop, daemon=True).start()
+    if _safe.allows("credential_sweep"):
+        threading.Thread(target=sweep_loop, daemon=True).start()
 
     # Residency: compute the placement plan, bind it into capability_routing,
     # and bring the GPU to that plan (decision Q9).
@@ -700,7 +721,7 @@ if not _TESTING:
     # Runs on a daemon thread and is FAIL-SOFT by construction: a residency
     # problem must never stop Friday from starting. Opt out with
     # FRIDAY_NO_ARBITER=1.
-    if os.environ.get("FRIDAY_NO_ARBITER") != "1":
+    if os.environ.get("FRIDAY_NO_ARBITER") != "1" and _safe.allows("model_seats"):
         threading.Thread(target=_residency_boot, daemon=True).start()
 
     # Machine monitor (docs/design/implemented/headroom.md §4.3): read-only telemetry --
@@ -712,7 +733,8 @@ if not _TESTING:
     # background loop here).
     try:
         from agent_friday.services import machine_monitor as _mm
-        _mm.start_loop()
+        if _safe.allows("machine_monitor"):
+            _mm.start_loop()
     except Exception as _mm_err:
         print(f"  Machine monitor: unavailable ({_mm_err})")
 
@@ -1331,7 +1353,9 @@ if __name__ == '__main__':
     # the tab links and the tray use. Never prompts and never changes Windows.
     try:
         from agent_friday.services import local_address as _la
-        _la.boot(_port)
+        from agent_friday.services import safe_mode as _safe_la
+        if _safe_la.allows("local_address"):
+            _la.boot(_port)
     except Exception as _la_err:
         print(f"  Local address: skipped ({_la_err})")
     # Say out loud, once, any store Friday cannot open or cannot vouch for
@@ -1344,8 +1368,10 @@ if __name__ == '__main__':
     # Deliberately after the boot-guard thread and before app.run(): the warm
     # waits on its own, so this only registers the intention.
     try:
-        warm_voice_after_boot(
-            "%s://127.0.0.1:%s" % ("https" if _ssl_context else "http", _port))
+        from agent_friday.services import safe_mode as _safe_vw
+        if _safe_vw.allows("voice_warm"):
+            warm_voice_after_boot(
+                "%s://127.0.0.1:%s" % ("https" if _ssl_context else "http", _port))
     except Exception as _warm_err:
         print(f"  Voice warm: unavailable ({_warm_err})")
 
