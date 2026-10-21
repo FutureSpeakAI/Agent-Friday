@@ -322,11 +322,9 @@ def _halt_interactive_sessions() -> int:
                 for sid, s in isess._SESSIONS.items()]
     n = 0
     for _sid, pid, started, proc in rows:
-        # Only a session still running, and only the very process it started: a reused
-        # PID belongs to someone else (interactive_sessions._same_process).
+        # Only a session still running: its live Popen handle keeps the PID from being
+        # reused, so the process killed is the one Friday started.
         if not pid or proc is None or proc.poll() is not None:
-            continue
-        if not isess._same_process(int(pid), started):
             continue
         isess._kill_pid(int(pid))
         n += 1
@@ -349,7 +347,6 @@ _LANES = (
     ("browser", _halt_browser),
     ("voice_calls", _halt_halters),
     ("computer_control", _halt_computer_control),
-    ("background", lambda: (_pause_background(), 1)[1]),
     ("claude_code", _halt_claude_code),
     ("interactive_sessions", _halt_interactive_sessions),
     ("media", _halt_media),
