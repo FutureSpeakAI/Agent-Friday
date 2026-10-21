@@ -716,14 +716,16 @@ Skips `CONFIRMED` targets; `regenerate: true` rebuilds `PENDING`/`HELD` ones.
 ### `POST /api/content/posts/<id>/schedule`
 Set/replace the post's `ScheduleConfig`. Resolves `optimal_time` (seed tables → learned best-times histogram) and returns same-platform conflict warnings.
 
+This route, `publish-now` and `release` also return `approval` (`{targets: [{target_id, platform, state, approval_id?}]}`) and `publisher` (`{on, auto_enabled, notice, action}`). `state` is `approved`, `covered by a grant`, `waiting for your approval`, `declined`, `unavailable`, or `will ask you again (more than a day late)` for a target more than a day past its due time whose decision was made before then. `notice` is set whenever something will stop the post going out (the Content publisher switched off or not saved on, the schedule list unreadable, publishing off or paused, no connected account), with `action` the place to fix it; the screens then show only the notice.
+
 ### `POST /api/content/posts/<id>/publish-now`
-Immediate dispatch. Still fully gated: moderation harm scan (H1–H4) and egress-gate sensitivity classification run before any adapter is called.
+Immediate dispatch. Still fully gated: moderation harm scan (H1–H4) and egress-gate sensitivity classification run before any adapter is called. A target more than a day late still needs a decision made within the last day.
 
 ### `POST /api/content/posts/<id>/cancel`
 Cancel the whole post, or one target with `{ "target_id": "tgt_..." }`.
 
 ### `POST /api/content/posts/<id>/release`
-Release a `HELD` target after human review.
+Release a `HELD` target after human review. The release is bound to the fingerprint of the words and media held at that moment; if they change afterwards, the moderation and privacy holds apply again.
 
 **Request:**
 ```json

@@ -110,14 +110,17 @@ review, Scheduled and Published. Drag a card to another column, or select it
 and press **]** to move it one stage on.
 
 - **Into Scheduled** asks for a date and time. Friday asks again, on an
-  approval card, before the post goes.
+  approval card, before the post goes. If something will stop the post going
+  out (see [When posts go out](#when-posts-go-out)), you see only that notice,
+  not "Scheduled. Friday asks again before it goes."
 - **Into Published** raises the approval card. Nothing leaves until you approve.
 - Moving a scheduled post back to Draft or Idea takes it off the schedule.
 
 **Calendar** shows only cards with a time. Choose **2 weeks** or **Month**. The
 legend shows Published, Scheduled and Needs you by. Drag a scheduled card to
 another day to move it; it keeps its time of day, and a message confirms the
-new day and time. A published card cannot be moved. Click a card for its
+new day and time (or, if the post won't go out, the notice says why). A
+published card cannot be moved. Click a card for its
 details, with **Open** and **Publish now…**.
 
 ## Approvals
@@ -129,8 +132,18 @@ post, or at the latest when the post is due.
 
 The approval covers exactly those words and that media. If Friday has to retry
 the same words after a temporary failure, your approval still covers it.
-Changed words, or a post sent again after it failed for good or was declined,
-get a new card.
+Changed words or media, or a post sent again after it failed for good or was
+declined, get a new card.
+
+### Late posts ask again
+
+A scheduled post that is more than a day late does not go out on an approval
+you gave before then. Its card asks again, and says "When: it was due [time]
+(UTC) and did not go out then; it goes as soon as you approve". A notification,
+"A late post asks you again", says the same: "It goes only if you approve it
+again; or reschedule it." This also holds if you choose **🚀 Post now**,
+reschedule it, or choose **Publish anyway…** on a late post: the old approval
+still doesn't count, and a new card asks you.
 
 A scheduled job of yours can schedule posts on its own only with a grant. Make
 one in **Settings > Privacy & Data**, under **Scheduled jobs: what they may do
@@ -157,6 +170,11 @@ its approval card still asks you before it goes out. A post the harmful-content
 check blocks is not sent, and if the check cannot run the post is held again.
 Friday cannot release a held post for you.
 
+**Publish anyway…** covers the words and media that were held, nothing else.
+If you edit them afterwards, the privacy check applies again, and the post is
+held again if it still looks private; the reason then ends "(changed after you
+released it)".
+
 If nobody acts on a held post for 7 days, it is cancelled and nothing is sent.
 
 ## When posts go out
@@ -166,8 +184,18 @@ every 15 minutes. It starts switched off, and switches itself on the first
 time you schedule or post to a connected account (or to Substack's manual
 hand-off). You get a notification, "Content publisher turned on": "It sends
 your scheduled posts, each only once you have approved it. You can switch it
-off in Workflows." Switching it on sends nothing: each post still waits for its
-approval card.
+off in Workflows." If posts are already waiting, it also says how many: "2
+posts you already approved are due now and go out on its next run, after the
+usual checks." and "3 posts more than a day late will ask you again before
+going out." Switching it on sends nothing: each post still waits for its
+approval card, and a late post asks again (see
+[Late posts ask again](#late-posts-ask-again)).
+
+If Friday can't save the switch-on, the post doesn't go out and you are told:
+"This post won't go out until the Content publisher is on: Friday tried to
+switch it on but couldn't save the change. Turn it on in Workflows." with
+**Open Workflows**. If Friday can't read its list of jobs just then, it says
+"This post may not go out" and asks you to check Workflows.
 
 The job shows as on under **Friday's built-in routines** in **Workflows** (see
 [Scheduled jobs](scheduled-jobs.md)), with a note that it was switched on
@@ -180,11 +208,19 @@ publisher is switched off, so if this post can't go out straight away it won't
 be tried again." Friday also tells you
 when something else will stop a post: publishing switched off in Settings, all
 publishing paused, or none of its platforms connected. Each of these notices
-has a button that opens the place to fix it.
+has a button that opens the place to fix it. When a post won't go out, the
+notice is the whole answer: the screen doesn't also say "Scheduled".
+
+Only your own switch-off stays off. A scheduled or background job can't pause
+the Content publisher. If you ask Friday in chat to pause it, she does, and a
+notification says "The Content publisher was paused from a chat": "Scheduled
+posts won't go out while it is paused. Scheduling a post switches it back on;
+to keep it off, switch it off in Workflows."
 
 - A post can go out up to about 15 minutes after its time.
 - The PC must be on and Friday running. A post missed while the PC was off goes
-  out at the first run after Friday is running again, once approved.
+  out at the first run after Friday is running again, once approved. If it is
+  by then more than a day late, it asks you again first.
 - **🚀 Post now** does not wait for the job: the post goes out right after you
   approve it.
 - **Mastodon** can hold a post on its own schedule. When the time is at least
@@ -223,7 +259,9 @@ pausing does not recall it.
   and schedules it. You can name a time ("tonight", "friday 3pm") or let her
   pick the best time.
 - "Reschedule that post to tonight." Friday moves it and warns about clashes
-  on the same platform.
+  on the same platform. For a late post whose approval is too old, what Friday
+  is told back says it "will ask you again (more than a day late)", not that
+  it is approved.
 - "What's queued?" or "Did my Mastodon post go out?" Friday lists upcoming and
   held posts and recent history, or one post's status on each platform. Friday
   cannot release a held post; use **Publish anyway…** on its card.
