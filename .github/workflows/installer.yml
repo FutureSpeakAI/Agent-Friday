@@ -204,7 +204,7 @@ jobs:
           path: |
             ${{ runner.temp }}/clean/*.json
             ${{ runner.temp }}/clean/*.log
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   upgrade:
     needs: build
@@ -347,15 +347,23 @@ jobs:
         with:
           name: release-gate-record
           path: gate
+      # The upgrade bases are named one by one (the same list as the upgrade
+      # matrix): a base that left no evidence refuses the record.
       - name: Write the release evidence record
+        env:
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           exe=$(ls artifact/AgentFriday-Setup-*.exe | head -n1)
           python3 scripts/release_evidence.py --dir evidence --gate gate/release-gate.json \
-            --sha "${{ github.sha }}" --tag "${{ github.ref_name }}" --installer "$exe" \
+            --sha "$GITHUB_SHA" --tag "$TAG_NAME" --installer "$exe" \
             --require fresh-install-evidence \
             --require clean-machine-evidence-locale-de-DE \
             --require clean-machine-evidence-standard-user \
-            --require-prefix upgrade-evidence- \
+            --require upgrade-evidence-v5.14.3 \
+            --require upgrade-evidence-v1.0.0-beta.1 \
+            --require upgrade-evidence-v1.0.1-beta.1 \
+            --require upgrade-evidence-v1.1.0-beta.1 \
+            --require upgrade-evidence-v1.2.0-beta.1 \
             --out artifact/release-evidence.json
       # Beta 1.0.x replaces the 5.x line, so it is the latest release: the README's
       # Download link (releases/latest) must land on it, and GitHub skips

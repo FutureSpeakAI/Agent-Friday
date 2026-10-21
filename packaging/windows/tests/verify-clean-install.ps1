@@ -129,7 +129,8 @@ if ($StandardUser) {
           "user $env:USERNAME; elevated: $elevated; in Administrators (any form): $inAdmins"
 }
 if ($ExpectCulture) {
-    Check 'locale' ($culture.Name -eq $ExpectCulture) `
+    # The leg claims a non-ASCII temp folder too, so it is a condition, not a remark.
+    Check 'locale' (($culture.Name -eq $ExpectCulture) -and $Machine.temp_non_ascii -and ($env:TEMP -eq $env:TMP)) `
           "culture $($culture.Name) (expected $ExpectCulture); decimal '$($culture.NumberFormat.NumberDecimalSeparator)'; dates $($culture.DateTimeFormat.ShortDatePattern); temp non-ASCII: $($Machine.temp_non_ascii)"
 }
 

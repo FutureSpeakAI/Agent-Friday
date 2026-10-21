@@ -56,9 +56,28 @@ $usersGroup = (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-545'))
 $adminGroup = (New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')).Translate([Security.Principal.NTAccount]).Value.Split('\')[-1]
 Add-LocalGroupMember -Group $usersGroup -Member $UserName -ErrorAction SilentlyContinue
 $sid = (Get-LocalUser -Name $UserName).SID.Value
-$admins = @(Get-LocalGroupMember -Group $adminGroup -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -eq $sid })
-if ($admins.Count) { throw "$UserName is in $adminGroup; this leg would prove nothing" }
-Write-Host "standard account $UserName ($sid) created; member of $usersGroup only"
+# Membership is read, never assumed: Get-LocalGroupMember fails on a group that
+# holds an orphaned SID, so `net localgroup` is the fallback, and a group that
+# cannot be read at all stops the leg.
+$inAdmins = $null
+try {
+    $inAdmins = [bool](@(Get-LocalGroupMember -Group $adminGroup -ErrorAction Stop | Where-Object { $_.SID.Value -eq $sid }).Count)
+} catch {
+    $netOut = net localgroup $adminGroup 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "could not read the members of $adminGroup" }
+    $inAdmins = [bool](@($netOut | Where-Object { ($_ -split '\\')[-1].Trim() -ieq $UserName }).Count)
+}
+if ($inAdmins) { throw "$UserName is in $adminGroup; this leg would prove nothing" }
+$account = [ordered]@{
+    user = $UserName; sid = $sid; in_administrators = $inAdmins
+    groups = @(Get-LocalGroup | Where-Object {
+        try { @(Get-LocalGroupMember -Group $_.Name -ErrorAction Stop | Where-Object { $_.SID.Value -eq $sid }).Count } catch { $false }
+    } | ForEach-Object { $_.Name })
+    written_by = 'run-as-standard-user.ps1 (the administrator side, not the check under test)'
+}
+[System.IO.File]::WriteAllText((Join-Path $WorkDir 'ACCOUNT.json'), ($account | ConvertTo-Json -Depth 3),
+                               (New-Object System.Text.UTF8Encoding($false)))
+Write-Host "standard account $UserName ($sid) created; groups: $($account.groups -join ', ')"
 
 # ── 2. Log on as a batch job, and nothing else ─────────────────────────────
 $inf = Join-Path $env:RUNNER_TEMP 'batch-right.inf'
@@ -95,7 +114,8 @@ $cmdText = @(
     '@echo off',
     'set GITHUB_ACTIONS=true',
     "powershell -NoProfile -ExecutionPolicy Bypass -File `"$verify`" -Setup `"$setupCopy`" -WorkDir `"$out`" -StandardUser > `"$out\run.log`" 2>&1",
-    "echo %ERRORLEVEL%> `"$out\exit.txt`""
+    # Redirect first: "echo 0> file" would redirect handle 0 and write nothing.
+    ">`"$out\exit.txt`" echo %ERRORLEVEL%"
 ) -join "`r`n"
 [System.IO.File]::WriteAllText($cmd, $cmdText + "`r`n", (New-Object System.Text.ASCIIEncoding))
 
@@ -133,6 +153,25 @@ Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyCo
 # ── 5. Evidence and verdict ────────────────────────────────────────────────
 Get-ChildItem -LiteralPath $out -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $WorkDir -Force }
 if (-not (Test-Path -LiteralPath $exitFile)) { Write-Host 'FAILED: the standard-user check did not finish'; exit 1 }
-$code = [int]((Get-Content -LiteralPath $exitFile -Raw).Trim())
+$raw = [string](Get-Content -LiteralPath $exitFile -Raw)
+$raw = $raw.Trim()
+if ($raw -notmatch '^\d+$') { Write-Host "FAILED: the check left no exit code ('$raw')"; exit 1 }
+$code = [int]$raw
 Write-Host "standard-user check exit code: $code"
-exit $code
+if ($code -ne 0) { exit $code }
+
+# Not the exit code alone: the result itself must say the account was standard
+# and every check passed (the hosts step is the one permitted skip).
+$result = $null
+try { $result = Get-Content -LiteralPath (Join-Path $out 'RESULT.json') -Raw | ConvertFrom-Json } catch { }
+if ($null -eq $result) { Write-Host 'FAILED: no RESULT.json from the standard-user check'; exit 1 }
+$names = @($result.PSObject.Properties | ForEach-Object { $_.Name })
+if ($names -notcontains 'standard-user' -or $result.'standard-user'.ok -ne $true) {
+    Write-Host 'FAILED: the result does not show a standard (non-administrator) account'; exit 1
+}
+$bad = @($result.PSObject.Properties | Where-Object {
+    $_.Value.ok -ne $true -or ($_.Value.PSObject.Properties.Name -contains 'skipped' -and $_.Value.skipped -eq $true -and $_.Name -ne 'address')
+} | ForEach-Object { $_.Name })
+if ($bad.Count) { Write-Host "FAILED: checks not passed: $($bad -join ', ')"; exit 1 }
+Write-Host 'standard-user leg passed.'
+exit 0

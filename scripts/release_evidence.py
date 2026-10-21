@@ -48,7 +48,15 @@ NOT_COVERED = (
     "temporary folder under a non-ASCII name; the system code page stays English.",
     "Elevation prompts: the standard-user leg skips the local address (hosts file) step, "
     "which on a real PC asks an administrator; it is recorded as skipped, not passed.",
+    "Self-report: each leg's RESULT.json and MACHINE.json are written by the check that "
+    "ran (repository code, run on a fresh runner). The standard-user leg's ACCOUNT.json "
+    "is written separately by the administrator side that created the account.",
 )
+
+#: The only checks a leg may skip. Any other skip refuses the record.
+ALLOWED_SKIPS = {"clean-machine-evidence-standard-user": frozenset({"address"})}
+#: Legs whose account must be described by the side that created it (ACCOUNT.json).
+ACCOUNT_LEGS = frozenset({"clean-machine-evidence-standard-user"})
 
 
 def _load(path: Path):
@@ -130,6 +138,16 @@ def assemble(evidence_dir: Path, gate: dict | None, sha: str, tag: str,
                             "result": result if isinstance(result, dict) else None}
             if ok is False:
                 problems.append(f"{d.name}: " + "; ".join(failed))
+            stray = sorted(set(skipped) - ALLOWED_SKIPS.get(d.name, frozenset()))
+            if stray:
+                problems.append(f"{d.name}: skipped checks that may not be skipped: {', '.join(stray)}")
+            account = _load(d / "ACCOUNT.json")
+            if d.name in ACCOUNT_LEGS and not isinstance(account, dict):
+                problems.append(f"{d.name}: no ACCOUNT.json from the side that created the account")
+            if isinstance(account, dict):
+                legs[d.name]["account"] = account
+                if account.get("in_administrators") is not False:
+                    problems.append(f"{d.name}: the account was not shown to be outside Administrators")
     else:
         problems.append(f"no evidence folder at {evidence_dir}")
 
