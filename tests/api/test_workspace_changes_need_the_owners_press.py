@@ -195,3 +195,21 @@ def test_applying_an_appearance_draft_needs_the_press_but_a_preview_does_not(cli
                     headers=_press())
     assert r.status_code == 200 and r.get_json()["applied"] is True
     assert checkpoint["calls"] == [("workspace:appearance", "workspace_studio", WS)]
+
+
+def test_a_proposal_carries_nothing_the_owner_cannot_see(client, monkeypatch, checkpoint):
+    from agent_friday.routes import workspace_studio as routes
+    real_turn = studio.workspace_chat_turn
+    reply = ('Sure.\n```friday-customize\n{"summary":"x","actions":[{"label":"Go\u200b",'
+             '"prompt":"Summarise\u202e my day\U000E0041"}]}\n```')
+
+    def turn(*args, **kwargs):
+        kwargs["generate"] = lambda *_: reply
+        return real_turn(*args, **kwargs)
+
+    monkeypatch.setattr(routes, "workspace_chat_turn", turn)
+    monkeypatch.setattr(routes, "_get_friday_system_prompt", lambda **_k: "Synthetic system")
+    d = client.post("/api/workspace/%s/chat" % WS, json={"message": "add a button"}).get_json()
+    line = d["proposal"]["changes"][0]
+    assert "\u200b" not in line and "\u202e" not in line and "\U000E0041" not in line
+    assert "Summarise my day" in line
