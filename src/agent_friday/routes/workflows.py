@@ -324,6 +324,11 @@ def run_routine(routine_id):
     # The user asked for the machine; background work waits.
     try:
         from agent_friday.services import stand_down as _sd
+        from agent_friday.services import global_stop as _gs_wf
+        if _gs_wf.active():
+            return jsonify({"status": "error", "routine": routine_id, "code": "everything_stopped",
+                            "message": "Everything is stopped. Press Resume on the red bar to run "
+                                       "%s." % reg['label']}), 409
         if _sd.is_stood_down():
             return jsonify({
                 "status": "error", "routine": routine_id,

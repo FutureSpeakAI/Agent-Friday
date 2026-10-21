@@ -7812,7 +7812,7 @@ def _tool_task_control(inp):
         _surf = str(_CURRENT_SURFACE.get() or _ctx_gs.get("surface") or "")
         _voice = bool(_cloud_voice() or _voice_room() or _surf.startswith("voice"))
         # Who: the owner's own words routed here (a voice rule, chat), or a model's call.
-        _by = "owner" if (_voice or _CURRENT_OWNER_TEXT.get()) else "model"
+        _by = "owner" if (_voice or _gs.is_stop_everything(_CURRENT_OWNER_TEXT.get())) else "model"
         res = _gs.stop(by=_by, source="voice" if _voice else "tool",
                        reason=str(inp.get("target") or "")[:120])
         return "EVERYTHING_STOPPED: " + _gs.SPOKEN_STOPPED + (

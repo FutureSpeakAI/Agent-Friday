@@ -318,12 +318,19 @@ def _halt_interactive_sessions() -> int:
     """Interactive command sessions (services/interactive_sessions): every one ended."""
     from agent_friday.services import interactive_sessions as isess
     with isess._LOCK:
-        rows = [(sid, s.get("pid")) for sid, s in isess._SESSIONS.items()
-                if s.get("status") not in ("exited", "killed", "stopped")]
-    for _sid, pid in rows:
-        if pid:
-            isess._kill_pid(int(pid))
-    return len(rows)
+        rows = [(sid, s.get("pid"), s.get("os_start_time"), s.get("proc"))
+                for sid, s in isess._SESSIONS.items()]
+    n = 0
+    for _sid, pid, started, proc in rows:
+        # Only a session still running, and only the very process it started: a reused
+        # PID belongs to someone else (interactive_sessions._same_process).
+        if not pid or proc is None or proc.poll() is not None:
+            continue
+        if not isess._same_process(int(pid), started):
+            continue
+        isess._kill_pid(int(pid))
+        n += 1
+    return n
 
 
 def _halt_media() -> int:
@@ -331,6 +338,9 @@ def _halt_media() -> int:
     from agent_friday.services import local_image
     return 1 if local_image.interrupt_comfy(timeout=3) else 0
 
+
+#: Bumped by every stop and resume: a lane that starts after a later resume does nothing.
+_GEN = [0]
 
 _LANES = (
     ("chat_turns", _halt_turns),
@@ -350,11 +360,14 @@ _LANES = (
 LANE_TIMEOUT_S = 4.0
 
 
-def _walk_lanes() -> Dict[str, Any]:
+def _walk_lanes(gen: int) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
     threads = []
     for name, fn in _LANES:
         def _run(name=name, fn=fn):
+            if _GEN[0] != gen or not active():
+                results[name] = "skipped: resumed"
+                return
             try:
                 results[name] = fn()
             except Exception as exc:
@@ -399,6 +412,9 @@ def stop(*, by: str = "owner", source: str = "button", reason: str = "") -> Dict
     now = time.time()
     with _LOCK:
         _flag().set()                   # again under the lock: a resume racing this stop loses
+        _GEN[0] += 1
+        gen = _GEN[0]
+        _pause_background()             # under the lock, so a resume always clears it after
         was = bool(_STATE.get("stopped"))
         if not was:
             _STATE.clear()
@@ -412,7 +428,7 @@ def stop(*, by: str = "owner", source: str = "button", reason: str = "") -> Dict
     except Exception as exc:
         receipt_error = str(exc)[:200] or type(exc).__name__
         _log.error("stop receipt not written: %s", receipt_error)
-    halted = _walk_lanes()
+    halted = _walk_lanes(gen)
     try:
         _receipt("stop_lanes", by=by, source=source, halted=halted)
     except Exception as exc:
@@ -448,6 +464,7 @@ def resume(*, by: str = "owner", source: str = "button") -> Dict[str, Any]:
         if save_error:
             # Saved state still says stopped: a restart would come back stopped. Say so.
             _log.error("resume not saved: %s", save_error)
+        _GEN[0] += 1
         _flag().clear()
         try:
             from agent_friday.services import turn_queue

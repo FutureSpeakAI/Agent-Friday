@@ -1419,6 +1419,13 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
     """
     from agent_friday.services import approvals as _ap
     try:
+        import agent_friday.core as _core_gs
+        if _core_gs.GLOBAL_STOP.is_set():
+            # Stop everything (services/global_stop): held, and the card is not used up.
+            return Verdict("deny", OUTWARD, "held: everything is stopped (the owner pressed Stop)")
+    except Exception:
+        pass
+    try:
         ok, integrity = verify_claws()
         if not ok:
             return Verdict("deny", OUTWARD, f"held: {integrity}")

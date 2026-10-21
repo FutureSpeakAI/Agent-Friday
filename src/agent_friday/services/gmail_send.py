@@ -498,6 +498,10 @@ def send(approval_id: str) -> dict:
     from agent_friday.services import approvals as _ap
     from agent_friday.services import google_accounts as G
 
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): nothing is sent while stopped.
+        raise SendRefused("everything is stopped, so nothing was sent. Press Resume first.")
     appr = _ap.get_approval(approval_id)
     if not appr:
         raise SendRefused("no such approval: %s" % approval_id)
