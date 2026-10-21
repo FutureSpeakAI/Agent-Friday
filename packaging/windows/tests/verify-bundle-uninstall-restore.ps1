@@ -65,7 +65,7 @@ function Invoke-Setup([string] $tag) {
 function Get-FridayTargets {
     $out = @()
     foreach ($line in (& cmdkey.exe /list)) {
-        if ($line -match '^\s*Target:\s*(.+?)\s*$' -and $Matches[1] -match 'agent-friday') { $out += $Matches[1] }
+        if ($line -match '^\s*Target:\s*(.+?)\s*$' -and $Matches[1] -match '^(LegacyGeneric:target=)?([^@\s]+@)?agent-friday$') { $out += $Matches[1] }
     }
     return ,$out
 }

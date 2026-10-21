@@ -59,6 +59,9 @@ files = {
     "runtime/models/ci.gguf": "x" * 4096,
     "logs/crashes.log": "nothing",
 }
+(home / "mcp_servers.json").write_text(json.dumps({"servers": {"ci-github": {
+    "command": "npx", "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "placeholder-mcp-token-not-real",  # pragma: allowlist secret
+                              "GITHUB_ORG": "ci-org"}}}}), encoding="utf-8")
 for rel, text in files.items():
     p = home / rel
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +91,6 @@ travel["vault/probe.enc"] = hashlib.sha256((home / "vault/probe.enc").read_bytes
 never_hashes = {r: hashlib.sha256((home / r).read_bytes()).hexdigest() for r in never}
 expected = {"travel": travel, "never": never_hashes, "vault_probe": probe.decode(),
             "governance_key_sha256": hashlib.sha256(gk).hexdigest(),
-            "ledger_last_seq": rep["last_seq"], "private_words": ["likes tea", "ci-conv"]}
+            "ledger_last_seq": rep["last_seq"], "mcp_server": "ci-github", "private_words": ["likes tea", "ci-conv"]}
 Path(args.expected).write_text(json.dumps(expected, indent=1), encoding="utf-8")
 print("seeded", len(files), "files; ledger", rep["records"], "records")

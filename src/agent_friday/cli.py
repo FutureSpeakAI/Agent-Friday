@@ -2057,7 +2057,10 @@ def cmd_bundle(args):
     for c in _cats(args.exclude) or []:
         if c in cats:
             cats.remove(c)
-    dest = Path(args.out or args.file or (Path.home() / "Documents" / "Friday Bundles")).expanduser()
+    if args.out or args.file:
+        dest = Path(args.out or args.file).expanduser()
+    else:
+        dest = fb.documents_dir() / "Friday Bundles"
     if dest.suffix != fb.SUFFIX:
         dest = dest / ("friday-%s%s" % (time.strftime("%Y%m%d-%H%M%S"), fb.SUFFIX))
     pw = _bundle_passphrase(True)

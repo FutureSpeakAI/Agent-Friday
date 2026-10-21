@@ -141,15 +141,18 @@ function Move-SelfOutOfHarmsWay {
     New-Item -ItemType Directory -Force -Path $temp | Out-Null
     Copy-Item -Path (Join-Path $Here '*') -Destination $temp -Recurse -Force
     Write-Log "Relaunching uninstaller from $temp"
-    $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File', (Join-Path $temp 'uninstall.ps1'),
-              '-InstallRoot', $Root, '-Relaunched')
+    # Every value quoted: Windows PowerShell 5.1 does not quote -ArgumentList
+    # items, so a path with a space would split.
+    $q = { param($v) '"' + ([string]$v).TrimEnd('\') + '"' }
+    $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File', (& $q (Join-Path $temp 'uninstall.ps1')),
+              '-InstallRoot', (& $q $Root), '-Relaunched')
     if ($Unattended)       { $args += '-Unattended' }
     if ($RemoveEverything) { $args += '-RemoveEverything' }
     if ($InnoManaged)      { $args += '-InnoManaged' }
     if ($AllowElevation)   { $args += '-AllowElevation' }
-    if ($BundleTo)         { $args += @('-BundleTo', $BundleTo) }
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $args -NoNewWindow -Wait
-    exit 0
+    if ($BundleTo)         { $args += @('-BundleTo', (& $q $BundleTo)) }
+    $child = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -NoNewWindow -Wait -PassThru
+    exit $child.ExitCode
 }
 
 $hereFull = ([System.IO.Path]::GetFullPath($Here)).TrimEnd('\')
@@ -229,7 +232,24 @@ function Get-FridayCredentialTargets {
     foreach ($line in ($r.StdOut -split "`r?`n")) {
         if ($line -match '^\s*Target:\s*(.+?)\s*$') {
             $t = $Matches[1]
-            if ($t -match 'agent-friday') { $out += $t }
+            # only the names Python's keyring writes for service agent-friday:
+            # "agent-friday" or "<account>@agent-friday", never another app's
+            # credential that merely mentions the name (a Git remote, say)
+            if ($t -match '^(LegacyGeneric:target=)?([^@\s]+@)?agent-friday$') { $out += $t }
+        }
+    }
+    return ,$out
+}
+
+function Get-FridaySiblingCopies {
+    <#  Full copies of the data folder a restore leaves beside it. #>
+    $parent = Split-Path -Parent $FridayDir
+    $leaf = Split-Path -Leaf $FridayDir
+    if (-not (Test-Path -LiteralPath $parent)) { return ,@() }
+    $out = @()
+    foreach ($d in @(Get-ChildItem -LiteralPath $parent -Directory -Force -ErrorAction SilentlyContinue)) {
+        if ($d.Name.StartsWith($leaf + '.pre-restore-') -or $d.Name.StartsWith($leaf + '.friday-restore-')) {
+            $out += $d.FullName
         }
     }
     return ,$out
@@ -379,7 +399,7 @@ if ($BundleTo) {
             $ok = ($r.ExitCode -eq 0)
             Write-Log ("bundle create exited {0}" -f $r.ExitCode)
         } else {
-            $p = Start-Process -FilePath $py -ArgumentList @('-m','agent_friday.cli','bundle','create','--out',('"' + $BundleTo + '"')) `
+            $p = Start-Process -FilePath $py -ArgumentList @('-m','agent_friday.cli','bundle','create','--out',('"' + $BundleTo.TrimEnd('\') + '"')) `
                                -WorkingDirectory $appDir -NoNewWindow -Wait -PassThru
             $ok = ($p.ExitCode -eq 0)
         }
@@ -647,12 +667,18 @@ if ($removeData) {
             if (Test-Path -LiteralPath $backups) {
                 Remove-Item -LiteralPath $backups -Recurse -Force -ErrorAction SilentlyContinue
             }
+            # Folders a restore left beside the data folder: the one it moved
+            # aside (.pre-restore-*) and an unfinished staging copy
+            # (.friday-restore-*). Both are full copies of her data.
+            foreach ($sib in @(Get-FridaySiblingCopies)) {
+                Remove-Item -LiteralPath $sib -Recurse -Force -ErrorAction SilentlyContinue
+            }
             Remove-FridayCredentials
         } `
         -Verify {
             $backups = if ($env:FRIDAY_BACKUP_ROOT) { $env:FRIDAY_BACKUP_ROOT } else { Join-Path $env:USERPROFILE '.friday-backups' }
             (-not (Test-Path -LiteralPath $FridayDir)) -and (-not (Test-Path -LiteralPath $backups)) -and
-                (@(Get-FridayCredentialTargets).Count -eq 0)
+                (@(Get-FridayCredentialTargets).Count -eq 0) -and (@(Get-FridaySiblingCopies).Count -eq 0)
         }
 
     Say-Ok 'Your notes and the passphrase that unlocked them are gone.'
@@ -724,6 +750,7 @@ $receipt = [ordered]@{
         data_folder_gone      = -not (Test-Path -LiteralPath $FridayDir)
         upgrade_backups_gone  = -not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.friday-backups'))
         credentials_left      = @(Get-FridayCredentialTargets).Count
+        restore_copies_left   = @(Get-FridaySiblingCopies).Count
         programs_entry_gone   = -not (Test-UninstallerRegistered)
         hosts_block_gone      = -not (Test-FridayHostsBlock)
         autostart_gone        = -not (Test-Autostart)

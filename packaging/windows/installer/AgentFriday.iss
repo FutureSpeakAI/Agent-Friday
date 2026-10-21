@@ -1151,7 +1151,17 @@ begin
     // /BUNDLETO=<folder> with FRIDAY_BUNDLE_PASSPHRASE set: bundle first.
     BundleTo := ExpandConstant('{param:BUNDLETO|}');
     if BundleTo <> '' then
-      Result := MakeBundleFirst(BundleTo, False);
+    begin
+      // Silent: the passphrase must come from the environment, or the
+      // command line would wait for typing that never comes.
+      if GetEnv('FRIDAY_BUNDLE_PASSPHRASE') = '' then
+      begin
+        Log('/BUNDLETO without FRIDAY_BUNDLE_PASSPHRASE: nothing removed');
+        Result := False;
+      end
+      else
+        Result := MakeBundleFirst(BundleTo, False);
+    end;
     Exit;
   end;
   // Default button is Yes = keep.

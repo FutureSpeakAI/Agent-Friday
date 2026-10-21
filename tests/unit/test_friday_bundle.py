@@ -303,3 +303,102 @@ def test_what_a_fresh_install_left_is_moved_aside_not_merged(homes, tmp_path, mo
     assert r["moved_aside"] and (b.parent / r["moved_aside"] / "settings.json").exists()
     assert json.loads((b / "settings.json").read_text(encoding="utf-8")) == {"agent_name": "Friday"}
     assert not (b / "skills" / "bundled").exists()
+
+
+# ── security review round 1 ─────────────────────────────────────────────────
+
+class _FakeKeyring:
+    """A keychain for one Windows account, in memory."""
+
+    class errors:
+        class NoKeyringError(Exception):
+            pass
+
+    def __init__(self):
+        self.store = {}
+
+    def get_password(self, service, account):
+        return self.store.get((service, account))
+
+    def set_password(self, service, account, value):
+        self.store[(service, account)] = value
+
+    def delete_password(self, service, account):
+        self.store.pop((service, account), None)
+
+
+def test_connector_secrets_in_the_mcp_list_and_the_signing_certificate_do_not_travel(homes, tmp_path, monkeypatch):
+    from agent_friday.services import friday_bundle as fb
+    a, b, _ = homes
+    (a / "mcp_servers.json").write_text(json.dumps({"servers": {"github": {
+        "command": "npx", "args": ["server-github"],
+        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_placeholdernotreal", "GITHUB_ORG": "octo"}}}}),
+        encoding="utf-8")   # pragma: allowlist secret
+    (a / "signing").mkdir()
+    (a / "signing" / "certificate_p12.bin").write_bytes(b"certificate placeholder")
+    (a / "signing" / "certificate_passphrase.bin").write_bytes(b"passphrase placeholder")
+    out = tmp_path / "x.fridaybundle"
+    _make(a, out)
+    _point_at(b, monkeypatch)
+    r = fb.restore(out, PASS, home=b)
+    cfg = json.loads((b / "mcp_servers.json").read_text(encoding="utf-8"))
+    env = cfg["servers"]["github"]["env"]
+    assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "" and env["GITHUB_ORG"] == "octo"
+    assert "ghp_placeholdernotreal" not in out.read_bytes().decode("latin-1")
+    assert r["reconnect"]["mcp_servers_needing_their_keys"] == ["github"]
+    assert not (b / "signing").exists()
+
+
+def test_a_restore_never_loses_the_governance_key_this_account_already_holds(homes, tmp_path, monkeypatch):
+    from agent_friday.services import friday_bundle as fb
+    a, b, _ = homes
+    out = tmp_path / "x.fridaybundle"
+    _make(a, out)
+    kr = _FakeKeyring()
+    other = "11" * 32
+    kr.set_password("agent-friday", "governance-key", other)    # another Friday on this account
+    monkeypatch.setitem(sys.modules, "keyring", kr)
+    monkeypatch.setitem(sys.modules, "keyring.errors", kr.errors)
+    _point_at(b, monkeypatch)
+    with pytest.raises(fb.BundleError, match="governance key"):
+        fb.restore(out, PASS, home=b)
+    assert kr.get_password("agent-friday", "governance-key") == other
+    r = fb.restore(out, PASS, home=b, replace=True)
+    kept = r["keys"]["kept_previous_key"]
+    assert kr.get_password("agent-friday", kept) == other
+    assert kr.get_password("agent-friday", "governance-key") == (a / "vault" / ".governance-key").read_bytes().hex()
+
+
+def test_the_owners_own_files_keep_their_names_and_friday_keys_its_own(homes, tmp_path, monkeypatch):
+    from agent_friday.services import friday_bundle as fb
+    a, b, _ = homes
+    for rel in ("codebases/app/poetry.lock", "workspaces/ws1/talk.key", "library/owner/index.key"):
+        (a / rel).parent.mkdir(parents=True, exist_ok=True)
+        (a / rel).write_bytes(b"owner content " + rel.encode())
+    out = tmp_path / "x.fridaybundle"
+    _make(a, out)
+    _point_at(b, monkeypatch)
+    fb.restore(out, PASS, home=b)
+    for rel in ("codebases/app/poetry.lock", "workspaces/ws1/talk.key", "library/owner/index.key"):
+        assert (b / rel).read_bytes() == (a / rel).read_bytes(), rel
+
+
+def test_names_are_judged_without_case():
+    from pathlib import PurePosixPath as P
+    from agent_friday.services import friday_bundle as fb
+    for rel in ("Security/keystore2.json", "VAULT/.governance-key", "Providers/keys/x.key",
+                "RESTORE/hold.json", "Signing/certificate_p12.bin"):
+        assert fb.category_of(P(rel)) is None, rel
+
+
+def test_a_header_asking_for_absurd_key_settings_is_refused_cleanly(homes, tmp_path):
+    import base64
+    from agent_friday.services import friday_bundle as fb
+    header = {"format": fb.FORMAT, "bundle_id": "fb-x", "nonce_prefix": base64.b64encode(b"8bytes!!").decode(),
+              "kdf": {"name": "argon2id", "t": 1, "m": 2 ** 32 - 1, "p": 1,
+                      "salt": base64.b64encode(os.urandom(16)).decode()}}
+    raw = json.dumps(header).encode()
+    out = tmp_path / "bad.fridaybundle"
+    out.write_bytes(fb.MAGIC + struct.pack(">I", len(raw)) + raw + b"\x00" * 64)
+    with pytest.raises(fb.BundleError, match="key settings"):
+        fb.verify(out, PASS)

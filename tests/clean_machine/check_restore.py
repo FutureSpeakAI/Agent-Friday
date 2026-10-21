@@ -41,6 +41,11 @@ for rel, digest in exp["never"].items():
     check("not_carried:" + rel, not p.exists() or hashlib.sha256(p.read_bytes()).hexdigest() != digest,
           "a file that must not travel was restored")
 
+mcp = json.loads((home / "mcp_servers.json").read_text(encoding="utf-8"))
+env = mcp["servers"][exp["mcp_server"]]["env"]
+check("mcp_token_not_carried", env.get("GITHUB_PERSONAL_ACCESS_TOKEN") == "" and env.get("GITHUB_ORG") == "ci-org",
+      json.dumps(env))
+
 from agent_friday.governance.proof_of_integrity import get_governance_key  # noqa: E402
 gk = get_governance_key()
 check("governance_key_installed", hashlib.sha256(gk).hexdigest() == exp["governance_key_sha256"],

@@ -193,7 +193,7 @@ def bundle_create():
         from pathlib import Path as _P
 
         from agent_friday.paths import friday_home
-        dest_dir = _P.home() / "Documents" / "Friday Bundles"
+        dest_dir = fb.documents_dir() / "Friday Bundles"
         dest = dest_dir / ("friday-%s%s" % (_t.strftime("%Y%m%d-%H%M%S"), fb.SUFFIX))
         try:
             m = fb.create(dest, pw, categories=cats)
