@@ -15790,6 +15790,14 @@ function ChatSurface(props) {
      the owner's own message. Nothing is sent until one is clicked, nothing is
      preselected, and the card is single-use. */
   const chooseLocalFallback = (msg, id) => {
+    /* North-star A16a: before a route is picked the only choice opens
+       Settings > Models, where local, cloud and both are offered. */
+    if (id === 'choose_route') {
+      window.__fridaySettingsTab = 'intelligence';
+      try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'intelligence' } })); } catch (_) {}
+      if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'settings' });
+      return;
+    }
     const src = msg.source_text || '';
     if (!src) return;
     setChatMsgs(p => p.map(x => x === msg ? { ...x, local_fallback: null } : x));
@@ -56628,11 +56636,10 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   const modes = d.routing_modes || [];
   // A16: nothing is pre-selected. With no mode picked, no button is pressed and
   // the card says what Friday does until the owner picks.
-  const actualLabel = ((modes.filter(m => m.id === d.routing_mode)[0]) || {}).label || d.routing_mode || 'the starting setting';
   const notPicked = !mode && E('div', {
     'data-route-not-picked': '1',
     style: { fontSize: 11.5, color: '#f59e0b', fontFamily: 'var(--st-font)', marginTop: 8, lineHeight: 1.5 },
-  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' uses its starting setting, ' + actualLabel + '.');
+  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' works only on this computer and sends nothing to the cloud, even with a key entered.');
   const modeButtonRow = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
     modes.map(m => {
       const on = mode === m.id;
@@ -56675,7 +56682,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     : x.state === 'cloud' ? 'cloud'
     : x.state === 'cold' ? 'not loaded' : x.state === 'refused' ? 'unavailable' : x.state || '';
   const postureTxt = [
-    !mode ? 'Route not chosen yet (starting setting: ' + actualLabel + ')' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
+    !mode ? 'Route not chosen yet: only this computer until you choose' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
     'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');

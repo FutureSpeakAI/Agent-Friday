@@ -173,6 +173,12 @@ def should_offer(record: Dict[str, Any], *, wait_s: float = 0.0) -> bool:
     """Is this a moment worth interrupting the user for?"""
     if not enabled():
         return False
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        if route_unpicked():
+            return False       # A16a: no cloud offer of any kind before a route is chosen
+    except Exception:
+        pass
     if (record or {}).get("status") != "queued-for-seat":
         return False
     if not record.get("seat_is_local", True):

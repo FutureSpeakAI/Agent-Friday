@@ -548,6 +548,17 @@ def begin(routing_mode: str = "", vault_passphrase: str = "") -> dict:
             st["routing_mode"] = routing_mode
         st["consent_done"] = True
         save_state(st)
+    # North-star A16a: the route the person picked on the consent screen is
+    # their pick from now on (until then Friday is local-only). It is recorded
+    # as a routing choice, not as cloud consent ("consent_screen" is not one of
+    # privacy/cloud_consent.ROUTING_CONSENT_VIAS); the privacy answer later in
+    # the chat may change it.
+    if routing_mode in ROUTING_MODES:
+        try:
+            from agent_friday.services.setup_complete import save_routing_answer
+            save_routing_answer(routing_mode, via="consent_screen")
+        except Exception as e:
+            _log.warning("the consent screen's route was not recorded: %s", type(e).__name__)
     return view()
 
 

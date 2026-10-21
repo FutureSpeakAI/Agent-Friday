@@ -51,7 +51,7 @@ def test_a_new_install_has_no_route_picked(real_settings):
     core._load_settings_raw()                       # the first read seeds settings.json
     assert core.SETTINGS_FILE.exists()
     assert _pending(core) is True
-    # How Friday routes meanwhile is unchanged (the factory mode, unchosen).
+    # Meanwhile Friday is local-only (A16a, tests/unit/test_unpicked_route_is_local_only.py).
     assert cloud_intent.mode_was_chosen() is False
 
 

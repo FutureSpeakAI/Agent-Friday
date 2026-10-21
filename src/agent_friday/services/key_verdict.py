@@ -151,6 +151,17 @@ def ping_detail(prov: dict, model: str | None, api_key: str | None = None,
     """
     import time as _t
 
+    # North-star A16a: before a route is picked nothing goes to the cloud, a
+    # one-token key check included. The key stays stored; it is checked once
+    # the person chooses where Friday thinks.
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        if route_unpicked():
+            return UNKNOWN, {"model": model, "ok": False,
+                             "error": "not checked yet: nothing goes to the cloud until you "
+                                      "choose where Friday thinks (Settings > Models)"}
+    except Exception:
+        pass
     spec = probe_spec(prov, model)
     if spec is None:
         return UNKNOWN, None

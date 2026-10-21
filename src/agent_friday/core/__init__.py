@@ -4180,7 +4180,10 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
 #: How an owner routing change was made, as `model_routing.mode_chosen_via`
 #: records it (privacy/cloud_consent.ROUTING_CONSENT_VIAS says which count as
 #: consent when the mode is cloud only). Anything else is stored as "unverified".
-ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified")
+#: "consent_screen" is the route picked on the first-run consent screen (A16a):
+#: a pick, not cloud consent.
+ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified",
+                       "consent_screen")
 
 
 def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
@@ -4569,7 +4572,12 @@ def _apply_offline_routing_overlay(settings):
     try:
         with _NETWORK_LOCK:
             offline = NETWORK_STATE["status"] == "offline"
-        if not offline or not settings.get("offline_auto_local", True):
+        # North-star A16a: an install whose owner has not picked a route is
+        # local-only until they do, whatever the stored starting mode says. The
+        # same overlay as offline, so every reader of the mode sees it; nothing
+        # is persisted (route_pick_pending reads the stored settings).
+        pending = route_pick_pending(settings)
+        if not pending and (not offline or not settings.get("offline_auto_local", True)):
             return settings
         mr = dict(settings.get("model_routing") or {})
         if mr.get("mode") != "local_only" or mr.get("fallback_to_cloud") is not False:
