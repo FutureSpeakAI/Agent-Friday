@@ -148,3 +148,64 @@ def test_the_voice_page_carries_the_key_on_its_socket(page):
     assert "refreshDeskKey()" in helper and "'dk='" in helper
     opener = html[:html.index("new WebSocket(proto")]
     assert "fridayDeskSocketParam" in opener[-600:], "the voice socket is opened without the desk key"
+
+
+# ── security review round 1 ───────────────────────────────────────────────────
+
+def test_a_voice_approval_with_no_voice_call_context_does_not_approve(store):
+    """Positive proof: a voice-labelled approval made outside a voice call's tool call
+    (a thread, a hook, a future fast path) is refused too."""
+    card = _card("v-no-ctx")
+    rec, won = ap.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:/voice/")
+    assert won is False and rec["status"] == "pending"
+
+
+def test_a_spoken_no_through_a_tunnel_still_declines(store):
+    from agent_friday.services import agent
+    card = _card("v-deny-word")
+    tok = _in_voice_call(False)
+    stok = agent._CURRENT_SURFACE.set("voice")
+    try:
+        out = agent._tool_answer_card({"card_id": card["approval_id"], "decision": "deny"})
+    finally:
+        agent._CURRENT_SURFACE.reset(stok)
+        agent._CURRENT_TOOL_CONTEXT.reset(tok)
+    assert not out.startswith("NOT RECORDED: a spoken yes")
+
+
+def test_voice_off_this_desk_cannot_spend_a_send_pre_approval(monkeypatch):
+    from agent_friday.governance import send_grants
+    monkeypatch.setattr(send_grants, "options", lambda: {"voice_may_use": True})
+    monkeypatch.setattr(send_grants, "content_tier", lambda args: 1)
+    off = send_grants.use_refusal("send_email", {}, {"is_voice": True, "surface": "voice-local"})
+    on = send_grants.use_refusal("send_email", {}, {"is_voice": True, "surface": "voice-local",
+                                                    "owner_local": True})
+    assert off == send_grants.VOICE_WHY and on == ""
+
+
+def test_every_local_voice_turn_context_says_whether_it_is_this_desk():
+    src = (REPO / "src" / "agent_friday" / "routes" / "voice.py").read_text(encoding="utf-8")
+    import re as _re
+    for m in _re.finditer(r'"surface": "voice-local",', src):
+        block = src[m.start():m.start() + 900]
+        assert '"owner_local"' in block, src[m.start() - 300:m.start() + 200]
+
+
+def test_the_server_log_never_carries_a_query_string():
+    from agent_friday.services import pooled_server
+
+    class H(pooled_server._OneRequestHandler):
+        def __init__(self):
+            self.requestline = "GET /ws/voice-local?t=TOKEN&dk=DESKKEY HTTP/1.1"
+            self.path = "/ws/voice-local?t=TOKEN&dk=DESKKEY"
+            self.command, self.request_version = "GET", "HTTP/1.1"
+            self.logged = []
+
+        def log(self, type, message, *args):
+            self.logged.append(message % args)
+
+    h = H()
+    h.log_request(101, "-")
+    line = " ".join(h.logged)
+    assert "DESKKEY" not in line and "TOKEN" not in line and "/ws/voice-local" in line
+    assert "dk=DESKKEY" in h.requestline and "dk=DESKKEY" in h.path, "restored after logging"
