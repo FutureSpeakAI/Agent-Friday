@@ -115,8 +115,18 @@ try {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent()
     $isAdmin = (New-Object Security.Principal.WindowsPrincipal $me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     $asciiProfile = ($env:USERPROFILE -cmatch '^[\x20-\x7E]+$')
-    $accountOk = if ($Variant -eq 'standard-user') { (-not $isAdmin) -and (-not $asciiProfile) } else { $true }
-    Check 'account' $accountOk ("user: $($me.Name); administrator: $isAdmin; profile: $env:USERPROFILE; plain ASCII path: $asciiProfile")
+    # The account's own profile, from Windows, not from the environment: a
+    # child started with -Credential can inherit the caller's USERPROFILE and
+    # LOCALAPPDATA, and an install would then land in the administrator's profile.
+    $ownProfile = ''
+    try {
+        $ownProfile = [string](Get-CimInstance Win32_UserProfile -ErrorAction Stop |
+            Where-Object { $_.SID -eq $me.User.Value } | Select-Object -First 1).LocalPath
+    } catch { }
+    $inOwnProfile = $ownProfile -and ($env:USERPROFILE -ieq $ownProfile) -and
+                    ($env:LOCALAPPDATA -like "$ownProfile\*")
+    $accountOk = if ($Variant -eq 'standard-user') { (-not $isAdmin) -and (-not $asciiProfile) -and $inOwnProfile } else { $true }
+    Check 'account' $accountOk ("user: $($me.Name); administrator: $isAdmin; profile: $env:USERPROFILE; own profile: $ownProfile; LOCALAPPDATA: $env:LOCALAPPDATA; plain ASCII path: $asciiProfile")
 
     $culture = [Globalization.CultureInfo]::CurrentCulture.Name
     $localeOk = if ($Variant -eq 'locale') { $culture -ceq $ExpectCulture } else { $true }
