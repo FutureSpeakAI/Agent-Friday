@@ -33,11 +33,28 @@ def probes(monkeypatch):
     return ran
 
 
-def test_a_misnamed_outward_tool_does_not_run(probes):
+def test_a_misnamed_outward_tool_does_not_run(probes, monkeypatch):
+    # The checkpoint would let it through (as an owner's grant would): only the name check stops it.
+    monkeypatch.setattr(ag, "_decide", lambda tool, klass, why, *a, **k: ag.Verdict("allow", klass, "allowed in test"))
     out = agent._execute_tool("zz.get.sender", {}, session_ctx={"authenticated": True, "is_background_task": True})
     assert probes == [], "an outward tool ran under a guessed name"
     assert out.startswith("TOOL CALL FAILED") and "'zz_sender'" in out and "exact name" in out
     assert agent._tool_call_status(out) == "error"
+
+
+def test_a_connector_tool_never_runs_under_a_guessed_name(probes):
+    assert agent._resolution_may_run("mcp_example_get_balance", {}) is False
+
+
+def test_the_arguments_judged_are_the_ones_that_would_run(probes, monkeypatch):
+    """A job set to send its mail turns a draft into a send before any gate: the guess is judged
+    on that, not on the draft the model asked for."""
+    seen = []
+    monkeypatch.setattr(agent, "_job_send_args", lambda name, args, ctx: dict(args, send=True))
+    real = ag.classify
+    monkeypatch.setattr(ag, "classify", lambda name, args, ctx=None: seen.append(dict(args)) or real(name, args, ctx))
+    agent._resolution_may_run("draft_email", {"to": "a@example.test"}, {"is_background_task": True})
+    assert seen and seen[-1].get("send") is True
 
 
 def test_a_misnamed_internal_tool_may_still_resolve(probes):
