@@ -91,6 +91,31 @@ def test_no_python_string_sends_anyone_to_the_task_tray():
     assert _python_strings_naming_the_tray() == []
 
 
+INSTRUCTIONS = ROOT / "src" / "agent_friday" / "resources" / "instructions"
+
+
+def test_no_instruction_file_sends_anyone_to_the_task_tray():
+    """Friday's core instructions live in Markdown files now, not a Python
+    string; the model repeats the reply they script ('Started - ...') to the
+    owner, so they name the task card in System too."""
+    files = sorted(INSTRUCTIONS.rglob("*.md"))
+    assert files, "no instruction files found under %s" % INSTRUCTIONS
+    hits = ["%s:%d" % (f.relative_to(ROOT).as_posix(), i)
+            for f in files
+            for i, line in enumerate(f.read_bytes().decode("utf-8").splitlines(), 1)
+            if _TRAY.search(line)]
+    assert hits == [], "instruction lines naming the task tray: %s" % hits
+    delegation = (INSTRUCTIONS / "85_task_delegation.md").read_bytes().decode("utf-8")
+    assert "follow it on its task card in System" in delegation
+
+
+def test_the_shipped_core_prompt_does_not_name_the_task_tray():
+    from agent_friday.services import instruction_files as inf
+    core = inf.shipped_core()
+    assert not _TRAY.search(core)
+    assert "follow it on its task card in System" in core
+
+
 @pytest.mark.parametrize("page", PAGES, ids=PAGE_IDS)
 def test_the_page_names_the_task_tray_only_in_comments(page):
     shown = [i for i, line in enumerate(_page(page).splitlines(), 1)

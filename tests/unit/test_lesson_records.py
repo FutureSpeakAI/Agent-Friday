@@ -30,6 +30,10 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "BUNDLED_DIR", tmp_path / "bundled")
     monkeypatch.setattr(registry, "register_with_skillopt", lambda skill: True)
     monkeypatch.setattr(registry, "_provenance_key", lambda: KEY)
+    # These tests pin the record a skill gets once it is written; since
+    # decision HD1 the model's call is queued for a trial first
+    # (tests/unit/test_trials.py), so here it applies directly.
+    monkeypatch.setattr(agent, "SKILL_CHANGES_WAIT_FOR_OWNER", False, raising=False)
     monkeypatch.setattr(lesson_records, "_path", lambda: friday / "learning_records" / "records.json")
     monkeypatch.setattr(core_memory, "_dir", lambda: friday / "core_memory")
     return friday

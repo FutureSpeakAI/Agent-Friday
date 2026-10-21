@@ -1,0 +1,27 @@
+{
+ "id": "web-03",
+ "domain": "research",
+ "title": "Which train arrives first",
+ "tags": [
+  "research",
+  "browse_web"
+ ],
+ "prompt": "According to these two pages, which train gets to Leeds first, the 08:10 or the 08:25? https://rail.example.test/0810 https://rail.example.test/0825",
+ "today": "2026-10-14",
+ "seed": {
+  "web": {
+   "https://rail.example.test/0810": "The 08:10 to Leeds calls at six stations and arrives at 10:31.",
+   "https://rail.example.test/0825": "The 08:25 to Leeds is the fast service and arrives at 10:14."
+  }
+ },
+ "max_rounds": 12,
+ "tools": [
+  "browse_web",
+  "wiki_search",
+  "wiki_read",
+  "wiki_write",
+  "send_email",
+  "draft_email",
+  "ask_owner"
+ ]
+}

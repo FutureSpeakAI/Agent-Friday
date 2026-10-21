@@ -17,6 +17,7 @@ import hmac as _hmac
 import json
 import logging
 import os
+import secrets
 import time
 import threading
 from datetime import datetime
@@ -402,6 +403,17 @@ _GOV_KEY_FILE    = friday_home() / "vault" / ".governance-key"
 _GOV_KEY_LOCK    = threading.Lock()
 
 
+_TRIAL_KEY: list = []
+
+
+def _trial_process_key() -> bytes:
+    """A governance key for one practice-task child process, in memory only."""
+    with _GOV_KEY_LOCK:
+        if not _TRIAL_KEY:
+            _TRIAL_KEY.append(secrets.token_bytes(32))
+        return _TRIAL_KEY[0]
+
+
 def get_governance_key() -> bytes:
     """Load (or generate) the HMAC governance key.
 
@@ -421,7 +433,20 @@ def get_governance_key() -> bytes:
     key and orphan every receipt signed with it. A new key that cannot be
     saved also raises instead of living in memory for one session. Callers
     treat the error as "cannot sign": outward actions are held, reads go on.
+
+    A practice-task child (FRIDAY_TRIAL=1, services/task_eval) never touches
+    the owner's keychain or key file: it gets a random key that lives only in
+    that process. Its scratch home has no key file, so without this it would
+    read the owner's real key from the per-user OS keychain, or, if the
+    keychain were empty, mint a new one INTO it and orphan every receipt the
+    live app signed.
     """
+    if os.environ.get("FRIDAY_TRIAL") == "1":
+        # Any FRIDAY_TRIAL, even a stray one in the real app's environment,
+        # keeps the owner's keychain untouched: the worst case is a throwaway
+        # key for one process (outward actions then hold), never a new key
+        # written over the owner's.
+        return _trial_process_key()
     with _GOV_KEY_LOCK:
         # 1. Try OS keychain
         keychain_absent = False     # no keyring library or backend at all

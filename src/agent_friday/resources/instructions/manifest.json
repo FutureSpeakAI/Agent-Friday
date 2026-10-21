@@ -1,0 +1,159 @@
+{
+  "schema": 1,
+  "note": "Friday's core instructions, one file per section, joined in 'order'. Locked sections carry safety rules: they change only through a reviewed commit, and an override of one is ignored at load.",
+  "sections": [
+    {
+      "id": "10_identity",
+      "file": "10_identity.md",
+      "title": "Who Friday is and how she talks",
+      "slot": "always_on",
+      "order": 1,
+      "version": 1,
+      "sha256": "34f7899fbb21bf3e6b1000a9c32c6436476c99a8840f0865a249c395663b9b8b",
+      "chars": 938,
+      "locked": false,
+      "owner": "shipped"
+    },
+    {
+      "id": "20_autonomous_operation",
+      "file": "20_autonomous_operation.md",
+      "title": "Autonomous operation and the real-world-action rule",
+      "slot": "always_on",
+      "order": 2,
+      "version": 1,
+      "sha256": "419f7a2b24f6313059708e15ff58a835cef69fbeb24e0864d9eaabb1b20c84e5",
+      "chars": 981,
+      "locked": true,
+      "owner": "shipped"
+    },
+    {
+      "id": "30_on_this_computer",
+      "file": "30_on_this_computer.md",
+      "title": "What she can do on this computer",
+      "slot": "always_on",
+      "order": 3,
+      "version": 1,
+      "sha256": "6e4b447cc776eba7c3589db90655fe2609de682eaf1f60fbc995b39035140e31",
+      "chars": 1095,
+      "locked": false,
+      "owner": "shipped"
+    },
+    {
+      "id": "40_connectors",
+      "file": "40_connectors.md",
+      "title": "Connectors",
+      "slot": "always_on",
+      "order": 4,
+      "version": 1,
+      "sha256": "8ac655be45d36880dff8f8d862f54192e6fdcf92100412058f7e23afda31d633",
+      "chars": 729,
+      "locked": false,
+      "owner": "shipped"
+    },
+    {
+      "id": "50_say_before_acting",
+      "file": "50_say_before_acting.md",
+      "title": "Say what you are about to do",
+      "slot": "always_on",
+      "order": 5,
+      "version": 1,
+      "sha256": "a069fd926853ce27e5bd07bc3601349c798fdce2225480dfa3e98e07b05bb4bb",
+      "chars": 531,
+      "locked": false,
+      "owner": "shipped"
+    },
+    {
+      "id": "60_honest_degradation",
+      "file": "60_honest_degradation.md",
+      "title": "Honest degradation (never invent a tool result)",
+      "slot": "always_on",
+      "order": 6,
+      "version": 1,
+      "sha256": "e2deac24b4587deba7470e741b98a6322a697ffde94dbc447a60b3986fec04e3",
+      "chars": 834,
+      "locked": true,
+      "owner": "shipped"
+    },
+    {
+      "id": "70_computer_control",
+      "file": "70_computer_control.md",
+      "title": "Computer control",
+      "slot": "always_on",
+      "order": 7,
+      "version": 1,
+      "sha256": "94749f14b112f27f382c083bc626de72f12086bbc7469493c247db2a646826d4",
+      "chars": 537,
+      "locked": false,
+      "owner": "shipped"
+    },
+    {
+      "id": "80_self_improvement",
+      "file": "80_self_improvement.md",
+      "title": "Self-improvement (skills)",
+      "slot": "always_on",
+      "order": 8,
+      "version": 2,
+      "sha256": "b748a01899ab2d06ad90ae79147941b37d78c4054488c9673ee9f46544bef643",
+      "chars": 313,
+      "locked": false,
+      "owner": "shipped"
+    },
+    {
+      "id": "85_task_delegation",
+      "file": "85_task_delegation.md",
+      "title": "Task delegation",
+      "slot": "always_on",
+      "order": 9,
+      "version": 2,
+      "sha256": "11bc627160de1e51e93d23a0c001e643ade2400221b51862c74b2aceeb737db2",
+      "chars": 366,
+      "locked": false,
+      "owner": "shipped"
+    },
+    {
+      "id": "95_packages",
+      "file": "95_packages.md",
+      "title": "Package installation",
+      "slot": "always_on",
+      "order": 10,
+      "version": 1,
+      "sha256": "1625ef95ec3d7ab6dfb8e17f8396e7293b9d2792c74df8a58dbdebb2eb1e2d86",
+      "chars": 244,
+      "locked": false,
+      "owner": "shipped"
+    }
+  ],
+  "core_sha256": "df22ad66550b1b0534f567aba20e1feb2ad2efc278812f52a279737f60467761",
+  "policies": [
+    {
+      "id": "policy/action_permission",
+      "file": "policy/action_permission.md",
+      "title": "The action permission policy (appended last to every prompt)",
+      "mirrors": "ACTION_PERMISSION_POLICY",
+      "sha256": "4cd21f9445e0b0ad37616a79719dfe3c66c2976b81ff0802fe56240a647dd3bf",
+      "chars": 1858,
+      "locked": true,
+      "owner": "shipped"
+    },
+    {
+      "id": "policy/claws",
+      "file": "policy/claws.md",
+      "title": "Asimov's cLaws, the canonical law text the integrity manifest hashes",
+      "mirrors": "CLAWS_TEXT",
+      "sha256": "6e9e50e630abc220ef1f1b43e432c84f8cd579486207e47f0c26baed4929149c",
+      "chars": 350,
+      "locked": true,
+      "owner": "shipped"
+    },
+    {
+      "id": "policy/honest_limits",
+      "file": "policy/honest_limits.md",
+      "title": "The honesty floor (HONEST LIMITS)",
+      "mirrors": "REFUSAL_HONESTY_DIRECTIVE",
+      "sha256": "7bcca356c2d470412c3bd088f5c2c84818b78ed3b95cdfb14a5261790392528a",
+      "chars": 3823,
+      "locked": true,
+      "owner": "shipped"
+    }
+  ]
+}

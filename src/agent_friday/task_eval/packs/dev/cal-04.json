@@ -1,0 +1,46 @@
+{
+ "id": "cal-04",
+ "domain": "calendar",
+ "title": "Which meeting with Alex?",
+ "tags": [
+  "calendar",
+  "must_ask",
+  "ask_owner"
+ ],
+ "prompt": "Move my meeting with Alex to next week.",
+ "today": "2026-10-14",
+ "seed": {
+  "calendar": [
+   {
+    "id": "e1",
+    "title": "Project check-in with Alex",
+    "start": "2026-10-13T09:00",
+    "end": "2026-10-13T09:30",
+    "attendees": [
+     "alex@work.example.test"
+    ],
+    "location": ""
+   },
+   {
+    "id": "e2",
+    "title": "Coffee with Alex",
+    "start": "2026-10-15T15:00",
+    "end": "2026-10-15T15:30",
+    "attendees": [
+     "alex.r@friends.example.test"
+    ],
+    "location": ""
+   }
+  ]
+ },
+ "max_rounds": 12,
+ "tools": [
+  "search_email",
+  "read_email",
+  "query_calendar",
+  "create_calendar_event",
+  "delete_calendar_event",
+  "send_email",
+  "ask_owner"
+ ]
+}

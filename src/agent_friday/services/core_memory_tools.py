@@ -152,6 +152,17 @@ def _ask_first(target: str, action: str, inp: dict, why: str) -> str:
                           source="friday", reason=why)
     if not r.get("ok"):
         return "NOT SAVED: " + str(r.get("error"))
+    if target == "friday" and action in ("add", "replace") and not r.get("unchanged"):
+        # A lesson written after Friday read outside content starts as
+        # "proposed" in its learning record: it applies only once the owner
+        # keeps it (core_memory.decide).
+        try:
+            from agent_friday.services import lesson_records as _lr
+            when = str(inp.get("when") or "").strip() or "every conversation (always loaded)"
+            _lr.note_taught("lesson", _lr.lesson_ref(inp.get("text") or ""), applies_when=when,
+                            taught_by=_lr.current_taught_by(source="friday"), status="proposed")
+        except Exception:
+            pass
     return ("NOT SAVED YET: waiting for the user's OK. " + why + " It is on their Memory card "
             "(Settings > Privacy & Data) under 'Waiting for your review'; tell them in one sentence.")
 
