@@ -152,6 +152,16 @@ def test_a_review_counts_only_signed_by_a_named_reviewer_until_its_date(sc, tmp_
     assert ("cpython", "3.12.10") in got["components"]
 
 
+def test_a_review_dated_more_than_a_year_ahead_does_not_count(sc, tmp_path):
+    p = tmp_path / "reviewed.json"
+    p.write_text(json.dumps({"licences": [
+        {"package": "forever", "licence": "GPL-3.0-only", "reason": "r",
+         "reviewed_by": "Someone", "until": "2099-12-31"}]}), encoding="utf-8")
+    got = sc.load_reviews(p, today=dt.date(2026, 10, 21))
+    assert "forever" not in got["licences"]
+    assert [e["package"] for e in got["awaiting"]] == ["forever"]
+
+
 def test_the_shipped_reviews_file_is_well_formed_and_signs_nothing_on_the_builders_behalf(sc):
     data = json.loads(REVIEWED.read_text(encoding="utf-8"))
     for kind in ("licences", "advisories", "components"):
@@ -276,6 +286,43 @@ def test_an_incomplete_answer_from_osv_is_an_error_not_a_pass(sc, tmp_path):
     sbom = _sbom(sc, tmp_path, {("one", "1.0"): "License-Expression: MIT"})
     with pytest.raises(RuntimeError):
         sc.audit(sbom, NO_REVIEWS(), post=lambda u, b: {"results": []}, get=lambda u: {})
+
+
+def test_an_alias_osv_does_not_hold_leaves_the_advisory_unknown_not_a_crash(sc, tmp_path):
+    import urllib.error
+    sbom = _sbom(sc, tmp_path, {("pkg", "1.0"): "License-Expression: MIT"})
+    post, _get, _ = _osv({"pkg": ["PYSEC-1"]}, {})
+
+    def get(url):
+        vid = url.rsplit("/", 1)[1]
+        if vid == "PYSEC-1":
+            return {"aliases": ["GHSA-missing"]}
+        raise urllib.error.HTTPError(url, 404, "not found", {}, None)
+    res = sc.audit(sbom, _reviewed_cpython(sc), post=post, get=get)
+    assert [(f["id"], f["severity"]) for f in res["findings"]] == [("PYSEC-1", "UNKNOWN")]
+
+
+def test_endless_paging_is_an_error_not_a_hang(sc, tmp_path):
+    sbom = _sbom(sc, tmp_path, {("loop", "1.0"): "License-Expression: MIT"})
+
+    def post(url, body):
+        return {"results": [{"vulns": [], "next_page_token": "again"} for _ in body["queries"]]}
+    with pytest.raises(RuntimeError):
+        sc.audit(sbom, _reviewed_cpython(sc), post=post, get=lambda u: {})
+
+
+def test_an_audit_that_cannot_run_fails_a_release_and_a_beta_records_it(sc, tmp_path, monkeypatch):
+    sbom = _sbom(sc, tmp_path, {("fine", "1.0"): "License-Expression: MIT"})
+    monkeypatch.setattr(sc, "load_reviews", lambda *a, **k: NO_REVIEWS())
+    monkeypatch.setattr(sc, "unattributed", lambda s, path=None: [])
+
+    def down(*a, **k):
+        raise OSError("OSV is down")
+    monkeypatch.setattr(sc, "audit", down)
+    assert sc.check(sbom, tmp_path / "o1") == 1
+    rec = json.loads((tmp_path / "o1" / "supply-chain.json").read_text(encoding="utf-8"))
+    assert [f["id"] for f in rec["audit"]["findings"]] == ["AUDIT-NOT-RUN"]
+    assert sc.check(sbom, tmp_path / "o2", report_only=True) == 0
 
 
 # ── the verdict ──────────────────────────────────────────────────────────────

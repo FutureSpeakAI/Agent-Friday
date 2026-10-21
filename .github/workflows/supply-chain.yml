@@ -86,9 +86,11 @@ jobs:
           python-version: "3.12"
       - name: The change's wheelhouse and the base's, each into an empty folder
         shell: pwsh
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           $base = Join-Path $env:RUNNER_TEMP 'base'
-          git worktree add $base "origin/${{ github.base_ref }}"
+          git worktree add $base "origin/$env:BASE_REF"
           python scripts/supply_chain.py resolve --wheels "$env:RUNNER_TEMP\head-wheels"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # The base is resolved with the base's own requirement files.

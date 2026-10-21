@@ -366,6 +366,13 @@ def _licence_of(comp: dict) -> str:
 
 # ── reviews ──────────────────────────────────────────────────────────────────
 
+#: The furthest a review's `until` may be; anything later does not count.
+REVIEW_HORIZON_DAYS = 366
+
+#: The most pages one OSV query may take before the audit gives up.
+OSV_MAX_PAGES = 50
+
+
 def load_reviews(path: Path = REVIEWED, today: _dt.date | None = None) -> dict:
     """The reviews in force: {"licences": {pkg: e}, "advisories": {(pkg, id): e},
     "components": {(pkg, version): e}, "expired": [...], "awaiting": [...]}."""
@@ -390,6 +397,11 @@ def load_reviews(path: Path = REVIEWED, today: _dt.date | None = None) -> dict:
                 continue
             if until < today:
                 out["expired"].append(dict(e, kind=kind))
+                continue
+            if until > today + _dt.timedelta(days=REVIEW_HORIZON_DAYS):
+                # A review must be looked at again within a year; a far-off
+                # date would clear a finding for good.
+                out["awaiting"].append(dict(e, kind=kind, why="until is more than a year away"))
                 continue
             k = _norm(e["package"])
             if kind == "licences":
@@ -530,6 +542,7 @@ def audit(sbom: dict, reviews: dict, *, post=_post_json, get=_get_json) -> dict:
     ids_per: list = [[] for _ in queries]
     pending = list(range(len(queries)))
     tokens: dict = {}
+    pages: dict = {}
     while pending:
         batch = pending[:500]
         body = {"queries": [dict(queries[i], **({"page_token": tokens[i]} if i in tokens else {}))
@@ -542,14 +555,24 @@ def audit(sbom: dict, reviews: dict, *, post=_post_json, get=_get_json) -> dict:
             ids_per[i] += [str(v.get("id")) for v in (res or {}).get("vulns") or []]
             tok = (res or {}).get("next_page_token")
             if tok:
+                pages[i] = pages.get(i, 1) + 1
+                if pages[i] > OSV_MAX_PAGES:
+                    raise RuntimeError("OSV kept paging for %s" % queries[i]["package"]["name"])
                 tokens[i] = tok
                 pending.append(i)
 
     cache: dict = {}
 
-    def detail(vid):
+    def detail(vid, *, alias=False):
         if vid not in cache:
-            cache[vid] = get(OSV_VULN + vid) or {}
+            try:
+                cache[vid] = get(OSV_VULN + vid) or {}
+            except urllib.error.HTTPError as e:
+                # An alias OSV does not hold is not a failed audit: the
+                # advisory itself was read, and stays UNKNOWN (a finding).
+                if not (alias and e.code == 404):
+                    raise
+                cache[vid] = {}
         return cache[vid]
 
     findings, reported = [], []
@@ -563,7 +586,7 @@ def audit(sbom: dict, reviews: dict, *, post=_post_json, get=_get_json) -> dict:
             if sev == "UNKNOWN":
                 for alias in aliases:
                     if alias.startswith("GHSA-"):
-                        sev = severity(detail(alias))
+                        sev = severity(detail(alias, alias=True))
                         if sev != "UNKNOWN":
                             break
             reviewed = any((_norm(name), i) in reviews["advisories"] for i in [vid] + aliases)
@@ -620,7 +643,16 @@ def check(sbom: dict, out: Path, *, offline: bool = False, report_only: bool = F
         print("AUDIT SKIPPED (--offline): advisories were not checked")
         record["audit"] = None
     else:
-        res = audit(sbom, reviews)
+        try:
+            res = audit(sbom, reviews)
+        except Exception as e:  # noqa: BLE001 - recorded, and fatal unless report-only
+            # An audit that could not ask is never a pass. A beta (report-only,
+            # A19) records it and goes on; anything else fails.
+            print("AUDIT COULD NOT RUN: %s" % type(e).__name__)
+            res = {"findings": [{"name": "osv", "version": "", "ecosystem": "", "id": "AUDIT-NOT-RUN",
+                                 "aliases": [], "severity": "UNKNOWN", "reviewed": False,
+                                 "summary": ("%s: %s" % (type(e).__name__, e))[:200]}],
+                   "reported": [], "checked": 0}
         res["findings"], res["findings_on_the_base"] = _new_only(res["findings"], base)
         record["audit"] = res
         for f in res["findings"]:
