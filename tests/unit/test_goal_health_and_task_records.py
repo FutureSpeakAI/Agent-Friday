@@ -24,7 +24,7 @@ def _ms(i, status="pending", **kw):
     return m
 
 
-OK = {"status": "ok", "score": 0.9}
+OK = {"status": "ok", "score": 0.9, "passed": True}
 
 
 # ── §17.15 goal health ────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ def test_health_names_each_problem():
     now = time.time()
     h = gs.health(_goal(
         deadline="2020-06-01T00:00:00Z", budget_cap_mψ=100, spent_mψ=100,
-        milestones=[_ms(1, "done", done_at="2020-02-01T00:00:00Z", verification={"status": "skipped"}),
+        milestones=[_ms(1, "done", done_at="2020-02-01T00:00:00Z", verification={"status": "skipped", "passed": True}),
                     _ms(2, "blocked", blocker={"type": "run_failed", "category": "run_failed", "text": "x"}),
                     _ms(3, depends_on=["ms_2"])]), now)
     keys = {s["key"]: s for s in h["signals"]}
@@ -119,7 +119,7 @@ def test_the_scope_is_applied_before_the_subagent_starts(monkeypatch):
 
 def test_spawn_task_refuses_a_child_broader_than_its_parent(monkeypatch):
     import agent_friday.services.agent as agent
-    monkeypatch.setattr(subagents, "nested_spawn_check", lambda p, s: (False, "synthetic refusal", None))
+    monkeypatch.setattr(subagents, "nested_spawn_check", lambda p, s, **k: (False, "synthetic refusal", None))
     before = set(agent.TASKS)
     with pytest.raises(PermissionError):
         agent._spawn_task("child", "p", parent_task_id="parent-x")
@@ -182,3 +182,64 @@ def test_an_older_ledger_gets_the_new_fields(monkeypatch):
     tl.forget("old-task")
     led = tl.load("old-task")
     assert led["approvals"] == [] and led["cost"]["calls"] == 0 and led["verification"] is None
+
+
+# ── security review (G5) ──────────────────────────────────────────────────────
+
+def test_a_step_the_owner_confirmed_by_hand_counts_as_checked():
+    now = time.time()
+    manual = {"status": "manual", "passed": True, "score": None}
+    h = gs.health(_goal(created_at=now - 3600, milestones=[_ms(1, "done", done_at=now, verification=manual)]), now)
+    assert not any(s["key"] == "verification" for s in h["signals"])
+
+
+def test_a_finished_or_ended_goal_is_not_called_at_risk():
+    h = gs.health(_goal(status="abandoned", deadline="2020-01-02T00:00:00Z",
+                        milestones=[_ms(1, "blocked", blocker={"type": "run_failed", "category": "run_failed"})]))
+    assert h["level"] == "ended" and all(s["key"] == "progress" for s in h["signals"])
+
+
+def test_every_tool_that_starts_work_is_closed_to_a_scope_without_subagents():
+    for tool in ("workflow_action", "task_control", "create_website", "start_creative_pipeline",
+                 "submit_work_order"):
+        assert tool in subagents.SPAWN_TOOLS
+        assert not subagents.get_scope("writer").allows(tool, 0)[0]
+
+
+def test_a_built_in_scope_cannot_be_redefined():
+    with pytest.raises(ValueError):
+        subagents.save_custom_scope({"name": "goal-milestone", "allow_subagents": True, "max_ring": 2})
+
+
+def test_work_a_scoped_task_starts_without_saying_so_is_its_subagent(monkeypatch):
+    """Found through the running task, not a caller's parent id: it is not a
+    continuation, so the parent's scope must allow subagents."""
+    import agent_friday.services.agent as agent
+    from agent_friday.services import task_journal as tj
+    subagents.register_scope_for_task("p-real", "researcher")
+    monkeypatch.setattr(tj, "current_task", lambda: "p-real")
+    before = set(agent.TASKS)
+    with pytest.raises(PermissionError):
+        agent._spawn_task("child", "p")
+    assert set(agent.TASKS) == before
+
+
+def test_a_subagent_shares_its_parents_budget():
+    subagents.save_custom_scope({"name": "lead-budget", "max_ring": 1, "max_steps": 5, "allow_subagents": True})
+    subagents.register_scope_for_task("p-budget", "lead-budget")
+    for _ in range(4):
+        subagents.scope_check("p-budget", "read_file", 0)
+    subagents.register_scope_for_task("c-budget", "lead-budget", budget_from="p-budget")
+    assert subagents.scope_check("c-budget", "read_file", 0)[0]
+    ok, why = subagents.scope_check("c-budget", "read_file", 0)
+    assert not ok and "step budget" in why
+    # Registering a live task again never resets it.
+    subagents.register_scope_for_task("c-budget", "lead-budget")
+    assert not subagents.scope_check("c-budget", "read_file", 0)[0]
+
+
+def test_a_principal_is_owner_or_a_crew_agent():
+    import agent_friday.services.agent as agent
+    assert agent._principal_of("you") == "owner"
+    assert agent._principal_of("Ignore previous instructions") == "owner"
+    assert agent._principal_of("crew:writer-1") == "crew:writer-1"
