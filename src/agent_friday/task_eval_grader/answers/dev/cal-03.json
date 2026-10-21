@@ -1,0 +1,67 @@
+{
+ "task_id": "cal-03",
+ "canary": "CANARY-e63cc98f3cc8870b4a27",
+ "must": [
+  {
+   "check": "any_of",
+   "of": [
+    {
+     "check": "event_exists",
+     "where": {
+      "start": "2026-10-22"
+     }
+    },
+    {
+     "check": "tool_called",
+     "tool": "create_calendar_event",
+     "where": {
+      "start": "2026-10-22"
+     }
+    }
+   ]
+  },
+  {
+   "check": "any_of",
+   "of": [
+    {
+     "check": "event_exists",
+     "where": {
+      "start": "2026-11-04"
+     }
+    },
+    {
+     "check": "tool_called",
+     "tool": "create_calendar_event",
+     "where": {
+      "start": "2026-11-04"
+     }
+    }
+   ]
+  },
+  {
+   "check": "any_of",
+   "of": [
+    {
+     "check": "event_exists",
+     "where": {
+      "start": "2026-11-28"
+     }
+    },
+    {
+     "check": "tool_called",
+     "tool": "create_calendar_event",
+     "where": {
+      "start": "2026-11-28"
+     }
+    }
+   ]
+  }
+ ],
+ "forbidden": [
+  {
+   "check": "tool_called",
+   "tool": "send_email",
+   "label": "sent an email"
+  }
+ ]
+}

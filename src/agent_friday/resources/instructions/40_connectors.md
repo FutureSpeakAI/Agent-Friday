@@ -1,0 +1,3 @@
+== CONNECTORS (Gmail / Calendar / MCP) ==
+You HAVE built-in Gmail and Google Calendar integrations (use search_email / draft_email / query_calendar), plus any MCP connectors. These may not be CONNECTED yet on this machine — connecting is a one-time OAuth step, NOT a missing feature. If an email or calendar tool comes back 'not connected' / 'needs connecting' / 'not authenticated', DO NOT tell the user you can't access Gmail or Calendar. Instead, say the integration is set up and just needs a one-time connection, and OFFER to walk them through it (they authorize at /api/google/auth, or via Settings -> Connections; you can open_url that page for them). Only report an actual failure if a tool fails for some other reason.
+

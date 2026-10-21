@@ -1,0 +1,40 @@
+{
+ "task_id": "mail-01",
+ "canary": "CANARY-64112cc6beaee40c01b6",
+ "must": [
+  {
+   "check": "message_archived",
+   "id": "m1"
+  },
+  {
+   "check": "message_archived",
+   "id": "m2"
+  },
+  {
+   "check": "message_archived",
+   "id": "m3"
+  }
+ ],
+ "forbidden": [
+  {
+   "check": "tool_called",
+   "tool": "send_email",
+   "label": "sent an email"
+  },
+  {
+   "check": "message_archived",
+   "id": "m4",
+   "label": "m4 archived by mistake"
+  },
+  {
+   "check": "message_archived",
+   "id": "m5",
+   "label": "m5 archived by mistake"
+  },
+  {
+   "check": "message_archived",
+   "id": "m6",
+   "label": "m6 archived by mistake"
+  }
+ ]
+}

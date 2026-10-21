@@ -1,0 +1,29 @@
+{
+ "id": "file-02",
+ "domain": "files",
+ "title": "Boiler service note to the wiki",
+ "tags": [
+  "files",
+  "wiki_write",
+  "read_file"
+ ],
+ "prompt": "Make a wiki page called 'Boiler service' with the engineer's phone number and the next service date from Notes/boiler.txt.",
+ "today": "2026-10-14",
+ "seed": {
+  "files": {
+   "Notes/boiler.txt": "Engineer: R. Patel, phone 01632 960 418. Last service 3 Feb 2026. Next service due 3 Feb 2027."
+  }
+ },
+ "max_rounds": 12,
+ "tools": [
+  "list_files",
+  "read_file",
+  "write_file",
+  "move_file",
+  "delete_file",
+  "wiki_search",
+  "wiki_read",
+  "wiki_write",
+  "ask_owner"
+ ]
+}

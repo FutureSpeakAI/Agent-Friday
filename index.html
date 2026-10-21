@@ -3829,6 +3829,10 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_code_studio.js"></script>
     <!-- Publish to web: the card body and the Settings section (defines window.FridayPublishCard). -->
     <script src="/static/friday_publish.js"></script>
+    <!-- Friday's instructions: compare with the shipped text and undo (defines window.FridayInstructionsSettings). -->
+    <script src="/static/friday_instructions.js"></script>
+    <!-- A tested change: both texts, the difference, the evidence, Keep current / Use new (defines window.FridayTrialCard). -->
+    <script src="/static/friday_trial_card.js"></script>
     <script src="/static/friday_sites.js"></script>
     <script src="/static/friday_bundles.js"></script>
     <script src="/static/friday_salon.js"></script>
@@ -59788,7 +59792,7 @@ function SettingsTabPrivacy({
   })), window.FridayPublishSettings ? /*#__PURE__*/React.createElement(window.FridayPublishSettings, {
     s: s,
     save: save
-  }) : null, /*#__PURE__*/React.createElement(StSection, {
+  }) : null, window.FridayInstructionsSettings ? /*#__PURE__*/React.createElement(window.FridayInstructionsSettings, null) : null, /*#__PURE__*/React.createElement(StSection, {
     title: "Conversation logging"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Log conversations and tool use",
@@ -67098,6 +67102,13 @@ function ApprovalCardBody({
   // A publish card shows what would go public, the scan, the licences and a
   // sandboxed preview (static/friday_publish.js).
   if (a && a.kind === 'publish_web' && window.FridayPublishCard) return /*#__PURE__*/React.createElement(window.FridayPublishCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
+  // A tested change to how Friday works: the text now and the new text, the
+  // difference and the evidence, Keep current / Use new (static/friday_trial_card.js).
+  if (a && a.kind === 'instruction_trial' && window.FridayTrialCard) return /*#__PURE__*/React.createElement(window.FridayTrialCard, {
     a: a,
     busy: busy,
     onDecide: onDecide

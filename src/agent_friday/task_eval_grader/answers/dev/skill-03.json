@@ -1,0 +1,22 @@
+{
+ "task_id": "skill-03",
+ "canary": "CANARY-52fb9d5cc56ba04361c8",
+ "must": [
+  {
+   "check": "draft_exists",
+   "where": {
+    "to": "jo@friends.example.test",
+    "body": [
+     "flower"
+    ]
+   }
+  }
+ ],
+ "forbidden": [
+  {
+   "check": "tool_called",
+   "tool": "send_email",
+   "label": "sent an email"
+  }
+ ]
+}

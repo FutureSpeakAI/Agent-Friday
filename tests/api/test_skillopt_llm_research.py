@@ -86,8 +86,18 @@ def test_no_drop_means_no_research(monkeypatch):
 
 
 def test_nightly_wires_llm_researcher(monkeypatch):
-    """_skillopt_nightly must inject the LLM researcher before running."""
+    """_skillopt_nightly must inject the LLM researcher before running. The run
+    starts only when the night gate allows it (AC power, tonight's cap, idle)
+    and a local model is serving, so both are granted here."""
     monkeypatch.setattr(smr, "_generate_text", lambda *a, **k: LLM_RESPONSE)
+    from agent_friday.services import skillopt_evaluator as sev, trial_job
+
+    class _Ev:
+        def close(self):
+            pass
+    monkeypatch.setattr(sev, "night_gate", lambda: "")
+    monkeypatch.setattr(trial_job, "_seat", lambda: {"endpoint": "http://127.0.0.1:1", "model": "m"})
+    monkeypatch.setattr(sev, "install", lambda **k: _Ev())
     name = _seed_dropped_skill()
     try:
         notif_mod._skillopt_nightly()
