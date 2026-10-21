@@ -78,3 +78,38 @@ def test_an_undo_without_the_owners_press_puts_nothing_back(client, moved):
         r = client.post("/api/actions/receipts/%s/undo" % rid, headers=headers)
         assert r.status_code == 403, headers
     assert (docs / "Taxes" / "w2.pdf").exists() and not (docs / "w2.pdf").exists()
+
+
+def test_a_file_undo_is_held_while_everything_is_stopped(client, tmp_path, monkeypatch):
+    """Putting a file back writes over whatever is on disk now: while everything is
+    stopped (services/global_stop) the owner's press puts nothing back, and after
+    Resume the same press does."""
+    from agent_friday.services import item_actions  # noqa: F401  (registers the domains)
+    from agent_friday.services.agent import _tool_write_file
+    import agent_friday.core as core
+    import re
+    monkeypatch.setattr(journal, "_path", lambda: tmp_path / "receipts.jsonl")
+    try:
+        from agent_friday.services import file_write_receipts as fwr
+        monkeypatch.setattr(fwr, "backups_root", lambda: tmp_path / "backups")
+    except ImportError:
+        pass
+    monkeypatch.setattr(journal, "home_trash", lambda rid: tmp_path / "trash" / rid, raising=False)
+    journal.reset()
+    doc = tmp_path / "work" / "report.txt"
+    doc.parent.mkdir()
+    doc.write_text("the owner's original", encoding="utf-8")
+    out = _tool_write_file({"path": str(doc), "content": "Friday's new text", "mode": "write"})
+    rid = re.search(r"receipt_id (rcpt_[0-9a-f]+)", out).group(1)
+
+    core.GLOBAL_STOP.set()
+    try:
+        r = client.post("/api/actions/receipts/%s/undo" % rid, headers=_press())
+        assert r.status_code == 403
+        assert doc.read_text(encoding="utf-8") == "Friday's new text"
+    finally:
+        core.GLOBAL_STOP.clear()
+    r = client.post("/api/actions/receipts/%s/undo" % rid, headers=_press())
+    assert r.status_code == 200
+    assert doc.read_text(encoding="utf-8") == "the owner's original"
+    journal.reset()
