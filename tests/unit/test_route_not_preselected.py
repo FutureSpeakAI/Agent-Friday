@@ -23,6 +23,9 @@ from agent_friday.services import cloud_intent
 
 REPO = Path(__file__).resolve().parents[2]
 
+#: These tests decide "new install" the way a real home does (tests/conftest.py).
+pytestmark = pytest.mark.new_install
+
 
 @pytest.fixture
 def real_settings(tmp_path, monkeypatch):
@@ -70,9 +73,12 @@ def test_a_route_the_terminal_setup_kept_without_asking_is_not_a_pick(real_setti
     core = real_settings
     core._load_settings_raw()
     s = {"model_routing": {"mode": "cloud_only", "mode_chosen": "cloud_only",
-                           "mode_chosen_via": "unverified"}}
+                           "mode_chosen_via": "kept"}}
     assert _pending(core, s) is True
     s["model_routing"]["mode_chosen_via"] = "setup"
+    assert _pending(core, s) is False
+    # A real owner click whose request could not be proven on-screen is still a pick.
+    s["model_routing"]["mode_chosen_via"] = "unverified"
     assert _pending(core, s) is False
 
 
