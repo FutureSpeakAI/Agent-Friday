@@ -107,8 +107,14 @@ The full matrix, with what each path can and cannot do, is in
    `RELEASE_NOTES.md`. It is public the moment it is created. Pushing the tag
    is the release decision.
 
-The release job runs only after `fresh-install` and every `upgrade` leg have
-passed on the tag. Before it publishes it adds the `Build sequence: N` line to
+The release job runs only after `fresh-install`, every `upgrade` leg and
+`tests-green` have passed on the tag. `tests-green` runs
+`scripts/release_gate.py`, which waits for the `tests` and `codeql` workflows
+on the tag's exact commit (both also run on the tag push itself) and refuses
+unless both are green there; a pull request run does not count, because it
+tested a merge rather than that commit. The release job asks the gate once
+more immediately before `gh release create`, so step 5 is enforced by CI and
+not only by this document. Before it publishes it adds the `Build sequence: N` line to
 the notes if it is missing, replaces the SHA-256 placeholder with the real
 hash (and fails if any placeholder is left), and writes
 `release-manifest.json`. It publishes the exe, its `.sha256` and the manifest.

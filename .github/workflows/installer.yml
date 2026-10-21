@@ -18,11 +18,17 @@ name: installer
 #                    the data survive, the data was backed up first, and the
 #                    shortcuts landed
 #                    (packaging/windows/tests/rehearsal/upgrade-vault-test.ps1)
+#   tests-green      on a version tag only: scripts/release_gate.py waits for
+#                    the tests and codeql workflows on the tag's exact commit
+#                    and fails unless both are green there
 #   release          on a version tag only: a PUBLISHED pre-release carrying the
 #                    exe, its SHA-256 and RELEASE_NOTES.md.
 #
 # Pushing a version tag is the release decision. The release job runs only
-# after the fresh-install job and every leg of the upgrade matrix have passed.
+# after tests-green, the fresh-install job and every leg of the upgrade matrix
+# have passed, and it asks the release gate once more immediately before it
+# publishes. A tag on a commit whose tests are red, running or missing
+# publishes nothing.
 #
 # The setup program is unsigned and sends nothing anywhere. The model page is
 # answered with the cloud option in CI, so no model is downloaded.
@@ -198,11 +204,31 @@ jobs:
             ${{ runner.temp }}/upgrade/setup-upgrade.log
           if-no-files-found: ignore
 
+  # The release gate. The tests and codeql workflows also run on the tag push
+  # itself, so the tag's exact commit always gets a run to wait for. Pull
+  # request runs do not count: they test a merge, not this commit.
+  tests-green:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The tests and codeql workflows are green on this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/release_gate.py --repo "${{ github.repository }}" --sha "${{ github.sha }}" \
+            --workflow tests.yml --workflow codeql.yml --wait-minutes 110 --poll-seconds 60
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fresh-install, upgrade]
+    needs: [tests-green, fresh-install, upgrade]
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -240,10 +266,14 @@ jobs:
       # Beta 1.0.x replaces the 5.x line, so it is the latest release: the README's
       # Download link (releases/latest) must land on it, and GitHub skips
       # pre-releases for "latest". Published, never a draft.
-      - name: Publish the release (latest, not a draft)
+      # Asked again here, with no waiting: a rerun that turned a check red
+      # after tests-green passed still stops the release.
+      - name: Publish the release (latest, not a draft), only if the checks are still green
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python3 scripts/release_gate.py --repo "${{ github.repository }}" --sha "${{ github.sha }}" \
+            --workflow tests.yml --workflow codeql.yml --wait-minutes 0
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
             artifact/release-manifest.json \
             --repo "${{ github.repository }}" --verify-tag --latest \
