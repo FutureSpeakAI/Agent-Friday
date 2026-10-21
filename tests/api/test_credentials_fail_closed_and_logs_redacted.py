@@ -128,6 +128,43 @@ def test_a_log_line_with_a_key_shaped_value_is_redacted(args):
     assert "redact" in out or "withheld" in out.lower(), out
 
 
+def test_quoted_and_cookie_values_are_redacted():
+    out = _logged('payload {"password": "%s", "user": "x"}', "correct horse battery staple")  # pragma: allowlist secret
+    assert "horse" not in out and '"user": "x"' in out
+    out = _logged("sent Cookie: %s", "session=" + "s" * 24)  # pragma: allowlist secret
+    assert "s" * 24 not in out
+
+
+def test_the_filter_never_raises_into_the_code_that_logged():
+    class Hostile:
+        def __str__(self):
+            raise RuntimeError("cannot print me")
+    out = _logged(Hostile())
+    assert "cannot print me" not in out
+
+
+def test_the_stale_key_repair_never_moves_a_keystore_key_back_to_the_vault_key(store, monkeypatch):
+    cs.set_provider_key("example", "not-a-real-key-000000")  # pragma: allowlist secret
+    path = cs._provider_key_path("example")
+    before = path.read_bytes()
+    monkeypatch.setattr(cs, "_derive_fresh_vault_key", lambda: bytes(range(32)))
+    out = cs.reencrypt_stale_provider_keys(["example"])
+    assert "example" in out["unchanged"] and path.read_bytes() == before
+
+
+def test_the_task_journal_never_writes_plain_text_when_nothing_can_encrypt(tmp_path, monkeypatch):
+    from agent_friday.services import task_journal as tj
+    monkeypatch.setattr(tj, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
+    monkeypatch.setattr(tj, "_encrypt_enabled", lambda: True)
+
+    def _refused(data):
+        raise cs.CredentialProtectionUnavailable("refused in this test")
+    monkeypatch.setattr(cs, "protect", _refused)
+    tj.append("task-plain-1", "note", text="the owner's private note")
+    on_disk = b"".join(p.read_bytes() for p in (tmp_path / "tasks").rglob("*") if p.is_file())
+    assert b"private note" not in on_disk
+
+
 def test_a_traceback_is_redacted_too():
     out = _logged("the call failed", exc=True)
     assert "A" * 30 not in out and "Traceback" in out
@@ -145,9 +182,10 @@ def test_every_request_answers_with_one_correlation_id(client):
     cid = r.headers.get("X-Friday-Request-Id", "")
     assert cid.startswith("req-") and len(cid) > 8
     r2 = client.get("/api/health", headers={"X-Request-Id": "trace-0123456789"})
-    assert r2.headers.get("X-Friday-Request-Id") == "trace-0123456789"
-    r3 = client.get("/api/health", headers={"X-Request-Id": "bad id\nwith newline"})
-    assert r3.headers.get("X-Friday-Request-Id", "").startswith("req-"), "an unsafe id was echoed"
+    assert r2.headers.get("X-Friday-Request-Id") == "c-trace-0123456789", "a caller's id is marked as the caller's"
+    for bad in ("bad id with spaces", 'x"<script>alert(1)</script>', "a" * 200):
+        r3 = client.get("/api/health", headers={"X-Request-Id": bad})
+        assert r3.headers.get("X-Friday-Request-Id", "").startswith("req-"), "an unsafe id was echoed"
     from agent_friday.services import correlation
     assert correlation.current() == "", "the id outlived its request"
 
