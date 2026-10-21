@@ -92,5 +92,6 @@ never_hashes = {r: hashlib.sha256((home / r).read_bytes()).hexdigest() for r in 
 expected = {"travel": travel, "never": never_hashes, "vault_probe": probe.decode(),
             "governance_key_sha256": hashlib.sha256(gk).hexdigest(),
             "ledger_last_seq": rep["last_seq"], "mcp_server": "ci-github", "private_words": ["likes tea", "ci-conv"]}
+Path(args.expected).parent.mkdir(parents=True, exist_ok=True)
 Path(args.expected).write_text(json.dumps(expected, indent=1), encoding="utf-8")
 print("seeded", len(files), "files; ledger", rep["records"], "records")
