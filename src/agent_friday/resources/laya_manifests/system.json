@@ -170,6 +170,16 @@
    "entry": "agent_friday.services.notifications:_skillopt_llm_researcher"
   },
   {
+   "id": "system.practice_trials",
+   "trigger": "schedule",
+   "also": ["idle"],
+   "model_class": "brain",
+   "helper": "visible_job",
+   "task_kind": "trial",
+   "activity_label": "Practice-task trials",
+   "entry": "agent_friday.services.trial_job:run_pending_trials"
+  },
+  {
    "id": "system.self_reflect",
    "trigger": "schedule",
    "also": ["idle"],

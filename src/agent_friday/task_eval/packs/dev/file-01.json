@@ -1,0 +1,31 @@
+{
+ "id": "file-01",
+ "domain": "files",
+ "title": "Receipts into the receipts folder",
+ "tags": [
+  "files",
+  "move_file"
+ ],
+ "prompt": "Move the receipts in Downloads into Documents/Receipts. Leave anything that isn't a receipt.",
+ "today": "2026-10-14",
+ "seed": {
+  "files": {
+   "Downloads/receipt-hardware-store.pdf": "Receipt. Total 23.40",
+   "Downloads/receipt-train.pdf": "Receipt. Ticket 12.10",
+   "Downloads/receipt-books.pdf": "Receipt. Total 8.99",
+   "Downloads/holiday-itinerary.pdf": "Day 1: arrive."
+  }
+ },
+ "max_rounds": 12,
+ "tools": [
+  "list_files",
+  "read_file",
+  "write_file",
+  "move_file",
+  "delete_file",
+  "wiki_search",
+  "wiki_read",
+  "wiki_write",
+  "ask_owner"
+ ]
+}

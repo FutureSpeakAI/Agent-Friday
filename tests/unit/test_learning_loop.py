@@ -82,7 +82,7 @@ def test_promote_proposes_and_owner_accept_activates():
     to_states = {c["to"] for c in changes}
     assert "proposed_add" in to_states
     assert not any(s["skill_id"] == sid for s in ll.active_skills())
-    assert ll.decide_proposal(sid, "accept")["ok"] is True
+    assert ll.decide_proposal(sid, "accept", decided_by="owner:ui")["ok"] is True
     assert any(s["skill_id"] == sid for s in ll.active_skills())
 
 
@@ -133,7 +133,7 @@ def test_retire_low_scoring_active():
     changes = ll.promote()
     assert any(c["to"] == "proposed_remove" for c in changes)
     assert any(s["skill_id"] == sid for s in ll.active_skills())
-    ll.decide_proposal(sid, "accept")
+    ll.decide_proposal(sid, "accept", decided_by="owner:ui")
     assert not any(s["skill_id"] == sid for s in ll.active_skills())
 
 

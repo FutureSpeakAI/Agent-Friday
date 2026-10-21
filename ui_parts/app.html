@@ -20487,6 +20487,7 @@ function SettingsTabPrivacy({s,save}){
       <KnowledgeSettings s={s} save={save} part="privacy"/>
     </StSection>
     {window.FridayPublishSettings ? <window.FridayPublishSettings s={s} save={save}/> : null}
+    {window.FridayInstructionsSettings ? <window.FridayInstructionsSettings/> : null}
     <StSection title="Conversation logging">
       <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
       <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
@@ -25892,6 +25893,8 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   // sandboxed preview (static/friday_publish.js).
   if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return <window.FridayWorkspaceSwapCard a={a} busy={busy} onDecide={onDecide}/>;
   if (a && a.kind === 'publish_web' && window.FridayPublishCard) return <window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>;
+  // A tested change: the text now and the new text, the difference and the evidence (static/friday_trial_card.js).
+  if (a && a.kind === 'instruction_trial' && window.FridayTrialCard) return <window.FridayTrialCard a={a} busy={busy} onDecide={onDecide}/>;
   // A search that shares text from the conversation (privacy/public_query):
   // the exact text that would go out, where it goes, and Send / Don't send.
   const pq = a && a.payload && a.payload.public_query;
