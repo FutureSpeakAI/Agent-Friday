@@ -102,3 +102,35 @@ def test_an_owner_route_choice_holds_work_on_the_wrong_route(monkeypatch):
     goals.run_due_milestones()
     assert calls == []
     assert goals.get_goal(g["goal_id"])["milestones"][0]["hold"]["type"] == "route"
+
+
+# ── security review (G3) ──────────────────────────────────────────────────────
+
+def test_a_proposed_goal_can_be_approved_and_an_approved_one_started():
+    from agent_friday.services import goal_state as gs
+    assert {"to": "approved", "label": "Approve"} in gs.owner_moves("proposed")
+    assert {"to": "active", "label": "Start"} in gs.owner_moves("approved")
+
+
+@pytest.mark.parametrize("status", ["proposed", "approved", "active", "waiting", "needs_owner", "at_risk",
+                                    "paused", "failed", "met_unverified", "met_verified", "abandoned", "archived"])
+def test_the_card_never_offers_met_verified(status):
+    from agent_friday.services import goal_state as gs
+    assert all(m["to"] != "met_verified" for m in gs.owner_moves(status))
+
+
+def test_a_done_or_running_step_waits_on_nothing():
+    assert goals.blocker_words({"status": "done", "blocker": {"text": "old words"}}) == ""
+    assert goals.blocker_words({"status": "in_progress", "hold": {"text": "old words"}}) == ""
+
+
+def test_the_card_reads_each_goal_file_once(monkeypatch):
+    _goal()
+    (goals.GOALS_DIR / "goal_broken.json").write_text("{not json", encoding="utf-8")
+
+    def second_pass():
+        raise AssertionError("the card read every goal file a second time")
+    monkeypatch.setattr(goals, "unreadable_goals", second_pass)
+    out = goals.summaries()
+    assert len(out["goals"]) == 1
+    assert [u["goal_id"] for u in out["unreadable"]] == ["goal_broken"]

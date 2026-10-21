@@ -24,16 +24,16 @@ const DATA = { goals: [{
     can_restart: true, restart_needs_confirmation: true, can_run: false, verified: false }],
 }], unreadable: [] };
 
-function render(calls, confirms) {
+function render(calls, confirms, data = DATA, open = null, answer = true) {
   const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
   const createElement = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) });
   let slot = 0;
-  const slots = [DATA, '', false, null];
+  const slots = [data, '', false, open];
   const ctx = vm.createContext({
     React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
     useEffect: () => {}, useCallback: fn => fn, encodeURIComponent, setInterval: () => 0, clearInterval: () => {},
     apiFetch: (url, opts) => { calls.push([url, opts && opts.method, opts && opts.body]); return Promise.resolve({ ok: true, status: 200, json: async () => ({}) }); },
-    window: { confirm: () => { confirms.push(1); return true; }, prompt: () => null, fridayOpenWorkspace: () => {} },
+    window: { confirm: () => { confirms.push(1); return answer; }, prompt: () => null, fridayOpenWorkspace: () => {} },
     String, Number, Object,
   });
   vm.runInContext(slice(source, 'GoalsCard'), ctx);
@@ -63,4 +63,35 @@ test('a move posts its transition and a restart of an unknown outcome asks first
   assert.equal(confirms.length, 1, 'the owner was not asked before a restart of an unknown outcome');
   assert.equal(calls.at(-1)[0], '/api/goals/goal_synthetic/milestones/ms_1/restart');
   assert.deepEqual(JSON.parse(calls.at(-1)[2]), { confirm_unknown_outcome: true });
+});
+
+test('a restart whose outcome is known does not ask and claims nothing', () => {
+  const calls = [], confirms = [];
+  const known = JSON.parse(JSON.stringify(DATA));
+  known.goals[0].milestones[0].restart_needs_confirmation = false;
+  const tree = render(calls, confirms, known);
+  all(tree, n => n.type === 'button').find(b => label(b) === 'Start it again').props.onClick();
+  assert.equal(confirms.length, 0);
+  assert.deepEqual(JSON.parse(calls.at(-1)[2]), {});
+});
+
+test('loosening where a goal may run, or its asking, needs a yes; tightening does not', () => {
+  const tight = JSON.parse(JSON.stringify(DATA));
+  tight.goals[0].allowed_routes = ['local_only'];
+  tight.goals[0].approval_required = true;
+  // Refused: nothing is sent.
+  let calls = [], confirms = [];
+  let buttons = all(render(calls, confirms, tight, 'goal_synthetic', false), n => n.type === 'button');
+  buttons.find(b => label(b) === 'with any routing').props.onClick();
+  buttons.find(b => label(b) === 'Stop asking before every step').props.onClick();
+  assert.equal(confirms.length, 2);
+  assert.equal(calls.length, 0, 'a looser setting was sent without a yes');
+  // Tightening goes straight through.
+  const loose = JSON.parse(JSON.stringify(DATA));
+  loose.goals[0].allowed_routes = [];
+  calls = []; confirms = [];
+  buttons = all(render(calls, confirms, loose, 'goal_synthetic'), n => n.type === 'button');
+  buttons.find(b => label(b) === 'only on this PC').props.onClick();
+  assert.equal(confirms.length, 0);
+  assert.deepEqual(JSON.parse(calls.at(-1)[2]), { allowed_routes: ['local_only'] });
 });
