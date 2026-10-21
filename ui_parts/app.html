@@ -10385,6 +10385,86 @@ function WhatFridayDidCard(){
     </>}
   </div>);
 }
+function GoalsCard() {
+  // Goals (north star §17, services/goals.py): every goal, its state, what each
+  // milestone waits on, and what the owner can do with it (§17.13): pause,
+  // resume, end, mark it met on their own judgment, reopen, archive, re-plan,
+  // change the budget or the deadline, ask before every step, keep it on this
+  // PC, start a stopped step again (a click here, never a word).
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [finished, setFinished] = useState(false);
+  const [open, setOpen] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/goals/summary' + (finished ? '?finished=1' : '')).then(r => r.json()).then(x => { setD(x); })
+      .catch(() => setMsg('Could not read your goals.'));
+  }, [finished]);
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+  const enc = encodeURIComponent;
+  const send = (url, method, body) => apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(r => r.json().then(j => ({ ok: r.ok, status: r.status, j }), () => ({ ok: r.ok, status: r.status, j: {} })));
+  const done = (x, words) => { setMsg(x.ok ? words : ((x.j && (x.j.message || x.j.error)) || 'That did not work.')); load(); };
+  const fail = () => setMsg('Could not reach the server.');
+  const move = (g, mv) => {
+    if (mv.to === 'abandoned' && !window.confirm('End “' + g.title + '”? Nothing more runs for it; you can reopen it later.')) return;
+    if (mv.to === 'met_unverified' && !window.confirm('Mark “' + g.title + '” met? It is recorded as your judgment, not as checked.')) return;
+    send('/api/goals/' + enc(g.goal_id) + '/transition', 'POST', { status: mv.to, reason: mv.label }).then(x => done(x, '“' + g.title + '”: ' + mv.label + '.')).catch(fail);
+  };
+  const patch = (g, body, words) => send('/api/goals/' + enc(g.goal_id), 'PATCH', body).then(x => done(x, words)).catch(fail);
+  const ask = (g, field, label, current, convert, words) => {
+    const v = window.prompt(label, current == null ? '' : String(current));
+    if (v == null) return;
+    const val = convert(v);
+    if (val === undefined) { setMsg('That value was not understood.'); return; }
+    patch(g, { [field]: val }, words);
+  };
+  const restart = (g, m) => {
+    const confirmIt = m.restart_needs_confirmation;
+    if (confirmIt && !window.confirm('Some of the earlier attempt’s steps may already have happened (a send, for example). Start “' + m.name + '” again anyway?')) return;
+    send('/api/goals/' + enc(g.goal_id) + '/milestones/' + enc(m.milestone_id) + '/restart', 'POST', confirmIt ? { confirm_unknown_outcome: true } : {})
+      .then(x => done(x, '“' + m.name + '” started again.')).catch(fail);
+  };
+  const runNow = (g, m) => send('/api/goals/' + enc(g.goal_id) + '/milestones/' + enc(m.milestone_id) + '/run', 'POST', {})
+    .then(x => done(x, '“' + m.name + '”: ' + ((x.j && x.j.status) || 'started') + '.')).catch(fail);
+  const routeWords = r => !r || !r.length ? 'any routing' : r.length === 1 && r[0] === 'local_only' ? 'only on this PC' : 'this PC first';
+  const goals = (d && d.goals) || [];
+  const btn = (label, onClick, extra) => E('button', Object.assign({ type: 'button', className: 'task-card-btn', style: { fontSize: 10, marginRight: 4, marginTop: 4 }, onClick }, extra || {}), label);
+  return E('div', { className: 'card', 'data-goals-card': 'true', style: { marginBottom: 10, padding: 10, border: '1px solid rgba(0,212,255,0.18)' } },
+    E('div', { className: 'card-title' }, 'Goals'),
+    E('div', { style: { fontSize: 11, color: '#888', padding: '4px 2px' } }, 'Goals you set, what each is doing or waiting on, and what you can change. They survive restarts; a step that was cut short never runs again without you.'),
+    !d && E('div', { style: { fontSize: 11, color: '#888' } }, msg || 'Reading…'),
+    d && goals.length === 0 && E('div', { style: { fontSize: 11, color: '#888' } }, 'No goals yet.'),
+    (d && d.unreadable || []).map(u => E('div', { key: u.goal_id, role: 'alert', style: { fontSize: 11, color: '#f59e0b' } }, 'A goal file could not be read: ' + u.file + '. It was left as it is.')),
+    goals.map(g => E('div', { key: g.goal_id, 'data-goal-state': g.status, style: { borderTop: '1px solid rgba(255,255,255,0.06)', padding: '6px 2px' } },
+      E('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
+        E('button', { type: 'button', className: 'task-card-btn', 'aria-expanded': open === g.goal_id, style: { fontSize: 12, fontWeight: 700 }, onClick: () => setOpen(open === g.goal_id ? null : g.goal_id) }, g.title),
+        E('span', { style: { fontSize: 11, color: g.status === 'needs_owner' ? '#f59e0b' : '#9ab' } }, g.state_words),
+        E('span', { style: { fontSize: 10, color: '#888' } }, g.done + ' of ' + g.total + ' done' + (g.deadline ? ' · due ' + String(g.deadline).slice(0, 10) : '') + (g.budget_cap_mψ ? ' · ' + g.spent_mψ + ' of ' + g.budget_cap_mψ + ' mψ' : ''))),
+      g.risk && g.risk.length > 0 && E('div', { style: { fontSize: 11, color: '#f59e0b' } }, 'At risk: ' + g.risk.join('; ') + '.'),
+      g.completion && E('div', { style: { fontSize: 11, color: '#9ab' } }, g.completion.verified ? 'Met: every step passed its own check.' : 'Met on judgment, not on an automatic check' + (g.completion.note ? ' (' + g.completion.note + ')' : '') + '.'),
+      g.milestones.filter(m => m.waits).map(m => E('div', { key: m.milestone_id, style: { fontSize: 11, color: '#cdd', marginTop: 2 } }, m.waits,
+        m.can_restart && btn('Start it again', () => restart(g, m), { 'aria-label': 'Start ' + m.name + ' again' }))),
+      E('div', null, g.moves.map(mv => btn(mv.label, () => move(g, mv), { key: mv.to, 'aria-label': mv.label + ': ' + g.title }))),
+      open === g.goal_id && E('div', { role: 'region', 'aria-label': 'Details of ' + g.title, style: { marginTop: 6, paddingLeft: 8 } },
+        g.success_criteria && E('div', { style: { fontSize: 11, color: '#cdd' } }, 'What counts as done: ' + g.success_criteria),
+        E('ul', { style: { fontSize: 11, color: '#cdd', margin: '4px 0', paddingLeft: 16 } }, g.milestones.map(m => E('li', { key: m.milestone_id },
+          m.name + ' — ' + m.status + (m.due ? ', due ' + String(m.due).slice(0, 10) : '') + (m.status === 'done' ? (m.verified ? ' (checked)' : ' (on your say-so)') : ''),
+          m.can_run && btn('Run it now', () => runNow(g, m), { 'aria-label': 'Run ' + m.name + ' now' })))),
+        E('div', null,
+          btn('Change what counts as done', () => ask(g, 'success_criteria', 'What counts as done?', g.success_criteria, v => v.trim() || undefined, 'New plan saved; work that began before it stops and asks.')),
+          btn('Change the budget', () => ask(g, 'budget_cap_mψ', 'Budget in mψ (0 for none)', g.budget_cap_mψ, v => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 ? n : undefined; }, 'Budget changed.')),
+          btn('Change the deadline', () => ask(g, 'deadline', 'Deadline (YYYY-MM-DD, or empty for none)', g.deadline ? String(g.deadline).slice(0, 10) : '', v => { v = v.trim(); if (!v) return null; return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v + 'T17:00:00Z' : undefined; }, 'Deadline changed.')),
+          btn(g.approval_required ? 'Stop asking before every step' : 'Ask me before every step', () => patch(g, { approval_required: !g.approval_required }, g.approval_required ? 'Steps that need no card run on their own again.' : 'Every step now waits for your yes.')),
+          btn('Routing: ' + routeWords(g.allowed_routes), () => {
+            const next = !g.allowed_routes || !g.allowed_routes.length ? ['local_only'] : g.allowed_routes.length === 1 ? ['local_only', 'local_preferred'] : [];
+            patch(g, { allowed_routes: next }, 'This goal now runs with ' + routeWords(next) + '.');
+          }),
+          btn('Pre-approved sends', () => window.fridayOpenWorkspace && window.fridayOpenWorkspace({ workspace: 'settings', tab: 'privacy', section: 'Pre-approved sends' }), { title: 'Revoke a standing permission' }))))),
+    E('div', { style: { marginTop: 6 } }, btn(finished ? 'Hide archived goals' : 'Show archived goals', () => setFinished(!finished))),
+    E('div', { role: 'status', 'aria-live': 'polite', style: { fontSize: 11, color: '#9ab', marginTop: 4 } }, msg));
+}
+
 function TaskRecordsCard(){
   const[ret,setRet]=useState(null);const[saving,setSaving]=useState(false);
   const[obs,setObs]=useState(null); // {token, header} shown once after minting
@@ -10570,6 +10650,9 @@ function SystemWS(){
           </>);
         })()}
     </div>
+
+    {/* ─── Goals ─── */}
+    <GoalsCard/>
 
     {/* ─── Task records ─── */}
     <TaskRecordsCard/>
