@@ -210,7 +210,7 @@ def test_a_write_that_never_happened_has_nothing_to_undo(store):
     rec = fwr.begin(doc, "write", 3)
     doc.write_text("someone else's file", encoding="utf-8")
     res = fwr.undo(journal.get(rec["receipt_id"]))
-    assert res["status"] == "failed" and "did not happen" in res["summary"]
+    assert res["status"] == "failed" and "did not finish" in res["summary"]
     assert doc.read_text(encoding="utf-8") == "someone else's file"
 
 
