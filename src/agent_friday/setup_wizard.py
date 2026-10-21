@@ -253,6 +253,12 @@ def _save_config(config: dict):
     # written no wider than settings.json holds it now.
     from agent_friday.services import guarded_settings
     config = guarded_settings.clamp_for_write(config, SETTINGS_FILE)
+    # The person's spending caps survive this rewrite (north-star A17).
+    try:
+        from agent_friday.services import spending_caps as _caps
+        config = _caps.keep_caps_on_rewrite(config, SETTINGS_FILE)
+    except Exception:
+        pass
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     try:
         import yaml

@@ -28,8 +28,10 @@ settings keys their readers already use.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 log = logging.getLogger("friday.spending_caps")
@@ -357,6 +359,27 @@ def seed_choices(seed: dict, origin: str) -> None:
             _set_card_state("not_needed")
     except Exception as e:
         log.warning("the daily cap card's state could not be saved (%s)", e)
+
+
+#: The settings blocks a wholesale rewrite of settings.json (the terminal
+#: setup and `friday config` rebuild it from config.yaml) must carry over from
+#: the file it replaces when the new content lacks them: the person's caps.
+KEPT_ON_REWRITE = ("cost_budget", "spending_caps")
+
+
+def keep_caps_on_rewrite(config: dict, settings_file) -> dict:
+    """`config` with the caps blocks of the settings.json it is about to
+    replace, where it has none of its own (A17: a rewrite never resets the
+    person's daily cap, or re-imposes the new-install default over it)."""
+    try:
+        cur = json.loads(Path(settings_file).read_text(encoding="utf-8-sig"))
+    except Exception:
+        return config
+    out = dict(config)
+    for k in KEPT_ON_REWRITE:
+        if k not in out and isinstance(cur.get(k), dict):
+            out[k] = cur[k]
+    return out
 
 
 def _card_state() -> Optional[str]:

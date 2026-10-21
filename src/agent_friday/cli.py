@@ -190,6 +190,12 @@ def _save_config(config: dict):
                       "this command cannot turn it on. Turn it back on in Friday's Settings (Laya, "
                       "Safe writes).[/yellow]")
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    # The person's spending caps survive this rewrite (north-star A17).
+    try:
+        from agent_friday.services import spending_caps as _caps
+        config = _caps.keep_caps_on_rewrite(config, SETTINGS_FILE)
+    except Exception:
+        pass
     # YAML (primary, human-editable)
     try:
         import yaml

@@ -205,6 +205,22 @@ def test_a_save_onto_a_rewritten_store_never_switches_an_existing_install_on(rea
     assert _on_disk(core)["cost_budget"]["hard_stop_daily_enabled"] is False
 
 
+def test_friday_config_set_keeps_a_new_installs_own_cap_choice(real_settings, monkeypatch):
+    """`friday config set` rebuilds settings.json from config.yaml, which has no
+    cost_budget. The person's own choice (no daily cap) must survive it: the
+    rewrite neither resets it nor lets the new-install default return."""
+    from agent_friday import cli
+    core = real_settings
+    core._load_settings()                                   # a new install: cap on
+    core._save_settings({"cost_budget": {"hard_stop_daily_enabled": False}})
+    monkeypatch.setattr(cli, "FRIDAY_DIR", core.FRIDAY_DIR)
+    monkeypatch.setattr(cli, "SETTINGS_FILE", core.SETTINGS_FILE)
+    monkeypatch.setattr(cli, "CONFIG_YAML", core.FRIDAY_DIR / "config.yaml")
+    cli._save_config({"agent_name": "TEST AGENT"})
+    core._invalidate_settings_cache()
+    assert getattr(sc, "daily_cap", lambda _s: "x")(core._load_settings()) is None
+
+
 def test_an_existing_install_with_no_cost_block_at_all_is_not_switched_on(real_settings):
     core = real_settings
     s = _existing(core, {})

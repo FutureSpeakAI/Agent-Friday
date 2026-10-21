@@ -2213,6 +2213,17 @@ def _degraded_settings() -> "_DegradedSettings":
         else:
             out = _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
             out.from_defaults = True
+            # North-star A17: a new install's daily cap is on even while its
+            # settings.json cannot be read (the record says new; nothing is
+            # decided here).
+            try:
+                if install_choices_state().get("install") == NEW_INSTALL:
+                    from agent_friday.services import spending_caps as _sc
+                    out["cost_budget"] = dict(out.get("cost_budget") or {},
+                                              hard_stop_daily_enabled=True,
+                                              hard_stop_daily=_sc.DAILY_CAP_DEFAULT_USD)
+            except Exception:
+                pass
     out[DEGRADED_READ_KEY] = gen
     return out
 
@@ -3774,7 +3785,12 @@ def _seed_install_choices(seed: dict) -> None:
         from agent_friday.services import spending_caps as _sc
         _sc.seed_choices(seed, install_origin())
     except Exception:
-        pass
+        # Undecided: leave the daily cap key out, so the migration on the next
+        # read decides it, rather than writing the defaults' off down for good.
+        cb = seed.get("cost_budget")
+        if isinstance(cb, dict):
+            seed["cost_budget"] = {k: v for k, v in cb.items()
+                                   if k != "hard_stop_daily_enabled"}
 
 
 def _migrate_daily_cap(settings: dict, stored: dict):
