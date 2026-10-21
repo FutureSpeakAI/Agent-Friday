@@ -33,6 +33,13 @@ first episode, and applied at the task level (repeats are correlated):
   secondary (reported, not gating): C vs A, D vs A.
 R0 PASS means the candidate writer (HA5) is worth building; FAIL or
 inconclusive (more than 10% missing, or lopsided missingness) shelves it.
+
+Where it runs: only inside the nightly practice-trials job
+(services/r0_nightly, called from services/trial_job), which is a visible job,
+takes the seat through the Local AI queue for every episode and editor call,
+yields to an interactive turn, and checks AC power and tonight's cap before
+every step. A step stopped that way raises ``Yielded``: the whole task-repeat
+is thrown away (never stored as missing) and run again the next night.
 """
 from __future__ import annotations
 
@@ -40,6 +47,7 @@ import hashlib
 import json
 import random
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -201,6 +209,11 @@ class CallVoided(RuntimeError):
     pass
 
 
+class Yielded(RuntimeError):
+    """A step was stopped (an interactive turn, battery, tonight's cap): the
+    task-repeat it belongs to is discarded and run again later."""
+
+
 def run_cell(task: dict, repeat: int, *, run_one: Callable[..., dict], call_model: Callable[[str, str], str],
              scan: Callable[[str], dict], cell_dir: Path, rng: random.Random) -> dict:
     """One (task, repeat): 8 agent runs, at most 5 model calls. Returns grades per arm."""
@@ -338,9 +351,12 @@ def decide(cells: List[dict]) -> dict:
 
 def run(*, tasks: List[dict], repeats: int, run_dir: Path, run_one: Callable[..., dict],
         call_model: Callable[[str, str], str], scan: Callable[[str], dict], model: str, endpoint: str,
-        should_yield: Callable[[], bool] = lambda: False) -> dict:
+        should_yield: Callable[[], bool] = lambda: False,
+        on_cell: Optional[Callable[[int, int], None]] = None) -> dict:
     """The whole experiment, resumable by cell. Writes manifest.json (with the
-    rule) before the first episode and result.json at the end."""
+    rule) before the first episode and result.json at the end. ``run_one`` or
+    ``call_model`` raising ``Yielded`` stops the run: that cell's folder is
+    removed, so the cell is run again from the start next time."""
     from agent_friday.task_eval import runs as R
     manifest = R.make_manifest(kind="r0", tasks=tasks, arms={"a": None, "b": None, "c": None, "d": None},
                                model=model, endpoint=endpoint, repeats=repeats, rule_version=RULE_VERSION,
@@ -359,10 +375,19 @@ def run(*, tasks: List[dict], repeats: int, run_dir: Path, run_one: Callable[...
             if should_yield():
                 complete = False
                 break
+            if cell_dir.exists():
+                shutil.rmtree(cell_dir, ignore_errors=True)   # a cell stopped part-way
             cell_dir.mkdir(parents=True, exist_ok=True)
             rng = random.Random(int(hashlib.sha256(f"{SEED}:{t['id']}:{r}".encode()).hexdigest()[:8], 16))
-            cells.append(run_cell(t, r, run_one=run_one, call_model=call_model, scan=scan,
-                                  cell_dir=cell_dir, rng=rng))
+            try:
+                cells.append(run_cell(t, r, run_one=run_one, call_model=call_model, scan=scan,
+                                      cell_dir=cell_dir, rng=rng))
+            except Yielded:
+                shutil.rmtree(cell_dir, ignore_errors=True)
+                complete = False
+                break
+            if on_cell is not None:
+                on_cell(len(cells), len(tasks) * int(repeats))
         if not complete:
             break
     out = {"complete": complete, "cells": len(cells), "planned_cells": len(tasks) * int(repeats)}
