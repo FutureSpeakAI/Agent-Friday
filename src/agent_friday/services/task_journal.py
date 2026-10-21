@@ -682,10 +682,14 @@ def redact(fn) -> Dict[str, Any]:
                     _write_atomic(jp, ("\n".join(new_lines) + "\n").encode("utf-8"))
                     out["records"] += changed
             for f in sorted(d.glob("*.json")):
+                stored = b""
                 try:
                     stored = f.read_bytes()
                     obj = json.loads(_unprotect(stored).decode("utf-8"))
                 except Exception:
+                    if stored and stored.lstrip()[:1] not in (b"{", b"["):
+                        # a protected record no key opens: it may hold the text; say so
+                        out["left_unchanged"] = out.get("left_unchanged", 0) + 1
                     continue
                 nobj, c = _redact_value(obj, fn)
                 if c:
