@@ -113,4 +113,15 @@ test('the map states plainly which mode is on, and its buttons switch or delete 
   assert.ok(!fpButtons.some(b => label(b) === 'Delete the kept text'));
   fpButtons.find(b => label(b) === 'Keep the full text again').props.onClick();
   assert.deepEqual(posts.at(-1), ['/api/privacy/sent-text', { mode: 'full' }]);
+
+  // Leftovers a switch could not delete are shown, with their delete, in either mode.
+  const left = render([], [], [], { ...VIEW, sent_text: { ...FULL, mode: 'fingerprint', keep: false, kept: 1, words: 'Only fingerprints are kept.' } }, posts);
+  assert.ok(all(left, n => n.type === 'button').some(b => label(b) === 'Delete the kept text'));
+});
+
+test('a receipt offers its text only while that text is still kept', () => {
+  const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const body = slice(source.replace(/\r\n/g, '\n'), 'SettingsPrivacyMap');
+  assert.ok(body.includes('r.still_kept && E('), 'the Show-what-was-sent button follows still_kept');
+  assert.ok(!body.includes('r.text_kept && E('));
 });
