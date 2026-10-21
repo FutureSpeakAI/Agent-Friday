@@ -125,6 +125,35 @@ def create_goal_route():
     return jsonify({"ok": True, "goal": goal}), 201
 
 
+@goals_bp.route("/api/goals/draft", methods=["POST"])
+@login_required
+def draft_goal_route():
+    """§17.4: what Friday understood, the questions it still needs answered,
+    and the goal in plain words. Creates nothing."""
+    from agent_friday.services import goal_definition
+    spec = request.get_json(silent=True)
+    if not isinstance(spec, dict):
+        return jsonify({"ok": False, "error": "send the goal as a JSON object"}), 400
+    return jsonify({"ok": True, **goal_definition.draft(spec)})
+
+
+@goals_bp.route("/api/goals/define", methods=["POST"])
+@login_required
+def define_goal_route():
+    """Create the goal the owner confirmed: {"goal": <the same spec>,
+    "summary_id": <from /api/goals/draft>}. Refused (409) while a question is
+    open or when the goal is not the one whose summary was confirmed."""
+    from agent_friday.services import goal_definition
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("goal"), dict):
+        return jsonify({"ok": False, "error": "send {goal, summary_id}"}), 400
+    try:
+        goal = _goals.define_goal(body["goal"], body.get("summary_id"))
+    except goal_definition.DefinitionRefused as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
+    return jsonify({"ok": True, "goal": goal}), 201
+
+
 @goals_bp.route("/api/goals/<goal_id>", methods=["GET"])
 def get_goal_route(goal_id):
     goal = _goals.get_goal(goal_id)

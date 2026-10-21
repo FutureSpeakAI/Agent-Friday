@@ -10396,6 +10396,8 @@ function GoalsCard() {
   const [msg, setMsg] = useState('');
   const [finished, setFinished] = useState(false);
   const [open, setOpen] = useState(null);
+  const [def, setDefRaw] = useState(null);
+  const [preview, setPreview] = useState(null);
   const load = useCallback(() => {
     apiFetch('/api/goals/summary' + (finished ? '?finished=1' : '')).then(r => r.json()).then(x => { setD(x); })
       .catch(() => setMsg('Could not read your goals.'));
@@ -10430,6 +10432,26 @@ function GoalsCard() {
   const routeWords = r => !r || !r.length ? 'any routing' : r.length === 1 && r[0] === 'local_only' ? 'only on this PC' : 'this PC first';
   const ROUTES = [{ label: 'only on this PC', value: ['local_only'] }, { label: 'this PC first', value: ['local_only', 'local_preferred'] }, { label: 'with any routing', value: [] }];
   const routeRank = r => !r || !r.length ? 2 : r.length === 1 && r[0] === 'local_only' ? 0 : 1;
+  // §17.4: define a goal with Friday. She asks only what the goal still
+  // needs, states it in plain words, and creates it only when you confirm
+  // that summary (any edit clears it, and the server checks it is the same).
+  const CATS = [['read', 'look things up'], ['draft', 'draft'], ['write', 'change files or settings'], ['send', 'send messages'], ['spend', 'spend money'], ['publish', 'publish'], ['delete', 'delete things']];
+  const LEVELS = [['on_its_own', 'on its own'], ['ask_me', 'asks me'], ['never', 'never']];
+  const NEW_DEF = { title: '', intent: '', done: '', proof: '', stop: '', steps: '', people: '', deadline: '', minutes: '', does: ['read', 'draft'], autonomy: { read: 'on_its_own', draft: 'on_its_own', write: 'ask_me', send: 'ask_me', spend: 'ask_me', publish: 'ask_me', delete: 'never' } };
+  const setDef = v => { setDefRaw(v); setPreview(null); };
+  const lines = s => String(s || '').split('\n').map(x => x.trim()).filter(Boolean);
+  const specOf = f => ({
+    title: f.title, intent: f.intent, completion_condition: f.done,
+    evidence_required: lines(f.proof), stop_conditions: lines(f.stop), people: lines(f.people),
+    deadline: /^\d{4}-\d{2}-\d{2}$/.test(f.deadline) ? f.deadline + 'T17:00:00Z' : null,
+    budget: { runtime_minutes: parseInt(f.minutes, 10) || 0 }, autonomy: f.autonomy,
+    milestones: lines(f.steps).map(n => ({ name: n, planned_actions: f.does })),
+  });
+  const showSummary = () => send('/api/goals/draft', 'POST', specOf(def)).then(x => x.ok ? setPreview(x.j) : setMsg((x.j && x.j.error) || 'Could not read that goal.')).catch(fail);
+  const confirmGoal = () => send('/api/goals/define', 'POST', { goal: specOf(def), summary_id: preview.summary_id })
+    .then(x => { if (x.ok) { setDefRaw(null); setPreview(null); } done(x, 'Goal created as you confirmed it. Start it when you are ready.'); }).catch(fail);
+  const field = (k, label, multi) => E('label', { key: k, style: { display: 'block', fontSize: 11, color: '#cdd', marginTop: 4 } }, label,
+    E(multi ? 'textarea' : 'input', { value: def[k], rows: multi ? 2 : undefined, 'aria-label': label, style: { display: 'block', width: '100%', fontSize: 11 }, onChange: e => setDef(Object.assign({}, def, { [k]: e.target.value })) }));
   const goals = (d && d.goals) || [];
   const btn = (label, onClick, extra) => E('button', Object.assign({ type: 'button', className: 'task-card-btn', style: { fontSize: 10, marginRight: 4, marginTop: 4 }, onClick }, extra || {}), label);
   return E('div', { className: 'card', 'data-goals-card': 'true', style: { marginBottom: 10, padding: 10, border: '1px solid rgba(0,212,255,0.18)' } },
@@ -10471,6 +10493,24 @@ function GoalsCard() {
             }, { key: r.label, 'aria-pressed': routeRank(g.allowed_routes) === routeRank(r.value) }))),
           btn('Pre-approved sends', () => window.fridayOpenWorkspace && window.fridayOpenWorkspace({ workspace: 'settings', tab: 'privacy', section: 'Pre-approved sends' }), { title: 'Revoke a standing permission' }))))),
     E('div', { style: { marginTop: 6 } }, btn(finished ? 'Hide archived goals' : 'Show archived goals', () => setFinished(!finished))),
+    !def && E('div', null, btn('Define a new goal', () => setDef(NEW_DEF))),
+    def && E('div', { role: 'region', 'aria-label': 'Define a new goal', style: { marginTop: 8, padding: 6, border: '1px solid rgba(255,255,255,0.08)' } },
+      E('div', { className: 'card-title', style: { fontSize: 12 } }, 'A new goal'),
+      field('title', 'What should I call it?'), field('intent', 'What do you want, in your words?', true),
+      field('done', 'What would tell you it is done?', true), field('proof', 'What should I show you as proof? (one per line)', true),
+      field('stop', 'When should I stop and come back to you? (one per line)', true), field('steps', 'Steps, if you know them (one per line)', true),
+      field('people', 'Who will it reach, if it sends or publishes? (one per line)', true),
+      field('deadline', 'Deadline (YYYY-MM-DD, optional)'), field('minutes', 'Most minutes of work (optional)'),
+      E('div', { role: 'group', 'aria-label': 'What its steps will do', style: { fontSize: 11, color: '#cdd', marginTop: 4 } }, 'Its steps will: ',
+        CATS.map(([c, w]) => E('label', { key: c, style: { marginRight: 8 } }, E('input', { type: 'checkbox', checked: def.does.includes(c), onChange: e => setDef(Object.assign({}, def, { does: e.target.checked ? def.does.concat([c]) : def.does.filter(x => x !== c) })) }), ' ' + w))),
+      E('div', { role: 'group', 'aria-label': 'What I may do without asking', style: { fontSize: 11, color: '#cdd', marginTop: 4 } },
+        CATS.map(([c, w]) => E('label', { key: c, style: { display: 'inline-block', marginRight: 10 } }, w + ': ',
+          E('select', { value: def.autonomy[c], 'aria-label': 'When I ' + w, onChange: e => setDef(Object.assign({}, def, { autonomy: Object.assign({}, def.autonomy, { [c]: e.target.value }) })) },
+            LEVELS.map(([v, t]) => E('option', { key: v, value: v }, t)))))),
+      E('div', null, btn('Show me the summary', showSummary), btn('Cancel', () => setDef(null))),
+      preview && preview.questions && preview.questions.length > 0 && E('ul', { role: 'alert', 'aria-label': 'Still to answer', style: { fontSize: 11, color: '#f59e0b' } }, preview.questions.map(q => E('li', { key: q.key }, q.ask))),
+      preview && E('pre', { 'aria-label': 'The goal in plain words', style: { whiteSpace: 'pre-wrap', fontSize: 11, color: '#cdd' } }, preview.summary),
+      preview && preview.questions && preview.questions.length === 0 && btn('Create this goal as summarised', confirmGoal)),
     E('div', { role: 'status', 'aria-live': 'polite', style: { fontSize: 11, color: '#9ab', marginTop: 4 } }, msg));
 }
 
