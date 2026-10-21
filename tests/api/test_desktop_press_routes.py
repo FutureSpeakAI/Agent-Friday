@@ -258,6 +258,30 @@ def test_editing_a_share_cards_words_needs_a_press_on_this_desktop(client):
     assert r.status_code == 403
 
 
+# ── Ways to make this PC run something as the owner ───────────────────────
+
+def test_opening_an_outside_folder_as_a_codebase_needs_a_press(client, tmp_path):
+    """A codebase on a chosen folder lets Friday write files there; in the right folder a file
+    runs as the owner, which could then press a card on this PC's own screen."""
+    r = client.post("/api/codebases", json={"title": "x", "path": str(tmp_path)}, headers=page_headers())
+    assert r.status_code == 403 and r.get_json().get("code") == "desk_proof_required"
+
+
+def test_fridays_own_data_and_startup_folders_are_never_a_codebase(client, tmp_path):
+    import agent_friday.core as core
+    startup = tmp_path / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    startup.mkdir(parents=True)
+    for folder in (str(core.FRIDAY_DIR), str(startup)):
+        r = client.post("/api/codebases", json={"title": "x", "path": folder}, headers=desk_headers())
+        assert r.status_code == 400, folder
+
+
+@pytest.mark.parametrize("path,body", [("/api/mcp/reload", {}), ("/api/extensions/allowlist", {"name": "my-server"})])
+def test_starting_or_widening_connectors_needs_a_press(client, path, body):
+    r = client.post(path, json=body, headers=page_headers())
+    assert r.status_code == 403 and r.get_json().get("code") == "desk_proof_required"
+
+
 # ── Where the key comes from, and that the main server never sends it ─────
 
 def test_the_page_learns_where_the_desk_door_is_but_never_the_key(client):
