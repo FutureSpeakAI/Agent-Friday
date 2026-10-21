@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from agent_friday.services.tool_result_compact import compact
+from agent_friday.services.untrusted_input import wrap
 
 PRETTY = json.dumps({
     "status": "ok", "error": "", "note": None, "count": 0, "unread": False,
@@ -78,15 +79,15 @@ def _drive(monkeypatch, *, provider, seat=None):
 def test_the_local_loop_sends_the_compact_result(monkeypatch):
     text, trace, tool_msgs = _drive(monkeypatch, provider="local")
     assert text == "done."
-    assert tool_msgs[0]["content"] == compact(PRETTY)
+    assert tool_msgs[0]["content"] == wrap(compact(PRETTY)), "compacted, then put in the data envelope"
     assert trace[0]["result"].startswith("{\n"), "the trace keeps the original"
 
 
 def test_a_local_seat_on_the_openai_dialect_is_compacted_too(monkeypatch):
     _text, _trace, tool_msgs = _drive(monkeypatch, provider="openai", seat="local")
-    assert tool_msgs[0]["content"] == compact(PRETTY)
+    assert tool_msgs[0]["content"] == wrap(compact(PRETTY))
 
 
 def test_a_cloud_seat_gets_the_result_as_returned(monkeypatch):
     _text, _trace, tool_msgs = _drive(monkeypatch, provider="openai")
-    assert tool_msgs[0]["content"] == PRETTY
+    assert tool_msgs[0]["content"] == wrap(PRETTY)

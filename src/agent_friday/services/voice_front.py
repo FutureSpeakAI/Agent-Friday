@@ -914,8 +914,11 @@ class FrontSeat:
                         return refusal
                 if not isinstance(result, str):
                     result = json.dumps(result, ensure_ascii=False, default=str)
+                # The tool's output is data, never instructions: the one envelope
+                # (services/untrusted_input).
+                from agent_friday.services.untrusted_input import wrap as _data_envelope
                 convo.append({"role": "tool", "tool_call_id": c.get("id") or name,
-                              "content": result})
+                              "content": _data_envelope(result)})
         # Rounds are separate utterances ("Let me check." then the answer).
         return " ".join(spoken).strip()
 

@@ -730,6 +730,9 @@ def _context_paragraphs(request: Any, provider: str) -> list:
             ps = p.strip()
             if not ps:
                 continue
+            from agent_friday.services.untrusted_input import is_envelope_line
+            if is_envelope_line(ps):
+                continue                  # the data envelope's own fixed lines: Friday's words
             if _eg is not None:
                 with _eg._TRUSTED_LOCK:
                     known = (ps in _eg._PUBLIC_PARAS or ps in _eg._TRUSTED_PARAS
