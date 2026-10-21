@@ -11905,7 +11905,7 @@ function NewsWS(){
          <div className="fp-masthead" style={{marginTop:12}}>
            <div>
              <div className="fp-title">{fridayName()}'s Editorial</div>
-             <div className="fp-sub">{(editorial.generated_central||editorial.week||'')+(editorial.regenerated?' · rewritten for stronger pushback':'')+(typeof editorial.independence_score==='number'?(' · independence '+editorial.independence_score.toFixed(2)):'')}</div>
+             <div className="fp-sub">{(editorial.generated_central||editorial.week||'')+(editorial.regenerated?' · first attempt came back empty, written again':'')+(typeof editorial.independence_score==='number'?(' · independence '+editorial.independence_score.toFixed(2)):'')}</div>
            </div>
            <div style={{display:'flex',gap:6,alignItems:'center'}}>
              {edList.length>1&&<select className="input" style={{fontSize:11,maxWidth:160}} value={editorial.id} onChange={e=>loadEdWeek(e.target.value)}>
@@ -13211,8 +13211,8 @@ function FinanceWS(){
     </div>}
     {view==='contacts'&&<div>
       <div className="card-title">Financial Contacts</div>
-      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your Financial Advisor</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
-      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your CPA / Accountant</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
+      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your Financial Advisor</div><div style={{fontSize:11,color:'#888'}}>Placeholder: this tab does not read any file yet.</div></div></div></div>
+      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your CPA / Accountant</div><div style={{fontSize:11,color:'#888'}}>Placeholder: this tab does not read any file yet.</div></div></div></div>
     </div>}
     {fridayHeldOn('federation')&&view==='wallet'&&<WalletPanel/>}
     {view==='quickref'&&<div>
@@ -17395,7 +17395,7 @@ function SetupResearchReview({ research, onChanged }) {
     return (
       <div className="sc-card">
         <h2 tabIndex={-1} data-sc-focus="">The search is running</h2>
-        <p className="sc-sub">It runs as a background task; you can watch it in the tray. Findings appear here for review, and nothing is kept until you accept it.</p>
+        <p className="sc-sub">It runs as a background task; you can watch it on its task card in System. Findings appear here for review, and nothing is kept until you accept it.</p>
       </div>
     );
   }
@@ -18048,7 +18048,7 @@ function SetupChat({ onDone }) {
                 <span className="sc-sr">{m.role === 'user' ? 'You: ' : (st.agent_name || fridayName()) + ': '}</span>
                 {m.text}
                 {m.model && <div className="sc-badge">{'Read by ' + m.model}</div>}
-                {m.task_id && <div className="sc-badge">Running as a background task: see the tray</div>}
+                {m.task_id && <div className="sc-badge">Running as a background task: see its task card in System</div>}
                 {m.link === 'windows_users' && (
                   <div className="sc-row"><button type="button" className="sc-btn" onClick={openWindowsUsers}>Open Windows' Other users page</button></div>
                 )}
@@ -28081,7 +28081,7 @@ function App(){
     let cut=r.lastIndexOf(' ',CHAT_RESULT_CAP);
     if(cut<CHAT_RESULT_CAP*0.8)cut=CHAT_RESULT_CAP;
     const remaining=r.length-cut;
-    return r.slice(0,cut)+`\n\n*(cut off here — ${remaining} more character${remaining===1?'':'s'}. Open this task in the Task Tray to read the rest.)*`;
+    return r.slice(0,cut)+`\n\n*(cut off here — ${remaining} more character${remaining===1?'':'s'}. Open this task's card in System and choose View Results to read the rest.)*`;
   };
   // ─── Background Task Runner (poll /api/tasks) ───
   const[bgTasks,setBgTasks]=useState([]);

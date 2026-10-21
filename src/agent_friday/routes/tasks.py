@@ -57,6 +57,8 @@ def list_tasks():
     "task complete" chat notification and for orb-syncing (the /api/processes
     poll already owns those orbs)."""
     tasks = _task_snapshot() or []
+    for t in tasks:
+        _task_status_word(t)
     # Liveness (TV7) for the rows a reader watches: a running task whose
     # heartbeat has gone stale renders as stalled, never as running; the
     # "now:" line, cost so far and last_seen come from the record.
@@ -151,6 +153,15 @@ def list_tasks():
     return jsonify(_serve_sealed({"tasks": tasks}, None, "list", events=len(tasks)))
 
 
+def _task_status_word(row):
+    """A task record the resume path saved as 'completed' (before it wrote
+    'complete') reads as 'complete', the status the task card has a word,
+    a View Results button and a lifetime for. The record itself is unchanged."""
+    if row.get('status') == 'completed':
+        row['status'] = 'complete'
+    return row
+
+
 def _queue_view():
     """Where each job stands in the Local AI queue: id -> position fields.
 
@@ -236,7 +247,7 @@ def _steps_as_log(steps):
 def get_task(task_id):
     task = _task_snapshot(task_id)
     if task:
-        row = dict(task)
+        row = _task_status_word(dict(task))
         _annotate_queue([row])
         return jsonify(_serve_sealed(row, task_id, "detail", events=1))
 
@@ -679,8 +690,10 @@ def resume_task(task_id):
                 _still = (TASKS.get(task_id) or {}).get('status') in ('running', 'queued')
             # A ledger resume ran the task's own worker, which already
             # recorded how it ended; do not report a failed run as completed.
+            # 'complete' is the task vocabulary: the card has a status word
+            # and a View Results button for it, and none for 'completed'.
             if _still:
-                _task_set(task_id, status='completed', result=text,
+                _task_set(task_id, status='complete', result=text,
                           ended=_time.time())
         except _tr.ResumeRefused as e:
             _task_set(task_id, status='interrupted', result=f"[Not resumed] {e}")

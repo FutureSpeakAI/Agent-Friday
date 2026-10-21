@@ -8165,16 +8165,16 @@ def _tool_spawn_task(inp):
         'tier': _tier or None,
         'model': _model,
         'message': (f"Spawned background task '{name}'." + _tier_note
-                    + " The user can watch progress in the Task Tray "
-                      "(bottom-right) and you can tell them you've started "
-                      "working on it."),
+                    + " The user can watch progress on its task card in "
+                      "System (Activity lists it) and you can tell them you've "
+                      "started working on it."),
     })
 
 
 # Register the spawn_task tool
 CLAUDE_TOOLS.append({
     "name": "spawn_task",
-    "description": "Start a background research or analysis task that runs while the user does other work. Use it for anything that takes a while (deep research, multi-step analysis, a long brief); it runs autonomously and the result appears in the Task Tray.",
+    "description": "Start a background research or analysis task that runs while the user does other work. Use it for anything that takes a while (deep research, multi-step analysis, a long brief); it runs autonomously and the result appears on its task card in System.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -8401,7 +8401,7 @@ def _tool_deep_research(inp):
                     f"{c.budget.get('fetches_total')} pages on local models, keeps a "
                     f"sealed copy of every page it cites, and reports into this "
                     f"conversation when it is done. It survives a restart. Progress "
-                    f"is in the Task Tray."),
+                    f"is on its task card in System."),
     })
 
 

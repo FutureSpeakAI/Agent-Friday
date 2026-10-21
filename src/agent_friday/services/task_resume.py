@@ -4,7 +4,8 @@ THE PROBLEM. Friday's desktop server dies with work in flight — sometimes a
 real crash, sometimes the recurring silent hang where the process is alive and
 ``friday.log`` simply stops. ``task_journal.reconcile_on_boot`` already notices
 and is honest about it: every running task is marked ``interrupted`` with
-"Nothing was resumed: re-run any of them from the Task Tray." Re-running from
+"Nothing was resumed: re-run any of them from their task cards in System."
+Re-running from
 the prompt throws away everything the task had already done — twenty minutes of
 searches, file reads, drafted output — and re-runs every side effect it had
 already taken. For a task that was mostly finished, that is the worst of both.
