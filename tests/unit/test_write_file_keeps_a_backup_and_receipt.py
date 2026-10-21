@@ -16,14 +16,19 @@ from pathlib import Path
 import pytest
 
 from agent_friday.services import action_journal as journal
-from agent_friday.services import file_write_receipts as fwr
 from agent_friday.services import item_actions
+
+try:
+    from agent_friday.services import file_write_receipts as fwr
+except ImportError:  # the old tree a red run is aimed at: its assertions fail, not this import
+    fwr = None
 
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(journal, "_path", lambda: tmp_path / "receipts.jsonl")
-    monkeypatch.setattr(fwr, "backups_root", lambda: tmp_path / "backups")
+    if fwr is not None:
+        monkeypatch.setattr(fwr, "backups_root", lambda: tmp_path / "backups")
     monkeypatch.setattr(journal, "home_trash", lambda rid: tmp_path / "trash" / rid)
     journal.reset()
     yield tmp_path
