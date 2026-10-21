@@ -100,6 +100,8 @@ def test_the_verify_script_knows_the_legs():
     src = (TESTS_PS / "verify-clean-install.ps1").read_text(encoding="utf-8")
     assert "[string] $ExpectCulture" in src and "[switch] $StandardUser" in src
     assert "Check 'standard-user'" in src and "Check 'locale'" in src
+    # The non-ASCII temp folder is a condition of the locale check, not a remark.
+    assert "$Machine.temp_non_ascii -and" in src
     assert "MACHINE.json" in src
     # A skipped check is named as skipped, never silently passed.
     assert "skipped = $true" in src
@@ -115,6 +117,12 @@ def test_the_standard_user_runs_as_itself_not_with_borrowed_environment():
     assert "S-1-5-32-544" in src  # refuses if the account is an administrator
     assert "SeBatchLogonRight" in src
     assert "-StandardUser" in src
+    # cmd reads "echo 0> f" as a redirect of handle 0: the exit code is redirected first,
+    # parsed strictly, and the result itself is read, not the exit code alone.
+    assert "echo %ERRORLEVEL%>" not in src
+    assert "'^\\d+$'" in src
+    assert "RESULT.json" in src and "'standard-user'" in src
+    assert "ACCOUNT.json" in src and "-ErrorAction Stop" in src
     # The password is generated, never a constant, and never printed.
     assert "RandomNumberGenerator" in src
     assert "Write-Host $plain" not in src and "Write-Host \"$plain" not in src
@@ -135,8 +143,16 @@ def test_the_release_writes_and_attaches_the_evidence_record():
     for leg in ("fresh-install-evidence", "clean-machine-evidence-locale-de-DE",
                 "clean-machine-evidence-standard-user"):
         assert f"--require {leg}" in run
-    assert "--require-prefix upgrade-evidence-" in run
+    # Every upgrade base in the matrix is required by name.
+    import re
+    bases = re.findall(r'"(v[0-9][^"]*)"', str(jobs["upgrade"]["strategy"]["matrix"]["base"]))
+    assert len(bases) >= 5
+    for b in bases:
+        assert f"--require upgrade-evidence-{b}" in run, b
+    assert "${{" not in run, "values reach the shell through env, not inline expressions"
     assert "artifact/release-evidence.json" in steps[pub[0]]["run"]
+    cm_upload = [s for s in jobs["clean-machine"]["steps"] if "upload-artifact" in str(s.get("uses"))][0]
+    assert cm_upload["with"]["if-no-files-found"] == "error"
     assert not steps[ev[0]].get("continue-on-error")
 
 
@@ -144,13 +160,15 @@ def _gate_rec(sha=SHA, verdict="green"):
     return {"verdict": verdict, "sha": sha, "workflows": {"tests.yml": [{"id": 1}]}}
 
 
-def _leg(root: Path, name: str, result, machine=None):
+def _leg(root: Path, name: str, result, machine=None, account=None):
     d = root / name
     d.mkdir(parents=True)
     if result is not None:
         (d / "RESULT.json").write_text(json.dumps(result), encoding="utf-8")
     if machine is not None:
         (d / "MACHINE.json").write_text(json.dumps(machine), encoding="utf-8")
+    if account is not None:
+        (d / "ACCOUNT.json").write_text(json.dumps(account), encoding="utf-8")
 
 
 def _installer(tmp: Path, good=True) -> Path:
@@ -166,7 +184,8 @@ def _all_legs(ev: Path):
     _leg(ev, "fresh-install-evidence", ok, {"ram_gb": 16})
     _leg(ev, "clean-machine-evidence-locale-de-DE", dict(ok, locale={"ok": True, "detail": "de-DE"}))
     _leg(ev, "clean-machine-evidence-standard-user",
-         dict(ok, address={"ok": True, "skipped": True, "detail": "needs admin"}))
+         dict(ok, address={"ok": True, "skipped": True, "detail": "needs admin"}),
+         account={"user": "fridaystd", "in_administrators": False, "groups": ["Users"]})
     _leg(ev, "upgrade-evidence-v1.2.0-beta.1", {"vault_decrypted": True, "label": "x"})
 
 
@@ -185,6 +204,31 @@ def test_a_complete_green_release_gets_a_record(tmp_path):
     assert rec["skipped_checks"] == {"clean-machine-evidence-standard-user": ["address"]}
     assert rec["legs"]["fresh-install-evidence"]["machine"] == {"ram_gb": 16}
     assert any("RAM" in s for s in rec["not_covered"])
+
+
+def test_only_the_permitted_skip_is_permitted(tmp_path):
+    m = _load("release_evidence")
+    ev = tmp_path / "evidence"
+    _all_legs(ev)
+    (ev / "fresh-install-evidence" / "RESULT.json").write_text(json.dumps(
+        {"install": {"ok": True, "detail": ""}, "health": {"ok": True, "skipped": True, "detail": ""}}),
+        encoding="utf-8")
+    _, problems = m.assemble(ev, _gate_rec(), SHA, "v1", None, REQ, ["upgrade-evidence-"])
+    assert any("may not be skipped" in p and "health" in p for p in problems)
+
+
+@pytest.mark.parametrize("account", [None, {"in_administrators": True}, {"in_administrators": None}])
+def test_the_standard_user_leg_needs_its_account_described_by_the_admin_side(tmp_path, account):
+    m = _load("release_evidence")
+    ev = tmp_path / "evidence"
+    _all_legs(ev)
+    acc = ev / "clean-machine-evidence-standard-user" / "ACCOUNT.json"
+    if account is None:
+        acc.unlink()
+    else:
+        acc.write_text(json.dumps(account), encoding="utf-8")
+    _, problems = m.assemble(ev, _gate_rec(), SHA, "v1", None, REQ, ["upgrade-evidence-"])
+    assert any("standard-user" in p and ("ACCOUNT" in p or "Administrators" in p) for p in problems)
 
 
 def test_a_missing_leg_refuses(tmp_path):
