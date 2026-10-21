@@ -7,7 +7,8 @@ undo handle at once; its shape follows the delivery-receipts design
 (docs/design/active/goals-and-delivery-receipts.md, section 5): a `rcpt_` id,
 the run it belongs to, a status, and per-item results.
 
-Receipts live in ~/.friday/actions/receipts.jsonl, one JSON object per line,
+Receipts are entries of kind "action" in the action ledger
+(services/action_ledger.py; before it, ~/.friday/actions/receipts.jsonl),
 append-only: an update (the action finished, or was undone) is a later line
 for the same id, and reading folds them. While the conversation is off the
 record, only what a receipt needs (the tool, the decision, the time, the id)
@@ -16,7 +17,6 @@ still works for the session and nothing about the things touched reaches disk.
 """
 from __future__ import annotations
 
-import json
 import os
 import secrets
 import threading
@@ -33,6 +33,8 @@ MAX_KEPT = 500
 
 
 def _path() -> Path:
+    """Where receipts were kept before the action ledger; read only by its
+    one-time migration."""
     from agent_friday.paths import friday_home
     return friday_home() / "actions" / "receipts.jsonl"
 
@@ -54,20 +56,18 @@ def _load() -> None:
     if _LOADED["done"]:
         return
     _LOADED["done"] = True
-    p = _path()
-    if not p.is_file():
-        return
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()[-4 * MAX_KEPT:]
-    except OSError:
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries(["action"], newest_first=True, limit=4 * MAX_KEPT)
+    except Exception:
         return
-    for line in lines:
-        try:
-            rec = json.loads(line)
-        except ValueError:
+    for e in reversed(rows):
+        rec = e.get("rec")
+        if not isinstance(rec, dict):
             continue
         rid = rec.get("receipt_id")
         if rid:
+            rec = {k: v for k, v in rec.items() if k != "_migrated"}
             _MEM[rid] = {**_MEM.get(rid, {}), **rec}
 
 
@@ -80,12 +80,11 @@ def _append(rec: dict) -> None:
             rec = {"receipt_id": rec.get("receipt_id"), "tool": rec.get("tool"),
                    "status": rec.get("status"), "at": rec.get("at")}
         rec["off_record"] = True
-    p = _path()
+    # One store for what Friday did: services/action_ledger.py (kind "action").
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, default=str) + "\n")
-    except OSError:
+        from agent_friday.services import action_ledger
+        action_ledger.append("action", rec)
+    except Exception:
         pass
 
 

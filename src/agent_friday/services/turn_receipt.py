@@ -103,10 +103,23 @@ def _sections(turn_id: str) -> List[dict]:
     return out
 
 
+def _ledger_rows(kind: str, turn_id: str, scan: int = 5000) -> List[dict]:
+    """This turn's records of one kind from the action ledger, oldest first,
+    looking back through at most `scan` of its newest entries of that kind."""
+    if not turn_id:
+        return []
+    try:
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries([kind], newest_first=True, limit=scan)
+    except Exception:
+        return []
+    return [e["rec"] for e in reversed(rows)
+            if isinstance(e.get("rec"), dict) and e["rec"].get("turn_id") == turn_id]
+
+
 def _models(turn_id: str) -> List[dict]:
-    from agent_friday.services import activity_ledger as _al
     out = []
-    for r in _tail_rows(_al.LEDGER_FILE, turn_id):
+    for r in _ledger_rows("activity", turn_id):
         if r.get("kind") != "model_invocation":
             continue
         out.append({k: r.get(k) for k in
@@ -125,9 +138,8 @@ def _egress(turn_id: str) -> Dict[str, int]:
 
 
 def _decisions(turn_id: str) -> List[dict]:
-    from agent_friday.governance import action_gate as _ag
     out = []
-    for r in _tail_rows(_ag.receipts_path(), turn_id):
+    for r in _ledger_rows("decision", turn_id):
         out.append({k: r.get(k) for k in
                     ("tool", "class", "decision", "chosen_by", "plan_version",
                      "surface") if r.get(k) is not None})

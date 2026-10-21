@@ -1,6 +1,6 @@
 """The privilege-ring check writes through the governance checkpoint's receipt.
 
-There is one signed receipt file, ~/.friday/decision-bom.jsonl, written by
+There is one signed receipt store, the action ledger (kind "decision"), written by
 governance.action_gate._receipt, which signs every entry or raises. The ring
 check used to keep its own file and append an entry unsigned when signing
 failed; it now goes through _receipt, and when the receipt cannot be written
@@ -28,8 +28,7 @@ def home(tmp_path, monkeypatch):
 
 
 def _rows(home):
-    p = home / "decision-bom.jsonl"
-    return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()] if p.exists() else []
+    return action_gate.receipts()              # the action ledger's decisions
 
 
 def test_ring_check_entry_is_signed_in_the_one_receipt_file(home):

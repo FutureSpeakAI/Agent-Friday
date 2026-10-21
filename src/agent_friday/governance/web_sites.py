@@ -159,8 +159,10 @@ def _write_raw(rows: Dict[str, Any]) -> None:
 def _history(event: Dict[str, Any]) -> None:
     entry = dict(event, at=time.time())
     entry["sig"] = _sign(entry)
-    with open(_history_path(), "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, default=str) + "\n")
+    # the one action ledger (services/action_ledger.py), kind "web_site";
+    # _history_path() is where history was kept before it
+    from agent_friday.services import action_ledger
+    action_ledger.append("web_site", entry)
 
 
 def all_sites() -> Dict[str, Any]:

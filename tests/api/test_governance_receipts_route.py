@@ -26,11 +26,14 @@ def test_receipts_route_returns_verified_entries_and_flags_a_tampered_one(client
     action_gate.authorize("search_web", {}, {"is_background_task": True, "task_id": "t-9"})
     action_gate.authorize("run_command", {"command": "Remove-Item x"},
                           {"is_background_task": True, "task_id": "t-9"})
-    path = home / "decision-bom.jsonl"
+    # decisions are entries in the action ledger (services/action_ledger.py)
+    from agent_friday.services import action_ledger
+    path = action_ledger.live_path()
     lines = path.read_text(encoding="utf-8").splitlines()
-    bad = json.loads(lines[1])
-    bad["decision"] = "allow"                     # a held action rewritten as allowed
-    lines[1] = json.dumps(bad)
+    i = next(n for n, ln in enumerate(lines) if '"run_command"' in ln)
+    bad = json.loads(lines[i])
+    bad["rec"]["decision"] = "allow"              # a held action rewritten as allowed
+    lines[i] = json.dumps(bad)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     r = client.get(f"/api/governance/receipts?since={time.time() - 3600}")

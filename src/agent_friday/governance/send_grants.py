@@ -242,8 +242,22 @@ def _write(rows: list) -> None:
 
 def _log(event: str, **fields) -> None:
     row = {"at": time.time(), "event": event, **fields}
-    with open(_log_path(), "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    # the one action ledger (services/action_ledger.py), kind "send_grant";
+    # _log_path() is where these rows were kept before it. Raises when it
+    # cannot be written, as the file write did.
+    from agent_friday.services import action_ledger
+    action_ledger.append("send_grant", row, durable=(event == "revoked"))
+
+
+def _log_rows(limit=None) -> list:
+    """The log, newest first, from the action ledger."""
+    from agent_friday.services import action_ledger
+    out = []
+    for e in action_ledger.entries(["send_grant"], newest_first=True, limit=limit):
+        rec = e.get("rec")
+        if isinstance(rec, dict):
+            out.append({k: v for k, v in rec.items() if k != "_migrated"})
+    return out
 
 
 def recipient_refusal(r) -> Optional[str]:
@@ -488,16 +502,9 @@ def _revoked_in_log() -> set:
     copy of send_grants.json (rows are signed one by one, with no generation)
     would otherwise come back to life."""
     out = set()
-    try:
-        for ln in _log_path().read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(ln)
-            except ValueError:
-                continue
-            if isinstance(row, dict) and row.get("event") == "revoked" and row.get("grant_id"):
-                out.add(str(row["grant_id"]))
-    except FileNotFoundError:
-        pass
+    for row in _log_rows():
+        if row.get("event") == "revoked" and row.get("grant_id"):
+            out.add(str(row["grant_id"]))
     return out
 
 
@@ -575,18 +582,9 @@ def _live_trusted() -> list:
 
 def log(limit: int = 50) -> list:
     try:
-        lines = _log_path().read_text(encoding="utf-8").splitlines()
+        return _log_rows(limit=max(0, int(limit)))
     except Exception:
         return []
-    out = []
-    for ln in reversed(lines):
-        try:
-            out.append(json.loads(ln))
-        except ValueError:
-            continue
-        if len(out) >= limit:
-            break
-    return out
 
 
 #: The kinds of outside content, as the card names them: (words in the plain source, the kind).

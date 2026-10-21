@@ -103,7 +103,7 @@ def test_a_covered_send_goes_without_a_card_and_every_use_is_logged(client):
     assert used[0]["schedule_id"] == "sch_weekly_status"
     assert listed["grants"][0]["uses"] == 1
     # The checkpoint's signed receipt names the grant behind the call.
-    bom = [json.loads(x) for x in action_gate.receipts_path().read_text(encoding="utf-8").splitlines()]
+    bom = action_gate.receipts()                  # the action ledger's decisions
     assert any(r.get("tool") == "draft_email" and r.get("grant") == g["grant_id"] for r in bom)
 
 

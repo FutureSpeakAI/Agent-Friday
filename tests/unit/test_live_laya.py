@@ -467,11 +467,12 @@ def test_the_receipt_has_sizes_and_no_content():
     summary = ll.close_leg(audio_bytes=3_200_000)
     ll.shutdown()
     assert summary["kinds"]["tool_result"] == {"count": 2, "chars": len(PRIVATE_BODY) * 11, "reduced_from": 0}
-    rows_ = [json.loads(x) for x in action_gate.receipts_path().read_text(encoding="utf-8").splitlines() if x.strip()]
+    rows_ = action_gate.receipts()             # the action ledger's decisions
     mine = [r for r in rows_ if r.get("decision") == "live_egress_receipt"]
     assert mine and action_gate.verify_receipt(mine[-1])
     assert mine[-1]["kinds"]["context_slice"]["chars"] == 5000 and mine[-1]["audio_bytes"] == 3_200_000
-    raw = action_gate.receipts_path().read_text(encoding="utf-8")
+    from agent_friday.services import action_ledger
+    raw = action_ledger.live_path().read_text(encoding="utf-8")
     assert "ZEBRA" not in raw and "QUOKKA" not in raw and "confidential" not in raw
 
 

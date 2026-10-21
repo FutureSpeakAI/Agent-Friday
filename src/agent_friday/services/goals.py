@@ -732,10 +732,11 @@ def _append_receipt(goal_id: str, receipt: Dict[str, Any]) -> Optional[Dict[str,
         return goal
     goal = _mutate_goal(goal_id, _fn)
     try:
-        RECEIPTS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        # the one action ledger (services/action_ledger.py), kind "goal";
+        # RECEIPTS_LOG is where these lines were kept before it
+        from agent_friday.services import action_ledger
         with _RECEIPTS_LOCK:
-            with RECEIPTS_LOG.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(receipt, ensure_ascii=False, default=str) + "\n")
+            action_ledger.append("goal", receipt)
     except Exception as e:
         _log.error("receipt log append FAILED: %s", e)
     return goal

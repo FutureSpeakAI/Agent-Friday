@@ -80,7 +80,7 @@ def test_moving_to_a_new_pc_holds_outward_actions_until_the_owner_repins(client,
 
     assert action_gate.verify_claws() == (True, "intact")
     assert _outward().action != "deny"
-    rows = [json.loads(x) for x in (tmp_path / "decision-bom.jsonl").read_text().splitlines()]
+    rows = action_gate.receipts()                      # the action ledger's decisions
     assert any(r.get("tool") == "governance:repin_claws" and r.get("hmac") for r in rows)
 
 

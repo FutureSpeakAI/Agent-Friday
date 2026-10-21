@@ -174,8 +174,8 @@ def test_no_key_means_no_hash_not_an_unsalted_one(monkeypatch):
 # --- chosen_by / plan_version in the decision log -------------------------------
 
 def _rows(home):
-    p = home / "decision-bom.jsonl"
-    return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()]
+    from agent_friday.governance import action_gate as _ag
+    return _ag.receipts()                      # the action ledger's decisions
 
 
 def _verify(row):

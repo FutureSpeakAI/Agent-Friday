@@ -3833,6 +3833,7 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_instructions.js"></script>
     <!-- A tested change: both texts, the difference, the evidence, Keep current / Use new (defines window.FridayTrialCard). -->
     <script src="/static/friday_trial_card.js"></script>
+    <script src="/static/friday_ledger.js"></script>
     <script src="/static/friday_sites.js"></script>
     <script src="/static/friday_bundles.js"></script>
     <script src="/static/friday_salon.js"></script>
@@ -70145,11 +70146,17 @@ function App() {
   const [activityEvents, setActivityEvents] = useState([]);
   const [activityKind, setActivityKind] = useState('');
   const [activityFilter, setActivityFilter] = useState('');
+  // The one action ledger (static/friday_ledger.js): activity rows and every
+  // receipt, newest first, and whether the chain is intact.
+  const [activityLedger, setActivityLedger] = useState(null);
   useEffect(() => {
     if (!activityOpen || activityTab !== 'activity') return;
     let active = true;
-    const tick = () => fetch('/api/activity?limit=200' + (activityKind ? '&kind=' + encodeURIComponent(activityKind) : '')).then(r => r.json()).then(d => {
-      if (active) setActivityEvents(d.events || []);
+    const tick = () => fetch('/api/ledger?limit=200').then(r => r.json()).then(d => {
+      if (active) {
+        setActivityEvents(window.fridayLedgerEvents ? window.fridayLedgerEvents(d) : []);
+        setActivityLedger(d.ledger || null);
+      }
     }).catch(() => {});
     tick();
     const iv = setInterval(tick, 4000);
@@ -70157,7 +70164,7 @@ function App() {
       active = false;
       clearInterval(iv);
     };
-  }, [activityOpen, activityKind, activityTab]);
+  }, [activityOpen, activityTab]);
   const [threadSteps, setThreadSteps] = useState([]);
   const [taskLog, setTaskLog] = useState(null);
   const [taskMeta, setTaskMeta] = useState(null);
@@ -73050,7 +73057,15 @@ function App() {
     value: "subagent_spawn"
   }, "subagent spawns"), /*#__PURE__*/React.createElement("option", {
     value: "reasoning_trace"
-  }, "reasoning traces")), activityTab === 'activity' ? /*#__PURE__*/React.createElement("input", {
+  }, "reasoning traces"), /*#__PURE__*/React.createElement("option", {
+    value: "decision"
+  }, "checkpoint decisions"), /*#__PURE__*/React.createElement("option", {
+    value: "action"
+  }, "changes to your things"), /*#__PURE__*/React.createElement("option", {
+    value: "goal"
+  }, "goal receipts"), /*#__PURE__*/React.createElement("option", {
+    value: "dissent"
+  }, "pushback")), activityTab === 'activity' ? /*#__PURE__*/React.createElement("input", {
     value: activityFilter,
     onChange: e => setActivityFilter(e.target.value),
     placeholder: "filter\u2026",
@@ -73079,7 +73094,9 @@ function App() {
       cursor: 'pointer',
       fontSize: 12
     }
-  }, "\u2715")), activityTab === 'traces' ? /*#__PURE__*/React.createElement(TracesViewer, null) : /*#__PURE__*/React.createElement("div", {
+  }, "\u2715")), activityTab === 'activity' && window.FridayLedgerStrip && /*#__PURE__*/React.createElement(window.FridayLedgerStrip, {
+    ledger: activityLedger
+  }), activityTab === 'traces' ? /*#__PURE__*/React.createElement(TracesViewer, null) : /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       overflowY: 'auto',
@@ -73087,7 +73104,7 @@ function App() {
     }
   }, (() => {
     const f = activityFilter.trim().toLowerCase();
-    const shown = activityEvents.filter(ev => !f || JSON.stringify(ev).toLowerCase().includes(f));
+    const shown = activityEvents.filter(ev => (!activityKind || ev.kind === activityKind) && (!f || JSON.stringify(ev).toLowerCase().includes(f)));
     if (shown.length === 0) return /*#__PURE__*/React.createElement("div", {
       style: {
         textAlign: 'center',
@@ -73101,7 +73118,11 @@ function App() {
       model_invocation: '🧠',
       tool_call: '🔧',
       subagent_spawn: '🤖',
-      reasoning_trace: '💭'
+      reasoning_trace: '💭',
+      decision: '🛡',
+      action: '📁',
+      goal: '🎯',
+      dissent: '✋'
     };
     return shown.map((ev, i) => {
       const when = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '';
@@ -73144,7 +73165,7 @@ function App() {
         style: {
           color: ev.ok ? '#3effa1' : '#f87171'
         }
-      }, ev.ok ? 'ok' : 'deny/err')) : ev.kind === 'subagent_spawn' ? /*#__PURE__*/React.createElement("span", null, "spawn ", ev.description || ev.task_id || '') : ev.kind === 'reasoning_trace' ? /*#__PURE__*/React.createElement("span", null, ev.parent_id ? '↳ ' : '', ev.trace_kind || 'trace', " \xB7 ", /*#__PURE__*/React.createElement("span", {
+      }, ev.ok ? 'ok' : 'deny/err')) : ev.kind === 'subagent_spawn' ? /*#__PURE__*/React.createElement("span", null, "spawn ", ev.description || ev.task_id || '') : ev.label ? /*#__PURE__*/React.createElement("span", null, ev.label, ev.summary ? ' · ' + ev.summary : '', ev.migrated ? ' · brought in from an older file' + (ev.legacy_verified === false ? ' (its own signature did not check)' : '') : '') : ev.kind === 'reasoning_trace' ? /*#__PURE__*/React.createElement("span", null, ev.parent_id ? '↳ ' : '', ev.trace_kind || 'trace', " \xB7 ", /*#__PURE__*/React.createElement("span", {
         style: {
           color: seatColor
         }

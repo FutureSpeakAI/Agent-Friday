@@ -219,24 +219,20 @@ def _routines(now):
 
 def _activity(now):
     from agent_friday.services import activity_ledger
-    path = Path(activity_ledger.LEDGER_FILE)
-    if not path.exists():
-        return [], None, "No local activity has been recorded."
-    # Read only a bounded tail, discarding the first partial line. No prompt,
-    # tool arguments, task descriptions or result bodies enter the card.
-    with path.open("rb") as stream:
-        size = stream.seek(0, 2)
-        stream.seek(max(0, size - 256 * 1024))
-        raw = stream.read(256 * 1024)
-    lines = raw.splitlines()
-    if size > len(raw):
-        lines = lines[1:]
     day = datetime.fromtimestamp(now).date()
     since = datetime.combine(day, datetime.min.time()).timestamp()
+    # A bounded read of today's rows from the action ledger, newest first. No
+    # prompt, tool arguments, task descriptions or result bodies enter the card.
+    from agent_friday.services import action_ledger
+    if not action_ledger.summary().get("intact", True):
+        # a record that cannot be read in full is never shown as a quiet day
+        raise ValueError("the activity record could not be read in full")
+    rows = activity_ledger.read(limit=5000, since=since, until=now)
+    if not rows and not activity_ledger.read(limit=1):
+        return [], None, "No local activity has been recorded."
     counts = {"model_invocation": 0, "tool_call": 0, "subagent_spawn": 0}
     latest = None
-    for line in lines:
-        row = json.loads(line)
+    for row in rows:
         if not isinstance(row, dict):
             raise ValueError("invalid activity record")
         stamp = _number(row.get("ts"))
@@ -245,9 +241,9 @@ def _activity(now):
         if row.get("kind") in counts:
             counts[row["kind"]] += 1
             latest = max(latest or 0, stamp)
-    detail = "Metadata from the latest 256 KiB of local activity; counts can be partial on busy days."
+    detail = "Metadata from the newest 5,000 rows of today's local activity; counts can be partial on busy days."
     if latest is None:
-        return [], path.stat().st_mtime, detail
+        return [], None, detail
     body = f"{counts['tool_call']} tool calls · {counts['model_invocation']} model calls · {counts['subagent_spawn']} tasks started in today's recent local activity."
     expiry = (datetime.combine(day, datetime.min.time()) + timedelta(days=1)).timestamp()
     return [_record("today", "Today's activity", body, updated=latest, priority=30, expires=expiry)], latest, detail

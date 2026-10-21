@@ -165,8 +165,8 @@ def test_an_allowed_action_consumes_one_use_and_leaves_a_receipt(home):
     assert out["decision"] == "allow", out
     g = next(g for g in gate.list_grants() if g["scope"] == cct.scope("t6"))
     assert g["uses_left"] == cct.GRANT_USES - 1
-    receipts = (home / "decision-bom.jsonl").read_text(encoding="utf-8")
-    line = json.loads(receipts.strip().splitlines()[-1])
+    from agent_friday.governance import action_gate
+    line = action_gate.receipts()[-1]           # the action ledger's decisions
     assert line.get("tool") == cct.ACTION_TOOL and line.get("decision") == "allow"
     assert line.get("task_id") == "t6"
 

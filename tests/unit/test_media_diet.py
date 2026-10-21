@@ -55,7 +55,7 @@ def test_an_approved_rule_is_applied_with_a_receipt(_isolate):
     kept, removed = media_diet.enforce(ITEMS, "briefing")
     assert [i["title"] for i in kept] == ["Council passes the budget"]
     assert {i["title"] for i in removed} == {"Senate vote tonight", "Storm closes the road"}
-    log = [json.loads(x) for x in media_diet.receipts_path().read_text(encoding="utf-8").splitlines()]
+    log = list(reversed(media_diet.recent_receipts(50)))   # from the action ledger
     assert log[-1]["where"] == "briefing" and log[-1]["rule"] == "Never cite Fox News"
     assert sorted(log[-1]["removed"]) == ["Senate vote tonight", "Storm closes the road"]
 

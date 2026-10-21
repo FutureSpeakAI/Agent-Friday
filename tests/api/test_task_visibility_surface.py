@@ -205,13 +205,15 @@ def test_observer_gets_reasoning_only_through_the_gate_with_a_ledger_row(client,
     d = r.get_json()
     assert d["sealed_for"] == "observer" and d["redacted_fields"] >= 1
     assert all(p == "observer" for p, _ in seen) and any(f == "task_journal.text" for _, f in seen)
-    rows = [json.loads(l) for l in (tmp_path / "activity.jsonl").read_text().splitlines()]
+    from agent_friday.services import activity_ledger as al
+    rows = list(reversed(al.read(limit=1000)))     # activity rows live in the action ledger
     jr = [x for x in rows if x["kind"] == "journal_read"]
     assert jr and jr[-1]["principal"] == "observer" and jr[-1]["reasoning"] is True and jr[-1]["redacted"] >= 1
     # the user's own read of the same thing writes no egress row
     n = len(jr)
     client.get(f"/api/tasks/{tid}/digest?reasoning=1")
-    rows = [json.loads(l) for l in (tmp_path / "activity.jsonl").read_text().splitlines()]
+    from agent_friday.services import activity_ledger as al
+    rows = list(reversed(al.read(limit=1000)))     # activity rows live in the action ledger
     assert len([x for x in rows if x["kind"] == "journal_read"]) == n
 
 

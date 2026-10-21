@@ -565,7 +565,7 @@ def test_signed_receipts_hold_only_the_receipt(off_record):
     action_gate._receipt({"tool": "send_email", "class": "outward", "decision": "card",
                           "reason": "sending " + m, "target": m + "@example.com",
                           "args_hash": "0" * 64, "surface": "chat"})
-    last = json.loads(action_gate.receipts_path().read_text(encoding="utf-8").splitlines()[-1])
+    last = action_gate.receipts()[-1]          # the action ledger's decisions
     assert m not in json.dumps(last)
     assert {"tool", "class", "decision", "timestamp"} <= set(last)
     assert "args_hash" not in last and "reason" not in last and "target" not in last

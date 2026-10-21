@@ -1123,14 +1123,32 @@ def _receipt(entry: dict) -> None:
     entry = dict(entry, timestamp=datetime.utcnow().isoformat() + "Z")
     canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
     entry["hmac"] = _hmac.new(_governance_key(), canonical, hashlib.sha256).hexdigest()
-    path = receipts_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, default=str) + "\n")
+    # One store for what Friday did (services/action_ledger.py): the decision
+    # is an entry in the hash-chained ledger, written to disk (fsync) before
+    # the action runs. The entry keeps its own HMAC as well, so a decision can
+    # still be checked on its own (verify_receipt).
+    from agent_friday.services import action_ledger
+    action_ledger.append("decision", entry, durable=True)
 
 
 def receipts_path() -> Path:
+    """Where decisions were kept before the action ledger. Read only by the
+    one-time migration (action_ledger.migrate_legacy); nothing writes it."""
     return Path(friday_home()) / "decision-bom.jsonl"
+
+
+def receipts(*, newest_first: bool = False, limit: Optional[int] = None,
+             where=None, with_seq: bool = False) -> list:
+    """Every decision receipt, from the action ledger: the signed entry as
+    `_receipt` wrote it (`with_seq` adds `_seq`, its place in the ledger)."""
+    from agent_friday.services import action_ledger
+    out = []
+    for e in action_ledger.entries(["decision"], newest_first=newest_first, limit=limit,
+                                   where=where):
+        r = e.get("rec")
+        if isinstance(r, dict):
+            out.append(dict(r, _seq=e.get("seq")) if with_seq else dict(r))
+    return out
 
 
 def verify_receipt(entry: dict, key: Optional[bytes] = None) -> bool:
@@ -1143,7 +1161,9 @@ def verify_receipt(entry: dict, key: Optional[bytes] = None) -> bool:
     sig = entry.get("hmac")
     if not isinstance(sig, str) or not sig:
         return False
-    body = {k: v for k, v in entry.items() if k != "hmac"}
+    # `_seq` (its place in the action ledger) and `_migrated` (where an old
+    # receipt came from) are added after signing and are not part of it.
+    body = {k: v for k, v in entry.items() if k not in ("hmac", "_seq", "_migrated")}
     try:
         k = key or _governance_key()
         canonical = json.dumps(body, sort_keys=True, default=str).encode("utf-8")
@@ -1307,6 +1327,9 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
     ok, integrity = verify_claws()
     if not ok:
         return Verdict("deny", klass, f"held: cLaws integrity check failed -- {integrity}")
+    hold = outward_hold()
+    if hold:
+        return Verdict("deny", klass, f"held: {hold}")
     # A send the owner pre-approved (named recipients; a job's or skill's
     # sends to them). Its id becomes the owner's decision behind the call
     # (DECIDED), which the sending handler re-verifies for the exact message
@@ -1350,6 +1373,23 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
     return Verdict("card", klass, why)
 
 
+def outward_hold() -> Optional[str]:
+    """Why every outward action waits right now, or None. Read on every
+    outward decision, after the cLaws check:
+
+    * the action ledger has a break the owner has not looked at
+      (services/action_ledger.hold_reason): a receipt changed, removed or
+      reordered on disk.
+
+    A check that cannot run holds: the reason names what failed."""
+    try:
+        from agent_friday.services import action_ledger
+        why = action_ledger.hold_reason()
+    except Exception as e:  # noqa: BLE001 - fail closed
+        why = "the action ledger could not be checked (%s)" % type(e).__name__
+    return why or None
+
+
 class Held(RuntimeError):
     """An outward action the checkpoint would not let through."""
 
@@ -1371,6 +1411,9 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
         raise Held(f"the cLaws integrity check could not run ({e})")
     if not ok:
         raise Held(f"the cLaws integrity check failed ({why})")
+    hold = outward_hold()
+    if hold:
+        raise Held(hold)
     try:
         _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
                   "surface": surface,

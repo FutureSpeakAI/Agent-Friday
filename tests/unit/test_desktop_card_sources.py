@@ -129,15 +129,17 @@ def test_routines_use_actual_handler_mapping_and_do_not_claim_template_monitorin
 
 
 def test_activity_is_bounded_metadata_only_and_rolls_its_automatic_identity_each_day(local_sources, monkeypatch):
-    from agent_friday.services import activity_ledger
-    path = local_sources / "activity.jsonl"
-    monkeypatch.setattr(activity_ledger, "LEDGER_FILE", path)
-    path.write_text("\n".join(json.dumps(row) for row in [
+    # activity rows are entries of the action ledger (services/action_ledger.py);
+    # rows with fields the card must never show are planted there directly
+    from agent_friday.services import action_ledger
+    for row in [
         {"ts": NOW - 10, "kind": "tool_call", "description": "PRIVATE DESCRIPTION"},
         {"ts": NOW - 20, "kind": "model_invocation", "prompt": "PRIVATE PROMPT"},
         {"ts": NOW - 30, "kind": "subagent_spawn"},
         {"ts": NOW - 5, "kind": "tool_call", "off_record": True},
-        {"ts": NOW - 86400, "kind": "tool_call"}]) + "\n", encoding="utf-8")
+        {"ts": NOW - 86400, "kind": "tool_call"}]:
+        action_ledger.append("activity", row)
+    path = action_ledger.live_path()
     before = path.read_bytes()
     records, stamp, detail = sources._activity(NOW)
     assert len(records) == 1 and stamp == NOW - 10
@@ -152,10 +154,11 @@ def test_activity_is_bounded_metadata_only_and_rolls_its_automatic_identity_each
 
 
 def test_partial_or_corrupt_activity_never_claims_an_empty_success(local_sources, monkeypatch):
-    from agent_friday.services import activity_ledger
-    path = local_sources / "activity.jsonl"
-    path.write_text('{"kind":', encoding="utf-8")
-    monkeypatch.setattr(activity_ledger, "LEDGER_FILE", path)
+    from agent_friday.services import action_ledger
+    action_ledger.append("activity", {"ts": NOW - 10, "kind": "tool_call"})
+    with open(action_ledger.live_path(), "a", encoding="utf-8") as f:
+        f.write('{"kind":\n')
+    action_ledger.reset_caches()
     with pytest.raises(ValueError):
         sources._activity(NOW)
 

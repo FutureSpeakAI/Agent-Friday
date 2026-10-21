@@ -27804,12 +27804,15 @@ function App(){
   const[activityEvents,setActivityEvents]=useState([]);
   const[activityKind,setActivityKind]=useState('');
   const[activityFilter,setActivityFilter]=useState('');
+  // The one action ledger (static/friday_ledger.js): activity rows and every
+  // receipt, newest first, and whether the chain is intact.
+  const[activityLedger,setActivityLedger]=useState(null);
   useEffect(()=>{
     if(!activityOpen||activityTab!=='activity')return;let active=true;
-    const tick=()=>fetch('/api/activity?limit=200'+(activityKind?'&kind='+encodeURIComponent(activityKind):'')).then(r=>r.json()).then(d=>{if(active)setActivityEvents(d.events||[])}).catch(()=>{});
+    const tick=()=>fetch('/api/ledger?limit=200').then(r=>r.json()).then(d=>{if(active){setActivityEvents(window.fridayLedgerEvents?window.fridayLedgerEvents(d):[]);setActivityLedger(d.ledger||null)}}).catch(()=>{});
     tick();const iv=setInterval(tick,4000);
     return()=>{active=false;clearInterval(iv)};
-  },[activityOpen,activityKind,activityTab]);
+  },[activityOpen,activityTab]);
   const [threadSteps, setThreadSteps] = useState([]);
   const [taskLog, setTaskLog] = useState(null);
   const [taskMeta, setTaskMeta] = useState(null);
@@ -29489,16 +29492,21 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           <option value="tool_call">tool calls</option>
           <option value="subagent_spawn">subagent spawns</option>
           <option value="reasoning_trace">reasoning traces</option>
+          <option value="decision">checkpoint decisions</option>
+          <option value="action">changes to your things</option>
+          <option value="goal">goal receipts</option>
+          <option value="dissent">pushback</option>
         </select>}
         {activityTab==='activity'?<input value={activityFilter} onChange={e=>setActivityFilter(e.target.value)} placeholder="filter…" style={{flex:1,minWidth:0,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,color:'#ccc',fontSize:9,fontFamily:'JetBrains Mono',padding:'2px 6px',outline:'none'}}/>:<span style={{flex:1}}/>}
         <button aria-label={'Close activity'} title={'Close activity'} onClick={()=>setActivityOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:12}}>✕</button>
       </div>
+      {activityTab==='activity'&&window.FridayLedgerStrip&&<window.FridayLedgerStrip ledger={activityLedger}/>}
       {activityTab==='traces'?<TracesViewer/>:<div style={{flex:1,overflowY:'auto',padding:'6px 10px'}}>
         {(()=>{
           const f=activityFilter.trim().toLowerCase();
-          const shown=activityEvents.filter(ev=>!f||JSON.stringify(ev).toLowerCase().includes(f));
+          const shown=activityEvents.filter(ev=>(!activityKind||ev.kind===activityKind)&&(!f||JSON.stringify(ev).toLowerCase().includes(f)));
           if(shown.length===0)return <div style={{textAlign:'center',color:'#666',fontSize:10,padding:24,fontFamily:'JetBrains Mono'}}>No activity recorded{f?' matching filter':''} yet.</div>;
-          const ICO={model_invocation:'🧠',tool_call:'🔧',subagent_spawn:'🤖',reasoning_trace:'💭'};
+          const ICO={model_invocation:'🧠',tool_call:'🔧',subagent_spawn:'🤖',reasoning_trace:'💭',decision:'🛡',action:'📁',goal:'🎯',dissent:'✋'};
           return shown.map((ev,i)=>{
             const when=ev.ts?new Date(ev.ts*1000).toLocaleTimeString():'';
             const seatColor=ev.seat==='local'?'#f59e0b':'#00d4ff';
@@ -29513,6 +29521,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
               <span style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                 {ev.kind==='tool_call'?<span>{ev.tool} <span style={{color:ev.ok?'#3effa1':'#f87171'}}>{ev.ok?'ok':'deny/err'}</span></span>
                  :ev.kind==='subagent_spawn'?<span>spawn {ev.description||ev.task_id||''}</span>
+                 :ev.label?<span>{ev.label}{ev.summary?' · '+ev.summary:''}{ev.migrated?' · brought in from an older file'+(ev.legacy_verified===false?' (its own signature did not check)':''):''}</span>
                  :ev.kind==='reasoning_trace'?<span>{ev.parent_id?'↳ ':''}{ev.trace_kind||'trace'} · <span style={{color:seatColor}}>{ev.model||'?'}{ev.seat?' · '+ev.seat:''}</span>{ev.source?' · '+window.fridayTraceStore.label(ev.source):''}{ev.reasoning_chars?' · '+ev.reasoning_chars+' chars':''}{ev.tool_calls?' · 🔧'+ev.tool_calls:''}{ev.ledger_seq!=null?' · #'+ev.ledger_seq:''}</span>
                  :<span style={{color:seatColor}}>{ev.model||'?'}{ev.seat?' · '+ev.seat:''}</span>}
               </span>

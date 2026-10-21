@@ -216,7 +216,7 @@ def test_through_the_real_tool_path_a_draft_runs_with_no_card_and_is_receipted(g
     assert out.get("saved") is True, out
     assert _cards() == [] and approvals.list_approvals(kind=gs.APPROVAL_KIND) == []
     assert "CONFIRMATION REQUIRED" not in json.dumps(out)
-    bom = [json.loads(x) for x in action_gate.receipts_path().read_text(encoding="utf-8").splitlines()]
+    bom = action_gate.receipts()               # the action ledger's decisions
     mine = [r for r in bom if r.get("tool") == "draft_email"]
     assert mine and mine[-1]["class"] == action_gate.INTERNAL and mine[-1]["decision"] == "allow"
     assert "own-mailbox" in mine[-1]["reason"]

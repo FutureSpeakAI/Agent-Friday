@@ -504,6 +504,21 @@ if not _TESTING:
     except Exception as _ph_err:
         print(f"  Published pages: hosting not started ({_ph_err})")
 
+    # The action ledger (services/action_ledger.py): bring any receipts still
+    # in the files each part of Friday used to keep into the one chain, then
+    # check every line once, so a break found now is on Activity and holds
+    # outward actions from the first one.
+    def _ledger_boot():
+        try:
+            from agent_friday.services import action_ledger as _al
+            _al.migrate_legacy()
+            rep = _al.verify(force=True)
+            if not rep.get("ok"):
+                print(f"  Action ledger: {rep.get('open_problem_count')} break(s) to review in Activity; outward actions held")
+        except Exception as _al_err:
+            print(f"  Action ledger: could not be checked at start ({_al_err})")
+    threading.Thread(target=_ledger_boot, daemon=True, name="action-ledger-boot").start()
+
     # Adopt whatever was running when the previous process died.
     #
     # Storage survived a restart; execution never did — a research commission
