@@ -853,11 +853,14 @@ def _gate_text(text: str, provider: str, field: str,
     A tool result in the data envelope (services/untrusted_input) is judged by
     what is inside it, exactly as an unwrapped one is (so a JSON result still
     gets its field-wise rescue), and leaves wrapped again. Withheld whole, it
-    is "" as before, and the caller puts its own withheld notice in its place."""
+    is "" as before, and the caller puts its own withheld notice in its place.
+    Envelopes nested inside one another are peeled in one linear pass
+    (untrusted_input.unwrap_all) and the output leaves inside exactly one."""
     from agent_friday.services import untrusted_input as _ui
-    inner, wrapped = _ui.split(text)
-    if wrapped:
-        gated = _gate_text(inner, provider, field, log_path)
+    inner, depth = _ui.unwrap_all(text)
+    if depth:
+        with _held_scope(provider):
+            gated = _gate_text_held(inner, provider, field, log_path)
         return _ui.wrap(gated) if gated else ""
     with _held_scope(provider):
         return _gate_text_held(text, provider, field, log_path)
