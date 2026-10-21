@@ -511,6 +511,8 @@ if not _TESTING:
     def _ledger_boot():
         try:
             from agent_friday.services import action_ledger as _al
+            # check what is there before anything is written to it
+            _al.verify(force=True, migrate=False)
             _al.migrate_legacy()
             rep = _al.verify(force=True)
             if not rep.get("ok"):

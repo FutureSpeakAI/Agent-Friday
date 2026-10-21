@@ -247,3 +247,47 @@ def test_undo_reads_only_lines_the_ledger_signed():
     action_journal.reset()
     assert action_journal.get("rcpt_genuine0001")
     assert action_journal.get("rcpt_forged00001") is None
+
+
+# ── security review round 2 ─────────────────────────────────────────────────
+
+def test_a_deleted_ledger_is_not_covered_by_the_next_start():
+    import shutil
+    for i in range(3):
+        L.append("probe", {"i": i}, durable=True)
+    shutil.rmtree(L.ledger_dir())
+    L.reset_caches()                                  # a restart
+    L.verify(force=True, migrate=False)
+    L.migrate_legacy()                                # the boot sequence
+    assert L.hold_reason(), "a deleted ledger passed after the first start"
+    L.append("probe", {"i": "after"}, durable=True)   # and the first new entry does not cover it
+    L.reset_caches()
+    assert L.hold_reason()
+
+
+def test_an_older_copy_put_back_is_not_covered_by_the_first_append():
+    for i in range(3):
+        L.append("probe", {"i": i}, durable=True)
+    old = {p.name: p.read_bytes() for p in L.ledger_dir().iterdir() if p.is_file()}
+    for i in range(3, 6):
+        L.append("probe", {"i": i}, durable=True)
+    for name, data in old.items():
+        (L.ledger_dir() / name).write_bytes(data)
+    L.reset_caches()                                  # a restart
+    L.append("activity", {"kind": "tool_call", "tool": "x"})
+    assert L.hold_reason()
+
+
+def test_an_edit_inside_a_sealed_segment_with_its_time_put_back_is_caught(monkeypatch):
+    import os
+    monkeypatch.setattr(L, "SEGMENT_MAX", 600)
+    for i in range(12):
+        L.append("probe", {"i": i, "pad": "x" * 60})
+    assert L.verify()["ok"]
+    seg = sorted((L.ledger_dir() / "segments").glob("*.jsonl"))[0]
+    st = seg.stat()
+    data = seg.read_bytes()
+    seg.write_bytes(data.replace(b'"i":1,', b'"i":7,', 1))
+    os.utime(seg, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert seg.stat().st_size == st.st_size
+    assert not L.verify(force=True)["ok"]

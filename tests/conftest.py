@@ -400,11 +400,21 @@ def _own_action_ledger(tmp_path_factory, monkeypatch):
     next one's reads, and a test that breaks the chain on purpose must not hold
     the outward actions of the tests after it. FRIDAY_LEDGER_DIR is honoured
     only with FRIDAY_TESTING=1."""
-    monkeypatch.setenv("FRIDAY_LEDGER_DIR", str(tmp_path_factory.mktemp("ledger")))
+    import uuid
+    # a name never used before: a test that removes its ledger folder must not
+    # hand the same path (and so the same anchor) to the next test
+    monkeypatch.setenv("FRIDAY_LEDGER_DIR",
+                       str(tmp_path_factory.mktemp("ledger-" + uuid.uuid4().hex[:12])))
     try:
         from agent_friday.services import action_ledger, action_journal
         action_ledger.reset_caches()
         action_journal.reset()
+    except Exception:
+        pass
+    try:
+        # safe mode is decided once per process; each test decides afresh
+        from agent_friday.services import safe_mode
+        safe_mode.reset_for_tests()
     except Exception:
         pass
     yield

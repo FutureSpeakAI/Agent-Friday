@@ -309,8 +309,23 @@ def _anchor_set(seq: int, h: str) -> str:
 def _move_anchor_locked(seq: int, h: str, *, force: bool = False) -> None:
     """Move the anchor forward to (seq, h). Never backwards unless `force`
     (the owner acknowledged the loss, or a restore). Best effort: a failure
-    leaves the old anchor, which can only make a later check stricter."""
+    leaves the old anchor, which can only make a later check stricter.
+
+    The first move in a process reads the stored anchor and moves it only when
+    the chain on disk still holds the anchored record (same seq, same hash):
+    a ledger deleted or put back from an earlier copy keeps the old anchor, so
+    verify() reports the break instead of the first new entry covering it."""
     cur = _STATE.get("anchor_seq")
+    if not force and cur is None:
+        try:
+            stored, _where = anchor_get()
+        except Exception:
+            return                              # unreadable: leave it; verify() holds
+        if stored is not None:
+            aseq, ahash = stored
+            if seq < aseq or _hash_at(aseq) != ahash:
+                return                          # the chain lost the anchored record
+            _STATE["anchor_seq"] = cur = aseq
     if not force and cur is not None and seq <= cur:
         return
     try:
@@ -802,7 +817,10 @@ def _walk(path: Path, key: Optional[bytes], is_live: bool) -> dict:
         if e is None:
             if (is_live and not terminated and idx == len(rows) - 1
                     and _someone_else_writing()):
-                continue                         # another process is mid-line
+                digest = hashlib.sha256(raw).hexdigest()
+                if _STATE.get("torn_seen") != digest:
+                    _STATE["torn_seen"] = digest
+                    continue                     # another process is mid-line (once)
             res["problems"].append(_problem(label, n, raw,
                                             "unreadable line" if terminated
                                             else "an unfinished write"))
@@ -846,11 +864,18 @@ def _walk(path: Path, key: Optional[bytes], is_live: bool) -> dict:
 
 
 def _hash_at(seq: int) -> Optional[str]:
-    for p in segments():
+    """The stored hash of record `seq`, read from the newest end (the anchor
+    is usually near the tip)."""
+    for p in reversed(segments()):
         try:
-            for e, _raw, _n, _t in _iter_lines(p):
-                if isinstance(e, dict) and e.get("seq") == seq:
+            for raw in _reverse_lines(p):
+                e = _safe_json(raw)
+                if not isinstance(e, dict) or not isinstance(e.get("seq"), int):
+                    continue
+                if e["seq"] == seq:
                     return e.get("hash")
+                if e["seq"] < seq:
+                    return None
         except OSError:
             continue
     return None
@@ -1005,20 +1030,24 @@ def stats_token() -> tuple:
     return _stats()
 
 
-def verify(*, force: bool = True) -> dict:
+def verify(*, force: bool = True, migrate: bool = True) -> dict:
     """Check every line: order, links, hashes, signatures, the head, the anchor,
     and which breaks the owner has acknowledged. `force=False` reuses the last
     result while no ledger file changed and it is younger than FULL_RECHECK_S.
     The files are read without holding the write lock."""
     with _TLOCK:
         _check_dir()
-        _ensure_migrated()
+        if migrate:
+            _ensure_migrated()
         stats = _stats()
         with _CACHE_LOCK:
             cached = _STATE.get("verified")
             fresh = time.time() - (_STATE.get("full_at") or 0.0) < FULL_RECHECK_S
         if not force and cached and cached[0] == stats and fresh:
             return dict(cached[1])
+        # a forced or periodic full check re-reads sealed segments too: an
+        # edit that put back a segment's size and mtime is caught here
+        _STATE["seg_cache"] = {}
     try:
         key = _key()
     except Exception:
@@ -1090,20 +1119,19 @@ def acknowledge(by: str, note: str = "", *, reviewed: Optional[list] = None) -> 
         _check_dir()
         out = _guarded_append(key, [("integrity_ack", {"problems": items, "by": str(by)[:40],
                                                          "note": str(note)[:200]})], True)
-        with _lock():
-            seq, h = _read_tip_locked()
         # the owner accepted what is gone: the anchor and this process's own
-        # high-water mark move to what is here now
+        # high-water mark move to the acknowledgement itself (never to a fresh
+        # read of the tip, which could take in a change made since the review)
         with _lock():
-            _move_anchor_locked(seq, h, force=True)
-        _STATE["max_seen"] = seq
-    del out
+            _move_anchor_locked(out["seq"], out["hash"], force=True)
+        _STATE["max_seen"] = out["seq"]
     return {"acknowledged": len(items), "report": verify(force=True)}
 
 
-def summary() -> dict:
-    """What Activity and the Doctor show: counts and state, no content."""
-    r = verify(force=False)
+def summary(*, migrate: bool = True) -> dict:
+    """What Activity and the Doctor show: counts and state, no content.
+    `migrate=False` (the Doctor) only reads."""
+    r = verify(force=False, migrate=migrate)
     return {k: r.get(k) for k in ("records", "last_seq", "intact", "ok", "key_available",
                                   "anchor", "problem_count", "open_problem_count",
                                   "verify_ms", "checked_at", "foreign_records",
@@ -1319,7 +1347,13 @@ def migrate_legacy() -> dict:
                             "lines": n_lines, "imported": n_imported + already,
                             "unreadable": n_unreadable, "kept_as": kept})], True)
                         moved.append({"store": kind, "from": _rel(p), "lines": n_lines})
-                if not state["complete"] and not _legacy_present():
+                try:
+                    anchored = anchor_get()[0] is not None
+                except Exception:
+                    anchored = True
+                if empty and anchored:
+                    pass        # an anchored ledger that is now empty was removed: verify() says so
+                elif not state["complete"] and not _legacy_present():
                     _append_locked(key, [("migration_complete",
                                           {"files": len([m for m in moved if not m.get("quarantined")])})],
                                    True)
