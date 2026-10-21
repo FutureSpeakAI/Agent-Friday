@@ -31,6 +31,13 @@ class _Leg:
         return self.result
 
 
+@pytest.fixture(autouse=True)
+def _anthropic_key_present(monkeypatch):
+    """An Anthropic key exists: a failure is a failure, not the one-key configuration."""
+    from agent_friday.services import one_key
+    monkeypatch.setattr(one_key, "anthropic_ready", lambda: True)
+
+
 @pytest.fixture
 def notices(monkeypatch):
     pf._reset_for_tests()
@@ -185,9 +192,53 @@ def test_the_default_is_ask():
 @pytest.mark.parametrize("exc,expected", [
     (RuntimeError("Error code: 529 - overloaded"), True),
     (RuntimeError("HTTP 429 Too Many Requests"), True),
-    (TimeoutError("timed out"), True),
+    (TimeoutError("timed out"), False),
     (KeyError("tool_input"), False),
     (ValueError("list index out of range"), False),
 ])
 def test_only_a_provider_failure_is_offered(exc, expected):
     assert pf.looks_like_provider_failure(exc) is expected
+
+
+# ── security review round 1 ───────────────────────────────────────────────────
+
+def test_with_no_anthropic_key_the_other_provider_is_configuration_not_a_switch(monkeypatch):
+    from agent_friday.services import one_key
+    monkeypatch.setattr(one_key, "anthropic_ready", lambda: False)
+    kept, withheld = pf.filter_ladder(_legs("cloud", "openai"), {})
+    assert [k[0] for k in kept] == ["cloud", "openai"] and not withheld
+
+
+def test_a_guest_key_turn_never_moves_to_another_provider():
+    kept, withheld = pf.filter_ladder(_legs("cloud", "openai"),
+                                      {"cloud_fallback_order": "anthropic_then_openai"}, locked=True)
+    assert [k[0] for k in kept] == ["cloud"] and [w[0] for w in withheld] == ["openai"]
+
+
+def test_a_provider_marked_down_is_not_skipped_silently(monkeypatch, notices):
+    """The owner's order allows the move, and health ordering makes it before Anthropic is
+    even tried: it is still announced."""
+    claude, oai, _local = _text_ladder(
+        monkeypatch, {"mode": "cloud_only", "cloud_fallback_order": "anthropic_then_openai"})
+    monkeypatch.setattr(mr, "_health_order", lambda attempts, *a, **k: sorted(
+        attempts, key=lambda leg: 0 if leg[0] == "openai" else 1))
+    assert mr._generate_text_untraced(MSG) == "from the other provider"
+    assert claude.calls == 0 and notices and "this answer came from" in notices[-1]["title"]
+
+
+def test_no_raw_error_text_reaches_the_offer_or_the_notice(monkeypatch, notices):
+    _text_ladder(monkeypatch, {"mode": "cloud_only"})
+    secretish = "Incorrect API key provided: sk-proj-abcd...wxyz at https://api.example.invalid/v1 req_123"
+    monkeypatch.setattr(mr, "_call_claude", lambda m, **kw: (_ for _ in ()).throw(RuntimeError(secretish)))
+    with pytest.raises(pf.ProviderSwitchWithheld) as e:
+        mr._generate_text_untraced(MSG)
+    shown = e.value.text() + str(e.value.offer()) + str(notices)
+    for leak in ("sk-proj", "api.example.invalid", "req_123"):
+        assert leak not in shown, leak
+
+
+def test_only_sdk_or_status_failures_are_offered():
+    class LocalUnavailable(Exception):
+        pass
+    assert not pf.looks_like_provider_failure(LocalUnavailable("connection refused"))
+    assert not pf.looks_like_provider_failure(ConnectionError("tool fetch failed: connection reset"))

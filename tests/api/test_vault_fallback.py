@@ -121,6 +121,8 @@ def _plain_ladder(monkeypatch, routing):
     import agent_friday.routing.ollama_manager as ollama_manager
     from agent_friday.services import provider_fallback
     provider_fallback._reset_for_tests()
+    from agent_friday.services import one_key
+    monkeypatch.setattr(one_key, "anthropic_ready", lambda: True)
     monkeypatch.setattr(ollama_manager, "get_manager",
                         lambda *a, **k: _FakeOllama(available=False))
     _patch_settings(monkeypatch, routing)
