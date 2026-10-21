@@ -58,7 +58,7 @@ def test_every_send_has_a_manifest_under_its_rows_id(ledger):
                 "purpose", "estimated_tokens", "previewed"):
         assert key in m, key
     parts = {s["part"] for s in m["sources"]}
-    assert "messages[].content" in parts, parts
+    assert "message[].content" in parts, parts
     assert m["estimated_tokens"] == (row["bytes"] + 3) // 4
     assert m["previewed"] is False and "preview" in m["previewed_words"]
     assert "boiling point" not in json.dumps(m), "a manifest never holds content"
@@ -107,14 +107,65 @@ def test_off_the_record_the_manifest_keeps_counts_only(ledger, monkeypatch):
     finally:
         tp.begin_turn(None)
     m = _manifests(ledger["manifests"])[-1]
-    assert m["off_record"] is True and "assembled_sections" not in m
+    assert m["off_record"] is True
+    assert m["sources"] and all("part" not in s for s in m["sources"]), "off the record parts are not named"
     assert "boiling point" not in json.dumps(m)
-    assert cm.read(m["manifest_id"]) is not None
+    opened = cm.read(m["manifest_id"])
+    assert opened is not None and "assembled_sections" not in opened
 
 
-def test_a_self_test_probe_never_writes_into_the_real_manifests(ledger, tmp_path):
+def test_a_self_test_probe_never_writes_a_manifest_anywhere(ledger, tmp_path, monkeypatch):
+    import os
+    from pathlib import Path
+    monkeypatch.chdir(tmp_path)
     eg.seal_outbound(dict(PAYLOAD), "anthropic", log_path=tmp_path / "probe.jsonl")
+    eg.seal_outbound(dict(PAYLOAD), "anthropic", log_path=Path(os.devnull))
     assert _manifests(ledger["manifests"]) == []
+    assert not list(tmp_path.glob("*manifests*")), "a probe left a manifest file behind"
+
+
+@pytest.mark.parametrize("field,want", [
+    ("messages[3].content", "messages[].content"),
+    ("messages[2].content[0].tool_result.jane.doe@example.com.size", "messages[].content[].tool_result.{…}"),
+    ("tools[0].input.secret_project_name", "tools[].input.{…}"),
+    ("files.Quarterly plan v2.docx", "files.{…}"),
+])
+def test_a_part_name_never_carries_data(field, want):
+    from agent_friday.services import context_manifest as cm
+    assert cm.part_name(field) == want
+
+
+def test_a_send_nested_inside_another_does_not_claim_the_turns_prompt(ledger):
+    from agent_friday.services import context_manifest as cm
+    from agent_friday.services import turn_plan as tp
+    tp.begin_turn("turn-synthetic-nested")
+    try:
+        outer = eg._open_call("anthropic", "synthetic-model-1", "seal")
+        inner = eg._open_call("anthropic", "synthetic-judge", "seal")
+        eg._close_call(inner, {"messages": [{"role": "user", "content": "judge this"}]}, result="sent")
+        eg._close_call(outer, dict(PAYLOAD), result="sent")
+    finally:
+        tp.begin_turn(None)
+    by_model = {r["model"]: r for r in _calls(ledger["log"])}
+    judge = cm.read(by_model["synthetic-judge"]["manifest_id"])
+    assert judge["nested"] is True and "assembled_sections" not in judge
+    assert "assembled_sections" in cm.read(by_model["synthetic-model-1"]["manifest_id"])
+
+
+def test_a_send_never_reads_the_retrieval_ledger(ledger, monkeypatch):
+    """The manifest is built before every send: it must stay cheap."""
+    from agent_friday.services import turn_plan as tp
+    from agent_friday.services import turn_receipt as tr
+
+    def slow(*a, **k):
+        raise AssertionError("the send path read the retrieval ledger")
+    monkeypatch.setattr(tr, "_sections", slow)
+    tp.begin_turn("turn-synthetic-cheap")
+    try:
+        eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    finally:
+        tp.begin_turn(None)
+    assert _manifests(ledger["manifests"])
 
 
 @pytest.mark.parametrize("bad", ["../../secret", "cm-", "eg-123", "cm-" + "a" * 200, 'cm-a"b'])
