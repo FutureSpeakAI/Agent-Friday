@@ -150,6 +150,35 @@ def test_a_waiting_notice_never_counts_as_the_runs_result(monkeypatch):
     assert "workflow_waiting_id" in src and "workflow-run:{rid}:waiting:" in src
 
 
+def test_a_sweep_closes_waiting_tasks_nothing_else_will(task, monkeypatch):
+    """After a restart, or when a card's run never reported back, nothing decides a card again:
+    the boot and the tray's poll sweep waiting tasks."""
+    tid, _said = task
+    with agent.TASKS_LOCK:
+        agent.TASKS[tid]["status"] = "waiting_approval"
+    _cards(monkeypatch, [_card("expired")])
+    assert agent.sweep_waiting_tasks(force=True) == 1
+    with agent.TASKS_LOCK:
+        assert agent.TASKS[tid]["status"] == "declined"
+
+
+def test_a_settled_failure_does_not_start_the_next_step(monkeypatch):
+    tid = "wf-step-failed"
+    with agent.TASKS_LOCK:
+        agent.TASKS[tid] = {"task_id": tid, "name": "step 1", "status": "failed", "settled": 1.0,
+                            "chain": "morning-run", "chain_step": 0, "log": [],
+                            "workflow_definition": {"steps": [{"name": "a", "prompt": "x"}, {"name": "b", "prompt": "y"}]}}
+    spawned = []
+    monkeypatch.setattr(agent, "_spawn_task", lambda *a, **k: spawned.append(a) or "child", raising=False)
+    monkeypatch.setattr(agent, "_retry_chain_step", lambda *a, **k: spawned.append("retry"), raising=False)
+    try:
+        assert agent._advance_task_chain_once(tid, "approved but did not go through") is None
+        assert spawned == []
+    finally:
+        with agent.TASKS_LOCK:
+            agent.TASKS.pop(tid, None)
+
+
 def test_a_card_decided_while_the_task_still_ran_is_settled_when_it_finishes(task, monkeypatch):
     tid, _said = task
     _cards(monkeypatch, [_card("denied")])
