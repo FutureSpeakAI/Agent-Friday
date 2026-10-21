@@ -402,9 +402,13 @@ def _own_action_ledger(tmp_path_factory, monkeypatch):
     only with FRIDAY_TESTING=1."""
     import uuid
     # a name never used before: a test that removes its ledger folder must not
-    # hand the same path (and so the same anchor) to the next test
-    monkeypatch.setenv("FRIDAY_LEDGER_DIR",
-                       str(tmp_path_factory.mktemp("ledger-" + uuid.uuid4().hex[:12])))
+    # hand the same path (and so the same anchor) to the next test. Not
+    # tmp_path_factory.mktemp: it lists the whole base folder on every call,
+    # which grows by one folder per test and doubled the Windows suite time.
+    name = uuid.uuid4().hex
+    d = tmp_path_factory.getbasetemp() / "ledgers" / name[:2] / name
+    d.mkdir(parents=True)
+    monkeypatch.setenv("FRIDAY_LEDGER_DIR", str(d))
     try:
         from agent_friday.services import action_ledger, action_journal
         action_ledger.reset_caches()
