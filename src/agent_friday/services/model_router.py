@@ -4328,9 +4328,12 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     # Layer 3: Vision context (from Gemini screen capture) — the screen could
     # show anything private, so treat it as private by default.
     if vision_description:
+        # What a screen shows (a page, a mail, a dialog) is the source's words: the
+        # one data envelope (services/untrusted_input), never part of the instructions.
+        from agent_friday.services.untrusted_input import wrap as _data_envelope
         add(
             f"\n== SCREEN VISION (what the user's screen shows) ==\n"
-            f"{vision_description[:1500]}",
+            f"{_data_envelope(vision_description[:1500])}",
             classify(vision_description, _T2),
         )
         sources_consulted.append('vision')

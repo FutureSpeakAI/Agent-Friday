@@ -155,6 +155,13 @@ def _sites(source: str, rel: str):
                                      vals["response"].values))
                     if "result" in inner:
                         kind, value = "function_response", inner["result"]
+            elif isinstance(node, ast.Call) and any(k.arg == "response" and isinstance(k.value, ast.Dict)
+                                                    for k in node.keywords):
+                # FunctionResponse(name=..., response={"result": ...}) written as a call
+                resp = next(k.value for k in node.keywords if k.arg == "response")
+                inner = dict(zip([getattr(k, "value", None) for k in resp.keys], resp.values))
+                if "result" in inner:
+                    kind, value = "function_response", inner["result"]
             elif isinstance(node, ast.Call) and _call_name(node)[1] == "dict":
                 kw = {k.arg: k.value for k in node.keywords if k.arg}
                 if getattr(kw.get("type"), "value", None) == "tool_result" and "content" in kw:
@@ -209,13 +216,14 @@ def run(convo, tu, result, other):
     convo.append({"role": "tool", "tool_call_id": tu, "content": result})
     blocks = [{"type": "tool_result", "tool_use_id": tu, "content": textwrap.wrap(result)}]
     convo.append(dict(role="tool", content=result))
+    types.FunctionResponse(name="x", response={"result": result})
     safe = _untrusted.wrap(result)
     safe = other
     convo.append({"role": "tool", "content": safe})
     return {"name": "x", "response": {"result": result}}
 '''
     bad = _unexplained(_sites(planted, "services/planted.py"))
-    assert len(bad) == 5, bad
+    assert len(bad) == 6, bad
 
 
 @pytest.mark.parametrize("rel,function", PROMPT_SITES)

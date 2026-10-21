@@ -531,7 +531,7 @@ def _conv_context(cid, limit=None, exclude_id=None):
 
 #: Transcript rows written by work that ran outside the chat turn (approval
 #: executors, background tasks, workflows), not by the turn's own model.
-_POSTED_RESULT_KINDS = frozenset({"approval_result", "task_result"})
+_POSTED_RESULT_KINDS = frozenset({"approval_result", "task_result", "crew_result", "crew_dialogue"})
 
 
 def _posted_result(meta) -> bool:

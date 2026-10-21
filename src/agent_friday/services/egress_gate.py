@@ -1096,12 +1096,6 @@ def _gate_text_span(text: str, provider: str, field: str,
             if not p.strip():
                 gated.append(p)
                 continue
-            if _is_envelope_line(p):
-                # The data envelope's own lines (services/untrusted_input): Friday's
-                # fixed words around a tool result. Kept, never judged, and never
-                # counted as trusted, so they cannot let the text beside them through.
-                gated.append(p)
-                continue
             with _TRUSTED_LOCK:
                 _ps = p.strip()
                 _p_origin = _PUBLIC_ORIGINS.get(_ps, "")
@@ -1135,7 +1129,7 @@ def _gate_text_span(text: str, provider: str, field: str,
         if appeals:
             rescued = _run_appeals(appeals, gated, provider, field, log_path)
             withheld -= rescued
-        nonempty = sum(1 for p in paras if p.strip() and not _is_envelope_line(p))
+        nonempty = sum(1 for p in paras if p.strip())
         if (0 < withheld < nonempty) or (withheld == 0 and trusted > 0) or \
                 (withheld == 0 and appeals):
             # No silent holds: each paragraph still held goes on the owner's card (cloud_release).
@@ -1352,11 +1346,6 @@ def _changed_paths(old, new, prefix: str = "") -> list:
             out += _changed_paths(a, b, "%s[%d]" % (prefix, i))
         return out
     return [prefix or "(whole result)"] if isinstance(old, str) and old != new else []
-
-
-def _is_envelope_line(paragraph: str) -> bool:
-    from agent_friday.services.untrusted_input import is_envelope_line
-    return is_envelope_line(paragraph)
 
 
 def _gate_tool_result(part: dict, provider: str, field: str,
