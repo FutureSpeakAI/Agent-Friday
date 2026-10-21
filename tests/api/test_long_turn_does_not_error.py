@@ -167,7 +167,7 @@ def test_the_resend_guard_is_not_only_about_deltas():
 
 def test_the_prompt_asks_for_a_line_of_intent_before_tools():
     """Half one: the model is ASKED to say what it is about to do."""
-    from agent_friday.services.model_router import FRIDAY_SYSTEM_PROMPT as P
+    from agent_friday.services.model_router import core_instructions as _core; P = _core()
     assert "SAY WHAT YOU ARE ABOUT TO DO" in P
     low = P.lower()
     assert "before your first tool call" in low

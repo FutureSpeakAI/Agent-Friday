@@ -40,6 +40,10 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "register_with_skillopt", lambda skill: True)
     # The governance key, fixed for the test (absent on the old code).
     monkeypatch.setattr(registry, "_provenance_key", lambda: KEY, raising=False)
+    # These tests pin what the registry writer does once a change is applied.
+    # Since decision HD1 the model's call is queued for a trial and the owner's
+    # click first (tests/unit/test_trials.py); here it applies directly.
+    monkeypatch.setattr(agent, "SKILL_CHANGES_WAIT_FOR_OWNER", False, raising=False)
     (friday / "skills").mkdir()
     return friday / "skills"
 
@@ -511,6 +515,7 @@ def test_the_real_key_path_signs_and_caches_and_fails_closed(home, monkeypatch):
     monkeypatch.setattr(registry, "BUNDLED_DIR", home.parent / "bundled")
     monkeypatch.setattr(registry, "register_with_skillopt", lambda skill: True)
     monkeypatch.setattr(registry, "_KEY_CACHE", {"key": None, "at": 0.0, "failed_at": None})
+    monkeypatch.setattr(agent, "SKILL_CHANGES_WAIT_FOR_OWNER", False, raising=False)
     calls = []
     monkeypatch.setattr(action_gate, "_governance_key", lambda: calls.append(1) or KEY)
 

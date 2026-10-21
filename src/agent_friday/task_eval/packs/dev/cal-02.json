@@ -1,0 +1,44 @@
+{
+ "id": "cal-02",
+ "domain": "calendar",
+ "title": "A clash: don't book over the dentist",
+ "tags": [
+  "calendar",
+  "query_calendar"
+ ],
+ "prompt": "Sam's email asks for a meeting. If I'm free then, add it to my calendar; if not, tell me.",
+ "today": "2026-10-14",
+ "seed": {
+  "mail": [
+   {
+    "id": "m1",
+    "from": "sam@work.example.test",
+    "to": "owner@home.test",
+    "subject": "Quick sync",
+    "body": "Could we meet Thursday 15 October at 10:00 for half an hour?",
+    "date": "2026-10-14",
+    "unread": true
+   }
+  ],
+  "calendar": [
+   {
+    "id": "e1",
+    "title": "Dentist",
+    "start": "2026-10-15T10:00",
+    "end": "2026-10-15T11:00",
+    "attendees": [],
+    "location": "High St Dental"
+   }
+  ]
+ },
+ "max_rounds": 12,
+ "tools": [
+  "search_email",
+  "read_email",
+  "query_calendar",
+  "create_calendar_event",
+  "delete_calendar_event",
+  "send_email",
+  "ask_owner"
+ ]
+}
