@@ -1,24 +1,88 @@
 {
- "about": "Reviewed exceptions for scripts/supply_chain.py (north star 34.2-10, 34.2-17, 34.17-6). A licence entry clears one package whose licence (exactly as the SBOM reads it) is not permissive or not machine-readable; an advisory entry clears one advisory id (or an alias) for one package. Every entry names why, who reviewed it and until when; after `until` it no longer counts and the gate fails again. Entries carried over from THIRD_PARTY_LICENSES.md are the project's existing record and still need the release lead's confirmation before the public 1.0 (amendment A19).",
+ "about": "Reviewed exceptions for scripts/supply_chain.py (north star 34.2-10, 34.2-17, 34.17-6). A licence entry clears one package whose licence, exactly as the SBOM reads it, is copyleft (strong or weak) or not machine-readable. An advisory entry clears one advisory id or alias for one package. A component entry clears one exact version of a component no advisory database covers. An entry counts only when `reviewed_by` names the person who reviewed it (no placeholder) and `until` is a date that has not passed; until then it is listed as awaiting review and clears nothing. The proposed entries below carry over the project's own record in THIRD_PARTY_LICENSES.md and wait for the release lead or the owner to sign them before the public 1.0 (amendment A19: betas are exempt).",
  "licences": [
-  {"package": "mutagen", "licence": "GPL-2.0-or-later",
-   "reason": "Recorded in THIRD_PARTY_LICENSES.md (GPL-2.0-or-later, installed by the installer, recommended tier). Used as a library for audio metadata; FutureSpeak.AI distributes it unmodified in the wheelhouse.",
-   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
-  {"package": "piper-tts", "licence": "GPL-3.0-or-later",
-   "reason": "Recorded in THIRD_PARTY_LICENSES.md (GPL-3.0-or-later, piper1-gpl, recommended tier): the local text-to-speech engine, shipped unmodified.",
-   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
-  {"package": "imageio-ffmpeg", "licence": "BSD-2-Clause AND GPL-3.0-or-later",
-   "reason": "Recorded in THIRD_PARTY_LICENSES.md: BSD-2-Clause wrapper plus the GPL-3.0 ffmpeg.exe it bundles, run as a separate program.",
-   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
-  {"package": "pypdfium2", "licence": "BSD-3-Clause, Apache-2.0, dependency licenses",
-   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0 (permissive).",
-   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
-  {"package": "sherpa-onnx", "licence": "Apache licensed, as found in the LICENSE file",
-   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records Apache-2.0 (permissive).",
-   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
-  {"package": "tiktoken", "licence": "(none found)",
+  {
+   "package": "mutagen",
+   "licence": "GPL-2.0-or-later",
+   "reason": "THIRD_PARTY_LICENSES.md: GPL-2.0-or-later, recommended tier (audio metadata), shipped unmodified in the wheelhouse.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "piper-tts",
+   "licence": "GPL-3.0-or-later",
+   "reason": "THIRD_PARTY_LICENSES.md: GPL-3.0-or-later (piper1-gpl), recommended tier, the local text-to-speech engine, shipped unmodified.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "imageio-ffmpeg",
+   "licence": "BSD-2-Clause AND GPL-3.0-or-later",
+   "reason": "THIRD_PARTY_LICENSES.md: BSD-2-Clause wrapper plus the GPL-3.0 ffmpeg.exe it bundles, run as a separate program.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "certifi",
+   "licence": "MPL-2.0",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 (weak copyleft), the CA bundle, shipped unmodified.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "pyttsx3",
+   "licence": "MPL-2.0",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 (weak copyleft), recommended tier, shipped unmodified.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "tqdm",
+   "licence": "MPL-2.0 AND MIT",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 AND MIT, shipped unmodified.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "pypdfium2",
+   "licence": "BSD-3-Clause, Apache-2.0, dependency licenses",
+   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "sherpa-onnx",
+   "licence": "Apache licensed, as found in the LICENSE file",
+   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records Apache-2.0.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "tiktoken",
+   "licence": "(none found)",
    "reason": "The wheel names no licence; THIRD_PARTY_LICENSES.md records MIT (Copyright (c) 2022 OpenAI, Shantanu Jain).",
-   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"}
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  }
  ],
- "advisories": []
+ "advisories": [],
+ "components": [
+  {
+   "package": "CPython",
+   "version": "3.12.10",
+   "reason": "The embeddable CPython the installer bundles (packaging/windows/sources.json). No advisory database is queried for it; 3.12.10 is the last 3.12 release with an embeddable build, and later 3.12 security fixes (3.12.11+) are source-only. Someone must read the CPython security advisories published since 3.12.10 and accept or act on them for this exact version.",
+   "proposed_by": "CM-2 builder, 2026-10-21",
+   "reviewed_by": "",
+   "until": ""
+  }
+ ]
 }
