@@ -2284,6 +2284,8 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
     const src=msg.source_text||'';
     if(!src)return;
     setChatMsgs(p=>p.map(x=>x===msg?{...x,local_fallback:null}:x));
+    /* A6: a cloud provider failed; the owner chose the other one for this message only. */
+    if(id==='use_alternative'){const c=((msg.local_fallback||{}).choices||[]).find(x=>x.id==='use_alternative');sendChat(src,{skipForecast:true,alreadyShown:true,cloudFallback:(c&&c.provider)||'openai'});return;}
     if(id==='send_claude')sendChat(src,{skipForecast:true,alreadyShown:true,routeMode:'cloud',confirmLocalOnly:true});
     else if(msg.local_fallback&&msg.local_fallback.kind==='local_only_confirm')return;
     else if(id==='shorter')sendChat(src+'\n\n(Keep the answer short.)',{skipForecast:true,alreadyShown:true});
@@ -20343,6 +20345,9 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Privacy check" desc={("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")}>
       <PrivacyCheckLayers/>
     </StSection>
+    <StSection title="When a cloud provider fails" desc="If a cloud provider fails, Friday says so and offers the other one; she never switches on her own. An order set here lets her move along it, and she still tells you each time.">
+      {window.FridayCloudFallbackOrder?React.createElement(window.FridayCloudFallbackOrder):null}
+    </StSection>
     <StSection title="Library" desc="Documents you add to the Library are read and indexed on this PC. Nothing is sent anywhere unless you turn on cloud answers below. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key.">
       <LibraryTrackedToggle/>
       <StToggle label="Library search" value={s.library_search!==false} onChange={()=>save({library_search:s.library_search===false})} desc={"On, "+fridayName()+" can search the documents you added and answer with footnotes. Off, she cannot see them, and nothing is deleted."}/>
@@ -28626,6 +28631,7 @@ function App(){
         turn_id:opts.turnId||('turn-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8))};
       sentTurn=body.turn_id;
       if(opts.routeMode)body.route_mode=opts.routeMode;
+      if(opts.cloudFallback)body.cloud_fallback_choice=opts.cloudFallback;
       if(opts.confirmLocalOnly)body.confirm_local_only=true;
       if(opts.privacyOverride)body.privacy_layer3_override=true;
       if(focusWin)body.workspace=focusWin;

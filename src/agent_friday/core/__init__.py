@@ -3362,6 +3362,12 @@ DEFAULT_SETTINGS = {
         "cloud_consent": {"answered": False, "choice": None, "at": None,
                           "capability_snapshot": None},
         "fallback_to_cloud": True,
+        # A6: when a cloud provider fails, Friday never moves to another cloud
+        # provider on her own. "ask" (the default) says so and offers the other
+        # one; "anthropic_then_openai" / "openai_then_anthropic" is an order the
+        # owner set in advance (services/provider_fallback.py). Changed only
+        # through POST /api/models/cloud-fallback-order, a press on the page.
+        "cloud_fallback_order": "ask",
         "cost_tracking": True,
         # ── OpenAI-compatible cloud provider (opt-in) ──
         # Set cloud_provider="openai" to route cloud turns through an
@@ -3996,7 +4002,8 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False,
                    owner_safe_writes_change: bool = False,
                    routing_change_via: str = "",
-                   owner_room_approvals_change: bool = False):
+                   owner_room_approvals_change: bool = False,
+                   owner_fallback_order_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
         return _save_settings_locked(data,
@@ -4004,7 +4011,8 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
             owner_routing_change=owner_routing_change,
             owner_safe_writes_change=owner_safe_writes_change,
             routing_change_via=routing_change_via,
-            owner_room_approvals_change=owner_room_approvals_change)
+            owner_room_approvals_change=owner_room_approvals_change,
+            owner_fallback_order_change=owner_fallback_order_change)
 
 
 #: How an owner routing change was made, as `model_routing.mode_chosen_via`
@@ -4017,7 +4025,8 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False,
                    owner_safe_writes_change: bool = False,
                    routing_change_via: str = "",
-                   owner_room_approvals_change: bool = False):
+                   owner_room_approvals_change: bool = False,
+                   owner_fallback_order_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -4180,6 +4189,21 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             _mr_in = {k: v for k, v in _mr_in.items()
                       if k not in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")}
             data["model_routing"] = _mr_in
+    # THE CLOUD FALLBACK ORDER IS THE OWNER'S, SET BY A PRESS (A6).
+    #
+    # `model_routing.cloud_fallback_order` pre-approves moving from one cloud
+    # provider to another when the first fails. Only its own route (a press on
+    # Friday's page, owner_fallback_order_change) may write it; any other write
+    # that carries it (a whole settings dict read earlier, a script, a model's
+    # tool) has the key dropped and logged, and the stored order is kept.
+    _mr_fb = (data or {}).get("model_routing")
+    if isinstance(_mr_fb, dict) and "cloud_fallback_order" in _mr_fb and not owner_fallback_order_change:
+        import logging as _lg
+        _lg.getLogger("friday.settings").warning(
+            "REFUSED a change of model_routing.cloud_fallback_order: not the owner's press "
+            "(caller %s); the rest of the write is kept", _routing_mode_caller())
+        data = dict(data)
+        data["model_routing"] = {k: v for k, v in _mr_fb.items() if k != "cloud_fallback_order"}
     # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
     #
     # `laya_safe_writes` lets Laya raise approval cards for changes to the

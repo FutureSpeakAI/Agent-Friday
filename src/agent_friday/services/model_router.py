@@ -701,6 +701,12 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # but healthy providers get the request first.
     # The mode the user chose outranks the resilience ladder.
     attempts = _mode_filtered_attempts(attempts, routing_cfg, vault_access=vault_access)
+    # A6: no silent move from one cloud provider to another. Applied before the
+    # health ordering, so a provider marked down cannot be skipped for another
+    # cloud provider the owner did not allow either (services/provider_fallback).
+    from agent_friday.services import provider_fallback as _pf
+    attempts, _pf_withheld = _pf.filter_ladder(attempts, routing_cfg)
+    _pf_watch = _pf.LadderWatch(_pf_withheld, routing_cfg)
     attempts = _health_order(attempts, routed_provider_name)
 
     errors = []
@@ -729,8 +735,10 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
                     except Exception:
                         pass
                 _vj.note_done(name, use_model)
+                _pf_watch.leg_succeeded(name)
                 return text
             errors.append(f"{_leg}: empty response")
+            _pf_watch.leg_failed(name, "empty response")
         except Exception as e:
             if type(e).__name__ == "JobCancelled":
                 # A job stopped from its card or the Local AI queue stops; it
@@ -739,11 +747,15 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
             from agent_friday.user_errors import ExceptionText
             errors.append(ExceptionText(f"{_leg}: {e}"))
             _vj.note_failed_leg(name, use_model, e)
+            _pf_watch.leg_failed(name, e)
         try:
             from agent_friday.services import attribution
             attribution.note_fallback(errors[-1])
         except Exception:
             pass
+    # A cloud provider failed and the move to another one was withheld: say so
+    # with the offer (ProviderSwitchWithheld), not as a generic failure.
+    _pf_watch.exhausted()
     _exhausted = (
         "No model provider could generate text (tried "
         + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "

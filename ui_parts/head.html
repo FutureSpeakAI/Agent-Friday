@@ -52,6 +52,8 @@ window.addEventListener('error',function(e){
 <!-- The top-bar plugin slot's registry (documented in the file). Not deferred:
      add-ons may register before the desktop mounts. -->
 <script src="/static/js/friday_topbar_slot.js"></script>
+<!-- Settings > Privacy > When a cloud provider fails (A6). -->
+<script src="/static/js/friday_cloud_fallback_order.js" defer></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
