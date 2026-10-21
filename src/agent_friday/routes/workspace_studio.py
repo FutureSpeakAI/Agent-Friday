@@ -6,8 +6,10 @@ from agent_friday.services.pasted_secrets import withholds_request_body
 from agent_friday.core import login_required
 from agent_friday.services.workspace_studio import (
     all_customizations,
+    apply_proposal,
     check_ws_id,
     clear_chat,
+    decline_proposal,
     load_ws_doc,
     reset_customization,
     revert_customization,
@@ -17,6 +19,7 @@ from agent_friday.services.workspace_studio import (
     WorkspaceConflictError,
     _admit_write,
     _presentation_origin,
+    _proposal_view,
 )
 from agent_friday.services.model_router import (
     _gated_vault_control,
@@ -44,6 +47,36 @@ def _ws_bad_id(e):
     return api_error(e, "That request was not valid", 400)
 
 
+def owner_change(ws_id, op):
+    """None when this request may change workspace `ws_id`'s saved state, else the 403 to answer.
+
+    Two checks, in this order, before anything is read or written:
+      * the owner's own press in Friday's page on this PC (screen_click.screen_session); a program
+        that can reach the API, or a model's command, is not a press;
+      * the action checkpoint (governance/action_gate.record_external): the cLaws are intact and a
+        signed receipt names this exact change.
+    Each refusal says what did not happen and where the change can be made. Off the record, the
+    change is refused first (as the store would refuse it), so no receipt names a change that the
+    privacy rule stops."""
+    from agent_friday.services import screen_click
+    try:
+        _admit_write()
+    except PermissionError as exc:
+        return api_error(exc, 'That change was refused', 403)
+    if not screen_click.screen_session(request):
+        return jsonify(status='error', code='owner_press_required',
+                       message="Nothing changed: workspace changes are made with your press in this "
+                               "workspace's Studio on this PC, or by asking Friday in chat."), 403
+    from agent_friday.governance import action_gate as _gate
+    try:
+        _gate.record_external("workspace:" + op, surface="workspace_studio", target=ws_id)
+    except _gate.Held:
+        return jsonify(status='error', code='held',
+                       message="Nothing changed: the action checkpoint held this workspace change "
+                               "(its integrity check or signed receipt failed)."), 403
+    return None
+
+
 # ═══ WORKSPACE STUDIO — Friday as per-workspace customization agent ═══
 
 @ws_studio_bp.route('/api/workspace/<ws_id>/appearance', methods=['GET', 'POST'])
@@ -61,6 +94,11 @@ def ws_appearance(ws_id):
             if (not isinstance(data, dict) or set(data) - {'patch', 'expected_revision', 'apply'}
                     or type(data.get('apply', False)) is not bool):
                 return jsonify(status='error', message='Provide an appearance patch and its reviewed revision.'), 400
+            if data.get('apply'):
+                # A preview is read-only and open to every caller; applying it is the owner's press.
+                refused = owner_change(check_ws_id(ws_id), 'appearance')
+                if refused:
+                    return refused
             result = review_presentation(ws_id, data.get('patch'), data.get('expected_revision'),
                                          apply=data.get('apply', False), origin=origin)
         return jsonify(status='ok', **result)
@@ -142,6 +180,9 @@ def ws_chat_post(ws_id):
 @login_required
 def ws_chat_clear(ws_id):
     check_ws_id(ws_id)
+    refused = owner_change(ws_id, 'clear_history')
+    if refused:
+        return refused
     try:
         doc = clear_chat(ws_id)
         return jsonify({"status": "ok", "chat": doc.get("chat", [])})
@@ -159,6 +200,9 @@ def ws_revert(ws_id):
     """Roll the workspace back to a snapshot version."""
     try:
         origin = _admit_write()
+        refused = owner_change(ws_id, 'revert')
+        if refused:
+            return refused
         data = request.get_json(silent=True) or {}
         version_id = (data.get('version_id') or '').strip()
         if not version_id:
@@ -183,6 +227,9 @@ def ws_revert(ws_id):
 def ws_reset(ws_id):
     check_ws_id(ws_id)
     """Clear all customization (snapshotted first, so it's undoable)."""
+    refused = owner_change(ws_id, 'reset')
+    if refused:
+        return refused
     try:
         doc = reset_customization(ws_id)
         return jsonify({
@@ -195,3 +242,45 @@ def ws_reset(ws_id):
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't reset the workspace")
+
+
+def _proposal_answer(ws_id, proposal_id, apply):
+    try:
+        doc, prop = (apply_proposal if apply else decline_proposal)(ws_id, proposal_id)
+    except WorkspaceConflictError as exc:
+        return jsonify(status='conflict', message=error_text(exc, 'The workspace changed')), 409
+    except PermissionError as exc:
+        return api_error(exc, 'That change was refused', 403)
+    except ValueError as exc:
+        return api_error(exc, 'That proposal could not be found', 404)
+    except OSError:
+        return jsonify(status='error', message='The workspace could not be read or saved. Nothing changed.'), 503
+    return jsonify({
+        "status": "ok",
+        "proposal": _proposal_view(prop),
+        "applied": prop.get("status") == "applied",
+        "revert_to": prop.get("revert_to"),
+        "customization": doc.get("customization", {}),
+        "versions": doc.get("versions", []),
+    })
+
+
+@ws_studio_bp.route('/api/workspace/<ws_id>/proposals/<proposal_id>/apply', methods=['POST'])
+@login_required
+def ws_proposal_apply(ws_id, proposal_id):
+    """The owner's Apply on a change Friday proposed in the Studio: exactly the
+    lines the proposal showed, after the owner's press and the checkpoint."""
+    check_ws_id(ws_id)
+    refused = owner_change(ws_id, 'apply_proposal')
+    if refused:
+        return refused
+    return _proposal_answer(ws_id, proposal_id, True)
+
+
+@ws_studio_bp.route('/api/workspace/<ws_id>/proposals/<proposal_id>/decline', methods=['POST'])
+@login_required
+def ws_proposal_decline(ws_id, proposal_id):
+    """"Not now": the proposal stays in the history, marked declined. Declining
+    changes nothing about the workspace, so any of the owner's channels may."""
+    check_ws_id(ws_id)
+    return _proposal_answer(ws_id, proposal_id, False)

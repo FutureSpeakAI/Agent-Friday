@@ -716,7 +716,7 @@ CLAUDE_TOOLS = [
          "newest_first": {"type": "boolean", "description": "Default true."},
          "limit": {"type": "integer", "description": "Default 20."},
      }, "required": []}},
-    {"name": "write_file", "description": "Write or append content to any file on the local filesystem. Creates parent directories automatically.",
+    {"name": "write_file", "description": "Write or append content to any file on the local filesystem. Creates parent directories automatically. A replaced file's earlier version is kept; undo_action restores it.",
      "input_schema": {"type": "object", "properties": {
          "path": {"type": "string", "description": "Absolute or home-relative path"},
          "content": {"type": "string", "description": "Text to write"},
@@ -1007,7 +1007,7 @@ CLAUDE_TOOLS = [
          "replaces": {"type": "string"},
          "why": {"type": "string"}},
       "required": ["action"]}},
-    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki): the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
+    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki) or a write_file: the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
      "input_schema": {"type": "object", "properties": {
          "receipt_id": {"type": "string", "description": "rcpt_... from an earlier result; empty for the newest."}}}},
     {"name": "answer_card", "description": "Record the user's answer to an organize, undo_action or money-paragraph card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer; if it returns a read-back, say it and ask.",
@@ -1429,24 +1429,50 @@ def _tool_write_file(inp):
         return "write_file error: 'path' is required."
     if mode not in ('write', 'append'):
         mode = 'write'
+    from agent_friday.services import file_write_receipts as _fwr
     try:
         p = Path(raw).expanduser().resolve()
+    except Exception as e:
+        return f"Write error: {e}"
+    if p.is_dir():
+        return f"Write error: {p} is a folder, not a file. Nothing was written."
+    # The backup and the receipt come first: an existing file is copied (and
+    # checked) and the receipt naming it is written before the first byte
+    # changes. No backup, no write.
+    try:
+        _conv = _CURRENT_CONVERSATION.get()
+    except Exception:
+        _conv = None
+    try:
+        receipt = _fwr.begin(p, mode, len(content), conversation_id=_conv)
+    except _fwr.BackupFailed as e:
+        return f"Write error: nothing was written, because {e}."
+    rid = receipt["receipt_id"]
+    try:
         p.parent.mkdir(parents=True, exist_ok=True)
         if mode == 'append':
             with open(p, 'a', encoding='utf-8') as f:
                 f.write(content)
         else:
             p.write_text(content, encoding='utf-8')
-        _log_context("file_write", {"path": str(p), "bytes": len(content), "mode": mode})
-        if mode == 'write':
-            # Not on append: a document being appended to (a log, a journal)
-            # popping open on every single line written would be the exact
-            # "multiple viewers in a row" case the setting's own default-off
-            # exists for.
-            _maybe_auto_open(p)
-        return f"{'Appended' if mode == 'append' else 'Wrote'} {len(content)} chars to {p}"
     except Exception as e:
-        return f"Write error: {e}"
+        _fwr.finish(rid, False, error=str(e))
+        return (f"Write error: {e}. Receipt {rid}"
+                + (" keeps the earlier version; undo_action with this receipt_id puts it back."
+                   if receipt["items"][0].get("existed") else "."))
+    _fwr.finish(rid, True)
+    _log_context("file_write", {"path": str(p), "bytes": len(content), "mode": mode, "receipt_id": rid})
+    if mode == 'write':
+        # Not on append: a document being appended to (a log, a journal)
+        # popping open on every single line written would be the exact
+        # "multiple viewers in a row" case the setting's own default-off
+        # exists for.
+        _maybe_auto_open(p)
+    done = f"{'Appended' if mode == 'append' else 'Wrote'} {len(content)} chars to {p}"
+    if receipt["items"][0].get("existed"):
+        return (f"{done}. The earlier version is kept (receipt_id {rid}); "
+                f"undo_action with that receipt_id puts it back.")
+    return f"{done} (new file; receipt_id {rid}; undo_action moves it to Friday's trash)."
 
 
 def _learn_skill_fields(content):
@@ -13149,6 +13175,14 @@ def _confirmation_question(name, tool_input):
         return f"I can switch you to {_WORKSPACE_LABELS.get(_resolve_workspace(tgt) or '', tgt)} — shall I?"
     if name == "write_file":
         tgt = inp.get("path") or "a file"
+        if not inp.get("path"):
+            return f"Would you like me to create {tgt}?"
+        from agent_friday.services import file_write_receipts as _fwr
+        what = _fwr.describe_target(tgt)
+        if what["exists"]:
+            verb = "add to" if str(inp.get("mode") or "").lower() == "append" else "replace"
+            return (f"Would you like me to {verb} {tgt}? It already exists; "
+                    f"I keep a copy of it first, so you can undo this.")
         return f"Would you like me to create {tgt}?"
     # Outward actions routed here by the governance check: say what it is.
     return f"{_taint_title(name, inp)} — shall I go ahead?"
@@ -14609,6 +14643,13 @@ def _taint_title(name, inp):
     if name in ("browse_web", "open_url"):
         return f"Open {_short_txt(inp.get('url'))}"
     if name == "write_file":
+        try:
+            from agent_friday.services import file_write_receipts as _fwr
+            if _fwr.describe_target(inp.get("path"))["exists"]:
+                return (f"Replace the existing file {_short_txt(inp.get('path'))} "
+                        f"(a copy is kept so it can be undone)")
+        except Exception:
+            pass
         return f"Write the file {_short_txt(inp.get('path'))}"
     if name == "open_path":
         return f"Open {_short_txt(inp.get('path') or inp.get('target'))} on this computer"

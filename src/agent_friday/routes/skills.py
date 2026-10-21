@@ -37,6 +37,11 @@ from agent_friday.routes._errors import api_error
 
 skills_bp = Blueprint('skills', __name__)
 
+# A skill-import card approved after a restart still installs: its decision
+# hook is registered when this blueprint loads, not only when a card is raised.
+from agent_friday.services import skill_import_review as _skill_import_review  # noqa: E402
+_skill_import_review.ensure_hook()
+
 
 
 # ── Portable skill registry (SKILL.md folder format) ────────────
@@ -55,11 +60,16 @@ def api_skills_list():
 @skills_bp.route('/api/skills/import', methods=['POST'])
 @login_required
 def api_skills_import():
-    """Import a portable skill — multipart .zip upload, or JSON {path, name}
-    pointing at a local folder / zip / legacy .yaml."""
+    """Propose a portable skill for install — multipart .zip upload, or JSON
+    {path, name} pointing at a local folder / zip / legacy .yaml.
+
+    Installs NOTHING. The package is read (bounded, never extracted) and one
+    card is raised that says what the skill would make Friday do; it installs
+    when the owner approves that card with a press on this PC's screen
+    (services/skill_import_review). Answers 202 with the card's id."""
     import tempfile as _tf, shutil as _sh
+    from agent_friday.services import skill_import_review as _review
     try:
-        import agent_friday.skill_registry as _skreg
         upload = request.files.get('file') if request.files else None
         if upload is not None:
             name = request.form.get('name') or None
@@ -71,7 +81,7 @@ def api_skills_import():
                 base = (upload.filename or '').replace('\\', '/').rsplit('/', 1)[-1]
                 dest = contained(tmpd, base if base not in ('', '.', '..') else 'skill.zip')
                 upload.save(str(dest))
-                res = _skreg.import_skill(dest, name=name)
+                res = _review.stage(dest, name=name, source_name=base or 'an upload')
             finally:
                 _sh.rmtree(tmpd, ignore_errors=True)
         else:
@@ -79,10 +89,14 @@ def api_skills_import():
             src = data.get('path')
             if not src:
                 return jsonify({"error": "provide a 'file' upload or JSON {path}"}), 400
-            res = _skreg.import_skill(src, name=data.get('name'))
-        return jsonify({"status": "ok", **res})
+            res = _review.stage(src, name=data.get('name'))
+        return jsonify({**res, "message": "Nothing is installed yet. A card shows what this skill would make "
+                                          "Friday do; it installs when you approve that card on this PC's "
+                                          "screen."}), 202
+    except _review.ImportRefused as e:
+        return jsonify({"status": "error", "error": "Nothing was installed: %s." % e}), 400
     except Exception as e:
-        return api_error(e, "Couldn't import the skill", 400, shape="bare")
+        return api_error(e, "Couldn't read the skill package", 400, shape="bare")
 
 
 @skills_bp.route('/api/skills/<name>/export', methods=['GET'])

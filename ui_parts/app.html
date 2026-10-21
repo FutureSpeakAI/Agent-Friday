@@ -2948,11 +2948,13 @@ function WorkspaceChat({
         applied: d.applied,
         revert_to: d.revert_to,
         change: d.change,
+        proposal: d.proposal || null,
         time: new Date().toISOString()
       }]);
       if (d.customization !== undefined) setCust(wsId, d.customization);
       if (d.versions) setVersions(d.versions);
       if (d.applied) flash('✨ Applied: ' + (d.change || 'change'));
+      else if (d.proposal) flash('Friday proposes a change. Nothing changes until you press Apply.');
     } catch (e) {
       if (!alive.current) return;
       setMustRefresh(true);
@@ -3015,6 +3017,24 @@ function WorkspaceChat({
       applyReply(d);
       flash('Workspace reset to default');
     }, 'Reset failed');
+  };
+  // A change Friday proposed: Apply is the owner's press (the server checks it),
+  // Not now keeps the proposal in the history as declined.
+  const answerProposal = async (pid, apply) => {
+    if (!begin()) return;
+    const ticket = operation.current;
+    try {
+      const d = await request('proposals/' + encodeURIComponent(pid) + '/' + (apply ? 'apply' : 'decline'), { method: 'POST' }, 'state');
+      if (!owns(ticket)) { if (alive.current) setMustRefresh(true); return; }
+      applyReply(d);
+      const p = d.proposal || {};
+      setMsgs(list => list.map(x => x.proposal && x.proposal.id === pid ? { ...x, proposal: { ...x.proposal, ...p },
+        applied: !!d.applied || !!x.applied, revert_to: d.revert_to || x.revert_to,
+        change: d.applied ? (p.summary || x.change) : x.change } : x));
+      flash(d.applied ? '✨ Applied: ' + (p.summary || 'change') : 'Not applied. The proposal stays in this history.');
+    } catch (e) {
+      if (owns(ticket)) flash(e.message || (apply ? 'Apply failed.' : 'Could not record that.'));
+    } finally { finish(); }
   };
   const clearChat = () => change('chat/clear', {
     method: 'POST'
@@ -3282,7 +3302,16 @@ function WorkspaceChat({
       fontSize: 10,
       padding: '1px 7px'
     }
-  }, "\u21A9 revert this")))), loading && /*#__PURE__*/React.createElement("div", {
+  }, "\u21A9 revert this")), m.proposal && m.proposal.status !== 'applied' && React.createElement('div', {
+    className: 'card friday-studio-proposal', role: 'group', 'aria-label': 'Proposed change',
+    style: { marginTop: 6, maxWidth: '90%', padding: '7px 10px', fontSize: 11.5 }
+  }, React.createElement('div', { style: { fontSize: 10.5, opacity: 0.75, marginBottom: 4 } },
+    m.proposal.status === 'declined' ? 'Not applied' : 'Proposed change \u00B7 nothing changes until you press Apply'),
+  React.createElement('ul', { style: { margin: '0 0 6px 16px', padding: 0 } },
+    (m.proposal.changes || []).map((c, j) => React.createElement('li', { key: j }, c))),
+  m.proposal.status === 'pending' && React.createElement('div', { style: { display: 'flex', gap: 6 } },
+    React.createElement('button', { type: 'button', className: 'btn', disabled: loading, onClick: () => answerProposal(m.proposal.id, true) }, 'Apply'),
+    React.createElement('button', { type: 'button', className: 'btn', disabled: loading, onClick: () => answerProposal(m.proposal.id, false) }, 'Not now'))))), loading && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 4,

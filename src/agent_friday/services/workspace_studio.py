@@ -19,7 +19,17 @@ The mechanics, kept deliberately simple and safe for a local single-user OS:
 
 Friday decides — from the user's message — whether to just talk or to emit a
 customization patch. She returns the patch in a fenced ```friday-customize
-{json}``` block which this module parses, sanitizes, applies, and versions.
+{json}``` block which this module parses and sanitizes into a PROPOSAL: the
+reply lists exactly what would change, and nothing changes until the owner
+presses Apply in the Studio on this PC's screen (apply_proposal, behind the
+action checkpoint in routes/workspace_studio.py). Applying versions it like any
+other change.
+
+Every route that changes a workspace's saved state (apply, revert, reset,
+undo, restore, clear the Studio history) takes only the owner's press in
+Friday's own page and writes a signed checkpoint receipt first. A tool call
+(customize_workspace, revert_workspace) goes through the action gate like any
+other tool.
 """
 
 import hashlib
@@ -782,12 +792,14 @@ def _system_prompt(ws_id, ws_label, current, base_system):
 ═══ WORKSPACE STUDIO MODE ═══
 You are talking to the user *inside* the "{ws_label}" workspace ({ws_id}) of
 their Friday desktop OS. This is a contextual chat scoped to THIS workspace. The
-user may: give feedback on it, request new features, ask you to apply changes
-live, or roll changes back. Keep replies short, warm, and concrete.
+user may: give feedback on it, request new features, ask you to propose changes
+they can apply, or roll changes back. Keep replies short, warm, and concrete.
 
-You can reshape this workspace by emitting a customization patch. When (and only
-when) the user actually wants a visible change, end your reply with a fenced
-block:
+You can propose a reshaping of this workspace by emitting a customization patch.
+The user sees it as a proposal listing exactly what would change, with an Apply
+button; nothing changes until they press it, so never say the change is made.
+When (and only when) the user actually wants a visible change, end your reply
+with a fenced block:
 
 ```friday-customize
 {{"summary":"short human description","css":"...","note":"...","accent":"#00d4ff","density":"compact","hidden":["selector"],"actions":[{{"label":"Refresh","prompt":"refresh the data"}}]}}
@@ -863,6 +875,7 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None, *,
     patch = _extract_patch(reply)
     visible_reply = _strip_patch_block(reply) or reply
     applied_version = None
+    proposal = None
     refused = None
     if patch:
         # BLAST RADIUS, on the live path. `apply_customization` had the gate and
@@ -881,10 +894,16 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None, *,
         except ImportError:
             pass
     if patch and not refused:
-        label = (patch.get("summary") if isinstance(patch, dict) else None) or "change"
-        # Mutate the in-memory doc (which already holds the pending user message)
-        # so nothing is lost; we persist once at the end of the turn.
-        applied_version = _apply_to_doc(doc, patch, label)
+        # A model's patch is a PROPOSAL. The turn writes nothing to the
+        # workspace: the reply carries exactly what would change, and the
+        # owner's own Apply press in this workspace's Studio applies it
+        # (apply_proposal, through the action checkpoint). The same patch
+        # that was shown is the one applied.
+        proposal = _new_proposal(patch, doc.get("customization", {}))
+        if proposal is None:
+            visible_reply = (visible_reply.rstrip() + "\n\nThat change had nothing a workspace can use "
+                             "(only notes, accent, spacing, quick actions, hidden parts and styles scoped "
+                             "to this workspace), so there is nothing to apply.").strip()
     elif patch and refused:
         visible_reply = (visible_reply.rstrip() + "\n\nI did not apply that change: %s." % refused).strip()
 
@@ -892,12 +911,8 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None, *,
         "role": "friday", "text": visible_reply,
         "time": datetime.now().isoformat(),
     }
-    if applied_version:
-        # The snapshot we just pushed is the PRE-change state; reverting to it
-        # undoes this change. Store its id so the UI can offer a Revert button.
-        entry["applied"] = True
-        entry["revert_to"] = applied_version["id"]
-        entry["change"] = applied_version["label"]
+    if proposal:
+        entry["proposal"] = proposal
     doc["chat"].append(entry)
     save_ws_doc(ws_id, doc, origin=origin)
 
@@ -908,6 +923,148 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None, *,
         "refused": refused,
         "revert_to": applied_version["id"] if applied_version else None,
         "change": applied_version["label"] if applied_version else None,
+        "proposal": _proposal_view(proposal) if proposal else None,
         "customization": doc.get("customization", {}),
         "versions": doc.get("versions", []),
     }
+
+
+# ── proposals: what the Studio chat may change, decided by the owner ───────
+
+_PROPOSAL_ID = re.compile(r"^p[0-9a-f]{12}$")
+
+
+def _patch_sha(clean) -> str:
+    return hashlib.sha256(json.dumps(clean, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _short(text, limit=160) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def describe_patch(clean, current=None) -> list:
+    """What applying a sanitized patch would do, one plain line per change.
+
+    Derived from the patch itself, never from the model's summary: the card is
+    the change, so a summary that says "tidy spacing" cannot hide a rule that
+    hides a section."""
+    current = current or {}
+    lines = []
+    for key in ("note", "accent", "density", "actions", "hidden", "css"):
+        if key not in clean:
+            continue
+        value = clean[key]
+        if value is None:
+            if key in current:
+                lines.append({"note": "Remove the pinned note",
+                              "accent": "Remove the custom accent colour",
+                              "density": "Go back to the default spacing",
+                              "actions": "Remove the quick-action buttons",
+                              "hidden": "Show every part again that was hidden",
+                              "css": "Remove the custom styles"}[key])
+            continue
+        if key == "note":
+            lines.append("Pin a note: “%s”" % _short(value))
+        elif key == "accent":
+            was = current.get("accent")
+            lines.append("Accent colour %s%s" % (("from %s to " % was) if was and was != value else "", value))
+        elif key == "density":
+            lines.append("Spacing: %s" % value)
+        elif key == "actions":
+            names = ", ".join("“%s”" % _short(a.get("label"), 40) for a in value) or "none"
+            lines.append("Quick-action buttons: %s" % names)
+        elif key == "hidden":
+            if value:
+                lines.append("Hide %d part%s of this workspace: %s" % (
+                    len(value), "" if len(value) == 1 else "s", _short("; ".join(value), 300)))
+            else:
+                lines.append("Hide nothing")
+        elif key == "css":
+            if value:
+                rules = value.count("}")
+                lines.append("Restyle this workspace (%d style rule%s): %s" % (
+                    rules, "" if rules == 1 else "s", _short(value, 300)))
+            else:
+                lines.append("No style rules were usable, so styles stay as they are")
+    return lines
+
+
+def _new_proposal(patch, current):
+    clean = _sanitize_patch(patch)
+    summary = clean.pop("summary", None)
+    if not clean:
+        return None
+    return {
+        "id": "p" + uuid.uuid4().hex[:12],
+        "status": "pending",
+        "summary": _short(summary or "a change to this workspace", 120),
+        "patch": clean,
+        "sha256": _patch_sha(clean),
+        "changes": describe_patch(clean, current),
+        "time": datetime.now().isoformat(),
+    }
+
+
+def _proposal_view(proposal):
+    """What the page shows for a proposal: the plain lines and its state."""
+    return {k: proposal.get(k) for k in ("id", "status", "summary", "changes", "revert_to")}
+
+
+def _find_proposal(doc, proposal_id):
+    if not isinstance(proposal_id, str) or not _PROPOSAL_ID.fullmatch(proposal_id):
+        raise UserFacingValueError("not a proposal id")
+    for entry in doc.get("chat") or []:
+        prop = entry.get("proposal") if isinstance(entry, dict) else None
+        if isinstance(prop, dict) and prop.get("id") == proposal_id:
+            return entry, prop
+    return None, None
+
+
+def apply_proposal(ws_id, proposal_id):
+    """The owner's Apply on a proposal Friday made in this workspace's Studio.
+
+    The caller has verified the press. Applies exactly the patch that was shown
+    (bound by its hash), once, after the same blast-radius and safe-mode checks
+    the turn ran; the snapshot it takes is the proposal's Revert. Returns
+    (doc, proposal) or raises a UserFacing error that says why nothing changed."""
+    from agent_friday.services.boot_guard import check_blast_radius, safe_mode
+    origin = _admit_write()
+    doc = load_ws_doc(ws_id)
+    entry, prop = _find_proposal(doc, proposal_id)
+    if prop is None:
+        raise UserFacingValueError("That proposal is not in this workspace's history.")
+    if prop.get("status") != "pending":
+        raise WorkspaceConflictError("That proposal was already %s." % prop.get("status"))
+    clean = prop.get("patch")
+    if not isinstance(clean, dict) or _patch_sha(clean) != prop.get("sha256"):
+        raise UserFacingPermissionError("That proposal no longer matches what was shown, so nothing was applied.")
+    if safe_mode():
+        raise UserFacingPermissionError("Friday is in safe mode, so workspace changes are off until it is lifted.")
+    ok, why = check_blast_radius(clean)
+    if not ok:
+        raise UserFacingPermissionError(why)
+    version = _apply_to_doc(doc, clean, prop.get("summary") or "change")
+    if version is None:
+        raise UserFacingValueError("That proposal has nothing left to apply.")
+    prop["status"] = "applied"
+    prop["revert_to"] = version["id"]
+    entry["applied"] = True
+    entry["revert_to"] = version["id"]
+    entry["change"] = version["label"]
+    save_ws_doc(ws_id, doc, origin=origin)
+    return doc, prop
+
+
+def decline_proposal(ws_id, proposal_id):
+    """"Not now" on a proposal: it is kept in the history as declined."""
+    origin = _admit_write()
+    doc = load_ws_doc(ws_id)
+    _entry, prop = _find_proposal(doc, proposal_id)
+    if prop is None:
+        raise UserFacingValueError("That proposal is not in this workspace's history.")
+    if prop.get("status") != "pending":
+        raise WorkspaceConflictError("That proposal was already %s." % prop.get("status"))
+    prop["status"] = "declined"
+    save_ws_doc(ws_id, doc, origin=origin)
+    return doc, prop

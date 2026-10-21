@@ -289,6 +289,9 @@ _ALL = [
     # An approval whose time ran out while quiet hours, the limit or Focus Assist held it back.
     _e("NQ3", "services/approvals.py:_notify_expired_while_held", "approval_expired_held", NEEDS_YOU,
        "approval-expired:{approval_id}", source="approvals"),
+    # The outcome of a skill import the owner approved on its card: installed, or why not.
+    _e("SK1", "services/skill_import_review.py:_tell", "skill_import", UPDATES,
+       "skill-import:{approval_id}", source="skills"),
     # A scheduled run that was due in quiet hours and waits for them to end.
     _e("NQ2", "services/scheduler.py:_defer_for_quiet", "scheduled_deferred", UPDATES,
        "sched-deferred:{schedule_id}:{day}", source="scheduler"),
