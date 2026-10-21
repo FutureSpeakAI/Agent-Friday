@@ -156,7 +156,8 @@ def ping_detail(prov: dict, model: str | None, api_key: str | None = None,
     # the person chooses where Friday thinks.
     try:
         from agent_friday.services.cloud_intent import route_unpicked
-        if route_unpicked():
+        from agent_friday.services.seat_policy import is_local_descriptor
+        if route_unpicked() and not is_local_descriptor(prov):
             return UNKNOWN, {"model": model, "ok": False,
                              "error": "not checked yet: nothing goes to the cloud until you "
                                       "choose where Friday thinks (Settings > Models)"}

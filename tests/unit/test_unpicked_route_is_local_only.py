@@ -153,7 +153,7 @@ def test_the_consent_screens_route_is_a_pick_but_not_cloud_consent(real_settings
     core = real_settings
     core._load_settings_raw()
     from agent_friday.services import setup_chat
-    setup_chat.begin(routing_mode="local_preferred")
+    setup_chat.begin(routing_mode="local_preferred", screen=True)
     mr = core._load_settings_raw()["model_routing"]
     assert mr.get("mode") == "local_preferred" and mr.get("mode_chosen_via") == "consent_screen"
     assert _unpicked() is False
@@ -258,6 +258,7 @@ def test_a_deep_provider_check_sends_nothing(real_settings, monkeypatch):
         "openai": {"name": "openai", "type": "openai-compatible",
                    "base_url": "https://api.openai.com/v1", "auth": {"type": "env_var"}},
     }
+    monkeypatch.setattr(ph, "_CACHE", {})
     monkeypatch.setattr(ph, "_provider", lambda name: provs.get(name))
     monkeypatch.setattr(ph, "_key_state", lambda prov: "ok")
     for name in provs:
@@ -274,7 +275,7 @@ def test_saving_the_ollama_address_does_not_save_the_overlay(real_settings, monk
     cs.save_ollama("http://localhost:11434")
     mr = json.loads(core.SETTINGS_FILE.read_text(encoding="utf-8"))["model_routing"]
     assert mr.get("ollama_url") == "http://localhost:11434"
-    assert mr.get("mode") != "local_only" and mr.get("fallback_to_cloud") is not False, \
+    assert mr.get("mode") == "cloud_only" and mr.get("fallback_to_cloud") is True, \
         "the never-persist local-only overlay was written to disk"
 
 
@@ -306,9 +307,50 @@ def test_only_the_consent_screens_first_finish_is_a_pick(real_settings):
     core = real_settings
     core._load_settings_raw()
     from agent_friday.services import setup_chat
-    setup_chat.begin()                                  # finished with no route given
-    setup_chat.begin(routing_mode="cloud_only")         # called again: not a pick
+    setup_chat.begin(screen=True)                       # finished with no route given
+    setup_chat.begin(routing_mode="cloud_only", screen=True)   # called again: not a pick
     assert _unpicked() is True
+
+
+def test_the_consent_screens_route_needs_the_pages_own_click(real_settings):
+    core = real_settings
+    core._load_settings_raw()
+    from agent_friday.services import setup_chat
+    import inspect
+    if "screen" not in inspect.signature(setup_chat.begin).parameters:
+        pytest.fail("begin() cannot tell the consent page's own click from any other call")
+    setup_chat.begin(routing_mode="cloud_only")        # not the page's verified click
+    assert _unpicked() is True
+    src = (REPO / "src/agent_friday/routes/setup_chat.py").read_text(encoding="utf-8")
+    assert "screen_session(request)" in src
+
+
+def test_a_verified_pick_stays_made_after_an_unverified_change(real_settings):
+    core = real_settings
+    core._load_settings_raw()
+    core._save_settings({"model_routing": {"mode": "local_only"}}, owner_routing_change=True,
+                        routing_change_via="settings")
+    assert _unpicked() is False
+    # The chat's "switch to cloud" button is an owner change that is not tied to a screen.
+    core._save_settings({"model_routing": {"mode": "cloud_only"}}, owner_routing_change=True,
+                        routing_change_via="unverified")
+    assert _unpicked() is False
+    assert cloud_intent.routing_mode() == "cloud_only"
+
+
+def test_a_local_provider_can_still_be_tested(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    from agent_friday.services import key_verdict as kv
+    calls = []
+    monkeypatch.setattr(kv, "probe_spec", lambda prov, model: calls.append(1) or None)
+    kv.ping_detail({"type": "ollama", "name": "ollama-local",
+                    "base_url": "http://127.0.0.1:11434"}, "qwen")
+    assert calls, "a provider on this computer is not the cloud; its check may run"
+
+
+def test_the_voice_setup_does_not_call_an_unchecked_key_ok():
+    src = (REPO / "src/agent_friday/routes/voice.py").read_text(encoding="utf-8")
+    assert "if _ki.get(\"key\") and _unpicked:" in src
 
 
 def test_a_spoken_yes_cannot_answer_the_choose_prompt(real_settings):

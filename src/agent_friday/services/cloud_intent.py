@@ -160,8 +160,9 @@ ROUTE_NOT_CHOSEN_TEXT = (
 
 def route_unpicked() -> bool:
     """True on a new install whose owner has not picked a route (A16a): no
-    cloud call at all until they do. A fault reads as not pending, as
-    core.route_pick_pending does: an existing install keeps its route."""
+    cloud call at all until they do. core.route_pick_pending keeps a new
+    install local-only when its own check faults; an existing install is
+    never changed by a fault."""
     try:
         from agent_friday import core
         return bool(core.route_pick_pending())

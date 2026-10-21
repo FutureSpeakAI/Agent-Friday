@@ -536,9 +536,13 @@ def view() -> dict:
 
 # ── Transitions ──────────────────────────────────────────────────────────────
 
-def begin(routing_mode: str = "", vault_passphrase: str = "") -> dict:
+def begin(routing_mode: str = "", vault_passphrase: str = "", *, screen: bool = False) -> dict:
     """The consent screens are done. Store the passphrase now (never in the
-    state file) and open the chat."""
+    state file) and open the chat.
+
+    `screen` is True only for the consent page's own verified click
+    (screen_click.screen_session); only then is its route recorded as the
+    person's pick (A16a)."""
     from agent_friday.services.setup_complete import ROUTING_MODES, store_vault_passphrase
     with _LOCK:
         st = load_state()
@@ -559,7 +563,7 @@ def begin(routing_mode: str = "", vault_passphrase: str = "") -> dict:
     if routing_mode in ROUTING_MODES and first_finish:
         try:
             from agent_friday.services.setup_complete import save_routing_answer
-            save_routing_answer(routing_mode, via="consent_screen")
+            save_routing_answer(routing_mode, via="consent_screen" if screen else "unverified")
         except Exception as e:
             _log.warning("the consent screen's route was not recorded: %s", type(e).__name__)
     return view()

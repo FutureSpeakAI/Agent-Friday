@@ -358,6 +358,20 @@ def _unpicked_cloud_endpoint(name: str) -> bool:
         return True
 
 
+def _unpicked_cloud_provider(name: str) -> bool:
+    """A provider that is not on this machine, while no route is picked (A16a).
+    Brave, Firecrawl and ElevenLabs have no local form. Unknown counts as cloud."""
+    if not _route_unpicked():
+        return False
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        from agent_friday.services.seat_policy import is_local_descriptor
+        prov = get_provider_registry().get_provider(name)
+        return not (prov and is_local_descriptor(prov))
+    except Exception:
+        return True
+
+
 def _not_checked_unpicked() -> dict:
     return _out(UNKNOWN, "Not checked yet: nothing goes to the cloud until you "
                          "choose where Friday thinks.",
@@ -381,9 +395,10 @@ def test(item_id: str) -> dict:
             return _test_openai_endpoint(name, name)
         # North-star A16a: before a route is picked a key check sends nothing
         # to the cloud. The key stays saved and is checked once a route is chosen.
-        if item_id.startswith("provider:") or item_id == "google":
-            if _route_unpicked():
-                return _not_checked_unpicked()
+        if item_id == "google" and _route_unpicked():
+            return _not_checked_unpicked()
+        if item_id.startswith("provider:") and _unpicked_cloud_provider(item_id.split(":", 1)[1]):
+            return _not_checked_unpicked()
         if item_id == "provider:brave":
             return _test_brave()
         if item_id == "provider:firecrawl":

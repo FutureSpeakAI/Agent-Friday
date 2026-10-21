@@ -3962,7 +3962,17 @@ def voice_setup_status():
             from agent_friday.core import GEMINI_API_KEY
             _ki = {"key": GEMINI_API_KEY, "valid": bool(GEMINI_API_KEY),
                    "source": "server", "detail": ""}
-        if _ki.get("key") and _ki.get("valid"):
+        try:
+            from agent_friday.services.cloud_intent import route_unpicked as _ru
+            _unpicked = bool(_ru())
+        except Exception:
+            _unpicked = False
+        if _ki.get("key") and _unpicked:
+            # A16a: the key was not sent to Google, so it is not called "ok".
+            _kstat = "unknown"
+            _kdetail = ("Not checked yet: nothing goes to the cloud until you choose "
+                        "where Friday thinks (Settings > Models).")
+        elif _ki.get("key") and _ki.get("valid"):
             _kstat, _kdetail = "ok", f"key from {_ki.get('source')}"
         elif _ki.get("key"):
             _kstat = "invalid"

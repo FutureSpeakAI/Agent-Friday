@@ -3941,6 +3941,8 @@ def route_pick_pending(settings=None) -> bool:
         unreadable = install_record_unreadable()
         if install_origin() != NEW_INSTALL and not unreadable:
             return False
+        if not unreadable and install_choices_state().get("route_picked") is True:
+            return False                    # a verified pick was made (sticky)
         s = _load_settings_raw() if settings is None else settings
         mr = (s or {}).get("model_routing")
         mr = mr if isinstance(mr, dict) else {}
@@ -3956,7 +3958,12 @@ def route_pick_pending(settings=None) -> bool:
         # Only a pick the owner verifiably made ends it (A16a).
         return via not in ROUTE_PICK_VIAS
     except Exception:
-        return False
+        # A check that cannot run keeps a new install local-only (A16a) and
+        # never changes an existing one.
+        try:
+            return install_origin() == NEW_INSTALL
+        except Exception:
+            return False
 
 
 def _persist_spending_caps_migration(delta: dict):
@@ -4200,12 +4207,25 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_room_approvals_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
-        return _save_settings_locked(data,
+        out = _save_settings_locked(data,
             _internal_cloud_consent_write=_internal_cloud_consent_write,
             owner_routing_change=owner_routing_change,
             owner_safe_writes_change=owner_safe_writes_change,
             routing_change_via=routing_change_via,
             owner_room_approvals_change=owner_room_approvals_change)
+    # A16a: a verified pick, once made, stays made. Kept in the install record
+    # (which no client and no whole-file settings rewrite can touch), so a
+    # later routing change that cannot be tied to a screen (the chat's mode
+    # button) moves the mode without taking the person back to "not chosen".
+    if owner_routing_change and routing_change_via in ROUTE_PICK_VIAS:
+        _mr_saved = (data or {}).get("model_routing") if isinstance(data, dict) else None
+        if isinstance(_mr_saved, dict) and str(_mr_saved.get("mode") or "").strip():
+            try:
+                if not install_choices_state().get("route_picked"):
+                    update_install_choices_state(route_picked=True)
+            except Exception:
+                pass
+    return out
 
 
 #: How an owner routing change was made, as `model_routing.mode_chosen_via`
