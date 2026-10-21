@@ -39,11 +39,11 @@ const VIEW = {
   honest_limit: 'This map lists what Friday itself keeps and sends.',
 };
 
-function render(fetched, opened, navs, view = VIEW, posts = []) {
+function render(fetched, opened, navs, view = VIEW, posts = [], rec = null, man = null) {
   const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
   const createElement = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) });
   let slot = 0;
-  const slots = [view, '', null];
+  const slots = [view, '', rec, null, man];
   const ctx = vm.createContext({
     React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
     useEffect: () => {}, useCallback: fn => fn, encodeURIComponent, fridayName: () => 'Friday',
@@ -117,6 +117,26 @@ test('the map states plainly which mode is on, and its buttons switch or delete 
   // Leftovers a switch could not delete are shown, with their delete, in either mode.
   const left = render([], [], [], { ...VIEW, sent_text: { ...FULL, mode: 'fingerprint', keep: false, kept: 1, words: 'Only fingerprints are kept.' } }, posts);
   assert.ok(all(left, n => n.type === 'button').some(b => label(b) === 'Delete the kept text'));
+});
+
+test('a send\'s receipt opens what went into it, by name, size and class (P3)', () => {
+  const fetched = [];
+  const rec = { to: 'anthropic', label: 'Anthropic (Claude)', rows: [{ kind: 'call', ts: 1760000000, purpose: 'answering you',
+    model: 'synthetic-model-1', destination: 'api.example', result: 'sent', manifest_id: 'cm-eg-synthetic01', payload_fingerprint: 'f'.repeat(64) }] };
+  const man = { manifest_id: 'cm-eg-synthetic01', principal: 'you', purpose: 'answering you', destination: 'api.example', model: 'synthetic-model-1',
+    sources: [{ part: 'messages[].content', sensitivity: 'PUBLIC', action: 'allow', count: 2 }, { part: 'system', sensitivity: 'PRIVATE', action: 'redact', count: 1 }],
+    sensitivity_classes: ['PRIVATE', 'PUBLIC'], withheld: 1, grants: [], estimated_tokens: 42, previewed: false,
+    previewed_words: 'Not previewed: Friday does not show an outbound preview yet.', assembled_sections: [{ name: 'memory', sent: true }] };
+  const tree = render(fetched, [], [], VIEW, [], rec, man);
+  const btn = all(tree, n => n.type === 'button').find(b => label(b) === 'What went into it');
+  assert.ok(btn, 'no way to open the manifest from the receipt');
+  btn.props.onClick();
+  assert.equal(fetched.at(-1), '/api/privacy/manifest/cm-eg-synthetic01');
+  const text = all(tree, () => true).flatMap(n => (n.children || []).filter(c => typeof c === 'string')).join(' ');
+  for (const s of ['What went into this send', 'messages[].content (PUBLIC, 2 times)', 'system (PRIVATE, redact)',
+                   'Sensitivity seen: PRIVATE, PUBLIC', 'Withheld: 1', 'About 42 tokens', 'Not previewed', 'Prompt sections this turn assembled: memory']) {
+    assert.ok(text.includes(s), 'missing: ' + s);
+  }
 });
 
 test('a receipt offers its text only while that text is still kept', () => {
