@@ -70,7 +70,10 @@ param(
     # file before anything is removed. Unattended runs read the bundle
     # passphrase from FRIDAY_BUNDLE_PASSPHRASE. If the bundle cannot be made
     # and verified, nothing is removed.
-    [string] $BundleTo = ''
+    [string] $BundleTo = '',
+    # Set by the setup program's own uninstaller when it made and verified a
+    # Friday Bundle before calling this script (it is in the receipt).
+    [switch] $BundleMade
 )
 
 $ErrorActionPreference = 'Stop'
@@ -151,6 +154,7 @@ function Move-SelfOutOfHarmsWay {
     if ($InnoManaged)      { $args += '-InnoManaged' }
     if ($AllowElevation)   { $args += '-AllowElevation' }
     if ($BundleTo)         { $args += @('-BundleTo', (& $q $BundleTo)) }
+    if ($BundleMade)       { $args += '-BundleMade' }
     $child = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -NoNewWindow -Wait -PassThru
     exit $child.ExitCode
 }
@@ -184,8 +188,8 @@ function Remove-FridayCredentials {
     $names = @('agent-friday/vault-passphrase', 'agent-friday/governance-key')
     # and every other agent-friday target, by the name cmdkey lists
     foreach ($t in @(Get-FridayCredentialTargets)) {
-        $names += $t
-        if ($t -match '^LegacyGeneric:target=(.+)$') { $names += $Matches[1] }
+        $names += [string]$t
+        if ([string]$t -match '^LegacyGeneric:target=(.+)$') { $names += $Matches[1] }
     }
     foreach ($n in $names) {
         $r = Invoke-Native -FilePath "$env:SystemRoot\System32\cmdkey.exe" -Arguments @("/delete:$n") -TimeoutSeconds 30
@@ -227,32 +231,30 @@ function Get-FridayCredentialTargets {
         vault passphrase, the governance key, the action ledger's anchors,
         the guarded-settings counters and any kept earlier passphrase. Names
         only, read from `cmdkey /list`; no value is ever read. #>
+    # Each name is written to the pipeline, so @(Get-FridayCredentialTargets)
+    # is an empty array when there are none.
     $r = Invoke-Native -FilePath "$env:SystemRoot\System32\cmdkey.exe" -Arguments @('/list') -TimeoutSeconds 30
-    $out = @()
     foreach ($line in ($r.StdOut -split "`r?`n")) {
         if ($line -match '^\s*Target:\s*(.+?)\s*$') {
             $t = $Matches[1]
             # only the names Python's keyring writes for service agent-friday:
             # "agent-friday" or "<account>@agent-friday", never another app's
             # credential that merely mentions the name (a Git remote, say)
-            if ($t -match '^(LegacyGeneric:target=)?([^@\s]+@)?agent-friday$') { $out += $t }
+            if ($t -match '^(LegacyGeneric:target=)?([^@\s]+@)?agent-friday$') { Write-Output $t }
         }
     }
-    return ,$out
 }
 
 function Get-FridaySiblingCopies {
     <#  Full copies of the data folder a restore leaves beside it. #>
     $parent = Split-Path -Parent $FridayDir
     $leaf = Split-Path -Leaf $FridayDir
-    if (-not (Test-Path -LiteralPath $parent)) { return ,@() }
-    $out = @()
+    if (-not (Test-Path -LiteralPath $parent)) { return }
     foreach ($d in @(Get-ChildItem -LiteralPath $parent -Directory -Force -ErrorAction SilentlyContinue)) {
         if ($d.Name.StartsWith($leaf + '.pre-restore-') -or $d.Name.StartsWith($leaf + '.friday-restore-')) {
-            $out += $d.FullName
+            Write-Output $d.FullName
         }
     }
-    return ,$out
 }
 
 function Get-FolderSizeGb {
@@ -744,9 +746,9 @@ $receipt = [ordered]@{
     receipt          = 'agent-friday-uninstall'
     at               = (Get-Date).ToUniversalTime().ToString('o')
     data_removed     = [bool]$removeData
-    bundle_first     = [bool]$bundleMade
+    bundle_first     = ([bool]$bundleMade -or [bool]$BundleMade)
     checks           = [ordered]@{
-        install_folder_gone   = -not (Test-Path -LiteralPath $InstallRoot)
+        install_folder_gone   = $(if ($InnoManaged) { 'removed by the setup program after this receipt' } else { -not (Test-Path -LiteralPath $InstallRoot) })
         data_folder_gone      = -not (Test-Path -LiteralPath $FridayDir)
         upgrade_backups_gone  = -not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.friday-backups'))
         credentials_left      = @(Get-FridayCredentialTargets).Count

@@ -63,11 +63,12 @@ function Invoke-Setup([string] $tag) {
     return $p.ExitCode
 }
 function Get-FridayTargets {
-    $out = @()
     foreach ($line in (& cmdkey.exe /list)) {
-        if ($line -match '^\s*Target:\s*(.+?)\s*$' -and $Matches[1] -match '^(LegacyGeneric:target=)?([^@\s]+@)?agent-friday$') { $out += $Matches[1] }
+        if ($line -match '^\s*Target:\s*(.+?)\s*$') {
+            $t = $Matches[1]
+            if ($t -match '^(LegacyGeneric:target=)?([^@\s]+@)?agent-friday$') { Write-Output $t }
+        }
     }
-    return ,$out
 }
 
 try {
@@ -105,7 +106,8 @@ try {
     $receiptPath = Join-Path $env:TEMP 'AgentFriday-uninstall\uninstall-receipt.json'
     $receipt = $null
     if (Test-Path $receiptPath) { $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json }
-    Check 'uninstall_receipt' ($null -ne $receipt -and $receipt.data_removed -and $receipt.checks.credentials_left -eq 0 -and
+    Check 'uninstall_receipt' ($null -ne $receipt -and $receipt.data_removed -and $receipt.bundle_first -and
+                               $receipt.checks.credentials_left -eq 0 -and $receipt.checks.restore_copies_left -eq 0 -and
                                $receipt.checks.data_folder_gone -and $receipt.checks.upgrade_backups_gone) `
           ("receipt: " + ($(if ($receipt) { $receipt | ConvertTo-Json -Compress -Depth 4 } else { 'missing' })))
 

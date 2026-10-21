@@ -191,6 +191,7 @@ var
   PrevVersion: String;
   PrevSequence: Int64;
   RemoveEverything: Boolean;
+  BundleWasMade: Boolean;
   ShortcutNote: String;
   ChosenCloud, ChosenConsent, ChosenDeepComp: Boolean;
   ChosenFast, ChosenFastPack, ChosenDeep, ChosenDeepPack, ChosenDeepPick, ChosenTier: String;
@@ -1130,12 +1131,14 @@ var
   Code, Show: Integer;
 begin
   Result := False;
+  BundleWasMade := False;
   Py := ExpandConstant('{app}\python\python.exe');
   if not FileExists(Py) then Exit;
   Params := '-m agent_friday.cli bundle create --out "' + Dest + '"';
   if Visible then Show := SW_SHOW else Show := SW_HIDE;
   if Exec(Py, Params, ExpandConstant('{app}\app'), Show, ewWaitUntilTerminated, Code) then
     Result := (Code = 0);
+  BundleWasMade := Result;
   Log('bundle create exited ' + IntToStr(Code));
 end;
 
@@ -1203,6 +1206,7 @@ begin
   if not FileExists(Script) then Exit;
   Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -InstallRoot "' + ExpandConstant('{app}') + '" -Unattended -InnoManaged';
   if RemoveEverything then Params := Params + ' -RemoveEverything';
+  if BundleWasMade then Params := Params + ' -BundleMade';
   if (not UninstallSilent) and HostsHasFridayBlock() then
   begin
     if MsgBox('Agent Friday added a local address to this computer''s hosts file. Remove it now? Windows will ask for permission.',
