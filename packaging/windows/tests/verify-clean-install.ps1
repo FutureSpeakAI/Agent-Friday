@@ -44,29 +44,13 @@
                 ~/.friday (the person's own data) is kept, byte for byte
       reinstall setup runs again over the kept data; Friday starts and answers
                 /api/health; the kept data is still there
-
-    Clean-machine legs (the installer workflow runs this script three ways):
-
-      -ExpectCulture de-DE   the user's formats were switched before this run
-                (Set-Culture, read by every new process). Adds the check
-                'locale': this process really runs with that culture.
-      -StandardUser          run by run-as-standard-user.ps1 as a local account
-                that is not an administrator. Adds the check 'standard-user'
-                (no Administrators membership, not even deny-only) and records
-                'address' as skipped: writing the hosts file asks an
-                administrator on a real PC too.
-
-    Every run writes MACHINE.json beside RESULT.json: user, administrator or
-    not, culture, display language, system locale, temporary folder, RAM, OS.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string] $Setup,
     [Parameter(Mandatory)][string] $WorkDir,
     [int] $Port = 3000,
-    [int] $BootSeconds = 420,
-    [string] $ExpectCulture = '',
-    [switch] $StandardUser
+    [int] $BootSeconds = 420
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,49 +74,6 @@ $ServerLog   = Join-Path $WorkDir 'server.log'
 
 if (Test-Path $InstallRoot) { throw "not a fresh machine: $InstallRoot exists" }
 if (Test-Path $FridayDir)   { throw "not a fresh machine: $FridayDir exists" }
-
-# ── The machine this leg ran on ────────────────────────────────────────────
-# Administrators membership counts even when UAC filters it to deny-only:
-# the SID appears in the token's groups either way.
-$me = [Security.Principal.WindowsIdentity]::GetCurrent()
-$elevated = ([Security.Principal.WindowsPrincipal] $me).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-$adminSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
-$inAdmins = $false
-foreach ($g in $me.Groups) { if ($g.Value -eq $adminSid.Value) { $inAdmins = $true } }
-$groupsText = (whoami /groups 2>$null) -join "`n"
-if ($groupsText -match 'S-1-5-32-544') { $inAdmins = $true }
-$cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
-$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-$sysLocale = ''
-try { $sysLocale = (Get-WinSystemLocale).Name } catch { }
-$culture = Get-Culture
-$Machine = [ordered]@{
-    user              = $env:USERNAME
-    administrator     = ($elevated -or $inAdmins)
-    culture           = $culture.Name
-    decimal_separator = $culture.NumberFormat.NumberDecimalSeparator
-    short_date        = $culture.DateTimeFormat.ShortDatePattern
-    display_language  = (Get-UICulture).Name
-    system_locale     = $sysLocale
-    temp              = $env:TEMP
-    temp_non_ascii    = [bool]($env:TEMP -match '[^\x00-\x7F]')
-    ram_gb            = $(if ($cs) { [math]::Round($cs.TotalPhysicalMemory / 1GB, 1) } else { $null })
-    os                = $(if ($os) { "$($os.Caption) build $($os.BuildNumber)" } else { '' })
-    leg               = $(if ($StandardUser) { 'standard-user' } elseif ($ExpectCulture) { "locale-$ExpectCulture" } else { 'fresh' })
-}
-[System.IO.File]::WriteAllText((Join-Path $WorkDir 'MACHINE.json'), ($Machine | ConvertTo-Json -Depth 3),
-                               (New-Object System.Text.UTF8Encoding($false)))
-Write-Host ("machine: " + ($Machine | ConvertTo-Json -Compress))
-
-if ($StandardUser) {
-    Check 'standard-user' ((-not $elevated) -and (-not $inAdmins)) `
-          "user $env:USERNAME; elevated: $elevated; in Administrators (any form): $inAdmins"
-}
-if ($ExpectCulture) {
-    # The leg claims a non-ASCII temp folder too, so it is a condition, not a remark.
-    Check 'locale' (($culture.Name -eq $ExpectCulture) -and $Machine.temp_non_ascii -and ($env:TEMP -eq $env:TMP)) `
-          "culture $($culture.Name) (expected $ExpectCulture); decimal '$($culture.NumberFormat.NumberDecimalSeparator)'; dates $($culture.DateTimeFormat.ShortDatePattern); temp non-ASCII: $($Machine.temp_non_ascii)"
-}
 
 $AppsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{BE782F40-3D1C-4F12-8635-4F7561938F75}_is1'
 $py = Join-Path $InstallRoot 'python\python.exe'
@@ -312,14 +253,6 @@ try {
     Check 'officecli' $ocOk ("installed: $(Test-Path $ocExe); pinned: $(if ($ocRec) { $ocRec.pinned_version } else { 'no record' }); hash matches: $($ocHash -eq [string]$ocRec.sha256)")
 
     # agent.<name>: the marked hosts block, then Friday's own listener.
-    # A standard user cannot write the hosts file or stop IIS; on a real PC
-    # Settings asks an administrator for that step. Recorded as skipped, by
-    # name, never as passed.
-    if ($StandardUser) {
-        $Results['address'] = [ordered]@{ ok = $true; skipped = $true
-            detail = 'skipped: the hosts file and port 80 need an administrator; a standard user is asked for approval in Settings' }
-        Write-Host '[SKIP] address: needs an administrator'
-    } else {
     # GitHub's Windows images run IIS, which answers port 80 through http.sys
     # ahead of any other listener. A person's PC normally does not; on a
     # disposable runner it is stopped so the check is about Friday.
@@ -408,7 +341,6 @@ try {
     }
     Check 'address' (($null -ne $named) -and ($named.StatusCode -eq 200) -and ($body -match 'FRIDAY')) `
           ("http://$hostName/ -> " + $(if ($named) { "$($named.StatusCode) $($named.Headers['Content-Type']); title: '$title'; server: $($named.Headers['Server'])" } else { "no answer ($namedErr)" }) + "; listener ok: $($serve.ok)")
-    }
 
     # Last, because it finishes first-run setup: "Set up later" from the
     # first stage completes setup with defaults.

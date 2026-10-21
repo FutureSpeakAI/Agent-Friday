@@ -157,29 +157,6 @@ def _with_retries(fn, attempts: int):
     raise err  # type: ignore[misc]
 
 
-def gate_record(runs_by_workflow: dict, sha: str, repo: str, reasons: list[str],
-                alerts_ref: str = "") -> dict:
-    """What a green verdict rested on: every counted run on ``sha``, by workflow, and
-    whether the alerts on the tag were asked about. Written only on green."""
-    sha = (sha or "").strip().lower()
-    out = {}
-    for wf, runs in (runs_by_workflow or {}).items():
-        out[wf] = [{"id": r.get("id"), "event": r.get("event"), "status": r.get("status"),
-                    "conclusion": r.get("conclusion"), "url": r.get("html_url")}
-                   for r in (runs or []) if isinstance(r, dict) and _counts(r, sha, repo)]
-    return {"verdict": "green", "sha": sha, "repo": repo, "workflows": out,
-            "reasons": list(reasons),
-            "alerts_checked_on": alerts_ref or None,
-            "blocking_alerts": 0 if alerts_ref else None,
-            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-
-
-def write_record(path: str, runs_by_workflow: dict, sha: str, repo: str,
-                 reasons: list[str], alerts_ref: str = "") -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(gate_record(runs_by_workflow, sha, repo, reasons, alerts_ref), f, indent=2)
-
-
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True, help="owner/name")
@@ -192,9 +169,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--alerts-ref", default="",
                     help="also refuse when this ref (refs/tags/<tag>) has open high/critical "
                          "code-scanning alerts")
-    ap.add_argument("--record", default="",
-                    help="on green, write what was checked (runs, alerts) to this JSON file; "
-                         "the release attaches it inside release-evidence.json")
     a = ap.parse_args(argv)
     workflows = a.workflow or list(DEFAULT_WORKFLOWS)
     deadline = time.monotonic() + max(0.0, a.wait_minutes) * 60.0
@@ -225,12 +199,6 @@ def main(argv: list[str] | None = None) -> int:
                       f"alert(s) on {a.alerts_ref}", flush=True)
                 return 1
         if state == "green":
-            if a.record:
-                try:
-                    write_record(a.record, runs, a.sha, a.repo, reasons, a.alerts_ref)
-                except OSError as e:
-                    print(f"release gate: REFUSED, could not write the record: {e}", flush=True)
-                    return 3
             print(f"release gate: GREEN on {a.sha}", flush=True)
             return 0
         if state == "red":
