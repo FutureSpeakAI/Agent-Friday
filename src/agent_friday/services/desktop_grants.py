@@ -86,7 +86,7 @@ _MCP_KEYS = frozenset({"shortcut", "key"})
 RISKY_WORDS = re.compile(
     r"\b(delete|remove|erase|discard|trash|wipe|uninstall|send|pay|payment|"
     r"purchase|buy|checkout|check\s*out|order|submit|transfer|publish|post|"
-    r"confirm|sign)\b", re.I)
+    r"confirm|sign|approve|allow|accept|grant)\b", re.I)   # the last four: an approval card's buttons
 _SUBMIT_KEYS = frozenset({"enter", "return"})
 _DELETE_KEYS = frozenset({"delete", "del"})
 _TEXT_CONTROLS = frozenset({"edit", "document"})

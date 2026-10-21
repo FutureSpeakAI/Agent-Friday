@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 import agent_friday.server as friday_server  # noqa: E402 (already imported by conftest but we want the ref)
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -780,17 +781,17 @@ class TestControlPermission:
 class TestControlAppGrants:
     def test_set_change_and_remove_an_app(self, client):
         resp = client.post("/api/control/app-grants",
-                           json={"app": "Notepad.exe", "tier": "observe"})
+                           json={"app": "Notepad.exe", "tier": "observe"}, headers=desk_headers())
         assert resp.status_code == 200
         assert resp.get_json()["apps"]["notepad.exe"] == "observe"
-        client.post("/api/control/app-grants", json={"app": "notepad.exe", "tier": "act"})
+        client.post("/api/control/app-grants", json={"app": "notepad.exe", "tier": "act"}, headers=desk_headers())
         assert client.get("/api/control/app-grants").get_json()["apps"]["notepad.exe"] == "act"
         resp = client.post("/api/control/app-grants", json={"app": "notepad.exe", "remove": True})
         assert "notepad.exe" not in resp.get_json()["apps"]
 
     def test_junk_is_refused(self, client):
         assert client.post("/api/control/app-grants",
-                           json={"app": "a;b", "tier": "act"}).status_code == 400
+                           json={"app": "a;b", "tier": "act"}, headers=desk_headers()).status_code == 400
         assert client.post("/api/control/app-grants",
                            json={"app": "x.exe", "tier": "all"}).status_code == 400
 

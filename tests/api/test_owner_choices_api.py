@@ -121,7 +121,8 @@ def test_the_card_answer_records_the_ticks_and_settings_lists_and_forgets_them(c
     monkeypatch.setattr(screen_click, "screen_session", lambda req: False)
     r = client.post("/api/privacy/cloud-release/%s/decide" % card["approval_id"],
                     json={"decision": "approve", "remember": {"thread": False, "sender": True}})
-    assert r.status_code == 400 and approvals.get_approval(card["approval_id"])["status"] == "pending"
+    # Refused with the code that has the page fetch the desk key (services/desk_press).
+    assert r.status_code == 403 and approvals.get_approval(card["approval_id"])["status"] == "pending"
     monkeypatch.setattr(screen_click, "screen_session", lambda req: True)
     r = client.post("/api/privacy/cloud-release/%s/decide" % card["approval_id"],
                     json={"decision": "approve", "remember": {"thread": False, "sender": True}})

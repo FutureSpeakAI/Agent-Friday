@@ -378,7 +378,7 @@ def test_a_screen_identity_needs_a_browser_click_of_this_server_and_its_session_
 def test_the_approval_route_downgrades_an_unverified_screen_claim():
     from pathlib import Path
     src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "routes" / "goals.py").read_text(encoding="utf-8-sig")
-    assert "_screen_click.decided_by(request, data.get(\"decided_by\", \"owner\"))" in src
+    assert "_screen_click.decided_by(request, data.get(\"decided_by\", \"owner\"), for_ids=[approval_id])" in src
 
 
 # -- L7, L12, L19: smaller closes ----------------------------------------------------

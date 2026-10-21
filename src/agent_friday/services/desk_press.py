@@ -131,9 +131,33 @@ def note_machine_input() -> None:
     _last_machine_input = time.time()
 
 
+_machine_active = 0
+_machine_lock = threading.Lock()
+
+
+class machine_input:
+    """Context manager around one of Friday's own mouse or keyboard actions: while it runs
+    (typing 2,000 characters takes a minute) and for MACHINE_INPUT_QUIET_S after it ends, no
+    press counts as the owner's."""
+
+    def __enter__(self):
+        global _machine_active
+        with _machine_lock:
+            _machine_active += 1
+        note_machine_input()
+        return self
+
+    def __exit__(self, *exc):
+        global _machine_active
+        note_machine_input()
+        with _machine_lock:
+            _machine_active = max(0, _machine_active - 1)
+        return False
+
+
 def machine_input_recent() -> bool:
     import time
-    return (time.time() - _last_machine_input) < MACHINE_INPUT_QUIET_S
+    return _machine_active > 0 or (time.time() - _last_machine_input) < MACHINE_INPUT_QUIET_S
 
 
 def check(request) -> dict:

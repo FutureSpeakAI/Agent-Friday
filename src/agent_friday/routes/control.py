@@ -111,7 +111,7 @@ def cc_app_grants():
                         "origin": cur["origin"]})
     data = request.get_json(force=True, silent=True) or {}
     app = data.get('app', '')
-    if not data.get('remove') and str(data.get('tier') or '').strip().lower() not in ('', 'none'):
+    if not data.get('remove') and str(data.get('tier') or '').strip().lower() in ('observe', 'act'):
         # Widening what Friday may see or do in an app (a browser holding Friday's own page among
         # them) is a press on this PC's screen. Narrowing and removing are open.
         from agent_friday.services import screen_click as _sc

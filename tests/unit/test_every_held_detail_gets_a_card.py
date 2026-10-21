@@ -167,7 +167,8 @@ def test_the_card_route_sends_only_for_a_click_on_the_page(gate, monkeypatch):
     with Flask(__name__).test_request_context("/x", method="POST", json={"decision": "approve"}):
         resp = view(card["approval_id"])
     resp, status = (resp if isinstance(resp, tuple) else (resp, 200))
-    assert status == 400 and ap.get_approval(card["approval_id"])["status"] == "pending"
+    # Refused with the code that has the page fetch the desk key (services/desk_press).
+    assert status == 403 and ap.get_approval(card["approval_id"])["status"] == "pending"
 
 
 def test_the_never_send_floor_is_refused_with_its_reason_and_never_carded(gate):

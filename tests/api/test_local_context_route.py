@@ -57,11 +57,11 @@ def test_allow_for_this_conversation_sends_and_grants(client, card):
 def test_edit_asks_once_more_when_the_check_would_change_it(client, card):
     aid, _heard = card
     d = client.post(f"/api/local-context/{aid}/act",
-                    json={"action": "edit", "text": "Ring 512-555-0199 first."}).get_json()
+                    json={"action": "edit", "text": "Ring 512-555-0199 first."}, headers=desk_headers()).get_json()
     assert d.get("needs_confirm") and "[phone number 1]" in d["checked"]
     d = client.post(f"/api/local-context/{aid}/act",
                     json={"action": "edit", "text": "Ring 512-555-0199 first.",
-                          "accept": "checked"}).get_json()
+                          "accept": "checked"}, headers=desk_headers()).get_json()
     assert d["ok"] and d["approval"]["payload"]["text"] == "Ring [phone number 1] first."
 
 

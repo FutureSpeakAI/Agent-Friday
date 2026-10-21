@@ -1548,7 +1548,11 @@ def test_f3_mj1_no_other_channel_approves_a_laya_card(chat, gmail, monkeypatch, 
 @pytest.mark.parametrize("who", ["owner:ui", "owner:/voice/"])
 def test_f3_mj1_the_button_and_the_owners_voice_still_approve(chat, gmail, monkeypatch, who):
     cid = _arm(gmail, monkeypatch)
-    rec, won = ap.decide_with_outcome(cid, "approve", decided_by=who)
+    if who == "owner:ui":
+        with pressed():                   # the button: a verified press on this PC (services/desk_press)
+            rec, won = ap.decide_with_outcome(cid, "approve", decided_by=who)
+    else:
+        rec, won = ap.decide_with_outcome(cid, "approve", decided_by=who)
     assert won is True and ia.wait_for(cid, 10)["status"] == "complete"
 
 
@@ -2007,8 +2011,19 @@ def test_fn_mn2_the_decide_route_refuses_a_laya_approval_with_a_clear_message(ch
             resp = fn(cid)
         resp, status = resp if isinstance(resp, tuple) else (resp, 200)
         data = json.loads(resp.get_data(as_text=True))
-        assert status == 403 and data["error"] == "needs_approve_button" and "Approve button" in data["message"], who
+        # Not a press on this PC's screen at all: refused before the card is even looked at.
+        assert status == 403 and data.get("code") == "desk_proof_required", who
         assert "already_decided" not in data
+    assert ap.get_approval(cid)["status"] == "pending"
+    # A real press on this PC that names another label still cannot approve a Laya card, and says why.
+    from tests.desk_press_support import desk_headers
+    with Flask(__name__).test_request_context("/x", method="POST", json={"decision": "approve", "decided_by": "owner:caption"},
+                                              headers=desk_headers(), base_url="http://localhost",
+                                              environ_base={"REMOTE_ADDR": "127.0.0.1"}):
+        resp = fn(cid)
+    resp, status = resp if isinstance(resp, tuple) else (resp, 200)
+    data = json.loads(resp.get_data(as_text=True))
+    assert status == 403 and data["error"] == "needs_approve_button" and "Approve button" in data["message"]
     assert ap.get_approval(cid)["status"] == "pending"
     with Flask(__name__).test_request_context("/x", method="POST", json={"decision": "deny", "decided_by": "owner:caption"}):
         resp = fn(cid)

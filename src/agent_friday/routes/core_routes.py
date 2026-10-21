@@ -2113,6 +2113,13 @@ def api_mcp_servers():
     POST: replace it ({"servers": {...}}) and hot-reload the manager."""
     if request.method == 'GET':
         return jsonify({"status": "ok", "config": _load_mcp_servers()})
+    # A server entry is a command this PC runs as the owner (it could even open Friday's own
+    # page in a browser here and press a card): a press on this PC's own screen.
+    from agent_friday.services import screen_click as _screen_click_mcp
+    _refused_mcp = _screen_click_mcp.press_refusal(
+        request, "Change Friday's connectors with a press in Settings, on the computer Friday runs on.")
+    if _refused_mcp is not None:
+        return _refused_mcp
     try:
         data = request.get_json(silent=True) or {}
         cfg = data.get("config") or data

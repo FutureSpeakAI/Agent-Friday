@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +46,7 @@ def test_create_scan_list_and_revoke_round_trip(client, tmp_path):
     assert scan.status_code == 200
     assert scan.get_json()["extractable"] is True
 
-    created = client.post("/api/privacy/file-grants", json={"path": str(p), "scope": "file"})
+    created = client.post("/api/privacy/file-grants", json={"path": str(p), "scope": "file"}, headers=desk_headers())
     assert created.status_code == 200
     grant = created.get_json()["grant"]
     assert grant["type"] == "file"
@@ -65,7 +66,7 @@ def test_scope_grant_without_expiry_is_rejected(client, tmp_path):
     folder = tmp_path / "docs"
     folder.mkdir()
     resp = client.post("/api/privacy/file-grants",
-                       json={"path": str(folder), "scope": "folder"})
+                       json={"path": str(folder), "scope": "folder"}, headers=desk_headers())
     assert resp.status_code == 400
 
 
@@ -73,7 +74,7 @@ def test_scope_grant_over_30_days_is_rejected(client, tmp_path):
     folder = tmp_path / "docs"
     folder.mkdir()
     resp = client.post("/api/privacy/file-grants",
-                       json={"path": str(folder), "scope": "folder", "expiry_days": 45})
+                       json={"path": str(folder), "scope": "folder", "expiry_days": 45}, headers=desk_headers())
     assert resp.status_code == 400
 
 
@@ -81,7 +82,7 @@ def test_deny_mark_round_trip(client, tmp_path):
     p = tmp_path / "private.txt"
     p.write_text("secret", encoding="utf-8")
 
-    created = client.post("/api/privacy/deny-marks", json={"path": str(p), "scope": "file"})
+    created = client.post("/api/privacy/deny-marks", json={"path": str(p), "scope": "file"}, headers=desk_headers())
     assert created.status_code == 200
     deny = created.get_json()["deny"]
 
@@ -91,7 +92,7 @@ def test_deny_mark_round_trip(client, tmp_path):
 
 def test_missing_file_grant_returns_404(client, tmp_path):
     resp = client.post("/api/privacy/file-grants",
-                       json={"path": str(tmp_path / "nope.txt"), "scope": "file"})
+                       json={"path": str(tmp_path / "nope.txt"), "scope": "file"}, headers=desk_headers())
     assert resp.status_code == 404
 
 

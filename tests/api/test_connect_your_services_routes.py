@@ -10,6 +10,7 @@ import json
 import pytest
 
 import agent_friday.core as core
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 FAKE_GROQ = "gsk_" + "Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2Rr1Qq0Pp" + "Oo9Nn8"   # pragma: allowlist secret
 
@@ -169,7 +170,7 @@ def test_a_local_runtime_that_is_not_running_says_how_to_start_it(client, home, 
 # ── MCP servers ──────────────────────────────────────────────────────────────
 
 def test_an_mcp_server_is_added_by_address_listed_and_removed(client, home):
-    r = client.post("/api/setup/connections/mcp",
+    r = client.post("/api/setup/connections/mcp", headers=desk_headers(),
                     json={"name": "docs", "url": "https://mcp.context7.com/mcp"})
     assert r.status_code == 200 and r.get_json()["item"] == "mcp:docs", r.get_json()
     cfg = json.loads((home["path"] / "mcp_servers.json").read_text(encoding="utf-8"))
@@ -177,7 +178,7 @@ def test_an_mcp_server_is_added_by_address_listed_and_removed(client, home):
     items = {i["id"]: i for i in client.get("/api/setup/connections").get_json()["items"]}
     assert items["mcp:docs"]["category"] == "mcp"
     assert items["mcp:docs"]["connect"]["sign_in"]
-    dup = client.post("/api/setup/connections/mcp", json={"name": "docs", "url": "https://x.example/mcp"})
+    dup = client.post("/api/setup/connections/mcp", headers=desk_headers(), json={"name": "docs", "url": "https://x.example/mcp"})
     assert dup.status_code == 422 and "already" in dup.get_json()["message"]
     assert client.delete("/api/setup/connections/mcp/docs").status_code == 200
     cfg = json.loads((home["path"] / "mcp_servers.json").read_text(encoding="utf-8"))
@@ -185,7 +186,7 @@ def test_an_mcp_server_is_added_by_address_listed_and_removed(client, home):
 
 
 def test_an_mcp_server_by_command_is_split_not_run(client, home):
-    r = client.post("/api/setup/connections/mcp",
+    r = client.post("/api/setup/connections/mcp", headers=desk_headers(),
                     json={"name": "local-tools", "command": 'npx -y "some server" --flag'})
     assert r.status_code == 200, r.get_json()
     spec = json.loads((home["path"] / "mcp_servers.json").read_text(encoding="utf-8"))["servers"]["local-tools"]
@@ -201,7 +202,7 @@ def test_an_mcp_server_by_command_is_split_not_run(client, home):
     ({"name": "x"}, "not both"),
 ])
 def test_an_mcp_server_the_screen_refuses_in_plain_words(client, home, body, words):
-    r = client.post("/api/setup/connections/mcp", json=body)
+    r = client.post("/api/setup/connections/mcp", headers=desk_headers(), json=body)
     assert r.status_code == 422 and words in r.get_json()["message"], r.get_json()
 
 
@@ -222,7 +223,7 @@ def test_a_connector_name_is_refused_and_nothing_is_written(client, home, name, 
     """A server added here under a connector's name would be hidden from this
     list, unremovable from it, and taken for the real connector."""
     before = _mcp_file(home)
-    r = client.post("/api/setup/connections/mcp", json={"name": name, **how})
+    r = client.post("/api/setup/connections/mcp", headers=desk_headers(), json={"name": name, **how})
     assert r.status_code == 422 and "its own card" in r.get_json()["message"], r.get_json()
     assert _mcp_file(home) == before
 
@@ -414,7 +415,7 @@ def test_a_sign_in_failure_never_reaches_the_screen_as_its_own_text(client, home
 
 
 def test_what_the_person_typed_is_not_echoed_in_a_refusal(client, home):
-    assert client.post("/api/setup/connections/mcp",
+    assert client.post("/api/setup/connections/mcp", headers=desk_headers(),
                        json={"name": "docs", "url": "https://mcp.example.com/mcp"}).status_code == 200
     r = client.delete("/api/setup/connections/mcp/zz-" + MARKER.lower())
     assert r.status_code == 422 and MARKER.lower() not in r.get_data(as_text=True)

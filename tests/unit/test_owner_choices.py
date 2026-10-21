@@ -124,7 +124,9 @@ def test_send_lets_the_text_go_and_remember_for_the_thread_covers_its_next_money
     assert _cards(), "no card to say Send on: the paragraph was held silently"
     card = _cards()[0]
     from agent_friday.services import cloud_release as cr
-    out = cr.decide(card["approval_id"], "approve", {"thread": True, "sender": False})
+    from tests.desk_press_support import pressed      # Send is a verified press on this PC (services/desk_press)
+    with pressed():
+        out = cr.decide(card["approval_id"], "approve", {"thread": True, "sender": False})
     assert out["ok"] and out["approval"]["status"] == "approved"
     sent = _seal(_mail(PLAIN + "\n\n" + MONEY))
     assert MONEY in sent, "the owner said Send and the paragraph still did not go"

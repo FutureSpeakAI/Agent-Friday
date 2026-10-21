@@ -11679,11 +11679,11 @@ function apiFetch(url, opts) {
         code = (await res.clone().json()).code || '';
       } catch (e) {}
       // Refused for a session token the server no longer knows (it rotated, or Friday
-      // restarted), for want of this launch's desk key, or before the desk key had loaded:
-      // fetch whatever is stale and send the same request once more. A 403 did nothing, so
-      // sending it once more cannot do anything twice.
+      // restarted), or for want of this launch's desk key (Friday restarted, or the key had
+      // not loaded yet): fetch whatever is stale and send the same request once more. Only
+      // these coded refusals are retried; each is answered before the route does anything.
       const needToken = code === 'session_token_required';
-      const needDesk = code === 'desk_proof_required' || deskStale || !sentDesk && deskCapablePage();
+      const needDesk = code === 'desk_proof_required' || deskStale;
       if (!needToken && !needDesk) return res;
       const headers = new Headers(init.headers);
       let changed = false;

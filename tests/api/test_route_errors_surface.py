@@ -112,7 +112,7 @@ CASES = [
     # A plain ValueError is not trusted, even on a 400/404 path.
     ("platform", "GET", "/api/distros/anything", None, R + "platform:distributions.load_distro",
      ValueError, 404, "error"),
-    ("control", "POST", "/api/control/app-grants", {"app": "notepad.exe", "tier": "act"},
+    ("control", "POST", "/api/control/app-grants", {"app": "notepad.exe", "tier": "none"},
      S + "desktop_grants:set_grant", ValueError, 400, "error"),
 ]
 

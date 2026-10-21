@@ -9251,6 +9251,21 @@ def _cc_rate_ok():
     return True
 
 
+class _DeskMarkUnavailable(Exception):
+    """services/desk_press could not be told that Friday is about to drive the mouse or keyboard."""
+
+
+def _desk_machine_input():
+    """While Friday's own mouse or keyboard action runs, and for a few seconds after it ends, no
+    press on an approval card counts (services/desk_press.machine_input). Raises
+    _DeskMarkUnavailable when the mark cannot be made, so the caller does not act."""
+    try:
+        from agent_friday.services import desk_press as _dp_cc
+        return _dp_cc.machine_input()
+    except Exception as e:
+        raise _DeskMarkUnavailable(str(e))
+
+
 def _tool_move_mouse(inp):
     ok, err = _cc_check()
     if not ok:
@@ -9265,7 +9280,8 @@ def _tool_move_mouse(inp):
     x = int(round(int((inp or {}).get('x', 0)) * _CC_LAST_SHOT["scale_x"]))
     y = int(round(int((inp or {}).get('y', 0)) * _CC_LAST_SHOT["scale_y"]))
     try:
-        _pag.moveTo(x, y, duration=0.25)
+        with _desk_machine_input():
+            _pag.moveTo(x, y, duration=0.25)
         _log_context("cc_action", {"action": "move_mouse", "x": x, "y": y})
         return f"Mouse moved to ({x}, {y})."
     except Exception as e:
@@ -9288,7 +9304,8 @@ def _tool_click(inp):
     if button not in ('left', 'right', 'middle'):
         button = 'left'
     try:
-        _pag.click(x, y, button=button)
+        with _desk_machine_input():
+            _pag.click(x, y, button=button)
         _log_context("cc_action", {"action": "click", "x": x, "y": y, "button": button})
         return f"Clicked {button} at ({x}, {y})."
     except Exception as e:
@@ -9310,7 +9327,8 @@ def _tool_type_text(inp):
     if not _cc_rate_ok():
         return "Rate limited."
     try:
-        _pag.write(text, interval=0.03)
+        with _desk_machine_input():
+            _pag.write(text, interval=0.03)
         _log_context("cc_action", {"action": "type_text", "chars": len(text)})
         return f"Typed {len(text)} characters."
     except Exception as e:
@@ -9330,7 +9348,8 @@ def _tool_press_key(inp):
     if not _cc_rate_ok():
         return "Rate limited."
     try:
-        _pag.press(key)
+        with _desk_machine_input():
+            _pag.press(key)
         _log_context("cc_action", {"action": "press_key", "key": key})
         return f"Pressed key: {key}."
     except Exception as e:
@@ -9391,7 +9410,8 @@ def _tool_scroll(inp):
     amount = max(1, min(20, int((inp or {}).get('amount', 3))))
     clicks = -amount if direction == 'down' else amount
     try:
-        _pag.scroll(clicks)
+        with _desk_machine_input():
+            _pag.scroll(clicks)
         _log_context("cc_action", {"action": "scroll", "direction": direction, "amount": amount})
         return f"Scrolled {direction} {amount} step(s)."
     except Exception as e:
@@ -15156,9 +15176,11 @@ def _make_mcp_handler(server_name: str, tool_name: str):
         payload = _mcp_fit_envelope(server_name, tool_name, inp or {})
         # A desktop tool acts on whatever app is under the pointer or in
         # front NOW; the checkpoint looked a moment ago. Look again.
+        desktop = False
         try:
             from agent_friday.services import desktop_grants as _dg
-            if _dg.is_desktop_server(server_name):
+            desktop = bool(_dg.is_desktop_server(server_name))
+            if desktop:
                 ok, why = _dg.recheck(
                     f"mcp_{_mcp_sanitize(server_name)}_{_mcp_sanitize(tool_name)}",
                     payload)
@@ -15170,6 +15192,14 @@ def _make_mcp_handler(server_name: str, tool_name: str):
             ok, explanation = _mcp_gate_args(server_name, tool_name, payload)
             if not ok:
                 return explanation
+        if desktop:
+            # A desktop connector clicks and types on this PC's screen like Computer Control:
+            # while it acts, and for a few seconds after, no press on an approval card counts.
+            try:
+                with _desk_machine_input():
+                    return _MCP_MANAGER.call(server_name, tool_name, payload)
+            except _DeskMarkUnavailable:
+                return "Not done: Friday could not mark its own desktop action, so it did not act."
         return _MCP_MANAGER.call(server_name, tool_name, payload)
     return _handler
 

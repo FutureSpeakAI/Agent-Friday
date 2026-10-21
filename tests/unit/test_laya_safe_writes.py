@@ -1141,7 +1141,8 @@ def test_m2_widening_through_the_real_settings_route_needs_the_pages_own_click(s
             "X-Friday-Desk": desk_key()}       # a press on this PC's screen (services/desk_press)
 
     def post(headers, b=body):
-        with Flask(__name__).test_request_context("/api/settings", method="POST", json=b, headers=headers):
+        with Flask(__name__).test_request_context("/api/settings", method="POST", json=b, headers=headers,
+                                                  environ_base={"REMOTE_ADDR": "127.0.0.1"}):
             out = cr.api_settings()
         return out[1] if isinstance(out, tuple) else 200
 
