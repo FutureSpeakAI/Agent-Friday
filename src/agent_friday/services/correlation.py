@@ -40,7 +40,10 @@ def accept(supplied) -> str:
     s = str(supplied or "").strip()
     if not _TOKEN.fullmatch(s):
         return new_id()
-    return s if s.startswith("c-") else "c-" + s
+    if s.startswith("c-"):
+        return s
+    # prefixed, it must still be a token `bind` accepts (64 characters at most)
+    return ("c-" + s) if len(s) <= 62 else new_id()
 
 
 def current() -> str:

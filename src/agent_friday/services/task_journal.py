@@ -113,23 +113,34 @@ class _NotWritable(Exception):
     """Encryption at rest is on and nothing can encrypt this record right now, so it is not
     written to disk (never written in plain text instead)."""
 
+    def __init__(self, msg="Friday's key store cannot encrypt this record, so it was not written"):
+        super().__init__(msg)
+
+
+_PROTECT_WARNED = False
+
 
 def _protect(data: bytes) -> bytes:
+    global _PROTECT_WARNED
     if not _encrypt_enabled():
         return data
     try:
         from agent_friday.services import credential_store as cs
         blob, method = cs.protect(data)
+        _PROTECT_WARNED = False
         if method == "plaintext":
             return data
         return blob
     except Exception as e:
         # Encryption at rest is on and nothing can encrypt (Friday's key store cannot be used:
-        # credential_store refuses rather than drop to another key). The record is NOT written
-        # in plain text: the caller keeps it in memory for this run, as the reasoning archive
-        # does, and the log says so once per kind of failure.
-        _log.warning("task journal: at-rest protection unavailable (%s); this record is kept in "
-                     "memory only and not written to disk", type(e).__name__)
+        # credential_store refuses rather than drop to another key). The record is NOT written,
+        # and never in plain text: the caller treats it as a failed write (the task is marked
+        # unrecorded, as for a full disk; the live task table still has it for this run). Said
+        # once until a write succeeds again, not on every event.
+        if not _PROTECT_WARNED:
+            _PROTECT_WARNED = True
+            _log.warning("task journal: at-rest protection unavailable (%s); records are not "
+                         "written until Friday's key store can encrypt again", type(e).__name__)
         raise _NotWritable() from None
 
 
@@ -647,6 +658,9 @@ def redact(fn) -> Dict[str, Any]:
                     ev = _decode_line(raw)
                     if ev is None:
                         new_lines.append(raw)
+                        if raw.strip().startswith(_LINE_PREFIX):
+                            # a protected line no key opens: it may hold the text; say so
+                            out["left_unchanged"] = out.get("left_unchanged", 0) + 1
                         continue
                     nev, c = _redact_value(ev, fn)
                     if c:

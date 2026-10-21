@@ -35,10 +35,14 @@ _MAX = 20000
 # A secret named by its field, in logs (where `password=hunter2` is never the owner's own
 # document): the name is kept and the value replaced.
 _NAMES = (r"api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|"
-          r"secret[_-]?key|private[_-]?key|password|passwd|passphrase|auth[_-]?token|session[_-]?token|"
-          r"token|secret|session|cookie|set-cookie|code")
+          r"secret[_-]?key|private[_-]?key|password|passwd|passphrase|auth[_-]?token|"
+          r"session[_-]?(?:id|token|key)|auth(?:orization)?[_-]?code|token|secret")
 _NAMED = re.compile(
-    r"(?i)\b(" + _NAMES + r")\b(\"?'?\s{0,3}[:=]\s{0,3}\"?'?)([^\s\"',;&}\]]{6,})")
+    r"(?i)\b(" + _NAMES + r")\b(\"?'?\s{0,3}[:=]\s{0,3}\"?'?)([^\s\"',;&}\]\[]{6,})")
+# An OAuth code in a query string (?code=... / &code=...): long, no spaces.
+_QUERY_CODE = re.compile(r"(?i)([?&]code=)([^&\s#\"']{16,})")
+# Cookie headers: every value after "=" goes, the cookie names stay.
+_COOKIE = re.compile(r"(?i)\b(set-cookie|cookie)(\s{0,3}:\s{0,3})([^\r\n]{1,4000})")
 # A quoted value may hold spaces ("password": "correct horse battery staple"): the whole quote goes.
 _NAMED_QUOTED = re.compile(
     r"(?i)([\"'](?:" + _NAMES + r")[\"']\s{0,3}:\s{0,3})([\"'])([^\"'\r\n]{1,2000})\2")
@@ -55,6 +59,9 @@ def redact(text) -> str:
             s = s[:_MAX] + " ...[cut: the rest of a very long line]"
         s = _URL_CREDS.sub(lambda m: m.group(1) + m.group(2) + ":[redacted]@", s)
         s = _BEARER.sub(lambda m: m.group(1) + " [redacted]", s)
+        s = _COOKIE.sub(lambda m: m.group(1) + m.group(2)
+                        + re.sub(r"=([^;\s]{1,4000})", "=[redacted]", m.group(3)), s)
+        s = _QUERY_CODE.sub(lambda m: m.group(1) + "[redacted]", s)
         s = _NAMED_QUOTED.sub(lambda m: m.group(1) + m.group(2) + "[redacted]" + m.group(2), s)
         s = _NAMED.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", s)
         from agent_friday.services import secret_shapes, secret_patterns
