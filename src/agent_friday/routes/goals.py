@@ -61,6 +61,18 @@ from agent_friday.user_errors import message_only
 
 goals_bp = Blueprint("goals", __name__)
 
+#: Milestone fields only Friday itself writes. A request names a milestone's
+#: work; it never sets how far that work got (a milestone posted as already
+#: running or done would be settled or counted as if Friday had done it).
+_SERVER_MILESTONE_FIELDS = ("status", "done_at", "verification", "approval_id", "attempts",
+                            "artifacts", "run", "last_run", "blocker", "last_blocker")
+
+
+def _requested_milestone(m):
+    if not isinstance(m, dict):
+        return {}
+    return {k: v for k, v in m.items() if k not in _SERVER_MILESTONE_FIELDS}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Goals CRUD
@@ -92,7 +104,8 @@ def create_goal_route():
         goal = _goals.create_goal(
             title=title, description=data.get("description", ""),
             owner=data.get("owner", "owner"), deadline=data.get("deadline"),
-            milestones=data.get("milestones"), success_criteria=data.get("success_criteria", ""),
+            milestones=[_requested_milestone(m) for m in (data.get("milestones") or [])],
+            success_criteria=data.get("success_criteria", ""),
             linked_schedules=data.get("linked_schedules"), linked_chains=data.get("linked_chains"),
             budget_cap_mψ=data.get("budget_cap_mψ", 0),
             approval_required=bool(data.get("approval_required", False)),
@@ -143,7 +156,7 @@ def add_milestone_route(goal_id):
     data = request.get_json(silent=True) or {}
     if not (data.get("name") or "").strip():
         return jsonify({"ok": False, "error": "milestone name is required"}), 400
-    goal = _goals.add_milestone(goal_id, data)
+    goal = _goals.add_milestone(goal_id, _requested_milestone(data))
     if not goal:
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "goal": goal}), 201

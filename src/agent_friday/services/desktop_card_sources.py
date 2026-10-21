@@ -106,10 +106,10 @@ def _goals(now):
     shown as such rather than left off."""
     from agent_friday.services import goals
     records = []
-    for goal in goals.list_goals()[:MAX_RECORDS]:
+    open_goals = [g for g in goals.list_goals()
+                  if g.get("status") not in goals.TERMINAL_STATUSES and g.get("goal_id")]
+    for goal in open_goals[:MAX_RECORDS]:
         status = goal.get("status")
-        if status in goals.TERMINAL_STATUSES:
-            continue
         milestones = [m for m in goal.get("milestones") or [] if isinstance(m, dict)]
         done = sum(1 for m in milestones if m.get("status") == "done")
         waits = [w for w in (goals.blocker_words(m) for m in milestones) if w]
