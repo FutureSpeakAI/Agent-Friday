@@ -651,9 +651,10 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
 # content again (its own key order and spacing), so it is not a hash of the
 # bytes on the wire. Off the record no fingerprint is written at all.
 #
-# The words themselves are not in the ledger (§29.6: "does not store the full
-# sensitive payload by default"). The owner may choose to keep them, encrypted,
-# in services/sent_text_store, filed under the same fingerprint.
+# The words themselves are never in the ledger. By the owner's ruling A20 the
+# full content is kept by default beside it, encrypted, in
+# services/sent_text_store under the same fingerprint (the owner can switch to
+# fingerprints only); off the record nothing is kept.
 
 _CALL: contextvars.ContextVar = contextvars.ContextVar("egress_call", default=None)
 
