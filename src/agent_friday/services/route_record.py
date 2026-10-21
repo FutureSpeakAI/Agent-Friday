@@ -33,6 +33,14 @@ _MAX_TEXT = 300
 
 
 def _clip(s: Any, n: int = _MAX_TEXT) -> str:
+    # Error text is scrubbed by public_result only while it keeps its marker type;
+    # turned into a plain str here it would reach the page and the history raw.
+    try:
+        from agent_friday.user_errors import ExceptionText
+        if isinstance(s, ExceptionText):
+            return "(error)"
+    except Exception:
+        pass
     s = " ".join(str(s or "").split())
     return s if len(s) <= n else s[: n - 1] + "…"
 
@@ -55,10 +63,9 @@ def _prompt_tokens(messages, system: Optional[str] = None) -> int:
 
 def _cloud_family(route: dict) -> str:
     """anthropic | openai, for the A6 policy (services/provider_fallback)."""
-    p = str(route.get("provider") or "").lower()
-    if p == "openai" or route.get("provider_name"):
-        return "openai"
-    return "anthropic"
+    # provider_name is set for Anthropic decisions resolved through the registry
+    # too, so only the ladder's own leg name decides.
+    return "openai" if str(route.get("provider") or "").lower() == "openai" else "anthropic"
 
 
 def _rate_per_1k(model: str) -> Optional[float]:
@@ -173,9 +180,11 @@ def build(route: Optional[dict], *, messages=None, system: Optional[str] = None,
             routing_cfg = (core._load_settings() or {}).get("model_routing") or {}
         except Exception:
             routing_cfg = {}
-    mode = str((routing_cfg or {}).get("mode") or "cloud_only")
-    if str(mode).lower() == "smart":
-        mode = "local_preferred"
+    try:
+        from agent_friday.services.cloud_intent import normalize_mode
+        mode = normalize_mode((routing_cfg or {}).get("mode"))
+    except Exception:
+        mode = str((routing_cfg or {}).get("mode") or "cloud_only").strip().lower()
     refused = bool(route.get("refuse"))
     if refused:
         seat = "none"

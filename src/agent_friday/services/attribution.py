@@ -41,6 +41,14 @@ def note_route(record: dict):
     if rows is None:
         rows = []
         _tls.routes = rows
+    # The chat route rebuilds its record when its decision changes later in the
+    # turn (one-key swap, a local fallback): the newer one replaces the older,
+    # keeping the time the turn was first routed so latency stays honest.
+    if record.get("source") == "chat":
+        for i, (t0, old) in enumerate(rows):
+            if old.get("source") == "chat":
+                rows[i] = (t0, dict(record))
+                return
     rows.append((time.monotonic(), dict(record)))
     del rows[:-10]
 
@@ -56,16 +64,29 @@ def route_record():
     gm = str(gen.get("model") or "")
     pick = None
     if gm:
-        for t0, rec in reversed(rows):
-            if str(rec.get("model") or "") == gm:
-                pick = (t0, rec)
+        # The chat route's own decision first (it carries the turn's overrides),
+        # then any other decision for the model that answered.
+        for want_chat in (True, False):
+            for t0, rec in reversed(rows):
+                if want_chat and rec.get("source") != "chat":
+                    continue
+                if str(rec.get("model") or "") == gm:
+                    pick = (t0, rec)
+                    break
+            if pick:
                 break
-    t0, rec = pick or rows[-1]
+    if pick is None:
+        chat = [(t0, rec) for t0, rec in rows if rec.get("source") == "chat"]
+        pick = chat[-1] if chat else rows[-1]
+    t0, rec = pick
     out = dict(rec)
     out["latency_ms"] = int((time.monotonic() - t0) * 1000)
     if gm and gm != str(out.get("model") or ""):
         out["answered_by"] = gm
         out["substituted"] = True
+    if not gm:
+        # Nothing recorded a generation: this is the decision, not a confirmed answer.
+        out["verified"] = False
     return out
 
 

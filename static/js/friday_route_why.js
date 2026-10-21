@@ -24,14 +24,16 @@
     var seat = r.seat === 'none' ? 'nothing was sent' : (r.seat + (r.model ? ' · ' + r.model : ''));
     out.push(['Answered by', r.answered_by ? (r.answered_by + ' (the route chose ' + (r.model || '?') + ')') : seat]);
     if (r.reason) out.push(['Why', r.reason]);
-    (r.alternatives || []).forEach(function (a) {
+    if (r.verified === false) out.push(['Note', 'no model reported answering; this is the decision only']);
+    (Array.isArray(r.alternatives) ? r.alternatives : []).forEach(function (a) {
+      if (!a || typeof a !== 'object') return;
       var who = (a.label || a.provider || a.seat || '') + (a.model ? ' · ' + a.model : '');
       out.push(['Not ' + who, a.why || '']);
     });
-    if (r.expected_cost) out.push(['Expected cost', cost(r.expected_cost)]);
-    if (r.context) out.push(['Sent', (r.context.messages || 0) + ' messages, about ' +
+    if (r.expected_cost && typeof r.expected_cost === 'object') out.push(['Expected cost', cost(r.expected_cost)]);
+    if (r.context && typeof r.context === 'object') out.push(['Sent', (r.context.messages || 0) + ' messages, about ' +
                                      (r.context.prompt_tokens_estimate || 0) + ' tokens']);
-    var p = r.fallback_policy || {};
+    var p = (r.fallback_policy && typeof r.fallback_policy === 'object') ? r.fallback_policy : {};
     if (p.cloud_to_cloud) out.push(['If the cloud provider fails', p.cloud_to_cloud]);
     if (p.local_to_cloud && p.local_to_cloud !== 'not applicable in this mode') out.push(['Local to cloud', p.local_to_cloud]);
     if (p.cloud_to_local) out.push(['Cloud to local', p.cloud_to_local]);
@@ -45,7 +47,8 @@
     var R = root.React;
     var r = props && props.route;
     if (!R || !r || typeof r !== 'object') return null;
-    var rows = lines(r);
+    var rows;
+    try { rows = lines(r); } catch (e) { return null; }   // a bad record never takes the chat down
     return R.createElement('details', {
         className: 'friday-route-why',
         style: { display: 'inline-block', marginLeft: 6, fontSize: 9, verticalAlign: 'top' }

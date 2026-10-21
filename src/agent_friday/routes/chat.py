@@ -3258,6 +3258,15 @@ def chat():
                 _gen = _attr.last_generation()
                 _fallback_chain = public_result(_attr.fallback_chain(),
                                                 "A model in the fallback chain failed")
+                # Rebuilt from the FINAL decision: _route_info can change after the
+                # first record (the one-key OpenRouter swap, "use OpenRouter for
+                # this", the no-key and cloud-outage local fallbacks).
+                try:
+                    from agent_friday.services import route_record as _route_rec2
+                    _attr.note_route(_route_rec2.build(
+                        _route_info, messages=messages, routing_cfg=_routing_cfg, source="chat"))
+                except Exception:
+                    pass
                 _route_rec_out = _attr.route_record()
         except Exception:
             pass
