@@ -759,7 +759,7 @@ def _open_call(provider: str, model: str, via: str, *, joinable: bool = False):
         return None
     return _CALL.set({"call_id": "eg-" + uuid.uuid4().hex[:16], "provider": provider,
                       "model": model or "", "via": via, "fields": 0, "withheld": 0,
-                      "grants": set(), "joinable": joinable})
+                      "grants": set(), "joinable": joinable, "nested": cur is not None})
 
 
 def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
@@ -819,9 +819,11 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
     except Exception:
         pass
     try:
-        from agent_friday.services import context_manifest as _cm
-        real = log_path is None or Path(log_path) == Path(_DEFAULT_LOG)
-        _cm.write(_cm.build(call, entry, off_record=off), None if real else log_path)
+        # Real sends only: a self-test or probe battery (its own log, often
+        # os.devnull) writes no manifest anywhere.
+        if log_path is None or Path(log_path) == Path(_DEFAULT_LOG):
+            from agent_friday.services import context_manifest as _cm
+            _cm.write(_cm.build(call, entry, off_record=off))
     except Exception:
         pass
     return entry

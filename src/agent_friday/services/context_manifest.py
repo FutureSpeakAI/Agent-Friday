@@ -9,9 +9,10 @@ content:
 
   sources              what parts of the payload were there (system prompt,
                        messages, tools, images ...), each with its sensitivity
-                       class and what the gate did with it, and, for a turn,
-                       the prompt sections that turn assembled (from the
-                       retrieval ledger: name, tier, size, whether sent)
+                       class and what the gate did with it; when opened, the
+                       prompt sections the turn assembled (from the retrieval
+                       ledger: name, tier, size, whether sent), said as the
+                       turn's, since a turn can send several times
   principal            whose request it served
   sensitivity_classes  every class the gate saw
   withheld/redactions  how much was withheld and in which parts
@@ -41,8 +42,10 @@ _LOCK = threading.Lock()
 MANIFEST_VERSION = 1
 #: The manifest file rotates past this size (the newest stay readable).
 MAX_FILE_BYTES = 20 * 1024 * 1024
-#: Newest bytes searched when a manifest is opened by id or by turn.
-_TAIL_BYTES = 8 * 1024 * 1024
+#: Bytes searched in each file when a manifest is opened by id or by turn:
+#: the whole of a file (it rotates at MAX_FILE_BYTES), so every kept
+#: manifest can be opened. Only on the owner's click, never on a send.
+_TAIL_BYTES = MAX_FILE_BYTES + 1024 * 1024
 _ID = re.compile(r"cm-[A-Za-z0-9_.:-]{1,80}")
 _INDEX = re.compile(r"\[\d+\]")
 
@@ -55,10 +58,30 @@ def path() -> Path:
     return Path(_eg._DEFAULT_LOG).with_name("context-manifests.jsonl")
 
 
+#: Path segments after which the rest of a field path is data (keys of a
+#: tool's arguments or result), not the payload's own structure.
+_DATA_SEGMENTS = {"tool_result", "tool_use", "input", "arguments", "args", "function_response",
+                  "functionResponse", "result", "parameters"}
+_STRUCT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,40}(\[\])?")
+
+
 def part_name(field: str) -> str:
     """A payload field as a part name: list positions folded, so forty
-    messages are one source ("messages[].content"), never forty."""
-    return _INDEX.sub("[]", str(field or "?"))[:80]
+    messages are one source ("messages[].content"), never forty. Only the
+    payload's own structure is kept: the path stops at the first segment that
+    is data (a tool's argument or result keys, which can be an address or a
+    file name) or that doesn't look like a structural name."""
+    segs = _INDEX.sub("[]", str(field or "?")).split(".")
+    out = []
+    for i, seg in enumerate(segs):
+        if not _STRUCT.fullmatch(seg):
+            out.append("{…}")
+            break
+        out.append(seg)
+        if seg.rstrip("[]") in _DATA_SEGMENTS and i + 1 < len(segs):
+            out.append("{…}")
+            break
+    return ".".join(out)[:80]
 
 
 def tally(call: Dict[str, Any], field: str, tier: str, action: str) -> None:
@@ -68,7 +91,7 @@ def tally(call: Dict[str, Any], field: str, tier: str, action: str) -> None:
     src[key] = src.get(key, 0) + 1
 
 
-def _principal() -> str:
+def _principal(turn_id: Optional[str]) -> str:
     try:
         from flask import g, has_request_context
         if has_request_context():
@@ -77,7 +100,9 @@ def _principal() -> str:
                 return "you" if p == "user" else str(p)[:40]
     except Exception:
         pass
-    return "Friday's own work"
+    # A send made for a turn (often from the reply's own stream thread, with
+    # no request context) serves the person whose turn it is.
+    return "you" if turn_id else "Friday's own work"
 
 
 def _sections(turn_id: str) -> List[dict]:
@@ -92,18 +117,25 @@ def _sections(turn_id: str) -> List[dict]:
 
 
 def build(call: Dict[str, Any], entry: Dict[str, Any], *, off_record: bool) -> Dict[str, Any]:
-    """The manifest for one closed send. Pure: reads the call's tally and the
-    turn's prompt sections; never the content."""
+    """The manifest for one closed send. Pure and cheap (it runs before every
+    send): the call's own tally only. The turn's prompt sections are attached
+    when the manifest is opened, not here. Off the record the parts are not
+    named: classes, actions and counts only."""
     sources = [{"part": k[0], "sensitivity": k[1], "action": k[2], "count": n}
                for k, n in sorted((call.get("sources") or {}).items())]
+    if off_record:
+        merged: Dict[tuple, int] = {}
+        for s in sources:
+            merged[(s["sensitivity"], s["action"])] = merged.get((s["sensitivity"], s["action"]), 0) + s["count"]
+        sources = [{"sensitivity": k[0], "action": k[1], "count": n} for k, n in sorted(merged.items())]
     classes = sorted({s["sensitivity"] for s in sources})
-    redactions = [{"part": s["part"], "action": s["action"], "count": s["count"]}
+    redactions = [{k: s[k] for k in ("part", "action", "count") if k in s}
                   for s in sources if s["action"] in ("redact", "drop", "block")]
     size = int(entry.get("bytes") or 0)
     m: Dict[str, Any] = {
         "manifest_version": MANIFEST_VERSION,
         "manifest_id": entry.get("manifest_id"), "call_id": entry.get("call_id"),
-        "ts": entry.get("ts") or time.time(), "principal": _principal(),
+        "ts": entry.get("ts") or time.time(), "principal": _principal(entry.get("turn_id")),
         "provider": entry.get("provider"), "destination": entry.get("destination"),
         "model": entry.get("model"), "purpose": entry.get("purpose"), "via": entry.get("via"),
         "result": entry.get("result"),
@@ -115,18 +147,28 @@ def build(call: Dict[str, Any], entry: Dict[str, Any], *, off_record: bool) -> D
     }
     if entry.get("turn_id"):
         m["turn_id"] = entry["turn_id"]
-        if not off_record:
-            m["assembled_sections"] = _sections(entry["turn_id"])
+    if call.get("nested"):
+        # A send made while another was being sealed (a judge asked about the
+        # payload, say): the turn's prompt was not part of it.
+        m["nested"] = True
     if off_record:
         m["off_record"] = True
     return m
 
 
-def write(manifest: Dict[str, Any], log_path: Optional[Path] = None) -> bool:
-    """Append one manifest. A self-test probe (its own log) writes beside its
-    own log, never into the real file. Never raises."""
+def _with_sections(m: Dict[str, Any]) -> Dict[str, Any]:
+    """On opening: the prompt sections the turn assembled, said as the turn's
+    (a turn can send several times), never on a nested send or off the record."""
+    if m.get("turn_id") and not m.get("off_record") and not m.get("nested"):
+        m = dict(m, assembled_sections=_sections(m["turn_id"]),
+                 assembled_words="The prompt sections this turn assembled (for all of its sends).")
+    return m
+
+
+def write(manifest: Dict[str, Any]) -> bool:
+    """Append one manifest to the real file. Never raises."""
     try:
-        dest = Path(log_path).with_name(Path(log_path).stem + ".manifests.jsonl") if log_path else path()
+        dest = path()
         dest.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(manifest, ensure_ascii=False, default=str) + "\n"
         with _LOCK:
@@ -176,7 +218,7 @@ def read(manifest_id: str) -> Optional[Dict[str, Any]]:
     if not _ID.fullmatch(mid):
         return None
     hits = [r for r in _rows('"' + mid + '"') if r.get("manifest_id") == mid]
-    return hits[-1] if hits else None
+    return _with_sections(hits[-1]) if hits else None
 
 
 def for_turn(turn_id: str) -> List[Dict[str, Any]]:
