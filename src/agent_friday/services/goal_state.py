@@ -297,6 +297,10 @@ def continuation_hold(goal: Dict[str, Any], milestone: Dict[str, Any], *,
     est = int(milestone.get("cost_estimate_mψ") or 0)
     if cap and int(goal.get("spent_mψ") or 0) + est > cap:
         return blocker("budget_exhausted", f"Starting “{name}” would go over the goal's budget.")
+    minutes = int(((goal.get("budget") or {}) if isinstance(goal.get("budget"), dict) else {}).get("runtime_minutes") or 0)
+    if minutes and float(goal.get("spent_runtime_s") or 0) >= minutes * 60:
+        return blocker("budget_exhausted", f"This goal has used its {minutes} minutes of work.",
+                       type="runtime")
     criteria = (milestone.get("success_criteria") or goal.get("success_criteria") or "").strip()
     if not criteria:
         return blocker("needs_user_input",

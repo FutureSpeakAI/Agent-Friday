@@ -125,10 +125,19 @@ def _goals(now):
         else:
             state = "running" if running else (status or "unknown")
         updated = goals._parse_ts(goal.get("updated_at"))
+        # §17.1 notification policy (schema-2 goals): Home shows the goal only
+        # for the moments the owner asked to hear about. The Goals card always
+        # shows it.
+        policy = goal.get("notification_policy")
+        notify = True
+        if isinstance(policy, dict) and isinstance(policy.get("on"), list):
+            moment = ("needs_owner" if state in {"interrupted", "needs_owner"} else
+                      "at_risk" if state == "at_risk" else "progress")
+            notify = moment in policy["on"]
         records.append(_record(goal.get("goal_id") or "", goal.get("title") or "Goal", body,
             updated=updated, priority=90 if state in {"interrupted", "needs_owner"} else
                      75 if state in {"waiting", "at_risk"} else 60,
-            state=state))
+            state=state, notify=notify))
     for bad in goals.unreadable_goals()[:5]:
         records.append(_record("unreadable:" + bad["goal_id"], "A goal Friday can't read",
             "The file " + bad["file"] + " and its last good copy could not be read. "
@@ -359,7 +368,8 @@ def automatic(observations, now):
             rows = [r for r in rows if r.get("available") and r.get("state") in {"failed", "error"}]
         elif kind == "goal":
             rows = [r for r in rows if r.get("state") in {"interrupted", "needs_owner", "waiting",
-                                                          "at_risk", "running", "active"}]
+                                                          "at_risk", "running", "active"}
+                    and r.get("notify", True)]
             rows.sort(key=lambda r: (-r["priority"], -(r["updated_at"] or 0), r["id"]))
         elif kind == "project":
             rows = [r for r in rows if (r["updated_at"] or 0) >= now - 7 * 86400]
