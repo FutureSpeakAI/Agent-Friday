@@ -33,6 +33,10 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path, raising=False)
     monkeypatch.setattr(egress_gate, "_DEFAULT_LOG", tmp_path / "vault" / "egress-log.jsonl")
     monkeypatch.setattr(core, "_VAULT_ENCRYPTION_STATE", {"enabled": False}, raising=False)
+    from agent_friday.services import agent
+    monkeypatch.setattr(agent, "_get_vault_key", lambda *a, **k: None, raising=False)
+    from agent_friday.services import keystore
+    monkeypatch.setattr(keystore, "describe", lambda: {"exists": True, "wrap": "none"})
     (tmp_path / "vault").mkdir()
     return tmp_path
 
@@ -122,8 +126,8 @@ def test_every_store_says_where_it_lives_how_long_and_how_to_remove_it(home):
     (home / "conversations").mkdir()
     (home / "conversations" / "c1.json").write_text("x" * 2048, encoding="utf-8")
     stores = {s["key"]: s for s in pm.view()["stores"]}
-    for key in ("conversations", "memory_card", "vault", "tasks", "goals", "credentials",
-                "receipts", "library", "meetings"):
+    for key in ("conversations", "memory_card", "vault", "wiki", "tasks", "goals", "credentials",
+                "receipts", "library", "meetings", "everything_else"):
         assert key in stores, key
     for s in stores.values():
         assert s["where"] and all(not w.startswith(("/", "\\")) and ".." not in w for w in s["where"])
@@ -186,3 +190,63 @@ def test_the_map_is_whole_even_when_a_source_cannot_be_read(home, monkeypatch):
     v = pm.view()
     assert v["services"]["readable"] is False
     assert v["stores"] and "honest_limit" in v
+
+
+def test_the_newest_part_of_a_long_log_is_what_is_summarised(home, monkeypatch):
+    pm = _map()
+    monkeypatch.setattr(pm, "MAX_TAIL_BYTES", 4096)
+    old = json.dumps({"ts": NOW - 9000, "provider": "oldprovider", "field": "m", "tier": "TIER_0",
+                      "action": "allow", "reason": "ok", "turn_id": "t"}) + "\n"
+    new = json.dumps({"ts": NOW, "provider": "newprovider", "field": "m", "tier": "TIER_0",
+                      "action": "allow", "reason": "ok", "turn_id": "t"}) + "\n"
+    with open(home / "vault" / "egress-log.jsonl", "w", encoding="utf-8") as fh:
+        fh.write(old * 200 + new)
+    left = pm.view()["left"]
+    assert "newprovider" in {d["to"] for d in left["destinations"]}
+    assert left["complete"] is False
+
+
+def test_a_call_under_cloud_for_everything_is_counted_as_a_call(home):
+    pm = _map()
+    _egress(home, {"ts": NOW, "provider": "anthropic", "field": "*", "tier": "TIER_0",
+                   "action": "allow", "reason": "unrestricted", "turn_id": "t1"},
+            {"ts": NOW, "provider": "anthropic", "field": "image", "tier": "UNCLASSIFIABLE",
+             "action": "allow", "reason": "image", "bytes": 10})
+    a = pm.view()["left"]["destinations"][0]
+    assert a["unrestricted_calls"] == 1 and a["sent"] == 1
+    assert a["files_or_images"] == 1 and a["background"] == 0
+
+
+def test_private_data_access_counts_allowed_and_refused_private_rows_only(home):
+    pm = _map()
+    with open(home / "vault" / "access-log.jsonl", "w", encoding="utf-8") as fh:
+        for row in ({"timestamp": NOW - 60, "tier": "TIER_2", "allowed": True},
+                    {"timestamp": NOW - 50, "tier": "TIER_3", "allowed": False},
+                    {"timestamp": NOW - 40, "tier": "TIER_1", "allowed": True},
+                    {"timestamp": NOW - 30 * 86400, "tier": "TIER_3", "allowed": True}):
+            fh.write(json.dumps(row) + "\n")
+    va = pm.view()["vault_access"]
+    assert (va["allowed_7_days"], va["refused_7_days"]) == (1, 1)
+
+
+def test_keys_are_not_called_protected_when_their_key_sits_beside_them(home, monkeypatch):
+    pm = _map()
+    keys = {s["key"]: s for s in pm.view()["stores"]}["credentials"]
+    assert keys["encrypted"] == "partly" and "without a passphrase" in keys["encrypted_words"]
+    from agent_friday.services import keystore
+    monkeypatch.setattr(keystore, "describe", lambda: {"exists": True, "wrap": "passphrase"})
+    keys = {s["key"]: s for s in pm.view()["stores"]}["credentials"]
+    assert keys["encrypted"] == "yes"
+
+
+def test_anything_unlisted_in_the_folder_is_counted_under_everything_else(home):
+    pm = _map()
+    (home / "browser-profile").mkdir()
+    (home / "browser-profile" / "Cookies").write_bytes(b"x" * 100)
+    rest = {s["key"]: s for s in pm.view()["stores"]}["everything_else"]
+    assert "browser-profile" in rest["where"] and rest["bytes"] == 100
+
+
+def test_the_map_does_not_carry_the_folder_path(home):
+    pm = _map()
+    assert str(home) not in json.dumps(pm.view())

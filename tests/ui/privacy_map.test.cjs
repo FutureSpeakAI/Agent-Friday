@@ -32,7 +32,7 @@ const VIEW = {
   mail: { sent: 1, failed: 0, recipients: [{ to: 'a@example.com', count: 1, last: 1760000000 }] },
   grants: { actions: [], files: 2, nav: { workspace: 'settings', tab: 'privacy', section: 'File access' } },
   services: { readable: true, connected: [{ label: 'Synthetic service', group: 'tools', may: ['Read things'] }], remote: [] },
-  vault_access: { last_7_days: 3, last: 1760000000 },
+  vault_access: { allowed_7_days: 3, refused_7_days: 1, last_allowed: 1760000000 },
   off_record: { on: false, words: 'Off the record, Friday saves nothing about the conversation. Services you connected (mail, calendar, publishing) can still keep their own records of anything they are asked to do.' },
   export: { kind: 'export', label: 'Export all my data', words: 'A zip.', href: '/api/data/export' },
   erase: { kind: 'delete', label: 'Erase everything', words: 'Type ERASE.', nav: { workspace: 'settings', tab: 'privacy', section: 'Your data' } },
@@ -68,9 +68,9 @@ test('the privacy map shows each store, each destination, and the honest limit',
   const text = all(tree, () => true).flatMap(n => (n.children || []).filter(c => typeof c === 'string')).join(' ');
   assert.equal(tree.props.title, 'Privacy map');
   for (const s of ['Your conversations', 'Where: conversations', 'Kept until you delete it.', 'Readable on this disk',
-                   'Anthropic (Claude)', '2 sent (1 with parts withheld), 1 stopped before leaving', '1 from background work',
+                   'Anthropic (Claude)', '2 items sent (1 with parts withheld), 1 stopped before leaving', '1 from background work',
                    'Calls to tool servers you added (MCP)', 'a@example.com: 1', 'Synthetic service: Read things',
-                   'Private records were read 3 times in the last 7 days.', 'can still keep their own records',
+                   'In the last 7 days, private data was let through 3 times and refused 1 time.', 'can still keep their own records',
                    'The honest limit.', 'This map lists what Friday itself keeps and sends.']) {
     assert.ok(text.includes(s), 'missing: ' + s);
   }
