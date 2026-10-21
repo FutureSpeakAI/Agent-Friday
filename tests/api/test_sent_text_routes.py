@@ -15,7 +15,9 @@ def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(poi, "get_governance_key", lambda: KEY)
     monkeypatch.setattr(cs, "protect", lambda data: (b"SEALED:" + data[::-1], "keystore"))
     monkeypatch.setattr(cs, "unprotect", lambda blob: blob[len(b"SEALED:"):][::-1])
+    monkeypatch.setattr(cs, "looks_protected", lambda blob: "keystore" if blob.startswith(b"SEALED:") else None)
     monkeypatch.setattr(sts, "_vault_key", lambda derive=True: None)
+    monkeypatch.setattr(sts, "_passphrase_set", lambda: False)
     monkeypatch.setattr(off_record, "active", lambda *a, **k: False)
     return sts
 

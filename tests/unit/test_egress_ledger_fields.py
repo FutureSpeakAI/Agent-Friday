@@ -32,9 +32,12 @@ def ledger(tmp_path, monkeypatch):
     # Encryption stand-in: reversible, never the plain bytes.
     monkeypatch.setattr(cs, "protect", lambda data: (b"SEALED:" + data[::-1], "keystore"))
     monkeypatch.setattr(cs, "unprotect", lambda blob: blob[len(b"SEALED:"):][::-1])
+    monkeypatch.setattr(cs, "looks_protected", lambda blob: "keystore" if blob.startswith(b"SEALED:") else None)
     # No vault passphrase unless a test sets one (never derive a real key).
     from agent_friday.services import sent_text_store as sts
     monkeypatch.setattr(sts, "_vault_key", lambda derive=True: None)
+    monkeypatch.setattr(sts, "_passphrase_set", lambda: False)
+    monkeypatch.setattr(sts, "_running_total", None)
     # The gate runs exactly as under recorded cloud consent (A14): every field
     # is still recorded and the never-send floor still applies, without a
     # classifier model in the test.
@@ -264,3 +267,78 @@ def test_the_privacy_map_counts_sends_and_states_which_mode_is_on(ledger):
     assert view["sent_text"]["words"] == "Only fingerprints are kept."
     row = [r for r in pm.left_rows("anthropic")["rows"] if r.get("kind") == "call"][0]
     assert row["payload_fingerprint"] and row["purpose"] and "manifest_id" in row
+
+
+# ── second review (A20) ───────────────────────────────────────────────────────
+
+def test_after_a_delete_the_map_no_longer_says_the_text_is_kept(ledger):
+    from agent_friday.services import privacy_map as pm
+    from agent_friday.services import sent_text_store as sts
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    assert {x["to"]: x for x in pm.view()["left"]["destinations"]}["anthropic"]["texts_kept"] == 1
+    sts.delete_kept()
+    assert {x["to"]: x for x in pm.view()["left"]["destinations"]}["anthropic"]["texts_kept"] == 0
+    row = [r for r in pm.left_rows("anthropic")["rows"] if r.get("kind") == "call"][0]
+    assert row["text_kept"] is True and row["still_kept"] is False
+
+
+def test_a_planted_unsealed_file_is_never_shown_as_what_was_sent(ledger):
+    from agent_friday.services import sent_text_store as sts
+    fp = "d" * 64
+    d = ledger["home"] / "vault" / "sent-text"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / (fp + ".bin")).write_bytes(json.dumps({"text": "forged words"}).encode("utf-8"))
+    assert sts.read(fp) is None
+
+
+def test_fridays_tools_cannot_touch_the_kept_text_or_the_choice(ledger):
+    import agent_friday.core as core
+    from pathlib import Path
+    from agent_friday.services import credential_paths as cp
+    f = Path(core.FRIDAY_DIR)
+    assert cp.check(f / "vault" / "sent-text" / ("e" * 64 + ".bin"))
+    assert cp.check(f / "vault" / "sent-text-choice.json")
+
+
+def test_reading_the_map_never_derives_the_vault_key(ledger, monkeypatch):
+    from agent_friday.services import privacy_map as pm
+    from agent_friday.services import sent_text_store as sts
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    c = _calls(ledger["log"])[0]
+    derived = []
+    monkeypatch.setattr(sts, "_vault_key", lambda derive=True: derived.append(derive))
+    pm.view()
+    sts.status()
+    sts.read(c["payload_fingerprint"])
+    assert True not in derived, "a read path derived the vault key"
+
+
+def test_a_passphrase_whose_key_fails_keeps_nothing_and_says_so(ledger, monkeypatch):
+    import sys
+    import types
+    from agent_friday.services import sent_text_store as sts
+    monkeypatch.setattr(sts, "_passphrase_set", lambda: True)
+    monkeypatch.setitem(sys.modules, "agent_friday.services.agent",
+                        types.SimpleNamespace(_VAULT_KEY_READY=True, _VAULT_KEY=None))
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    assert _calls(ledger["log"])[0]["text_kept"] is False, "fell back to a weaker seal than the owner set up"
+    st = sts.status()
+    assert st["sealed_with"] is None and "couldn't be opened" in st["words"]
+
+
+def test_when_off_the_record_cant_be_told_no_fingerprint_is_written(ledger, monkeypatch):
+    from agent_friday.services import off_record
+
+    def boom(*a, **k):
+        raise RuntimeError("synthetic")
+    monkeypatch.setattr(off_record, "active", boom)
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    c = _calls(ledger["log"])[0]
+    assert "payload_fingerprint" not in c and c["text_kept"] is False
+
+
+def test_the_total_cap_holds_without_waiting_for_a_full_scan(ledger, monkeypatch):
+    from agent_friday.services import sent_text_store as sts
+    monkeypatch.setattr(sts, "MAX_TOTAL_BYTES", 1)
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    assert not list((ledger["home"] / "vault" / "sent-text").glob("*.bin"))
