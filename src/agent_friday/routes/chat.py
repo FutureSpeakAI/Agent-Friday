@@ -1093,6 +1093,9 @@ def _stop_everything_gate(fn):
             return jsonify({"status": "everything_stopped", "code": "everything_stopped",
                             "response": text, "error": text, "everything_stopped": True}), 423
         return fn(*args, **kwargs)
+    return _inner
+
+
 def _guest_turn(sess_ctx) -> bool:
     """A codebase turn on a guest's key never moves to the owner's key (salon spec 4.7)."""
     try:
