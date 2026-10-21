@@ -173,9 +173,12 @@ test('a new person sets Friday up, end to end, and every step is on screen', asy
 
   await waitStage(page, 'money');
   const rec = await chat(page).locator('.sc-chips button.rec').allTextContents();
-  expect(rec).toEqual(['$10 a month (recommended)']);
+  // North-star A17: a new install's daily spending cap is already on; keeping
+  // it is the labelled recommendation, pressed here, never pre-selected.
+  expect(rec).toEqual(['Keep $2.00 a day (recommended)']);
+  await expect(chat(page)).toContainText('Right now I stop spending on cloud AI after $2.00 a day.');
   await shot(page, info, '11-money');
-  await chip(page, '$10 a month (recommended)');
+  await chip(page, 'Keep $2.00 a day (recommended)');
 
   if ((await stage(page)) === 'scheduled_cloud') {
     await shot(page, info, '11b-scheduled-jobs');
