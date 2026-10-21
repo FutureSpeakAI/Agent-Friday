@@ -56,6 +56,13 @@ def list_tasks():
     entries are flagged `process: True` so the frontend can skip them for the
     "task complete" chat notification and for orb-syncing (the /api/processes
     poll already owns those orbs)."""
+    try:
+        # A task waiting on a card whose run never reported back (a restart mid-run) is closed
+        # here, at most every few minutes, as the tray polls (agent.sweep_waiting_tasks).
+        from agent_friday.services import agent as _agent
+        _agent.sweep_waiting_tasks()
+    except Exception:
+        pass
     tasks = _task_snapshot() or []
     # Liveness (TV7) for the rows a reader watches: a running task whose
     # heartbeat has gone stale renders as stalled, never as running; the

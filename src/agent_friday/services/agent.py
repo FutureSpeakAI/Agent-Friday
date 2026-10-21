@@ -5453,6 +5453,12 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 TASKS[tid] = st
                 loaded += 1
         summary['loaded'] = loaded
+        try:
+            # A task that waited on a card while Friday was down: its card may have been decided
+            # (or its run cut off) in the meantime. Settle what can be settled now.
+            summary['waiting_settled'] = sweep_waiting_tasks(force=True)
+        except Exception:
+            summary['waiting_settled'] = 0
         # Which of the casualties still have a transcript on disk. The journal
         # can only say a task was interrupted; services/task_resume is what can
         # say it is recoverable, so the two notices are separate and the
@@ -5979,6 +5985,32 @@ def settle_waiting_task(task_id, *, from_worker=False):
         except Exception as ce:
             _task_log(task_id, f'Chain advance error: {ce}')
     return status
+
+
+_LAST_SWEEP = [0.0]
+#: How often the tray's poll may re-check waiting tasks.
+_SWEEP_EVERY_S = 300
+
+
+def sweep_waiting_tasks(*, force=False):
+    """Settle every waiting task whose cards have all been decided or have stopped reporting
+    (an approved card a restart left half-run is closed after _SETTLE_STALE_S). Called at boot
+    and, at most every _SWEEP_EVERY_S, from the task list the tray polls. Returns how many
+    tasks it closed."""
+    now = _time.time()
+    if not force and now - _LAST_SWEEP[0] < _SWEEP_EVERY_S:
+        return 0
+    _LAST_SWEEP[0] = now
+    with TASKS_LOCK:
+        waiting = [tid for tid, t in TASKS.items() if (t or {}).get('status') == WAITING_APPROVAL]
+    closed = 0
+    for tid in waiting:
+        try:
+            if settle_waiting_task(tid):
+                closed += 1
+        except Exception as e:
+            _log.warning("could not settle waiting task %s: %s", tid, type(e).__name__)
+    return closed
 
 
 #: The card kinds whose action is a task's own tool call (services/approval_executor).
@@ -8207,13 +8239,16 @@ def _advance_task_chain_once(task_id, result_text):
         return None
     if _journal().stop_requested(task_id) or t.get('stop_requested') or t.get('status') in ('cancelled', 'timeout', 'interrupted'):
         return None
-    if t.get('status') in (WAITING_APPROVAL, DECLINED):
+    if t.get('status') in (WAITING_APPROVAL, DECLINED) or (t.get('settled') and t.get('status') == 'failed'):
         # The step raised a card: what follows may depend on it, so the next step does not
         # start on a result that says the action is still waiting. The owner's decision
-        # continues the run (settle_waiting_task) or ends it here, declined.
+        # continues the run (settle_waiting_task) or ends it here, declined; an approved action
+        # that did not go through ends it too (whichever path settled it).
         _task_log(task_id, 'Waiting for your decision on its approval card: the next step '
                            'starts once you approve it.' if t.get('status') == WAITING_APPROVAL
-                  else 'You declined its approval card: the next step did not start.')
+                  else 'You declined its approval card: the next step did not start.'
+                  if t.get('status') == DECLINED
+                  else 'The action you approved did not go through: the next step did not start.')
         return None
 
     # A "completed" chain link whose result is a provider-failure message did
