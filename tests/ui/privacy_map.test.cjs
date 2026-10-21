@@ -46,7 +46,7 @@ function render(fetched, opened, navs) {
   const slots = [VIEW, '', null];
   const ctx = vm.createContext({
     React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
-    useEffect: () => {}, useCallback: fn => fn, encodeURIComponent,
+    useEffect: () => {}, useCallback: fn => fn, encodeURIComponent, fridayName: () => 'Friday',
     apiFetch: url => { fetched.push(url); return Promise.resolve({ json: async () => ({ rows: [] }) }); },
     window: { open: url => opened.push(url), fridayOpenWorkspace: t => navs.push(t) },
     Date,

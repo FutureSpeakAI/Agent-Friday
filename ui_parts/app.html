@@ -2125,7 +2125,7 @@ window.fridayEnterSends=fridayEnterSends;
 // Off the record (services/off_record): one state every chat box reads, so
 // each one says that nothing is being saved while it lasts.
 const FRIDAY_OFF_RECORD_TEXT = 'Off the record: nothing is being saved';
-const FRIDAY_OFF_RECORD_NOTICE = 'Off the record, Friday saves nothing about the conversation itself. It still keeps the minimum receipt of each outward action and each send to the cloud, and services you connected (mail, calendar, publishing) can still keep their own records of anything they are asked to do.';
+const FRIDAY_OFF_RECORD_NOTICE = 'Off the record, nothing about the conversation itself is saved. The minimum receipt of each outward action and each send to the cloud is still kept, and services you connected (mail, calendar, publishing) can still keep their own records of anything they are asked to do.';
 function fridayOffRecordFrom(s) {
   return !!(s && s.off_record) && s.off_record_stops_storage !== false;
 }
@@ -20295,7 +20295,7 @@ function SettingsLocks(){
 
 
 function SettingsPrivacyMap() {
-  // The privacy map (north star §26.22, services/privacy_map.py): what Friday
+  // The privacy map (north star §26.22, services/privacy_map.py): what she
   // keeps, where, for how long, what left this PC and to whom. Read-only; each
   // entry links to the control that exports or deletes it.
   const E = React.createElement;
@@ -20314,19 +20314,19 @@ function SettingsPrivacyMap() {
   const ctl = c => E('button', { type: 'button', key: c.kind + c.label, className: 'btn', style: { fontSize: 11, marginRight: 6, marginTop: 4 }, title: c.words, 'aria-label': c.label + ': ' + c.words, onClick: () => go(c) }, c.label);
   const receipts = to => apiFetch('/api/privacy/map/left?to=' + encodeURIComponent(to)).then(r => r.json())
     .then(x => setRec({ to, label: x.label, rows: x.rows || [] })).catch(() => setMsg('Could not read the receipts.'));
-  if (!d) return E(StSection, { title: 'Privacy map', desc: 'What Friday keeps on this PC, where, for how long, and what has left it and to whom.' },
+  if (!d) return E(StSection, { title: 'Privacy map', desc: 'What is kept on this PC, where, for how long, and what has left it and to whom.' },
     E('div', { className: 'sc-sub' }, msg || 'Reading…'));
   const left = d.left || {};
   const dests = left.destinations || [];
   const mail = d.mail || {};
   const svc = d.services || {};
   const gr = d.grants || {};
-  return E(StSection, { title: 'Privacy map', desc: 'What Friday keeps on this PC, where, for how long, and what has left it and to whom.' },
-    E('h4', { className: 'pm-h' }, 'What Friday keeps'),
-    E('ul', { className: 'pm-list', 'aria-label': 'What Friday keeps' }, (d.stores || []).map(s => E('li', { key: s.key, className: 'pm-store pm-' + s.encrypted },
+  return E(StSection, { title: 'Privacy map', desc: 'What is kept on this PC, where, for how long, and what has left it and to whom.' },
+    E('h4', { className: 'pm-h' }, 'What is kept on this PC'),
+    E('ul', { className: 'pm-list', 'aria-label': 'What is kept on this PC' }, (d.stores || []).map(s => E('li', { key: s.key, className: 'pm-store pm-' + s.encrypted },
       E('div', { className: 'lk-title' }, s.name),
       E('div', { className: 'lk-words' }, s.holds),
-      E('div', { className: 'lk-words' }, 'Where: ' + (s.where || []).join(', ') + ' in Friday’s folder. ' + s.size_words),
+      E('div', { className: 'lk-words' }, 'Where: ' + (s.where || []).join(', ') + ' (in the data folder). ' + s.size_words),
       E('div', { className: 'lk-words' }, s.encrypted_words),
       E('div', { className: 'lk-words' }, s.retention_words),
       E('div', null, (s.controls || []).map(ctl))))),
@@ -20346,14 +20346,14 @@ function SettingsPrivacyMap() {
     left.other_destinations > 0 && E('div', { className: 'lk-words' }, 'And ' + left.other_destinations + ' more destination' + (left.other_destinations === 1 ? '' : 's') + ' with older sends.'),
     (left.not_recorded || []).length > 0 && E('div', { className: 'lk-words' }, 'Not in this list yet:'),
     (left.not_recorded || []).length > 0 && E('ul', { className: 'lk-sub', 'aria-label': 'Not in this list yet' }, left.not_recorded.map(n => E('li', { key: n.key }, n.what + '. ' + n.record))),
-    E('h4', { className: 'pm-h' }, 'Mail Friday sent for you'),
+    E('h4', { className: 'pm-h' }, 'Mail sent for you'),
     E('div', { className: 'lk-words' }, (mail.sent || 0) + ' sent' + (mail.failed ? ', ' + mail.failed + ' failed' : '') + '.'),
     (mail.recipients || []).length > 0 && E('ul', { className: 'lk-sub', 'aria-label': 'Mail recipients' }, mail.recipients.map(r => E('li', { key: r.to }, r.to + ': ' + r.count + (r.last ? ', last ' + when(r.last) : '')))),
     E('h4', { className: 'pm-h' }, 'Who and what can reach your things'),
     E('div', { className: 'lk-words' }, (gr.actions == null ? 'I couldn’t read the pre-approved actions.' : gr.actions.length + ' pre-approved action' + (gr.actions.length === 1 ? '' : 's') + '.') + ' ' + (gr.files == null ? 'I couldn’t read the file permissions.' : gr.files + ' folder permission' + (gr.files === 1 ? '' : 's') + '.')),
-    gr.nav && ctl({ kind: 'nav', label: 'File access', words: 'Folders Friday may read', nav: gr.nav }),
+    gr.nav && ctl({ kind: 'nav', label: 'File access', words: 'Folders that may be read', nav: gr.nav }),
     svc.readable === false ? E('div', { className: 'lk-words' }, 'I couldn’t read the connected services.') : E('ul', { className: 'lk-sub', 'aria-label': 'Connected services' }, (svc.connected || []).concat(svc.remote || []).map(c => E('li', { key: c.group + c.label }, c.label + (c.may && c.may.length ? ': ' + c.may.join('; ') : '')))),
-    E('div', { className: 'lk-words' }, (svc.remote || []).length ? (svc.remote.length + ' phone or remote channel' + (svc.remote.length === 1 ? '' : 's') + ' can reach Friday from outside this PC.') : 'No phone or remote channel can reach Friday from outside this PC.'),
+    E('div', { className: 'lk-words' }, (svc.remote || []).length ? (svc.remote.length + ' phone or remote channel' + (svc.remote.length === 1 ? '' : 's') + ' can reach ' + fridayName() + ' from outside this PC.') : 'No phone or remote channel can reach ' + fridayName() + ' from outside this PC.'),
     d.vault_access && E('div', { className: 'lk-words' }, d.vault_access.allowed_7_days == null ? 'I couldn’t read the private-data access log.' : 'In the last 7 days, private data was used by a model on this PC or allowed to the cloud ' + d.vault_access.allowed_7_days + ' time' + (d.vault_access.allowed_7_days === 1 ? '' : 's') + ', and refused ' + d.vault_access.refused_7_days + ' time' + (d.vault_access.refused_7_days === 1 ? '' : 's') + '.'),
     d.off_record && E('p', { className: 'lk-words', role: 'note' }, E('strong', null, 'When you go off the record. '), d.off_record.words),
     E('div', null, d.export && ctl(d.export), d.erase && ctl(d.erase)),

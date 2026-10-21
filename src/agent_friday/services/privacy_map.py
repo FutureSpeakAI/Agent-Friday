@@ -321,10 +321,10 @@ def _stores() -> List[dict]:
     """The registry. `paths` are relative to Friday's folder."""
     return [
         {"key": "conversations", "name": "Your conversations",
-         "holds": "Every chat with Friday, and the search index over them.",
+         "holds": ("Every chat with Friday, and the search index over them. One message can be deleted "
+                   "from its conversation; a whole conversation can't be deleted on its own yet."),
          "paths": ["conversations", "chat_history.json"], "enc": _PLAIN, "ret": lambda: _FOREVER,
-         "controls": [_ctl("delete", "Delete a message", "Open the conversation and delete the message; "
-                           "a whole conversation can't be deleted on its own yet."), _EXPORT_ALL, _ERASE_ALL]},
+         "controls": [_EXPORT_ALL, _ERASE_ALL]},
         {"key": "memory_card", "name": "What Friday remembers about you",
          "holds": "The short notes Friday reads before every reply (your memory card).",
          "paths": ["core_memory"], "enc": _PLAIN, "ret": lambda: _FOREVER,
