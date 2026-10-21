@@ -291,3 +291,23 @@ def test_an_edit_inside_a_sealed_segment_with_its_time_put_back_is_caught(monkey
     os.utime(seg, ns=(st.st_atime_ns, st.st_mtime_ns))
     assert seg.stat().st_size == st.st_size
     assert not L.verify(force=True)["ok"]
+
+
+def test_a_durable_entry_is_flushed_to_disk_outside_the_tests(monkeypatch):
+    """Durable entries (gate decisions, revocations, acknowledgements) are
+    fsync'ed in a real start; the suite skips it unless FRIDAY_LEDGER_FSYNC=1
+    stands in for a real start."""
+    import os
+    calls = []
+    real = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (calls.append(fd), real(fd)))
+    L.append("activity", {"n": 1})
+    L.append("decision", {"n": 2}, durable=True)
+    assert calls == []
+    monkeypatch.setenv("FRIDAY_LEDGER_FSYNC", "1")
+    L.append("activity", {"n": 3})
+    assert calls == []
+    L.append("decision", {"n": 4}, durable=True)
+    assert len(calls) == 1
+    monkeypatch.delenv("FRIDAY_TESTING")
+    assert L._fsync_durable() is True

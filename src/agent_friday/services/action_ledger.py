@@ -132,6 +132,16 @@ def _testing() -> bool:
     return os.environ.get("FRIDAY_TESTING") == "1"
 
 
+def _fsync_durable() -> bool:
+    """A durable append is flushed to the disk (fsync) outside the tests.
+    Under FRIDAY_TESTING=1 it is not, unless FRIDAY_LEDGER_FSYNC=1: every gate
+    decision is durable, and an fsync per decision doubled the Windows suite
+    time on CI. The tests check order, chain and anchor, not power loss."""
+    if not _testing():
+        return True
+    return os.environ.get("FRIDAY_LEDGER_FSYNC") == "1"
+
+
 def ledger_dir() -> Path:
     if _testing():
         override = os.environ.get("FRIDAY_LEDGER_DIR", "").strip()
@@ -680,7 +690,7 @@ def _append_locked(key: bytes, items: list, durable: bool) -> dict:
             out = entry
             written += 1
         f.flush()
-        if durable:
+        if durable and _fsync_durable():
             os.fsync(f.fileno())
     st = live.stat()
     _STATE["tip"] = (seq, prev, st.st_size, st.st_mtime_ns)
