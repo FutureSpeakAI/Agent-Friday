@@ -84,6 +84,8 @@ def learning_proposals():
 @login_required
 def learning_decide(skill_id):
     d = request.get_json(silent=True) or {}
+    from agent_friday.services import screen_click as _sc
     res = learning_loop.decide_proposal(skill_id, str(d.get("decision") or ""),
-                                        pattern=d.get("pattern"))
+                                        pattern=d.get("pattern"),
+                                        decided_by=_sc.decided_by(request, "owner:ui"))
     return jsonify(public_result(res, "Couldn't record that decision")), (200 if res.get("ok") else 400)

@@ -133,7 +133,10 @@ def _is_public_query_card(rec: Dict[str, Any]) -> bool:
 #: Cards whose title and description repeat what the action would carry (a path, an address, an event
 #: and its guests, a task's text). Their notices, and a text message offering them, name only the tool;
 #: the full words stay on the card in the app.
-PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff"})
+PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff",
+                                  # Website task cards carry the values to type, or a
+                                  # question written after reading a page: never in a notice.
+                                  "web_task_plan", "web_task_plan_new_sites", "web_task_question"})
 
 
 def notice_title(rec: Dict[str, Any]) -> str:
@@ -157,6 +160,14 @@ def notice_body(rec: Dict[str, Any]) -> str:
     return str(rec.get("description") or rec.get("action_description") or "")
 
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
+    # A website task's plan that adds a site to the owner's list
+    # (services/web_tasks): widening what Friday may do is a press on screen.
+    "web_task_plan_new_sites": frozenset({"owner:ui"}),
+    # Any website task plan: a press on screen. Never a typed "yes" in chat, a
+    # text reply or a label claimed in a request, which would approve a plan
+    # whose goal, sites and values were not seen. (Voice can read the card;
+    # a server-granted spoken approval is a later phase.)
+    "web_task_plan": frozenset({"owner:ui"}),
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
     # Library changes Friday proposes (services/library/cards.py): the click is
@@ -175,6 +186,15 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # of mail archives and statements reach a cloud model again, so a click
     # on the card on screen only (owner decision O7).
     "raw_holds_reset": frozenset({"owner:ui"}),
+    # A change to how Friday works, tested on practice tasks old way against
+    # new (services/trials): only the owner's click on
+    # the card decides, so a voice or typed "yes" can never adopt one. The
+    # same for a learned heuristic's add/remove card (services/learning_loop).
+    "instruction_trial": frozenset({"owner:ui"}),
+    "learning_skill_change": frozenset({"owner:ui"}),
+    # Retiring a learned lesson or skill (services/lesson_records): it archives
+    # something the owner relies on, so a click on the card only.
+    "lesson_retire": frozenset({"owner:ui"}),
 }
 
 
@@ -1085,6 +1105,11 @@ def _fire_hook(record: Dict[str, Any]) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _notify_pending(record: Dict[str, Any]) -> None:
+    if (record.get("payload") or {}).get("quiet_until_digest"):
+        # A tested change Friday proposed herself (services/trials): its card
+        # waits in the app, and the one weekly summary card is the notice
+        # (owner decision HD3, "No Pestering"). Owner-started tests notify.
+        return
     try:
         import agent_friday.notifications_engine as _ne
     except Exception:
