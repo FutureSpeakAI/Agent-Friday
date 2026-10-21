@@ -135,6 +135,51 @@ def cc_kill():
     return jsonify({"killed": True, "message": "Computer control terminated. All permissions revoked."})
 
 
+# ── Stop everything (services/global_stop) ──────────────────────────────────
+#
+# Stop is open to every channel the owner uses (it only ends work). Resume is a
+# press on Friday's own page (screen_click.screen_session): no word, tool call or
+# program can resume. Each writes a signed receipt (decision-bom.jsonl).
+
+@control_bp.route('/api/stop-everything', methods=['GET'])
+@login_required
+def stop_everything_state():
+    from agent_friday.services import global_stop as _gs
+    st = _gs.state()
+    return jsonify({"status": "ok", "stopped": bool(st.get("stopped")),
+                    "since": st.get("since"), "source": st.get("source"),
+                    "resume_needs": "a press on Friday's own screen"})
+
+
+@control_bp.route('/api/stop-everything', methods=['POST'])
+@login_required
+def stop_everything():
+    from agent_friday.services import global_stop as _gs
+    data = request.get_json(silent=True) or {}
+    source = str(data.get("source") or "button").strip().lower()
+    if source not in ("button", "keyboard", "tray"):
+        source = "button"
+    st = _gs.stop(by="owner", source=source, reason=str(data.get("reason") or "")[:200])
+    return jsonify({"status": "ok", "stopped": True, "since": st.get("since"),
+                    "halted": st.get("halted"), "receipt": st.get("receipt"),
+                    "message": _gs.SPOKEN_STOPPED})
+
+
+@control_bp.route('/api/stop-everything/resume', methods=['POST'])
+@login_required
+def stop_everything_resume():
+    from agent_friday.services import global_stop as _gs, screen_click
+    if not screen_click.screen_session(request):
+        return jsonify({"status": "refused", "code": "resume_needs_press",
+                        "error": "Resume is a press of the Resume button on Friday's own screen."}), 403
+    try:
+        st = _gs.resume(by="owner", source="button")
+    except _gs.ResumeHeld as e:
+        return jsonify({"status": "held", "code": "resume_receipt_failed", "error": str(e)}), 503
+    return jsonify({"status": "ok", "stopped": False, "message": st.get("text", "Resumed."),
+                    "save_error": st.get("save_error")})
+
+
 # ── File permissions (WO-17) ────────────────────────────────────────────────
 #
 # Authenticated HTTP endpoints only — there is no grant tool in CLAUDE_TOOLS,

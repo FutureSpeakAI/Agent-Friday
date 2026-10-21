@@ -569,6 +569,9 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
 
     Returns the response text.
     """
+    # Stop everything: no model call starts while stopped (services/global_stop).
+    from agent_friday.services import global_stop as _global_stop
+    _global_stop.raise_if_stopped("a model call")
     # Callers pass either a structured message list or a bare prompt string.
     # Normalize here — a string used to crash the router consult ('str' object
     # has no attribute 'get'), silently pinning those calls to the cloud
@@ -1299,9 +1302,35 @@ TURN_CANCEL = _contextvars.ContextVar("friday_turn_cancel", default=None)
 
 
 def turn_cancelled() -> bool:
-    """Has the caller cancelled the turn running in this context?"""
+    """Has the caller cancelled the turn running in this context? Always True
+    while everything is stopped (core.GLOBAL_STOP, services/global_stop)."""
+    if core.GLOBAL_STOP.is_set():
+        return True
     ev = TURN_CANCEL.get()
     return bool(ev is not None and ev.is_set())
+
+
+class _AnyCancel:
+    """The turn's own cancel Event, or the global stop: whichever is set first.
+    Quacks like the part of threading.Event the stream reader uses."""
+
+    __slots__ = ("_events",)
+
+    def __init__(self, *events):
+        self._events = tuple(e for e in events if e is not None)
+
+    def is_set(self) -> bool:
+        return any(e.is_set() for e in self._events)
+
+    def wait(self, timeout: float) -> bool:
+        end = _time.monotonic() + max(0.0, float(timeout))
+        while True:
+            if self.is_set():
+                return True
+            left = end - _time.monotonic()
+            if left <= 0:
+                return False
+            _time.sleep(min(0.02, left))
 
 
 # How long a local call waits for a seat that answers 503 "Loading model"
@@ -1459,7 +1488,9 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None,
             getattr(resp, "encoding", "")).lower() in ("iso-8859-1", "latin-1", "latin_1"):
         resp.encoding = "utf-8"
 
-    _cancel = TURN_CANCEL.get()
+    # The turn's own cancel, or Stop everything (core.GLOBAL_STOP): either cuts
+    # the stream, so a reply that is still generating stops at once.
+    _cancel = _AnyCancel(TURN_CANCEL.get(), core.GLOBAL_STOP)
     cancelled = False
     # A cancel must close the stream even while the seat is still prefilling
     # and has sent nothing yet: the per-line check below never runs until a

@@ -560,6 +560,14 @@ if not _TESTING:
               + (f", {_n_int} marked interrupted" if _n_int else ""))
     except Exception as _tj_err:
         print(f"  Task journal: restore skipped ({_tj_err})")
+    # Stop everything (services/global_stop) survives a restart: read it before the
+    # scheduler or any worker can start.
+    try:
+        from agent_friday.services import global_stop as _global_stop
+        if _global_stop.load_on_boot().get("stopped"):
+            print("  Stop everything: STILL STOPPED from before the restart; press Resume to let work run")
+    except Exception as _gs_err:
+        print(f"  Stop everything: state not read ({_gs_err})")
     start_scheduler()
     try:
         from agent_friday.services import call_watch as _call_watch

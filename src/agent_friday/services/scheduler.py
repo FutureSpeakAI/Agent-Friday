@@ -1682,6 +1682,11 @@ def _run_task_inner(rec):
     # through here, so "pause all background and scheduled jobs" is one check
     # rather than a flag each job has to remember to read.
     try:
+        # Stop everything (services/global_stop): a scheduled or Run-now job is
+        # skipped with its reason while stopped, like a stand-down.
+        from agent_friday.services import global_stop as _gs
+        if _gs.active():
+            raise StoodDown("Everything is stopped (you pressed Stop); press Resume to let jobs run.")
         from agent_friday.services import stand_down as _sd
         if _sd.is_stood_down():
             raise StoodDown(_sd.reason() or "Friday is stood down.")

@@ -164,6 +164,24 @@ def _on_a_call() -> bool:
         return False
 
 
+from agent_friday.services import global_stop as _global_stop  # noqa: E402
+
+#: What the page hears when Stop everything ends a call (or refuses one).
+_STOPPED_FRAME = {"type": "everything_stopped", "error": "everything_stopped",
+                  "detail": "Everything is stopped. Press Resume on the screen to talk again."}
+
+
+def _voice_refused_while_stopped(ws) -> bool:
+    """No voice call starts while everything is stopped (services/global_stop)."""
+    if not _global_stop.active():
+        return False
+    try:
+        ws.send(json.dumps(_STOPPED_FRAME))
+    except Exception:
+        pass
+    return True
+
+
 def _live_conn_next():
     with _LIVE_RESUME_LOCK:
         _LIVE_CONN_GEN[0] += 1
@@ -1430,6 +1448,9 @@ def tts():
     in the JSON body. The text is wrapped with a conversational style hint so
     the model delivers it as a news anchor rather than reading robotically.
     """
+    if _global_stop.active():
+        return jsonify({"error": "Everything is stopped. Press Resume to hear Friday again.",
+                        "code": "everything_stopped"}), 423
     try:
         text = request.json.get('text', '')
         if not text:
@@ -4239,6 +4260,8 @@ if sock is not None:
         # `request` are request-context bound, and turns now run on their own
         # thread where neither is available.
         _ws_authenticated = _ws_auth_ok(_ui_tok_ok)
+        if _voice_refused_while_stopped(ws):
+            return
         from agent_friday.services import crew_runtime as _crew_host_runtime
         _crew_call_origin = _crew_host_runtime.capture_host_origin()
         # The owner's own voice on this PC (a paired phone or a tunnel is not): only then may the
@@ -4779,6 +4802,19 @@ if sock is not None:
             _manifest.subscribe(_sub)
             sess.start()
 
+            # Stop everything (services/global_stop) cuts her off mid-word and ends the call.
+            def _halt_call():
+                try:
+                    sess.barge("global_stop")
+                except Exception:
+                    pass
+                try:
+                    _send(_STOPPED_FRAME)
+                except Exception:
+                    pass
+                done.set()
+            _gs_unregister = _global_stop.on_stop(_halt_call)
+
         except BaseException:
             _release_voice_front(_front)
             raise
@@ -4814,6 +4850,10 @@ if sock is not None:
                     _vlog.error("voice frame failed: %s: %s", type(_he).__name__, _he)
         finally:
             done.set()
+            try:
+                _gs_unregister()
+            except Exception:
+                pass
             _manifest.unsubscribe(_sub)
             sess.close()
             try:
@@ -4920,6 +4960,8 @@ if sock is not None:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
             except Exception:
                 pass
+            return
+        if _voice_refused_while_stopped(ws):
             return
 
         # A provider can request its first tool long after private mode ends.
@@ -7028,6 +7070,17 @@ if sock is not None:
                 except Exception as e:
                     print(f'[live] voice distill spawn error: {e}')
 
+        # Stop everything (services/global_stop) ends the call: the page is told, the
+        # runner's loops see `done`, and closing the socket ends the blocked receive.
+        def _halt_live_call():
+            _safe_send(_STOPPED_FRAME)
+            done.set()
+            try:
+                ws.close()
+            except Exception:
+                pass
+        _gs_unregister_live = _global_stop.on_stop(_halt_live_call)
+
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(runner())
@@ -7048,6 +7101,10 @@ if sock is not None:
                 pass
         finally:
             done.set()
+            try:
+                _gs_unregister_live()
+            except Exception:
+                pass
             if _crew[0]:
                 _crew[0].close()
             if _crew_chan[0]:

@@ -262,6 +262,9 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     been gated for a different, less restrictive provider. Omit it (the
     default) to keep the previous single-prompt behavior unchanged.
     """
+    # Stop everything: no model call starts while stopped (services/global_stop).
+    from agent_friday.services import global_stop as _global_stop
+    _global_stop.raise_if_stopped("a model call")
     # Streaming deltas ride a context variable (see on_text_delta above). Run
     # the whole call inside a COPIED context with the sink set, so it is
     # scoped to this call and nothing has to be reset on any of the exits.
@@ -917,9 +920,9 @@ CLAUDE_TOOLS = [
          "pin": {"type": "boolean"}}}},
     {"name": "set_setting", "description": "Change one Settings row by its path; op=undo changes nothing and says where the row's own Undo is (30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>, .podcasts.hosts.<a|b> (host name), .display.dock.<ws> (value show or hide; op=list says what the dock shows and hides).",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string"}}, "required": ["path"]}},
-    {"name": "task_control", "description": "Stop or steer background work. op=stop ends a running workflow or task after the step it is on: that step finishes, the next never starts, nothing done is undone; with no target it stops the steps on the user's screen. op=steer messages a running task without stopping it. target: workflow name, task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what happened.",
+    {"name": "task_control", "description": "Stop or steer background work. op=stop ends a running workflow or task after the step it is on: that step finishes, the next never starts, nothing done is undone; with no target it stops the steps on the user's screen. op=stop_all stops everything at once (only when the user asks to stop everything). op=steer messages a running task without stopping it. target: workflow name, task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what happened.",
      "input_schema": {"type": "object", "properties": {
-         "op": {"type": "string", "enum": ["stop", "steer"]},
+         "op": {"type": "string", "enum": ["stop", "stop_all", "steer"]},
          "target": {"type": "string", "description": "A workflow name, a task id or words from a task's name; empty for what is on their screen."},
          "message": {"type": "string", "description": "For op=steer: what to tell the task."}},
          "required": ["op"]}},
@@ -7056,6 +7059,12 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                                   "project_id": _browser_conversation.get("project") or None}
         except Exception:
             pass  # Missing original scope disables browser use, not other task capabilities.
+    # Stop everything (services/global_stop): no task, crew run, website task or
+    # delegation starts while stopped. None is what a refused spawn already returns.
+    from agent_friday.services import global_stop as _global_stop
+    if _global_stop.active():
+        print(f"  [tasks] not started while everything is stopped: {name!r}")
+        return None
     with TASKS_LOCK:
         if task_id in TASKS:
             return task_id
@@ -7792,8 +7801,17 @@ def _tool_task_control(inp):
     op = str(inp.get("op") or "").strip().lower()
     target = str(inp.get("target") or "").strip()
     quiet = _cloud_voice() or _voice_room()
+    if op == "stop_all":
+        # Stop everything (services/global_stop): every lane at once. Never needs approval;
+        # resuming is a press on the screen, so no tool can undo it.
+        from agent_friday.services import global_stop as _gs
+        _voice = bool(_cloud_voice() or _voice_room())
+        res = _gs.stop(by="owner", source="voice" if _voice else "tool",
+                       reason=str(inp.get("target") or "")[:120])
+        return "EVERYTHING_STOPPED: " + _gs.SPOKEN_STOPPED + (
+            "" if res.get("receipt") else " (The stop receipt could not be written.)")
     if op not in ("stop", "steer"):
-        return "NOT DONE: op is stop or steer."
+        return "NOT DONE: op is stop, stop_all or steer."
     if op == "steer":
         message = str(inp.get("message") or "").strip()
         if not message:
@@ -13475,6 +13493,14 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     voice surface's own helpers). It runs through exactly the same chain;
     there is no other way to invoke a tool handler.
     """
+    # Stop everything (services/global_stop): while stopped no tool runs, from any
+    # surface. Only another stop may pass, so "stop everything" said twice still works.
+    from agent_friday.services import global_stop as _global_stop
+    if _global_stop.active() and not (
+            name == "task_control"
+            and str((tool_input or {}).get("op") or "").strip().lower() in ("stop", "stop_all")):
+        _receipts.record(name, ok=False, denied=True, detail="everything is stopped")
+        return _global_stop.refusal()
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
         return _crew_denial
@@ -17624,6 +17650,13 @@ def _start_kill_hotkey():
                 _log_context("cc_action", {"action": "kill_hotkey_ctrl_shift_q"})
             except Exception:
                 pass
+            # The one emergency key stops everything (services/global_stop), not only
+            # computer control: it works from any app, even while Friday's page is frozen.
+            try:
+                from agent_friday.services import global_stop as _gs
+                _gs.stop(by="owner", source="keyboard", reason="Ctrl+Shift+Q")
+            except Exception as _gs_err:
+                _log.warning("Ctrl+Shift+Q: stop everything failed: %s", _gs_err)
 
         hk = _kb.GlobalHotKeys({'<ctrl>+<shift>+q': _on_kill})
         hk.start()

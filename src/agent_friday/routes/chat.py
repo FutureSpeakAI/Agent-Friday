@@ -1069,6 +1069,33 @@ def _privacy_hold_turn(fn):
 _PASTED_KEYS_ENV = "friday.pasted_key_kinds"
 
 
+def _stop_everything_gate(fn):
+    """Stop everything (services/global_stop) for typed chat.
+
+    "Stop everything" typed into chat stops everything at once, before any model
+    or Laya rule sees the words, so it works while a model call is wedged. While
+    everything is stopped no chat turn runs: the reply says so and names Resume.
+    """
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import global_stop as _gs
+        data = request.get_json(silent=True)
+        message = data.get("message") if isinstance(data, dict) else None
+        if _gs.is_stop_everything(message):
+            st = _gs.stop(by="owner", source="typed")
+            return jsonify({"status": "ok", "response": _gs.SPOKEN_STOPPED,
+                            "everything_stopped": True, "stop": public_result(
+                                {k: st.get(k) for k in ("since", "source", "halted", "receipt")},
+                                "Couldn't stop everything")})
+        if _gs.active():
+            text = ("Everything is stopped, so I did not read or answer that. "
+                    "Press Resume on the screen when you want me back.")
+            return jsonify({"status": "everything_stopped", "code": "everything_stopped",
+                            "response": text, "error": text, "everything_stopped": True}), 423
+        return fn(*args, **kwargs)
+    return _inner
+
+
 def _withhold_pasted_keys(fn):
     """A key pasted into a chat message never enters the turn.
 
@@ -1389,6 +1416,7 @@ def _end_grant_turn(sess_ctx, session_id, conversation_id):
 
 
 @chat_bp.route('/api/chat', methods=['POST'])
+@_stop_everything_gate
 @_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
@@ -3482,6 +3510,7 @@ def _screen_block_for(provider_name, conversation_id):
 
 
 @chat_bp.route('/api/chat/send', methods=['POST'])
+@_stop_everything_gate
 @_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
