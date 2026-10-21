@@ -34,10 +34,14 @@ _MAX = 20000
 
 # A secret named by its field, in logs (where `password=hunter2` is never the owner's own
 # document): the name is kept and the value replaced.
+_NAMES = (r"api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|"
+          r"secret[_-]?key|private[_-]?key|password|passwd|passphrase|auth[_-]?token|session[_-]?token|"
+          r"token|secret|session|cookie|set-cookie|code")
 _NAMED = re.compile(
-    r"(?i)\b(api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|"
-    r"secret[_-]?key|private[_-]?key|password|passwd|passphrase|auth[_-]?token|session[_-]?token|"
-    r"token|secret)\b(\"?'?\s{0,3}[:=]\s{0,3}\"?'?)([^\s\"',;&}\]]{6,})")
+    r"(?i)\b(" + _NAMES + r")\b(\"?'?\s{0,3}[:=]\s{0,3}\"?'?)([^\s\"',;&}\]]{6,})")
+# A quoted value may hold spaces ("password": "correct horse battery staple"): the whole quote goes.
+_NAMED_QUOTED = re.compile(
+    r"(?i)([\"'](?:" + _NAMES + r")[\"']\s{0,3}:\s{0,3})([\"'])([^\"'\r\n]{1,2000})\2")
 _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+([A-Za-z0-9._~+/-]{12,}=*)")
 _URL_CREDS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,15}://)([^/\s:@]{1,64}):([^/\s@]{1,256})@")
 
@@ -51,6 +55,7 @@ def redact(text) -> str:
             s = s[:_MAX] + " ...[cut: the rest of a very long line]"
         s = _URL_CREDS.sub(lambda m: m.group(1) + m.group(2) + ":[redacted]@", s)
         s = _BEARER.sub(lambda m: m.group(1) + " [redacted]", s)
+        s = _NAMED_QUOTED.sub(lambda m: m.group(1) + m.group(2) + "[redacted]" + m.group(2), s)
         s = _NAMED.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", s)
         from agent_friday.services import secret_shapes, secret_patterns
         s = secret_shapes.redact(s)
@@ -69,6 +74,16 @@ class RedactingFilter(logging.Filter):
         if getattr(record, "_friday_redacted", False):
             return True                       # a second handler: already done
         try:
+            self._redact(record)
+        except Exception:  # noqa: BLE001 - never raise into the code that logged; never leak
+            record.msg, record.args = WITHHELD, None
+            record.exc_info, record.exc_text, record.stack_info = None, None, None
+        record._friday_redacted = True
+        return True
+
+    @staticmethod
+    def _redact(record: logging.LogRecord) -> None:
+        try:
             from agent_friday.services import correlation
             cid = correlation.current()
         except Exception:  # noqa: BLE001
@@ -76,8 +91,11 @@ class RedactingFilter(logging.Filter):
         record.correlation_id = cid or "-"
         try:
             msg = record.getMessage()
-        except Exception:  # noqa: BLE001 - a broken format string: check the raw parts
-            msg = "%s %s" % (record.msg, record.args)
+        except Exception:  # noqa: BLE001 - a broken format string or object: check the raw parts
+            try:
+                msg = "%s %s" % (record.msg, record.args)
+            except Exception:  # noqa: BLE001
+                msg = WITHHELD
         msg = redact(msg)
         record.msg = ("[%s] %s" % (cid, msg)) if cid else msg
         record.args = None
@@ -88,10 +106,10 @@ class RedactingFilter(logging.Filter):
                 text = ""
             record.exc_text = redact(text) if text else None
             record.exc_info = None
+        elif record.exc_text:
+            record.exc_text = redact(record.exc_text)
         if record.stack_info:
             record.stack_info = redact(record.stack_info)
-        record._friday_redacted = True
-        return True
 
 
 _FILTER = RedactingFilter()

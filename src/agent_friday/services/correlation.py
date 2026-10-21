@@ -34,10 +34,13 @@ def new_id() -> str:
 
 
 def accept(supplied) -> str:
-    """The caller's id when it is a plain token (8-64 letters, digits, . _ : -), else a new one.
-    Anything else (spaces, newlines, quotes, a very long value) is never echoed into a log."""
+    """The caller's id when it is a plain token (8-64 letters, digits, . _ : -), marked as the
+    caller's ("c-" + it, so it can never pass for one Friday made), else a new one. Anything
+    else (spaces, newlines, quotes, a very long value) is never echoed into a log."""
     s = str(supplied or "").strip()
-    return s if _TOKEN.fullmatch(s) else new_id()
+    if not _TOKEN.fullmatch(s):
+        return new_id()
+    return s if s.startswith("c-") else "c-" + s
 
 
 def current() -> str:
@@ -54,8 +57,10 @@ def begin(supplied=None) -> str:
 
 @contextlib.contextmanager
 def bind(cid):
-    """Carry an id into other work (a thread a request started)."""
-    token = _CURRENT.set(accept(cid) if cid else new_id())
+    """Carry this request's id (from `current()`) into other work, such as a thread the
+    request started. An id that is not a plain token gets a new one instead."""
+    cid = str(cid or "").strip()
+    token = _CURRENT.set(cid if _TOKEN.fullmatch(cid) else new_id())
     try:
         yield _CURRENT.get()
     finally:

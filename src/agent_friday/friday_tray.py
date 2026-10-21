@@ -223,6 +223,12 @@ def _attach_friday_log() -> None:
             root.setLevel(logging.INFO)
     except Exception:
         pass  # a log that cannot be opened must not stop Friday starting
+    try:
+        # The tray writes friday.log too: the same redaction filter as the server's handlers.
+        from agent_friday.services import log_redaction
+        log_redaction.install(root)
+    except Exception:
+        pass
 
 
 def _ui_url() -> str:

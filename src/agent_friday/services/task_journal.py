@@ -109,6 +109,11 @@ def _encrypt_enabled() -> bool:
 
 # ── at-rest protection ───────────────────────────────────────────────────────
 
+class _NotWritable(Exception):
+    """Encryption at rest is on and nothing can encrypt this record right now, so it is not
+    written to disk (never written in plain text instead)."""
+
+
 def _protect(data: bytes) -> bytes:
     if not _encrypt_enabled():
         return data
@@ -119,9 +124,13 @@ def _protect(data: bytes) -> bytes:
             return data
         return blob
     except Exception as e:
-        # A protection failure must not lose the record; write plain and say so.
-        _log.warning("task journal: at-rest protection unavailable (%s); writing plaintext", e)
-        return data
+        # Encryption at rest is on and nothing can encrypt (Friday's key store cannot be used:
+        # credential_store refuses rather than drop to another key). The record is NOT written
+        # in plain text: the caller keeps it in memory for this run, as the reasoning archive
+        # does, and the log says so once per kind of failure.
+        _log.warning("task journal: at-rest protection unavailable (%s); this record is kept in "
+                     "memory only and not written to disk", type(e).__name__)
+        raise _NotWritable() from None
 
 
 # Records that cannot be decrypted, by digest. A passphrase rotation can leave
@@ -641,7 +650,17 @@ def redact(fn) -> Dict[str, Any]:
                         continue
                     nev, c = _redact_value(ev, fn)
                     if c:
-                        new_lines.append(_encode_line(nev))
+                        try:
+                            new_lines.append(_encode_line(nev))
+                        except _NotWritable:
+                            # Nothing can encrypt right now. A line that was plain stays plain,
+                            # with the text taken out; a protected one cannot be rewritten and
+                            # is counted, never written back in plain text.
+                            if raw.strip().startswith(_LINE_PREFIX):
+                                new_lines.append(raw)
+                                out["left_unchanged"] = out.get("left_unchanged", 0) + 1
+                                continue
+                            new_lines.append(json.dumps(nev, default=str, ensure_ascii=False))
                         changed += 1
                     else:
                         new_lines.append(raw)
@@ -650,12 +669,21 @@ def redact(fn) -> Dict[str, Any]:
                     out["records"] += changed
             for f in sorted(d.glob("*.json")):
                 try:
-                    obj = json.loads(_unprotect(f.read_bytes()).decode("utf-8"))
+                    stored = f.read_bytes()
+                    obj = json.loads(_unprotect(stored).decode("utf-8"))
                 except Exception:
                     continue
                 nobj, c = _redact_value(obj, fn)
                 if c:
-                    _write_atomic(f, _protect(json.dumps(nobj, default=str, ensure_ascii=False).encode("utf-8")))
+                    plain = json.dumps(nobj, default=str, ensure_ascii=False).encode("utf-8")
+                    try:
+                        _write_atomic(f, _protect(plain))
+                    except _NotWritable:
+                        if stored.lstrip()[:1] in (b"{", b"["):
+                            _write_atomic(f, plain)          # it was plain: stays plain, text taken out
+                        else:
+                            out["left_unchanged"] = out.get("left_unchanged", 0) + 1
+                            continue
                     out["records"] += 1
     return out
 

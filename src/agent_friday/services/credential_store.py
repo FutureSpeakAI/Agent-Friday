@@ -84,8 +84,8 @@ _KEYSTORE_WHY = {
 def _refusal(e: BaseException) -> "CredentialProtectionUnavailable":
     """The fail-closed refusal for a keystore that could not be used (anything but locked)."""
     why = _KEYSTORE_WHY.get(type(e).__name__, "its file is not one Friday can use")
-    detail = ("keystore unavailable (%s: %s); the credential was refused, not written under "
-              "another key" % (type(e).__name__, e))
+    detail = ("keystore unavailable (%s); the credential was refused, not written under "
+              "another key" % type(e).__name__)
     if is_os_mode():
         return CredentialProtectionUnavailable(
             _PLAIN_REFUSAL.format(why=why), detail=(
@@ -834,6 +834,15 @@ def reencrypt_stale_provider_keys(names: list[str] | None = None) -> dict:
 
     for name in targets:
         real_path = _provider_key_path(name)
+        try:
+            # A key already under Friday's own keystore is where it should be: rewriting it
+            # under the vault key would move it back to the key-per-process scheme the keystore
+            # replaced (BD-08: the keystore is the only write tier).
+            if real_path.exists() and looks_protected(real_path.read_bytes()) == "keystore":
+                result["unchanged"].append(name)
+                continue
+        except OSError:
+            pass
         old_plain = None
         try:
             old_plain = get_provider_key(name)

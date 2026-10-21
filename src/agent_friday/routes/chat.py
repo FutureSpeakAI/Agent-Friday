@@ -1295,7 +1295,16 @@ def chat_stream():
                     pass
             q.put(("done", None))
 
-    threading.Thread(target=_run_turn, daemon=True).start()
+    # The turn runs on its own thread; it carries this request's correlation id with it, so
+    # its log lines and decision receipts name the request (services/correlation).
+    from agent_friday.services import correlation as _correlation
+    _corr_id = _correlation.current()
+
+    def _run_turn_bound():
+        with _correlation.bind(_corr_id):
+            _run_turn()
+
+    threading.Thread(target=_run_turn_bound, daemon=True).start()
 
     def _events():
         # Open the stream immediately so a proxy that buffers until the first
