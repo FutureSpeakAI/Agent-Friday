@@ -95,16 +95,11 @@ def _tasks(now):
     return records, max((row["updated_at"] or 0 for row in records), default=None), "Reported task state from Friday's local registry; this is not an independent heartbeat check."
 
 
-#: Plain words for a goal's own status.
-_GOAL_STATUS_WORDS = {"proposed": "proposed", "approved": "approved, not started",
-                      "active": "active", "paused": "paused", "failed": "stopped after a failure"}
-
-
 def _goals(now):
-    """Every goal still open, with what it is doing or waiting on. Goals are
-    durable files (services/goals.py); a goal file Friday cannot read is
-    shown as such rather than left off."""
-    from agent_friday.services import goals
+    """Every goal still open, with its state (§17.3) and what it waits on
+    (§17.8). Goals are durable files (services/goals.py); a goal file Friday
+    cannot read is shown as such rather than left off."""
+    from agent_friday.services import goals, goal_state
     records = []
     open_goals = [g for g in goals.list_goals()
                   if g.get("status") not in goals.TERMINAL_STATUSES and g.get("goal_id")]
@@ -114,22 +109,25 @@ def _goals(now):
         done = sum(1 for m in milestones if m.get("status") == "done")
         waits = [w for w in (goals.blocker_words(m) for m in milestones) if w]
         running = any(m.get("status") == "in_progress" for m in milestones)
-        body = "Goal " + _GOAL_STATUS_WORDS.get(status, _text(status or "unknown", 30)) + ". "
+        body = "Goal " + goal_state.STATE_WORDS.get(status, _text(status or "unknown", 30)) + ". "
         if milestones:
             body += f"{done} of {len(milestones)} milestones done."
         if running:
             body += " A milestone is being worked on now."
         if waits:
             body += " " + " ".join(waits[:2])
+        if status == "at_risk":
+            body += " At risk: " + "; ".join(goal_state.risk_reasons(goal, now)[:2]) + "."
         if any((m.get("blocker") or {}).get("type") in ("interrupted", "run_failed") for m in milestones):
             state = "interrupted"
-        elif waits:
-            state = "waiting"
+        elif status in ("needs_owner", "waiting", "at_risk"):
+            state = status
         else:
             state = "running" if running else (status or "unknown")
         updated = goals._parse_ts(goal.get("updated_at"))
         records.append(_record(goal.get("goal_id") or "", goal.get("title") or "Goal", body,
-            updated=updated, priority=90 if state in {"interrupted", "waiting"} else 60,
+            updated=updated, priority=90 if state in {"interrupted", "needs_owner"} else
+                     75 if state in {"waiting", "at_risk"} else 60,
             state=state))
     for bad in goals.unreadable_goals()[:5]:
         records.append(_record("unreadable:" + bad["goal_id"], "A goal Friday can't read",
@@ -360,7 +358,8 @@ def automatic(observations, now):
         elif kind == "routine":
             rows = [r for r in rows if r.get("available") and r.get("state") in {"failed", "error"}]
         elif kind == "goal":
-            rows = [r for r in rows if r.get("state") in {"interrupted", "waiting", "running", "active"}]
+            rows = [r for r in rows if r.get("state") in {"interrupted", "needs_owner", "waiting",
+                                                          "at_risk", "running", "active"}]
             rows.sort(key=lambda r: (-r["priority"], -(r["updated_at"] or 0), r["id"]))
         elif kind == "project":
             rows = [r for r in rows if (r["updated_at"] or 0) >= now - 7 * 86400]
