@@ -131,7 +131,7 @@ def _zip_without_a_manifest() -> bytes:
 @pytest.mark.parametrize("data,why", [
     (b"not a zip", "not a readable"),
     (_zip_without_a_manifest(), "no SKILL.md"),
-])
+], ids=["not-a-zip", "no-manifest"])
 def test_a_package_that_cannot_be_read_is_refused_with_a_reason(client, skills, data, why):
     r = _upload(client, data)
     assert r.status_code == 400
