@@ -10,9 +10,23 @@ from __future__ import annotations
 import pytest
 
 
+class _OldTree:
+    """On a tree without services/global_stop (the old code a red run is aimed at) the
+    tests still run, so each one fails by its own assertion, not at import."""
+
+    @staticmethod
+    def active():
+        return False
+
+
 @pytest.fixture
 def gs(tmp_path, monkeypatch):
-    from agent_friday.services import global_stop, agent, local_image
+    try:
+        from agent_friday.services import global_stop
+    except ImportError:
+        yield _OldTree()
+        return
+    from agent_friday.services import agent, local_image
     monkeypatch.setattr(global_stop, "_path", lambda: tmp_path / "global_stop.json")
     monkeypatch.setattr(agent, "_HAS_PYAUTOGUI", False, raising=False)
     monkeypatch.setattr(local_image, "interrupt_comfy", lambda timeout=10: False)
