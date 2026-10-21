@@ -217,7 +217,7 @@ def _assert_live_result_gated(name, response, events):
     assert wrapped and inner == _GATED_LIVE_RESULT, "Raw tool data bypassed the egress gate"
     assert response.name == name and response.id == "synthetic-call"
     assert events == [("execute", name), ("gate", _RAW_LIVE_RESULT, name), ("hold",),
-                      ("orb", _GATED_LIVE_RESULT), ("response", wrap(_GATED_LIVE_RESULT))]
+                      ("orb", wrap(_GATED_LIVE_RESULT)), ("response", wrap(_GATED_LIVE_RESULT))]
 
 
 @pytest.mark.parametrize("name", ["home_cards", "customize_workspace"])
