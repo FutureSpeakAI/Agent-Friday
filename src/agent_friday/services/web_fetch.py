@@ -191,6 +191,29 @@ def _fetch_via_firecrawl(url, key, root, meta_path, text_path,
 
 def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
           register_provenance: bool = True) -> FetchResult:
+    """Fetch one URL safely, and record the request in the egress ledger
+    (§26.7): the address Friday chose went to that website. A page served
+    from the cache, or an address refused before anything was sent, records
+    nothing."""
+    rec = _fetch(url, timeout=timeout, use_cache=use_cache, register_provenance=register_provenance)
+    try:
+        if not rec.get("from_cache") and not (not rec.get("ok") and rec.get("error_kind") == "refused_unsafe"
+                                                and "redirect" not in str(rec.get("error") or "")):
+            from urllib.parse import urlparse
+            from agent_friday.services import egress_gate as _eg
+            host = urlparse(str(url or "")).hostname or "a website"
+            via = rec.get("via")
+            _eg.record_service_send("web_fetch", ("web:" + host)[:80],
+                                    destination=("Firecrawl, for " + host) if via == "firecrawl" else host,
+                                    content={"url": url}, result="sent", part="address",
+                                    note="" if rec.get("ok") else str(rec.get("error_kind") or "")[:40])
+    except Exception:
+        pass
+    return rec
+
+
+def _fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
+           register_provenance: bool = True) -> FetchResult:
     """Fetch one URL safely. Returns a FetchResult / SourceRecord.
 
     Never raises for an unsafe or unreachable URL — the refusal is data, so a

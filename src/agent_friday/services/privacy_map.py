@@ -60,20 +60,17 @@ DESTINATION_WORDS = {
 }
 
 #: Sends that do not pass the egress gate yet, and where each keeps its own record.
+#: What leaves this PC and is NOT in the list above. Email, tool-server (MCP)
+#: calls, Calendar/Tasks/Contacts changes, posts, published pages, web pages
+#: Friday opens and web/news searches are now each a send in that list (P4).
 NOT_RECORDED = (
-    {"key": "mail", "what": "Email Friday sends for you",
-     "record": ("Each send is recorded with its To and Cc recipients and subject in sent_mail.jsonl, and "
-                "counted under Mail below. Bcc recipients are not recorded.")},
-    {"key": "mcp", "what": "Calls to tool servers you added (MCP)",
-     "record": "Not recorded as a send yet. Each call that changes something is an action with its own card."},
-    {"key": "connectors", "what": "Calls to connected services' own APIs (for example Calendar or Tasks writes not made through Friday's tools)",
-     "record": "Actions are recorded in Friday's action receipts (System > Friday's changes)."},
-    {"key": "publishing", "what": "Posts to social and publishing accounts",
-     "record": "Each post has an approval card and a publishing record."},
-    {"key": "fetches", "what": "Web pages Friday opens to read",
-     "record": ("The address, which Friday chose, goes to that website. When a cloud model reads the "
-                "page, the page text goes to that model as part of the conversation, and that send is "
-                "in this list under the model's name.")},
+    {"key": "messaging", "what": "Texts and chat messages (SMS, Telegram, Discord)",
+     "record": "Each message is checked by the privacy gate first; it is not yet a line in this list."},
+    {"key": "browser", "what": "Pages opened in a real browser window for you",
+     "record": "The browser's own history keeps them; they are not yet a line in this list."},
+    {"key": "connector_reads", "what": "Reading your own mail, calendar, tasks and contacts",
+     "record": ("Friday asks your own accounts for your own data; those requests are not listed here. "
+                "Every change she makes to them is.")},
 )
 
 HONEST_LIMIT = (
@@ -686,7 +683,18 @@ def _ts(row: dict) -> Optional[float]:
 
 def destination_words(provider: str) -> str:
     p = str(provider or "").strip()
-    return DESTINATION_WORDS.get(p.lower(), p or "an unnamed destination")
+    hit = DESTINATION_WORDS.get(p.lower())
+    if hit:
+        return hit
+    # The service channels (P4): named for what they are.
+    for prefix, words in (("mcp:", "Tool server “{}” (MCP)"), ("web:", "The website {}"),
+                          ("search:", "Web search ({})"), ("publish:", "Posts to {}"),
+                          ("publish-web:", "Web pages published via {}")):
+        if p.lower().startswith(prefix):
+            return words.format(p[len(prefix):])
+    return {"gmail": "Gmail (email you sent)", "google-calendar": "Google Calendar (changes)",
+            "google-tasks": "Google Tasks (changes)", "google-contacts": "Google Contacts (changes)"}.get(
+        p.lower(), p or "an unnamed destination")
 
 
 #: Most destinations listed one by one; the rest are counted together.

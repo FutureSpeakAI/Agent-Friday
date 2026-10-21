@@ -54,6 +54,26 @@ _canary_cache: dict[str, Any] = {"ts": 0.0, "ok": None, "detail": ""}
 _BRAVE_USD_PER_QUERY = 0.005
 
 
+#: Where each backend sends the query. wigolo runs on this PC.
+_SEARCH_HOSTS = {"brave": "api.search.brave.com", "duckduckgo-scrape": "html.duckduckgo.com",
+                 "firecrawl": "api.firecrawl.dev"}
+
+
+def _record_query(backend: str, q: str, out: dict) -> None:
+    """The query in the egress ledger (§26.7), for each backend it actually
+    went to (a backend that is not set up, or runs on this PC, sent nothing)."""
+    try:
+        host = _SEARCH_HOSTS.get(backend)
+        if not host or (out or {}).get("status") == SearchStatus.NO_BACKEND:
+            return
+        from agent_friday.services import egress_gate as _eg
+        ok = (out or {}).get("status") in (SearchStatus.OK, SearchStatus.EMPTY)
+        _eg.record_service_send("web_search", ("search:" + backend)[:80], destination=host,
+                                content={"query": q}, result="sent" if ok else "failed", part="query")
+    except Exception:
+        pass
+
+
 class SearchStatus:
     OK = "ok"                      # results returned
     EMPTY = "empty"                # backend answered, genuinely nothing
@@ -653,6 +673,7 @@ def search(query: str, count: int = 10) -> dict:
             out = {"status": SearchStatus.BACKEND_BROKEN,
                    "detail": ExceptionText(f"{type(e).__name__}: {e}")}
         _note_backend_health(name, out)
+        _record_query(name, q, out)
         if out.get("status") == SearchStatus.OK:
             out["results"] = _normalise_rows(out.get("results"))
             out["query"] = q

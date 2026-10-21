@@ -1064,6 +1064,16 @@ def _run_target(target: Dict[str, Any]) -> str:
     store.set_target_status(tid, "SENT")
     pub = adapter.publish(prepared)
     pub = pub if isinstance(pub, dict) else {"ok": False, "error": "publish_failed"}
+    # §26.7: the post in the egress ledger and on the privacy map (what went
+    # to which platform; the text fingerprinted and kept encrypted, A20).
+    try:
+        from agent_friday.services import egress_gate as _eg
+        platform = str(target.get("platform") or "")
+        _eg.record_service_send("publishing", ("publish:" + platform)[:80], destination=_destination(platform),
+                                content={"platform": platform, "post": prepared},
+                                result="sent" if pub.get("ok") else "failed", part="post")
+    except Exception:
+        pass
     if pub.get("ok"):
         # The adapter's word beats the arm-time flag: a publish the platform
         # did NOT schedule must never be recorded or announced as native.

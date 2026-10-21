@@ -707,6 +707,14 @@ def _brave_results(query, limit=8):
                      "X-Subscription-Token": key},
             timeout=12,
         )
+        # §26.7: the news query in the egress ledger and on the privacy map.
+        try:
+            from agent_friday.services import egress_gate as _eg
+            _eg.record_service_send("news_search", "search:brave-news", destination="api.search.brave.com",
+                                    content={"query": query}, part="query",
+                                    result="sent" if resp.status_code == 200 else "failed")
+        except Exception:
+            pass
         if resp.status_code != 200:
             return []
         data = resp.json()

@@ -1044,7 +1044,22 @@ class MCPManager:
             return f"[mcp error] no such server: {server}"
         if sp.status == "disabled":
             return f"[mcp error] server '{server}' is disabled"
-        return sp.call_tool(tool, arguments, timeout=timeout)
+        out = sp.call_tool(tool, arguments, timeout=timeout)
+        # §26.7: every call to a tool server is in the egress ledger and on the
+        # privacy map, whichever path made it: where it went, and the
+        # arguments that left (fingerprinted; kept encrypted by default, A20).
+        try:
+            from urllib.parse import urlparse
+            from agent_friday.services import egress_gate as _eg
+            url = getattr(sp, "url", None)
+            dest = (urlparse(str(url)).hostname or str(url)) if url else f"a program on this PC ({server})"
+            failed = isinstance(out, str) and out.startswith("[mcp")
+            _eg.record_service_send("mcp", f"mcp:{server}"[:80], destination=dest,
+                                    content={"tool": tool, "arguments": arguments},
+                                    result="failed" if failed else "sent", part=f"tool {tool}"[:60])
+        except Exception:
+            pass
+        return out
 
     def all_tools(self) -> list[tuple[str, dict]]:
         out: list[tuple[str, dict]] = []

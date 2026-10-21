@@ -155,7 +155,8 @@ def merge_intervals(intervals) -> list:
 
 def _calendar_client(creds):
     from googleapiclient.discovery import build
-    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+    from agent_friday.services import egress_record as _er
+    return _er.calendar(build("calendar", "v3", credentials=creds, cache_discovery=False))
 
 
 def _sources() -> tuple:

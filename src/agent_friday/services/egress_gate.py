@@ -778,10 +778,14 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
         # action; it is never an "allow" or a "block" of a field.
         "action": "call", "field": "(the whole send)", "tier": "CALL",
         "provider": call["provider"], "model": call["model"], "via": call["via"],
-        "destination": _destination(call["provider"]), "purpose": _purpose(),
+        "destination": call.get("destination") or _destination(call["provider"]), "purpose": _purpose(),
         "fields": call["fields"], "withheld": call["withheld"],
         "grants": sorted(call["grants"]), "result": result,
     }
+    if call.get("channel"):
+        entry["channel"] = call["channel"]
+        if call.get("recipients") is not None:
+            entry["recipients"] = int(call["recipients"])
     try:
         from agent_friday.services import turn_plan as _tp
         _turn = _tp.current_turn_id()
@@ -827,6 +831,48 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
     except Exception:
         pass
     return entry
+
+
+#: The sends that leave through a service rather than a model (§26.7: no
+#: unannounced egress). Each has its own name in the ledger and on the map.
+SERVICE_CHANNELS = ("mail", "mcp", "calendar", "tasks", "contacts", "publishing", "web_publish",
+                    "web_fetch", "web_search", "news_search")
+
+
+def record_service_send(channel: str, provider: str, *, destination: str = "", content: Any = None,
+                        result: str = "sent", recipients: int | None = None, note: str = "",
+                        part: str = "") -> dict | None:
+    """One ledger row (and its context manifest) for a send that leaves
+    through a service: mail, a tool server, a calendar/tasks/contacts write,
+    a post, a page Friday fetches, a search. The same row a model call gets:
+    destination, purpose, the time, the result, a keyed fingerprint of what
+    left and, by the owner's default (A20), its full content kept encrypted.
+    Never raises; a send is never stopped because its record failed.
+
+    `content` is what left (the message, the arguments, the URL); it is not
+    written into the ledger, only fingerprinted and, unless the owner chose
+    fingerprints only or is off the record, kept encrypted beside it."""
+    try:
+        if channel not in SERVICE_CHANNELS:
+            channel = "other"
+        cur = _CALL.get()
+        token = _CALL.set({"call_id": "eg-" + uuid.uuid4().hex[:16], "provider": str(provider or channel)[:80],
+                           "model": "", "via": "service:" + channel, "fields": 0, "withheld": 0,
+                           "grants": set(), "joinable": False, "nested": cur is not None,
+                           "channel": channel, "destination": str(destination or "")[:200],
+                           "recipients": recipients})
+        try:
+            from agent_friday.services import context_manifest as _cm
+            _cm.tally(_CALL.get(), part or channel, "SERVICE",
+                      "allow" if result in ("sent", "sent_with_parts_withheld") else "block")
+        except Exception:
+            pass
+        left = result in ("sent", "sent_with_parts_withheld")
+        # Only what actually left is fingerprinted and kept.
+        return _close_call(token, content if left else None, result=str(result or "sent")[:40], note=note)
+    except Exception as e:
+        _dlog.warning("service send not recorded (%s): %s", channel, type(e).__name__)
+        return None
 
 
 def _result_of(out: Any) -> str:
