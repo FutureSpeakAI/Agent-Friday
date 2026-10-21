@@ -156,10 +156,31 @@ def test_a_review_dated_more_than_a_year_ahead_does_not_count(sc, tmp_path):
     p = tmp_path / "reviewed.json"
     p.write_text(json.dumps({"licences": [
         {"package": "forever", "licence": "GPL-3.0-only", "reason": "r",
-         "reviewed_by": "Someone", "until": "2099-12-31"}]}), encoding="utf-8")
+         "reviewed_by": "Stephen Webster", "until": "2099-12-31"}]}), encoding="utf-8")
     got = sc.load_reviews(p, today=dt.date(2026, 10, 21))
     assert "forever" not in got["licences"]
     assert [e["package"] for e in got["awaiting"]] == ["forever"]
+
+
+def test_only_the_owner_signs_a_review(sc, tmp_path):
+    p = tmp_path / "reviewed.json"
+    base = {"licence": "GPL-3.0-only", "reason": "r", "until": "2026-12-31"}
+    p.write_text(json.dumps({"licences": [
+        dict(base, package="his", reviewed_by="Stephen Webster"),
+        dict(base, package="someone-else", reviewed_by="Release Lead"),
+    ]}), encoding="utf-8")
+    got = sc.load_reviews(p, today=dt.date(2026, 10, 21))
+    assert set(got["licences"]) == {"his"}
+    assert [e["package"] for e in got["awaiting"]] == ["someone-else"]
+
+
+def test_the_review_files_need_the_owners_approval_on_github():
+    owners = (REPO / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
+    rules = {line.split()[0]: line.split()[1:] for line in owners.splitlines()
+             if line.strip() and not line.startswith("#")}
+    for path in ("/packaging/supply-chain/", "/scripts/supply_chain.py",
+                 "/.github/workflows/supply-chain.yml", "/.github/CODEOWNERS"):
+        assert rules.get(path) == ["@FutureSpeakAI"], path
 
 
 def test_the_shipped_reviews_file_is_well_formed_and_signs_nothing_on_the_builders_behalf(sc):

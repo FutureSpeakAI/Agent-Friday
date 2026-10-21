@@ -366,6 +366,11 @@ def _licence_of(comp: dict) -> str:
 
 # ── reviews ──────────────────────────────────────────────────────────────────
 
+#: Who may sign a licence or security review: the owner only (ruling
+#: 2026-10-21). .github/CODEOWNERS makes a change to this list, or to
+#: reviewed.json, need his approval on GitHub.
+REVIEW_SIGNERS = ("Stephen Webster",)
+
 #: The furthest a review's `until` may be; anything later does not count.
 REVIEW_HORIZON_DAYS = 366
 
@@ -389,6 +394,10 @@ def load_reviews(path: Path = REVIEWED, today: _dt.date | None = None) -> dict:
             who = str(e.get("reviewed_by") or "").strip()
             if not who or _PLACEHOLDER.search(who):
                 out["awaiting"].append(dict(e, kind=kind))
+                continue
+            if who.casefold() not in {s.casefold() for s in REVIEW_SIGNERS}:
+                # Only the owner signs reviews (ruling 2026-10-21).
+                out["awaiting"].append(dict(e, kind=kind, why="not signed by the owner"))
                 continue
             try:
                 until = _dt.date.fromisoformat(str(e.get("until")))
