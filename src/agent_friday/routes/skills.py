@@ -93,11 +93,11 @@ def api_skills_import():
                 return jsonify({"status": "error", "error": "Nothing was installed: choose a skill package in "
                                 "Documents, Downloads, Desktop, Creations or Projects, or upload the file."}), 400
             res = _review.stage(src, name=data.get('name'))
+        if res.get("status") == "refused":
+            return jsonify({"status": "error", "error": "Nothing was installed: %s." % res.get("reason")}), 400
         return jsonify({**res, "message": "Nothing is installed yet. A card shows what this skill would make "
                                           "Friday do; it installs when you approve that card on this PC's "
                                           "screen."}), 202
-    except _review.ImportRefused as e:
-        return jsonify({"status": "error", "error": "Nothing was installed: %s." % e}), 400
     except Exception as e:
         from agent_friday.user_errors import log_failure
         return jsonify({"status": "error", "error": "Couldn't read the skill package (error %s). Nothing was "
