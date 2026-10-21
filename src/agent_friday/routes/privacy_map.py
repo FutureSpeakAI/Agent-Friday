@@ -63,6 +63,17 @@ def privacy_map_sent(sha):
     return jsonify({"ok": True, "sha": sha, **data})
 
 
+@privacy_map_bp.route("/api/privacy/manifest/<manifest_id>", methods=["GET"])
+def privacy_manifest(manifest_id):
+    """One send's context manifest: what went into it by name, size and class,
+    never its content (§12.5, §14.3)."""
+    from agent_friday.services import context_manifest
+    m = context_manifest.read(str(manifest_id or "")[:90])
+    if not m:
+        return jsonify({"ok": False, "message": "No manifest with that id (it may be older than the kept record)."}), 404
+    return jsonify({"ok": True, "manifest": m})
+
+
 @privacy_map_bp.route("/api/privacy/sent-text", methods=["POST"])
 def privacy_sent_text_choice():
     """Full text with each receipt (the default, A20) or fingerprints only

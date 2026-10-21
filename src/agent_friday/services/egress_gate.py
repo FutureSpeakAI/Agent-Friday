@@ -602,6 +602,11 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
         _call["fields"] += 1
         if action in ("redact", "drop", "block"):
             _call["withheld"] += 1
+        try:
+            from agent_friday.services import context_manifest as _cm
+            _cm.tally(_call, field, entry["tier"], action)
+        except Exception:
+            pass
         _grant = _grant_marker(reason)
         if _grant:
             _call["grants"].add(_grant)
@@ -784,7 +789,9 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
             entry["turn_id"] = _turn
     except Exception:
         _turn = None
-    entry["manifest_id"] = "cm-" + (_turn or call["call_id"])
+    # One manifest per assembly (§12.5, §14.3): a turn that calls a model
+    # three times has three, each linked back to the turn by its turn_id.
+    entry["manifest_id"] = "cm-" + call["call_id"]
     if note:
         entry["note"] = note[:200]
     entry["text_kept"] = False
@@ -809,6 +816,12 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
         with _LOG_LOCK:
             with open(dest, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import context_manifest as _cm
+        real = log_path is None or Path(log_path) == Path(_DEFAULT_LOG)
+        _cm.write(_cm.build(call, entry, off_record=off), None if real else log_path)
     except Exception:
         pass
     return entry
@@ -856,6 +869,11 @@ def record_binary_egress(provider: str, field: str, *, action: str,
     _call = _CALL.get()
     if _call is not None:
         entry["call_id"] = _call["call_id"]
+        try:
+            from agent_friday.services import context_manifest as _cm
+            _cm.tally(_call, field, "UNCLASSIFIABLE", action)
+        except Exception:
+            pass
     _dlog.log(
         logging.INFO if action == "allow" else logging.WARNING,
         "%s provider=%s field=%s tier=UNCLASSIFIABLE bytes=%d (%s)",
