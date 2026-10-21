@@ -74,7 +74,9 @@ class _Req:
         return {"id": "evt-synthetic"}
 
 
-class _Events:
+class Resource:
+    """Stands in for googleapiclient.discovery.Resource (matched by name)."""
+
     def insert(self, **kw):
         return _Req()
 
@@ -84,16 +86,20 @@ class _Events:
     def list(self, **kw):
         return _Req()
 
+    def list_next(self, *a):
+        return None
+
 
 class _Svc:
     def events(self):
-        return _Events()
+        return Resource()
 
 
 def test_a_calendar_write_is_recorded_and_a_read_is_not(ledger):
     from agent_friday.services import egress_record as er
     svc = er.calendar(_Svc())
     svc.events().list(calendarId="primary").execute()
+    assert svc.events().list_next(None, None) is None, "the last page must stay None"
     assert _calls(ledger) == []
     svc.events().insert(calendarId="primary", body={"summary": "Synthetic", "attendees": [{"email": "a@example.invalid"}]}).execute()
     with pytest.raises(RuntimeError):
@@ -162,20 +168,87 @@ _SENDS = (
 )
 
 
-def _sources():
+def _functions():
+    """(module path, function name, function source) for every function."""
+    import ast
     for p in SRC.rglob("*.py"):
-        yield p, p.read_text(encoding="utf-8", errors="replace")
+        text = p.read_text(encoding="utf-8", errors="replace")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield p, node.name, ast.get_source_segment(text, node) or ""
+
+
+_FUNCS = list(_functions())
+
+
+#: A function whose send is recorded by its caller says so, and names where:
+#: "# egress: recorded by <caller>"; one that deliberately records nothing
+#: says why: "# egress: not recorded: <reason>". Grepping lists every case.
+_MARK = "# egress: "
+
+
+def _calls_any(seg: str, names) -> bool:
+    return any(re.search(r"\b" + re.escape(n) + r"\(", seg) for n in names)
 
 
 def test_every_google_write_goes_through_a_recorded_client():
-    bad = [str(p.relative_to(SRC)) for p, t in _sources()
-           if _GOOGLE_WRITE.search(t) and "egress_record" not in t]
+    """Checked per function: the function that writes builds its client
+    through egress_record, or gets it from a factory that does."""
+    factories = {name for _p, name, seg in _FUNCS if "egress_record" in seg}
+    for _ in range(3):                    # a helper that gets its client from a factory is one too
+        factories |= {name for _p, name, seg in _FUNCS if _calls_any(seg, factories)}
+    bad = [f"{p.relative_to(SRC)}:{name}" for p, name, seg in _FUNCS
+           if _GOOGLE_WRITE.search(seg) and "egress_record" not in seg and not _calls_any(seg, factories)
+           and _MARK not in seg]
     assert bad == [], "Calendar/Tasks/Contacts writes with no egress record: %s" % bad
 
 
 @pytest.mark.parametrize("pattern,needs,what", _SENDS, ids=[s[2] for s in _SENDS])
 def test_every_known_send_path_records_itself(pattern, needs, what):
-    bad = [str(p.relative_to(SRC)) for p, t in _sources()
-           if pattern.search(t) and needs not in t and p.name != "egress_gate.py"
-           and not str(p.relative_to(SRC)).startswith(("services/platforms", "services\\platforms"))]
+    """Checked per function: the function that sends records the send itself,
+    or calls a helper of its module that does."""
+    recorders = {name for _p, name, seg in _FUNCS if needs in seg}
+    bad = [f"{p.relative_to(SRC)}:{name}" for p, name, seg in _FUNCS
+           if pattern.search(seg) and needs not in seg and not _calls_any(seg, recorders) and _MARK not in seg
+           and p.name != "egress_gate.py" and "platforms" not in p.parts]
     assert bad == [], f"{what} with no egress record in: {bad}"
+
+
+def test_the_mail_record_counts_every_recipient_once(ledger):
+    from agent_friday.services import gmail_send as gs
+    gs._record_egress({"to": ["Smith, J <j@example.invalid>"], "cc": "a@example.invalid, b@example.invalid",
+                       "bcc": ["c@example.invalid"]}, "c3ludGhldGlj", "sent")
+    assert _calls(ledger)[0]["recipients"] == 4
+
+
+def test_off_the_record_a_service_send_keeps_no_destination(ledger, monkeypatch):
+    from agent_friday.services import off_record
+    monkeypatch.setattr(off_record, "active", lambda *a, **k: True)
+    eg.record_service_send("web_fetch", "web:private.example.invalid", destination="private.example.invalid",
+                           content={"url": "https://private.example.invalid/x"})
+    row = _calls(ledger)[0]
+    assert "private.example.invalid" not in json.dumps(row)
+    assert "payload_fingerprint" not in row and row["text_kept"] is False
+
+
+def test_a_tool_server_call_keeps_no_secret(ledger):
+    from agent_friday import mcp_client
+    from agent_friday.services import sent_text_store as sts
+
+    class _Server:
+        status = "running"
+        url = None
+
+        def call_tool(self, tool, arguments, timeout=None):
+            return "[mcp:synthetic error] timed out"
+    mgr = mcp_client.MCPManager.__new__(mcp_client.MCPManager)
+    mgr.servers = {"synthetic": _Server()}
+    secret = "sk-" + "ant-api03-" + "A" * 90  # pragma: allowlist secret (synthetic, built at run time)
+    mgr.call("synthetic", "lookup", {"api_key": secret})
+    row = _calls(ledger)[0]
+    assert row["result"] == "sent_unconfirmed" and row["destination"] == "a program on this PC (synthetic)"
+    assert secret not in (sts.read(row["payload_fingerprint"]) or {}).get("text", "")
