@@ -279,6 +279,9 @@ class Orchestrator:
     """Manages local worker lifecycle — spawn, monitor, collect, cancel."""
 
     def spawn_worker(self, task: WorkerTask) -> str:
+        # Stop everything (services/global_stop): no worker starts while stopped.
+        from agent_friday.services import global_stop as _global_stop
+        _global_stop.raise_if_stopped("a delegated worker")
         adapter = _get_adapter(task.adapter_type)
         entry = _WorkerEntry(
             task=task,

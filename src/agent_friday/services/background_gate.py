@@ -60,6 +60,15 @@ REASON_INTERACTIVE = "waits for your chat to finish"
 REASON_IDLE = "waits for idle"
 REASON_SEAT = "waits for the local model"
 REASON_PAUSED = "paused by you"
+REASON_STOPPED = "everything is stopped"
+
+
+def _everything_stopped() -> bool:
+    try:
+        import agent_friday.core as _core
+        return _core.GLOBAL_STOP.is_set()
+    except Exception:
+        return False
 
 #: An open voice call, as opposed to a voice TURN in progress ("voice"). A
 #: call means the owner is here: deferrable work waits for it to end. Only a
@@ -329,7 +338,10 @@ def block_reason(record: Dict[str, Any]) -> str:
     Applied by the queue before a job starts and by the cooperative wait
     before each of a running job's model calls. Cloud seats are never asked.
     Run now bypasses the idle wait only; an interactive turn always wins.
+    Everything stopped (services/global_stop) holds every job, local or not.
     """
+    if _everything_stopped():
+        return REASON_STOPPED
     if not record.get("seat_is_local"):
         return ""
     if record.get("user_paused"):
@@ -426,6 +438,10 @@ def before_local_model_call(model: Optional[str] = None) -> None:
     queue, then waits while ``block_reason`` holds. Raises JobCancelled when
     the job was cancelled from the queue.
     """
+    # Everything stopped (services/global_stop): no local model call runs, in or
+    # outside a background job.
+    if _everything_stopped():
+        raise JobCancelled("Everything is stopped; the local model call did not run.")
     job = CURRENT_JOB.get()
     if not job:
         return

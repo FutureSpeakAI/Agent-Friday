@@ -3,7 +3,11 @@ name: tests
 on:
   push:
     branches: [main]
+    # A version tag runs the suite on its exact commit; the installer
+    # workflow's release gate (scripts/release_gate.py) waits for this run.
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

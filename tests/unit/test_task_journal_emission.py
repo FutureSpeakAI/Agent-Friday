@@ -309,7 +309,12 @@ def test_seat_select_and_ladder_fallback_decisions(monkeypatch):
         def route(self, messages, task_context=None):
             return {"provider": "cloud", "model": "claude-sonnet-5", "reason": "cloud_only mode"}
     monkeypatch.setattr(rmr, "get_router", lambda cfg=None: _Router())
-    monkeypatch.setattr(ag, "_load_settings", lambda: {"model_routing": {"mode": "smart"}})
+    # A6: the move from Anthropic to the OpenAI-compatible provider happens only on an
+    # order the owner set (services/provider_fallback); this test is about the journal.
+    monkeypatch.setattr(ag, "_load_settings", lambda: {"model_routing": {
+        "mode": "smart", "cloud_fallback_order": "anthropic_then_openai"}})
+    from agent_friday.services import one_key
+    monkeypatch.setattr(one_key, "anthropic_ready", lambda: True)
     from agent_friday.services import model_router as smr
     monkeypatch.setattr(smr, "_mode_filtered_attempts", lambda attempts, cfg, vault_access=False: attempts)
     monkeypatch.setattr(smr, "_health_order", lambda attempts, name: attempts)

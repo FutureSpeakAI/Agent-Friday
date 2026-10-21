@@ -409,7 +409,11 @@ class SeatSupervisor:
         when the queue promotes it again. If nothing behind it could run, it
         keeps the seat, so its prompt prefix stays the seat's cache."""
         from agent_friday.services.background_gate import JobCancelled, REASON_INTERACTIVE, REASON_PAUSED
+        from agent_friday.services.background_gate import _everything_stopped
         while True:
+            if _everything_stopped():
+                # Stop everything (services/global_stop) ends a running job, it does not park it.
+                raise JobCancelled("Everything is stopped; this job was stopped.")
             yielded_now = False
             with self._lock:
                 record = self._records.get(task_id)

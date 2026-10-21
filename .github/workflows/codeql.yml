@@ -3,10 +3,13 @@ name: codeql
 on:
   push:
     branches: [main]
+    # A version tag is analysed on its exact commit; the release gate waits for it.
+    tags: ["v*"]
   pull_request:
     branches: [main]
   schedule:
     - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read

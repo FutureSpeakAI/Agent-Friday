@@ -740,8 +740,14 @@ def run(run_id: str, *, until_checkpoint: bool = True,
     if not r:
         return {"status": "error", "message": "run not found"}
     guard = 0
+    from agent_friday.services import global_stop as _gs
     while guard < 100:
         guard += 1
+        if _gs.active():
+            # Stop everything (services/global_stop): the run stops between stages; it
+            # can be continued after Resume.
+            r = dict(get_run(run_id) or {}, stopped_by="global_stop")
+            break
         r = advance(run_id, progress)
         state = r.get("state")
         if state in (COMPLETED, FAILED):
@@ -798,6 +804,10 @@ def start_async(run_id: str, *, until_checkpoint: bool = True) -> Dict[str, Any]
     r = get_run(run_id)
     if not r:
         return {"status": "error", "message": "run not found"}
+    from agent_friday.services import global_stop as _gs
+    if _gs.active():
+        return {"status": "error", "run_id": run_id, "code": "everything_stopped",
+                "message": "Everything is stopped. Press Resume to run the pipeline."}
 
     orb_id = _orb_start(r.get("name", "Pipeline"))
     with _LOCK:

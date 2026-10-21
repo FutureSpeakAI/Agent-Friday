@@ -514,6 +514,10 @@ def tick(now=None) -> Dict[str, Any]:
     """One publisher pass: expire stale holds, recover crashed claims, claim
     due targets, dispatch each through the gate chain. Returns a summary
     envelope; never raises. Re-entrant calls coalesce (one tick at a time)."""
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): nothing is published while stopped.
+        return {"ok": True, "skipped": "everything is stopped"}
     if not _TICK_LOCK.acquire(blocking=False):
         return {"ok": True, "skipped": "tick already running"}
     try:
@@ -551,6 +555,9 @@ def tick(now=None) -> Dict[str, Any]:
         counts: Dict[str, int] = {}
         confirmed_posts: List[str] = []
         for t in targets:
+            if _core_gs.GLOBAL_STOP.is_set():
+                # Stopped mid-pass: what is not sent yet waits for Resume (claims recover).
+                break
             outcome = _dispatch_target(t)
             counts[outcome] = counts.get(outcome, 0) + 1
             if outcome == "confirmed":
