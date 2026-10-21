@@ -24,11 +24,11 @@ const DATA = { goals: [{
     can_restart: true, restart_needs_confirmation: true, can_run: false, verified: false }],
 }], unreadable: [] };
 
-function render(calls, confirms, data = DATA, open = null, answer = true) {
+function render(calls, confirms, data = DATA, open = null, answer = true, def = null, preview = null) {
   const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
   const createElement = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) });
   let slot = 0;
-  const slots = [data, '', false, open];
+  const slots = [data, '', false, open, def, preview];
   const ctx = vm.createContext({
     React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
     useEffect: () => {}, useCallback: fn => fn, encodeURIComponent, setInterval: () => 0, clearInterval: () => {},
@@ -63,6 +63,28 @@ test('a move posts its transition and a restart of an unknown outcome asks first
   assert.equal(confirms.length, 1, 'the owner was not asked before a restart of an unknown outcome');
   assert.equal(calls.at(-1)[0], '/api/goals/goal_synthetic/milestones/ms_1/restart');
   assert.deepEqual(JSON.parse(calls.at(-1)[2]), { confirm_unknown_outcome: true });
+});
+
+test('defining a goal: the summary first, then create only that summary (17.4)', () => {
+  const def = { title: 'Synthetic', intent: '', done: 'a report exists', proof: 'report.md', stop: 'it needs money', steps: 'Draft\nCheck',
+    people: '', deadline: '', minutes: '20', does: ['read', 'draft'], autonomy: { read: 'on_its_own', draft: 'on_its_own', write: 'ask_me', send: 'ask_me', spend: 'ask_me', publish: 'ask_me', delete: 'never' } };
+  let calls = [];
+  let buttons = all(render(calls, [], DATA, null, true, def, null), n => n.type === 'button');
+  assert.ok(!buttons.some(b => label(b) === 'Create this goal as summarised'), 'a goal could be created before its summary was shown');
+  buttons.find(b => label(b) === 'Show me the summary').props.onClick();
+  assert.equal(calls.at(-1)[0], '/api/goals/draft');
+  const spec = JSON.parse(calls.at(-1)[2]);
+  assert.equal(spec.completion_condition, 'a report exists');
+  assert.deepEqual(spec.milestones.map(m => m.name), ['Draft', 'Check']);
+  assert.equal(spec.budget.runtime_minutes, 20);
+  // With open questions there is no create button.
+  buttons = all(render([], [], DATA, null, true, def, { questions: [{ key: 'people', ask: 'Who will it reach?' }], summary: 'Goal: Synthetic.', summary_id: 'abc' }), n => n.type === 'button');
+  assert.ok(!buttons.some(b => label(b) === 'Create this goal as summarised'));
+  calls = [];
+  buttons = all(render(calls, [], DATA, null, true, def, { questions: [], summary: 'Goal: Synthetic.', summary_id: 'abc' }), n => n.type === 'button');
+  buttons.find(b => label(b) === 'Create this goal as summarised').props.onClick();
+  assert.equal(calls.at(-1)[0], '/api/goals/define');
+  assert.equal(JSON.parse(calls.at(-1)[2]).summary_id, 'abc');
 });
 
 test('a restart whose outcome is known does not ask and claims nothing', () => {
