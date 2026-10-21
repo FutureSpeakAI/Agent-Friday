@@ -552,11 +552,24 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         raise
     except Exception:
         pass
+    # A6: no silent move from one cloud provider to another
+    # (services/provider_fallback). Outside the try above on purpose: a filter
+    # that failed must not leave the old silent ladder in place.
+    from agent_friday.services import provider_fallback as _pf
+    try:  # a codebase turn on a guest's key never moves to the owner's key
+        from agent_friday.services import codebases as _cb_pf
+        _pf_locked = bool(_cb_pf.guest_key_for_turn(session_ctx))
+    except Exception:
+        _pf_locked = False
+    attempts, _pf_withheld = _pf.filter_ladder(attempts, routing_cfg, locked=_pf_locked)
+    _pf_watch = _pf.LadderWatch(_pf_withheld, routing_cfg)
+    _pf_before = list(attempts)
     try:
         from agent_friday.services.model_router import _health_order
         attempts = _health_order(attempts, routed_provider_name)
     except Exception:
         pass
+    _pf_watch.reordered(_pf_before, attempts)
 
     # A TURN PINNED TO ITS SEAT RUNS THERE OR FAILS. The local voice path
     # promises the owner a local mind; a dead or busy seat must surface as an
@@ -582,10 +595,13 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         try:
             text, trace = fn(use_model)
             if text and text.strip():
+                _pf_watch.leg_succeeded(name)
                 return text, (trace or [])
             errors.append(f"{_leg}: empty response")
+            _pf_watch.leg_failed(name, "empty response")
         except Exception as e:
             errors.append(ExceptionText(f"{_leg}: {e}"))
+            _pf_watch.leg_failed(name, e)
         # Task journal (TV4, point=ladder_fallback): a leg failed; say which
         # and what comes next, from the ladder already in hand.
         try:
@@ -636,6 +652,13 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
                 "was NOT sent to any cloud provider. This is a local-model "
                 "problem, not a permissions one: check that the local seat is "
                 "up, then retry."), []
+    # A cloud provider failed and the move to another one was withheld (A6): the
+    # caller gets the offer (ProviderSwitchWithheld), not a generic failure.
+    try:
+        _pf_watch.exhausted()
+    except _pf.ProviderSwitchWithheld:
+        _pilot_outcome(session_ctx, "error")
+        raise
     _mode_now = str(routing_cfg.get('mode') or '').lower()
     if _cloud_intent.is_local_mode(_mode_now) and not _cloud_intent.opens_cloud(_mode_now):
         _pilot_outcome(session_ctx, "error")

@@ -358,3 +358,32 @@ def previous_route(model_id):
         return jsonify({"status": "ok", "previous": p}) if p else (jsonify({"status": "none"}), 404)
     except Exception as e:
         return api_error(e, "Couldn't read the previous version", shape="bare")
+
+
+# ── A6: what happens when a cloud provider fails (services/provider_fallback) ──
+#
+# The order is a pre-approval to move from one cloud provider to another, so it
+# is set only by a press on Friday's own page (screen_click.screen_session); the
+# general settings save drops the key (core._save_settings_locked).
+
+@models_screen_bp.route("/api/models/cloud-fallback-order", methods=["GET"])
+@login_required
+def cloud_fallback_order_get():
+    from agent_friday.services import provider_fallback as pf
+    return jsonify({"status": "ok", "order": pf.stored_order(), "choices": sorted(pf.ORDERS)})
+
+
+@models_screen_bp.route("/api/models/cloud-fallback-order", methods=["POST"])
+@login_required
+def cloud_fallback_order_set():
+    from agent_friday.services import provider_fallback as pf, screen_click
+    import agent_friday.core as core
+    if not screen_click.screen_session(request):
+        return jsonify({"status": "refused", "code": "needs_press",
+                        "error": "Set this with the control in Settings on Friday's own screen."}), 403
+    order = str((request.get_json(silent=True) or {}).get("order") or "").strip().lower()
+    if order not in pf.ORDERS:
+        return jsonify({"status": "error", "error": "order is one of: " + ", ".join(sorted(pf.ORDERS))}), 400
+    core._save_settings({"model_routing": {"cloud_fallback_order": order}},
+                        owner_fallback_order_change=True)
+    return jsonify({"status": "ok", "order": pf.stored_order()})
