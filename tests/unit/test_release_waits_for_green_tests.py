@@ -89,13 +89,14 @@ def test_the_publish_step_asks_the_gate_again_before_it_creates_the_release():
 
 
 def test_nothing_else_publishes_a_release():
-    for path in sorted(WF.glob("*.yml")):
+    for path in sorted(list(WF.glob("*.yml")) + list(WF.glob("*.yaml"))):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         for jname, job in (doc.get("jobs") or {}).items():
             for step in job.get("steps") or []:
                 run = _run_script_lines(step)
                 uses = str(step.get("uses") or "")
                 if "gh release create" in run or "gh release upload" in run \
+                        or "/releases" in run and "gh api" in run and "POST" in run.upper() \
                         or "action-gh-release" in uses or "create-release" in uses:
                     assert (path.name, jname) == ("installer.yml", "release"), (path.name, jname)
 
@@ -200,3 +201,69 @@ def test_an_unreadable_api_refuses(monkeypatch):
 
     monkeypatch.setattr(g, "fetch_runs", boom)
     assert g.main(["--repo", REPO_NAME, "--sha", SHA]) == 3
+
+
+def test_the_gate_and_release_jobs_cannot_be_talked_past():
+    """No always()/!cancelled() on the release job (it would run after a failed gate), no
+    continue-on-error, and no shell override that could drop bash -e on the publish step."""
+    doc = _wf("installer.yml")
+    jobs = doc["jobs"]
+    assert "defaults" not in doc
+    for name in ("tests-green", "release"):
+        job = jobs[name]
+        cond = str(job.get("if", ""))
+        assert "always()" not in cond and "cancelled()" not in cond and "failure()" not in cond, cond
+        assert not job.get("continue-on-error")
+        for step in job.get("steps") or []:
+            assert not step.get("continue-on-error"), step.get("name")
+    publish = [s for s in jobs["release"]["steps"] if "gh release create" in _run_script_lines(s)][0]
+    assert "shell" not in publish
+
+
+def test_the_tag_must_still_name_the_gated_commit():
+    run = _run_script_lines([s for s in _wf("installer.yml")["jobs"]["release"]["steps"]
+                             if "gh release create" in _run_script_lines(s)][0])
+    head = run.split("gh release create")[0]
+    assert "commits/${TAG_NAME}" in head and "GITHUB_SHA" in head
+
+
+def test_open_high_alerts_on_the_tag_refuse():
+    jobs = _wf("installer.yml")["jobs"]
+    for name in ("tests-green", "release"):
+        runs = " ".join(_run_script_lines(s) for s in jobs[name]["steps"])
+        assert "--alerts-ref" in runs, name
+        assert "security-events" in (jobs[name].get("permissions") or {}), name
+
+
+@pytest.mark.parametrize("name", ["tests.yml", "codeql.yml"])
+def test_no_required_job_can_be_skipped_into_a_green_run(name):
+    """A job-level if: could skip every job and leave the workflow 'success'."""
+    for jname, job in (_wf(name).get("jobs") or {}).items():
+        assert "if" not in job, (name, jname)
+
+
+def test_alert_levels():
+    g = _gate()
+    alerts = [{"state": "open", "rule": {"security_severity_level": "high"}},
+              {"state": "open", "rule": {"severity": "error"}},
+              {"state": "open", "rule": {"security_severity_level": "medium"}},
+              {"state": "open", "rule": {"severity": "warning"}},
+              {"state": "dismissed", "rule": {"security_severity_level": "critical"}}]
+    assert len(g.blocking_alerts(alerts)) == 2
+
+
+def test_an_open_high_alert_refuses_a_green_commit(monkeypatch):
+    g = _gate()
+    monkeypatch.setattr(g, "fetch_runs", lambda repo, wf, sha: [_run(1)])
+    monkeypatch.setattr(g, "fetch_open_alerts", lambda repo, ref: [
+        {"state": "open", "number": 7, "rule": {"id": "py/x", "security_severity_level": "high"}}])
+    assert g.main(["--repo", REPO_NAME, "--sha", SHA, "--alerts-ref", "refs/tags/v9.9.9"]) == 1
+    monkeypatch.setattr(g, "fetch_open_alerts", lambda repo, ref: [])
+    assert g.main(["--repo", REPO_NAME, "--sha", SHA, "--alerts-ref", "refs/tags/v9.9.9"]) == 0
+
+
+def test_runs_without_a_head_repository_still_count_by_sha_and_event():
+    g = _gate()
+    run = _run(1)
+    run.pop("head_repository")
+    assert g.verdict({"tests.yml": [run], "codeql.yml": [_run(2)]}, SHA, REPO_NAME)[0] == "green"

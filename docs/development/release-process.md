@@ -114,7 +114,16 @@ on the tag's exact commit (both also run on the tag push itself) and refuses
 unless both are green there; a pull request run does not count, because it
 tested a merge rather than that commit. The release job asks the gate once
 more immediately before `gh release create`, so step 5 is enforced by CI and
-not only by this document. Before it publishes it adds the `Build sequence: N` line to
+not only by this document. Green also means no open high or critical
+code-scanning alert on the tag (a CodeQL run ends green even when it finds
+something), and the publish step checks that the tag still names the commit
+that was gated. A failed run on that commit blocks the release until it is
+re-run green (a re-run replaces its conclusion; a fresh manual run does not).
+
+The gate lives in the workflow file at the tagged commit, so it binds only
+tags on commits that carry it. Protect `refs/tags/v*` with a tag ruleset
+(Settings → Rules) so only the release owners can create or move a version
+tag. Before it publishes it adds the `Build sequence: N` line to
 the notes if it is missing, replaces the SHA-256 placeholder with the real
 hash (and fails if any placeholder is left), and writes
 `release-manifest.json`. It publishes the exe, its `.sha256` and the manifest.

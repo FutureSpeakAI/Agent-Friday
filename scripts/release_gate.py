@@ -108,6 +108,55 @@ def fetch_runs(repo: str, workflow: str, sha: str) -> list[dict]:
         page += 1
 
 
+#: Open code-scanning alerts at these levels on the tag refuse a release: CodeQL's workflow
+#: ends green even when it finds something, so "the analysis ran" is not "the code is clean".
+BLOCKING_ALERT_LEVELS = frozenset({"critical", "high", "error"})
+
+
+def blocking_alerts(alerts: list) -> list:
+    """The open alerts that refuse a release (security severity high/critical, or a rule
+    severity of error when no security severity is given)."""
+    out = []
+    for a in alerts or []:
+        if not isinstance(a, dict) or a.get("state", "open") != "open":
+            continue
+        rule = a.get("rule") or {}
+        level = str(rule.get("security_severity_level") or rule.get("severity") or "").lower()
+        if level in BLOCKING_ALERT_LEVELS:
+            out.append(a)
+    return out
+
+
+def fetch_open_alerts(repo: str, ref: str) -> list:
+    out: list = []
+    page = 1
+    while True:
+        cmd = ["gh", "api", "-H", "Accept: application/vnd.github+json",
+               f"repos/{repo}/code-scanning/alerts?ref={ref}&state=open&per_page=100&page={page}"]
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=120)
+        if res.returncode != 0:
+            raise RuntimeError(f"gh api failed for code-scanning alerts: {res.stderr.strip()[:400]}")
+        batch = json.loads(res.stdout or "[]") or []
+        out.extend(batch)
+        if len(batch) < 100:
+            return out
+        page += 1
+
+
+def _with_retries(fn, attempts: int):
+    """A transient API error is retried (with backoff) while there is time to wait; the
+    last error is raised, and the caller refuses."""
+    err: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            err = e
+            if i + 1 < attempts:
+                time.sleep(min(60, 10 * (i + 1)))
+    raise err  # type: ignore[misc]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True, help="owner/name")
@@ -117,18 +166,38 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wait-minutes", type=float, default=0.0,
                     help="keep polling while the verdict is pending, up to this long")
     ap.add_argument("--poll-seconds", type=float, default=60.0)
+    ap.add_argument("--alerts-ref", default="",
+                    help="also refuse when this ref (refs/tags/<tag>) has open high/critical "
+                         "code-scanning alerts")
     a = ap.parse_args(argv)
     workflows = a.workflow or list(DEFAULT_WORKFLOWS)
     deadline = time.monotonic() + max(0.0, a.wait_minutes) * 60.0
+    retries = 3 if a.wait_minutes > 0 else 1
     while True:
         try:
-            runs = {wf: fetch_runs(a.repo, wf, a.sha.lower()) for wf in workflows}
+            runs = _with_retries(lambda: {wf: fetch_runs(a.repo, wf, a.sha.lower()) for wf in workflows},
+                                 retries)
         except Exception as e:  # an API we cannot read never counts as green
             print(f"release gate: REFUSED, could not read the workflow runs: {e}", flush=True)
             return 3
         state, reasons = verdict(runs, a.sha, a.repo)
         for r in reasons:
             print(f"  {r}", flush=True)
+        if state == "green" and a.alerts_ref:
+            try:
+                bad = blocking_alerts(_with_retries(lambda: fetch_open_alerts(a.repo, a.alerts_ref), retries))
+            except Exception as e:
+                print(f"release gate: REFUSED, could not read the code-scanning alerts: {e}", flush=True)
+                return 3
+            if bad:
+                for al in bad[:20]:
+                    rule = al.get("rule") or {}
+                    loc = ((al.get("most_recent_instance") or {}).get("location") or {})
+                    print(f"  open alert #{al.get('number')} {rule.get('id')} "
+                          f"{loc.get('path')}:{loc.get('start_line')}", flush=True)
+                print(f"release gate: REFUSED, {len(bad)} open high/critical code-scanning "
+                      f"alert(s) on {a.alerts_ref}", flush=True)
+                return 1
         if state == "green":
             print(f"release gate: GREEN on {a.sha}", flush=True)
             return 0
