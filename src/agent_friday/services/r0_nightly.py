@@ -15,7 +15,9 @@ in the nightly practice-trials job (services/trial_job), which
   turn appears, the running episode stops, and the task-repeat it belonged to
   is thrown away (never stored as a missing result) and run again next night.
 
-It schedules itself once (``ensure_scheduled``), runs after any queued trials
+On a developer install (a source checkout of Friday, where R0's answer is
+used) it schedules itself once (``ensure_scheduled``); an installed copy never
+runs it unless ``schedule()`` is called. It runs after any queued trials
 in whatever time is left, picks up where it stopped, and when every
 task-repeat is done writes result.json and report.md (aggregate numbers only)
 under ``<FRIDAY_HOME>/trials/r0/``. If the serving model changes
@@ -29,6 +31,9 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 R0_REPEATS = 2
+#: Failed nights in a row (a seat error, a broken run folder) before R0 stops
+#: for good and says why, instead of failing every night.
+R0_MAX_FAILURES = 3
 #: Longest single editor / composer / selector reply, in tokens.
 R0_MAX_TOKENS = 2048
 #: How long one editor call may take before it counts as a failed step.
@@ -47,11 +52,18 @@ def _state_path() -> Path:
 
 
 def state() -> Dict:
-    try:
-        v = json.loads(_state_path().read_text(encoding="utf-8"))
-        return v if isinstance(v, dict) else {}
-    except (OSError, ValueError):
+    """R0's state; {} only when there is no state file at all. A file that
+    cannot be read is "unreadable", which never runs and never reschedules."""
+    p = _state_path()
+    if not p.exists():
         return {}
+    try:
+        v = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        v = None
+    if not isinstance(v, dict) or not v.get("status"):
+        return {"status": "unreadable", "reason": f"{p} could not be read"}
+    return v
 
 
 def _save(st: Dict) -> None:
@@ -61,16 +73,39 @@ def _save(st: Dict) -> None:
     tmp.replace(p)
 
 
-def ensure_scheduled(now: Optional[float] = None) -> Dict:
-    """R0 schedules itself the first time the nightly job runs. Once done,
-    stopped or cancelled it is never scheduled again."""
+def _developer_install() -> bool:
+    """A source checkout of Friday (the repository sits beside the package),
+    where the owner builds Friday and R0's verdict decides what to build next."""
+    try:
+        import agent_friday
+        return (Path(agent_friday.__file__).resolve().parents[2] / ".git").exists()
+    except Exception:
+        return False
+
+
+def schedule(now: Optional[float] = None) -> Dict:
+    """Schedule R0 (once). A run folder that already holds a result is done."""
     st = state()
     if st:
         return st
-    st = {"status": "scheduled", "repeats": R0_REPEATS, "created": float(now or time.time()),
-          "run_dir": str(_dir() / "run"), "cells_done": 0}
+    run_dir = _dir() / "run"
+    if (run_dir / "result.json").exists():
+        st = {"status": "done", "run_dir": str(run_dir), "reason": "the result was already there"}
+    else:
+        st = {"status": "scheduled", "repeats": R0_REPEATS, "created": float(now or time.time()),
+              "run_dir": str(run_dir), "cells_done": 0, "failures": 0}
     _save(st)
     return st
+
+
+def ensure_scheduled(now: Optional[float] = None) -> Dict:
+    """R0 schedules itself the first time the nightly job runs on a developer
+    install. Once done, stopped, cancelled or unreadable it is never scheduled
+    again."""
+    st = state()
+    if st or not _developer_install():
+        return st
+    return schedule(now)
 
 
 def due() -> bool:
@@ -157,12 +192,32 @@ def run_tonight(seat: Dict[str, str], watcher, run_one: Callable[..., dict], *,
     _save(st)
     _log("R0 experiment: resuming" if st.get("cells_done") else "R0 experiment: starting")
 
+    def still_wanted() -> bool:
+        # A cancel written while this night's run was going wins: the next
+        # step stops, and nothing here writes "running" over it.
+        return state().get("status") == "running"
+
     def progress(done: int, planned: int) -> None:
+        if not still_wanted():
+            raise r0.Yielded("R0 was cancelled")
         st["cells_done"] = done
         st["planned_cells"] = planned
+        st["failures"] = 0
         _save(st)
         _log(f"R0 experiment: {done} of {planned} task-repeats done")
 
+    base_scan = scan
+
+    def timed_scan(text: str) -> dict:
+        # The canary scans run on the CPU, not the seat, but their time is
+        # still tonight's testing time.
+        t0 = time.time()
+        try:
+            return base_scan(text)
+        finally:
+            trials._spend_night(time.time() - t0)
+
+    from agent_friday.services.background_gate import JobCancelled
     try:
         out = r0.run(tasks=tasks if tasks is not None else P.load_pack("dev"),
                      repeats=int(st.get("repeats") or R0_REPEATS), run_dir=Path(st["run_dir"]),
@@ -170,13 +225,30 @@ def run_tonight(seat: Dict[str, str], watcher, run_one: Callable[..., dict], *,
                      call_model=lambda system, user: step(model_call, system, user),
                      # The seat's address can change between nights (a new
                      # port); the model may not, so only the model is pinned.
-                     scan=scan, model=seat["model"], endpoint="the nightly job's local seat",
+                     scan=timed_scan, model=seat["model"], endpoint="the nightly job's local seat",
                      should_yield=lambda: _stop_now(watcher), on_cell=progress)
     except R.ManifestMismatch as e:
+        if not still_wanted():
+            return {"stopped": "R0 was cancelled"}
         st.update(status="stopped", reason=f"the serving model or the task pack changed ({e})", at=time.time())
         _save(st)
         _log("R0 experiment: stopped, the setup changed since it started")
         return {"stopped": st["reason"]}
+    except JobCancelled:
+        raise                  # the owner cancelled tonight's job; R0 resumes next night
+    except Exception as e:
+        if not still_wanted():
+            return {"stopped": "R0 was cancelled"}
+        st["failures"] = int(st.get("failures") or 0) + 1
+        st["last_error"] = f"{type(e).__name__}: {str(e)[:300]}"
+        if st["failures"] >= R0_MAX_FAILURES:
+            st.update(status="stopped", reason=f"failed {st['failures']} nights in a row ({st['last_error']})",
+                      at=time.time())
+            _log("R0 experiment: stopped after repeated failures")
+        _save(st)
+        return {"failed": st["last_error"], "failures": st["failures"]}
+    if not still_wanted():
+        return {"stopped": "R0 was cancelled"}
     st["cells_done"] = out.get("cells", st.get("cells_done", 0))
     st["planned_cells"] = out.get("planned_cells")
     if out.get("complete"):

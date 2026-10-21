@@ -156,8 +156,11 @@ def run_pending_trials() -> dict:
     # worth building, schedules itself once and runs here, after the queued
     # trials, in whatever is left of tonight's testing time (services/r0_nightly).
     from agent_friday.services import r0_nightly
-    r0_nightly.ensure_scheduled()
-    r0_due = r0_nightly.due()
+    try:
+        r0_nightly.ensure_scheduled()
+        r0_due = r0_nightly.due()
+    except Exception:
+        r0_due = False         # R0's state is never a reason for queued trials not to run
     if not pending and not r0_due:
         out["skipped"] = "nothing to test"
         return out

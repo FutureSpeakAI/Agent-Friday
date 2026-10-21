@@ -93,6 +93,7 @@ def _job(monkeypatch, runs):
         r0_nightly = None
     if r0_nightly is not None:
         monkeypatch.setattr(r0_nightly, "_seat_chat", lambda seat, system, user: _editor(system, user))
+        monkeypatch.setattr(r0_nightly, "_developer_install", lambda: True)
     return trial_job.run_pending_trials.__wrapped__
 
 
@@ -122,7 +123,7 @@ def test_nothing_runs_on_battery(home, monkeypatch):
 def test_an_interactive_turn_discards_the_task_repeat_and_it_runs_again(home, monkeypatch):
     from agent_friday.services import r0_nightly
     monkeypatch.setattr(r0_nightly, "_seat_chat", lambda seat, system, user: _editor(system, user))
-    r0_nightly.ensure_scheduled()
+    r0_nightly.schedule()
     w = _Watcher()
     first = r0_nightly.run_tonight(dict(SEAT), w, _Runs(w, trip_on=3))
     assert first["complete"] is False and first["cells"] == 0
@@ -145,13 +146,15 @@ def test_every_step_counts_against_tonights_cap_and_the_cap_stops_r0(home, monke
         calls["editor"] += 1
         return _editor(system, user)
     monkeypatch.setattr(r0_nightly, "_seat_chat", editor)
-    r0_nightly.ensure_scheduled()
+    r0_nightly.schedule()
     runs = _Runs()
     out = r0_nightly.run_tonight(dict(SEAT), _Watcher(), runs)
-    steps = runs.calls + calls["editor"]
+    # Every episode, editor call and canary scan added 600 s here: R0 stops at
+    # the first step after the cap, so it overshoots by at most one step and
+    # the scans around it.
     assert out["complete"] is False
-    assert steps == trials.NIGHT_CAP_SECONDS // 600, steps
-    assert calls["editor"] > 0, "editor calls were not counted"
+    assert trials.NIGHT_CAP_SECONDS <= used["s"] <= trials.NIGHT_CAP_SECONDS + 4 * 600, used
+    assert runs.calls > 0 and calls["editor"] > 0, "editor calls were not counted"
 
 
 def test_an_editor_call_takes_the_seat_through_the_queue(home, monkeypatch):
@@ -181,7 +184,7 @@ def test_an_editor_call_takes_the_seat_through_the_queue(home, monkeypatch):
 def test_a_model_change_between_nights_stops_r0(home, monkeypatch):
     from agent_friday.services import r0_nightly
     monkeypatch.setattr(r0_nightly, "_seat_chat", lambda seat, system, user: _editor(system, user))
-    r0_nightly.ensure_scheduled()
+    r0_nightly.schedule()
     w = _Watcher()
     r0_nightly.run_tonight(dict(SEAT), w, _Runs(w, trip_on=10))
     out = r0_nightly.run_tonight(dict(SEAT, model="another-model"), _Watcher(), _Runs())
@@ -189,13 +192,14 @@ def test_a_model_change_between_nights_stops_r0(home, monkeypatch):
     assert r0_nightly.due() is False
 
 
-def test_r0_schedules_itself_once_and_a_cancel_holds(home):
+def test_r0_schedules_itself_once_and_a_cancel_holds(home, monkeypatch):
     from agent_friday.services import r0_nightly
+    monkeypatch.setattr(r0_nightly, "_developer_install", lambda: True)
     a = r0_nightly.ensure_scheduled(now=1.0)
     b = r0_nightly.ensure_scheduled(now=2.0)
     assert a["created"] == b["created"] == 1.0 and r0_nightly.due()
     r0_nightly.cancel()
-    r0_nightly.ensure_scheduled()
+    r0_nightly.schedule()
     assert r0_nightly.due() is False
 
 
@@ -206,3 +210,55 @@ def test_no_other_path_runs_r0():
     callers = [p.relative_to(ROOT).as_posix() for p in (ROOT / "src").rglob("*.py")
                if "r0.run(" in p.read_text(encoding="utf-8")]
     assert callers == ["src/agent_friday/services/r0_nightly.py"], callers
+
+
+def test_an_installed_copy_never_schedules_r0_itself(home, monkeypatch):
+    runs = _Runs()
+    job = _job(monkeypatch, runs)
+    from agent_friday.services import r0_nightly
+    monkeypatch.setattr(r0_nightly, "_developer_install", lambda: False)
+    out = job()
+    assert out["skipped"] == "nothing to test" and runs.calls == 0
+    assert r0_nightly.state() == {}
+
+
+def test_an_unreadable_state_never_reschedules(home, monkeypatch):
+    from agent_friday.services import r0_nightly
+    monkeypatch.setattr(r0_nightly, "_developer_install", lambda: True)
+    r0_nightly._state_path().write_text("{not json", encoding="utf-8")
+    assert r0_nightly.ensure_scheduled()["status"] == "unreadable"
+    assert r0_nightly.due() is False
+    assert r0_nightly._state_path().read_text(encoding="utf-8") == "{not json"
+
+
+def test_a_cancel_during_the_night_wins(home, monkeypatch):
+    from agent_friday.services import r0_nightly
+    monkeypatch.setattr(r0_nightly, "_seat_chat", lambda seat, system, user: _editor(system, user))
+    r0_nightly.schedule()
+
+    class CancelOn(_Runs):
+        def __call__(self, **kw):
+            res = super().__call__(**kw)
+            if self.calls == 5:
+                r0_nightly.cancel("owner")
+            return res
+    runs = CancelOn()
+    out = r0_nightly.run_tonight(dict(SEAT), _Watcher(), runs)
+    assert "stopped" in out
+    assert r0_nightly.state()["status"] == "cancelled"
+    assert runs.calls <= 8, "R0 went on past the task-repeat it was in"
+
+
+def test_a_failing_seat_stops_r0_after_three_nights(home, monkeypatch):
+    from agent_friday.services import r0_nightly
+
+    def broken(seat, system, user):
+        raise ConnectionError("the seat did not answer")
+    monkeypatch.setattr(r0_nightly, "_seat_chat", broken)
+    r0_nightly.schedule()
+    for night in range(3):
+        out = r0_nightly.run_tonight(dict(SEAT), _Watcher(), _Runs())
+        assert "ConnectionError" in out["failed"]
+    st = r0_nightly.state()
+    assert st["status"] == "stopped" and "3 nights" in st["reason"]
+    assert r0_nightly.due() is False
