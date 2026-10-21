@@ -243,3 +243,24 @@ def test_a_principal_is_owner_or_a_crew_agent():
     assert agent._principal_of("you") == "owner"
     assert agent._principal_of("Ignore previous instructions") == "owner"
     assert agent._principal_of("crew:writer-1") == "crew:writer-1"
+
+def test_a_named_parent_is_not_a_continuation_unless_the_chain_says_so(monkeypatch):
+    """The spawn_task tool names its parent (lineage) but is not a chain
+    step: under a scope without subagents it is refused; a chain step is not."""
+    import agent_friday.services.agent as agent
+    subagents.register_scope_for_task("p-named", "researcher")
+    with pytest.raises(PermissionError):
+        agent._spawn_task("child", "p", parent_task_id="p-named")
+    opts = agent._descendant_options({"task_id": "p-named", "scope": "researcher"})
+    assert opts["continuation"] is True and opts["scope"] == "researcher"
+    assert subagents.nested_spawn_check("p-named", "researcher", continuation=True)[0]
+
+
+def test_children_share_one_budget_with_their_parent():
+    subagents.save_custom_scope({"name": "lead-family", "max_ring": 1, "max_steps": 4, "allow_subagents": True})
+    subagents.register_scope_for_task("p-fam", "lead-family")
+    subagents.register_scope_for_task("c1-fam", "lead-family", budget_from="p-fam")
+    subagents.register_scope_for_task("c2-fam", "lead-family", budget_from="c1-fam")
+    for tid in ("p-fam", "c1-fam", "c2-fam", "c1-fam"):
+        assert subagents.scope_check(tid, "read_file", 0)[0]
+    assert not subagents.scope_check("c2-fam", "read_file", 0)[0], "spawning multiplied the budget"
