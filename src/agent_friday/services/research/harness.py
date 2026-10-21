@@ -20,6 +20,7 @@ import time
 import uuid
 
 from agent_friday.services import page_reader, web_fetch, web_search
+from agent_friday.services.untrusted_input import wrap as _data_envelope
 from agent_friday.services.research.objects import (
     CONFIRMED, CONTESTED, GRINDING, SCOPING, SINGLE_SOURCE, SYNTHESIZING,
     UNCONFIRMED, VERIFYING, Commission, Finding, ResearchPlan, SubQuestion,
@@ -424,10 +425,12 @@ def grind(c: Commission) -> None:
                       chars=rec.get("chars"), cached=rec.get("from_cache"))
                 page = page_reader.select_text(web_fetch.load_extraction(rec["id"]) or "",
                                                sq.text, EXTRACT_PAGE_TOKENS)
+                # The page (and its title) is the site's words: the one data
+                # envelope (services/untrusted_input), never part of the question.
                 ex = _json_local(
                     _EXTRACT_SYSTEM,
-                    f"Question: {sq.text}\n\nPage ({rec.get('title')}):\n"
-                    f"{page}",
+                    f"Question: {sq.text}\n\nPage:\n"
+                    + _data_envelope(f"Title: {rec.get('title')}\n\n{page}"),
                     EXTRACTOR, max_tokens=1536)
                 for passage in _as_list(_as_dict(ex).get("passages"))[:8]:
                     ptext = _as_text(passage)
@@ -445,8 +448,8 @@ def grind(c: Commission) -> None:
             conv = _json_local(
                 _CONVERSE_SYSTEM,
                 f"Sub-question: {sq.text}\ndone_when: {sq.done_when}\n\n"
-                f"CORPUS:\n" + "\n\n".join(
-                    f"[{p['source_id']}] {p['text']}" for p in corpus[:60]),
+                f"CORPUS:\n" + _data_envelope("\n\n".join(
+                    f"[{p['source_id']}] {p['text']}" for p in corpus[:60])),
                 BRAIN, max_tokens=3072)
             if conv is None:
                 # A MODEL failure, not an empty web. Recorded as such, because

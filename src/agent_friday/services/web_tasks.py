@@ -59,6 +59,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote_plus, urlsplit
 
+from agent_friday.services.untrusted_input import wrap as _data_envelope
+
 _log = logging.getLogger("friday.web_tasks")
 
 # ── Fixed vocabulary ──────────────────────────────────────────────────────────
@@ -1007,8 +1009,11 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
             page = first
             while True:
                 check_limits()
+                # The page is the website's words: the one data envelope
+                # (services/untrusted_input), closed after the cut, so a page
+                # cut short can never leave the envelope open.
                 user = (_header(plan, state) + ("\nNOTES:\n- " + "\n- ".join(notes) + "\n" if notes else "")
-                        + "\nCURRENT PAGE:\n" + page[:PAGE_CHARS_TO_MODEL])
+                        + "\nCURRENT PAGE:\n" + _data_envelope(page[:PAGE_CHARS_TO_MODEL]))
                 notes = []
                 answer, usage = ports.model.decide(SYSTEM, user)
                 state["steps"] += 1

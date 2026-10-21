@@ -179,7 +179,9 @@ def _run_cloud_turn(monkeypatch, calls, cid):
 def test_check_action_lets_the_local_handoff_through_from_a_cloud_seat(world, monkeypatch):
     res = _run_cloud_turn(monkeypatch, [("switch_seat", {"task": PRIVATE_TASK})], world.cid)
     assert not res["tu0"].startswith("[VAULT ACCESS DENIED]"), res["tu0"]
-    assert res["tu0"].startswith("SEAT_NEEDS_YES:"), res["tu0"]
+    from agent_friday.services.untrusted_input import split
+    inner, wrapped = split(res["tu0"])
+    assert wrapped and inner.startswith("SEAT_NEEDS_YES:"), res["tu0"]
     assert len(_cards()) == 1
 
 
