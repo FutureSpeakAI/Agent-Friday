@@ -104,7 +104,9 @@ def test_a_conditional_yes_leaves_the_card_pending(words):
 
 def test_a_plain_yes_still_decides_the_card():
     aid = _card()
-    res = lc.decide_by_voice(aid, "send it", False, "approve")
+    from tests.desk_press_support import voice_call_on_this_desk
+    with voice_call_on_this_desk():
+        res = lc.decide_by_voice(aid, "send it", False, "approve")
     assert res.get("ok"), res
     assert _status(aid) == "approved"
 

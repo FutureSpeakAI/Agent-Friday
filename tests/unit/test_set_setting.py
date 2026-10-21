@@ -69,7 +69,9 @@ def test_a_conditional_spoken_yes_does_not_apply_and_becomes_a_revision(world):
     res = local_context.decide_by_voice(cid, "yes, if it's cheaper", False, "approve")
     assert res["ok"] is False and res.get("revise") is True
     assert ap.get_approval(cid)["status"] == "pending" and _load_settings()["big_mode"] == "off"
-    res = local_context.decide_by_voice(cid, "yes", False, "approve")
+    from tests.desk_press_support import voice_call_on_this_desk
+    with voice_call_on_this_desk():
+        res = local_context.decide_by_voice(cid, "yes", False, "approve")
     assert res["ok"] is True and _load_settings()["big_mode"] == "on"
 
 
