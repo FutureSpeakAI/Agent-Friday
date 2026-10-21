@@ -290,6 +290,10 @@ def ollama_pull():
     (`routes/residency.py`'s pre-fetch card routes text pulls here); other
     modalities have no automated fetch to refuse.
     """
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("first_run_models")
+    if _why:
+        return jsonify({"ok": False, "error": _why}), 409
     try:
         from agent_friday.services import machine_monitor as _mm
         _s = _mm.last_sample() or _mm.sample()

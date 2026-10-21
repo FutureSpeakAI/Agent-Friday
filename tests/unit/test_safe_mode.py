@@ -197,3 +197,27 @@ def test_in_safe_mode_no_connection_leaves_the_machine(safe):
     finally:
         safe_mode.remove_network_guard()
         srv.close()
+
+
+def test_in_safe_mode_no_proxy_and_no_name_lookup_carry_anything_out(safe, monkeypatch):
+    import os
+    import socket
+    import urllib.request
+    from agent_friday.services import safe_mode
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
+    try:
+        safe_mode.install_network_guard()
+        assert "HTTPS_PROXY" not in os.environ and os.environ.get("NO_PROXY") == "*"
+        assert urllib.request.getproxies() == {}
+        with pytest.raises(OSError):
+            socket.gethostbyname("api.anthropic.com")
+        assert socket.gethostbyname("localhost")
+    finally:
+        safe_mode.remove_network_guard()
+
+
+def test_in_safe_mode_commands_run_nothing(safe):
+    from agent_friday.governance import action_gate
+    v = action_gate.authorize("run_command", {"command": "git remote update"},
+                              {"session_id": "s", "authenticated": True})
+    assert v.action == "deny" and "safe mode" in v.reason

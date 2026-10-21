@@ -177,3 +177,15 @@ def test_nothing_here_answers_a_page_reached_from_another_machine(client):
     r = client.get("/doctor", environ_base=remote)
     assert r.status_code in (302, 401, 403)
     assert _current_api_token().encode() not in r.data
+
+
+def test_in_safe_mode_no_model_is_pulled(client, monkeypatch):
+    from agent_friday.services import safe_mode
+    monkeypatch.setenv("FRIDAY_SAFE_START", "1")
+    safe_mode.reset_for_tests()
+    try:
+        r = client.post("/api/ollama/pull", json={"model": "llama3"})
+        assert r.status_code == 409 and "safe mode" in r.get_json()["error"]
+    finally:
+        monkeypatch.delenv("FRIDAY_SAFE_START")
+        safe_mode.reset_for_tests()
