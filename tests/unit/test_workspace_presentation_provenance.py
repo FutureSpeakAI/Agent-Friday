@@ -211,10 +211,13 @@ def _run_live_result(name, *, refuse=False, bypass_gate=False):
 
 
 def _assert_live_result_gated(name, response, events):
-    assert response.response["result"] == _GATED_LIVE_RESULT, "Raw tool data bypassed the egress gate"
+    # The model receives the gated text inside the one data envelope (services/untrusted_input).
+    from agent_friday.services.untrusted_input import split, wrap
+    inner, wrapped = split(response.response["result"])
+    assert wrapped and inner == _GATED_LIVE_RESULT, "Raw tool data bypassed the egress gate"
     assert response.name == name and response.id == "synthetic-call"
     assert events == [("execute", name), ("gate", _RAW_LIVE_RESULT, name), ("hold",),
-                      ("orb", _GATED_LIVE_RESULT), ("response", _GATED_LIVE_RESULT)]
+                      ("orb", _GATED_LIVE_RESULT), ("response", wrap(_GATED_LIVE_RESULT))]
 
 
 @pytest.mark.parametrize("name", ["home_cards", "customize_workspace"])

@@ -172,7 +172,8 @@ def test_native_calls_recheck_before_instrumentation_and_send(session, monkeypat
                     SimpleNamespace(function_calls=[call])))
     assert len(sent) == 1 and sent[0].id == "fixture-call"
     if boundary == "public":
-        assert sent[0].response["result"] == "Synthetic result marker"
+        from agent_friday.services.untrusted_input import wrap
+        assert sent[0].response["result"] == wrap("Synthetic result marker")
         assert len(finished) == 1 and not discarded
     else:
         assert "NOT DONE" in sent[0].response["result"]
