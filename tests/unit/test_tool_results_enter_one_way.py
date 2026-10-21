@@ -69,6 +69,8 @@ PROMPT_SITES = [
     ("services/compaction.py", "maybe_compact"),            # summaries of earlier turns
     ("services/model_router.py", "_compress_trajectory"),
     ("routes/voice.py", "_injection_text"),                 # background results in a live call
+    ("services/qa_gates.py", "evaluate_text"),              # content a reviewer model judges (goal milestones)
+    ("services/qa_gates.py", "gate_text"),                  # a reviewer's critique fed to the next attempt
 ]
 
 
