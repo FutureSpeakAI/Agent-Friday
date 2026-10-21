@@ -90,7 +90,7 @@
       body: JSON.stringify({ source: source || 'button' }) })
       .then(function (r) { return r.json(); })
       .then(function (d) { set(!!(d && d.stopped)); if (d && d.message) toast(d.message); return d; })
-      .catch(function () { toast('Stop did not reach Friday — press Ctrl+Alt+Shift+S.', true); poll(); });
+      .catch(function () { toast('Stop did not go through — press Ctrl+Alt+Shift+S.', true); poll(); });
   }
 
   function poll() {
