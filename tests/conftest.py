@@ -160,6 +160,17 @@ os.environ["HOMEPATH"] = str(_TEST_HOME)[len(_TEST_HOME.drive):] or "\\"
 # across runs (the economy/leaderboard flakes in the Chaos Engineer review).
 os.environ["HOME"] = str(_TEST_HOME)
 os.environ.setdefault("FRIDAY_PASSWORD", "test-vault-passphrase")
+# The shared test home is an EXISTING install (north-star A16/A17): its first
+# settings.json keeps the choices tests were written against (no daily
+# spending cap; an unpicked route is not reported as pending). Every test file
+# shares one costs.db, so a cap on by default would pause whichever later file
+# reached a paid choke point after earlier files had recorded spend. Tests of
+# the new-install behaviour use a home of their own.
+_shared_friday = _TEST_HOME / ".friday"
+_shared_friday.mkdir(parents=True, exist_ok=True)
+if not (_shared_friday / "install_choices.json").exists():
+    (_shared_friday / "install_choices.json").write_text(
+        '{"install": "existing", "daily_cap_card": "not_needed"}', encoding="utf-8")
 # FRIDAY_VAULT_PASSPHRASE is the canonical vault key env var; FRIDAY_PASSWORD is
 # the backward-compat fallback.  Set both so tests exercise the new code path.
 os.environ.setdefault("FRIDAY_VAULT_PASSPHRASE", "test-vault-passphrase")
@@ -361,6 +372,39 @@ def federation_on(monkeypatch):
     def _enabled(feature, settings=None):
         return True if feature == held_features.FEDERATION else real(feature, settings)
     monkeypatch.setattr(held_features, "enabled", _enabled)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _homes_are_existing_installs(request, monkeypatch):
+    """Every home a test points FRIDAY_DIR at is an EXISTING install (north-star
+    A16/A17): its first settings keep the choices tests were written against
+    (no daily spending cap; no route reported as unpicked). costs.db is the
+    shared home's in every test, so a $2 cap on by default in a temp home would
+    pause whichever test reached a paid choke point after earlier tests had
+    recorded spend. Tests of new-install behaviour opt in with the
+    `new_install` marker."""
+    if request.node.get_closest_marker("new_install") is not None:
+        yield
+        return
+    try:
+        from agent_friday import core
+    except Exception:
+        yield
+        return
+    real = getattr(core, "install_origin", None)
+    if real is None:
+        yield
+        return
+
+    def _existing_unless_recorded():
+        if not core.install_choices_state().get("install"):
+            try:
+                core.update_install_choices_state(install=core.EXISTING_INSTALL)
+            except Exception:
+                return core.EXISTING_INSTALL
+        return real()
+    monkeypatch.setattr(core, "install_origin", _existing_unless_recorded)
     yield
 
 

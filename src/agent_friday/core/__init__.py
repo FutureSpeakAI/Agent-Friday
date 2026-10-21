@@ -2220,6 +2220,18 @@ def _degraded_settings() -> "_DegradedSettings":
             out = _DegradedSettings(_copy.deepcopy(_SETTINGS_LAST_GOOD["value"]))
         else:
             out = _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
+            out.from_defaults = True
+            # North-star A17: a new install's daily cap is on even while its
+            # settings.json cannot be read (the record says new; nothing is
+            # decided here).
+            try:
+                if install_choices_state().get("install") == NEW_INSTALL:
+                    from agent_friday.services import spending_caps as _sc
+                    out["cost_budget"] = dict(out.get("cost_budget") or {},
+                                              hard_stop_daily_enabled=True,
+                                              hard_stop_daily=_sc.DAILY_CAP_DEFAULT_USD)
+            except Exception:
+                pass
     out[DEGRADED_READ_KEY] = gen
     return out
 
@@ -2797,18 +2809,23 @@ DEFAULT_SETTINGS = {
     # drive budget-alert notifications: crossing 80% warns, 100% alerts. The
     # alert cap never blocks — Friday is never silently stopped by it.
     #
-    # hard_stop_* (maintainer ruling: "we do want a stopping cap available
-    # to the user") is the SECOND cap: when its enabled period's
-    # spend reaches the limit, services/spend_guard refuses every further
-    # cloud call (local models keep working), loudly — ledger row +
-    # notification naming what stopped and how to resume. Off by default;
-    # the user chooses, neither cap is imposed.
+    # hard_stop_* is the SECOND cap, the one that stops: when its enabled
+    # period's spend reaches the limit, services/spend_guard pauses every
+    # further paid cloud call (local models keep working), with a card naming
+    # what paused and how to go on. The DAILY one is ON for a new install at a
+    # modest figure (north-star A17, the owner's ruling of 2026-10-21; the
+    # figure is services/spending_caps.DAILY_CAP_DEFAULT_USD), changeable at
+    # setup and in Settings > Spending. It is switched on by the new install's
+    # first settings (spending_caps.seed_choices / migrate_daily_cap), not
+    # here: these defaults are also what an existing install's missing keys
+    # read as, and those keep the cap they had (off unless they set one). The
+    # monthly one ships off.
     "cost_budget": {
         "daily": 5.0,
         "monthly": 50.0,
         "daily_enabled": False,
         "monthly_enabled": False,
-        "hard_stop_daily": 0.0,
+        "hard_stop_daily": 2.0,
         "hard_stop_monthly": 0.0,
         # THE STUCK-MODEL GUARD, shown beside the spending limits because that
         # is where the owner decides what may stop his work.
@@ -3777,6 +3794,154 @@ def _migrate_spending_caps(settings: dict):
         return None
 
 
+def _seed_install_choices(seed: dict) -> None:
+    try:
+        from agent_friday.services import spending_caps as _sc
+        _sc.seed_choices(seed, install_origin())
+    except Exception:
+        # Undecided: leave the daily cap key out, so the migration on the next
+        # read decides it, rather than writing the defaults' off down for good.
+        cb = seed.get("cost_budget")
+        if isinstance(cb, dict):
+            seed["cost_budget"] = {k: v for k, v in cb.items()
+                                   if k != "hard_stop_daily_enabled"}
+
+
+def _migrate_daily_cap(settings: dict, stored: dict):
+    """services/spending_caps.migrate_daily_cap (north-star A17): an install
+    from before the daily cap shipped on keeps the daily cap it had, and gets
+    one card about it. Changes `settings` in place; returns the delta to
+    persist, or None."""
+    try:
+        from agent_friday.services import spending_caps as _sc
+        return _sc.migrate_daily_cap(settings, stored, install_origin())
+    except Exception as e:
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "daily cap migration skipped (%s: %s)", type(e).__name__, e)
+        except Exception:
+            pass
+        return None
+
+
+def _merge_migration_deltas(a, b):
+    """Two settings deltas as one, merged a block deep (both may carry spending_caps)."""
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in (a or {}).items()}
+    for k, v in (b or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = dict(out[k], **v)
+        else:
+            out[k] = v
+    return out
+
+
+# ── Is this a new install? (north-star A16 and A17) ─────────────────────────
+#
+# A16 (no AI route pre-selected) and A17 (the daily spending cap on by
+# default) treat a NEW install differently from one that already existed: an
+# existing install keeps the choices it had. Which one this is gets decided
+# once, the first time anything reads or writes settings (or the terminal
+# setup starts), and is kept in its own file beside settings.json, because
+# several writers rebuild settings.json wholesale (the terminal setup from
+# config.yaml, `friday config set`). New means nothing of a previous install
+# is here: no settings.json, no setup marker, no cost history.
+
+INSTALL_ORIGIN_NAME = "install_choices.json"
+NEW_INSTALL, EXISTING_INSTALL = "new", "existing"
+_INSTALL_ORIGIN_LOCK = threading.Lock()
+_INSTALL_ORIGIN_CACHE: dict = {}
+
+
+def install_origin_file() -> Path:
+    return Path(FRIDAY_DIR) / INSTALL_ORIGIN_NAME
+
+
+def install_choices_state() -> dict:
+    """The install-origin record ({} when there is none or it cannot be read)."""
+    try:
+        data = json.loads(install_origin_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def update_install_choices_state(**fields) -> None:
+    """Merge `fields` into the install-origin record (atomic replace)."""
+    with _INSTALL_ORIGIN_LOCK:
+        cur = install_choices_state()
+        known = _INSTALL_ORIGIN_CACHE.get(str(install_origin_file()))
+        if known and "install" not in cur:
+            cur["install"] = known
+        cur.update(fields)
+        p = install_origin_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(cur, indent=1), encoding="utf-8")
+        os.replace(str(tmp), str(p))
+        _INSTALL_ORIGIN_CACHE[str(p)] = cur.get("install")
+
+
+def install_origin() -> str:
+    """NEW_INSTALL or EXISTING_INSTALL, decided once and then read back.
+
+    Unreadable or unwritable means EXISTING: an install whose record cannot be
+    kept must never have its choices changed by a default."""
+    p = install_origin_file()
+    key = str(p)
+    cached = _INSTALL_ORIGIN_CACHE.get(key)
+    if cached in (NEW_INSTALL, EXISTING_INSTALL):
+        return cached
+    got = install_choices_state().get("install")
+    if got in (NEW_INSTALL, EXISTING_INSTALL):
+        _INSTALL_ORIGIN_CACHE[key] = got
+        return got
+    home = Path(FRIDAY_DIR)
+    fresh = not (Path(SETTINGS_FILE).exists() or (home / ".setup_complete").exists()
+                 or (home / "costs.db").exists() or (home / "config.yaml").exists())
+    origin = NEW_INSTALL if fresh else EXISTING_INSTALL
+    # Kept for this process even if the record cannot be written now (a
+    # sharing lock, say): the answer must not change once anything acted on
+    # it. The write is tried again by update_install_choices_state's callers.
+    _INSTALL_ORIGIN_CACHE[key] = origin
+    try:
+        update_install_choices_state(install=origin,
+                                     decided_at=datetime.now().isoformat(timespec="seconds"))
+    except Exception:
+        pass
+    return origin
+
+
+#: How the terminal setup records a route it kept without asking (quick mode,
+#: a skipped routing screen). Not a pick (A16) and not consent (it is not one
+#: of privacy/cloud_consent.ROUTING_CONSENT_VIAS).
+ROUTE_KEPT_VIA = "kept"
+
+
+def route_pick_pending(settings=None) -> bool:
+    """True on a new install whose owner has not picked an AI route yet (A16).
+
+    The pick is the owner's own routing change (Settings, the setup chat,
+    setup completion, an answered terminal-setup routing question), which
+    records `model_routing.mode_chosen` for the stored mode. A mode the
+    terminal setup kept without asking (`mode_chosen_via` ROUTE_KEPT_VIA) is
+    not a pick. An install that already existed is never pending: its stored
+    route is its choice."""
+    try:
+        if install_origin() != NEW_INSTALL:
+            return False
+        s = _load_settings_raw() if settings is None else settings
+        mr = (s or {}).get("model_routing")
+        mr = mr if isinstance(mr, dict) else {}
+        mode = str(mr.get("mode") or "").strip().lower()
+        chosen = str(mr.get("mode_chosen") or "").strip().lower()
+        if not mode or chosen != mode:
+            return True
+        return str(mr.get("mode_chosen_via") or "") == ROUTE_KEPT_VIA
+    except Exception:
+        return False
+
+
 def _persist_spending_caps_migration(delta: dict):
     """Write the one-time spending-caps migration (and its stamp) once per
     process. A failed write is retried by the next process; every read in
@@ -3816,6 +3981,9 @@ def _load_settings_raw():
         # Fresh installs start on the trimmed core dock; existing installs (that
         # had ~/.friday before this version added the setting) keep the full set.
         seed["show_all_workspaces"] = not _FRESH_INSTALL
+        # North-star A17: the daily spending cap starts on only on a new
+        # install; an install that lost its settings.json keeps none.
+        _seed_install_choices(seed)
         _sync_capability_routing(seed)
         # The seed is written whole or not at all, and never over a file:
         # a hard link fails when the target exists, so a settings.json that
@@ -3882,6 +4050,9 @@ def _load_settings_raw():
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _smart_found = _migrate_smart_routing_mode(merged)
         _caps_delta = _migrate_spending_caps(merged)
+        _daily_cap_delta = _migrate_daily_cap(merged, data)
+        if _daily_cap_delta:
+            _caps_delta = _merge_migration_deltas(_caps_delta, _daily_cap_delta)
         _sync_capability_routing(merged)
         _remember_good_settings(merged)
         with _SETTINGS_CACHE_LOCK:
@@ -3902,8 +4073,7 @@ def _load_settings_raw():
         out = _degraded_settings()
         try:
             import logging as _lg
-            _have_last = ({k: v for k, v in out.items()
-                           if k != DEGRADED_READ_KEY} != DEFAULT_SETTINGS)
+            _have_last = not getattr(out, "from_defaults", False)
             _lg.getLogger("friday.settings").error(
                 "settings.json exists but could not be read (%s: %s) — %s. "
                 "A save of anything derived from this read is refused. "
@@ -4255,6 +4425,22 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             data.pop("voice_room_approvals_require_name", None)
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
+    # North-star A17: a NEW install's daily cap is on. A save onto its store
+    # before it has a cost_budget (the terminal setup wrote settings.json
+    # without one) writes the cap down as on, never the defaults' off.
+    if not isinstance(existing.get("cost_budget"), dict):
+        try:
+            _new = install_origin() == NEW_INSTALL
+        except Exception:
+            _new = False
+        if _new:
+            try:
+                from agent_friday.services import spending_caps as _sc
+                merged["cost_budget"] = dict(merged.get("cost_budget") or {},
+                                             hard_stop_daily_enabled=True,
+                                             hard_stop_daily=_sc.DAILY_CAP_DEFAULT_USD)
+            except Exception:
+                pass
     for k, v in (data or {}).items():
         if (k in _DEEP_MERGED_BLOCKS and isinstance(v, dict)
                 and isinstance(existing.get(k), dict)):

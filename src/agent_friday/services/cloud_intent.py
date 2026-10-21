@@ -413,12 +413,25 @@ def _chosen_mode():
     return str((mr or {}).get(MODE_CHOSEN_KEY) or "") if isinstance(mr, dict) else ""
 
 
+def _chosen_via() -> str:
+    from agent_friday import core
+    raw = core._load_settings_raw() or {}
+    mr = raw.get("model_routing")
+    return str((mr or {}).get("mode_chosen_via") or "") if isinstance(mr, dict) else ""
+
+
 def mode_was_chosen(mode=None) -> bool:
     """True when the owner chose ``mode`` (default: the stored mode) through an
-    owner routing change. A blank mode is never chosen; any fault is "no"."""
+    owner routing change. A blank mode is never chosen; any fault is "no".
+
+    A route the terminal setup kept without asking (``mode_chosen_via``
+    "kept", core.ROUTE_KEPT_VIA) is not a choice (north-star A16): Settings
+    says "not chosen yet", so routine jobs are not released by it either."""
     try:
         stored = _stored_mode() if mode is None else mode
         if not str(stored or "").strip():
+            return False
+        if _chosen_via() == "kept":
             return False
         chosen = str(_chosen_mode() or "").strip()
         return bool(chosen) and normalize_mode(chosen) == normalize_mode(stored)

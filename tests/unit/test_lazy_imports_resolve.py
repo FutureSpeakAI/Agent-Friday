@@ -47,15 +47,17 @@ def test_setup_routing_screen_consults_the_hardware_assessment(monkeypatch):
 
     def _ask(prompt, default=None, **kw):
         defaults.append(default)
-        return default
+        # Enter first (the default), then an explicit pick.
+        return default if len(defaults) == 1 else "3"
 
     monkeypatch.setattr(wiz.Prompt, "ask", staticmethod(_ask))
 
     wiz.step_routing(5, 2, "")
 
     assert calls, "step_routing never reached setup_brain.assess()"
-    # A capable machine is offered the local-first choice as the default.
-    assert defaults[-1] == "3"
+    # North-star A16: nothing is pre-selected, even on a capable machine; the
+    # recommendation is a label and Enter alone picks nothing.
+    assert defaults[0] == "" and len(defaults) == 2
 
 
 @pytest.fixture

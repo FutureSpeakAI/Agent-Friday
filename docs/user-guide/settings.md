@@ -87,7 +87,10 @@ service's card.
   or **Cloud only**. The rows show your local model, your deep model and your
   cloud model. These correspond to the **Fast responder** and **Deep thinker**
   you picked in setup (see [Getting started](getting-started.md)), and each row
-  says whether it is ready and why if not.
+  says whether it is ready and why if not. Nothing is picked for you: on a new
+  install no routing mode is pressed until you choose one (here or in setup),
+  and the card says "Not chosen yet" and how Friday works until you do. An
+  install that already had a mode keeps it.
 - **Model for each job.** Click a job to choose its model. The list shows only
   models that can do that job. Voice is chosen in Voice.
 - **Your stack**, **Find a model**, **Local models** (what your PC can run,
@@ -100,15 +103,19 @@ service's card.
 What cloud models have cost: **Spend**, then breakdowns by model, prompt cache,
 provider, kind, workspace, key and codebase, and scheduled jobs this month.
 
-Every spending cap ships switched off, so nothing is limited until you choose.
-
+- **Spending caps.** A new install starts with a **daily cap of $2.00** on
+  everything sent to paid cloud services; the section says it in one sentence,
+  for example "Friday stops spending on cloud AI after $2.00 a day". Change the
+  amount, switch it off, or add a **monthly cap** (off until you set one). When
+  a cap is reached, paid cloud work pauses and a card says what paused, how
+  much is spent against the cap, and that it can go again tomorrow (or next
+  month) or as soon as you raise the cap; **Change my spending cap** opens this
+  section. Nothing done so far is lost, and models on this PC keep working.
+  Every pause is logged. The daily cap you pick in the setup chat is this one.
+  An install from before the daily cap shipped on keeps the caps it had and
+  shows one card, **New: a daily spending cap**, with a press to set it.
 - **Budget alerts** are off until you switch them on. They warn at 80 percent of
-  a limit and alert at 100 percent.
-- **Hard stop** is also off by default. When on, and an enabled period's spend
-  reaches its limit, Friday refuses every further cloud call until you raise the
-  limit or switch it off. Local models keep working. Every halt is logged and
-  notified. The monthly ceiling you pick in the setup chat sets the monthly
-  hard stop.
+  a limit and alert at 100 percent, and never pause anything.
 - **Scheduled jobs without a local model.** Whether the daily creation and the
   heartbeat may use a cloud model while this PC has no local model, which
   model, and roughly what it costs.

@@ -57,10 +57,12 @@ of the passphrase disagreed.
 
 **What you will notice:**
 
-- **Spending caps start off.** Nothing is capped until you choose. A daily
-  creation ceiling of $0.50 you never set, and workspace budgets left at the
-  old defaults, are switched off once; any other figure you set is kept. Set
-  caps in **Settings > Spending**.
+- **Your spending caps are kept.** New installs start with a daily spending
+  cap of $2.00 on paid cloud services; an update never switches one on. If
+  yours has no daily cap, one card, **New: a daily spending cap**, explains it
+  and opens **Settings > Spending** to set one or keep none. A daily creation
+  ceiling of $0.50 you never set, and workspace budgets left at the old
+  defaults, are switched off once; any other figure you set is kept.
 - **Email jobs.** Emails Friday writes are now saved as drafts in your Gmail
   Drafts unless you ask to send. Scheduled jobs and workflows you made before
   Beta 1.2 that send email **keep sending** (each send still asks you first,
