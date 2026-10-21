@@ -113,11 +113,23 @@ def test_safe_mode_applies_nothing_and_says_so(monkeypatch):
     assert "safe mode" in json.dumps(out).lower()
 
 
-def test_an_ordinary_patch_still_applies_through_the_gate():
+def test_an_ordinary_patch_is_proposed_and_applies_through_the_gate_on_apply():
     reply = 'Done.\n```friday-customize\n{"summary":"tint","accent":"#00d4ff"}\n```'
     out = ws.workspace_chat_turn("news", "News", "tint it", generate=_gen(reply))
+    assert ws.load_ws_doc("news")["customization"] == {}, "the chat turn applied a model patch by itself"
+    assert not out.get("applied") and out["proposal"]["changes"] == ["Accent colour #00d4ff"]
+    ws.apply_proposal("news", out["proposal"]["id"])
     assert ws.load_ws_doc("news")["customization"]["accent"] == "#00d4ff"
-    assert out.get("applied")
+
+
+def test_apply_runs_the_blast_radius_gate_again(monkeypatch):
+    from agent_friday.services import boot_guard
+    reply = 'Done.\n```friday-customize\n{"summary":"tint","accent":"#00d4ff"}\n```'
+    out = ws.workspace_chat_turn("news", "News", "tint it", generate=_gen(reply))
+    monkeypatch.setattr(boot_guard, "check_blast_radius", lambda patch: (False, "it touches the vault boundary"))
+    with pytest.raises(PermissionError, match="vault boundary"):
+        ws.apply_proposal("news", out["proposal"]["id"])
+    assert ws.load_ws_doc("news")["customization"] == {}
 
 
 # ── the history tool never hands the model cut JSON ─────────────────────────

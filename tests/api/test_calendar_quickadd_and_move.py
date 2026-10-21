@@ -126,7 +126,7 @@ def test_an_event_is_added_only_from_the_owners_add_on_the_calendar_she_picked(c
     assert client.post("/api/calendar/events", json=dict(body, confirmed=True, calendar_key="home|nope"), headers=_page()).status_code == 400
 
 
-def test_a_drag_moves_nothing_until_confirmed_then_moves_on_its_own_calendar_and_undo_puts_it_back(client, google):
+def test_a_drag_moves_nothing_until_confirmed_then_moves_on_its_own_calendar_and_undo_puts_it_back(client, google, monkeypatch):
     new_start = START + timedelta(days=1, minutes=90)
     body = {"calendar_key": "home|fam", "start_time": new_start.isoformat(),
             "end_time": (new_start + timedelta(hours=1)).isoformat()}
@@ -139,7 +139,11 @@ def test_a_drag_moves_nothing_until_confirmed_then_moves_on_its_own_calendar_and
     assert len(patches) == 1 and patches[0][1] == "fam"
     assert datetime.fromisoformat(google["store"][("fam", "e1")]["start"]["dateTime"]) == new_start
     assert google["store"][("fam", "e1")]["start"].get("timeZone") == "America/Chicago", "a move keeps the event's zone"
-    u = client.post("/api/actions/receipts/%s/undo" % d["receipt_id"])
+    # The page's Undo is the owner's press; the checkpoint itself is tested in
+    # test_calendar_page_writes_pass_the_checkpoint.py.
+    from agent_friday.governance import action_gate as ag
+    monkeypatch.setattr(ag, "record_external", lambda *a, **k: None)
+    u = client.post("/api/actions/receipts/%s/undo" % d["receipt_id"], headers=_page())
     assert u.status_code == 200, u.get_json()
     assert datetime.fromisoformat(google["store"][("fam", "e1")]["start"]["dateTime"]) == START
     assert [x[1] for x in google["log"] if x[0] == "patch"] == ["fam", "fam"]
