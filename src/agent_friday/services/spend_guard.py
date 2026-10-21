@@ -33,7 +33,7 @@ WHAT "STOP" MEANS AT THE BOUNDARY (decided here, not deferred):
      Its cost is recorded, and that record is what trips the cap.
   2. A multi-step task / agentic loop halts at its NEXT cloud call. The
      tool loop's existing failure path marks the task failed with a
-     "[Halted by hard spending cap]" result, the task log keeps every step
+     "[Paused by your spending cap]" result (agent.SPEND_CAP_PAUSE_MARK), the task log keeps every step
      that ran, files already written stay written, and the halt ledger
      names the task so it can be re-run once the cap is raised. Nothing is
      rolled back and nothing is retried against the cap.

@@ -380,12 +380,25 @@ def migrate_daily_cap(settings: dict, stored: Optional[dict], origin: str) -> Op
     stamp = _migration_stamp()
     delta: Dict[str, Any] = {"spending_caps": {DAILY_CAP_STAMP: stamp}}
     settings["spending_caps"] = dict(blk, **{DAILY_CAP_STAMP: stamp})
-    if origin == core.NEW_INSTALL:
-        if _card_state() is None:
-            _set_card_state("not_needed")
-        return delta
     stored_cb = (stored or {}).get("cost_budget")
     stored_cb = stored_cb if isinstance(stored_cb, dict) else None
+    if origin == core.NEW_INSTALL:
+        # A new install written by the terminal setup has no cost_budget yet:
+        # write the defaults' block down (the daily cap on), so a later save of
+        # part of it can never leave the cap reading as off.
+        if stored_cb is None or "hard_stop_daily_enabled" not in stored_cb:
+            fix_new: Dict[str, Any] = {"hard_stop_daily_enabled": True}
+            if stored_cb is None or not _num(stored_cb.get("hard_stop_daily")):
+                fix_new["hard_stop_daily"] = DAILY_CAP_DEFAULT_USD
+            cb = dict(_block(settings, "cost_budget"), **fix_new)
+            settings["cost_budget"] = cb
+            delta["cost_budget"] = dict(cb) if stored_cb is None else fix_new
+        if _card_state() is None:
+            try:
+                _set_card_state("not_needed")
+            except Exception as e:
+                log.warning("the daily cap card's state could not be saved (%s)", e)
+        return delta
     if stored_cb is None or "hard_stop_daily_enabled" not in stored_cb:
         fix: Dict[str, Any] = {"hard_stop_daily_enabled": False}
         if stored_cb is None or "hard_stop_daily" not in stored_cb:
