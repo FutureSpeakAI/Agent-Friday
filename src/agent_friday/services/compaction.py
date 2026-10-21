@@ -745,10 +745,13 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
                         _taint.note_carried(_key, "summary", summary)
                 except Exception as e:
                     print(f"  [compaction] could not record the summary's provenance: {e}")
+            # A summary keeps what tools found, so it is data, never the owner's
+            # voice: the one envelope (services/untrusted_input).
+            from agent_friday.services.untrusted_input import wrap as _data_envelope
             summary_msg = {
                 "role": "user",
                 "content": f"{_SUMMARY_PREFIX} Earlier in this session ("
-                           f"{len(middle)} messages condensed): {body}",
+                           f"{len(middle)} messages condensed):\n\n{_data_envelope(body)}",
             }
             compacted = _merge_adjacent(list(head) + [summary_msg] + list(tail))
         else:

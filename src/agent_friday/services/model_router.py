@@ -2482,7 +2482,8 @@ def _compress_trajectory(messages, model=None):
 
     compressed_block = [
         {"role": "user",
-         "content": f"[COMPRESSED MEMORY — earlier conversation summary]\n{summary}\n[END COMPRESSED MEMORY]"},
+         "content": "[COMPRESSED MEMORY — earlier conversation summary]\n"
+                    + _summary_as_data(summary) + "\n[END COMPRESSED MEMORY]"},
         {"role": "assistant",
          "content": "Got it — I have that context from our earlier conversation."},
     ]
@@ -2490,6 +2491,13 @@ def _compress_trajectory(messages, model=None):
     print(f"  [TRAJ] Compressed {len(old_turns)} turns → 2 synthetic turns. "
           f"Chars: {_estimate_chars(old_turns)} → {_estimate_chars(compressed_block)}")
     return result
+
+
+def _summary_as_data(summary: str) -> str:
+    """A summary of earlier turns keeps what tools found there, so it is replayed as
+    data, never as the owner's words (services/untrusted_input)."""
+    from agent_friday.services.untrusted_input import wrap
+    return wrap(summary)
 
 
 # ── Semantic context pruner (lazy singleton) ──────────────────────

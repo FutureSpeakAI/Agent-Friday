@@ -6036,7 +6036,12 @@ if sock is not None:
                                 return refused
                             _tell_hold()
                             _took = _time.time() - _orb_t0
-                            result = _mark_if_stale(result, fname, _orb_t0,
+                            # What the tool returned reaches the model as data, never as
+                            # instructions: the one envelope (services/untrusted_input), put
+                            # on after the egress gate has judged the output itself. Friday's
+                            # own "late result" line stays outside it.
+                            from agent_friday.services.untrusted_input import wrap as _data_envelope
+                            result = _mark_if_stale(_data_envelope(result), fname, _orb_t0,
                                                     _user_words_ts[0], _time.time())
                             _log.info("voice tool result: %s -> %d chars in %.2fs",
                                       fname, len(result or ''), _took)
@@ -6047,11 +6052,6 @@ if sock is not None:
                             if refused is not None:
                                 return refused
                             _voice_orb_finish(_orb_id, fname, fargs, result, _took * 1000.0)
-                            # What the tool returned reaches the model as data, never as
-                            # instructions: the one envelope (services/untrusted_input),
-                            # put on after the egress gate has judged the output itself.
-                            from agent_friday.services.untrusted_input import wrap as _data_envelope
-                            result = _data_envelope(result)
                             _kw = {"name": fname, "response": {"result": result}}
                             if fid is not None:
                                 _kw["id"] = fid

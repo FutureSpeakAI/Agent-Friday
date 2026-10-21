@@ -509,6 +509,12 @@ def _conv_context(cid, limit=None, exclude_id=None):
                 _library_cite.remember_library_reply(text)
             if role == 'assistant':
                 text = _with_receipts(text, (m.get('meta') or {}).get('receipts'))
+            if role == 'assistant' and _posted_result(m.get('meta') or {}):
+                # Work that ran outside this chat (an approved card, a task, a workflow) posted
+                # its outcome here. It is stored as the owner saw it and replayed as data, never
+                # as something Friday or the owner said (services/untrusted_input).
+                from agent_friday.services.untrusted_input import wrap as _data_envelope
+                text = _data_envelope(text)
             if (m.get('meta') or {}).get('local_only'):
                 # A result the local model produced on this PC: replayed with
                 # the mark the egress gate withholds from every cloud model.
@@ -521,6 +527,15 @@ def _conv_context(cid, limit=None, exclude_id=None):
                     and (nxt is None or nxt.get('role') == 'user')):
                 out.append({"role": "assistant", "content": _NO_REPLY_NOTE})
     return out
+
+
+#: Transcript rows written by work that ran outside the chat turn (approval
+#: executors, background tasks, workflows), not by the turn's own model.
+_POSTED_RESULT_KINDS = frozenset({"approval_result", "task_result"})
+
+
+def _posted_result(meta) -> bool:
+    return meta.get("kind") in _POSTED_RESULT_KINDS or bool(meta.get("workflow_run_id"))
 
 
 def _with_receipts(text, receipts):

@@ -8057,8 +8057,10 @@ def _advance_task_chain_once(task_id, result_text):
             step = steps[nxt]
             prompt = _workflow_prompt(chain, step['prompt'], t.get('workflow_baseline'))
             if step.get('with_context', True) and result_text:
+                # The previous step read mail, pages or files: what it produced is data
+                # for this step (services/untrusted_input), never part of its task.
                 prompt = (f"Context from the previous step "
-                          f"(\"{t.get('name')}\"):\n\n{result_text[:6000]}\n\n"
+                          f"(\"{t.get('name')}\"):\n\n{_untrusted.wrap(result_text[:6000])}\n\n"
                           f"---\n\nYour task:\n{prompt}")
             _task_log(task_id, f"→ chaining to step {nxt + 1}/{len(steps)}: {step['name']}")
             _journal().decision("chain_advance", f"step {nxt + 1}/{len(steps)}: {step['name']}",
@@ -8087,7 +8089,7 @@ def _advance_task_chain_once(task_id, result_text):
         prompt = (oc.get('prompt') or oc.get('spawn') or '').strip()
         if oc.get('with_context', True) and result_text:
             prompt = (f"Context from the previous task (\"{t.get('name')}\"):\n\n"
-                      f"{result_text[:6000]}\n\n---\n\nYour task:\n{prompt}")
+                      f"{_untrusted.wrap(result_text[:6000])}\n\n---\n\nYour task:\n{prompt}")
         _task_log(task_id, f"→ on_complete: spawning '{nxt_name}'")
         return _spawn_task(
             name=nxt_name, prompt=prompt,
@@ -13476,19 +13478,23 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     voice surface's own helpers). It runs through exactly the same chain;
     there is no other way to invoke a tool handler.
     """
+    # Every return before the handler runs is Friday's own line about the call (a
+    # refusal, a fix-it, a hold), not a tool's output: marked so the loops hand it
+    # to the model as Friday's words, outside the data envelope (services/untrusted_input).
+    _own = _untrusted.FridaysWords
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
-        return _crew_denial
+        return _own(_crew_denial)
     if (session_ctx or {}).get("crew_agent_id"):
         from agent_friday.services import crew_runtime
         if (session_ctx or {}).get("crew_chat_only"):
             reason = "[CREW DENY] This conversation with a working agent has no tool authority."
             _receipts.record(name, ok=False, denied=True, detail=reason)
-            return reason
+            return _own(reason)
         if crew_runtime.pending_steering((session_ctx or {}).get("task_id")):
             reason = "[CREW STEER PENDING] A new user instruction is queued. This tool did not run; receive it at the next model round."
             _receipts.record(name, ok=False, denied=True, detail=reason)
-            return reason
+            return _own(reason)
     handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
@@ -13504,11 +13510,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             hint = ("Closest registered tools: "
                     + ", ".join(suggestions)) if suggestions else \
                    "No similarly-named tool is registered."
-            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so "
-                    f"nothing ran and no result was produced. {hint} "
-                    f"Retry with an exact name from your tool list, or tell "
-                    f"the user you could not do it. Do not describe an "
-                    f"outcome: there isn't one.")
+            return _own(f"TOOL CALL FAILED — no tool named '{name}' exists, so "
+                        f"nothing ran and no result was produced. {hint} "
+                        f"Retry with an exact name from your tool list, or tell "
+                        f"the user you could not do it. Do not describe an "
+                        f"outcome: there isn't one.")
 
     # Arguments are checked against the tool's own schema before any gate
     # sees them. A call that does not fit never runs: the model gets back
@@ -13519,7 +13525,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     if _arg_error:
         _receipts.record(name, ok=False, denied=True, detail="invalid arguments")
         _call_verifier.receipt(name, _checked, "verifier_fixit", "invalid arguments", session_ctx)
-        return _arg_error
+        return _own(_arg_error)
     tool_input = _restore_placeholders(_checked or {}, pii_lookup)
     # A scheduled job or workflow made to SEND its emails (kept sending by the one-time mark in
     # services/email_jobs, or switched to send on its Workflows card) sends, as it did before
@@ -13538,7 +13544,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
                                session_ctx)
         if _vout.kind != "cached":
             _receipts.record(name, ok=False, denied=True, detail=_vout.message)
-        return _vout.message
+            return _own(_vout.message)
+        return _vout.message          # an earlier result of this read: tool output, enveloped like any
     # The gate and handler must act on the same codebase even if the chat is
     # rebound while its turn runs. Pin implicit scope before every pre-hook.
     if name in ("codebase_edit", "codebase_undo", "codebase_read", "codebase_understand") and not str(tool_input.get("codebase_id") or "").strip():
@@ -13553,7 +13560,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         if not _scope_rec or not _scope_rec.get("id"):
             _reason = f"[NOT RUN] '{name}': this turn has no resolvable codebase. Open its codebase conversation before trying again."
             _receipts.record(name, ok=False, denied=True, detail=_reason)
-            return _reason
+            return _own(_reason)
         tool_input = dict(tool_input, codebase_id=_scope_rec["id"])
 
     _host_name = name if name in CLAUDE_TOOL_HANDLERS else _resolve_tool_name(name)[0]
@@ -13584,10 +13591,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     session_ctx = ctx.session_ctx
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
-        return _crew_denial
+        return _own(_crew_denial)
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
-        return verdict.reason
+        return _own(verdict.reason)
 
     # Say what is about to happen BEFORE it happens, and only once it will
     # happen: derived from the tool actually being invoked, after every gate
@@ -15495,14 +15502,15 @@ def _screenshot_result_to_block(tool_use_id, result):
     return {
         "type": "tool_result",
         "tool_use_id": tool_use_id,
-        "content": [
-            {"type": "text", "text": _untrusted.wrap(data.get('note', 'Screenshot captured.'))},
+        # The picture (a web page, a document, the desktop) is the source's, like
+        # its text: both sit inside the one data envelope (services/untrusted_input).
+        "content": _untrusted.wrap_blocks(
+            data.get('note', 'Screenshot captured.'),
             {"type": "image", "source": {
                 "type": "base64",
                 "media_type": data.get('media_type', 'image/png'),
                 "data": b64,
-            }},
-        ],
+            }}),
     }
 
 
@@ -17569,7 +17577,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             # small window, so it gets the result without formatting
             # boilerplate; the data is unchanged and the trace keeps the
             # original. A cloud seat gets the result exactly as returned.
-            if _compact_seat == "local":
+            if _compact_seat == "local" and not isinstance(result, _untrusted.FridaysWords):
                 try:
                     from agent_friday.services.tool_result_compact import compact as _compact_result
                     result = _compact_result(result)
