@@ -374,7 +374,10 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         _journal().decision("seat_select", f"{provider}/{routed_model or '(provider default)'}",
                             reason=str(route.get("reason") or route.get("why")
                                        or f"mode={routing_cfg.get('mode', 'default')}"),
-                            alternatives=[p for p in ("local", "cloud", "openai") if p != provider],
+                            alternatives=([
+                                "%s: %s" % (a.get("label") or a.get("provider") or a.get("seat"), a.get("why"))
+                                for a in ((route.get("record") or {}).get("alternatives") or [])
+                            ] or [p for p in ("local", "cloud", "openai") if p != provider]),
                             session_ctx=session_ctx)
     except Exception:
         pass
