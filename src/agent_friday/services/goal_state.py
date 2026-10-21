@@ -85,8 +85,11 @@ def _all_verified(goal: Dict[str, Any]) -> bool:
         return False
     for m in ms:
         v = m.get("verification") or {}
+        # Only a check that actually ran and scored counts: a skipped check
+        # (no output, no model reachable, an unreadable score) passes the
+        # milestone but proves nothing, so the goal is met, unverified.
         if m.get("status") != "done" or not v.get("passed") or v.get("human_override") \
-                or v.get("status") == "manual":
+                or v.get("status") != "ok" or v.get("score") is None:
             return False
     return True
 
@@ -204,7 +207,11 @@ def risk_reasons(goal: Dict[str, Any], now: Optional[float] = None) -> List[str]
 
 
 def live_state(goal: Dict[str, Any], now: Optional[float] = None) -> str:
-    cats = [category_of(m) for m in goal.get("milestones") or [] if isinstance(m, dict)]
+    # Holds (recomputed every tick: "waits for the step before it", "no
+    # expected result yet") are shown on the milestone but don't move the
+    # goal's state, so it doesn't flip back and forth with each tick.
+    cats = [category_of(m, include_hold=False) for m in goal.get("milestones") or []
+            if isinstance(m, dict)]
     if any(c in _NEEDS_OWNER for c in cats):
         return "needs_owner"
     if any(c == "external_wait" for c in cats):
@@ -252,8 +259,6 @@ def continuation_hold(goal: Dict[str, Any], milestone: Dict[str, Any], *,
             return blocker("external_wait", f"An answer is still waiting on “{other.get('name')}”; "
                            "nothing more starts on its own until you answer it.",
                            type="approval_pending")
-    if milestone.get("no_progress"):
-        return blocker("no_progress", milestone["no_progress"].get("text") or "No progress.")
     deps = [d for d in milestone.get("depends_on") or [] if d]
     if deps:
         done = {m.get("milestone_id") for m in goal.get("milestones") or [] if m.get("status") == "done"}
@@ -324,5 +329,6 @@ def blocked_again(history: List[str], category: str) -> bool:
 
 def no_progress_words(name: str, attempts: int, why: str) -> str:
     return (f"I stopped working on “{name}” because {why} ({attempts} attempt"
-            f"{'s' if attempts != 1 else ''} so far). Trying again the same way would only "
-            "repeat it. Change the plan or the criteria, or tell me to start it again.")
+            f"{'s' if attempts != 1 else ''} so far; what they did has happened). Trying again "
+            "the same way would only repeat it. Change the plan or the criteria, or tell me "
+            "to start it again.")

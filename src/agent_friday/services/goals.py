@@ -292,22 +292,24 @@ def _load_goal(p: Path) -> Optional[Dict[str, Any]]:
     return g
 
 
-def _read_goal_file(goal_id: str) -> Optional[Dict[str, Any]]:
+def _read_goal_file(goal_id: str, *, current: bool = True) -> Optional[Dict[str, Any]]:
     """The goal, from its file or, when that is torn or gone, from the copy
     kept beside it at the previous write. A crash in the middle of a write
-    loses at most that one write, never the goal."""
+    loses at most that one write, never the goal. `current=False` returns it
+    as stored (the write path refreshes it itself, with a history line)."""
     try:
         p = _goal_path(goal_id)
     except ValueError:
         return None
+    fresh = _current if current else (lambda x: x)
     g = _load_goal(p) if p.exists() else None
     if g is not None:
-        return _current(g)
+        return fresh(g)
     bak = _backup_path(p)
     g = _load_goal(bak) if bak.exists() else None
     if g is not None:
         _log.warning("goal file %s was unreadable; using its last good copy", goal_id)
-        return _current(g)
+        return fresh(g)
     if p.exists():
         _log.error("goal file %s unreadable/corrupt and no good copy beside it", goal_id)
     return None
@@ -399,20 +401,25 @@ def _mutate_goal(goal_id: str, fn: Callable[[Dict[str, Any]], Optional[Dict[str,
     still releases via the context manager) — used by transition_goal to
     reject an illegal move without corrupting the stored record."""
     with _LOCK:
-        goal = _read_goal_file(goal_id)
+        goal = _read_goal_file(goal_id, current=False)
         if goal is None:
             return None
         result = fn(goal)
         goal = result if isinstance(result, dict) else goal
-        before = goal.get("status")
         old = goal_state.refresh(goal)
-        if old is not None and goal.get("status") != before:
+        if old is not None:
             goal.setdefault("history", []).append({
                 "at": _now_iso(), "from": old, "to": goal["status"],
                 "reason": "read off its milestones, deadline and budget"})
+        if len(goal.get("history") or []) > _HISTORY_KEPT:
+            goal["history"] = goal["history"][-_HISTORY_KEPT:]
         goal["updated_at"] = _now_iso()
         _write_goal_file(goal)
         return goal
+
+
+#: History lines kept per goal (the oldest go first); receipts are kept whole.
+_HISTORY_KEPT = 500
 
 
 def _find_milestone(goal: Dict[str, Any], milestone_id: str) -> Optional[Dict[str, Any]]:
@@ -440,6 +447,8 @@ def _normalize_milestone(m: Optional[dict]) -> Dict[str, Any]:
         "cost_estimate_mψ": int(m.get("cost_estimate_mψ") or DEFAULT_MILESTONE_COST_MΨ),
         "artifacts": list(m.get("artifacts") or []),
         "approval_id": m.get("approval_id"),
+        # §17.5 / §17.9: the milestones this one waits for (ids in the goal).
+        "depends_on": [str(d)[:40] for d in (m.get("depends_on") or []) if d][:20],
     }
 
 
@@ -448,6 +457,9 @@ _MUTABLE_GOAL_FIELDS = {
     "linked_schedules", "linked_chains", "budget_cap_mψ",
     "approval_required", "verification_mode", "max_repair_retries",
     "milestone_timeout_seconds", "dissent_constraints", "owner",
+    # §17.9 "the model route is still permitted": the routing modes this goal
+    # may run under (cloud_mode_policy names); empty means any.
+    "allowed_routes",
 }
 
 
@@ -509,6 +521,11 @@ def update_goal(goal_id: str, patch: dict) -> Optional[Dict[str, Any]]:
                 goal[k] = v
         if changed:
             goal["plan_revised_at"] = time.time()
+            # A new plan is a new start: earlier results no longer count as
+            # "the same again" against it (§17.10).
+            for m in goal.get("milestones") or []:
+                m["progress_marks"] = []
+                m["blocker_history"] = []
         return goal
     return _mutate_goal(goal_id, _fn)
 
@@ -1178,6 +1195,11 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         return {"ok": False, "status": "interrupted", "blocker": milestone.get("blocker"),
                 "error": "this milestone waits for you: "
                          + str((milestone.get("blocker") or {}).get("text") or "")}
+    if milestone.get("status") in ("escalated", "failed", "verifying"):
+        # Its result waits on the owner's card (or was refused there): a new
+        # attempt is the owner's decision, made on that card.
+        return {"ok": False, "status": "waits_on_card",
+                "error": "this milestone waits for your answer on its card"}
 
     # The Q3/dissent gate MUST see the REAL instruction the executor will
     # run, not just the milestone's cosmetic name + the goal's cosmetic
@@ -1196,9 +1218,12 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         + (f" — success criteria: {criteria_text}" if criteria_text else "")
     )
 
+    # A refused or lapsed card is never reused; after the owner starts the
+    # milestone again it asks afresh, on a card of its own (gate_round).
+    _round = int(milestone.get("gate_round") or 0)
     gate = approvals.gate_action(
         kind="goal_milestone", subject_type="goal_milestone",
-        subject_id=f"{goal_id}:{milestone_id}",
+        subject_id=f"{goal_id}:{milestone_id}" + (f":r{_round}" if _round else ""),
         title=f"{goal.get('title')} — {milestone.get('name')}",
         description=goal.get("description", ""), action_description=action_description,
         force_gate=bool(goal.get("approval_required")),
@@ -1217,7 +1242,7 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         _update_milestone(goal_id, milestone_id, status="blocked", approval_id=appr.get("approval_id"),
                           hold=None, blocker=goal_state.blocker(
                               "policy_blocked", f"“{milestone.get('name')}” was not approved, so it won't run.",
-                              type="approval_denied"))
+                              type="approval_denied", needs_confirmation=False))
         receipt = _make_receipt(goal, milestone, kind="denied", verdict=None, cost_mψ=0,
                                 note=f"approval {appr.get('status')}")
         _append_receipt(goal_id, receipt)
@@ -1273,8 +1298,9 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
                 _block(goal_id, milestone_id, goal_state.blocker(
                     "needs_user_input",
                     f"You changed the goal while “{milestone.get('name')}” was being worked on, so I "
-                    "stopped instead of carrying on with the old plan. Start it again when you're ready.",
-                    type="plan_changed", needs_confirmation=False),
+                    "stopped instead of carrying on with the old plan. The attempt that had started "
+                    "did run. Start it again when you're ready.",
+                    type="plan_changed", needs_confirmation=True),
                     note="the owner changed the plan mid-attempt; no further attempt")
                 return {"ok": False, "status": "plan_changed"}
             # Every attempt AFTER the first must re-clear the SAME per-goal
@@ -1359,6 +1385,9 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         criteria = milestone.get("success_criteria") or goal.get("success_criteria") or ""
         verdict = qa_gates.evaluate_text(last_text, criteria, workspace=f"goal:{goal_id}")
         last_verdict = verdict
+        # The attempt reached its check: whatever stopped it before is not
+        # "the same stop again" (§17.10 counts runs of identical stops).
+        _update_milestone(goal_id, milestone_id, blocker_history=[])
         if not verdict.get("passed"):
             why = goal_state.repeated(marks[:-1], critique=str(verdict.get("critique") or ""))
             marks[-1]["critique"] = goal_state.fingerprint(verdict.get("critique") or "")
@@ -1397,7 +1426,9 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         _block(goal_id, milestone_id, goal_state.blocker(
             "no_progress", goal_state.no_progress_words(milestone.get("name") or "this milestone",
                                                         base_attempts + attempt, no_progress_why),
-            needs_confirmation=False),
+            # Its attempts did run (and did whatever they did): starting it
+            # again is the owner's explicit yes, like any restart.
+            needs_confirmation=True),
             note=f"no progress: {no_progress_why}")
         return {"ok": False, "status": "no_progress", "why": no_progress_why}
 
@@ -1465,6 +1496,22 @@ def _on_milestone_gate_decided(approval: Dict[str, Any]) -> None:
     goal_id, milestone_id = ids
     status = approval.get("status")
     if status == "approved":
+        # §17.9: the card showed the plan as it was when it was raised. If the
+        # owner has changed the plan since, this yes is not a yes to the new
+        # plan: the milestone asks again instead of running it.
+        goal = get_goal(goal_id) or {}
+        created = approval.get("created_at")
+        if goal_state.superseded(goal, created if isinstance(created, (int, float)) else
+                                 _parse_ts(created)):
+            _update_milestone(goal_id, milestone_id, status="blocked", hold=None,
+                              gate_round=int((_find_milestone(goal, milestone_id) or {})
+                                             .get("gate_round") or 0) + 1,
+                              blocker=goal_state.blocker(
+                                  "needs_user_input",
+                                  "You changed the goal after this card was raised, so its yes "
+                                  "doesn't cover the new plan. Start the step again to see it on a new card.",
+                                  type="approval_stale", needs_confirmation=False))
+            return
         run_milestone(goal_id, milestone_id)
     elif status in ("denied", "expired"):
         # §17.8 / NS-32.8-1: a refused or lapsed approval is a typed stop the
@@ -1475,7 +1522,7 @@ def _on_milestone_gate_decided(approval: Dict[str, Any]) -> None:
                               ("The card for this step was not approved, so it won't run."
                                if status == "denied" else
                                "The card for this step expired before anyone answered, so it didn't run."),
-                              type="approval_" + status))
+                              type="approval_" + status, needs_confirmation=False))
 
 
 def _accept_escalated_milestone(goal_id: str, milestone_id: str) -> None:
@@ -1568,7 +1615,10 @@ def _on_confirm_decided(approval: Dict[str, Any]) -> None:
 # call alone: restart_milestone(..., confirm_unknown_outcome=True).
 
 #: Blocker types that only the owner (or the task they resume) can clear.
-_OWNER_BLOCKERS = ("interrupted", "run_failed", "no_progress", "plan_changed")
+_OWNER_BLOCKERS = ("interrupted", "run_failed", "no_progress", "plan_changed",
+                   "approval_denied", "approval_expired", "approval_stale")
+#: Of those, the ones stopped by a card: starting again asks on a new card.
+_CARD_BLOCKERS = ("approval_denied", "approval_expired", "approval_stale")
 
 
 def _note_run(goal_id: Optional[str], milestone_id: Optional[str], **fields) -> None:
@@ -1693,15 +1743,18 @@ def _block(goal_id: str, milestone_id: str, blocker: Dict[str, Any], *, note: st
     category = goal_state.category_of({"blocker": blocker}) or "needs_user_input"
     blocker.setdefault("category", category)
     history = list(milestone.get("blocker_history") or [])
-    if category != "no_progress" and goal_state.blocked_again(history, category):
-        # §17.10: the same stop again and again is no progress.
+    kind = str(blocker.get("type") or category)
+    # §17.10: the same stop (same kind, not merely the same category) again
+    # and again is no progress. A stop tied to a task (interrupted, failed)
+    # keeps its own type, so the task can still be resumed and picked up.
+    if category != "no_progress" and not blocker.get("task_id") \
+            and goal_state.blocked_again(history, kind):
         blocker = goal_state.blocker(
             "no_progress", goal_state.no_progress_words(
                 milestone.get("name") or "this milestone", int(milestone.get("attempts") or 0),
                 "it stopped for the same reason " + str(goal_state.SAME_BLOCKER_LIMIT) + " times running"),
-            needs_confirmation=bool(blocker.get("needs_confirmation", False)),
-            task_id=blocker.get("task_id"), was=blocker)
-    history = (history + [blocker.get("category") or category])[-10:]
+            needs_confirmation=True, was=blocker)
+    history = (history + [kind])[-10:]
     _update_milestone(goal_id, milestone_id, status="blocked", blocker=blocker, hold=None,
                       blocker_history=history, **_closed_run(goal_id, milestone_id))
     _append_receipt(goal_id, _make_receipt(goal, milestone, kind="milestone_interrupted",
@@ -1751,7 +1804,7 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
         # The run record says the work was never handed to a task: the gate
         # and the budget had run, nothing else. Nothing ran, so it can run
         # again; its unspent reservation is given back.
-        _update_milestone(goal_id, milestone_id, status="pending", blocker=None,
+        _update_milestone(goal_id, milestone_id, status="pending", blocker=None, hold=None,
                           **_closed_run(goal_id, milestone_id))
         _release_goal_budget(goal_id, int(run.get("reserved_mψ") or 0))
         _append_receipt(goal_id, _make_receipt(
@@ -2040,11 +2093,13 @@ def restart_milestone(goal_id: str, milestone_id: str, *,
         mm = _find_milestone(g, milestone_id)
         if mm is None or mm.get("status") != "blocked" or mm.get("blocker") != blocker:
             return g
-        mm.update(status="pending", blocker=None, hold=None, last_blocker=blocker)
-        if blocker.get("category") == "no_progress":
-            # The owner's go-ahead after a no-progress stop: earlier results no
-            # longer count against the next attempt.
-            mm["progress_marks"] = []
+        mm.update(status="pending", blocker=None, hold=None, last_blocker=blocker,
+                  # The owner's go-ahead is a new start: earlier results no
+                  # longer count against the next attempt (§17.10).
+                  progress_marks=[])
+        if blocker.get("type") in _CARD_BLOCKERS:
+            # A refused, lapsed or stale card is never reused: ask afresh.
+            mm["gate_round"] = int(mm.get("gate_round") or 0) + 1
         released["ok"] = True
         return g
     _mutate_goal(goal_id, _fn)
@@ -2106,7 +2161,11 @@ def run_due_milestones(*, max_per_tick: int = 5) -> Dict[str, Any]:
                 continue
             # §17.9: Friday starts work on her own only when every
             # precondition holds; otherwise the milestone shows why it waits.
-            hold = goal_state.continuation_hold(get_goal(g["goal_id"]) or g, m, now=now)
+            fresh = get_goal(g["goal_id"]) or g
+            m = _find_milestone(fresh, m["milestone_id"]) or m
+            if m.get("status") != "pending":
+                continue
+            hold = goal_state.continuation_hold(fresh, m, now=now)
             if hold:
                 if (m.get("hold") or {}).get("type") != hold.get("type") or \
                         (m.get("hold") or {}).get("text") != hold.get("text"):
