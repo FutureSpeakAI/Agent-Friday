@@ -25,6 +25,16 @@ def clean_studio():
         shutil.rmtree(ws.WS_STUDIO_DIR, ignore_errors=True)
 
 
+@pytest.fixture(autouse=True)
+def owner_press(monkeypatch):
+    """These tests post as the owner's page does. The press check itself and the
+    checkpoint are tested in test_workspace_changes_need_the_owners_press.py."""
+    from agent_friday.governance import action_gate as ag
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
+    monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
+
+
 def _gen(reply):
     """An injected generate() that returns a fixed reply, ignoring inputs."""
     return lambda messages, system, orb_label: reply
@@ -154,17 +164,20 @@ class TestChatTurn:
         doc = ws.load_ws_doc("home")
         assert len(doc["chat"]) == 2  # user + friday
 
-    def test_patch_reply_applies_and_is_revertible(self):
+    def test_patch_reply_is_a_proposal_and_applying_it_is_revertible(self):
         reply = ('On it.\n```friday-customize\n'
                  '{"summary":"compact home","density":"compact"}\n```')
         res = ws.workspace_chat_turn("home", "Home", "make it denser",
                                      generate=_gen(reply))
-        assert res["applied"] is True
+        assert res["applied"] is False
         assert res["response"] == "On it."           # patch block stripped
-        assert res["customization"]["density"] == "compact"
-        assert res["change"] == "compact home"
-        # The returned revert_to undoes the change (back to empty).
-        doc = ws.revert_customization("home", res["revert_to"])
+        assert res["customization"] == {}            # nothing changed yet
+        assert res["proposal"]["changes"] == ["Spacing: compact"]
+        doc, prop = ws.apply_proposal("home", res["proposal"]["id"])
+        assert doc["customization"]["density"] == "compact"
+        assert prop["status"] == "applied"
+        # The proposal's revert_to undoes the change (back to empty).
+        doc = ws.revert_customization("home", prop["revert_to"])
         assert doc["customization"] == {}
 
     def test_malicious_css_from_model_is_sanitized(self):
@@ -173,7 +186,8 @@ class TestChatTurn:
                  '</style><script>steal()</script>"}\n```')
         res = ws.workspace_chat_turn("home", "Home", "round the cards",
                                      generate=_gen(reply))
-        css = res["customization"].get("css", "")
+        doc, _prop = ws.apply_proposal("home", res["proposal"]["id"])
+        css = doc["customization"].get("css", "")
         assert "<script" not in css and "</style" not in css
         assert "color:red" in css
 

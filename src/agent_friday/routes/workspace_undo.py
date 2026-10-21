@@ -47,9 +47,17 @@ def ws_history(ws_id):
     return jsonify(_ws().history(ws_id))
 
 
+def _owner_change(ws_id, op):
+    from agent_friday.routes.workspace_studio import owner_change
+    return owner_change(_ws().check_ws_id(ws_id), op)
+
+
 @workspace_undo_bp.route("/api/workspace/<ws_id>/undo", methods=["POST"])
 @login_required
 def ws_undo(ws_id):
+    refused = _owner_change(ws_id, "undo")
+    if refused:
+        return refused
     doc, err = _ws().undo_last(ws_id)
     if err:
         return jsonify({"ok": False, "error": err}), 400
@@ -61,6 +69,9 @@ def ws_undo(ws_id):
 @workspace_undo_bp.route("/api/workspace/<ws_id>/restore-as-of", methods=["POST"])
 @login_required
 def ws_restore_as_of(ws_id):
+    refused = _owner_change(ws_id, "restore_as_of")
+    if refused:
+        return refused
     when = (request.get_json(silent=True) or {}).get("when")
     if not when:
         return jsonify({"ok": False,

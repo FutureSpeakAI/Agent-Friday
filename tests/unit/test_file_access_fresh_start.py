@@ -207,7 +207,9 @@ def test_the_caption_widget_never_decides_file_access_cards():
     text = (ROOT / "index.html").read_text(encoding="utf-8")
     start = text.index("function pollApprovals()")
     widget = text[start - 200:text.index("function decide(ok)", start) + 600]
-    assert "CAPTION_NEVER_DECIDES = ['file_grant_request', 'file_access_reset']" in widget
+    never = widget[widget.index("CAPTION_NEVER_DECIDES = ["):]
+    never = never[:never.index("]") + 1]
+    assert "'file_grant_request'" in never and "'file_access_reset'" in never
     assert "CAPTION_NEVER_DECIDES.indexOf(x && x.kind) < 0" in widget
     assert "decided_by: 'owner:caption'" in widget and "'owner:ui'" not in widget
 

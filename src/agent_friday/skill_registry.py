@@ -1079,6 +1079,10 @@ def import_skill(src, name=None) -> dict:
     Normalizes OpenClaw/agentskills folders (which already use SKILL.md) and
     Friday's legacy YAML into the canonical SKILL.md folder format under
     ~/.friday/skills/, tagging ``source: imported``.
+
+    This installs AT ONCE, with no review. No route or tool calls it: an import
+    from outside goes through services/skill_import_review, which shows the
+    owner a card and installs only after a press on it. Keep it that way.
     """
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     src = Path(src)

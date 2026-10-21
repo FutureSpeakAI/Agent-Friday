@@ -91,6 +91,25 @@ def _not_the_owners_click():
                     "message": "this change must come from the Calendar page"}), 403
 
 
+def _held_by_the_gate(action, target, nothing_done):
+    """None when the action checkpoint lets the owner's calendar write through, else the 403 to answer.
+
+    Every write to Google from the Calendar page passes the same checkpoint a tool call does
+    (governance/action_gate.record_external): the cLaws are intact and a signed receipt of this exact
+    write exists before anything leaves the PC. `nothing_done` is the sentence that starts the answer
+    when it is held ("Nothing was added", ...), so the page never reads a hold as a success."""
+    from agent_friday.governance import action_gate as _gate
+    try:
+        _gate.record_external(action, surface="calendar_workspace", target=str(target or "")[:300])
+    except _gate.Held as e:
+        print(f"  [calendar] {action} on {target} held by the action gate: {type(e).__name__}")
+        return jsonify({"status": "error", "held": True,
+                        "message": nothing_done + ": the action checkpoint held this change "
+                                                  "(its integrity check or signed receipt failed), "
+                                                  "so nothing reached Google. Try again."}), 403
+    return None
+
+
 
 def _read_state(day):
     """{read_failed, errors} for one day's read: whether Google could not be read at
@@ -598,6 +617,9 @@ def api_calendar_create_event():
         aid, cid = _calendar_of(data.get("calendar_key"))
         if cid is None:
             return jsonify({"status": "error", "message": "choose a calendar from the list"}), 400
+        held = _held_by_the_gate("calendar:create_event", "%s|%s %s" % (aid or "", cid, title), "Nothing was added")
+        if held:
+            return held
         out = cw.create_event(title=title, start=sdt.astimezone().isoformat(),
                               end=edt.astimezone().isoformat(), location=location,
                               description="", attendees=attendees, account_id=aid, calendar_id=cid)
@@ -637,6 +659,10 @@ def api_calendar_rsvp(event_id):
     aid, cid = _calendar_of(data.get("calendar_key"))
     if cid is None:
         return jsonify({"status": "error", "message": "that calendar is not one Friday knows"}), 400
+    held = _held_by_the_gate("calendar:respond_to_event", "%s|%s %s" % (aid or "", cid, event_id),
+                             "No reply was sent")
+    if held:
+        return held
     out = cw.respond_to_event(event_id, str(data.get("response") or ""), account_id=aid, calendar_id=cid)
     if out.get("error"):
         return jsonify({"status": "error", "message": cw.public_error(out)}), 409
@@ -663,6 +689,9 @@ def api_calendar_move_event(event_id):
     aid, cid = _calendar_of(data.get("calendar_key"))
     if cid is None:
         return jsonify({"status": "error", "message": "that calendar is not one of the calendars shown here"}), 400
+    held = _held_by_the_gate("calendar:move_event", "%s|%s %s" % (aid or "", cid, event_id), "Nothing was moved")
+    if held:
+        return held
     try:
         out = item_actions.move_event_by_owner(event_id, start=str(data.get("start_time") or ""),
                                                end=str(data.get("end_time") or ""), calendar_id=cid,

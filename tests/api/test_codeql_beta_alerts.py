@@ -70,6 +70,11 @@ def test_hosting_status_error_has_an_id_not_the_cause(client, monkeypatch):
 
 def test_workspace_chat_clear_hides_an_operating_system_refusal(client, monkeypatch):
     from agent_friday.routes import workspace_studio as route
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)  # the owner's press
+    monkeypatch.setattr(route, "_admit_write", lambda origin=None: 0)
+    from agent_friday.governance import action_gate as ag
+    monkeypatch.setattr(ag, "record_external", lambda *a, **k: None)
 
     def denied(*_a, **_k):
         raise PermissionError(INTERNAL)
@@ -81,6 +86,11 @@ def test_workspace_chat_clear_hides_an_operating_system_refusal(client, monkeypa
 
 def test_workspace_off_the_record_refusal_is_still_said(client, monkeypatch):
     from agent_friday.routes import workspace_studio as route
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)  # the owner's press
+    monkeypatch.setattr(route, "_admit_write", lambda origin=None: 0)
+    from agent_friday.governance import action_gate as ag
+    monkeypatch.setattr(ag, "record_external", lambda *a, **k: None)
     from agent_friday.user_errors import UserFacingPermissionError
 
     def refused(*_a, **_k):

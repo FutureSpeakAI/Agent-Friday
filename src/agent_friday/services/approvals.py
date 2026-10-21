@@ -195,6 +195,10 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # Retiring a learned lesson or skill (services/lesson_records): it archives
     # something the owner relies on, so a click on the card only.
     "lesson_retire": frozenset({"owner:ui"}),
+    # Installing a skill from a package (services/skill_import_review): it
+    # changes what Friday does whenever its triggers match, so a press on the
+    # card that shows its procedure, triggers and tools, and nothing else.
+    "skill_import": frozenset({"owner:ui"}),
 }
 
 

@@ -2073,6 +2073,12 @@ def classify_undo(args: dict, conversation_id: str | None = None) -> tuple[str, 
         return "outward", "putting mail back changes Gmail"
     if rec and rec.get("domain") == "calendar":
         return "outward", "putting events back changes Google Calendar"
+    if rec and rec.get("domain") == "file_write":
+        # Putting a file back writes over it, so it is judged as that write was:
+        # inside Friday's output folders it runs, anywhere else it is asked.
+        from agent_friday.governance import action_gate as _gate
+        path = ((rec.get("undo") or {}).get("file") or {}).get("path")
+        return _gate.classify_write(path)
     return "internal", "it puts back Friday's own local change"
 
 
@@ -2118,6 +2124,11 @@ def undo(receipt_id: str = "", *, conversation_id: str | None = None, owner_word
         card = _raise_card("calendar_undo", "undo", detail, requested_by=requested_by,
                            title="Friday wants to put back %s" % _plural(n, "event"), body=body)
         return {**card, "count": n, "readback": "Shall I put back the %s I moved?" % _plural(n, "event")}
+    if dom == "file_write":
+        from agent_friday.services import file_write_receipts as _fwr
+        out = _fwr.undo(rec)
+        _tell_pages(dom, rec["receipt_id"])
+        return {"status": out["status"], "receipt_id": out["receipt_id"], "text": _said(out)}
     out = (undo_email(rec) if dom == "email" else undo_files(rec) if dom == "files"
            else undo_wiki(rec) if dom == "wiki" else undo_media(rec) if dom == "media"
            else undo_calendar(rec) if dom == "calendar" else None)
