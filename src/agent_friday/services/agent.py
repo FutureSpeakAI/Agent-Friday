@@ -1289,6 +1289,11 @@ def _tool_read_file(inp):
     # path here as well as in the sandbox hook, which settings can switch off. Key
     # material keeps its own refusal (and its signed receipt) first.
     from agent_friday.services import path_policy as _pp
+    # The text first: a network share or a device path is refused before anything
+    # resolves it (resolving a share contacts it).
+    _why = _pp._text_reason(str(raw))
+    if _why:
+        return _pp.refusal(raw, _why, "read")
     try:
         p = Path(raw).expanduser().resolve()
     except Exception as e:
@@ -1440,6 +1445,10 @@ def _tool_write_file(inp):
     _p_ok, _why = _pp.judge(raw, "write")
     if _p_ok is None:
         return _pp.refusal(raw, _why, "write")
+    # Key material is not written over either (services/credential_paths).
+    from agent_friday.services import credential_paths as _cred_w
+    if _cred_w.check(_p_ok, sniff=False):
+        return _cred_w.refusal(_p_ok)
     try:
         p = _p_ok
         p.parent.mkdir(parents=True, exist_ok=True)

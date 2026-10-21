@@ -604,7 +604,38 @@ def classify_command(cmd: str) -> tuple:
             return OUTWARD, f"'{words[0]}' is not on the read-only list"
         if head == "git" and (len(words) < 2 or words[1].lower() not in _GIT_READ):
             return OUTWARD, "a git command that is not read-only"
+    reach = _command_reach_reason(c)
+    if reach:
+        return OUTWARD, reach
     return INTERNAL, "read-only"
+
+
+def _command_reach_reason(cmd: str) -> str:
+    """A read-only command still READS: every path it names is judged by the same
+    policy as read_file (services/path_policy, BD-26). A path outside the folders
+    Friday may use, or a walk up with '..', makes the command outward (a card)."""
+    import re as _re
+    try:
+        from agent_friday.services import path_policy as _pp
+        from agent_friday.services.credential_paths import _expand_path_text
+    except Exception:
+        return ""
+    for raw in _re.split(r"[\s,;()]+", cmd):
+        tok = raw.strip().strip("'\"`")
+        if not tok or tok.startswith("-"):
+            continue
+        low = tok.lower()
+        looks = (_re.match(r"^[a-z]:[\\/]", low) or tok.startswith(("~", "\\\\", "//", "%"))
+                 or low.startswith(("$env:", "$home", "$pshome", "$profile")) or ".." in tok)
+        if not looks:
+            continue
+        if ".." in tok and not _re.match(r"^[a-z]:[\\/]|^[~\\/%$]", low):
+            return "it walks up out of its working folder with '..'"
+        expanded = _expand_path_text(tok)
+        p, why = _pp.judge(expanded, "read")
+        if p is None:
+            return f"it reads a place Friday's file tools may not ({why})"
+    return ""
 
 
 def _resolve(path) -> Optional[Path]:

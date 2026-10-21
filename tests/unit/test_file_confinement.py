@@ -201,6 +201,110 @@ def test_a_link_inside_the_home_folder_to_outside_is_judged_where_it_lands(home,
         os.unlink(str(link))
 
 
+def _junction_or_link(link: Path, target: Path) -> bool:
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))      # needs no privilege
+        else:
+            os.symlink(str(target), str(link), target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError, AttributeError):
+        return False
+
+
+# ── security review round 1 ───────────────────────────────────────────────────
+
+@pytest.mark.parametrize("spelling", ["AppData.", "AppData ", "APPDATA"])
+def test_trailing_dots_spaces_and_case_do_not_reach_application_data(home, spelling):
+    real = home / "AppData" / "Roaming" / "App"
+    real.mkdir(parents=True, exist_ok=True)
+    (real / "s.txt").write_text(SECRET, encoding="utf-8")
+    spelled = str(home / spelling / "Roaming" / "App" / "s.txt")
+    assert SECRET not in _read(spelled)
+    assert _write(str(home / spelling / "Roaming" / "App" / "w.txt")).startswith("[SANDBOX DENY]")
+
+
+@pytest.mark.parametrize("rel", [".config./git/config", ".npmrc", ".claude/.credentials.json", ".bash_history",
+                                 ".docker/config.json"])
+def test_sign_in_stores_and_dot_tricks_are_refused(home, rel):
+    f = home / rel.replace("./", "/")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(SECRET, encoding="utf-8")
+    assert SECRET not in _read(str(home / rel))
+
+
+@pytest.mark.parametrize("rel", [".gitconfig", ".bashrc", "Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1",
+                                 ".ssh/authorized_keys"])
+def test_files_run_or_obeyed_at_start_up_are_never_written(home, rel):
+    target = home / rel
+    assert not _write(target, "malicious").startswith("Wrote"), rel
+    assert not target.exists() or "malicious" not in target.read_text(encoding="utf-8")
+
+
+def test_the_real_application_data_folder_is_off_limits_wherever_it_is(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "RoamingElsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "s.txt").write_text(SECRET, encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(elsewhere))
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
+    assert _refused(_read(elsewhere / "s.txt"))
+
+
+def test_a_sandbox_root_above_the_profile_is_clamped_to_it(outside, monkeypatch):
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", os.path.abspath(os.sep))
+    assert _refused(_read(outside))
+
+
+def test_a_grant_that_would_hold_fridays_state_is_refused(friday_dir):
+    from agent_friday.services import path_policy as pp
+    g, why = pp.add_grant(str(Path(friday_dir).parent), ["read"])
+    assert g is None and why
+
+
+def test_a_network_path_is_never_resolved(monkeypatch):
+    """Resolving \\\\host\\share contacts it (and offers the owner's sign-in); it is refused from its text."""
+    import pathlib
+    real = pathlib.Path.resolve
+
+    def guard(self, *a, **k):
+        if str(self).replace("/", "\\").startswith("\\\\"):
+            raise AssertionError("a network path was resolved")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "resolve", guard)
+    out = _read("\\\\attacker.example\\share\\x.txt")
+    assert out.startswith("[SANDBOX DENY]")
+
+
+def test_a_read_only_command_that_reads_outside_is_carded(outside, home):
+    from agent_friday.governance import action_gate as ag
+    assert ag.classify_command(f'Get-Content "{outside}"')[0] == ag.OUTWARD
+    assert ag.classify_command("Get-Content ~/AppData/Roaming/App/state.json")[0] == ag.OUTWARD
+    assert ag.classify_command("Get-Content ..\\..\\x.txt")[0] == ag.OUTWARD
+    assert ag.classify_command("Get-Content ~/Documents/report.txt")[0] == ag.INTERNAL
+
+
+def test_search_does_not_follow_a_junction_into_application_data(home):
+    from agent_friday.services import file_search
+    app = home / "AppData" / "Roaming" / "Hidden"
+    app.mkdir(parents=True, exist_ok=True)
+    (app / "needle-7f3a.txt").write_text(SECRET, encoding="utf-8")
+    docs = home / "Documents"
+    docs.mkdir(parents=True, exist_ok=True)
+    link = docs / "j"
+    if not _junction_or_link(link, app):
+        pytest.skip("this runner cannot make a junction or link")
+    try:
+        res = file_search.search_files(query="needle-7f3a", root="documents")
+        assert not [r for r in (res.get("results") or []) if "needle-7f3a" in str(r.get("path"))]
+    finally:
+        try:
+            os.rmdir(str(link)) if os.name == "nt" else os.unlink(str(link))
+        except OSError:
+            pass
+
+
 def test_a_pdf_outside_the_folders_is_not_opened(outside):
     from agent_friday.services import pdf_forms
     pdf = outside.parent / "form.pdf"

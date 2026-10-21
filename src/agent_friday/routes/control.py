@@ -145,6 +145,9 @@ def cc_kill():
 @login_required
 def folder_grants_list():
     from agent_friday.services import path_policy as _pp
+    if not core._is_local_request():   # folder names are the owner's; not for a tunnel or the LAN
+        return jsonify({"status": "refused", "code": "local_only",
+                        "error": "Folder grants are listed on this PC only."}), 403
     rows = [{k: g.get(k) for k in ("id", "root", "ops", "purpose", "granted_at", "expires_at")}
             for g in _pp.grants()]
     return jsonify({"status": "ok", "grants": rows, "max_days": _pp.MAX_GRANT_DAYS})

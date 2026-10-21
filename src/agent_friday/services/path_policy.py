@@ -47,11 +47,16 @@ def _text_reason(raw: str) -> Optional[str]:
     why = file_grants.unsafe_path_reason(raw)
     if why:
         return why
-    # An alternate data stream (name:stream) is another file behind the same name.
     t = os.path.expanduser(str(raw))
     drive, rest = os.path.splitdrive(t)
+    # An alternate data stream (name:stream) is another file behind the same name.
     if ":" in rest:
         return "a name with ':' (an alternate data stream) is not allowed"
+    # Windows drops a trailing dot or space from a name, so 'AppData.' would reach
+    # AppData while not looking like it to a comparison of text.
+    for part in rest.replace("/", "\\").split("\\"):
+        if part not in ("", ".", "..") and part != part.rstrip(". "):
+            return "a name ending in a dot or a space is not allowed"
     return None
 
 
@@ -66,25 +71,45 @@ def _within(p: Path, root: Path) -> bool:
     return a.startswith(b.rstrip("\\/") + os.sep)
 
 
+def _within_folded(p: Path, root: Path) -> bool:
+    """Containment with case folded on every platform: used for refusals, where
+    matching too much only refuses more."""
+    a, b = str(p).casefold(), str(root).casefold()
+    if a == b:
+        return True
+    return a.startswith(b.rstrip("\\/") + os.sep)
+
+
 def resolve(raw: str) -> Tuple[Optional[Path], Optional[str]]:
-    """(resolved path, None) or (None, why it is refused). Never touches the file."""
+    """(resolved path, None) or (None, why it is refused). Judges the text first, so a
+    refused spelling never touches the disk or the network."""
     raw = str(raw or "").strip()
     why = _text_reason(raw)
     if why:
         return None, why
     try:
         p = Path(os.path.expanduser(raw)).resolve(strict=False)
-    except Exception as e:  # noqa: BLE001
-        return None, f"the path could not be resolved ({e})"
+    except Exception:  # noqa: BLE001
+        return None, "the path could not be resolved"
     return p, None
 
 
 # ── where ─────────────────────────────────────────────────────────────────────
 
+def _profile() -> Path:
+    return Path(os.path.expanduser("~")).resolve(strict=False)
+
+
 def _home() -> Path:
+    """The sandbox root. A root set above the owner's profile (a whole drive, the
+    Users folder) is clamped to the profile: it can narrow, never widen."""
     import agent_friday.core as core
     root = os.environ.get("FRIDAY_SANDBOX_ROOT", "") or str(core.HOME)
-    return Path(os.path.expanduser(root)).resolve(strict=False)
+    r = Path(os.path.expanduser(root)).resolve(strict=False)
+    prof = _profile()
+    if r != prof and _within(prof, r):
+        return prof
+    return r
 
 
 def output_dirs() -> List[Path]:
@@ -101,16 +126,37 @@ def output_dirs() -> List[Path]:
     return out
 
 
-def _off_limits() -> List[Tuple[Path, str]]:
+#: Under the home folder, never reached by a file tool unless the owner granted it:
+#: other programs' data and settings, and stores that hold sign-ins and history.
+_APP_DATA = ("AppData", "Library/Application Support", "Library/Keychains", "Library/Cookies",
+             ".config", ".local/share", ".local/state", ".mozilla", ".thunderbird")
+_SIGN_IN_STORES = (".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", ".claude", ".codex",
+                   ".npmrc", ".pypirc", ".netrc", ".git-credentials", ".cargo/credentials",
+                   ".cargo/credentials.toml", ".m2", ".terraform.d", ".gem/credentials",
+                   ".bash_history", ".zsh_history", ".python_history", ".node_repl_history",
+                   ".psql_history", ".mysql_history", ".lesshst", ".viminfo")
+#: Never WRITTEN by a file tool (reading is fine): files a shell, git or PowerShell
+#: runs or obeys at start-up, so a write there is code that runs later.
+_AUTORUN = (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv", ".gitconfig",
+            ".gitattributes", ".inputrc", ".wgetrc", ".curlrc", ".npmrc", ".pip", "pip",
+            "Documents/WindowsPowerShell", "Documents/PowerShell", ".vscode", ".ipython",
+            ".jupyter", "Start Menu", ".config/autostart")
+
+
+def _off_limits(op: str) -> List[Tuple[Path, str]]:
     import agent_friday.core as core
-    home = _home()
-    return [
-        (Path(core.FRIDAY_DIR).resolve(strict=False), "Friday's own state folder"),
-        (home / "AppData", "application data"),
-        (home / "Library" / "Application Support", "application data"),
-        (home / ".config", "application settings"),
-        (home / ".local" / "share", "application data"),
-    ]
+    homes = {_home(), _profile()}
+    out: List[Tuple[Path, str]] = [(Path(core.FRIDAY_DIR).resolve(strict=False), "Friday's own state folder")]
+    for var in ("APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
+        v = os.environ.get(var)
+        if v:
+            out.append((Path(v).resolve(strict=False), "application data"))
+    for h in homes:
+        out += [(h / rel, "application data") for rel in _APP_DATA]
+        out += [(h / rel, "a store of sign-ins or history") for rel in _SIGN_IN_STORES]
+        if op == "write":
+            out += [(h / rel, "a file run or obeyed at start-up") for rel in _AUTORUN]
+    return out
 
 
 def _search_roots() -> List[Path]:
@@ -130,6 +176,15 @@ def _library_allows(p: Path) -> bool:
         return False
 
 
+def off_limits_reason(p: Path, op: str = "read") -> Optional[str]:
+    """Why a resolved path is in a refused zone (ignoring grants), or None. Cheap: for
+    a walk that judges every file it opens."""
+    for root, label in _off_limits(op):
+        if _within_folded(p, root):
+            return f"it is inside {label}"
+    return None
+
+
 def judge(raw: str, op: str) -> Tuple[Optional[Path], Optional[str]]:
     """May a file tool `op` ("read" or "write") at `raw`? (path, None) when allowed;
     (None, reason) when not. Fails closed."""
@@ -139,15 +194,11 @@ def judge(raw: str, op: str) -> Tuple[Optional[Path], Optional[str]]:
     if p is None:
         return None, why
     try:
-        outputs = output_dirs()
-        if any(_within(p, d) for d in outputs):
+        if any(_within(p, d) for d in output_dirs()):
             return p, None
-        for root, label in _off_limits():
-            if _within(p, root):
-                g = _grant_for(p, op)
-                if g is None:
-                    return None, f"it is inside {label}"
-                return p, None
+        zone = off_limits_reason(p, op)
+        if zone:
+            return (p, None) if _grant_for(p, op) is not None else (None, zone)
         if _within(p, _home()):
             return p, None
         if _grant_for(p, op) is not None:
@@ -155,15 +206,15 @@ def judge(raw: str, op: str) -> Tuple[Optional[Path], Optional[str]]:
         if op == "read" and (any(_within(p, r) for r in _search_roots()) or _library_allows(p)):
             return p, None
         return None, "it is outside the folders Friday may use"
-    except Exception as e:  # noqa: BLE001
-        return None, f"the folder check could not run ({e})"
+    except Exception:  # noqa: BLE001
+        return None, "the folder check could not run"
 
 
 def refusal(raw: str, why: str, op: str) -> str:
-    return (f"{REFUSAL_PREFIX} Nothing was {'read' if op == 'read' else 'written'}: {raw!s} "
-            f"is not a place Friday's file tools may {op} ({why}). Tell the owner; they can allow "
-            f"a folder on Friday's own screen ({WHERE_TO_ALLOW}). Do not try another spelling "
-            f"of the same path.")
+    return (f"{REFUSAL_PREFIX} Nothing was {'read' if op == 'read' else 'written'}: that path is "
+            f"not a place Friday's file tools may {op} ({why}). Tell the owner; they can allow a "
+            f"folder on Friday's own screen ({WHERE_TO_ALLOW}). Do not try another spelling of "
+            f"the same path.")
 
 
 # ── owner folder grants ───────────────────────────────────────────────────────
@@ -235,8 +286,11 @@ def add_grant(root_text: str, ops: List[str], *, days: int = DEFAULT_GRANT_DAYS,
         return None, "that folder cannot be allowed: " + (_text_reason(root_text) or "it could not be resolved")
     if not p.is_dir():
         return None, "that is not a folder on this computer"
-    if file_grants.too_broad_folder_reason(p):
+    if file_grants.too_broad_folder_reason(p) or _within(_home(), p) or _within(_profile(), p):
         return None, "that folder is too broad; choose a folder inside it"
+    for zone, label in _off_limits("write"):
+        if _within_folded(zone, p) and not _within_folded(p, zone):
+            return None, f"that folder holds {label}; choose a folder inside it"
     import agent_friday.core as core
     fd = Path(core.FRIDAY_DIR).resolve(strict=False)
     if _within(p, fd) or _within(fd, p):
