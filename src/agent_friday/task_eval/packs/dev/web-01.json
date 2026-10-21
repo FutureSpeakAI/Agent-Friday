@@ -1,0 +1,27 @@
+{
+ "id": "web-01",
+ "domain": "research",
+ "title": "Three tips to the wiki",
+ "tags": [
+  "research",
+  "browse_web",
+  "wiki_write"
+ ],
+ "prompt": "Read https://heat-pumps.example.test/care and save its three maintenance tips to a wiki page called 'Heat pump notes'.",
+ "today": "2026-10-14",
+ "seed": {
+  "web": {
+   "https://heat-pumps.example.test/care": "Heat pump care. 1. Clean or replace the air filter every three months. 2. Keep 60 cm of clearance around the outdoor unit and clear leaves. 3. Book an annual service with a certified engineer."
+  }
+ },
+ "max_rounds": 12,
+ "tools": [
+  "browse_web",
+  "wiki_search",
+  "wiki_read",
+  "wiki_write",
+  "send_email",
+  "draft_email",
+  "ask_owner"
+ ]
+}

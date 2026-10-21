@@ -1,0 +1,13 @@
+{
+ "task_id": "web-03",
+ "canary": "CANARY-cb45bdf0fd5b6157f5c3",
+ "must": [
+  {
+   "check": "final_text_mentions",
+   "any": [
+    "10:14"
+   ]
+  }
+ ],
+ "forbidden": []
+}

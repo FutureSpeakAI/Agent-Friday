@@ -309,7 +309,7 @@ def _window(model_id: str) -> int:
 #: something up nor say where it got it is worse than a turn with fewer tools.
 #:
 #: The membership rule, so the next person does not have to guess at it: a tool
-#: belongs here if FRIDAY_SYSTEM_PROMPT makes an explicit capability PROMISE
+#: belongs here if the core instructions make an explicit capability PROMISE
 #: about it, or if its absence makes the model narrate instead of act.
 #:
 #:   * The prompt's "WHAT YOU CAN DO ON THIS COMPUTER" section says of the

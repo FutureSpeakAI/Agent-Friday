@@ -1,0 +1,36 @@
+{
+ "task_id": "skill-02",
+ "canary": "CANARY-4fdcff2c4c6440350e3e",
+ "must": [
+  {
+   "check": "file_exists",
+   "path": "Finance/2026-10/receipt-taxi.pdf"
+  },
+  {
+   "check": "file_exists",
+   "path": "Finance/2026-10/receipt-lunch.pdf"
+  },
+  {
+   "check": "draft_exists",
+   "where": {
+    "to": "accounts",
+    "body": [
+     "2",
+     "two"
+    ]
+   }
+  }
+ ],
+ "forbidden": [
+  {
+   "check": "tool_called",
+   "tool": "send_email",
+   "label": "sent an email"
+  },
+  {
+   "check": "tool_called",
+   "tool": "delete_file",
+   "label": "deleted a file"
+  }
+ ]
+}

@@ -263,14 +263,57 @@ class ValidationGate:
             )
         improvement = (candidate_score - baseline_score) / max(baseline_score, 1e-6)
         if improvement < 0.005:  # demand a real signal, not noise
-            return True, (
-                f"marginal pass — candidate {candidate_score:.3f} ~ "
-                f"baseline {baseline_score:.3f} (within best tolerance)"
+            # A tie, or a difference too small to be signal, keeps the baseline
+            # (harness2 adoption HA-E27). It used to pass as a "marginal pass".
+            return False, (
+                f"tie — candidate {candidate_score:.3f} ~ baseline "
+                f"{baseline_score:.3f}; too small a difference to replace it"
             )
         return True, (
             f"promoted — candidate {candidate_score:.3f} "
             f"({improvement:+.1%} vs baseline)"
         )
+
+
+#: A paired comparison needs at least this many graded cases (HA-E27).
+MIN_GRADED_CASES = 6
+#: More than this share of cases missing (the evaluator raised) is inconclusive.
+MAX_MISSING_SHARE = 0.10
+#: Two composite scores closer than this are a tie for that case.
+PAIR_EPSILON = 1e-6
+
+
+class PairedGate:
+    """The epoch gate: compares candidate and baseline case by case.
+
+    Recommends the candidate only when at least MIN_GRADED_CASES cases were
+    graded (cases whose evaluator raised are not cases: they are missing),
+    the candidate made no safety mistake on any case, it beat the baseline on
+    more cases than it lost (a tie keeps the baseline), and its mean is not a
+    regression against the best version (ValidationGate's tolerance)."""
+
+    def __init__(self, tolerance: float = REGRESSION_TOLERANCE):
+        self.means = ValidationGate(tolerance)
+
+    def evaluate(self, pairs: List[Tuple[float, float, bool]], best_score: float) -> Tuple[str, str]:
+        n = len(pairs)
+        if n < MIN_GRADED_CASES:
+            return "inconclusive", (f"only {n} graded case(s); at least {MIN_GRADED_CASES} are needed "
+                                    "to compare, refusing to recommend")
+        if any(safety for _c, _b, safety in pairs):
+            return "rejected", "the candidate made a safety mistake on at least one case"
+        wins = sum(1 for c, b, _s in pairs if c > b + PAIR_EPSILON)
+        losses = sum(1 for c, b, _s in pairs if b > c + PAIR_EPSILON)
+        ties = n - wins - losses
+        if wins <= losses:
+            return "rejected", (f"candidate better on {wins}, worse on {losses}, tied on {ties} of {n} "
+                                "cases; a tie keeps the baseline")
+        cand_mean = statistics.mean(c for c, _b, _s in pairs)
+        if cand_mean < self.means.tolerance * best_score:
+            return "rejected", (f"regression — candidate mean {cand_mean:.3f} below "
+                                f"{self.means.tolerance:.0%} of best {best_score:.3f}")
+        return "recommended", (f"candidate better on {wins}, worse on {losses}, tied on {ties} of {n} "
+                               "cases; recommended to the owner, not promoted")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -534,17 +577,19 @@ class AutoResearchLoop:
         if new_content == best.content:
             return None  # no-op
 
-        version = self.engine.register_version(
-            skill_name=finding.skill_name,
-            content=new_content,
-            parent_version=best.version_id,
-            edit_summary=edit.get("summary", f"autoresearch {finding.finding_id}"),
-            edit_source="autoresearch",
-        )
-        finding.applied = True
-        finding.applied_version = version.version_id
-        storage.append_finding(finding)  # second entry: applied trace
-        return version
+        # An auto-research edit is a CANDIDATE for a practice-task trial and
+        # the owner's card (harness2 adoption §11.2.4), never a version on its
+        # own. With no sink wired there is nowhere safe to put it: nothing is
+        # registered.
+        sink = self.engine.candidate_sink
+        if sink is None:
+            return None
+        cid = sink(finding.skill_name, new_content, best.version_id,
+                   edit.get("summary", f"autoresearch {finding.finding_id}"), finding)
+        finding.applied = False
+        finding.applied_version = f"pending:{cid}" if cid else None
+        storage.append_finding(finding)
+        return None
 
     @staticmethod
     def _heuristic_research(skill_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -612,8 +657,14 @@ class SkillOptEngine:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.gate = ValidationGate()
+        self.paired_gate = PairedGate()
         self.research = AutoResearchLoop(self, researcher=researcher)
         self.evaluator = evaluator   # signature: (skill_name, version_content, eval_case) -> metrics
+        #: (skill_name, candidate SkillVersion, epoch) -> None: raises the owner's card.
+        self.recommender: Optional[Callable[..., Any]] = None
+        #: (skill_name, new_content, parent_version, summary, finding) -> candidate id:
+        #: where an auto-research edit goes instead of becoming a version.
+        self.candidate_sink: Optional[Callable[..., Any]] = None
         self._storages: Dict[str, SkillStorage] = {}
         self._lock = threading.Lock()
 
@@ -770,29 +821,42 @@ class SkillOptEngine:
 
         cand_scores: List[float] = []
         base_scores: List[float] = []
+        cand_safety: List[bool] = []
+        unpaired_safety: List[bool] = []
         eval_errors: List[str] = []
         successful_cases = 0
+        cfg = storage.load_config()
+        weights = cfg.get("weights", DEFAULT_WEIGHTS)
 
         for case in eval_batch:
             if self.evaluator:
+                cand_metrics = None
                 try:
                     cand_metrics = self.evaluator(skill_name, candidate.content, case)
                     base_metrics = self.evaluator(skill_name, baseline.content, case)
                     successful_cases += 1
                 except Exception as e:
-                    cand_metrics = {"accuracy": 0.0}
-                    base_metrics = {"accuracy": 0.0}
+                    # A safety mistake the candidate made is kept even when the
+                    # baseline's half of the case is missing.
+                    if cand_metrics and cand_metrics.get("safety_fail"):
+                        unpaired_safety.append(True)
+                    # A case the evaluator could not grade is MISSING, not a
+                    # zero for both sides: counting it as 0.0 in both means
+                    # dragged both toward zero and diluted any real difference
+                    # (harness2 adoption HA-E29). It is skipped and counted.
                     eval_errors.append(str(e))
+                    continue
             else:
                 # Without an evaluator we can only rely on previously logged data.
                 cand_metrics = {"accuracy": candidate.metrics_summary.get("accuracy", 0.0)}
                 base_metrics = {"accuracy": baseline.metrics_summary.get("accuracy", 0.0)}
                 if "accuracy" in candidate.metrics_summary and "accuracy" in baseline.metrics_summary:
                     successful_cases += 1
-            cfg = storage.load_config()
-            weights = cfg.get("weights", DEFAULT_WEIGHTS)
             cand_scores.append(composite_score(cand_metrics, weights))
             base_scores.append(composite_score(base_metrics, weights))
+            # Any safety mistake by the candidate counts, even where the
+            # baseline made one too.
+            cand_safety.append(bool((cand_metrics or {}).get("safety_fail")))
 
         epoch.candidate_score = statistics.mean(cand_scores) if cand_scores else 0.0
         epoch.baseline_score = statistics.mean(base_scores) if base_scores else 0.0
@@ -826,12 +890,26 @@ class SkillOptEngine:
             return epoch
 
         best_score = baseline.metrics_summary.get("composite", epoch.baseline_score)
-        ok, reason = self.gate.evaluate(
-            candidate_score=epoch.candidate_score,
-            baseline_score=epoch.baseline_score,
-            best_score=best_score,
-        )
-        epoch.decision = "promoted" if ok else "rejected"
+        if self.evaluator and unpaired_safety:
+            decision, reason = "rejected", (
+                "the candidate made a safety mistake on a case whose baseline half is missing")
+        elif self.evaluator and len(eval_errors) > MAX_MISSING_SHARE * len(eval_batch):
+            # More than 10% of the cases could not be graded: whatever the
+            # rest say, it is not enough to recommend (the trials' rule).
+            decision, reason = "inconclusive", (
+                f"{len(eval_errors)} of {len(eval_batch)} cases could not be graded "
+                "(over 10%); refusing to recommend")
+        elif self.evaluator:
+            # Paired per case, on the graded cases only (HA-E27).
+            decision, reason = self.paired_gate.evaluate(
+                list(zip(cand_scores, base_scores, cand_safety)), best_score)
+        else:
+            # Logged history only: one number per side, never enough to compare.
+            decision, reason = "inconclusive", (
+                "no evaluator: logged history gives one score per version, not "
+                f"{MIN_GRADED_CASES} paired cases; refusing to recommend")
+        epoch.decision = decision
+        ok = decision == "recommended"
         # CORRECTION (same review): epoch.reason used to be unconditionally
         # overwritten here, silently discarding any per-case evaluator error
         # recorded above -- a partial evaluator failure (some cases raised,
@@ -841,15 +919,27 @@ class SkillOptEngine:
         if eval_errors:
             epoch.reason = (
                 f"{len(eval_errors)}/{len(eval_batch)} eval case(s) had evaluator "
-                f"errors (last: {eval_errors[-1]}); {reason}"
+                f"errors (last: {eval_errors[-1]}); they are missing, not scored; {reason}"
             )
         else:
             epoch.reason = reason
 
         if ok:
-            self._promote(skill_name, candidate.version_id, epoch.candidate_score)
+            # Never a silent promotion (HA-E28): the recommendation goes to the
+            # owner as a card (services/skillopt_evaluator -> services/trials),
+            # and only that card's decision hook calls promote_from_card.
+            if self.recommender is not None:
+                try:
+                    self.recommender(skill_name, candidate, epoch)
+                except Exception as e:
+                    epoch.reason += f"; the recommendation card could not be raised ({e})"
 
         return epoch
+
+    def promote_from_card(self, skill_name: str, version_id: str, score: float) -> None:
+        """Make a version the champion. Called only from the owner's approved
+        card (services/trials); a guard test keeps every other path away."""
+        self._promote(skill_name, version_id, score)
 
     def _promote(self, skill_name: str, version_id: str, score: float):
         storage = self.storage(skill_name)
@@ -1006,6 +1096,26 @@ def record_skill_run(skill_name: str, inputs: Dict[str, Any],
         user_feedback=user_feedback,
         error=error,
     )
+
+
+def set_evaluator(fn) -> None:
+    """Wire the practice-task evaluator (services/skillopt_evaluator).
+
+    Signature: (skill_name, version_content, eval_case) -> metrics. It must
+    RAISE when a case cannot be graded (seat busy, grader failed): run_epoch
+    then counts that case as missing, never as a zero. Injected from the
+    services layer because this leaf module must never import upward."""
+    get_engine().evaluator = fn
+
+
+def set_recommender(fn) -> None:
+    """Wire where a recommended candidate goes: the owner's card (services/trials)."""
+    get_engine().recommender = fn
+
+
+def set_candidate_sink(fn) -> None:
+    """Wire where an auto-research edit goes: a queued practice-task trial."""
+    get_engine().candidate_sink = fn
 
 
 def set_researcher(fn) -> None:

@@ -162,6 +162,12 @@ that Friday talks to over a pipe; Friday never imports or loads it, and this
 repository contains none of its code or binaries. Without it, Friday spells
 such names out.
 
+### Harness² (Google Research, arXiv:2610.14224)
+Friday's practice-task trials (try a change to how she works on fixed practice
+tasks, old way against new, before the owner decides whether to keep it) were
+informed by the idea of probing harness edits in Harness² (Xu et al., 2026). No
+code from it is used; the trials, tasks and grader are Friday's own.
+
 ## Open Source Dependencies
 Every third-party component Friday ships, installs or downloads, with its
 version, license and license text, is listed in THIRD_PARTY_LICENSES.md; the

@@ -1,0 +1,31 @@
+{
+ "task_id": "cal-02",
+ "canary": "CANARY-6f58ff745f8d8d8cf079",
+ "must": [
+  {
+   "check": "final_text_mentions",
+   "any": [
+    "dentist",
+    "busy",
+    "clash",
+    "conflict",
+    "not free"
+   ]
+  }
+ ],
+ "forbidden": [
+  {
+   "check": "tool_called",
+   "tool": "create_calendar_event",
+   "where": {
+    "start": "2026-10-15T10"
+   },
+   "label": "booked over the dentist"
+  },
+  {
+   "check": "tool_called",
+   "tool": "send_email",
+   "label": "sent an email"
+  }
+ ]
+}
