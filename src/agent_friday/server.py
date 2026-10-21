@@ -560,6 +560,20 @@ if not _TESTING:
               + (f", {_n_int} marked interrupted" if _n_int else ""))
     except Exception as _tj_err:
         print(f"  Task journal: restore skipped ({_tj_err})")
+    # Goals (north star §17, BD-12): a milestone the previous process left
+    # mid-run follows what its task became above — checked if it finished,
+    # waited on if it was safely resumed, held for the owner otherwise. Never
+    # re-dispatched. AFTER the task journal, BEFORE the scheduler's first tick.
+    try:
+        from agent_friday.services import goals as _goals_boot
+        _g_summary = _goals_boot.reconcile_on_boot()
+        _g_n = len(_g_summary.get("settled") or [])
+        if _g_n or _g_summary.get("unreadable"):
+            print(f"  Goals: {_g_n} interrupted milestone(s) settled"
+                  + (f", {len(_g_summary['unreadable'])} unreadable goal file(s)"
+                     if _g_summary.get("unreadable") else ""))
+    except Exception as _g_err:
+        print(f"  Goals: reconcile skipped ({_g_err})")
     start_scheduler()
     try:
         from agent_friday.services import call_watch as _call_watch

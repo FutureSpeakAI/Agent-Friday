@@ -13,6 +13,10 @@ backend/API-first.
   POST   /api/goals/<goal_id>/transition          {"status": "..."} — state-machine move
   POST   /api/goals/<goal_id>/milestones          add a milestone
   POST   /api/goals/<goal_id>/milestones/<mid>/run   advance one attempt-cycle now
+  POST   /api/goals/<goal_id>/milestones/<mid>/restart  start a milestone a restart
+                                                   or a failed run stopped; needs
+                                                   {"confirm_unknown_outcome": true}
+                                                   from a click on Friday's own page
   GET    /api/goals/<goal_id>/receipts            signed proof-of-work receipts
   GET    /api/goals/review                        latest weekly review doc
   POST   /api/goals/review/run                    force-run the weekly review job now
@@ -67,7 +71,8 @@ def list_goals_route():
     status = request.args.get("status")
     if status and status not in _goals.STATUSES:
         return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)}"}), 400
-    return jsonify({"ok": True, "goals": _goals.list_goals(status=status)})
+    return jsonify({"ok": True, "goals": _goals.list_goals(status=status),
+                    "unreadable": _goals.unreadable_goals()})
 
 
 @goals_bp.route("/api/goals", methods=["POST"])
@@ -152,6 +157,27 @@ def run_milestone_route(goal_id, milestone_id):
         # goal/milestone not found, or goal not active — a request-shape problem
         return jsonify(public_result(result, "Couldn't run the milestone")), 404 if "not found" in (result.get("error") or "") else 409
     return jsonify(public_result(result, "Couldn't run the milestone")), 200
+
+
+@goals_bp.route("/api/goals/<goal_id>/milestones/<milestone_id>/restart", methods=["POST"])
+@login_required
+def restart_milestone_route(goal_id, milestone_id):
+    """Start again a milestone that a restart or a failed run stopped. Its
+    earlier attempt had begun, so a step such as a send may already have
+    happened: the confirmation must be a click on Friday's own page, never a
+    word or a program that names itself the owner (services/screen_click)."""
+    data = request.get_json(silent=True) or {}
+    confirm = data.get("confirm_unknown_outcome") is True
+    if confirm and not _screen_click.screen_session(request):
+        return jsonify({"ok": False, "error": "needs_screen_click",
+                        "message": "Starting this again is confirmed with a click in Friday's own window."}), 403
+    result = _goals.restart_milestone(goal_id, milestone_id, confirm_unknown_outcome=confirm)
+    if result.get("status") == "not_found":
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not result.get("ok"):
+        return jsonify({"ok": False, "status": result.get("status"),
+                        "message": message_only(result.get("error") or "")}), 409
+    return jsonify(public_result(result, "Couldn't start the milestone again")), 200
 
 
 @goals_bp.route("/api/goals/<goal_id>/receipts", methods=["GET"])

@@ -16,6 +16,7 @@ KINDS = {
     "task": ("Tasks", "tasks"), "calendar": ("Local calendar", "calendar"),
     "project": ("Projects", "projects"), "routine": ("Routines", "workflows"),
     "schedule": ("Schedules", "settings"), "activity": ("Local activity", "tasks"),
+    "goal": ("Goals", "system"),
 }
 
 
@@ -92,6 +93,50 @@ def _tasks(now):
             priority=90 if status in {"failed", "stalled", "interrupted"} else 80,
             expires=ended + 86400 if ended else None, state=status))
     return records, max((row["updated_at"] or 0 for row in records), default=None), "Reported task state from Friday's local registry; this is not an independent heartbeat check."
+
+
+#: Plain words for a goal's own status.
+_GOAL_STATUS_WORDS = {"proposed": "proposed", "approved": "approved, not started",
+                      "active": "active", "paused": "paused", "failed": "stopped after a failure"}
+
+
+def _goals(now):
+    """Every goal still open, with what it is doing or waiting on. Goals are
+    durable files (services/goals.py); a goal file Friday cannot read is
+    shown as such rather than left off."""
+    from agent_friday.services import goals
+    records = []
+    for goal in goals.list_goals()[:MAX_RECORDS]:
+        status = goal.get("status")
+        if status in goals.TERMINAL_STATUSES:
+            continue
+        milestones = [m for m in goal.get("milestones") or [] if isinstance(m, dict)]
+        done = sum(1 for m in milestones if m.get("status") == "done")
+        waits = [w for w in (goals.blocker_words(m) for m in milestones) if w]
+        running = any(m.get("status") == "in_progress" for m in milestones)
+        body = "Goal " + _GOAL_STATUS_WORDS.get(status, _text(status or "unknown", 30)) + ". "
+        if milestones:
+            body += f"{done} of {len(milestones)} milestones done."
+        if running:
+            body += " A milestone is being worked on now."
+        if waits:
+            body += " " + " ".join(waits[:2])
+        if any((m.get("blocker") or {}).get("type") in ("interrupted", "run_failed") for m in milestones):
+            state = "interrupted"
+        elif waits:
+            state = "waiting"
+        else:
+            state = "running" if running else (status or "unknown")
+        updated = goals._parse_ts(goal.get("updated_at"))
+        records.append(_record(goal.get("goal_id") or "", goal.get("title") or "Goal", body,
+            updated=updated, priority=90 if state in {"interrupted", "waiting"} else 60,
+            state=state))
+    for bad in goals.unreadable_goals()[:5]:
+        records.append(_record("unreadable:" + bad["goal_id"], "A goal Friday can't read",
+            "The file " + bad["file"] + " and its last good copy could not be read. "
+            "It was left as it is in Friday's folder.", priority=95, state="interrupted"))
+    stamp = max((r["updated_at"] or 0 for r in records), default=None)
+    return records, stamp, "Goals from Friday's goal files on this PC."
 
 
 def _calendar(now):
@@ -254,7 +299,8 @@ def _activity(now):
 
 
 _READERS = {"task": _tasks, "calendar": _calendar, "project": _projects,
-            "routine": _routines, "schedule": _schedules, "activity": _activity}
+            "routine": _routines, "schedule": _schedules, "activity": _activity,
+            "goal": _goals}
 
 
 def snapshot(now):
@@ -291,7 +337,7 @@ def card_for(kind, source_id, observations, *, prefix="auto", now):
                   updated_at=row["updated_at"])
     return {"id": automatic_id(kind, source_id, now) if prefix == "auto" else stable_id(prefix, kind, source_id), "title": row["title"], "body": row["body"],
             "type": kind, "origin": "tracked" if prefix == "track" else "automatic", "priority": row["priority"],
-            "actions": [{"label": "Open " + ("Activity" if kind in {"task", "activity"} else KINDS[kind][0]), **target}],
+            "actions": [{"label": "Open " + ("Activity" if kind in {"task", "activity"} else "Tasks" if kind == "goal" else KINDS[kind][0]), **target}],
             "source": source, "created_at": row["updated_at"] or now, "updated_at": row["updated_at"],
             "expires_at": row["expires_at"]}
 
@@ -299,7 +345,7 @@ def card_for(kind, source_id, observations, *, prefix="auto", now):
 def automatic(observations, now):
     """Small, deterministic workday candidates derived from actual observations."""
     cards = []
-    for kind, maximum in (("task", 3), ("calendar", 2), ("schedule", 2), ("routine", 1), ("project", 1), ("activity", 1)):
+    for kind, maximum in (("goal", 2), ("task", 3), ("calendar", 2), ("schedule", 2), ("routine", 1), ("project", 1), ("activity", 1)):
         rows = list(observations[kind]["records"].values())
         if kind == "calendar":
             rows = [r for r in rows if (r.get("expires_at") or 0) > now and r.get("starts_at", now) <= now + 86400]
@@ -313,6 +359,9 @@ def automatic(observations, now):
             rows.sort(key=lambda r: (-r["priority"], r.get("next_run") or float("inf"), r["id"]))
         elif kind == "routine":
             rows = [r for r in rows if r.get("available") and r.get("state") in {"failed", "error"}]
+        elif kind == "goal":
+            rows = [r for r in rows if r.get("state") in {"interrupted", "waiting", "running", "active"}]
+            rows.sort(key=lambda r: (-r["priority"], -(r["updated_at"] or 0), r["id"]))
         elif kind == "project":
             rows = [r for r in rows if (r["updated_at"] or 0) >= now - 7 * 86400]
             rows.sort(key=lambda r: -(r["updated_at"] or 0))

@@ -178,6 +178,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -266,42 +267,114 @@ def _is_overdue(due_value: Any, *, now: Optional[float] = None) -> bool:
 #  STORE — one JSON file per goal under ~/.friday/goals/
 # ═══════════════════════════════════════════════════════════════════════════
 
+#: The on-disk shape of a goal file. A file without the field is version 1
+#: as well (every goal written before the field existed has this shape).
+#: Fields this code does not know are kept on every rewrite, so a goal written
+#: by a newer Friday survives a rollback to this one.
+GOAL_SCHEMA_VERSION = 1
+
+#: This process's identity. A milestone's run record names the process that
+#: started it, so a run left by an earlier process (a restart, a crash, an
+#: update) is told apart from one this process is still running.
+BOOT_ID = uuid.uuid4().hex
+
+
 def _goal_path(goal_id: str) -> Path:
     return contained(GOALS_DIR, safe_name("%s.json" % goal_id, what="goal id"))
 
 
+def _backup_path(p: Path) -> Path:
+    return p.with_name(p.name + ".bak")
+
+
+def _load_goal(p: Path) -> Optional[Dict[str, Any]]:
+    """One goal file, or None when it is missing, torn or not a goal."""
+    try:
+        g = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(g, dict) or not isinstance(g.get("goal_id"), str):
+        return None
+    return g
+
+
 def _read_goal_file(goal_id: str) -> Optional[Dict[str, Any]]:
+    """The goal, from its file or, when that is torn or gone, from the copy
+    kept beside it at the previous write. A crash in the middle of a write
+    loses at most that one write, never the goal."""
     try:
         p = _goal_path(goal_id)
     except ValueError:
         return None
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception as e:
-        _log.error("goal file %s unreadable/corrupt: %s", goal_id, e)
-        return None
+    g = _load_goal(p) if p.exists() else None
+    if g is not None:
+        return g
+    bak = _backup_path(p)
+    g = _load_goal(bak) if bak.exists() else None
+    if g is not None:
+        _log.warning("goal file %s was unreadable; using its last good copy", goal_id)
+        return g
+    if p.exists():
+        _log.error("goal file %s unreadable/corrupt and no good copy beside it", goal_id)
+    return None
+
+
+def _fsync_write(path: Path, data: bytes) -> None:
+    with open(path, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
 def _write_goal_file(goal: Dict[str, Any]) -> None:
+    """Write-to-temp, fsync, then replace, keeping the previous good file as
+    `<id>.json.bak`. The replace is atomic on one filesystem; the fsync makes
+    the new bytes durable before the old ones are given up, so power loss
+    leaves either the old goal or the new one, never a torn one."""
     GOALS_DIR.mkdir(parents=True, exist_ok=True)
+    goal.setdefault("schema", GOAL_SCHEMA_VERSION)
     p = _goal_path(goal["goal_id"])
     tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(goal, indent=2, default=str), encoding="utf-8")
-    tmp.replace(p)  # atomic on the same filesystem — no partial-write corruption
+    _fsync_write(tmp, json.dumps(goal, indent=2, default=str).encode("utf-8"))
+    if p.exists() and _load_goal(p) is not None:
+        try:
+            _fsync_write(_backup_path(p), p.read_bytes())
+        except OSError as e:
+            _log.warning("goal %s: could not keep the previous copy: %s", goal["goal_id"], e)
+    os.replace(tmp, p)
+
+
+def _goal_ids_on_disk() -> List[str]:
+    ids = set()
+    for f in GOALS_DIR.glob("goal_*.json"):
+        ids.add(f.name[:-len(".json")])
+    for f in GOALS_DIR.glob("goal_*.json.bak"):
+        ids.add(f.name[:-len(".json.bak")])
+    return sorted(ids)
 
 
 def list_goals(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
     GOALS_DIR.mkdir(parents=True, exist_ok=True)
     out = []
-    for f in sorted(GOALS_DIR.glob("goal_*.json")):
-        try:
-            g = json.loads(f.read_text(encoding="utf-8"))
-        except Exception:
+    for gid in _goal_ids_on_disk():
+        g = _read_goal_file(gid)
+        if g is None:
             continue
         if status is None or g.get("status") == status:
             out.append(g)
+    return out
+
+
+def unreadable_goals() -> List[Dict[str, Any]]:
+    """Goals whose file and last good copy are both unreadable. They are
+    reported, never silently dropped: the owner is told a goal exists that
+    Friday cannot read, and the file stays where it is for repair."""
+    if not GOALS_DIR.exists():
+        return []
+    out = []
+    for gid in _goal_ids_on_disk():
+        if _read_goal_file(gid) is None:
+            out.append({"goal_id": gid, "file": "goals/%s.json" % gid})
     return out
 
 
@@ -869,23 +942,73 @@ def _default_executor(goal: Dict[str, Any], milestone: Dict[str, Any], *,
         # never fall back to spawning unscoped. See its own docstring.
         return {"ok": False, "text": "", "cost_mψ": 0,
                 "error": ExceptionText(f"could not safely dispatch milestone: {e}")}
+    # The goal points at its task from this moment on: if Friday stops while
+    # the task runs, the next start finds the task through this record and
+    # follows the task's own honest-resume verdict (see reconcile_on_boot).
+    _note_run(goal.get("goal_id"), milestone.get("milestone_id"), task_id=tid)
     timeout = int(goal.get("milestone_timeout_seconds") or DEFAULT_MILESTONE_TIMEOUT_SECONDS)
-    deadline = time.time() + timeout
-    terminal = {"complete", "completed", "completed_unverified", "failed",
-               "timeout", "error", "cancelled"}
+    return _await_task(tid, milestone, timeout)
+
+
+#: Task statuses that mean the task's work is over (task_journal.is_terminal
+#: covers the same spellings plus "interrupted", which is NOT over: it can
+#: still be resumed by the owner).
+_TASK_SUCCESS = ("complete", "completed", "completed_unverified", "done")
+_TASK_FAILED = ("failed", "error", "timeout", "cancelled", "killed", "superseded")
+
+
+def _task_outcome(status: Optional[str]) -> str:
+    """'running', 'done', 'failed', 'interrupted' or 'missing'."""
+    s = str(status or "")
+    if not s:
+        return "missing"
+    if s == "interrupted":
+        return "interrupted"
+    if s in _TASK_SUCCESS or s.startswith("complete"):
+        return "done"
+    if s in _TASK_FAILED or s.startswith("failed"):
+        return "failed"
+    return "running"
+
+
+def _await_task(tid: str, milestone: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    deadline = time.time() + max(1, int(timeout))
     while time.time() < deadline:
-        snap = _task_snapshot(tid) or {}
-        if snap.get("status") in terminal:
-            if snap.get("status") in ("failed", "error"):
-                return {"ok": False, "text": "", "cost_mψ": 0,
-                        "error": str(snap.get("result") or "agent task failed"),
-                        "task_id": tid}
-            return {"ok": True, "text": str(snap.get("result") or ""),
+        status, result = _task_status(tid)
+        outcome = _task_outcome(status)
+        if outcome == "failed":
+            return {"ok": False, "text": "", "cost_mψ": 0,
+                    "error": str(result or "agent task failed"), "task_id": tid}
+        if outcome == "done":
+            return {"ok": True, "text": str(result or ""),
                     "cost_mψ": int(milestone.get("cost_estimate_mψ") or DEFAULT_MILESTONE_COST_MΨ),
                     "task_id": tid}
+        if outcome == "interrupted":
+            return {"ok": False, "text": "", "cost_mψ": 0, "task_id": tid,
+                    "interrupted": True, "error": "the task was interrupted"}
         time.sleep(1)
     return {"ok": False, "text": "", "cost_mψ": 0,
             "error": "milestone execution timed out", "task_id": tid}
+
+
+def _task_status(tid: str) -> Tuple[Optional[str], str]:
+    """(status, result) of a background task: the live registry first, then
+    its journal on disk. (None, "") when neither knows the task."""
+    try:
+        from agent_friday.services.agent import _task_snapshot
+        snap = _task_snapshot(tid)
+        if isinstance(snap, dict) and snap.get("status"):
+            return snap.get("status"), str(snap.get("result") or "")
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import task_journal as tj
+        st = tj.read_state(tid)
+        if isinstance(st, dict) and st.get("status"):
+            return st.get("status"), str(st.get("result") or "")
+    except Exception:
+        pass
+    return None, ""
 
 
 _EXECUTOR: Callable[..., Dict[str, Any]] = _default_executor
@@ -970,6 +1093,19 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         return {"ok": False, "error": "milestone not found"}
     if milestone.get("status") == "done":
         return {"ok": True, "status": "already_done"}
+    # A milestone whose earlier attempt was cut short by a restart is never
+    # dispatched again from here: what that attempt did is decided by its
+    # task's honest-resume verdict, and a fresh start needs the owner's own
+    # restart_milestone(..., confirm_unknown_outcome=True).
+    if _orphaned_run(milestone):
+        _reconcile_milestone(goal_id, milestone_id, background=True)
+        return {"ok": False, "status": "interrupted",
+                "error": "this milestone was interrupted by a restart; "
+                         "it continues only through its task or your restart"}
+    if (milestone.get("blocker") or {}).get("type") in _OWNER_BLOCKERS:
+        return {"ok": False, "status": "interrupted", "blocker": milestone.get("blocker"),
+                "error": "this milestone waits for you: "
+                         + str((milestone.get("blocker") or {}).get("text") or "")}
 
     # The Q3/dissent gate MUST see the REAL instruction the executor will
     # run, not just the milestone's cosmetic name + the goal's cosmetic
@@ -1026,7 +1162,13 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         _append_receipt(goal_id, receipt)
         return {"ok": False, "status": "budget_exceeded", "receipt": receipt}
 
-    _update_milestone(goal_id, milestone_id, status="in_progress")
+    # The run record goes to disk BEFORE any work is dispatched: which process
+    # started it and when. The executor adds the task id the moment the task
+    # exists (_note_run). After a restart this is how the goal finds out what
+    # its last attempt did instead of guessing.
+    _update_milestone(goal_id, milestone_id, status="in_progress", blocker=None,
+                      run={"boot": BOOT_ID, "started_at": time.time(), "task_id": None,
+                           "reserved_mψ": cost_estimate})
 
     max_retries = int(goal.get("max_repair_retries", DEFAULT_MAX_REPAIR_RETRIES))
     base_attempts = int(milestone.get("attempts") or 0)
@@ -1056,8 +1198,21 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
             reserved_total += cost_estimate
         attempt += 1
         _update_milestone(goal_id, milestone_id, attempts=base_attempts + attempt)
+        # Each attempt is its own task: forget the previous attempt's task id
+        # first, so a restart in this attempt never adopts the last one's work.
+        _note_run(goal_id, milestone_id, task_id=None, attempt=attempt,
+                  attempt_started_at=time.time(), reserved_mψ=reserved_total)
         work = _execute_milestone_work(goal, milestone, critique_hint=critique_hint)
         total_cost += int(work.get("cost_mψ") or 0)
+        if work.get("task_id"):
+            _note_run(goal_id, milestone_id, task_id=work.get("task_id"))
+        if work.get("interrupted"):
+            # The task stopped without finishing (its process went away).
+            # Whether its last step happened is the task's question, not a
+            # reason to dispatch a new attempt over it.
+            # Its reservation stays counted as spent: what it used is unknown.
+            _reconcile_milestone(goal_id, milestone_id, background=True, force=True)
+            return {"ok": False, "status": "interrupted", "task_id": work.get("task_id")}
 
         if not work.get("ok"):
             last_text = ""
@@ -1081,7 +1236,8 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
                 payload={"draft_text": last_text[:4000]},
             )
             _update_milestone(goal_id, milestone_id, status="verifying",
-                             approval_id=appr.get("approval_id"), artifacts=[last_text[:2000]])
+                             approval_id=appr.get("approval_id"), artifacts=[last_text[:2000]],
+                             **_closed_run(goal_id, milestone_id))
             return {"ok": False, "status": "pending_manual_confirmation",
                     "approval_id": appr.get("approval_id")}
 
@@ -1093,7 +1249,8 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
             _release_goal_budget(goal_id, max(0, reserved_total - total_cost))
             now = _now_iso()
             _update_milestone(goal_id, milestone_id, status="done", done_at=now,
-                             verification=verdict, artifacts=[last_text[:2000]])
+                             verification=verdict, artifacts=[last_text[:2000]],
+                             **_closed_run(goal_id, milestone_id))
             receipt = _make_receipt(goal, milestone, kind="milestone_complete", verdict=verdict,
                                     cost_mψ=total_cost, artifact_text=last_text)
             _append_receipt(goal_id, receipt)
@@ -1120,7 +1277,8 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         f"verification failed after {attempt} attempt(s)"
     )
     _update_milestone(goal_id, milestone_id, status="escalated", verification=last_verdict,
-                     artifacts=[last_text[:2000]] if last_text else [])
+                     artifacts=[last_text[:2000]] if last_text else [],
+                     **_closed_run(goal_id, milestone_id))
     receipt = _make_receipt(goal, milestone, kind="verification_failed_escalated",
                             verdict=last_verdict, cost_mψ=total_cost, artifact_text=last_text,
                             note=escalation_reason)
@@ -1238,6 +1396,412 @@ def _on_confirm_decided(approval: Dict[str, Any]) -> None:
 #  additive edit to services/scheduler.py's _register_default_builtin_tasks)
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  SURVIVING A RESTART — the goal follows its task's honest-resume verdict
+# ═══════════════════════════════════════════════════════════════════════════
+# A milestone's work runs as one background task per attempt. When Friday
+# stops (a crash, a reboot, an update) the task journal marks the task
+# interrupted, and services/task_resume decides, with rules that already
+# exist, whether it may continue: a step whose outcome is unknown (a send, a
+# purchase, any write) is never repeated without the owner. The goal never
+# second-guesses that. On the next start it reads what its task became:
+#
+#   no task was ever started  -> nothing ran; the milestone is pending again
+#   the task finished         -> its result is CHECKED, never redone
+#   the task is running again -> (resumed safely) the goal waits for it
+#   the task failed           -> a typed blocker for the owner, nothing re-run
+#   the task is interrupted   -> a typed blocker that says why, nothing re-run;
+#                                if the owner resumes the task, the goal picks
+#                                its result up on the next tick (adopt_resumed)
+#
+# A fresh start of a milestone whose earlier attempt had begun is the owner's
+# call alone: restart_milestone(..., confirm_unknown_outcome=True).
+
+#: Blocker types that only the owner (or the task they resume) can clear.
+_OWNER_BLOCKERS = ("interrupted", "run_failed")
+
+
+def _note_run(goal_id: Optional[str], milestone_id: Optional[str], **fields) -> None:
+    """Merge fields into the milestone's run record, durably."""
+    if not goal_id or not milestone_id:
+        return
+
+    def _fn(goal):
+        m = _find_milestone(goal, milestone_id)
+        if m is not None:
+            run = dict(m.get("run") or {})
+            run.update(fields)
+            m["run"] = run
+        return goal
+    try:
+        _mutate_goal(goal_id, _fn)
+    except Exception as e:
+        _log.warning("goal %s: could not record its run: %s", goal_id, e)
+
+
+def _closed_run(goal_id: str, milestone_id: str) -> Dict[str, Any]:
+    """Fields that end the milestone's current run: it moves to last_run."""
+    goal = get_goal(goal_id) or {}
+    m = _find_milestone(goal, milestone_id) or {}
+    run = m.get("run")
+    out: Dict[str, Any] = {"run": None}
+    if run:
+        out["last_run"] = dict(run, ended_at=time.time())
+    return out
+
+
+def _run_key(goal_id: str, milestone_id: str) -> str:
+    return f"{goal_id}:{milestone_id}"
+
+
+def _orphaned_run(milestone: Dict[str, Any], goal_id: Optional[str] = None) -> bool:
+    """True when the milestone says work is under way but no attempt of this
+    process owns it: it was left by an earlier process."""
+    status = milestone.get("status")
+    if status == "verifying" and milestone.get("approval_id"):
+        return False                      # an owner card holds it, and survives
+    if status not in ("in_progress", "verifying"):
+        return False
+    if (milestone.get("run") or {}).get("boot") == BOOT_ID:
+        return False
+    if goal_id is not None:
+        with _RUNNING_MILESTONES_LOCK:
+            if _run_key(goal_id, milestone.get("milestone_id") or "") in _RUNNING_MILESTONES:
+                return False
+    return True
+
+
+def _find_task_for(goal_id: str, milestone_id: str, since: Optional[float]) -> Optional[str]:
+    """The newest task this attempt started, found by the description every
+    milestone task carries (see _default_executor). Covers the instant
+    between a task being spawned and its id reaching the goal file."""
+    want = f"goal:{goal_id}:milestone:{milestone_id}"
+    try:
+        from agent_friday.services import task_journal as tj
+        rows = tj.index_read()
+    except Exception:
+        return None
+    best, best_at = None, -1.0
+    floor = (float(since) - 5.0) if isinstance(since, (int, float)) else None
+    for tid, row in rows.items():
+        if not str(row.get("name") or "").startswith("Goal"):
+            continue
+        created = row.get("created")
+        created = float(created) if isinstance(created, (int, float)) else 0.0
+        if floor is not None and created and created < floor:
+            continue
+        st = tj.read_state(tid) or {}
+        if st.get("description") != want:
+            continue
+        if created >= best_at:
+            best, best_at = tid, created
+    return best
+
+
+def _block(goal_id: str, milestone_id: str, blocker: Dict[str, Any], *, note: str) -> None:
+    goal = get_goal(goal_id)
+    milestone = _find_milestone(goal or {}, milestone_id)
+    if goal is None or milestone is None:
+        return
+    blocker = dict(blocker, at=_now_iso())
+    _update_milestone(goal_id, milestone_id, status="blocked", blocker=blocker,
+                      **_closed_run(goal_id, milestone_id))
+    _append_receipt(goal_id, _make_receipt(goal, milestone, kind="milestone_interrupted",
+                                           verdict=None, cost_mψ=0, note=note))
+
+
+def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = True,
+                         force: bool = False) -> str:
+    """Settle one milestone whose run an earlier process left behind. Returns
+    what it became: 'pending', 'adopted', 'blocked' or 'unchanged'. Starts no
+    new work: the only thing it may start is the CHECK of a finished task's
+    result, or waiting on a task the honest-resume rules already resumed."""
+    goal = get_goal(goal_id)
+    m = _find_milestone(goal or {}, milestone_id)
+    if goal is None or m is None:
+        return "unchanged"
+    if not force and not _orphaned_run(m, goal_id):
+        return "unchanged"
+    run = dict(m.get("run") or {})
+    since = run.get("attempt_started_at") or run.get("started_at")
+    tid = run.get("task_id") or _find_task_for(goal_id, milestone_id, since)
+    name = m.get("name") or "this milestone"
+    if not tid:
+        _update_milestone(goal_id, milestone_id, status="pending", blocker=None,
+                          **_closed_run(goal_id, milestone_id))
+        _append_receipt(goal_id, _make_receipt(
+            goal, m, kind="milestone_interrupted_before_work", verdict=None, cost_mψ=0,
+            note="Friday stopped before this milestone's work started; nothing ran, "
+                 "so it runs again when it is next due."))
+        return "pending"
+    status, _result = _task_status(tid)
+    outcome = _task_outcome(status)
+    if outcome in ("running", "done"):
+        _update_milestone(goal_id, milestone_id, status="in_progress", blocker=None,
+                          run=dict(run, boot=BOOT_ID, task_id=tid, adopted=True))
+        _adopt(goal_id, milestone_id, tid, background=background)
+        return "adopted"
+    if outcome == "failed":
+        _block(goal_id, milestone_id, {
+            "type": "run_failed", "task_id": tid, "needs_confirmation": True,
+            "text": (f"Friday stopped while “{name}” was running, and its task then ended "
+                     "with an error. Nothing was run again. Look at the task in Tasks; "
+                     "start the milestone again only when you're ready.")},
+            note="interrupted by a restart; its task ended with an error; nothing was re-run")
+        return "blocked"
+    verdict: Dict[str, Any] = {}
+    if outcome == "interrupted":
+        try:
+            from agent_friday.services import task_resume
+            verdict = task_resume.resumability(tid) or {}
+        except Exception:
+            verdict = {}
+    reason = str(verdict.get("reason") or "").strip()
+    if outcome == "missing":
+        text = (f"Friday stopped while “{name}” was running, and its task's record is gone, "
+                "so I can't tell what it finished. Nothing was run again. Start the "
+                "milestone again only if you're sure nothing needs checking first.")
+    elif verdict.get("resumable") and verdict.get("needs_confirmation"):
+        text = (f"Friday stopped while “{name}” was running, and one of its steps may or "
+                f"may not have happened{(' (' + reason.rstrip('.') + ')') if reason else ''}. "
+                "Nothing was repeated. Check the task in Tasks: resume it there, or start "
+                "the milestone again.")
+    elif verdict.get("resumable"):
+        text = (f"Friday stopped while “{name}” was running. Its task can pick up where it "
+                "left off without repeating anything: press Resume on it in Tasks.")
+    else:
+        text = (f"Friday stopped while “{name}” was running, and its task can't pick up "
+                f"again{(' (' + reason.rstrip('.') + ')') if reason else ''}. Nothing was "
+                "repeated. You can start the milestone again.")
+    _block(goal_id, milestone_id, {
+        "type": "interrupted", "task_id": tid, "needs_confirmation": True,
+        "task_resumable": bool(verdict.get("resumable")),
+        "task_needs_confirmation": bool(verdict.get("needs_confirmation")),
+        "text": text},
+        note="interrupted by a restart; waiting for the owner; nothing was re-run")
+    return "blocked"
+
+
+def _adopt(goal_id: str, milestone_id: str, tid: str, *, background: bool) -> None:
+    if background:
+        threading.Thread(target=_adopt_job, args=(goal_id, milestone_id, tid),
+                         name=f"goal-adopt-{milestone_id}", daemon=True).start()
+    else:
+        _adopt_job(goal_id, milestone_id, tid)
+
+
+@visible_job('Goal milestone (picked up after a restart)', kind='goal_milestone', workspace='goals')
+def _adopt_job(goal_id: str, milestone_id: str, tid: str) -> Dict[str, Any]:
+    """Wait for a task the honest-resume rules let continue (or that had
+    already finished), then CHECK its result. Never dispatches the work."""
+    key = _run_key(goal_id, milestone_id)
+    with _RUNNING_MILESTONES_LOCK:
+        if key in _RUNNING_MILESTONES:
+            return {"ok": False, "status": "already_running"}
+        _RUNNING_MILESTONES.add(key)
+    try:
+        goal = get_goal(goal_id)
+        m = _find_milestone(goal or {}, milestone_id)
+        if goal is None or m is None:
+            return {"ok": False, "error": "milestone not found"}
+        timeout = int(goal.get("milestone_timeout_seconds") or DEFAULT_MILESTONE_TIMEOUT_SECONDS)
+        res = _await_task(tid, m, timeout)
+        if res.get("ok"):
+            return _finish_adopted(goal_id, milestone_id, res.get("text") or "", tid)
+        if res.get("interrupted"):
+            _reconcile_milestone(goal_id, milestone_id, background=False, force=True)
+            return {"ok": False, "status": "interrupted"}
+        _block(goal_id, milestone_id, {
+            "type": "run_failed", "task_id": tid, "needs_confirmation": True,
+            "text": (f"After a restart, the task for “{m.get('name')}” did not finish "
+                     f"({str(res.get('error') or 'no result')[:160]}). Nothing was run again.")},
+            note="picked up after a restart; its task did not finish; nothing was re-run")
+        return {"ok": False, "status": "blocked"}
+    finally:
+        with _RUNNING_MILESTONES_LOCK:
+            _RUNNING_MILESTONES.discard(key)
+
+
+def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dict[str, Any]:
+    """Judge a finished task's result exactly as a live attempt is judged,
+    without running the work again. A failed check escalates to the owner
+    (no repair attempt: a repair would be new work the owner did not see)."""
+    goal = get_goal(goal_id)
+    milestone = _find_milestone(goal or {}, milestone_id)
+    if goal is None or milestone is None:
+        return {"ok": False, "error": "milestone not found"}
+    criteria_text = (milestone.get("success_criteria") or goal.get("success_criteria") or "").strip()
+    action_description = (f"{milestone.get('name')} — {goal.get('description') or goal.get('title')}"
+                          + (f" — success criteria: {criteria_text}" if criteria_text else ""))
+    note = f"picked up after a restart: task {tid} had finished; its result was checked, not redone"
+    if (goal.get("verification_mode") or "auto") == "manual":
+        appr = approvals.create_approval(
+            kind="goal_milestone_confirm", subject_type="goal_milestone",
+            subject_id=f"{goal_id}:{milestone_id}:confirm",
+            title=f"Confirm milestone: {milestone.get('name')}",
+            description=text[:1000], action_description=action_description,
+            force_gate=True, cost_estimate_mψ=0, interest_model=_safe_interest_model(),
+            payload={"draft_text": text[:4000]},
+        )
+        _update_milestone(goal_id, milestone_id, status="verifying",
+                          approval_id=appr.get("approval_id"), artifacts=[text[:2000]],
+                          **_closed_run(goal_id, milestone_id))
+        return {"ok": False, "status": "pending_manual_confirmation",
+                "approval_id": appr.get("approval_id")}
+    verdict = qa_gates.evaluate_text(text, criteria_text, workspace=f"goal:{goal_id}")
+    if verdict.get("passed"):
+        _update_milestone(goal_id, milestone_id, status="done", done_at=_now_iso(),
+                          verification=verdict, artifacts=[text[:2000]],
+                          **_closed_run(goal_id, milestone_id))
+        receipt = _make_receipt(goal, milestone, kind="milestone_complete", verdict=verdict,
+                                cost_mψ=0, artifact_text=text, note=note)
+        _append_receipt(goal_id, receipt)
+        _log_work_entry(goal, milestone, verdict, 0, status="COMPLETED", receipt=receipt)
+        _maybe_complete_goal(goal_id)
+        return {"ok": True, "status": "done", "receipt": receipt}
+    _update_milestone(goal_id, milestone_id, status="escalated", verification=verdict,
+                      artifacts=[text[:2000]] if text else [],
+                      **_closed_run(goal_id, milestone_id))
+    receipt = _make_receipt(goal, milestone, kind="verification_failed_escalated",
+                            verdict=verdict, cost_mψ=0, artifact_text=text,
+                            note=note + "; the result did not pass its check")
+    _append_receipt(goal_id, receipt)
+    appr = approvals.create_approval(
+        kind="goal_milestone_escalation", subject_type="goal_milestone",
+        subject_id=f"{goal_id}:{milestone_id}:escalation",
+        title=f"After a restart, the result did not pass its check: {milestone.get('name')}",
+        description=(verdict or {}).get("critique", "") or "verification failed",
+        action_description=action_description,
+        force_gate=True, cost_estimate_mψ=0, interest_model=_safe_interest_model(),
+        payload={"last_text": text[:4000], "verdict": verdict},
+    )
+    _update_milestone(goal_id, milestone_id, approval_id=appr.get("approval_id"))
+    return {"ok": False, "status": "escalated", "approval_id": appr.get("approval_id")}
+
+
+def adopt_resumed(*, background: bool = True) -> List[Dict[str, Any]]:
+    """Every scheduler tick: settle runs an earlier process left, and pick up
+    the result of any interrupted task the owner has since resumed. Starts no
+    milestone work of its own."""
+    out: List[Dict[str, Any]] = []
+    for g in list_goals():
+        if g.get("status") in TERMINAL_STATUSES:
+            continue
+        gid = g.get("goal_id")
+        for m in g.get("milestones") or []:
+            mid = m.get("milestone_id")
+            if not mid:
+                continue
+            try:
+                if _orphaned_run(m, gid):
+                    out.append({"goal_id": gid, "milestone_id": mid,
+                                "result": _reconcile_milestone(gid, mid, background=background)})
+                    continue
+                blocker = m.get("blocker") or {}
+                tid = blocker.get("task_id")
+                if m.get("status") != "blocked" or blocker.get("type") != "interrupted" or not tid:
+                    continue
+                status, _r = _task_status(tid)
+                outcome = _task_outcome(status)
+                if outcome in ("running", "done"):
+                    _update_milestone(gid, mid, status="in_progress", blocker=None,
+                                      run={"boot": BOOT_ID, "task_id": tid, "adopted": True,
+                                           "started_at": time.time()})
+                    _adopt(gid, mid, tid, background=background)
+                    out.append({"goal_id": gid, "milestone_id": mid, "result": "adopted"})
+                elif outcome == "failed":
+                    _update_milestone(gid, mid, blocker=dict(
+                        blocker, type="run_failed",
+                        text=(f"The task for “{m.get('name')}” ended with an error. "
+                              "Nothing was run again.")))
+                    out.append({"goal_id": gid, "milestone_id": mid, "result": "blocked"})
+            except Exception as e:
+                _log.warning("goal %s milestone %s: could not settle after restart: %s", gid, mid, e)
+    return out
+
+
+def reconcile_on_boot(*, background: bool = True) -> Dict[str, Any]:
+    """Called once at server start, after the task journal has marked and
+    (where safe) resumed the previous process's tasks. Never raises."""
+    try:
+        settled = adopt_resumed(background=background)
+    except Exception as e:
+        _log.error("goal reconciliation failed: %s", e)
+        settled = []
+    unreadable = []
+    try:
+        unreadable = unreadable_goals()
+    except Exception:
+        pass
+    if settled or unreadable:
+        try:
+            import agent_friday.notifications_engine as ne
+            blocked = sum(1 for s in settled if s.get("result") == "blocked")
+            body = []
+            if settled:
+                body.append(f"{len(settled)} goal milestone(s) were mid-run when Friday stopped."
+                            + (f" {blocked} wait for you; nothing was repeated." if blocked else
+                               " Nothing was repeated."))
+            if unreadable:
+                body.append(f"{len(unreadable)} goal file(s) could not be read and were left "
+                            "untouched in the goals folder.")
+            ne.push(title="Goals after the restart", body=" ".join(body), priority="high",
+                    source="goals", kind="goals_after_restart", emitter="goals",
+                    dedupe_key="goals_after_restart:" + BOOT_ID,
+                    target={"workspace": "system", "tab": "tasks"})
+        except Exception:
+            pass
+    return {"settled": settled, "unreadable": unreadable}
+
+
+def restart_milestone(goal_id: str, milestone_id: str, *,
+                      confirm_unknown_outcome: bool = False) -> Dict[str, Any]:
+    """The owner starts a stopped milestone again. Its earlier attempt had
+    begun, so what that attempt did (a send, a purchase, a write) cannot be
+    known from here: the owner must say so explicitly. Refused while the
+    task can still finish on its own."""
+    goal = get_goal(goal_id)
+    m = _find_milestone(goal or {}, milestone_id)
+    if goal is None or m is None:
+        return {"ok": False, "status": "not_found", "error": "milestone not found"}
+    blocker = m.get("blocker") or {}
+    if m.get("status") != "blocked" or blocker.get("type") not in _OWNER_BLOCKERS:
+        return {"ok": False, "status": "not_stopped",
+                "error": "this milestone was not stopped by a restart or a failed run"}
+    tid = blocker.get("task_id")
+    if tid and _task_outcome(_task_status(tid)[0]) in ("running", "done"):
+        return {"ok": False, "status": "task_continuing",
+                "error": "its task is running again or has finished; Friday will check its result"}
+    if blocker.get("needs_confirmation", True) and not confirm_unknown_outcome:
+        return {"ok": False, "status": "needs_confirmation", "blocker": blocker,
+                "error": ("The earlier attempt had started, so some of its steps may already "
+                          "have happened. Confirm to start it again anyway.")}
+    _update_milestone(goal_id, milestone_id, status="pending", blocker=None,
+                      last_blocker=blocker)
+    _append_receipt(goal_id, _make_receipt(
+        goal, m, kind="milestone_restarted_by_owner", verdict=None, cost_mψ=0,
+        note=("owner started it again after a stop"
+              + ("; the owner confirmed the earlier attempt's outcome was unknown"
+                 if confirm_unknown_outcome else ""))))
+    result = run_milestone(goal_id, milestone_id)
+    return {"ok": True, "status": "restarted", "run": result}
+
+
+def blocker_words(milestone: Dict[str, Any]) -> str:
+    """One plain sentence about what a milestone waits on, or ""."""
+    b = milestone.get("blocker") or {}
+    if b.get("text"):
+        return str(b["text"])
+    status = milestone.get("status")
+    if status == "blocked" and milestone.get("approval_id"):
+        return f"“{milestone.get('name')}” waits for your answer on its card."
+    if status == "escalated":
+        return f"“{milestone.get('name')}” did not pass its check and waits for you."
+    if status == "verifying" and milestone.get("approval_id"):
+        return f"“{milestone.get('name')}” is done and waits for you to confirm it."
+    return ""
+
+
 def run_due_milestones(*, max_per_tick: int = 5) -> Dict[str, Any]:
     """Scan every ACTIVE goal for milestones whose `due` has passed and are
     still 'pending', advancing each one attempt-cycle. Bounded per tick so a
@@ -1247,6 +1811,11 @@ def run_due_milestones(*, max_per_tick: int = 5) -> Dict[str, Any]:
     way scheduler.py's own agent_prompt jobs already do their recurring
     work unattended."""
     processed: List[Dict[str, Any]] = []
+    try:
+        settled = adopt_resumed()
+    except Exception as e:
+        _log.warning("goal tick: settling interrupted milestones failed: %s", e)
+        settled = []
     now = time.time()
     for g in list_goals(status="active"):
         if len(processed) >= max_per_tick:
@@ -1262,9 +1831,10 @@ def run_due_milestones(*, max_per_tick: int = 5) -> Dict[str, Any]:
             result = run_milestone(g["goal_id"], m["milestone_id"])
             processed.append({"goal_id": g["goal_id"], "milestone_id": m["milestone_id"],
                               "status": result.get("status")})
-    return {"changed": bool(processed),
-            "summary": f"advanced {len(processed)} due milestone(s)",
-            "processed": processed}
+    return {"changed": bool(processed or settled),
+            "summary": f"advanced {len(processed)} due milestone(s)"
+                       + (f"; settled {len(settled)} after a restart" if settled else ""),
+            "processed": processed, "settled": settled}
 
 
 def latest_review() -> Optional[Dict[str, Any]]:
