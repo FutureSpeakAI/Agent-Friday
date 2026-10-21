@@ -16,14 +16,19 @@ from pathlib import Path
 import pytest
 
 from agent_friday.services import action_journal as journal
-from agent_friday.services import file_write_receipts as fwr
 from agent_friday.services import item_actions
+
+try:
+    from agent_friday.services import file_write_receipts as fwr
+except ImportError:  # the old tree a red run is aimed at: its assertions fail, not this import
+    fwr = None
 
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(journal, "_path", lambda: tmp_path / "receipts.jsonl")
-    monkeypatch.setattr(fwr, "backups_root", lambda: tmp_path / "backups")
+    if fwr is not None:
+        monkeypatch.setattr(fwr, "backups_root", lambda: tmp_path / "backups")
     monkeypatch.setattr(journal, "home_trash", lambda rid: tmp_path / "trash" / rid)
     journal.reset()
     yield tmp_path
@@ -210,7 +215,7 @@ def test_a_write_that_never_happened_has_nothing_to_undo(store):
     rec = fwr.begin(doc, "write", 3)
     doc.write_text("someone else's file", encoding="utf-8")
     res = fwr.undo(journal.get(rec["receipt_id"]))
-    assert res["status"] == "failed" and "did not happen" in res["summary"]
+    assert res["status"] == "failed" and "did not finish" in res["summary"]
     assert doc.read_text(encoding="utf-8") == "someone else's file"
 
 
