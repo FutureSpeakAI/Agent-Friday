@@ -157,7 +157,7 @@ def test_the_card_shows_the_whole_procedure_not_a_harmless_opening(client, skill
 
 def test_a_procedure_too_long_to_show_in_full_is_refused(client, skills, monkeypatch):
     from agent_friday.services import skill_import_review as review
-    monkeypatch.setattr(review, "MAX_REVIEW_BODY", 100)
+    monkeypatch.setattr(review, "MAX_REVIEW_BODY", 10)
     r = _upload(client, _zip())
     assert r.status_code == 400 and "can show in full" in r.get_json()["error"]
     assert not _installed(skills["root"])
@@ -173,3 +173,19 @@ def test_an_install_whose_target_changed_after_the_card_installs_nothing(client,
     assert (skills["root"] / "weekly-tidy" / "SKILL.md").read_text(encoding="utf-8").endswith("mine\n")
     assert approvals.get_approval(aid)["used_detail"]["ok"] is False
 
+
+
+def test_a_package_named_by_path_is_read_only_from_the_owners_folders(client, skills, tmp_path, monkeypatch):
+    from agent_friday.services import studio_files as sf
+    docs = tmp_path / "Documents"
+    docs.mkdir()
+    (docs / "weekly-tidy.zip").write_bytes(_zip())
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "weekly-tidy.zip").write_bytes(_zip())
+    monkeypatch.setattr(sf, "roots", lambda: {"documents": docs})
+    r = client.post("/api/skills/import", json={"path": str(elsewhere / "weekly-tidy.zip")})
+    assert r.status_code == 400 and "Nothing was installed" in r.get_json()["error"]
+    r = client.post("/api/skills/import", json={"path": str(docs / "weekly-tidy.zip")})
+    assert r.status_code == 202 and r.get_json()["status"] == "pending_review"
+    assert not _installed(skills["root"])

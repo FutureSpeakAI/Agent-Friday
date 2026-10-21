@@ -86,9 +86,12 @@ def api_skills_import():
                 _sh.rmtree(tmpd, ignore_errors=True)
         else:
             data = request.get_json(silent=True) or {}
-            src = data.get('path')
-            if not src:
+            if not data.get('path'):
                 return jsonify({"error": "provide a 'file' upload or JSON {path}"}), 400
+            src = _owner_folder_path(str(data.get('path')))
+            if src is None:
+                return jsonify({"status": "error", "error": "Nothing was installed: choose a skill package in "
+                                "Documents, Downloads, Desktop, Creations or Projects, or upload the file."}), 400
             res = _review.stage(src, name=data.get('name'))
         return jsonify({**res, "message": "Nothing is installed yet. A card shows what this skill would make "
                                           "Friday do; it installs when you approve that card on this PC's "
@@ -96,7 +99,27 @@ def api_skills_import():
     except _review.ImportRefused as e:
         return jsonify({"status": "error", "error": "Nothing was installed: %s." % e}), 400
     except Exception as e:
-        return api_error(e, "Couldn't read the skill package", 400, shape="bare")
+        from agent_friday.user_errors import log_failure
+        return jsonify({"status": "error", "error": "Couldn't read the skill package (error %s). Nothing was "
+                                                    "installed." % log_failure(e, "skill import")}), 400
+
+
+def _owner_folder_path(raw):
+    """A local skill package named by path, only inside one of the owner's own folders
+    (studio_files.roots: Documents, Downloads, Desktop, Creations, Projects), resolved
+    and contained there; None for any other place."""
+    import os
+    from agent_friday.paths import contained
+    from agent_friday.services import studio_files as _sf
+    try:
+        full = os.path.realpath(os.path.expanduser(raw))
+        for root in _sf.roots().values():
+            base = os.path.realpath(str(root))
+            if full.startswith(base + os.sep):
+                return contained(base, os.path.relpath(full, base))
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 @skills_bp.route('/api/skills/<name>/export', methods=['GET'])

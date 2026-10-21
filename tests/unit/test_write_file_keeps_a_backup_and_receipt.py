@@ -69,9 +69,9 @@ def test_the_receipt_and_backup_exist_before_the_write_and_survive_a_failed_one(
             fh.write("half")
         raise OSError("disk full")
 
-    monkeypatch.setattr(Path, "write_text", failing_write)
-    out = _write(doc, "new")
-    monkeypatch.undo()
+    with monkeypatch.context() as m:
+        m.setattr(Path, "write_text", failing_write)
+        out = _write(doc, "new")
     assert out.startswith("Write error")
     assert seen["receipt"] and seen["receipt"]["status"] == "pending" and seen["backup_ok"]
     rid = seen["receipt"]["receipt_id"]

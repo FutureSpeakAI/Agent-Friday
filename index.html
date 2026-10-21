@@ -15069,7 +15069,7 @@ function WorkspaceChat({
       if (d.customization !== undefined) setCust(wsId, d.customization);
       if (d.versions) setVersions(d.versions);
       if (d.applied) flash('✨ Applied: ' + (d.change || 'change'));
-      else if (d.proposal) flash('Friday proposes a change. Nothing changes until you press Apply.');
+      else if (d.proposal) flash(fridayName() + ' proposes a change. Nothing changes until you press Apply.');
     } catch (e) {
       if (!alive.current) return;
       setMustRefresh(true);

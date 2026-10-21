@@ -223,8 +223,10 @@ def _restore_bytes(path: Path, data_from: Path | bytes) -> None:
     os.close(fd)
     try:
         if isinstance(data_from, bytes):
+            # The owner's own file, put back byte for byte where it was.
+            import io
             with open(tmp, "wb") as fh:
-                fh.write(data_from)
+                shutil.copyfileobj(io.BytesIO(data_from), fh)
         else:
             shutil.copy2(data_from, tmp)
         os.replace(tmp, path)
