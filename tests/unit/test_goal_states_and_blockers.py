@@ -284,9 +284,98 @@ def test_no_progress_holds_across_runs_until_the_owner_says_go(monkeypatch):
     goals.run_due_milestones()
     goals.run_milestone(gid, mid)
     assert work.calls == before, "a stopped milestone ran again without the owner"
-    out = goals.restart_milestone(gid, mid)
-    assert out["ok"] is True, "a no-progress stop needs no unknown-outcome confirmation"
+    # Its attempts did run, so starting again is the owner's explicit yes.
+    refused = goals.restart_milestone(gid, mid)
+    assert refused["status"] == "needs_confirmation" and work.calls == before
+    out = goals.restart_milestone(gid, mid, confirm_unknown_outcome=True)
+    assert out["ok"] is True
     assert work.calls > before
+
+
+def test_a_new_plan_is_a_new_start_for_the_no_progress_check(monkeypatch):
+    calls = {"n": 0}
+
+    def verdict(content, intent, **kw):
+        calls["n"] += 1
+        ok = "relaxed" in intent
+        return {"status": "ok", "passed": ok, "score": 0.9 if ok else 0.3, "threshold": 0.7,
+                "critique": "" if ok else f"critique {calls['n']}", "suggestions": ""}
+    monkeypatch.setattr(goals.qa_gates, "evaluate_text", verdict)
+    goals.set_executor(_Work(texts=lambda n: "the very same synthetic draft"))
+    g = _goal()
+    gid, mid = g["goal_id"], _m(g["goal_id"])["milestone_id"]
+    assert goals.run_milestone(gid, mid)["status"] == "no_progress"
+    goals.update_goal(gid, {"success_criteria": "a relaxed synthetic draft"})
+    out = goals.restart_milestone(gid, mid, confirm_unknown_outcome=True)
+    assert out["run"]["status"] == "done", "the same output was stopped against the old plan's marks"
+
+
+def test_a_skipped_check_never_counts_as_verified(monkeypatch):
+    monkeypatch.setattr(goals.qa_gates, "evaluate_text", lambda c, i, **kw: {
+        "status": "skipped", "passed": True, "score": None, "critique": "", "suggestions": ""})
+    goals.set_executor(_Work())
+    g = _goal()
+    goals.run_milestone(g["goal_id"], _m(g["goal_id"])["milestone_id"])
+    assert goals.get_goal(g["goal_id"])["status"] == "met_unverified"
+
+
+def test_a_yes_to_a_card_raised_before_the_plan_changed_does_not_run_the_new_plan(monkeypatch):
+    _verdicts(monkeypatch)
+    work = _Work()
+    goals.set_executor(work)
+    g = _goal(approval_required=True)
+    gid, mid = g["goal_id"], _m(g["goal_id"])["milestone_id"]
+    out = goals.run_milestone(gid, mid)
+    time.sleep(0.01)
+    goals.update_goal(gid, {"success_criteria": "something else entirely"})
+    goals.approvals.decide(out["approval_id"], "approve", decided_by="owner")
+    assert work.calls == 0
+    assert _m(gid)["blocker"]["type"] == "approval_stale"
+
+
+def test_starting_again_after_a_refused_card_asks_on_a_new_card(monkeypatch):
+    _verdicts(monkeypatch)
+    work = _Work()
+    goals.set_executor(work)
+    g = _goal(approval_required=True)
+    gid, mid = g["goal_id"], _m(g["goal_id"])["milestone_id"]
+    first = goals.run_milestone(gid, mid)
+    goals.approvals.decide(first["approval_id"], "deny", decided_by="owner")
+    again = goals.restart_milestone(gid, mid)
+    assert again["ok"] is True and again["run"]["status"] == "pending_approval"
+    assert again["run"]["approval_id"] != first["approval_id"]
+    assert work.calls == 0
+
+
+def test_a_stop_tied_to_a_task_keeps_its_type_however_often(monkeypatch):
+    g = _goal()
+    gid, mid = g["goal_id"], _m(g["goal_id"])["milestone_id"]
+    for _ in range(4):
+        goals._block(gid, mid, goals.goal_state.blocker(
+            "needs_user_input", "synthetic", type="interrupted", task_id="task_x",
+            needs_confirmation=True), note="synthetic")
+    assert _m(gid)["blocker"]["type"] == "interrupted"
+
+
+def test_a_milestone_waiting_on_its_card_is_not_run_again(monkeypatch):
+    _verdicts(monkeypatch, passed=False)
+    work = _Work()
+    goals.set_executor(work)
+    g = _goal()
+    gid, mid = g["goal_id"], _m(g["goal_id"])["milestone_id"]
+    goals.run_milestone(gid, mid)
+    before = work.calls
+    assert goals.run_milestone(gid, mid)["status"] == "waits_on_card"
+    assert work.calls == before
+
+
+def test_a_hold_is_shown_but_does_not_move_the_goal(monkeypatch):
+    work = _Work()
+    goals.set_executor(work)
+    g = _goal(success_criteria="")
+    goals.run_due_milestones()
+    assert _m(g["goal_id"])["hold"]
+    assert goals.get_goal(g["goal_id"])["status"] == "active"
 
 
 def test_stopping_for_the_same_reason_again_and_again_is_no_progress():
