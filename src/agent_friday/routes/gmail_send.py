@@ -146,29 +146,57 @@ def _mailbox_call(fn):
             "Couldn't change the mailbox")), 502
 
 
+def _owner_mail_change(action, target, nothing_done):
+    """None when this is the owner's press and the action checkpoint let the change through,
+    else the 403 to answer (nothing has changed). services/mail_owner says why."""
+    from agent_friday.services import mail_owner
+    return (mail_owner.not_the_owners_press(request, nothing_done)
+            or mail_owner.held(action, target, nothing_done))
+
+
 @gmail_send_bp.route("/api/mail/labels", methods=["GET", "POST"])
 def mail_labels():
-    """GET ?account= : the account's own Gmail labels. POST {account_id, name}: create one."""
+    """GET ?account= : the account's own Gmail labels. POST {account_id, name}: create one
+    (the owner's press only, through the action checkpoint)."""
     if request.method == "GET":
         aid = (request.args.get("account") or "").strip()
         return _mailbox_call(lambda gm: {"labels": gm.list_labels(aid)})
     body = request.get_json(silent=True) or {}
-    return _mailbox_call(lambda gm: {"label": gm.create_label((body.get("account_id") or "").strip(), body.get("name") or "")})
+    aid = (body.get("account_id") or "").strip()
+    refused = _owner_mail_change("gmail:create_label", aid, "No label was made")
+    if refused:
+        return refused
+    return _mailbox_call(lambda gm: {"label": gm.create_label(aid, body.get("name") or "")})
 
 
 @gmail_send_bp.route("/api/mail/modify", methods=["POST"])
 def mail_modify():
     """Add/remove labels on conversations in Gmail. {account_id, thread_ids, add, remove}.
-    Returns `changed` (exactly what was different), which /api/mail/modify/undo reverses."""
+    Returns `changed` (exactly what was different), which /api/mail/modify/undo reverses.
+    The owner's press only, through the action checkpoint."""
+    from agent_friday.services import mail_owner
     b = request.get_json(silent=True) or {}
-    return _mailbox_call(lambda gm: gm.modify_threads((b.get("account_id") or "").strip(),
-                                                        b.get("thread_ids") or [], b.get("add") or [], b.get("remove") or []))
+    aid = (b.get("account_id") or "").strip()
+    tids = b.get("thread_ids") if isinstance(b.get("thread_ids"), list) else []
+    what = "+%s -%s" % (",".join(map(str, b.get("add") or [])), ",".join(map(str, b.get("remove") or [])))
+    refused = _owner_mail_change("gmail:label", mail_owner.gmail_target(aid, tids, what[:120]), "No label was changed")
+    if refused:
+        return refused
+    return _mailbox_call(lambda gm: gm.modify_threads(aid, tids, b.get("add") or [], b.get("remove") or []))
 
 
 @gmail_send_bp.route("/api/mail/modify/undo", methods=["POST"])
 def mail_modify_undo():
+    """Put back exactly what /api/mail/modify reported as `changed`. The owner's press only,
+    through the action checkpoint (putting Gmail back is a change to Gmail)."""
+    from agent_friday.services import mail_owner
     b = request.get_json(silent=True) or {}
-    return _mailbox_call(lambda gm: gm.undo((b.get("account_id") or "").strip(), b.get("changed") or {}))
+    aid = (b.get("account_id") or "").strip()
+    changed = b.get("changed") if isinstance(b.get("changed"), dict) else {}
+    refused = _owner_mail_change("gmail:undo", mail_owner.gmail_target(aid, list(changed)), "Nothing was put back")
+    if refused:
+        return refused
+    return _mailbox_call(lambda gm: gm.undo(aid, changed))
 
 
 @gmail_send_bp.route("/api/mail/signature")
@@ -224,8 +252,10 @@ def mail_original():
 def mail_unsubscribe():
     """GET ?account=&message= : how this list says to leave it (for the
     confirm dialog). POST {account_id, message_id, confirmed}: leave it.
-    The owner's own confirmed click acts; a request from Friday itself
-    becomes an approval card."""
+    The owner's confirmed press acts, after the action checkpoint; a body
+    that says it is the owner without the press changes nothing; a request
+    from Friday itself becomes an approval card."""
+    from agent_friday.services import mail_owner
     from agent_friday.services import mail_unsubscribe as mu
     if request.method == "GET":
         aid = (request.args.get("account") or "").strip()
@@ -235,13 +265,18 @@ def mail_unsubscribe():
     aid, mid = (b.get("account_id") or "").strip(), (b.get("message_id") or "").strip()
     if not aid or not mid:
         return jsonify({"status": "error", "message": "account_id and message_id are required"}), 400
-    from agent_friday.routes.messages import _is_owner
-    if not _is_owner(b.get("requested_by")):
-        return jsonify(public_result(_mp.propose("unsubscribe", [mid], [], requested_by=str(b.get("requested_by")),
+    actor = mail_owner.who(request, b.get("requested_by"))
+    if actor == mail_owner.CLAIMED:
+        return mail_owner.not_the_owners_press(request, "You were not unsubscribed")
+    if actor == mail_owner.FRIDAY:
+        return jsonify(public_result(_mp.propose("unsubscribe", [mid], [], requested_by=str(b.get("requested_by") or "friday"),
                                    reason=str(b.get("reason") or ""),
                                    extra={"account_id": aid, "message_id": mid, "sender": str(b.get("sender") or "")}), "Couldn't unsubscribe")), 202
     if not b.get("confirmed"):
         return jsonify({"status": "error", "message": "Unsubscribing tells the sender this address is read; confirm it first."}), 400
+    held = mail_owner.held("mail:unsubscribe", mail_owner.gmail_target(aid, [mid]), "You were not unsubscribed")
+    if held:
+        return held
     return _mailbox_call(lambda gm: mu.unsubscribe(aid, mid))
 
 
@@ -262,8 +297,14 @@ def mail_held_cancel(approval_id):
 
 @gmail_send_bp.route("/api/mail/draft", methods=["POST"])
 def mail_draft():
-    """Save a draft into the account's Gmail Drafts. Sends nothing."""
+    """Save a draft into the account's Gmail Drafts. Sends nothing. It writes into the
+    owner's Gmail, so it is the owner's press only, through the action checkpoint
+    (Friday's own draft_email tool goes through the checkpoint as a tool call)."""
     body = request.get_json(silent=True) or {}
+    refused = _owner_mail_change("gmail:save_draft", (body.get("account_id") or "").strip()[:120],
+                                 "No draft was saved")
+    if refused:
+        return refused
     try:
         out = _gs.save_draft(
             account_id=(body.get("account_id") or "").strip(),

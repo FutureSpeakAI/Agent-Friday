@@ -411,11 +411,20 @@ NOT_PERMITTED_TEXT = ("this account has not allowed Friday to change Gmail. Reco
 
 
 def _is_owner(actor):
-    """A click in Friday's own UI (requested_by "ui:<surface>") is the owner
-    acting. Anything else, including a request that does not say who made it,
-    is Friday acting, and waits for approval: the safe reading of silence."""
-    actor = str(actor or "").strip().lower()
-    return actor == "ui" or actor.startswith("ui:")
+    """The body SAYS the owner's click in Friday's page made it (requested_by
+    "ui:<surface>"). A label, not proof: who is changing the mailbox is
+    services/mail_owner.who, which takes the owner only from the owner's press."""
+    from agent_friday.services import mail_owner
+    return mail_owner.claims_owner(actor)
+
+
+def _reaches_gmail(action, items) -> bool:
+    """The change is made in Gmail itself as well as in Friday (so it passes the checkpoint)."""
+    from agent_friday.services import gmail_mailbox as gm
+    if action not in gm.ACTIONS and action not in gm.TRASH_ACTIONS:
+        return False
+    return any(isinstance(it, dict) and it.get("account_id") and it.get("thread_id")
+               for it in (items if isinstance(items, list) else []))
 
 
 def _apply_local(st, action, data):
@@ -467,9 +476,13 @@ def api_messages_action():
     only, and `gmail_status` says so; Trash, spam and importance exist only in
     Gmail, so there they are refused rather than faked.
 
-    The owner's own click (`requested_by` absent or "ui:...") runs at once,
-    with undo. A request from Friday itself to delete, archive, mute or
-    report spam becomes an approval card instead (202)."""
+    The owner's press in Friday's page runs at once, with undo; a change that
+    reaches Gmail passes the action checkpoint first (services/mail_owner). A
+    body that says "ui:..." without the press changes nothing and says so. A
+    request from Friday itself to delete, archive, mute or report spam becomes
+    an approval card instead (202); any other change it asks for is answered
+    with what it can ask for (403)."""
+    from agent_friday.services import mail_owner
     data = request.get_json(silent=True) or {}
     ids = [str(i).strip() for i in (data.get("ids") or []) if str(i).strip()]
     if not ids and str(data.get("id") or "").strip():
@@ -479,11 +492,25 @@ def api_messages_action():
         return jsonify({"status": "error", "message": "id(s) and action required"}), 400
     if action not in _LOCAL_ACTIONS:
         return jsonify(public_result({"status": "error", "message": f"unknown action {action}"}, "Couldn't change the message")), 400
-    if action in NEEDS_APPROVAL_FROM_FRIDAY and not _is_owner(data.get("requested_by")):
+    actor = mail_owner.who(request, data.get("requested_by"))
+    if actor == mail_owner.CLAIMED:
+        return mail_owner.not_the_owners_press(request, "Nothing was changed")
+    if actor == mail_owner.FRIDAY:
+        if action not in NEEDS_APPROVAL_FROM_FRIDAY:
+            return mail_owner.friday_cannot_ask("Nothing was changed")
         from agent_friday.services import mail_proposals
         return jsonify(public_result(mail_proposals.propose(action, ids, data.get("gmail") or [],
-                                              requested_by=str(data.get("requested_by")),
+                                              requested_by=str(data.get("requested_by") or "friday"),
                                               reason=str(data.get("reason") or "")), "Couldn't change the message")), 202
+    if _reaches_gmail(action, data.get("gmail")):
+        items = [it for it in data.get("gmail") if isinstance(it, dict)]
+        accounts = sorted({str(it.get("account_id") or "") for it in items if it.get("account_id")})
+        held = mail_owner.held("gmail:" + action,
+                               mail_owner.gmail_target(",".join(accounts), [it.get("thread_id") for it in items
+                                                                             if it.get("thread_id")]),
+                               "Nothing was changed")
+        if held:
+            return held
     out = run_action(action, ids, data.get("gmail"), data)
     return jsonify(public_result(out, "Couldn't change the message"))
 
@@ -564,9 +591,25 @@ def _sync_gmail(action, ids, items):
 def api_messages_restore():
     """Undo: put each message's local state back to exactly what an action
     reported as `before`, and in Gmail reverse exactly the `gmail_changes` it
-    reported. Body: {states: {id: {...}}, gmail_changes?: {...}}."""
+    reported. Body: {states: {id: {...}}, gmail_changes?: {...}}.
+
+    Only the owner's press puts mail back (it is a change like the one it
+    reverses); putting Gmail back passes the action checkpoint first."""
+    from agent_friday.services import mail_owner
     body = request.get_json(silent=True) or {}
+    refused = mail_owner.not_the_owners_press(request, "Nothing was put back")
+    if refused is not None:
+        return refused
     states = body.get("states") or {}
+    gchanges = body.get("gmail_changes") or {}
+    if gchanges:
+        if not isinstance(gchanges, dict):
+            return jsonify({"status": "error", "message": "gmail_changes must be what the change reported"}), 400
+        tids = [t for ch in gchanges.values() if isinstance(ch, dict) for t in ch]
+        held = mail_owner.held("gmail:undo", mail_owner.gmail_target(",".join(sorted(map(str, gchanges))), tids),
+                               "Nothing was put back")
+        if held:
+            return held
     gfailed = {}
     for aid, changed in (body.get("gmail_changes") or {}).items():
         try:
