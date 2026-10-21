@@ -50,9 +50,11 @@ only as a fallback for non-registry provider strings.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import logging
 import os
+import uuid
 import threading
 import time
 from pathlib import Path
@@ -590,6 +592,19 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
             entry["turn_id"] = _turn
     except Exception:
         pass
+    _call = _CALL.get()
+    if _call is not None:
+        # The field row belongs to one send: its call row (written when the
+        # send is sealed) carries the §29.6 fields for the whole payload.
+        entry["call_id"] = _call["call_id"]
+        if _call.get("model"):
+            entry["model"] = _call["model"]
+        _call["fields"] += 1
+        if action in ("redact", "drop", "block"):
+            _call["withheld"] += 1
+        _grant = _grant_marker(reason)
+        if _grant:
+            _call["grants"].add(_grant)
     verdict = "ALLOW" if action == "allow" else "BLOCK"
     # Structured log (survives pythonw / no-console launches). INFO for allow,
     # WARNING for a block so a withheld leak is visible even at a raised log level.
@@ -618,6 +633,153 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
                 f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
+
+
+# ── The egress ledger's call rows (north star §29.6, BD-15 slice P2) ─────────
+# Every send that leaves through seal_outbound or gate_text gets ONE call row
+# beside its field rows: destination, purpose, context-manifest id, the
+# sensitivity classes seen, how many fields were withheld, the grants that
+# let otherwise restricted content through, a SHA-256 fingerprint of exactly
+# what left, the time, the model and the result. The words themselves are
+# not in the ledger (§29.6: "does not store the full sensitive payload by
+# default"); the owner may choose to keep them, encrypted, in
+# services/sent_text_store, tied to the row by the same fingerprint.
+
+_CALL: contextvars.ContextVar = contextvars.ContextVar("egress_call", default=None)
+
+#: The largest payload the gate lets leave in one call (§26.7 payload-size
+#: check). Images travel inside model payloads, so this is generous; anything
+#: larger is refused and recorded, never truncated silently.
+MAX_PAYLOAD_BYTES = int(os.environ.get("FRIDAY_EGRESS_MAX_PAYLOAD_BYTES", str(48 * 1024 * 1024)))
+
+
+def _grant_marker(reason: str) -> str:
+    """A short, content-free name for the grant a field row relied on."""
+    r = str(reason or "")
+    if r.startswith("owner-released"):
+        return "owner released on its card"
+    if "file grant" in r or "file-grant" in r:
+        return "file permission"
+    if r.startswith("trusted-self-authored"):
+        return "Friday's own words"
+    return ""
+
+
+def _purpose() -> str:
+    """Why this send happened, in words that never quote the content."""
+    try:
+        from agent_friday.services import off_record as _off
+        if _off.active():
+            return "off the record"
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import turn_plan as _tp
+        if _tp.current_turn_id():
+            return "answering you"
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import task_journal as _tj
+        if _tj.current_task():
+            return "a background task"
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import visible_jobs as _vj
+        job = _vj.current_job() if hasattr(_vj, "current_job") else None
+        kind = getattr(job, "kind", None) if job is not None else None
+        if kind:
+            return "background work (%s)" % str(kind)[:40]
+    except Exception:
+        pass
+    return "background work"
+
+
+def _destination(provider: str) -> str:
+    """The host the provider sends to, when the registry knows it."""
+    try:
+        from urllib.parse import urlparse
+        from agent_friday.services.provider_registry import get_provider_registry
+        p = get_provider_registry().get_provider((provider or "").lower().strip())
+        url = (p or {}).get("base_url") if isinstance(p, dict) else getattr(p, "base_url", None)
+        host = urlparse(str(url or "")).hostname
+        if host:
+            return host
+    except Exception:
+        pass
+    return str(provider or "unknown")
+
+
+def _fingerprint(obj: Any) -> tuple:
+    """(sha256 hex, byte length, canonical text) of what leaves."""
+    if isinstance(obj, str):
+        text = obj
+    else:
+        text = json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str)
+    raw = text.encode("utf-8")
+    return hashlib.sha256(raw).hexdigest(), len(raw), text
+
+
+def _open_call(provider: str, model: str, via: str):
+    # A send made while another is being sealed (the judgment gate asking a
+    # cloud judge, say) is its own send with its own row.
+    return _CALL.set({"call_id": "eg-" + uuid.uuid4().hex[:16], "provider": provider,
+                      "model": model or "", "via": via, "fields": 0, "withheld": 0,
+                      "grants": set()})
+
+
+def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
+                note: str = "") -> dict | None:
+    """Write the call row and, if the owner chose it, keep the exact text."""
+    if token is None:
+        return None
+    call = _CALL.get()
+    _CALL.reset(token)
+    if call is None:
+        return None
+    entry: dict[str, Any] = {
+        "ts": time.time(), "kind": "call", "call_id": call["call_id"],
+        # Readers that only know field rows see a row they can skip by its
+        # action; it is never an "allow" or a "block" of a field.
+        "action": "call", "field": "(the whole send)", "tier": "CALL",
+        "provider": call["provider"], "model": call["model"], "via": call["via"],
+        "destination": _destination(call["provider"]), "purpose": _purpose(),
+        "fields": call["fields"], "withheld": call["withheld"],
+        "grants": sorted(call["grants"]), "result": result,
+    }
+    try:
+        from agent_friday.services import turn_plan as _tp
+        _turn = _tp.current_turn_id()
+        if _turn:
+            entry["turn_id"] = _turn
+    except Exception:
+        _turn = None
+    entry["manifest_id"] = "cm-" + (_turn or call["call_id"])
+    if note:
+        entry["note"] = note[:200]
+    if sent is not None:
+        sha, size, text = _fingerprint(sent)
+        entry["payload_sha256"] = sha
+        entry["bytes"] = size
+        # Kept only for sends recorded in the real ledger (a self-test probe
+        # writes to its own throwaway log and is never kept).
+        real = log_path is None or Path(log_path) == Path(_DEFAULT_LOG)
+        try:
+            from agent_friday.services import sent_text_store as _sts
+            entry["text_kept"] = bool(real and _sts.keep(sha, text, provider=call["provider"],
+                                                         model=call["model"], purpose=entry["purpose"]))
+        except Exception:
+            entry["text_kept"] = False
+    dest = log_path or _DEFAULT_LOG
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with _LOG_LOCK:
+            with open(dest, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+    return entry
 
 
 def record_binary_egress(provider: str, field: str, *, action: str,
@@ -652,6 +814,9 @@ def record_binary_egress(provider: str, field: str, *, action: str,
         "reason": reason,
         "bytes": int(byte_len or 0),
     }
+    _call = _CALL.get()
+    if _call is not None:
+        entry["call_id"] = _call["call_id"]
     _dlog.log(
         logging.INFO if action == "allow" else logging.WARNING,
         "%s provider=%s field=%s tier=UNCLASSIFIABLE bytes=%d (%s)",
@@ -1764,10 +1929,19 @@ def gate_text(text: str, provider: str, field: str = "prompt",
     if not _is_cloud(provider, model):
         return text
     tok = _DEST_CLOUD.set(True)
+    call_tok = _open_call(provider, model, "gate_text:" + str(field)[:40])
     try:
-        return _gate_text(text, provider, field, log_path)
+        out = _gate_text(text, provider, field, log_path)
+    except BaseException:
+        _close_call(call_tok, None, result="blocked", log_path=log_path)
+        raise
     finally:
         _DEST_CLOUD.reset(tok)
+    _c = _CALL.get()
+    _close_call(call_tok, out, result=("nothing_sent" if not out else
+                                       "sent_with_parts_withheld" if (_c and _c["withheld"]) else "sent"),
+                log_path=log_path)
+    return out
 
 
 def gate_worker_payload(
@@ -2004,6 +2178,34 @@ def seal_outbound(
     if not _is_cloud(provider, model):
         return payload  # stays on-device, no gating needed
 
+    _call_tok = _open_call(provider, model, "seal_outbound")
+    try:
+        _size = len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
+    except Exception:
+        _size = 0
+    if _size > MAX_PAYLOAD_BYTES:
+        # §26.7: a payload over the limit does not leave, and the refusal is
+        # recorded. Never truncated silently.
+        _log(provider, "*", Tier.SENSITIVE, "block",
+             "payload of %d bytes is over the %d-byte limit" % (_size, MAX_PAYLOAD_BYTES), log_path)
+        _close_call(_call_tok, None, result="blocked", log_path=log_path,
+                    note="payload over the size limit")
+        raise RuntimeError("Egress payload over the size limit; cloud send blocked.")
+    try:
+        _sealed = _seal_outbound_inner(payload, provider, log_path, pii_lookup, model)
+    except BaseException:
+        _close_call(_call_tok, None, result="blocked", log_path=log_path,
+                    note="the gate stopped this send")
+        raise
+    _c = _CALL.get()
+    _close_call(_call_tok, _sealed,
+                result="sent_with_parts_withheld" if (_c and _c["withheld"]) else "sent",
+                log_path=log_path)
+    return _sealed
+
+
+def _seal_outbound_inner(payload, provider, log_path, pii_lookup, model):
+    """seal_outbound's body: consent, scrub and the gate steps."""
     _unrestricted = is_unrestricted_cloud()
     if _unrestricted:
         # A14: the gate runs and records under unrestricted-cloud consent. The consent widens

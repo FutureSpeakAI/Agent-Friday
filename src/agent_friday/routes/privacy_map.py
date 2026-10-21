@@ -47,3 +47,36 @@ def privacy_map_left():
     except (TypeError, ValueError):
         limit = 200
     return jsonify({"ok": True, **privacy_map.left_rows(to, limit)})
+
+
+@privacy_map_bp.route("/api/privacy/map/sent/<sha>", methods=["GET"])
+def privacy_map_sent(sha):
+    """The exact text of one send, when the owner chose to keep it. Shown only
+    to a click in Friday's own window: the words are the most sensitive thing
+    the map can open."""
+    from agent_friday.services import screen_click
+    if not screen_click.screen_session(request):
+        return jsonify({"ok": False, "message": "This opens only from the privacy map in Friday's window."}), 403
+    data = privacy_map.sent_text(str(sha or "")[:64])
+    if not data:
+        return jsonify({"ok": False, "message": "That text was not kept (or its time is up)."}), 404
+    return jsonify({"ok": True, "sha": sha, **data})
+
+
+@privacy_map_bp.route("/api/privacy/sent-text", methods=["POST"])
+def privacy_sent_text_choice():
+    """Keep the exact text of sends, or stop (which deletes what was kept).
+    The owner's click in Friday's own window only."""
+    from agent_friday.services import screen_click, sent_text_store
+    if not request.is_json:
+        return jsonify({"ok": False, "message": "JSON body required"}), 415
+    if not screen_click.screen_session(request):
+        return jsonify({"ok": False, "message": "This changes only from the privacy map in Friday's window."}), 403
+    body = request.get_json(silent=True) or {}
+    keep = body.get("keep")
+    if not isinstance(keep, bool):
+        return jsonify({"ok": False, "message": "say keep: true or false"}), 400
+    days = body.get("days")
+    if days is not None and (not isinstance(days, int) or isinstance(days, bool)):
+        return jsonify({"ok": False, "message": "days must be a whole number"}), 400
+    return jsonify({"ok": True, **sent_text_store.set_keep(keep, days)})

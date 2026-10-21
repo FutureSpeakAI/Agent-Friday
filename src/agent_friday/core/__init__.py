@@ -2648,6 +2648,11 @@ DEFAULT_SETTINGS = {
     # ── Privacy / Context Log ──
     "context_logging_enabled": True,       # master switch for the append-only event log
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
+    # The exact text of each cloud send (services/sent_text_store, north star
+    # §29.6): OFF by default, so only a fingerprint is kept; the owner turns it
+    # on from Privacy & Data > Privacy map. Turning it off deletes what was kept.
+    "privacy_keep_sent_text": False,
+    "privacy_keep_sent_text_days": 30,
     # Full tool output kept on disk when a result is cut (services/tool_output.py);
     # day folders older than this are deleted. 0 = keep forever.
     "tool_output_retention_days": 7,

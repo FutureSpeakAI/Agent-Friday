@@ -296,6 +296,26 @@ def _enc(state: str, words: str):
 _PLAIN = _enc("no", "Readable on this disk (not encrypted yet).")
 
 
+def _enc_sent_text() -> tuple:
+    state, words = _enc_keys()
+    if state == "partly":
+        return "partly", ("Encrypted with Friday's key store, whose key is kept in Friday's folder "
+                          "without a passphrase. Nothing is written if encryption isn't available.")
+    if state == "yes":
+        return "yes", "Encrypted with Friday's key store. Nothing is written if encryption isn't available."
+    return state, words
+
+
+def _ret_sent_text() -> str:
+    try:
+        from agent_friday.services import sent_text_store as sts
+        if not sts.enabled():
+            return "Not kept: only a fingerprint of each send is recorded."
+        return f"Kept {sts.days()} days, then deleted; turning it off deletes it all."
+    except Exception:
+        return "I couldn't tell how long it is kept."
+
+
 # ── the stores ────────────────────────────────────────────────────────────────
 
 _PRIVACY_TAB = {"workspace": "settings", "tab": "privacy"}
@@ -415,6 +435,12 @@ def _stores() -> List[dict]:
          "ret": lambda: "Kept until you delete them, so the record stays whole. The activity record rotates at about 20 MB.",
          "controls": [_ctl("settings", "Friday's changes", "Every action with its receipt and undo.",
                            nav={"workspace": "system"}), _EXPORT_ALL]},
+        {"key": "sent_text", "name": "The exact text of what was sent (only if you chose it)",
+         "holds": ("The words of each send to the cloud, kept so a receipt can show exactly what left. "
+                   "Off unless you turn it on below; by default only a fingerprint is kept."),
+         "paths": ["vault/sent-text"], "enc": _enc_sent_text, "ret": _ret_sent_text,
+         "controls": [_ctl("delete", "Keep or delete it", "Turn keeping off to delete it all.",
+                           nav=dict(_PRIVACY_TAB, section="Privacy map"))]},
         {"key": "credentials", "name": "Keys and sign-ins",
          "holds": "Provider keys and account sign-ins Friday uses for you.",
          "paths": ["security", "providers", "google_accounts", "mcp_oauth", "platforms",
@@ -697,8 +723,25 @@ def _left(path: Path) -> dict:
             d = by.setdefault(provider, {"to": provider, "label": destination_words(provider),
                                          "sent": 0, "sent_with_parts_withheld": 0, "stopped": 0,
                                          "files_or_images": 0, "background": 0, "off_record": 0,
-                                         "unrestricted_calls": 0,
+                                         "unrestricted_calls": 0, "calls": 0, "calls_blocked": 0,
+                                         "texts_kept": 0, "models": [], "hosts": [],
                                          "first": None, "last": None, "fields": {}})
+            ts = _ts(row)
+            if row.get("kind") == "call":
+                # One row per send (§29.6): counted as a send, never as a field.
+                d["calls"] += 1
+                if row.get("result") == "blocked":
+                    d["calls_blocked"] += 1
+                if row.get("text_kept"):
+                    d["texts_kept"] += 1
+                for key, val in (("models", row.get("model")), ("hosts", row.get("destination"))):
+                    v = str(val or "")[:80]
+                    if v and v not in d[key] and len(d[key]) < 6:
+                        d[key].append(v)
+                if ts is not None:
+                    d["first"] = ts if d["first"] is None else min(d["first"], ts)
+                    d["last"] = ts if d["last"] is None else max(d["last"], ts)
+                continue
             action = row.get("action")
             if row.get("field") == "*":
                 # One summary row per call under "Cloud for everything" (A14):
@@ -717,7 +760,6 @@ def _left(path: Path) -> dict:
                 d["background"] += 1
             if row.get("reason") == "off the record":
                 d["off_record"] += 1
-            ts = _ts(row)
             if ts is not None:
                 d["first"] = ts if d["first"] is None else min(d["first"], ts)
                 d["last"] = ts if d["last"] is None else max(d["last"], ts)
@@ -753,8 +795,11 @@ def left_rows(to: str, limit: int = 200) -> dict:
     keep: deque = deque(maxlen=limit)
     for row in _rows(_egress_log(), tail=True):
         if str(row.get("provider") or "")[:80] == to:
-            keep.append({k: row.get(k) for k in ("ts", "provider", "field", "tier", "action",
-                                                 "reason", "turn_id", "bytes") if k in row})
+            keep.append({k: row.get(k) for k in ("ts", "kind", "provider", "field", "tier", "action",
+                                                 "reason", "turn_id", "bytes", "call_id", "model",
+                                                 "destination", "purpose", "manifest_id", "fields",
+                                                 "withheld", "grants", "payload_sha256", "result",
+                                                 "text_kept", "note") if k in row})
     rows = list(reversed(keep))
     for r in rows:
         if r.get("turn_id"):
@@ -896,6 +941,18 @@ def off_record() -> dict:
 
 # ── the whole map ─────────────────────────────────────────────────────────────
 
+def _sent_text_status() -> dict:
+    from agent_friday.services import sent_text_store as sts
+    st = sts.status()
+    return {k: st[k] for k in ("keep", "days", "kept", "explanation")}
+
+
+def sent_text(sha: str) -> Optional[dict]:
+    """The kept text of one send, by its fingerprint, if the owner chose to keep it."""
+    from agent_friday.services import sent_text_store as sts
+    return sts.read(sha)
+
+
 def view(now: Optional[float] = None) -> dict:
     now = now or time.time()
 
@@ -916,6 +973,7 @@ def view(now: Optional[float] = None) -> dict:
         "services": safe(services, {"readable": False, "connected": [], "remote": []}),
         "vault_access": safe(lambda: vault_access(now), {"allowed_7_days": None, "refused_7_days": None}),
         "off_record": safe(off_record, {"on": None, "words": OFF_RECORD_WORDS}),
+        "sent_text": safe(_sent_text_status, {"keep": None}),
         "export": _EXPORT_ALL, "erase": _ERASE_ALL,
         "honest_limit": HONEST_LIMIT,
     }

@@ -119,6 +119,9 @@ def _egress(turn_id: str) -> Dict[str, int]:
     from agent_friday.services import egress_gate as _eg
     counts: Dict[str, int] = {}
     for r in _tail_rows(_eg._DEFAULT_LOG, turn_id):
+        if r.get("kind") == "call":
+            counts["calls"] = counts.get("calls", 0) + 1   # one per send (the §29.6 row)
+            continue
         action = str(r.get("action") or "unknown")
         counts[action] = counts.get(action, 0) + 1
     return counts
