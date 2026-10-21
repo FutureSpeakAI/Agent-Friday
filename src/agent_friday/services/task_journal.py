@@ -591,7 +591,7 @@ def announce_interrupted(interrupted: Iterable[dict]) -> None:
         ne.push(
             title=f"{len(items)} task{'s were' if len(items) != 1 else ' was'} interrupted by a restart",
             body=(f"{names}{more}. Each record is complete up to its last checkpoint. "
-                  "Nothing was resumed: re-run any of them from the Task Tray."),
+                  "Nothing was resumed: re-run any of them from their task cards in System."),
             priority="high", source="task-journal", kind="tasks_interrupted",
             emitter="E28", dedupe_key="tasks_interrupted:" + _incident([t.get("task_id") for t in items]),
             target={"workspace": "system", "tab": "tasks"},

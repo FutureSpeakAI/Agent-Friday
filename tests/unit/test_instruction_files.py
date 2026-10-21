@@ -38,7 +38,10 @@ OLD_CONSTANT_SHA256 = "6c4f77dbf77812667d1d3d7dd9f5e9487ebeae142e76c5f107832d6a1
 #: HD1): "A new or edited skill takes effect on the next turn." became "...
 #: waits for a test and the owner's approval." because it no longer goes live
 #: at once. Every later change to a shipped section updates this pin.
-SHIPPED_CORE_SHA256 = "e4591f5ad1b23d532e96047c8eae478336e0f278bb00867443802f5c9a521d87"
+#: 85_task_delegation v2 (2026-10-20): "Started — track it in the task tray
+#: (bottom-right)." became "Started — follow it on its task card in System."
+#: because there is no task tray any more; a task's controls are on its card.
+SHIPPED_CORE_SHA256 = "df22ad66550b1b0534f567aba20e1feb2ad2efc278812f52a279737f60467761"
 
 UNLOCKED = "50_say_before_acting"
 LOCKED = "20_autonomous_operation"

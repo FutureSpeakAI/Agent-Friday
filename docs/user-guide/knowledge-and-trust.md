@@ -178,8 +178,7 @@ not call that a finding.
 ### Watching progress
 
 The run is a background task named "Research: " and your question. It appears
-in **Activity**, with its status and a link to its reasoning trace. (Friday's
-reply when the research starts still calls this the Task Tray.)
+in **Activity**, with its status and a link to its reasoning trace.
 
 ### After a restart
 

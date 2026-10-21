@@ -6,7 +6,7 @@ Invariants this module protects:
 - One task per local seat. A spawn aimed at a busy local seat is admitted as
   ``queued-for-seat`` and gets NO worker thread until promoted. The caller's
   live task record (not seat_queue's internal copy) carries the status and
-  the user-facing notice, so the task tray renders honest state directly.
+  the user-facing notice, so the task card renders honest state directly.
 - FIFO promotion. When a running task ends (completion or watchdog kill),
   the freed seat's oldest queued task is started via the injected thread
   factory — the same construction the dispatcher would have used at spawn.
