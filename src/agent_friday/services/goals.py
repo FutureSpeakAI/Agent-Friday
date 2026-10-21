@@ -2216,16 +2216,24 @@ def summary(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]
 
 
 def summaries(*, include_finished: bool = False) -> Dict[str, Any]:
+    """Every goal for the Goals card, and the ones that can't be read, in one
+    pass over the files (the card polls this)."""
     out = []
-    for g in list_goals():
-        if not include_finished and g.get("status") in ("archived",):
-            continue
-        out.append(summary(g))
+    unreadable = []
+    if GOALS_DIR.exists():
+        for gid in _goal_ids_on_disk():
+            g = _read_goal_file(gid)
+            if g is None:
+                unreadable.append({"goal_id": gid, "file": "goals/%s.json" % gid})
+                continue
+            if not include_finished and g.get("status") in ("archived",):
+                continue
+            out.append(summary(g))
     order = {s: i for i, s in enumerate(("needs_owner", "at_risk", "waiting", "active", "approved",
                                          "proposed", "paused", "failed", "met_unverified",
                                          "met_verified", "abandoned", "archived"))}
     out.sort(key=lambda s: (order.get(s["status"], 99), str(s["title"] or "")))
-    return {"goals": out, "unreadable": unreadable_goals()}
+    return {"goals": out, "unreadable": unreadable}
 
 
 def run_due_milestones(*, max_per_tick: int = 5) -> Dict[str, Any]:
