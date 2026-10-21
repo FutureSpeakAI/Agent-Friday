@@ -1151,7 +1151,9 @@ def _traced_turn(fn):
                     rv = fn(*args, **kwargs)
             finally:
                 _crew_runtime.HOST_ORIGIN.reset(_crew_token)
-            status = "complete"
+            # A turn that raised an approval card nobody has decided is waiting for the
+            # owner, never complete (NS-17.7-2), whatever else it did.
+            status = _turn_outcome(tid) if tid else "complete"
             if tid:
                 rv, reply_text = _attach_trace(rv, tid)
                 # chat() reports a crashed turn as a reply rather than raising.
@@ -1166,8 +1168,27 @@ def _traced_turn(fn):
     return _inner
 
 
+#: What a tool call that raised an approval card and stopped returns (services/agent).
+_CARD_RAISED = "[APPROVAL CARD RAISED]"
+
+
+def _turn_outcome(tid) -> str:
+    """'waiting_approval' when a tool call in this turn raised an approval card (the
+    action has not run; it waits for the owner), else 'complete'."""
+    from agent_friday.services import reasoning_trace as _rt
+    try:
+        live = _rt.live_trace(tid) or {}
+        for ev in live.get("events") or []:
+            if ev.get("type") == "tool_result" and str(ev.get("summary") or "").lstrip().startswith(_CARD_RAISED):
+                return "waiting_approval"
+    except Exception:  # noqa: BLE001 - an unreadable trace says nothing about a card
+        pass
+    return "complete"
+
+
 def _attach_trace(rv, tid):
-    """Add trace_id + reasoning_sources to a JSON turn response."""
+    """Add trace_id + reasoning_sources to a JSON turn response, and `outcome`:
+    'waiting_approval' when the turn raised a card that waits for the owner."""
     from agent_friday.services import reasoning_trace as _rt
     try:
         body, code = (rv[0], rv[1]) if isinstance(rv, tuple) else (rv, None)
@@ -1177,6 +1198,7 @@ def _attach_trace(rv, tid):
         live = _rt.live_trace(tid) or {}
         payload["trace_id"] = tid
         payload["reasoning_sources"] = [_rt.LABELS.get(s, s) for s in live.get("sources") or []]
+        payload["outcome"] = _turn_outcome(tid)
         reply = payload.get("response")
         if reply is None and isinstance(payload.get("friday_msg"), dict):
             reply = payload["friday_msg"].get("text")

@@ -58,7 +58,10 @@ _OFF_RECORD: set = set()
 BASE_DIR_OVERRIDE: Optional[Path] = None
 
 TERMINAL = ("complete", "completed", "completed_unverified", "done", "failed",
-            "error", "timeout", "cancelled", "interrupted", "superseded", "killed")
+            "error", "timeout", "cancelled", "interrupted", "superseded", "killed",
+            # The worker is finished and what is left is the owner's decision on a card
+            # (services/agent.settle_waiting_task): a restart must never run it again.
+            "waiting_approval", "declined")
 
 
 def is_terminal(status) -> bool:

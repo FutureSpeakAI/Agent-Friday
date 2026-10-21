@@ -31301,6 +31301,8 @@ const WF_STATUS = {
   unverified: { color: 'var(--fr-warn)', label: 'Finished · not verified' },
   waiting: { color: 'var(--fr-warn)', label: 'Needs your decision' },
   awaiting_approval: { color: 'var(--fr-warn)', label: 'Needs your decision' },
+  waiting_approval: { color: 'var(--fr-warn)', label: 'Needs your decision' },
+  declined: { color: '#f59e0b', label: 'Declined by you' },
   interrupted: { color: 'var(--fr-warn)', label: 'Interrupted' },
   queued: { color: 'var(--fr-cyan)', label: 'Queued' },
   finished: {
@@ -49800,7 +49802,17 @@ function TaskCard({
       color: '#f59e0b',
       fontWeight: 700
     }
-  }, "\u26A0"), "UNVERIFIED"), status === 'failed' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }, "\u26A0"), "UNVERIFIED"), status === 'waiting_approval' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#f59e0b',
+      fontWeight: 700
+    }
+  }, "\u23F3"), "NEEDS YOUR DECISION"), status === 'declined' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#888',
+      fontWeight: 700
+    }
+  }, "\u25A0"), "DECLINED"), status === 'failed' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#ff0080',
       fontWeight: 700
@@ -70549,7 +70561,7 @@ function App() {
           // Scheduled runs (heartbeat, job intelligence — description "scheduled:*")
           // must NOT post a "task complete" chat message every time; they surface
           // through the notifications panel's self-updating status entry instead.
-          const newlyDone = list.filter(t => !t.process && !(t.description || '').startsWith('scheduled:') && (t.status === 'complete' || t.status === 'completed_unverified' || t.status === 'failed') && !lastNotifiedComplete.has(t.task_id) && prev.some(p => p.task_id === t.task_id && p.status === 'running'));
+          const newlyDone = list.filter(t => !t.process && !(t.description || '').startsWith('scheduled:') && (t.status === 'complete' || t.status === 'completed_unverified' || t.status === 'failed' || t.status === 'waiting_approval') && !lastNotifiedComplete.has(t.task_id) && prev.some(p => p.task_id === t.task_id && p.status === 'running'));
           if (newlyDone.length > 0) {
             const seen = new Set(lastNotifiedComplete);
             newlyDone.forEach(t => seen.add(t.task_id));
@@ -70557,7 +70569,7 @@ function App() {
             newlyDone.forEach(t => {
               setChatMsgs(p => [...p, {
                 role: 'friday',
-                text: `✅ Task complete: **${t.name}**${t.result ? '\n\n' + fmtTaskResultForChat(t.result) : ''}`,
+                text: `${t.status === 'waiting_approval' ? '⏳ Task waiting for your decision (an approval card): ' : t.status === 'failed' ? '✕ Task did not finish: ' : '✅ Task complete: '}**${t.name}**${t.result ? '\n\n' + fmtTaskResultForChat(t.result) : ''}`,
                 time: new Date().toLocaleTimeString()
               }]);
             });
