@@ -163,6 +163,12 @@ def remember(conversation_id, offer: dict, message: str) -> None:
     cid = str(conversation_id or "").strip()
     if not cid:
         return
+    # North-star A16a: "choose where Friday thinks" is not a yes/no question.
+    # A spoken yes must never answer it (that would send the message to the
+    # cloud before a route is chosen), so it is not held for one.
+    if (offer or {}).get("kind") == "route_pick":
+        forget(cid)
+        return
     with _LOCK:
         for k in [k for k, v in _PENDING.items()
                   if time.time() - v["at"] > _OFFER_TTL_S]:

@@ -542,6 +542,9 @@ def begin(routing_mode: str = "", vault_passphrase: str = "") -> dict:
     from agent_friday.services.setup_complete import ROUTING_MODES, store_vault_passphrase
     with _LOCK:
         st = load_state()
+        # Only the consent screen's own first finish records its route as a
+        # pick (A16a); calling begin again (a reload, a script) cannot.
+        first_finish = not st.get("consent_done") and not st.get("completed")
         if vault_passphrase:
             store_vault_passphrase(vault_passphrase)
         if routing_mode in ROUTING_MODES:
@@ -553,7 +556,7 @@ def begin(routing_mode: str = "", vault_passphrase: str = "") -> dict:
     # as a routing choice, not as cloud consent ("consent_screen" is not one of
     # privacy/cloud_consent.ROUTING_CONSENT_VIAS); the privacy answer later in
     # the chat may change it.
-    if routing_mode in ROUTING_MODES:
+    if routing_mode in ROUTING_MODES and first_finish:
         try:
             from agent_friday.services.setup_complete import save_routing_answer
             save_routing_answer(routing_mode, via="consent_screen")

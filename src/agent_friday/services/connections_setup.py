@@ -337,6 +337,34 @@ def _test_mcp(name: str) -> dict:
                 "Check the address or command, then test again.")
 
 
+def _route_unpicked() -> bool:
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        return bool(route_unpicked())
+    except Exception:
+        return False
+
+
+def _unpicked_cloud_endpoint(name: str) -> bool:
+    """A custom endpoint on the internet, while no route is picked (A16a)."""
+    if not _route_unpicked():
+        return False
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        from agent_friday.routing.provider_descriptors import is_private_host
+        prov = get_provider_registry().get_provider(name) or {}
+        return not is_private_host(prov.get("base_url") or "")
+    except Exception:
+        return True
+
+
+def _not_checked_unpicked() -> dict:
+    return _out(UNKNOWN, "Not checked yet: nothing goes to the cloud until you "
+                         "choose where Friday thinks.",
+                "Choose where Friday thinks in Settings > Models; the key stays saved "
+                "and is checked then.")
+
+
 def test(item_id: str) -> dict:
     """Test one checklist item. Never raises; never returns a key."""
     try:
@@ -348,7 +376,14 @@ def test(item_id: str) -> dict:
             return _test_openai_endpoint(LMSTUDIO_PROVIDER, "LM Studio")
         if item_id.startswith("custom:"):
             name = item_id.split(":", 1)[1]
+            if _unpicked_cloud_endpoint(name):
+                return _not_checked_unpicked()
             return _test_openai_endpoint(name, name)
+        # North-star A16a: before a route is picked a key check sends nothing
+        # to the cloud. The key stays saved and is checked once a route is chosen.
+        if item_id.startswith("provider:") or item_id == "google":
+            if _route_unpicked():
+                return _not_checked_unpicked()
         if item_id == "provider:brave":
             return _test_brave()
         if item_id == "provider:firecrawl":
@@ -444,10 +479,11 @@ def save_ollama(url: str) -> dict:
     from agent_friday.services.provider_registry import get_provider_registry
     get_provider_registry().update_provider("ollama-local", {"base_url": url, "enabled": True})
     try:
-        from agent_friday.core import _load_settings, _save_settings
-        block = dict((_load_settings() or {}).get("model_routing") or {})
-        block["ollama_url"] = url
-        _save_settings({"model_routing": block})
+        from agent_friday.core import _save_settings
+        # Only the delta. _load_settings() carries the never-persist routing
+        # overlay (offline, or North-star A16a's route-not-chosen), and saving
+        # its whole block would pin local_only / no-fallback to disk.
+        _save_settings({"model_routing": {"ollama_url": url}})
     except Exception as e:  # noqa: BLE001
         _log.debug("ollama_url not saved to settings: %s", type(e).__name__)
     return {"saved": True, "base_url": url}

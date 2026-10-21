@@ -2454,11 +2454,19 @@ def _resolve_voice_engine(settings=None):
     # cloud_ok needs a key that actually AUTHENTICATES (cheap cached REST
     # probe), not merely a non-empty string — a revoked key must route the
     # mic to local voice instead of a doomed /ws/live session.
-    try:
-        _ki = resolve_gemini_key()
-        cloud_ok = bool(_ki.get("valid")) and not net.get("offline")
-    except Exception:
-        cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
+    # Local-only is decided first, so a local-only install (and, North-star
+    # A16a, an install whose route is not chosen yet) never probes Google with
+    # the key at all.
+    _local_only_first = str(((settings.get('model_routing') or {})
+                             .get('mode')) or '').strip().lower() == 'local_only'
+    if _local_only_first:
+        cloud_ok = False
+    else:
+        try:
+            _ki = resolve_gemini_key()
+            cloud_ok = bool(_ki.get("valid")) and not net.get("offline")
+        except Exception:
+            cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
     # Local-only is an absolute override, the same guarantee routes/chat.py's
     # vision path already enforces — it
     # must win regardless of `voice_engine` preference or whether the Gemini

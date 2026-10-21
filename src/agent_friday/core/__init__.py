@@ -3852,9 +3852,27 @@ def install_choices_state() -> dict:
         return {}
 
 
+def install_record_unreadable() -> bool:
+    """True when the install-origin record exists but cannot be read as one
+    (damaged, half-written, not a JSON object). Such a record is never
+    overwritten: what it said is unknown, so nothing may be decided over it."""
+    p = install_origin_file()
+    try:
+        if not p.exists():
+            return False
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return not isinstance(data, dict)
+    except Exception:
+        return True
+
+
 def update_install_choices_state(**fields) -> None:
-    """Merge `fields` into the install-origin record (atomic replace)."""
+    """Merge `fields` into the install-origin record (atomic replace).
+
+    An unreadable record is left as it is (install_record_unreadable)."""
     with _INSTALL_ORIGIN_LOCK:
+        if install_record_unreadable():
+            return
         cur = install_choices_state()
         known = _INSTALL_ORIGIN_CACHE.get(str(install_origin_file()))
         if known and "install" not in cur:
@@ -3882,6 +3900,12 @@ def install_origin() -> str:
     if got in (NEW_INSTALL, EXISTING_INSTALL):
         _INSTALL_ORIGIN_CACHE[key] = got
         return got
+    if install_record_unreadable():
+        # Neither decided again nor overwritten. EXISTING keeps the person's
+        # stored choices (A17); route_pick_pending separately keeps an
+        # unpicked route local-only (A16a), so this never opens the cloud.
+        _INSTALL_ORIGIN_CACHE[key] = EXISTING_INSTALL
+        return EXISTING_INSTALL
     home = Path(FRIDAY_DIR)
     fresh = not (Path(SETTINGS_FILE).exists() or (home / ".setup_complete").exists()
                  or (home / "costs.db").exists() or (home / "config.yaml").exists())
@@ -3914,16 +3938,23 @@ def route_pick_pending(settings=None) -> bool:
     not a pick. An install that already existed is never pending: its stored
     route is its choice."""
     try:
-        if install_origin() != NEW_INSTALL:
+        unreadable = install_record_unreadable()
+        if install_origin() != NEW_INSTALL and not unreadable:
             return False
         s = _load_settings_raw() if settings is None else settings
         mr = (s or {}).get("model_routing")
         mr = mr if isinstance(mr, dict) else {}
         mode = str(mr.get("mode") or "").strip().lower()
         chosen = str(mr.get("mode_chosen") or "").strip().lower()
+        via = str(mr.get("mode_chosen_via") or "")
         if not mode or chosen != mode:
+            # A damaged record cannot say this install existed before A16, so
+            # a route with no recorded pick stays local-only (fails closed).
             return True
-        return str(mr.get("mode_chosen_via") or "") == ROUTE_KEPT_VIA
+        if via == ROUTE_KEPT_VIA:
+            return True
+        # Only a pick the owner verifiably made ends it (A16a).
+        return via not in ROUTE_PICK_VIAS
     except Exception:
         return False
 
@@ -4184,6 +4215,13 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
 #: a pick, not cloud consent.
 ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified",
                        "consent_screen")
+
+#: The vias that end a new install's route-not-chosen state (A16, A16a): a
+#: pick the owner verifiably made on a screen or at the terminal question.
+#: "unverified" (a routing change whose request could not be tied to an
+#: owner's screen) is recorded but does not end it; "migration" only ever
+#: runs on an install that already existed.
+ROUTE_PICK_VIAS = ("settings", "setup", "posture", "consent_screen", "migration")
 
 
 def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,

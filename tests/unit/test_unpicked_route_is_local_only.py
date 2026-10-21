@@ -184,6 +184,161 @@ def test_an_existing_install_keeps_its_stored_route(real_settings):
     assert tok is not None
 
 
+# ── nothing else reaches the cloud before a pick either ─────────────────────
+
+def _never(*a, **k):
+    raise AssertionError("a request reached the cloud before a route was chosen")
+
+
+def test_the_model_catalog_is_not_fetched_from_the_cloud(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    from agent_friday.services import hosted_catalog as hc
+    monkeypatch.setattr(hc, "fetch_anthropic_models", _never)
+    monkeypatch.setattr(hc, "fetch_openrouter_models", _never)
+    monkeypatch.setattr(hc, "_resolve_api_key", lambda name: "sk-test")  # pragma: allowlist secret
+    for name, res in hc.refresh_all().items():
+        assert res["status"] != "refreshed", name
+        assert "choose where Friday thinks" in res.get("error", ""), name
+
+
+def test_a_cloud_providers_model_list_is_not_fetched(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    from agent_friday.services import model_discovery as md
+    import requests
+    monkeypatch.setattr(requests, "get", _never)
+    prov = {"name": "openai", "type": "openai-compatible", "base_url": "https://api.openai.com/v1",
+            "discovery": {"mode": "api"}, "auth": {"type": "env_var"}}
+    res = md.refresh_models(prov)
+    assert res["ok"] is False and "choose where Friday thinks" in res.get("error", "")
+
+
+def test_the_gemini_voice_key_is_not_probed(real_settings):
+    real_settings._load_settings_raw()
+    from agent_friday.services import voice_engine as ve
+    ok, detail = ve.validate_gemini_key("AIza-test", force=True)  # pragma: allowlist secret
+    assert "choose where Friday thinks" in detail
+
+
+def test_voice_decides_local_only_before_probing_the_key():
+    src = (REPO / "src/agent_friday/routes/voice.py").read_text(encoding="utf-8")
+    i_first = src.find("_local_only_first")
+    i_probe = src.find("_ki = resolve_gemini_key()")
+    assert 0 < i_first < i_probe
+
+
+def test_pressing_test_on_a_cloud_key_sends_nothing(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    from agent_friday.services import connections_setup as cs
+    from agent_friday import setup_wizard as sw
+    from agent_friday import cli
+    monkeypatch.setattr(cs, "_test_provider", _never)
+    monkeypatch.setattr(cs, "_test_brave", _never)
+    monkeypatch.setattr(cs, "_test_google", _never)
+    for item in ("provider:anthropic", "provider:brave", "google"):
+        out = cs.test(item)
+        assert out["state"] == cs.UNKNOWN and "choose where Friday thinks" in out["text"], item
+    for fn in (sw._validate_anthropic, sw._validate_gemini,
+               cli._validate_anthropic_key, cli._validate_gemini_key):
+        ok, msg = fn("sk-test")  # pragma: allowlist secret
+        assert ok is None and "choose where Friday thinks" in msg, fn.__name__
+
+
+def test_a_deep_provider_check_sends_nothing(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    from agent_friday.services import provider_health as ph
+    monkeypatch.setattr(ph, "inference_probe", _never)
+    import requests
+    monkeypatch.setattr(requests, "get", _never)
+    monkeypatch.setattr(requests, "post", _never)
+    provs = {
+        "anthropic": {"name": "anthropic", "type": "anthropic",
+                      "base_url": "https://api.anthropic.com", "auth": {"type": "env_var"}},
+        "kie": {"name": "kie", "type": "kie", "base_url": "https://api.kie.ai",
+                "auth": {"type": "env_var"}},
+        "openai": {"name": "openai", "type": "openai-compatible",
+                   "base_url": "https://api.openai.com/v1", "auth": {"type": "env_var"}},
+    }
+    monkeypatch.setattr(ph, "_provider", lambda name: provs.get(name))
+    monkeypatch.setattr(ph, "_key_state", lambda prov: "ok")
+    for name in provs:
+        res = ph.check_provider(name, deep=True, use_cache=False)
+        assert res.get("status") == "not_checked", (name, res)
+
+
+def test_saving_the_ollama_address_does_not_save_the_overlay(real_settings, monkeypatch):
+    core = real_settings
+    core._load_settings_raw()
+    from agent_friday.services import connections_setup as cs
+    from agent_friday.services import provider_registry as pr
+    monkeypatch.setattr(pr.get_provider_registry(), "update_provider", lambda *a, **k: None)
+    cs.save_ollama("http://localhost:11434")
+    mr = json.loads(core.SETTINGS_FILE.read_text(encoding="utf-8"))["model_routing"]
+    assert mr.get("ollama_url") == "http://localhost:11434"
+    assert mr.get("mode") != "local_only" and mr.get("fallback_to_cloud") is not False, \
+        "the never-persist local-only overlay was written to disk"
+
+
+def test_a_damaged_install_record_is_kept_and_stays_local_only(real_settings):
+    core = real_settings
+    core._load_settings_raw()                                   # a new install, unpicked
+    core._INSTALL_ORIGIN_CACHE.clear()
+    core.install_origin_file().write_text("{not json", encoding="utf-8")
+    assert core.install_origin() in (core.NEW_INSTALL, core.EXISTING_INSTALL)
+    assert core.install_origin_file().read_text(encoding="utf-8") == "{not json", \
+        "an unreadable install record must not be overwritten"
+    core.update_install_choices_state(daily_cap_card="shown")
+    assert core.install_origin_file().read_text(encoding="utf-8") == "{not json"
+    core._invalidate_settings_cache()
+    assert cloud_intent.routing_mode() == "local_only"
+    assert _unpicked() is True
+
+
+def test_an_unverified_routing_change_is_not_a_pick(real_settings):
+    core = real_settings
+    core._load_settings_raw()
+    core._save_settings({"model_routing": {"mode": "cloud_only"}}, owner_routing_change=True,
+                        routing_change_via="unverified")
+    assert _unpicked() is True
+    assert cloud_intent.routing_mode() == "local_only"
+
+
+def test_only_the_consent_screens_first_finish_is_a_pick(real_settings):
+    core = real_settings
+    core._load_settings_raw()
+    from agent_friday.services import setup_chat
+    setup_chat.begin()                                  # finished with no route given
+    setup_chat.begin(routing_mode="cloud_only")         # called again: not a pick
+    assert _unpicked() is True
+
+
+def test_a_spoken_yes_cannot_answer_the_choose_prompt(real_settings):
+    real_settings._load_settings_raw()
+    from agent_friday.services import local_offer
+    offer = local_offer.build(mode="local_only", kind="local_failed")
+    local_offer.remember("conv-a16a", offer, "hello")
+    assert local_offer.pending("conv-a16a", [offer["id"]]) is None
+
+
+def test_work_plans_do_not_offer_the_cloud(real_settings, monkeypatch):
+    core = real_settings
+    core._load_settings_raw()
+    monkeypatch.setattr(core, "ANTHROPIC_API_KEY", "sk-test", raising=False)  # pragma: allowlist secret
+    from agent_friday.routes import work_plan
+    assert work_plan._cloud_available() is False
+
+
+def test_the_router_refusal_asks_to_choose_not_to_send_to_claude(real_settings):
+    real_settings._load_settings_raw()
+    from agent_friday.routing.model_router import ModelRouter
+    r = ModelRouter.__new__(ModelRouter)
+    r.fallback_to_cloud = True
+    r.mode = "local_only"
+    out = r._local_unavailable("chat", "no model loaded")
+    assert out["offer_cloud_switch"] is False
+    assert "haven't chosen where I think" in out["warning"]
+    assert "send this one turn to Claude" not in out["warning"]
+
+
 # ── the page ─────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("page", ["index.html", "ui_parts/app.html"])

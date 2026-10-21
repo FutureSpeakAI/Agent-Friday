@@ -77,8 +77,11 @@ def test_a_route_the_terminal_setup_kept_without_asking_is_not_a_pick(real_setti
     assert _pending(core, s) is True
     s["model_routing"]["mode_chosen_via"] = "setup"
     assert _pending(core, s) is False
-    # A real owner click whose request could not be proven on-screen is still a pick.
+    # A16a: a routing change that could not be tied to the owner's own screen
+    # is recorded but is not a pick, so Friday stays local-only.
     s["model_routing"]["mode_chosen_via"] = "unverified"
+    assert _pending(core, s) is True
+    s["model_routing"]["mode_chosen_via"] = "consent_screen"
     assert _pending(core, s) is False
 
 
