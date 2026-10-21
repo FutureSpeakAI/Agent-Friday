@@ -39,15 +39,15 @@ const VIEW = {
   honest_limit: 'This map lists what Friday itself keeps and sends.',
 };
 
-function render(fetched, opened, navs) {
+function render(fetched, opened, navs, view = VIEW, posts = []) {
   const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
   const createElement = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) });
   let slot = 0;
-  const slots = [VIEW, '', null];
+  const slots = [view, '', null];
   const ctx = vm.createContext({
     React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
     useEffect: () => {}, useCallback: fn => fn, encodeURIComponent, fridayName: () => 'Friday',
-    apiFetch: url => { fetched.push(url); return Promise.resolve({ json: async () => ({ rows: [] }) }); },
+    apiFetch: (url, opts) => { fetched.push(url); if (opts && opts.method === 'POST') posts.push([url, JSON.parse(opts.body)]); return Promise.resolve({ json: async () => ({ rows: [] }) }); },
     window: { open: url => opened.push(url), fridayOpenWorkspace: t => navs.push(t) },
     Date,
     StSection: ({ title, desc, children }) => createElement('section', { title, desc }, children),
@@ -90,4 +90,27 @@ test('controls open the existing export or the place that deletes, and receipts 
   assert.equal(show[0].props['aria-label'], 'Show the receipts for Anthropic (Claude)');
   show[0].props.onClick();
   assert.equal(fetched.at(-1), '/api/privacy/map/left?to=anthropic');
+});
+
+const FULL = { mode: 'full', keep: true, sealed_with: 'vault', kept: 2, bytes: 4096,
+  words: 'The full text of each send is kept, encrypted with your vault passphrase.',
+  explanation: 'Friday keeps the full text of each send to the cloud with its receipt.' };
+
+test('the map states plainly which mode is on, and its buttons switch or delete (A20)', () => {
+  const fetched = [], opened = [], navs = [], posts = [];
+  const tree = render(fetched, opened, navs, { ...VIEW, sent_text: FULL }, posts);
+  const status = all(tree, n => n.props && n.props.role === 'status' && String(n.props.className).includes('pm-mode'));
+  assert.equal(status.length, 1);
+  assert.ok(label(status[0]).includes('The full text of each send is kept, encrypted with your vault passphrase.'));
+  const buttons = all(tree, n => n.type === 'button');
+  buttons.find(b => label(b) === 'Switch to fingerprints only (deletes the kept text)').props.onClick();
+  assert.deepEqual(posts.at(-1), ['/api/privacy/sent-text', { mode: 'fingerprint' }]);
+  buttons.find(b => label(b) === 'Delete the kept text').props.onClick();
+  assert.deepEqual(posts.at(-1), ['/api/privacy/sent-text/delete', {}]);
+
+  const fp = render([], [], [], { ...VIEW, sent_text: { ...FULL, mode: 'fingerprint', keep: false, kept: 0, words: 'Only fingerprints are kept.' } }, posts);
+  const fpButtons = all(fp, n => n.type === 'button');
+  assert.ok(!fpButtons.some(b => label(b) === 'Delete the kept text'));
+  fpButtons.find(b => label(b) === 'Keep the full text again').props.onClick();
+  assert.deepEqual(posts.at(-1), ['/api/privacy/sent-text', { mode: 'full' }]);
 });

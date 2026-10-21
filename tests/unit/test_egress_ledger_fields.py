@@ -1,9 +1,11 @@
-"""The egress ledger's call rows, the payload-size check, and keeping the
-exact content only if the owner turns it on (north star §29.6, §26.7;
+"""The egress ledger's call rows, the payload-size check, and the full text of
+what left kept with its receipt (north star §29.6, §26.7 as amended by A20;
 BD-15 slice P2).
 
-By default a send leaves a keyed fingerprint of the content the gate
-released, never its words. Synthetic payloads only; nothing reaches a network.
+By default each send keeps the full content the gate released, encrypted at
+rest (under the vault when a passphrase is set), and a keyed fingerprint. The
+owner can switch to fingerprints only. Synthetic payloads only; nothing
+reaches a network.
 """
 from __future__ import annotations
 
@@ -30,6 +32,9 @@ def ledger(tmp_path, monkeypatch):
     # Encryption stand-in: reversible, never the plain bytes.
     monkeypatch.setattr(cs, "protect", lambda data: (b"SEALED:" + data[::-1], "keystore"))
     monkeypatch.setattr(cs, "unprotect", lambda blob: blob[len(b"SEALED:"):][::-1])
+    # No vault passphrase unless a test sets one (never derive a real key).
+    from agent_friday.services import sent_text_store as sts
+    monkeypatch.setattr(sts, "_vault_key", lambda derive=True: None)
     # The gate runs exactly as under recorded cloud consent (A14): every field
     # is still recorded and the never-send floor still applies, without a
     # classifier model in the test.
@@ -75,68 +80,113 @@ def test_the_fingerprint_is_keyed_so_a_guess_cannot_be_confirmed(ledger):
     assert c["payload_fingerprint"] != plain
 
 
-def test_by_default_the_words_are_not_kept(ledger):
-    eg.seal_outbound(dict(PAYLOAD), "anthropic")
-    c = _calls(ledger["log"])[0]
-    assert c["text_kept"] is False
-    assert "boiling point" not in json.dumps(c)
-    assert not (ledger["home"] / "vault" / "sent-text").exists()
+def _kept_file(ledger, c):
+    return ledger["home"] / "vault" / "sent-text" / (c["payload_fingerprint"] + ".bin")
 
 
-def test_the_content_is_kept_encrypted_only_when_the_owner_turns_it_on(ledger):
+def test_by_default_the_full_text_is_kept_encrypted_with_its_receipt(ledger):
+    """A20: the owner's default is the full text, not a fingerprint."""
     from agent_friday.services import sent_text_store as sts
-    sts.set_keep(True)
+    assert sts.mode() == sts.FULL
     eg.seal_outbound(dict(PAYLOAD), "anthropic")
     c = _calls(ledger["log"])[0]
     assert c["text_kept"] is True
-    stored = (ledger["home"] / "vault" / "sent-text" / (c["payload_fingerprint"] + ".bin")).read_bytes()
+    assert "boiling point" not in json.dumps(c), "the ledger row holds the fingerprint, not the words"
+    stored = _kept_file(ledger, c).read_bytes()
     assert b"boiling point" not in stored, "kept content is never readable on disk"
     assert "boiling point" in sts.read(c["payload_fingerprint"])["text"]
-    # Turning it off deletes what was kept.
-    out = sts.set_keep(False)
-    assert out["deleted"] == 1 and sts.read(c["payload_fingerprint"]) is None
 
 
-def test_an_edited_or_unsigned_choice_reads_as_off(ledger):
+def test_with_a_vault_passphrase_the_text_is_sealed_under_the_vault(ledger, monkeypatch):
+    from agent_friday.privacy import vault_crypto as vc
     from agent_friday.services import sent_text_store as sts
-    sts.set_keep(True)
+    key = bytes(range(32))
+    monkeypatch.setattr(sts, "_vault_key", lambda derive=True: key)
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    c = _calls(ledger["log"])[0]
+    stored = _kept_file(ledger, c).read_bytes()
+    assert stored.startswith(vc.MAGIC), "sealed with the vault key, not the key store"
+    assert "boiling point" in json.loads(vc.decrypt(stored, key))["text"]
+    assert sts.status()["sealed_with"] == "vault"
+    assert "vault passphrase" in sts.status()["words"]
+
+
+def test_without_a_vault_passphrase_the_map_says_it_is_the_key_store(ledger):
+    from agent_friday.services import sent_text_store as sts
+    st = sts.status()
+    assert st["mode"] == "full" and st["sealed_with"] == "keystore"
+    assert "key store" in st["words"] and "Vault" in st["words"]
+
+
+def test_switching_to_fingerprints_deletes_what_was_kept_and_keeps_no_more(ledger):
+    from agent_friday.services import sent_text_store as sts
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    first = _calls(ledger["log"])[0]
+    out = sts.set_mode(sts.FINGERPRINT)
+    assert out["deleted"] == 1 and out["mode"] == "fingerprint"
+    assert sts.read(first["payload_fingerprint"]) is None
+    eg.seal_outbound({"messages": [{"role": "user", "content": "A different synthetic question."}]}, "anthropic")
+    second = _calls(ledger["log"])[-1]
+    assert second["text_kept"] is False and second["payload_fingerprint"]
+    assert not list((ledger["home"] / "vault" / "sent-text").glob("*.bin"))
+    assert sts.set_mode(sts.FULL)["mode"] == "full"
+
+
+def test_delete_kept_removes_the_text_but_leaves_the_mode(ledger):
+    from agent_friday.services import sent_text_store as sts
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    out = sts.delete_kept()
+    assert out["deleted"] == 1 and out["mode"] == "full"
+
+
+def test_an_edited_or_unsigned_choice_reads_as_full(ledger):
+    """Only the owner's signed choice can make Friday keep less."""
+    from agent_friday.services import sent_text_store as sts
+    sts.set_mode(sts.FINGERPRINT)
     p = ledger["home"] / "vault" / "sent-text-choice.json"
     data = json.loads(p.read_text(encoding="utf-8"))
-    data["days"] = 365
+    data["at"] = 1.0
     p.write_text(json.dumps(data), encoding="utf-8")
-    assert sts.enabled() is False
-    p.write_text(json.dumps({"keep": True, "days": 30}), encoding="utf-8")
-    assert sts.enabled() is False
+    assert sts.mode() == sts.FULL
+    p.write_text(json.dumps({"mode": "fingerprint"}), encoding="utf-8")
+    assert sts.mode() == sts.FULL
 
 
-def test_the_settings_file_cannot_turn_keeping_on(ledger, monkeypatch):
-    """The choice is not a settings key: a write to settings.json (the generic
-    settings route, a program, a tool) can't switch it on."""
+def test_the_choice_is_not_a_settings_key(ledger, monkeypatch):
+    """A write to settings.json (the generic settings route, a program, a tool)
+    can't change the mode."""
     import agent_friday.core as core
     from agent_friday.services import sent_text_store as sts
-    monkeypatch.setattr(core, "_load_settings", lambda: {"privacy_keep_sent_text": True})
-    assert sts.enabled() is False
-    assert "privacy_keep_sent_text" not in core.DEFAULT_SETTINGS
+    monkeypatch.setattr(core, "_load_settings", lambda: {"privacy_sent_text_mode": "fingerprint"})
+    assert sts.mode() == sts.FULL
+    assert not any("sent_text" in k for k in core.DEFAULT_SETTINGS)
+
+
+def test_the_kept_text_is_included_in_export_all_my_data(ledger):
+    from pathlib import PurePath
+    from agent_friday.services import data_export
+    eg.seal_outbound(dict(PAYLOAD), "anthropic")
+    c = _calls(ledger["log"])[0]
+    assert data_export.skip_reason(PurePath("vault", "sent-text", c["payload_fingerprint"] + ".bin")) is None
 
 
 def test_nothing_is_kept_if_encryption_is_not_available(ledger, monkeypatch):
     from agent_friday.services import sent_text_store as sts
     from agent_friday.services import credential_store as cs
     monkeypatch.setattr(cs, "protect", lambda data: (data, "plaintext"))
-    sts.set_keep(True)
     eg.seal_outbound(dict(PAYLOAD), "anthropic")
     assert _calls(ledger["log"])[0]["text_kept"] is False
+    assert sts.status()["sealed_with"] is None
 
 
 def test_off_the_record_no_fingerprint_and_nothing_kept(ledger, monkeypatch):
-    from agent_friday.services import sent_text_store as sts
     from agent_friday.services import off_record
-    sts.set_keep(True)
     monkeypatch.setattr(off_record, "active", lambda *a, **k: True)
     eg.seal_outbound(dict(PAYLOAD), "anthropic")
     c = _calls(ledger["log"])[0]
     assert c["text_kept"] is False and c["purpose"] == "off the record"
     assert "payload_fingerprint" not in c
+    assert not (ledger["home"] / "vault" / "sent-text").exists()
 
 
 def test_a_payload_over_the_size_limit_is_refused_and_recorded(ledger, monkeypatch):
@@ -185,8 +235,6 @@ def test_a_worker_payload_is_one_send_not_two(ledger, monkeypatch):
 
 
 def test_a_self_test_probe_is_never_kept(ledger, tmp_path):
-    from agent_friday.services import sent_text_store as sts
-    sts.set_keep(True)
     eg.seal_outbound(dict(PAYLOAD), "anthropic", log_path=tmp_path / "probe.jsonl")
     kept = ledger["home"] / "vault" / "sent-text"
     assert not (kept.exists() and list(kept.glob("*.bin")))
@@ -194,20 +242,25 @@ def test_a_self_test_probe_is_never_kept(ledger, tmp_path):
 
 def test_kept_content_has_a_total_cap_oldest_first(ledger, monkeypatch):
     from agent_friday.services import sent_text_store as sts
-    sts.set_keep(True)
     monkeypatch.setattr(sts, "MAX_TOTAL_BYTES", 1)
     eg.seal_outbound(dict(PAYLOAD), "anthropic")
     sts.prune()
     assert not list((ledger["home"] / "vault" / "sent-text").glob("*.bin"))
 
 
-def test_the_privacy_map_counts_sends_and_says_fingerprints_only(ledger):
+def test_the_privacy_map_counts_sends_and_states_which_mode_is_on(ledger):
     from agent_friday.services import privacy_map as pm
+    from agent_friday.services import sent_text_store as sts
     eg.seal_outbound(dict(PAYLOAD), "anthropic", model="synthetic-model-1")
     view = pm.view()
     d = {x["to"]: x for x in view["left"]["destinations"]}["anthropic"]
-    assert d["calls"] == 1 and d["texts_kept"] == 0 and d["models"] == ["synthetic-model-1"]
-    assert view["sent_text"]["keep"] is False
-    assert "fingerprint" in view["sent_text"]["explanation"]
+    assert d["calls"] == 1 and d["texts_kept"] == 1 and d["models"] == ["synthetic-model-1"]
+    assert view["sent_text"]["mode"] == "full" and "full text" in view["sent_text"]["words"]
+    store = {s["key"]: s for s in view["stores"]}["sent_text"]
+    assert "until you delete" in store["retention_words"]
+    sts.set_mode(sts.FINGERPRINT)
+    view = pm.view()
+    assert view["sent_text"]["mode"] == "fingerprint"
+    assert view["sent_text"]["words"] == "Only fingerprints are kept."
     row = [r for r in pm.left_rows("anthropic")["rows"] if r.get("kind") == "call"][0]
     assert row["payload_fingerprint"] and row["purpose"] and "manifest_id" in row
