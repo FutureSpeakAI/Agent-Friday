@@ -68,7 +68,7 @@ def test_real_spend_past_hard_cap_halts_the_next_cloud_call(monkeypatch, _fresh)
     with pytest.raises(sg.SpendCapReached) as ei:
         mr._seal_or_block({"messages": []}, "anthropic")
     msg = str(ei.value)
-    assert "$1.20" in msg and "$1.00" in msg and "monthly" in msg
+    assert "$1.20" in msg and "$1.00" in msg and "a month" in msg
     assert "raise the cap" in msg and "Models on this computer keep working" in msg
 
     # Loud: the trip notification fired at the crossing (from record()),

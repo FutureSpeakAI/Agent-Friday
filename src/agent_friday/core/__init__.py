@@ -2213,16 +2213,6 @@ def _degraded_settings() -> "_DegradedSettings":
         else:
             out = _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
             out.from_defaults = True
-            # North-star A17: the defaults carry the daily cap on, which only a
-            # new install chose to start with. An existing install read while
-            # its file is unreadable must not get a cap it never set.
-            try:
-                if install_origin() != NEW_INSTALL:
-                    out["cost_budget"] = dict(out.get("cost_budget") or {},
-                                              hard_stop_daily_enabled=False)
-            except Exception:
-                out["cost_budget"] = dict(out.get("cost_budget") or {},
-                                          hard_stop_daily_enabled=False)
     out[DEGRADED_READ_KEY] = gen
     return out
 
@@ -2803,11 +2793,14 @@ DEFAULT_SETTINGS = {
     # hard_stop_* is the SECOND cap, the one that stops: when its enabled
     # period's spend reaches the limit, services/spend_guard pauses every
     # further paid cloud call (local models keep working), with a card naming
-    # what paused and how to go on. The DAILY one ships ON at a modest figure
-    # (north-star A17, the owner's ruling of 2026-10-21; the figure is
-    # services/spending_caps.DAILY_CAP_DEFAULT_USD), changeable at setup and in
-    # Settings > Spending. Installs from before A17 keep theirs
-    # (spending_caps.migrate_daily_cap). The monthly one ships off.
+    # what paused and how to go on. The DAILY one is ON for a new install at a
+    # modest figure (north-star A17, the owner's ruling of 2026-10-21; the
+    # figure is services/spending_caps.DAILY_CAP_DEFAULT_USD), changeable at
+    # setup and in Settings > Spending. It is switched on by the new install's
+    # first settings (spending_caps.seed_choices / migrate_daily_cap), not
+    # here: these defaults are also what an existing install's missing keys
+    # read as, and those keep the cap they had (off unless they set one). The
+    # monthly one ships off.
     "cost_budget": {
         "daily": 5.0,
         "monthly": 50.0,
@@ -2824,7 +2817,7 @@ DEFAULT_SETTINGS = {
         # 2026-09-25 removal of the round, time and token caps, and why it
         # defaults ON. It is still his to switch off.
         "loop_guard_enabled": True,
-        "hard_stop_daily_enabled": True,
+        "hard_stop_daily_enabled": False,
         "hard_stop_monthly_enabled": False,
     },
     # ── Task journal (docs/design/active/task-visibility.md) ──
@@ -4384,18 +4377,22 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             data.pop("voice_room_approvals_require_name", None)
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
-    # North-star A17: the defaults' daily cap is a new install's. A save onto a
-    # store with no cost_budget (rewritten by config.yaml, lost, or never
-    # migrated) on an install that existed writes the cap down as off, as it
-    # was, never the default's on.
+    # North-star A17: a NEW install's daily cap is on. A save onto its store
+    # before it has a cost_budget (the terminal setup wrote settings.json
+    # without one) writes the cap down as on, never the defaults' off.
     if not isinstance(existing.get("cost_budget"), dict):
         try:
-            _keep_off = install_origin() != NEW_INSTALL
+            _new = install_origin() == NEW_INSTALL
         except Exception:
-            _keep_off = True
-        if _keep_off:
-            merged["cost_budget"] = dict(merged.get("cost_budget") or {},
-                                         hard_stop_daily_enabled=False)
+            _new = False
+        if _new:
+            try:
+                from agent_friday.services import spending_caps as _sc
+                merged["cost_budget"] = dict(merged.get("cost_budget") or {},
+                                             hard_stop_daily_enabled=True,
+                                             hard_stop_daily=_sc.DAILY_CAP_DEFAULT_USD)
+            except Exception:
+                pass
     for k, v in (data or {}).items():
         if (k in _DEEP_MERGED_BLOCKS and isinstance(v, dict)
                 and isinstance(existing.get(k), dict)):

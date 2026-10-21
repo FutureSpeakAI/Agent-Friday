@@ -105,7 +105,7 @@ def test_the_spend_hard_stop_blocks_sends(phone_home, fake_twilio, monkeypatch):
     def tripped(provider, what=None):
         raise spend_guard.SpendCapReached("daily", 10.0, 5.0, "phone")
     monkeypatch.setattr(spend_guard, "check", tripped)
-    with pytest.raises(service.PhoneRefused, match="hard stop"):
+    with pytest.raises(service.PhoneRefused, match="Paused by your spending cap"):
         service.text_owner("hi")
     assert fake_twilio.calls == []
 

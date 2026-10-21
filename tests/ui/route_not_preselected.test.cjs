@@ -9,7 +9,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '../..');
-const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+// Windows checkouts may carry CRLF; the slicer looks for LF boundaries.
+const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
 
 function slice(name) {
   const start = source.indexOf('function ' + name + '(');

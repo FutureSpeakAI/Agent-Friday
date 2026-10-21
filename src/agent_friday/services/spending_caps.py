@@ -341,11 +341,22 @@ CARD_KEY = "daily_cap_card"
 
 def seed_choices(seed: dict, origin: str) -> None:
     """The first settings.json a process writes (no file yet). A new install
-    keeps the defaults: the daily cap on. An install that existed and lost its
-    settings.json starts with no daily cap, as before A17."""
+    starts with the daily cap on (A17). An install that existed and lost its
+    settings.json starts with no daily cap, as before A17, and the migration
+    still runs on it (no stamp), so it may get the card."""
     from agent_friday import core
     if origin != core.NEW_INSTALL:
         seed["cost_budget"] = dict(_block(seed, "cost_budget"), hard_stop_daily_enabled=False)
+        return
+    seed["cost_budget"] = dict(_block(seed, "cost_budget"), hard_stop_daily_enabled=True,
+                               hard_stop_daily=DAILY_CAP_DEFAULT_USD)
+    seed["spending_caps"] = dict(_block(seed, "spending_caps"),
+                                 **{DAILY_CAP_STAMP: "new_install"})
+    try:
+        if _card_state() is None:
+            _set_card_state("not_needed")
+    except Exception as e:
+        log.warning("the daily cap card's state could not be saved (%s)", e)
 
 
 def _card_state() -> Optional[str]:
@@ -363,8 +374,9 @@ def migrate_daily_cap(settings: dict, stored: Optional[dict], origin: str) -> Op
     """An install from before A17 keeps the daily cap it had, once.
 
     `settings` is the merged settings dict (updated in place); `stored` is the
-    file as read; `origin` is core.install_origin(). A NEW install keeps the
-    defaults (the cap on) and needs no card. An EXISTING one: before A17 a
+    file as read; `origin` is core.install_origin(). A NEW install whose file
+    has no daily cap key yet (the terminal setup wrote it) gets the cap on and
+    needs no card. An EXISTING one: before A17 a
     daily cap that was never set read as off, so a stored cost_budget without
     `hard_stop_daily_enabled` (or no cost_budget at all) is written down as
     explicitly off, with the default figure ready for when the person turns it
