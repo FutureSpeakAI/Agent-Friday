@@ -62,7 +62,8 @@ DESTINATION_WORDS = {
 #: Sends that do not pass the egress gate yet, and where each keeps its own record.
 NOT_RECORDED = (
     {"key": "mail", "what": "Email Friday sends for you",
-     "record": "Each send is recorded with its recipients and subject in sent_mail.jsonl, and counted under Mail below."},
+     "record": ("Each send is recorded with its To and Cc recipients and subject in sent_mail.jsonl, and "
+                "counted under Mail below. Bcc recipients are not recorded.")},
     {"key": "mcp", "what": "Calls to tool servers you added (MCP)",
      "record": "Not recorded as a send yet. Each call that changes something is an action with its own card."},
     {"key": "connectors", "what": "Calls to connected services' own APIs (for example Calendar or Tasks writes not made through Friday's tools)",
@@ -171,27 +172,72 @@ _FOREVER = "Kept until you delete it."
 # ── encryption, read from the store that decides it ───────────────────────────
 
 def _vault_on() -> Optional[bool]:
-    """The live lock, read the way Privacy & Data > Vault reads it: derive
-    the key first (it is derived lazily), then read the state it set."""
+    """The live lock as start-up found it. Read only: the map never derives
+    the key itself (that can write the vault's config), so before start-up
+    has looked, the answer is "I couldn't tell" (None)."""
     try:
-        from agent_friday.services import agent as _agent
-        _agent._get_vault_key()
-    except Exception:
-        pass
-    try:
+        import sys
+        agent = sys.modules.get("agent_friday.services.agent")
+        if agent is None or not getattr(agent, "_VAULT_KEY_READY", False):
+            return None
         from agent_friday import core
         return bool((getattr(core, "_VAULT_ENCRYPTION_STATE", {}) or {}).get("enabled"))
     except Exception:
         return None
 
 
+#: Folders whose files the vault lock covers (services/agent._sensitive_vault_dirs).
+_VAULT_DIRS = ("finance", "health", "vault/legal", "vault/finances", "vault/family")
+#: Files sampled to check what the lock actually did on disk.
+_VAULT_SAMPLE = 50
+
+
+def _vault_sample() -> tuple:
+    """(sealed, readable) among up to _VAULT_SAMPLE files in the vault folders,
+    read by their first bytes."""
+    try:
+        from agent_friday.privacy import vault_crypto as vc
+        magic = vc.MAGIC
+    except Exception:
+        return 0, 0
+    sealed = readable = 0
+    home = _home()
+    for rel in _VAULT_DIRS:
+        d = home / rel
+        if not d.is_dir() or _is_link(d):
+            continue
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    if sealed + readable >= _VAULT_SAMPLE:
+                        return sealed, readable
+                    try:
+                        if _is_link(e) or not e.is_file(follow_symlinks=False):
+                            continue
+                        with open(e.path, "rb") as fh:
+                            head = fh.read(len(magic))
+                    except OSError:
+                        continue
+                    if head.startswith(magic):
+                        sealed += 1
+                    else:
+                        readable += 1
+        except OSError:
+            continue
+    return sealed, readable
+
+
 def _enc_vault() -> tuple:
     on = _vault_on()
+    sealed, readable = _vault_sample()
     if on is None:
-        return "unknown", "I couldn't tell whether it is encrypted."
-    if on:
-        return "yes", "Encrypted with your passphrase (AES-256-GCM)."
-    return "no", "Readable on this disk: no passphrase is set (Privacy & Data > Vault)."
+        return "unknown", "I couldn't tell whether it is encrypted yet (Friday is still starting)."
+    if not on:
+        return "no", "Readable on this disk: no passphrase is set (Privacy & Data > Vault)."
+    if readable:
+        return "partly", (f"Your passphrase is set, but {readable} of the {sealed + readable} files I "
+                          "looked at are still readable (they are sealed at the next start-up).")
+    return "yes", "Encrypted with your passphrase (AES-256-GCM)."
 
 
 def _enc_wiki() -> tuple:
@@ -203,6 +249,9 @@ def _enc_wiki() -> tuple:
     if locked and _vault_on():
         return "partly", ("Readable on this disk, except the sections you chose to lock ("
                           + ", ".join(locked[:6]) + "), which are encrypted with your passphrase.")
+    if locked:
+        return "no", ("Readable on this disk. You chose to lock " + ", ".join(locked[:6])
+                      + ", but no passphrase is set, so they are not encrypted yet.")
     return "no", "Readable on this disk (no wiki section is locked)."
 
 
@@ -230,10 +279,14 @@ def _enc_tasks() -> tuple:
         return "unknown", "I couldn't tell whether it is encrypted."
     if not on:
         return "no", "Readable on this disk: encryption for task records is switched off."
-    if _vault_on():
-        return "yes", "Encrypted on disk with your passphrase's key."
-    return "yes", ("Encrypted on disk with Windows' protection for your account (anything running "
-                   "as you on this PC can open it); with a passphrase set, with its key.")
+    state, words = _enc_keys()
+    fallback = " If that protection ever fails, a record is written readable rather than lost."
+    if state == "yes":
+        return "yes", "Encrypted with Friday's key store; " + words[0].lower() + words[1:] + fallback
+    if state == "partly":
+        return "partly", ("Encrypted with Friday's key store, but its key is kept in Friday's folder "
+                          "without a passphrase, so anyone who can read that folder can open them." + fallback)
+    return "unknown", "I couldn't tell how task records are locked." + fallback
 
 
 def _enc(state: str, words: str):
@@ -460,6 +513,8 @@ def _measured(root: Path, key: str, rel_paths: List[str], deadline: float) -> di
     if time.monotonic() > deadline:
         return {"bytes": 0, "files": 0, "complete": False, "present": True, "skipped": True}
     m = _measure(root, rel_paths, deadline)
+    if len(_SIZE_CACHE) > 200:
+        _SIZE_CACHE.clear()
     _SIZE_CACHE[ck] = (time.monotonic(), m)
     return m
 
@@ -481,15 +536,33 @@ def _size_words(m: dict) -> str:
 
 
 def _everything_else(home: Path, listed: List[str]) -> dict:
-    """Top-level entries of Friday's folder that no line above covers."""
-    covered = {Path(p).parts[0].lower() for p in listed if Path(p).parts}
-    rest = []
+    """What no line above covers: top-level entries, and the rest of a folder
+    only part of which a line covers (vault/, runtime/), one level down."""
+    whole = {Path(p).parts[0].lower() for p in listed if len(Path(p).parts) == 1}
+    part: Dict[str, set] = {}
+    for p in listed:
+        parts = Path(p).parts
+        if len(parts) >= 2:
+            part.setdefault(parts[0].lower(), set()).add(parts[1].lower())
+    rest: List[str] = []
     try:
-        for e in sorted(os.scandir(home), key=lambda e: e.name.lower()):
-            if e.name.lower() not in covered:
-                rest.append(e.name)
+        with os.scandir(home) as it:
+            top = sorted((e.name for e in it), key=str.lower)
     except OSError:
-        pass
+        top = []
+    for name in top:
+        low = name.lower()
+        if low in whole:
+            continue
+        if low in part:
+            try:
+                with os.scandir(home / name) as it:
+                    inner = sorted((e.name for e in it), key=str.lower)
+            except OSError:
+                inner = []
+            rest += [name + "/" + c for c in inner if c.lower() not in part[low]]
+            continue
+        rest.append(name)
     return {"key": "everything_else", "name": "Everything else in Friday's folder",
             "holds": ("Other things Friday keeps that have no line of their own yet"
                       + (": " + ", ".join(rest[:12]) + ("…" if len(rest) > 12 else "") if rest else "")
@@ -515,7 +588,7 @@ def stores() -> List[dict]:
             ret = "I couldn't tell how long it is kept."
         m = _measured(home, s["key"], list(s["paths"]), deadline)
         out.append({"key": s["key"], "name": s["name"], "holds": s["holds"],
-                    "where": [str(Path(p)) for p in s["paths"]] or ["(nothing else)"],
+                    "where": [Path(p).as_posix() for p in s["paths"]] or ["(nothing else)"],
                     "encrypted": state, "encrypted_words": enc_words,
                     "retention_words": ret, "size_words": _size_words(m),
                     "bytes": m["bytes"], "files": m["files"], "present": m["present"],
@@ -581,10 +654,39 @@ def destination_words(provider: str) -> str:
     return DESTINATION_WORDS.get(p.lower(), p or "an unnamed destination")
 
 
+#: Most destinations listed one by one; the rest are counted together.
+MAX_DESTINATIONS = 200
+_LOG_CACHE: Dict[str, tuple] = {}
+
+
+def _stamp(path: Path) -> tuple:
+    try:
+        st = path.stat()
+        return (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (str(path), None, None)
+
+
+def _cached(name: str, stamp: tuple, build):
+    """Rebuilt whenever the log changes (its size or time), reused otherwise:
+    a new send still shows on the next read, and repeated reads of an
+    unchanged log cost nothing."""
+    hit = _LOG_CACHE.get(name)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    value = build()
+    _LOG_CACHE[name] = (stamp, value)
+    return value
+
+
 def left() -> dict:
     """Every destination that has received something from Friday, from the
-    egress log, as counts. Regenerated on every call."""
+    egress log, as counts. Rebuilt whenever the log changes."""
     path = _egress_log()
+    return _cached("left", _stamp(path), lambda: _left(path))
+
+
+def _left(path: Path) -> dict:
     by: Dict[str, dict] = {}
     total = 0
     info: Dict[str, Any] = {}
@@ -626,11 +728,14 @@ def left() -> dict:
     except OSError:
         readable = False
     dests = []
-    for d in sorted(by.values(), key=lambda x: -(x["last"] or 0)):
+    ordered = sorted(by.values(), key=lambda x: -(x["last"] or 0))
+    others = ordered[MAX_DESTINATIONS:]
+    for d in ordered[:MAX_DESTINATIONS]:
         d["fields"] = sorted(d["fields"], key=lambda f: -d["fields"][f])
         d["receipts"] = "/api/privacy/map/left?to=" + _quote(d["to"])
         dests.append(d)
     return {"destinations": dests, "rows": total, "readable": readable,
+            "other_destinations": len(others),
             "log": "vault/egress-log.jsonl",
             "complete": bool(info.get("complete", True)),
             "not_recorded": list(NOT_RECORDED)}
@@ -666,7 +771,7 @@ def mail() -> dict:
         path = _home() / "sent_mail.jsonl"
     by: Dict[str, dict] = {}
     sent = failed = 0
-    for row in _rows(path):
+    for row in _rows(path, tail=True):
         if not row.get("ok"):
             failed += 1
             continue
@@ -736,10 +841,17 @@ def services() -> dict:
 
 
 #: Tiers that mean private data (privacy/vault_access writes the tier name).
-_PRIVATE_TIERS = ("TIER_2", "TIER_3", "TIER_4")
+_PRIVATE_TIERS = ("TIER_2", "TIER_3")
 
 
 def vault_access(now: Optional[float] = None) -> dict:
+    base = _home() / "vault"
+    stamp = (_stamp(base / "access-log.1.jsonl"), _stamp(base / "access-log.jsonl"),
+             int((now or time.time()) // 3600))
+    return _cached("vault_access", stamp, lambda: _vault_access(now))
+
+
+def _vault_access(now: Optional[float] = None) -> dict:
     """How often, in the last 7 days, something asked to use private data and
     what the checks decided: allowed and refused, from the access log and
     its one rotated file."""
@@ -754,6 +866,8 @@ def vault_access(now: Optional[float] = None) -> dict:
                 continue
             if str(row.get("tier") or "") not in _PRIVATE_TIERS:
                 continue
+            if str(row.get("detail") or "").startswith("check_action:"):
+                continue          # the same decision, written a second time
             if row.get("allowed"):
                 allowed += 1
                 last = ts if last is None else max(last, ts)
