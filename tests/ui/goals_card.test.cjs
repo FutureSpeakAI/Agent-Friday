@@ -1,0 +1,66 @@
+// System > Goals, rendered from the served copy (index.html) with a minimal
+// React stand-in: each goal shows its state and what its steps wait on, the
+// owner's moves post the right transition, and starting a stopped step again
+// asks for a yes first when its outcome is unknown.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const root = path.resolve(__dirname, '../..');
+
+function slice(source, name) {
+  const start = source.indexOf('function ' + name + '(');
+  assert.ok(start >= 0, name + ' exists');
+  return source.slice(start, source.indexOf('\n}\n', start) + 3);
+}
+
+const DATA = { goals: [{
+  goal_id: 'goal_synthetic', title: 'Synthetic goal', status: 'needs_owner', state_words: 'needs you',
+  done: 0, total: 1, deadline: null, 'budget_cap_mψ': 0, 'spent_mψ': 0, risk: [], completion: null,
+  approval_required: false, allowed_routes: [], success_criteria: 'a synthetic draft exists',
+  moves: [{ to: 'paused', label: 'Pause' }, { to: 'met_unverified', label: 'Mark it met (my judgment)' }, { to: 'abandoned', label: 'End this goal' }],
+  milestones: [{ milestone_id: 'ms_1', name: 'Draft', status: 'blocked', waits: 'Friday stopped while “Draft” was running.',
+    can_restart: true, restart_needs_confirmation: true, can_run: false, verified: false }],
+}], unreadable: [] };
+
+function render(calls, confirms) {
+  const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
+  const createElement = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) });
+  let slot = 0;
+  const slots = [DATA, '', false, null];
+  const ctx = vm.createContext({
+    React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
+    useEffect: () => {}, useCallback: fn => fn, encodeURIComponent, setInterval: () => 0, clearInterval: () => {},
+    apiFetch: (url, opts) => { calls.push([url, opts && opts.method, opts && opts.body]); return Promise.resolve({ ok: true, status: 200, json: async () => ({}) }); },
+    window: { confirm: () => { confirms.push(1); return true; }, prompt: () => null, fridayOpenWorkspace: () => {} },
+    String, Number, Object,
+  });
+  vm.runInContext(slice(source, 'GoalsCard'), ctx);
+  return ctx.GoalsCard();
+}
+
+const all = (n, f, o = []) => { if (n && typeof n === 'object') { if (f(n)) o.push(n); (n.children || []).forEach(c => all(c, f, o)); } return o; };
+const label = b => (b.children || []).filter(c => typeof c === 'string').join('');
+
+test('the Goals card shows each goal, its state and what it waits on', () => {
+  const tree = render([], []);
+  const text = all(tree, () => true).flatMap(n => (n.children || []).filter(c => typeof c === 'string')).join(' ');
+  for (const s of ['Goals', 'Synthetic goal', 'needs you', '0 of 1 done', 'Friday stopped while “Draft” was running.']) {
+    assert.ok(text.includes(s), 'missing: ' + s);
+  }
+  assert.equal(all(tree, n => n.props && n.props.role === 'status').length, 1);
+});
+
+test('a move posts its transition and a restart of an unknown outcome asks first', () => {
+  const calls = [], confirms = [];
+  const tree = render(calls, confirms);
+  const buttons = all(tree, n => n.type === 'button');
+  buttons.find(b => label(b) === 'Pause').props.onClick();
+  assert.equal(calls.at(-1)[0], '/api/goals/goal_synthetic/transition');
+  assert.deepEqual(JSON.parse(calls.at(-1)[2]), { status: 'paused', reason: 'Pause' });
+  buttons.find(b => label(b) === 'Start it again').props.onClick();
+  assert.equal(confirms.length, 1, 'the owner was not asked before a restart of an unknown outcome');
+  assert.equal(calls.at(-1)[0], '/api/goals/goal_synthetic/milestones/ms_1/restart');
+  assert.deepEqual(JSON.parse(calls.at(-1)[2]), { confirm_unknown_outcome: true });
+});
