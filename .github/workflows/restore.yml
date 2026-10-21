@@ -101,6 +101,8 @@ jobs:
           python -m agent_friday.cli restore $bad
           if ($LASTEXITCODE -eq 0) { throw "a changed bundle was restored" }
           if (Test-Path "$env:RUNNER_TEMP\c\.friday\settings.json") { throw "a changed bundle wrote files" }
+          Write-Host "a changed bundle was refused and wrote nothing"
+          exit 0
 
   restore-ubuntu:
     name: machine C (ubuntu) restores the windows bundle
