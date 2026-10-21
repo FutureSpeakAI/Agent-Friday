@@ -63,7 +63,8 @@ def test_only_the_questions_the_goal_still_needs_are_asked():
 def test_the_summary_says_the_whole_goal_in_plain_words():
     s = gd.draft(FULL)["summary"]
     for part in ("Goal: Plan a synthetic trip.", "Done when: an itinerary file is saved.", "Proof: itinerary.md in Documents.",
-                 "Steps: 1. Find options; 2. Write the itinerary.", "On my own I may look things up and read, draft.",
+                 "1. Find options (look things up and read, draft)", "2. Write the itinerary (change files or settings)",
+                 "On my own I may look things up and read, draft.", "It starts when you start it.",
                  "I ask you first before I change files or settings", "I never delete things",
                  "500 mψ", "30 minutes of work", "I stop and come back to you if: flights cost more than the budget."):
         assert part in s, part
@@ -144,3 +145,84 @@ def test_home_shows_a_goal_only_for_the_moments_the_owner_asked_for():
     goals.transition_goal(loud["goal_id"], "active")
     records, _stamp, _detail = dcs._goals(0)
     assert {r["id"]: r for r in records}[loud["goal_id"]]["notify"] is True
+
+
+# ── security review (G4) ──────────────────────────────────────────────────────
+
+def _active(spec):
+    g = goals.define_goal(spec, gd.draft(spec)["summary_id"])
+    goals.transition_goal(g["goal_id"], "active")
+    return g
+
+
+def test_changing_one_kind_of_action_keeps_the_others():
+    spec = dict(FULL, autonomy={"write": "never"})
+    g = goals.define_goal(spec, gd.draft(spec)["summary_id"])
+    goals.update_goal(g["goal_id"], {"autonomy": {"send": "never"}})
+    a = goals.get_goal(g["goal_id"])["autonomy"]
+    assert a["write"] == "never" and a["send"] == "never"
+    assert any("send ask_me→never" in h.get("reason", "") for h in goals.get_goal(g["goal_id"])["history"])
+
+
+def test_a_step_added_without_saying_what_it_does_asks():
+    work = _Work()
+    goals.set_executor(work)
+    g = _active(FULL)
+    goals.add_milestone(g["goal_id"], {"name": "Something extra", "due": PAST})
+    m = goals.get_goal(g["goal_id"])["milestones"][-1]
+    out = goals.run_milestone(g["goal_id"], m["milestone_id"])
+    assert out["status"] == "pending_approval" and work.calls == 0
+
+
+def test_what_the_instruction_really_does_counts_not_only_what_the_step_declares():
+    work = _Work()
+    goals.set_executor(work)
+    spec = dict(FULL, autonomy={"send": "never"}, people=["a synthetic friend"],
+                milestones=[{"name": "Email the itinerary to a synthetic friend", "planned_actions": ["read"], "due": PAST}])
+    g = _active(spec)
+    out = goals.run_milestone(g["goal_id"], g["milestones"][0]["milestone_id"])
+    assert out["status"] == "not_allowed" and work.calls == 0
+
+
+def test_the_runtime_budget_holds_for_a_direct_run_too():
+    work = _Work()
+    goals.set_executor(work)
+    g = _active(dict(FULL, milestones=[{"name": "Find options", "planned_actions": ["read"], "due": PAST}]))
+
+    def used(goal):
+        goal["spent_runtime_s"] = 30 * 60
+        return goal
+    goals._mutate_goal(g["goal_id"], used)
+    out = goals.run_milestone(g["goal_id"], g["milestones"][0]["milestone_id"])
+    assert out["status"] == "budget_exceeded" and work.calls == 0
+    goals.update_goal(g["goal_id"], {"budget": {"runtime_minutes": 60}})
+    assert goals.get_goal(g["goal_id"])["milestones"][0]["status"] == "pending"
+
+
+def test_a_run_is_counted_once_however_often_it_is_closed():
+    import time as _t
+    g = _active(FULL)
+    gid, mid = g["goal_id"], g["milestones"][0]["milestone_id"]
+    goals._update_milestone(gid, mid, run={"boot": "x", "started_at": _t.time() - 60, "task_id": None})
+    goals._update_milestone(gid, mid, **goals._closed_run(gid, mid))
+    goals._update_milestone(gid, mid, **goals._closed_run(gid, mid))
+    spent = goals.get_goal(gid)["spent_runtime_s"]
+    assert 55 <= spent <= 120, spent
+
+
+def test_a_step_waiting_for_the_owner_always_shows_on_home():
+    from agent_friday.services import desktop_card_sources as dcs
+    spec = dict(FULL, notification_policy={"on": []},
+                milestones=[{"name": "Clear old drafts", "planned_actions": ["delete"], "due": PAST}])
+    g = _active(spec)
+    goals.run_milestone(g["goal_id"], g["milestones"][0]["milestone_id"])
+    records, _s, _d = dcs._goals(0)
+    assert {r["id"]: r for r in records}[g["goal_id"]]["notify"] is True
+
+
+def test_the_summary_is_honest_about_money():
+    spec = dict(FULL, budget={"money_cents": 5000},
+                milestones=[{"name": "Book it", "planned_actions": ["spend"]}])
+    s = gd.draft(spec)["summary"]
+    assert "I can't count money yet, so every spend asks you first (you said at most 50.00)." in s
+    assert "50.00 in money" not in s
