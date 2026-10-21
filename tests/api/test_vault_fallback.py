@@ -117,21 +117,37 @@ def test_router_refuse_flag_is_honored(monkeypatch):
     assert "local model" in text.lower()
 
 
-def test_non_vault_request_keeps_full_fallback_chain(monkeypatch):
+def _plain_ladder(monkeypatch, routing):
     import agent_friday.routing.ollama_manager as ollama_manager
+    from agent_friday.services import provider_fallback
+    provider_fallback._reset_for_tests()
     monkeypatch.setattr(ollama_manager, "get_manager",
                         lambda *a, **k: _FakeOllama(available=False))
-    _patch_settings(monkeypatch, {"mode": "cloud_only"})
-
+    _patch_settings(monkeypatch, routing)
     cloud = _Recorder(exc=RuntimeError("anthropic down"))
     openai = _Recorder(result=("openai saved the day", []))
     local = _Recorder(exc=RuntimeError("no ollama"))
     monkeypatch.setattr(agent_mod, "_call_claude_agent", cloud)
     monkeypatch.setattr(agent_mod, "_call_openai", openai)
     monkeypatch.setattr(agent_mod, "_call_ollama", local)
+    return cloud, openai, local
 
-    text, trace = agent_mod._generate_agent(PLAIN_MSG, system="sys")
 
+def test_non_vault_cloud_failure_offers_the_other_provider_instead_of_switching(monkeypatch):
+    """A6: Anthropic failing no longer moves the call to the other cloud provider on its own."""
+    from agent_friday.services import provider_fallback
+    cloud, openai, _local = _plain_ladder(monkeypatch, {"mode": "cloud_only"})
+    with pytest.raises(provider_fallback.ProviderSwitchWithheld) as e:
+        agent_mod._generate_agent(PLAIN_MSG, system="sys")
     assert cloud.calls == 1, "plain request should try the routed cloud provider first"
-    assert openai.calls == 1, "plain request must still fall back across providers"
+    assert openai.calls == 0, "no silent move to another cloud provider"
+    assert e.value.failed == "anthropic" and e.value.alternative == "openai"
+
+
+def test_non_vault_request_keeps_the_fallback_the_owner_set(monkeypatch):
+    cloud, openai, _local = _plain_ladder(
+        monkeypatch, {"mode": "cloud_only", "cloud_fallback_order": "anthropic_then_openai"})
+    text, trace = agent_mod._generate_agent(PLAIN_MSG, system="sys")
+    assert cloud.calls == 1, "plain request should try the routed cloud provider first"
+    assert openai.calls == 1, "the owner's order allows the move"
     assert text == "openai saved the day"
