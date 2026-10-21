@@ -2125,6 +2125,7 @@ window.fridayEnterSends=fridayEnterSends;
 // Off the record (services/off_record): one state every chat box reads, so
 // each one says that nothing is being saved while it lasts.
 const FRIDAY_OFF_RECORD_TEXT = 'Off the record: nothing is being saved';
+const FRIDAY_OFF_RECORD_NOTICE = 'Off the record, Friday saves nothing about this conversation. Services you connected (mail, calendar, publishing) can still keep their own records of what they are asked to do.';
 function fridayOffRecordFrom(s) {
   return !!(s && s.off_record) && s.off_record_stops_storage !== false;
 }
@@ -2148,7 +2149,7 @@ function FridayChatInput({value,onChange,onSend,placeholder,disabled,inputRef,cl
   const offRecord=useFridayOffRecord();if(offRecord)placeholder=FRIDAY_OFF_RECORD_TEXT;
   const own=useRef(null);const ref=inputRef||own;
   React.useLayoutEffect(()=>{const el=ref.current;if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight+2,maxHeight||160)+'px'},[value]);
-  return <textarea ref={ref} rows={1} className={className} value={value} disabled={disabled} autoFocus={autoFocus} placeholder={placeholder} aria-label={placeholder} title={offRecord?FRIDAY_OFF_RECORD_TEXT:undefined} data-chat-input="" data-off-record={offRecord?"true":undefined}
+  return <textarea ref={ref} rows={1} className={className} value={value} disabled={disabled} autoFocus={autoFocus} placeholder={placeholder} aria-label={placeholder} title={offRecord?FRIDAY_OFF_RECORD_NOTICE:undefined} data-chat-input="" data-off-record={offRecord?"true":undefined}
     onChange={e=>{onChange(e.target.value);try{window.fridayAvatar&&window.fridayAvatar.typed()}catch(_){}}} onKeyDown={e=>fridayEnterSends(e,onSend)}
     style={{resize:'none',overflowY:'auto',boxSizing:'border-box',lineHeight:1.45,fontFamily:'Inter, sans-serif',display:'block',...(style||{}),...(offRecord?{borderColor:'#ff0080',boxShadow:'0 0 0 1px rgba(255,0,128,0.45)'}:{})}}/>;
 }
@@ -20293,6 +20294,72 @@ function SettingsLocks(){
 }
 
 
+function SettingsPrivacyMap() {
+  // The privacy map (north star §26.22, services/privacy_map.py): what Friday
+  // keeps, where, for how long, what left this PC and to whom. Read-only; each
+  // entry links to the control that exports or deletes it.
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [rec, setRec] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/privacy/map').then(r => r.json()).then(x => { setD(x); setMsg(''); }).catch(() => setMsg('Could not read the privacy map.'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const when = t => t ? new Date(t * 1000).toLocaleDateString() : '';
+  const go = c => {
+    if (c.href) window.open(c.href, '_blank');
+    else if (c.nav && window.fridayOpenWorkspace) window.fridayOpenWorkspace(c.nav);
+  };
+  const ctl = c => E('button', { type: 'button', key: c.kind + c.label, className: 'btn', style: { fontSize: 11, marginRight: 6, marginTop: 4 }, title: c.words, 'aria-label': c.label + ': ' + c.words, onClick: () => go(c) }, c.label);
+  const receipts = to => apiFetch('/api/privacy/map/left?to=' + encodeURIComponent(to)).then(r => r.json())
+    .then(x => setRec({ to, label: x.label, rows: x.rows || [] })).catch(() => setMsg('Could not read the receipts.'));
+  if (!d) return E(StSection, { title: 'Privacy map', desc: 'What Friday keeps on this PC, where, for how long, and what has left it and to whom.' },
+    E('div', { className: 'sc-sub' }, msg || 'Reading…'));
+  const left = d.left || {};
+  const dests = left.destinations || [];
+  const mail = d.mail || {};
+  const svc = d.services || {};
+  const gr = d.grants || {};
+  return E(StSection, { title: 'Privacy map', desc: 'What Friday keeps on this PC, where, for how long, and what has left it and to whom.' },
+    E('h4', { className: 'pm-h' }, 'What Friday keeps'),
+    E('ul', { className: 'pm-list', 'aria-label': 'What Friday keeps' }, (d.stores || []).map(s => E('li', { key: s.key, className: 'pm-store pm-' + s.encrypted },
+      E('div', { className: 'lk-title' }, s.name),
+      E('div', { className: 'lk-words' }, s.holds),
+      E('div', { className: 'lk-words' }, 'Where: ' + (s.where || []).join(', ') + ' in Friday’s folder. ' + s.size_words),
+      E('div', { className: 'lk-words' }, s.encrypted_words),
+      E('div', { className: 'lk-words' }, s.retention_words),
+      E('div', null, (s.controls || []).map(ctl))))),
+    E('h4', { className: 'pm-h' }, 'What has left this PC, and to whom'),
+    left.readable === false && E('div', { className: 'lk-words' }, 'I couldn’t read the record of what left this PC.'),
+    dests.length === 0 && left.readable !== false && E('div', { className: 'lk-words' }, 'Nothing has left this PC through the privacy gate.'),
+    dests.length > 0 && E('ul', { className: 'pm-list', 'aria-label': 'What has left this PC' }, dests.map(x => E('li', { key: x.to, className: 'pm-dest' },
+      E('div', { className: 'lk-title' }, x.label),
+      E('div', { className: 'lk-words' }, x.sent + ' sent' + (x.sent_with_parts_withheld ? ' (' + x.sent_with_parts_withheld + ' with parts withheld)' : '') + (x.stopped ? ', ' + x.stopped + ' stopped before leaving' : '') + (x.files_or_images ? ', ' + x.files_or_images + ' files or images' : '') + (x.background ? ', ' + x.background + ' from background work' : '') + '. ' + (x.first ? 'From ' + when(x.first) + ' to ' + when(x.last) + '.' : '')),
+      x.fields && x.fields.length > 0 && E('div', { className: 'lk-words' }, 'What kind: ' + x.fields.join(', ')),
+      E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4 }, 'aria-label': 'Show the receipts for ' + x.label, onClick: () => receipts(x.to) }, 'Show the receipts')))),
+    rec && E('div', { className: 'pm-receipts', role: 'region', 'aria-label': 'Receipts for ' + rec.label },
+      E('div', { className: 'lk-title' }, 'Receipts: ' + rec.label),
+      rec.rows.length === 0 ? E('div', { className: 'lk-words' }, 'No rows.') : E('ul', { className: 'lk-sub' }, rec.rows.map((r, i) => E('li', { key: i }, new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.field || '') + ' · ' + (r.action || '') + (r.reason ? ' · ' + r.reason : '')))),
+      E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setRec(null) }, 'Close the receipts')),
+    (left.not_recorded || []).length > 0 && E('div', { className: 'lk-words' }, 'Not in this list yet:'),
+    (left.not_recorded || []).length > 0 && E('ul', { className: 'lk-sub', 'aria-label': 'Not in this list yet' }, left.not_recorded.map(n => E('li', { key: n.key }, n.what + '. ' + n.record))),
+    E('h4', { className: 'pm-h' }, 'Mail Friday sent for you'),
+    E('div', { className: 'lk-words' }, (mail.sent || 0) + ' sent' + (mail.failed ? ', ' + mail.failed + ' failed' : '') + '.'),
+    (mail.recipients || []).length > 0 && E('ul', { className: 'lk-sub', 'aria-label': 'Mail recipients' }, mail.recipients.map(r => E('li', { key: r.to }, r.to + ': ' + r.count + (r.last ? ', last ' + when(r.last) : '')))),
+    E('h4', { className: 'pm-h' }, 'Who and what can reach your things'),
+    E('div', { className: 'lk-words' }, (gr.actions == null ? 'I couldn’t read the pre-approved actions.' : gr.actions.length + ' pre-approved action' + (gr.actions.length === 1 ? '' : 's') + '.') + ' ' + (gr.files == null ? 'I couldn’t read the file permissions.' : gr.files + ' folder permission' + (gr.files === 1 ? '' : 's') + '.')),
+    gr.nav && ctl({ kind: 'nav', label: 'File access', words: 'Folders Friday may read', nav: gr.nav }),
+    svc.readable === false ? E('div', { className: 'lk-words' }, 'I couldn’t read the connected services.') : E('ul', { className: 'lk-sub', 'aria-label': 'Connected services' }, (svc.connected || []).concat(svc.remote || []).map(c => E('li', { key: c.group + c.label }, c.label + (c.may && c.may.length ? ': ' + c.may.join('; ') : '')))),
+    E('div', { className: 'lk-words' }, (svc.remote || []).length ? (svc.remote.length + ' phone or remote channel' + (svc.remote.length === 1 ? '' : 's') + ' can reach Friday from outside this PC.') : 'No phone or remote channel can reach Friday from outside this PC.'),
+    d.vault_access && E('div', { className: 'lk-words' }, d.vault_access.last_7_days == null ? 'I couldn’t read the private-records access log.' : 'Private records were read ' + d.vault_access.last_7_days + ' time' + (d.vault_access.last_7_days === 1 ? '' : 's') + ' in the last 7 days.'),
+    d.off_record && E('p', { className: 'lk-words', role: 'note' }, E('strong', null, 'Off the record. '), d.off_record.words),
+    E('div', null, d.export && ctl(d.export), d.erase && ctl(d.erase)),
+    E('p', { className: 'lk-limit', role: 'note' }, E('strong', null, 'The honest limit. '), d.honest_limit),
+    E('div', { role: 'status', 'aria-live': 'polite', className: 'sc-msgline' }, msg),
+    E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 6 }, onClick: load }, 'Check again'));
+}
+
 function SettingsTabPrivacy({s,save}){
   const[vaultStatus,setVaultStatus]=useState(null);
   const[pass,setPass]=useState('');
@@ -20318,6 +20385,7 @@ function SettingsTabPrivacy({s,save}){
   const armed=vaultStatus&&vaultStatus.encryption==='AES-256-GCM';
   return <div>
     <SettingsLocks/>
+    <SettingsPrivacyMap/>
     <StSection title="Vault">
       {vaultStatus&&<div style={{padding:'12px 14px',background:'rgba(0,0,0,0.3)',borderRadius:8,border:'1px solid rgba(0,212,255,0.08)',marginBottom:14}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
@@ -29645,6 +29713,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>{agentSettings.off_record&&agentSettings.off_record_stops_storage!==false?FRIDAY_OFF_RECORD_TEXT:'Go off the record'}</span>
           <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
         </div>
+        {agentSettings.off_record&&<div role="note" data-off-record-notice="true" style={{fontSize:11,color:'rgba(255,255,255,0.6)',padding:'0 12px 8px',lineHeight:1.5}}>{FRIDAY_OFF_RECORD_NOTICE}</div>}
         <div className="settings-toggle" role="button" tabIndex={0} title="Logging is changed in Settings, Privacy & Data, next to the log and its erase controls." onClick={()=>{window.__fridaySettingsTab='privacy';setSettingsOpen(false);toggle('settings');try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'privacy'}}))}catch(e){}}} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.currentTarget.click()}}}>
           <span className="settings-toggle-label">Log conversations</span>
           <span style={{fontSize:11,color:agentSettings.context_logging_enabled?'#00ff80':'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>{(agentSettings.context_logging_enabled?'On':'Off')+' \u2192'}</span>
