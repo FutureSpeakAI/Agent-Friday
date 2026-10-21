@@ -87,6 +87,16 @@ test('defining a goal: the summary first, then create only that summary (17.4)',
   assert.equal(JSON.parse(calls.at(-1)[2]).summary_id, 'abc');
 });
 
+test('each goal says how it is doing, in words (17.15)', () => {
+  const withHealth = JSON.parse(JSON.stringify(DATA));
+  withHealth.goals[0].health = { level: 'poor', words: 'needs attention', signals: [
+    { key: 'progress', words: '0 of 1 steps done.', level: 'good' }, { key: 'attention', words: '1 step waits for you.', level: 'poor' }] };
+  const tree = render([], [], withHealth);
+  const node = all(tree, n => n.props && n.props['data-goal-health'] === 'poor')[0];
+  assert.ok(node, 'no health line');
+  assert.equal(label(node), 'Health: needs attention. 1 step waits for you.');
+});
+
 test('a restart whose outcome is known does not ask and claims nothing', () => {
   const calls = [], confirms = [];
   const known = JSON.parse(JSON.stringify(DATA));
