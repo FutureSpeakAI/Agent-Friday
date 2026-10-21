@@ -143,7 +143,9 @@ def test_the_filter_never_raises_into_the_code_that_logged():
     assert "cannot print me" not in out
 
 
-def test_the_stale_key_repair_never_moves_a_keystore_key_back_to_the_vault_key(store, monkeypatch):
+def test_the_stale_key_repair_never_moves_a_keystore_key_back_to_the_vault_key(store, monkeypatch, tmp_path):
+    from agent_friday import core
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path / "home-for-backups")   # its backup lands here
     cs.set_provider_key("example", "not-a-real-key-000000")  # pragma: allowlist secret
     path = cs._provider_key_path("example")
     before = path.read_bytes()
@@ -160,9 +162,11 @@ def test_the_task_journal_never_writes_plain_text_when_nothing_can_encrypt(tmp_p
     def _refused(data):
         raise cs.CredentialProtectionUnavailable("refused in this test")
     monkeypatch.setattr(cs, "protect", _refused)
-    tj.append("task-plain-1", "note", text="the owner's private note")
+    tj.reset_for_tests()
+    assert tj.append("task-plain-1", "note", text="the owner's private note") is None, "the write did not fail"
     on_disk = b"".join(p.read_bytes() for p in (tmp_path / "tasks").rglob("*") if p.is_file())
     assert b"private note" not in on_disk
+    tj.reset_for_tests()
 
 
 def test_a_traceback_is_redacted_too():
@@ -173,6 +177,16 @@ def test_a_traceback_is_redacted_too():
 def test_ordinary_lines_are_left_alone():
     out = _logged("model %s answered in %d ms with max_tokens=%d", "local-seat", 812, 4096)
     assert "local-seat" in out and "812" in out and "max_tokens=4096" in out
+    for line in ('provider said {"code": "rate_limit_exceeded"}', "error code: ERR_CONNECTION_REFUSED",
+                 "exit code: -1073741819", "session: 7f3a9c2b started"):
+        assert _logged("%s", line).strip().endswith(line), line
+
+
+def test_a_redacted_value_reads_cleanly():
+    out = _logged('{"password": "%s"}', "correct horse")  # pragma: allowlist secret
+    assert '"password": "[redacted]"' in out and "]]" not in out
+    out = _logged("callback %s", "https://app.example.test/cb?state=s1&code=" + "4%2F0A" + "x" * 30)
+    assert "x" * 30 not in out and "state=s1" in out
 
 
 # -- one correlation id per request ----------------------------------------
