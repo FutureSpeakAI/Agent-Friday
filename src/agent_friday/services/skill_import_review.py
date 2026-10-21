@@ -55,8 +55,14 @@ _HOOKED = {"done": False}
 _LOCK = threading.Lock()
 
 
-class ImportRefused(ValueError):
-    """The package cannot be staged; the message says why in plain words."""
+class Refusal(str):
+    """Why a package cannot be staged, in plain words. Returned, never raised: a
+    refusal is an answer for the owner, not an error, and no exception text ever
+    reaches a response."""
+
+
+def _refused(x) -> bool:
+    return isinstance(x, Refusal)
 
 
 def _staging_dir() -> Path:
@@ -74,17 +80,17 @@ def _registry():
 def _zip_manifest(src: Path):
     """(manifest text, folder name, left-out member names) from a zip, read in memory."""
     if src.stat().st_size > MAX_PACKAGE_BYTES:
-        raise ImportRefused("the package is larger than %d MB" % (MAX_PACKAGE_BYTES // (1024 * 1024)))
+        return Refusal("the package is larger than %d MB" % (MAX_PACKAGE_BYTES // (1024 * 1024)))
     try:
         zf = zipfile.ZipFile(src)
     except zipfile.BadZipFile:
-        raise ImportRefused("the file is not a readable .zip")
+        return Refusal("the file is not a readable .zip")
     with zf:
         infos = zf.infolist()
         if len(infos) > MAX_MEMBERS:
-            raise ImportRefused("the package has more than %d files" % MAX_MEMBERS)
+            return Refusal("the package has more than %d files" % MAX_MEMBERS)
         if sum(max(0, i.file_size) for i in infos) > MAX_UNPACKED_BYTES:
-            raise ImportRefused("the package unpacks to more than %d MB" % (MAX_UNPACKED_BYTES // (1024 * 1024)))
+            return Refusal("the package unpacks to more than %d MB" % (MAX_UNPACKED_BYTES // (1024 * 1024)))
         manifests = []
         for info in infos:
             name = info.filename.replace("\\", "/")
@@ -93,16 +99,16 @@ def _zip_manifest(src: Path):
             if PurePosixPath(name).name in _MANIFEST_NAMES:
                 manifests.append(info)
         if not manifests:
-            raise ImportRefused("the package contains no SKILL.md")
+            return Refusal("the package contains no SKILL.md")
         # The shallowest manifest is the skill (the same choice as a folder import).
         manifests.sort(key=lambda i: (i.filename.replace("\\", "/").count("/"), i.filename))
         man = manifests[0]
         if man.file_size > MAX_MANIFEST_BYTES:
-            raise ImportRefused("the SKILL.md is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
+            return Refusal("the SKILL.md is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
         with zf.open(man) as stream:
             raw = stream.read(MAX_MANIFEST_BYTES + 1)
         if len(raw) > MAX_MANIFEST_BYTES:
-            raise ImportRefused("the SKILL.md is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
+            return Refusal("the SKILL.md is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
         folder = PurePosixPath(man.filename.replace("\\", "/")).parent.name or src.stem
         left_out = sorted(i.filename for i in infos if not i.is_dir() and i is not man)
     return raw.decode("utf-8", errors="replace"), folder, left_out
@@ -111,9 +117,9 @@ def _zip_manifest(src: Path):
 def _folder_manifest(src: Path):
     man = next((src / n for n in _MANIFEST_NAMES if (src / n).is_file()), None)
     if man is None:
-        raise ImportRefused("the folder has no SKILL.md")
+        return Refusal("the folder has no SKILL.md")
     if man.stat().st_size > MAX_MANIFEST_BYTES:
-        raise ImportRefused("the SKILL.md is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
+        return Refusal("the SKILL.md is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
     left_out = []
     for i, p in enumerate(src.rglob("*")):
         if i >= MAX_MEMBERS:
@@ -125,23 +131,29 @@ def _folder_manifest(src: Path):
 
 
 def _read(src: Path):
-    """The Skill a package describes, and the files an install would leave out."""
+    """(the Skill a package describes, the files an install would leave out), or a Refusal."""
     reg = _registry()
     if src.is_file() and src.suffix.lower() == ".zip":
-        text, folder, left_out = _zip_manifest(src)
+        got = _zip_manifest(src)
+        if _refused(got):
+            return got
+        text, folder, left_out = got
         skill = reg._skill_from_manifest(Path(folder), text, default_source="imported")
     elif src.is_file() and src.suffix.lower() in (".yaml", ".yml"):
         if src.stat().st_size > MAX_MANIFEST_BYTES:
-            raise ImportRefused("the skill file is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
+            return Refusal("the skill file is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
         skill = reg._skill_from_legacy_yaml(src)
         if skill is None:
-            raise ImportRefused("the legacy skill file could not be read")
+            return Refusal("the legacy skill file could not be read")
         left_out = []
     elif src.is_dir():
-        text, folder, left_out = _folder_manifest(src)
+        got = _folder_manifest(src)
+        if _refused(got):
+            return got
+        text, folder, left_out = got
         skill = reg._skill_from_manifest(Path(folder), text, default_source="imported")
     else:
-        raise ImportRefused("choose a .zip, a skill folder or a .yaml skill file")
+        return Refusal("choose a .zip, a skill folder or a .yaml skill file")
     return skill, left_out
 
 
@@ -193,9 +205,9 @@ def describe(staged: dict) -> str:
 
 
 def _replaces(name: str):
-    """The installed skill folder an install of `name` would write over, or None. Raises
-    ImportRefused when the name belongs to a bundled skill (the bundled one would keep
-    answering to it, so the install would change nothing the owner could see)."""
+    """The installed skill folder an install of `name` would write over, or None; a Refusal
+    when the name belongs to a bundled skill (the bundled one would keep answering to it, so
+    the install would change nothing the owner could see) or to another installed skill."""
     reg = _registry()
     safe = reg._safe_name(name)
     try:
@@ -203,7 +215,7 @@ def _replaces(name: str):
     except Exception:  # noqa: BLE001 - an unreadable bundle dir has no names to collide with
         bundled = set()
     if safe in bundled:
-        raise ImportRefused("a skill that ships with Friday is already called “%s”; import it "
+        return Refusal("a skill that ships with Friday is already called “%s”; import it "
                             "under another name" % name)
     folder = reg._skill_dir(reg.SKILLS_DIR, name)
     try:
@@ -215,7 +227,7 @@ def _replaces(name: str):
         if (str(other.name).casefold() == str(name).casefold() and other_folder.name != folder.name):
             # Another skill already answers to this name from a different folder (or a legacy file):
             # installing would leave two skills with one name, and which one runs would be chance.
-            raise ImportRefused("a skill called \u201c%s\u201d is already installed (in %s); import this one "
+            return Refusal("a skill called \u201c%s\u201d is already installed (in %s); import this one "
                                 "under another name, or archive that one first" % (name, other_folder.name))
     return folder.name if folder.exists() else None
 
@@ -231,12 +243,15 @@ def _invisible(text: str) -> list:
 def stage(src, name=None, *, source_name: str = "", requested_by: str = "owner") -> dict:
     """Read a package and raise the card that installs it. Installs nothing.
 
-    Returns {"status": "pending_review", "approval_id", "stage_id", "preview"}.
-    Raises ImportRefused (with a plain reason) when the package cannot be read."""
+    Returns {"status": "pending_review", "approval_id", "stage_id", "preview"}, or
+    {"status": "refused", "reason": <plain words>} when the package cannot be staged."""
     src = Path(src)
     if not src.exists():
-        raise ImportRefused("the import source was not found")
-    skill, left_out = _read(src)
+        return {"status": "refused", "reason": "the import source was not found"}
+    got = _read(src)
+    if _refused(got):
+        return {"status": "refused", "reason": str(got)}
+    skill, left_out = got
     reg = _registry()
     if name:
         skill.name = str(name)
@@ -249,14 +264,17 @@ def stage(src, name=None, *, source_name: str = "", requested_by: str = "owner")
     }
     hidden = _invisible(json.dumps(fields, ensure_ascii=False))
     if hidden:
-        raise ImportRefused("the package holds characters a card cannot show (%s); remove them and import "
-                            "it again" % ", ".join(hidden[:8]))
+        return {"status": "refused", "reason": "the package holds characters a card cannot show (%s); remove "
+                                               "them and import it again" % ", ".join(hidden[:8])}
     if len(fields["body"]) > MAX_REVIEW_BODY:
-        raise ImportRefused("its procedure is %d characters, more than the %d a card can show in full; "
-                            "shorten it before importing" % (len(fields["body"]), MAX_REVIEW_BODY))
+        return {"status": "refused", "reason": "its procedure is %d characters, more than the %d a card can "
+                                               "show in full; shorten it before importing"
+                                               % (len(fields["body"]), MAX_REVIEW_BODY)}
     if not safe or safe.startswith((".", "_")):
-        raise ImportRefused("the skill needs a plain name")
+        return {"status": "refused", "reason": "the skill needs a plain name"}
     existing = _replaces(skill.name)
+    if _refused(existing):
+        return {"status": "refused", "reason": str(existing)}
     stage_id = "sk" + uuid.uuid4().hex[:16]
     staged = {
         "stage_id": stage_id, "fields": fields, "sha256": _fields_sha(fields),
@@ -335,11 +353,8 @@ def install_approved(record: dict) -> dict:
             _tell("The skill was not installed", out["why"], record["approval_id"])
             return out
         f = staged["fields"]
-        try:
-            now_replaces = _replaces(f["name"])
-        except ImportRefused as e:
-            now_replaces = str(e)
-        if now_replaces != staged.get("replaces"):
+        now_replaces = _replaces(f["name"])
+        if _refused(now_replaces) or now_replaces != staged.get("replaces"):
             out = {"ok": False, "why": "what this install would replace has changed since the card was raised; "
                                        "nothing was installed. Import the package again to see the new card"}
             ap.mark_used(record["approval_id"], KIND, out)
