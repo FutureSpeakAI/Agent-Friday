@@ -1309,10 +1309,25 @@ def _send_grant(tool_name, args, ctx) -> Optional[dict]:
         return None
 
 
+#: In safe mode these run nothing at all: a command or program can reach the
+#: network or another machine in ways no socket guard in this process sees
+#: (git remotes, \\host paths, -ComputerName).
+SAFE_MODE_HELD_TOOLS = frozenset({"run_command", "run_sandboxed", "run_powershell",
+                                  "run_python", "execute_code", "open_path", "launch_app"})
+
+
 def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             grant_tainted=None) -> Verdict:
     if klass == "forbidden":
         return Verdict("deny", klass, f"not allowed: {why}")
+    if tool_name in SAFE_MODE_HELD_TOOLS:
+        try:
+            from agent_friday.services import safe_mode as _sm
+            _why = _sm.refusal("connectors") if _sm.active() else None
+        except Exception:
+            _why = None
+        if _why:
+            return Verdict("deny", klass, f"held: {_why}")
     if klass == INTERNAL:
         if tainted and _own_mailbox_draft(tool_name, args):
             # A recipient read in an email is the normal case for a reply. The

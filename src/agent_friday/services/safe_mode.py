@@ -9,7 +9,12 @@ In safe mode Friday starts a minimal local interface:
   held, remote channels, the phone line and published-page hosting stay off;
 * no cloud: every cloud model call is refused (even with a per-turn intent),
   routing is local only for this run, web search and web fetch are refused,
-  nothing is downloaded at start and no update check is made;
+  nothing is downloaded at start and no update check is made; underneath all
+  of these, no connection leaves the machine from this process (a socket-level
+  guard: loopback only, no proxy), and commands and programs (run_command and
+  the like) run nothing, since a child process is outside that guard. The
+  local Ollama daemon is a separate program with its own settings; Friday asks
+  it for no download in safe mode;
 * schedules paused, outward actions held (the action gate's outward_hold);
 * still there: chat with a local model if one is installed, read-only data,
   the Activity ledger, the Doctor report, backup (the Friday Bundle) and the
@@ -185,10 +190,55 @@ def install_network_guard() -> bool:
             raise socket.gaierror("safe mode: no name lookup for %s" % h)
         return real_gai(host, *a, **k)
 
+    real_ghbn = socket.gethostbyname
+    real_ghbn_ex = socket.gethostbyname_ex
+    real_sendto = socket.socket.sendto
+    real_sendmsg = getattr(socket.socket, "sendmsg", None)
+
+    def gethostbyname(host):
+        if not _local_host(host):
+            raise socket.gaierror("safe mode: no name lookup for %s" % host)
+        return real_ghbn(host)
+
+    def gethostbyname_ex(host):
+        if not _local_host(host):
+            raise socket.gaierror("safe mode: no name lookup for %s" % host)
+        return real_ghbn_ex(host)
+
+    def sendto(self, data, *rest):
+        addr = rest[-1] if rest else None
+        if getattr(self, "family", None) in (socket.AF_INET, getattr(socket, "AF_INET6", -1)) and addr:
+            _check(addr)
+        return real_sendto(self, data, *rest)
+
+    def sendmsg(self, buffers, ancdata=(), flags=0, address=None):
+        if address is not None and getattr(self, "family", None) in (
+                socket.AF_INET, getattr(socket, "AF_INET6", -1)):
+            _check(address)
+        return real_sendmsg(self, buffers, ancdata, flags, *(() if address is None else (address,)))
+
     socket.socket.connect = connect
     socket.socket.connect_ex = connect_ex
     socket.getaddrinfo = getaddrinfo
-    _GUARD.update(installed=True, real=(real_connect, real_connect_ex, real_gai))
+    socket.gethostbyname = gethostbyname
+    socket.gethostbyname_ex = gethostbyname_ex
+    socket.socket.sendto = sendto
+    if real_sendmsg is not None:
+        socket.socket.sendmsg = sendmsg
+    # A proxy on this machine (a VPN agent, a corporate proxy, the system
+    # proxy in the registry) would carry a request out through a loopback
+    # connection: no proxy is used in safe mode.
+    names = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+    saved_env = {k: os.environ.get(k) for k in names + ("NO_PROXY", "no_proxy")}
+    for k in names:
+        os.environ.pop(k, None)
+    os.environ["NO_PROXY"] = os.environ["no_proxy"] = "*"
+    import urllib.request as _ur
+    real_getproxies = _ur.getproxies
+    _ur.getproxies = lambda: {}
+    _GUARD.update(installed=True, real=(real_connect, real_connect_ex, real_gai),
+                  real2=(real_ghbn, real_ghbn_ex, real_sendto, real_sendmsg, real_getproxies),
+                  env=saved_env)
     return True
 
 
@@ -197,8 +247,19 @@ def remove_network_guard() -> None:
     if not _GUARD.get("installed"):
         return
     import socket
+    import urllib.request as _ur
     socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo = _GUARD["real"]
-    _GUARD.update(installed=False, real=None)
+    ghbn, ghbn_ex, sendto, sendmsg, getproxies = _GUARD["real2"]
+    socket.gethostbyname, socket.gethostbyname_ex, socket.socket.sendto = ghbn, ghbn_ex, sendto
+    if sendmsg is not None:
+        socket.socket.sendmsg = sendmsg
+    _ur.getproxies = getproxies
+    for k, v in (_GUARD.get("env") or {}).items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    _GUARD.update(installed=False, real=None, real2=None, env=None)
 
 
 def reset_for_tests() -> None:

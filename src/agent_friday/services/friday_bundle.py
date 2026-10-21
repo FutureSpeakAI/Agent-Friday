@@ -20,11 +20,18 @@ What it holds, by category (each can be left out):
 * other: anything else in the data folder that is not excluded below.
 
 Never in it: third-party credentials (provider API keys, Google and MCP OAuth
-tokens, platform credentials, the phone line's secrets; connectors are
-re-connected after a restore, §27.2), files only this machine can open (DPAPI
-blobs), this device's identity (attestation key, TLS and local-address keys,
-the web session secret), downloads and caches (models, runtime, voice
-environments: fetched again), logs, and process files.
+tokens and client secrets, platform credentials, the phone line's secrets, the
+PDF-signing certificate, browser-task profiles with their cookies; the
+connector secrets in mcp_servers.json and any key, password or token an older
+version kept in settings.json or config.yaml are blanked as they go in;
+connectors are re-connected after a restore, §27.2), files only this machine
+can open (DPAPI blobs), this device's identity and grants (attestation key, TLS
+and local-address keys, the web session secret, desktop-control grants),
+downloads and caches (models, runtime, voice environments: fetched again),
+logs, and process files.
+
+A restore with --replace moves the WHOLE current folder aside (never deleted),
+including the categories a restore with --only leaves out.
 
 Format (``.fridaybundle``)::
 
@@ -49,6 +56,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import io
 import json
 import os
@@ -103,13 +111,20 @@ _FILE_CATEGORY = {
 _EXCLUDED_TOPS = {"runtime", "local_voice", "models", "cache", "backups", "logs", "tmp",
                   "audio-cache", "vibe-code-logs", "tool-output", "browser-profile",
                   "doctor", "safe_mode", "boot_guard", "restore", "tls", "local-address",
-                  "providers", "google_accounts", "mcp_oauth", "platforms", "signing"}
+                  "providers", "google_accounts", "mcp_oauth", "platforms", "signing",
+                  "browser-sessions"}
 #: Exact paths (and folders) never carried, relative, POSIX, lower case.
 _EXCLUDED_PATHS = {"vault/.governance-key", "vault/.attestation-key-ed25519",
                    "vault/.attestation-key-ed25519.pub", "vault/.action-ledger-anchor",
                    "secret_key", "friday_server.lock", "friday_server.pid",
                    "friday_server.port", "startup-report.json", "friday.log",
-                   "server_stderr.log", "ledger/.lock", "phone/secrets"}
+                   "server_stderr.log", "ledger/.lock", "phone/secrets",
+                   # Google sign-in written by older paths, and OAuth client secrets
+                   "google_token.json", "credentials.json", "oauth-keys.json", ".env",
+                   # this machine's desktop-control grants: granted again on the new one
+                   "governance/desktop_app_grants.json", "cc_permission"}
+#: Names never carried wherever they sit outside the owner's own content.
+_EXCLUDED_NAME_PATTERNS = (re.compile(r"^client_secret.*\.json$"),)
 #: In Friday's own folders, these names are keys, credentials or process
 #: files. They are NOT applied inside the owner's own content (a project's
 #: poetry.lock or a Keynote .key is a file like any other).
@@ -166,6 +181,8 @@ def category_of(rel: PurePosixPath) -> Optional[str]:
     if top == "security" or top in _EXCLUDED_TOPS:
         return None
     if s in _EXCLUDED_PATHS or any(s.startswith(p + "/") for p in _EXCLUDED_PATHS):
+        return None
+    if top not in _OWNER_CONTENT_TOPS and any(rx.match(low.name) for rx in _EXCLUDED_NAME_PATTERNS):
         return None
     if top not in _OWNER_CONTENT_TOPS and low.name.endswith(_EXCLUDED_SUFFIXES):
         # the Library's own index key travels with its encrypted index
@@ -367,37 +384,124 @@ class _HashingReader:
         return b
 
 
-def _scrub_mcp(data: bytes) -> tuple[bytes, list]:
-    """mcp_servers.json without its connector secrets: every value the
-    connector-secrets layer encrypted, and every value under a name that
-    names a credential, becomes "". Returns the scrubbed bytes and the
-    servers that need signing in again."""
+_SECRET_NAME = re.compile(
+    r"(api[_-]?key|apikey|secret|password|passwd|passphrase|token|bearer|credential|"
+    r"private[_-]?key|subscription[_-]?key|auth|cookie|session|key$|pat$|pw$|pwd$)", re.I)
+_NOT_SECRET_NAME = re.compile(r"(^|_)(max_?tokens?|tokens?_(in|out|limit|budget)|token_count|"
+                              r"auth_?(mode|method|type|url))$", re.I)
+_SECRET_IN_TEXT = re.compile(r"(?i)(token|key|secret|password|passwd|bearer|auth|sig)=|"
+                             r"--?[a-z0-9_-]*(token|key|secret|password|auth)[a-z0-9_-]*([= ]|$)")
+_URL_USERINFO = re.compile(r"(?i)^([a-z][a-z0-9+.-]*://)[^/@\s]*@")
+
+
+def _secret_name(name) -> bool:
+    n = str(name or "")
+    return bool(n) and not _NOT_SECRET_NAME.search(n) and bool(_SECRET_NAME.search(n))
+
+
+def _scrub_obj(obj, key=None, hits=None):
+    """Blank every value that is, or may hold, a credential: encrypted
+    connector values, values under a credential-like name, URLs with a user
+    and password, and command-line arguments or query strings that carry a
+    token or key. Leaves names and the rest of the structure."""
     try:
         from agent_friday.services import connector_secrets as cs
+        enc = cs.is_encrypted
+    except Exception:
+        enc = lambda v: False  # noqa: E731
+    if isinstance(obj, dict):
+        return {k: _scrub_obj(v, k, hits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        out, blank_next = [], False
+        for v in obj:
+            if blank_next and isinstance(v, str):
+                out.append("")
+                blank_next = False
+                if hits is not None:
+                    hits.append(key)
+                continue
+            if isinstance(v, str) and re.fullmatch(r"--?[A-Za-z0-9_-]*(token|key|secret|password|auth)[A-Za-z0-9_-]*", v, re.I):
+                blank_next = True                    # "--api-key X": X is the secret
+                out.append(v)
+                continue
+            out.append(_scrub_obj(v, key, hits))
+        return out
+    if isinstance(obj, str) and obj:
+        if enc(obj) or (key is not None and _secret_name(key)) or _SECRET_IN_TEXT.search(obj) \
+                or _URL_USERINFO.match(obj):
+            if hits is not None:
+                hits.append(key)
+            return ""
+    return obj
+
+
+def _scrub_mcp(data: bytes) -> tuple[bytes, list]:
+    """mcp_servers.json without its connector secrets (_scrub_obj), in either
+    of its shapes ({"servers": {...}} or a bare mapping or list). Returns the
+    scrubbed bytes and the servers that need their keys again."""
+    try:
         doc = json.loads(data)
     except Exception:
         return b"{}", ["(the server list could not be read, so it was not carried)"]
-    touched = set()
-
-    def walk(obj, server, key=None):
-        if isinstance(obj, dict):
-            return {k: walk(v, server, k) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [walk(v, server, key) for v in obj]
-        if isinstance(obj, str) and (cs.is_encrypted(obj) or (key and cs.looks_secret(str(key)))):
-            if obj:
-                touched.add(server)
-            return ""
-        return obj
-
-    servers = doc.get("servers") if isinstance(doc, dict) and isinstance(doc.get("servers"), dict) \
-        else (doc if isinstance(doc, dict) else {})
-    out = {name: walk(cfg, name) for name, cfg in servers.items()}
-    if isinstance(doc, dict) and isinstance(doc.get("servers"), dict):
+    touched = []
+    servers = doc.get("servers") if isinstance(doc, dict) and isinstance(doc.get("servers"), (dict, list)) else doc
+    if isinstance(servers, dict):
+        out = {}
+        for name, cfg in servers.items():
+            hits = []
+            out[name] = _scrub_obj(cfg, None, hits)
+            if hits:
+                touched.append(str(name))
+    elif isinstance(servers, list):
+        out = []
+        for i, cfg in enumerate(servers):
+            hits = []
+            out.append(_scrub_obj(cfg, None, hits))
+            if hits:
+                touched.append(str((cfg or {}).get("name", i)) if isinstance(cfg, dict) else str(i))
+    else:
+        return b"{}", ["(the server list could not be read, so it was not carried)"]
+    if not touched:
+        return data, []                  # nothing to blank: the file as it is
+    if isinstance(doc, dict) and isinstance(doc.get("servers"), (dict, list)):
         doc = dict(doc, servers=out)
     else:
         doc = out
-    return json.dumps(doc, indent=1).encode("utf-8"), sorted(touched)
+    return json.dumps(doc, indent=1).encode("utf-8"), sorted(set(touched))
+
+
+_SETTINGS_SECRET = re.compile(
+    r"(api[_-]?key|apikey|password|passwd|passphrase|client_secret|private_key|access_token|"
+    r"refresh_token|(^|_)token|(^|_)secret)$", re.I)
+
+
+def _scrub_settings(data: bytes, yaml_file: bool = False) -> bytes:
+    """settings.json (or a legacy config.yaml) without any key, password or
+    token an older version kept in it."""
+    try:
+        if yaml_file:
+            import yaml
+            doc = yaml.safe_load(data.decode("utf-8")) or {}
+        else:
+            doc = json.loads(data)
+    except Exception:
+        return data if not yaml_file else b""
+
+    def walk(o):
+        if isinstance(o, dict):
+            return {k: ("" if _SETTINGS_SECRET.search(str(k)) and isinstance(v, str) and v else walk(v))
+                    for k, v in o.items()}
+        if isinstance(o, list):
+            return [walk(v) for v in o]
+        return o
+    new = walk(doc)
+    if new == doc:
+        return data                      # nothing to blank: the file as it is
+    doc = new
+    if yaml_file:
+        import yaml
+        return yaml.safe_dump(doc, sort_keys=False).encode("utf-8")
+    return json.dumps(doc, indent=1).encode("utf-8")
 
 
 def _vault_passphrase() -> str:
@@ -507,12 +611,17 @@ def create(out: Path, passphrase: str, *, home: Optional[Path] = None,
                 for i, (rel, cat) in enumerate(other_files):
                     src = home / Path(*rel.parts)
                     name = "home/" + rel.as_posix()
-                    if rel.as_posix().lower() == "mcp_servers.json":
+                    lname = rel.as_posix().lower()
+                    if lname in ("mcp_servers.json", "settings.json", "config.yaml"):
                         try:
-                            data, reconnect_mcp = _scrub_mcp(src.read_bytes())
+                            raw = src.read_bytes()
                         except OSError:
                             vanished.append(rel.as_posix())
                             continue
+                        if lname == "mcp_servers.json":
+                            data, reconnect_mcp = _scrub_mcp(raw)
+                        else:
+                            data = _scrub_settings(raw, yaml_file=lname.endswith(".yaml"))
                         _add_bytes(tar, name, data, time.time())
                         got = (len(data), hashlib.sha256(data).hexdigest())
                     else:
@@ -940,6 +1049,11 @@ def restore(path: Path, passphrase: str, *, home: Optional[Path] = None,
         for rel in written:                                             # step 13 (staged)
             if _sha256_file(stage.joinpath(*PurePosixPath(rel).parts)) != listed[rel]["sha256"]:
                 raise BundleError("A restored file did not match its manifest: %s" % rel[:80])
+        # outward actions are held from the moment the folder is in place,
+        # even if a later step fails
+        (stage / "restore").mkdir(parents=True, exist_ok=True)
+        (stage / "restore" / "hold.json").write_text(json.dumps({
+            "bundle_id": opened.manifest["bundle_id"], "restored_at": time.time()}), encoding="utf-8")
         moved_aside = None
         if home.exists():
             # replace was chosen, or the folder holds only what a fresh install
@@ -952,10 +1066,6 @@ def restore(path: Path, passphrase: str, *, home: Optional[Path] = None,
         raise
     keys = _install_keys(home, opened.secrets, moved_aside, cats_restored)   # step 10
     _mark_reindex(home)                                                 # step 9
-    hold = hold_path(home)
-    hold.parent.mkdir(parents=True, exist_ok=True)
-    hold.write_text(json.dumps({"bundle_id": opened.manifest["bundle_id"],
-                                "restored_at": time.time()}), encoding="utf-8")
     from agent_friday.services import action_ledger
     with _as_home(home):
         # a new device (or a replaced folder at the same path): the anchor kept
@@ -1030,6 +1140,10 @@ def _governance_key_conflict(secrets: dict, home: Path, cats: set) -> bool:
     if not gk or not (cats & {"receipts", "skills", "vault"}):
         return False
     cur = _current_governance_key(home)
+    if cur == "unreadable":
+        raise BundleError("This Windows account's keychain did not answer, so Friday cannot tell "
+                          "whether another Friday's governance key is there. Nothing was restored; "
+                          "try again when the keychain opens.")
     return bool(cur) and cur != gk.decode("ascii").strip()
 
 

@@ -402,3 +402,70 @@ def test_a_header_asking_for_absurd_key_settings_is_refused_cleanly(homes, tmp_p
     out.write_bytes(fb.MAGIC + struct.pack(">I", len(raw)) + raw + b"\x00" * 64)
     with pytest.raises(fb.BundleError, match="key settings"):
         fb.verify(out, PASS)
+
+
+# ── security review round 2 ─────────────────────────────────────────────────
+
+def test_old_sign_ins_client_secrets_browser_profiles_and_grants_stay_behind(homes, tmp_path, monkeypatch):
+    from agent_friday.services import friday_bundle as fb
+    a, b, _ = homes
+    stay = {"google_token.json": '{"refresh_token": "placeholder"}',
+            "credentials.json": "{}", "oauth-keys.json": "{}", ".env": "X=placeholder",
+            "client_secret_123.json": "{}", "browser-sessions/t1/Cookies": "placeholder",
+            "governance/desktop_app_grants.json": "{}", "cc_permission": "granted"}
+    for rel, text in stay.items():
+        (a / rel).parent.mkdir(parents=True, exist_ok=True)
+        (a / rel).write_text(text, encoding="utf-8")
+    d = json.loads((a / "settings.json").read_text(encoding="utf-8"))
+    d.update(anthropic_api_key="placeholder-old-key", max_tokens=4096,  # pragma: allowlist secret
+             telegram_bot_token="placeholder", voice_session_mode="push")
+    (a / "settings.json").write_text(json.dumps(d), encoding="utf-8")
+    (a / "mcp_servers.json").write_text(json.dumps({"servers": {"db": {
+        "command": "srv", "args": ["--api-key", "placeholder-arg-key", "--verbose"],
+        "url": "https://example.test/mcp?api_key=placeholder",
+        "env": {"DATABASE_URL": "postgres://user:placeholderpw@db.example.test/x", "OPENAI_KEY": "p",
+                "REGION": "eu"}}}}), encoding="utf-8")
+    out = tmp_path / "x.fridaybundle"
+    _make(a, out)
+    _point_at(b, monkeypatch)
+    r = fb.restore(out, PASS, home=b)
+    for rel in stay:
+        assert not (b / rel).exists(), rel
+    s = json.loads((b / "settings.json").read_text(encoding="utf-8"))
+    assert s["anthropic_api_key"] == "" and s["telegram_bot_token"] == ""
+    assert s["max_tokens"] == 4096 and s["voice_session_mode"] == "push"
+    srv = json.loads((b / "mcp_servers.json").read_text(encoding="utf-8"))["servers"]["db"]
+    assert srv["args"] == ["--api-key", "", "--verbose"]
+    assert srv["url"] == "" and srv["env"]["DATABASE_URL"] == "" and srv["env"]["OPENAI_KEY"] == ""
+    assert srv["env"]["REGION"] == "eu"
+    assert r["reconnect"]["mcp_servers_needing_their_keys"] == ["db"]
+
+
+def test_a_keychain_that_does_not_answer_is_never_written_over(homes, tmp_path, monkeypatch):
+    from agent_friday.services import friday_bundle as fb
+    a, b, _ = homes
+    out = tmp_path / "x.fridaybundle"
+    _make(a, out)
+
+    class Broken(_FakeKeyring):
+        def get_password(self, service, account):
+            raise RuntimeError("keychain did not answer")
+    kr = Broken()
+    monkeypatch.setitem(sys.modules, "keyring", kr)
+    monkeypatch.setitem(sys.modules, "keyring.errors", kr.errors)
+    _point_at(b, monkeypatch)
+    with pytest.raises(fb.BundleError, match="keychain"):
+        fb.restore(out, PASS, home=b, replace=True)
+    assert kr.store == {} and not b.exists()
+
+
+def test_outward_actions_are_held_even_when_a_late_restore_step_fails(homes, tmp_path, monkeypatch):
+    from agent_friday.services import friday_bundle as fb
+    a, b, _ = homes
+    out = tmp_path / "x.fridaybundle"
+    _make(a, out)
+    _point_at(b, monkeypatch)
+    monkeypatch.setattr(fb, "_install_keys", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+    with pytest.raises(OSError):
+        fb.restore(out, PASS, home=b)
+    assert (b / "restore" / "hold.json").exists()
