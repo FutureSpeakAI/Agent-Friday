@@ -108,14 +108,16 @@ def target(goal: Dict[str, Any], requested: str) -> str:
 
 #: The owner's own moves (§17.13), in the words the Goals card uses.
 OWNER_MOVES = (
-    ("paused", "Pause"), ("active", "Resume"), ("met_unverified", "Mark it met (my judgment)"),
+    ("approved", "Approve"), ("paused", "Pause"), ("active", "Resume"),
+    ("met_unverified", "Mark it met (my judgment)"),
     ("abandoned", "End this goal"), ("archived", "Archive"),
 )
 
 
 def owner_moves(current: str) -> List[Dict[str, str]]:
     """The moves the owner can make from `current`, labelled. Resume reads
-    "Reopen" from a finished state."""
+    "Start" from an approved goal and "Reopen" from a finished one. Never
+    met_verified: only the goal's own checks set that."""
     out = []
     for tgt, label in OWNER_MOVES:
         if tgt == current or tgt == "met_verified":
@@ -125,8 +127,8 @@ def owner_moves(current: str) -> List[Dict[str, str]]:
         if may_move(current, tgt):
             if tgt == "active" and current in TERMINAL + ("failed",):
                 label = "Reopen"
-            if tgt == "active" and current in ("proposed",):
-                continue
+            elif tgt == "active" and current == "approved":
+                label = "Start"
             out.append({"to": tgt, "label": label})
     return out
 

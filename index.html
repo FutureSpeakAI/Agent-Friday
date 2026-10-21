@@ -33079,6 +33079,8 @@ function GoalsCard() {
   const runNow = (g, m) => send('/api/goals/' + enc(g.goal_id) + '/milestones/' + enc(m.milestone_id) + '/run', 'POST', {})
     .then(x => done(x, '“' + m.name + '”: ' + ((x.j && x.j.status) || 'started') + '.')).catch(fail);
   const routeWords = r => !r || !r.length ? 'any routing' : r.length === 1 && r[0] === 'local_only' ? 'only on this PC' : 'this PC first';
+  const ROUTES = [{ label: 'only on this PC', value: ['local_only'] }, { label: 'this PC first', value: ['local_only', 'local_preferred'] }, { label: 'with any routing', value: [] }];
+  const routeRank = r => !r || !r.length ? 2 : r.length === 1 && r[0] === 'local_only' ? 0 : 1;
   const goals = (d && d.goals) || [];
   const btn = (label, onClick, extra) => E('button', Object.assign({ type: 'button', className: 'task-card-btn', style: { fontSize: 10, marginRight: 4, marginTop: 4 }, onClick }, extra || {}), label);
   return E('div', { className: 'card', 'data-goals-card': 'true', style: { marginBottom: 10, padding: 10, border: '1px solid rgba(0,212,255,0.18)' } },
@@ -33106,11 +33108,18 @@ function GoalsCard() {
           btn('Change what counts as done', () => ask(g, 'success_criteria', 'What counts as done?', g.success_criteria, v => v.trim() || undefined, 'New plan saved; work that began before it stops and asks.')),
           btn('Change the budget', () => ask(g, 'budget_cap_mψ', 'Budget in mψ (0 for none)', g.budget_cap_mψ, v => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 ? n : undefined; }, 'Budget changed.')),
           btn('Change the deadline', () => ask(g, 'deadline', 'Deadline (YYYY-MM-DD, or empty for none)', g.deadline ? String(g.deadline).slice(0, 10) : '', v => { v = v.trim(); if (!v) return null; return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v + 'T17:00:00Z' : undefined; }, 'Deadline changed.')),
-          btn(g.approval_required ? 'Stop asking before every step' : 'Ask me before every step', () => patch(g, { approval_required: !g.approval_required }, g.approval_required ? 'Steps that need no card run on their own again.' : 'Every step now waits for your yes.')),
-          btn('Routing: ' + routeWords(g.allowed_routes), () => {
-            const next = !g.allowed_routes || !g.allowed_routes.length ? ['local_only'] : g.allowed_routes.length === 1 ? ['local_only', 'local_preferred'] : [];
-            patch(g, { allowed_routes: next }, 'This goal now runs with ' + routeWords(next) + '.');
+          btn(g.approval_required ? 'Stop asking before every step' : 'Ask me before every step', () => {
+            // Loosening the owner's gate asks first; tightening it never does.
+            if (g.approval_required && !window.confirm('Let the steps of “' + g.title + '” that need no card run without asking you first?')) return;
+            patch(g, { approval_required: !g.approval_required }, g.approval_required ? 'Steps that need no card run on their own again.' : 'Every step now waits for your yes.');
           }),
+          E('div', { role: 'group', 'aria-label': 'Where ' + g.title + ' may run', style: { fontSize: 11, color: '#cdd', marginTop: 4 } }, 'Where it may run (now: ' + routeWords(g.allowed_routes) + '): ',
+            ROUTES.map(r => btn(r.label, () => {
+              const now = routeRank(g.allowed_routes), next = routeRank(r.value);
+              if (now === next) return;
+              if (next > now && !window.confirm('Let “' + g.title + '” run ' + r.label + '? That is looser than now (' + routeWords(g.allowed_routes) + ').')) return;
+              patch(g, { allowed_routes: r.value }, 'This goal now runs ' + r.label + '.');
+            }, { key: r.label, 'aria-pressed': routeRank(g.allowed_routes) === routeRank(r.value) }))),
           btn('Pre-approved sends', () => window.fridayOpenWorkspace && window.fridayOpenWorkspace({ workspace: 'settings', tab: 'privacy', section: 'Pre-approved sends' }), { title: 'Revoke a standing permission' }))))),
     E('div', { style: { marginTop: 6 } }, btn(finished ? 'Hide archived goals' : 'Show archived goals', () => setFinished(!finished))),
     E('div', { role: 'status', 'aria-live': 'polite', style: { fontSize: 11, color: '#9ab', marginTop: 4 } }, msg));
