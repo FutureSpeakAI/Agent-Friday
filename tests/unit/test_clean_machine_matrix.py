@@ -19,6 +19,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "clean-machine.yml"
+INSTALLER = REPO / ".github" / "workflows" / "installer.yml"
 LEG_DIR = REPO / "packaging" / "windows" / "tests" / "clean-machine"
 VERIFY = LEG_DIR / "verify-clean-machine.ps1"
 AS_USER = LEG_DIR / "run-as-standard-user.ps1"
@@ -48,16 +49,31 @@ def _evidence_module():
 
 # ── what the matrix covers ──────────────────────────────────────────────────
 
-def test_it_runs_on_every_version_tag_and_by_hand():
+def test_the_release_build_calls_it_and_the_release_waits_for_it():
     on = _triggers(_workflow())
-    assert "v*" in on["push"]["tags"]
-    assert "workflow_dispatch" in on
+    assert "workflow_call" in on and "workflow_dispatch" in on
+    inst = yaml.safe_load(INSTALLER.read_text(encoding="utf-8"))
+    job = inst["jobs"]["clean-machine"]
+    assert job["uses"] == "./.github/workflows/clean-machine.yml"
+    assert job["with"]["called"] is True and job["needs"] == "build"
+    assert "clean-machine" in inst["jobs"]["release"]["needs"]
+    # A beta tag only records (A19); a public tag must pass.
+    assert "contains(github.ref_name, '-')" in str(job["with"]["report_only"])
 
 
-def test_two_windows_images_are_proven():                      # §34.3-1
+def test_called_by_the_release_it_tests_the_release_build_not_its_own():
+    wf = _workflow()
+    assert wf["jobs"]["build"]["if"] == "${{ inputs.called != true }}"
+    assert "needs.build.result == 'skipped'" in wf["jobs"]["leg"]["if"]
+
+
+def test_two_windows_images_get_the_full_fresh_install_check():        # §34.3-1
     legs = _legs(_workflow())
     assert legs["windows-2022"]["os"] == "windows-2022"
     assert legs["windows-2025"]["os"] == "windows-2025"
+    assert legs["windows-2022"]["variant"] == legs["windows-2025"]["variant"] == "image"
+    run = " ".join(s.get("run", "") for s in _workflow()["jobs"]["leg"]["steps"])
+    assert "verify-clean-install.ps1" in run
 
 
 def test_the_situations_beyond_a_plain_fresh_install_each_have_a_leg():
@@ -74,13 +90,17 @@ def test_the_locale_leg_is_not_english():
     steps = _workflow()["jobs"]["leg"]["steps"]
     locale = [s for s in steps if s.get("if") == "matrix.variant == 'locale'"]
     assert locale and "Set-Culture tr-TR" in locale[0]["run"]
+    run = " ".join(s.get("run", "") for s in steps)
+    assert "-ExpectCulture 'tr-TR'" in run
+    verify = VERIFY.read_text(encoding="utf-8-sig")
+    assert "$culture -ceq $ExpectCulture" in verify
 
 
 def test_the_evidence_job_reads_every_leg_even_when_one_failed():   # §34.3-8
     job = _workflow()["jobs"]["evidence"]
-    assert job["needs"] == "leg" and job["if"] == "always()"
+    assert "leg" in job["needs"] and job["if"] == "${{ always() }}"
     run = " ".join(s.get("run", "") for s in job["steps"])
-    assert "scripts/clean_machine_evidence.py" in run
+    assert "scripts/clean_machine_evidence.py" in run and "--installer-sha256" in run
 
 
 def test_every_leg_in_the_workflow_is_one_the_evidence_expects():
@@ -89,17 +109,31 @@ def test_every_leg_in_the_workflow_is_one_the_evidence_expects():
 
 # ── the leg scripts ─────────────────────────────────────────────────────────
 
-def test_the_leg_refuses_to_run_off_a_ci_runner():
-    src = VERIFY.read_text(encoding="utf-8") if VERIFY.exists() else ""
-    assert "runs only on a disposable CI runner" in src
-    assert "$env:GITHUB_ACTIONS -eq 'true'" in src
+def _verify() -> bytes:
+    return VERIFY.read_bytes() if VERIFY.exists() else b""
 
 
-def test_the_memory_cap_is_a_job_object_over_everything_the_server_starts():
-    src = VERIFY.read_text(encoding="utf-8") if VERIFY.exists() else ""
+def test_the_leg_refuses_to_run_off_a_github_hosted_runner():
+    src = _verify().decode("utf-8-sig")
+    assert "runs only on a disposable GitHub-hosted runner" in src
+    assert "$env:RUNNER_ENVIRONMENT -eq 'github-hosted'" in src
+
+
+def test_the_leg_script_has_a_bom_and_always_writes_its_result():
+    raw = _verify()
+    assert raw.startswith(b"\xef\xbb\xbf"), "Windows PowerShell 5.1 reads a BOM-less file as ANSI"
+    src = raw.decode("utf-8-sig")
+    assert "detail = 'did not run'" in src, "every check starts as failed until it really runs"
+    finally_block = src.split("finally {", 1)[1]
+    assert "Save-Result" in finally_block and "unins000.exe" in finally_block
+
+
+def test_the_memory_cap_is_a_job_object_and_reaching_it_is_a_failure():
+    src = _verify().decode("utf-8-sig")
     assert "JOB_MEMORY = 0x200" in src and "KILL_ON_CLOSE = 0x2000" in src
     assert "[FridayJob]::Assign($job, $server.Handle)" in src
     assert "PeakJobMemoryUsed" in src
+    assert "$peakMiB -lt [math]::Floor($MemoryCapMiB * 0.9)" in src
 
 
 def test_the_standard_user_is_not_an_administrator_and_has_a_non_ascii_profile():
@@ -110,24 +144,35 @@ def test_the_standard_user_is_not_an_administrator_and_has_a_non_ascii_profile()
     assert "Remove-LocalUser" in text
     name = text.split('[string] $UserName = "', 1)[1].split('"', 1)[0]
     assert any(ord(c) > 127 for c in name), name
-    verify = VERIFY.read_text(encoding="utf-8")
-    assert "'standard-user' { (-not $isAdmin) -and (-not $asciiProfile) }" in verify
+    verify = VERIFY.read_text(encoding="utf-8-sig")
+    assert "if ($Variant -eq 'standard-user') { (-not $isAdmin) -and (-not $asciiProfile) }" in verify
+    assert "$null -eq $exit" in text, "a leg whose exit code is unknown is not a pass"
 
 
 # ── the evidence record ─────────────────────────────────────────────────────
 
-def _leg_result(tmp: Path, leg: str, checks: dict) -> None:
+HASH = "ab" * 32
+
+
+def _leg_result(tmp: Path, leg: str, checks: dict | None = None, *, variant=None, image=None,
+                digest=HASH, flat=False) -> None:
+    mod = _evidence_module()
+    want = mod.LEGS[leg]
+    if checks is None:
+        checks = {c: {"ok": True, "detail": ""} for c in want["checks"]}
     d = tmp / ("clean-machine-" + leg)
-    d.mkdir(parents=True)
-    (d / "RESULT.json").write_text(json.dumps({"variant": leg, "image": "win25", "os": "Windows",
-                                               "checks": checks}), encoding="utf-8-sig")
+    d.mkdir(parents=True, exist_ok=True)
+    body = dict(checks) if flat else {"variant": variant or want["variant"], "os": "Windows", "checks": checks}
+    (d / "RESULT.json").write_text(json.dumps(body), encoding="utf-8-sig")
+    (d / "LEG.json").write_text(json.dumps({"leg": leg, "image": image or want["image"] or "win25",
+                                            "installer_sha256": digest}), encoding="utf-8-sig")
 
 
 def _all_pass(tmp: Path, skip=()):
     mod = _evidence_module()
     for leg in mod.LEGS:
         if leg not in skip:
-            _leg_result(tmp, leg, {"install": {"ok": True, "detail": ""}, "health": {"ok": True, "detail": ""}})
+            _leg_result(tmp, leg, flat=mod.LEGS[leg]["variant"] == "image")
     return mod
 
 
@@ -149,23 +194,48 @@ def test_a_missing_leg_fails_the_record_and_its_row(tmp_path):
 
 def test_a_failed_check_names_itself(tmp_path):
     mod = _all_pass(tmp_path, skip=("locale",))
-    _leg_result(tmp_path, "locale", {"install": {"ok": True}, "health": {"ok": False, "detail": "x"}})
+    checks = {c: {"ok": True} for c in mod.LEGS["locale"]["checks"]}
+    checks["health"] = {"ok": False, "detail": "x"}
+    _leg_result(tmp_path, "locale", checks)
     rec = mod.collect(tmp_path, "abc")
-    assert rec["ok"] is False and rec["legs"]["locale"]["failed_checks"] == ["health"]
+    assert rec["ok"] is False and "checks failed: health" in rec["legs"]["locale"]["problems"]
 
 
-def test_a_leg_with_no_checks_is_not_a_pass(tmp_path):
+def test_a_leg_that_skipped_the_check_that_proves_its_row_is_not_a_pass(tmp_path):
     mod = _all_pass(tmp_path, skip=("memory-cap",))
-    _leg_result(tmp_path, "memory-cap", {})
-    assert mod.collect(tmp_path, "abc")["legs"]["memory-cap"]["ok"] is False
+    checks = {c: {"ok": True} for c in mod.LEGS["memory-cap"]["checks"] if c != "memory"}
+    _leg_result(tmp_path, "memory-cap", checks)
+    rec = mod.collect(tmp_path, "abc")
+    assert rec["legs"]["memory-cap"]["ok"] is False
+    assert any("memory" in p for p in rec["legs"]["memory-cap"]["problems"])
 
 
-def test_the_script_exits_1_unless_every_leg_passed(tmp_path):
+def test_a_leg_that_ran_another_variant_or_image_is_not_a_pass(tmp_path):
+    mod = _all_pass(tmp_path, skip=("standard-user", "windows-2022"))
+    _leg_result(tmp_path, "standard-user", variant="locale")
+    _leg_result(tmp_path, "windows-2022", image="win25", flat=True)
+    rec = mod.collect(tmp_path, "abc")
+    assert rec["legs"]["standard-user"]["ok"] is False and rec["legs"]["windows-2022"]["ok"] is False
+
+
+def test_every_leg_must_have_installed_the_release_build(tmp_path):
+    mod = _all_pass(tmp_path, skip=("locale",))
+    _leg_result(tmp_path, "locale", digest="cd" * 32)
+    assert mod.collect(tmp_path, "abc")["ok"] is False
+    mod = _all_pass(tmp_path / "again")
+    assert mod.collect(tmp_path / "again", "abc", installer_sha256=HASH)["ok"] is True
+    assert mod.collect(tmp_path / "again", "abc", installer_sha256="ef" * 32)["ok"] is False
+
+
+def test_the_script_exits_1_unless_every_leg_passed_but_a_beta_only_records(tmp_path):
     mod = _all_pass(tmp_path, skip=("windows-2022",))
     out = tmp_path / "e" / "evidence.json"
     assert mod.main(["--dir", str(tmp_path), "--sha", "s", "--out", str(out)]) == 1
     assert json.loads(out.read_text(encoding="utf-8"))["ok"] is False
-    _leg_result(tmp_path, "windows-2022", {"install": {"ok": True}})
+    assert mod.main(["--dir", str(tmp_path), "--sha", "s", "--out", str(out), "--report-only"]) == 0
+    rec = json.loads(out.read_text(encoding="utf-8"))
+    assert rec["ok"] is False and rec["report_only"] is True
+    _leg_result(tmp_path, "windows-2022", flat=True)
     assert mod.main(["--dir", str(tmp_path), "--sha", "s", "--out", str(out)]) == 0
 
 

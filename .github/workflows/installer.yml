@@ -18,11 +18,17 @@ name: installer
 #                    the data survive, the data was backed up first, and the
 #                    shortcuts landed
 #                    (packaging/windows/tests/rehearsal/upgrade-vault-test.ps1)
+#   clean-machine    the clean-machine matrix (.github/workflows/clean-machine.yml)
+#                    on this build's setup program: two Windows images, a memory
+#                    cap, a non-English locale, a standard account, and one
+#                    evidence record (north star §34.3). On a beta tag it only
+#                    records (amendment A19: betas are exempt from §34).
 #   release          on a version tag only: a PUBLISHED pre-release carrying the
 #                    exe, its SHA-256 and RELEASE_NOTES.md.
 #
 # Pushing a version tag is the release decision. The release job runs only
-# after the fresh-install job and every leg of the upgrade matrix have passed.
+# after the fresh-install job, every leg of the upgrade matrix and the
+# clean-machine evidence have passed.
 #
 # The setup program is unsigned and sends nothing anywhere. The model page is
 # answered with the cloud option in CI, so no model is downloaded.
@@ -198,9 +204,18 @@ jobs:
             ${{ runner.temp }}/upgrade/setup-upgrade.log
           if-no-files-found: ignore
 
+  clean-machine:
+    needs: build
+    uses: ./.github/workflows/clean-machine.yml
+    with:
+      called: true
+      # A beta tag (v1.2.0-beta.3) records the evidence without failing (A19);
+      # a public tag (v1.0.0) must pass it.
+      report_only: ${{ !startsWith(github.ref, 'refs/tags/v') || contains(github.ref_name, '-') }}
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fresh-install, upgrade]
+    needs: [fresh-install, upgrade, clean-machine]
     runs-on: ubuntu-latest
     permissions:
       contents: write

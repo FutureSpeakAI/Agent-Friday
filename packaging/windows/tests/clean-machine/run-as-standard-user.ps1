@@ -20,7 +20,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-if ($env:GITHUB_ACTIONS -ne 'true') { throw 'run-as-standard-user.ps1 creates a Windows account; it runs only on a disposable CI runner.' }
+if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+    throw 'run-as-standard-user.ps1 creates a Windows account; it runs only on a disposable GitHub-hosted runner.'
+}
 
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
@@ -54,7 +56,13 @@ if (Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue) { Remove-LocalU
 New-LocalUser -Name $UserName -Password $secure -PasswordNeverExpires -AccountNeverExpires | Out-Null
 Add-LocalGroupMember -Group (Get-LocalGroup -SID 'S-1-5-32-545').Name -Member $UserName
 $adminGroup = (Get-LocalGroup -SID 'S-1-5-32-544').Name
-$isAdminMember = @(Get-LocalGroupMember -Group $adminGroup | Where-Object { $_.Name -like "*\$UserName" }).Count -gt 0
+# Get-LocalGroupMember throws on a group that holds an orphaned SID; `net
+# localgroup` lists the same members as text.
+try {
+    $isAdminMember = @(Get-LocalGroupMember -Group $adminGroup | Where-Object { $_.Name -like "*\$UserName" }).Count -gt 0
+} catch {
+    $isAdminMember = @(net localgroup "$adminGroup" | Where-Object { $_.Trim() -eq $UserName }).Count -gt 0
+}
 if ($isAdminMember) { throw "$UserName is an administrator; this leg needs a standard account" }
 icacls $shared /grant "${UserName}:(OI)(CI)M" /T | Out-Null
 
@@ -64,11 +72,31 @@ $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
           '-Setup', $setupCopy, '-WorkDir', $work, '-Variant', 'standard-user',
           '-RunnerMarker', $marker, '-RunId', $runId)
 $exit = 1
+$verifyOut = Join-Path $work 'leg.out.log'
+$verifyErr = Join-Path $work 'leg.err.log'
 try {
+    # First way in: CreateProcessWithLogonW. On a service session it can fail to
+    # start the child at all (0xC0000142); then the same command runs as a
+    # scheduled task under the account, with limited rights.
     $p = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $psArgs -Credential $cred `
          -LoadUserProfile -WorkingDirectory $shared -PassThru -Wait `
-         -RedirectStandardOutput (Join-Path $work 'leg.out.log') -RedirectStandardError (Join-Path $work 'leg.err.log')
+         -RedirectStandardOutput $verifyOut -RedirectStandardError $verifyErr
     $exit = $p.ExitCode
+    if ($null -eq $exit -or $exit -eq -1073741502) {
+        Write-Host "Start-Process -Credential could not start the leg (exit: $exit); running it as a scheduled task instead"
+        $quoted = ($psArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+        $cmd = "/c `"`"$(Join-Path $PSHOME 'powershell.exe')`" $quoted > `"$verifyOut`" 2> `"$verifyErr`"`""
+        $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $cmd -WorkingDirectory $shared
+        $taskName = 'friday-standard-user-leg'
+        Register-ScheduledTask -TaskName $taskName -Action $action -User "$env:COMPUTERNAME\$UserName" `
+            -Password $plain -RunLevel Limited -Force | Out-Null
+        Start-ScheduledTask -TaskName $taskName
+        $until = (Get-Date).AddMinutes(50)
+        do { Start-Sleep -Seconds 10; $info = Get-ScheduledTaskInfo -TaskName $taskName; $state = (Get-ScheduledTask -TaskName $taskName).State }
+        while ($state -eq 'Running' -and (Get-Date) -lt $until)
+        $exit = [int]$info.LastTaskResult
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
 }
 finally {
     Get-ChildItem -LiteralPath $work -File -ErrorAction SilentlyContinue | Copy-Item -Destination $WorkDir -Force
@@ -83,4 +111,5 @@ finally {
     Remove-LocalUser -Name $UserName -ErrorAction SilentlyContinue
 }
 if (-not (Test-Path (Join-Path $WorkDir 'RESULT.json'))) { Write-Host 'FAILED: the standard-user leg wrote no RESULT.json'; exit 1 }
+if ($null -eq $exit) { exit 1 }
 exit $exit

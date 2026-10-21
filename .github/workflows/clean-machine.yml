@@ -2,30 +2,45 @@ name: clean-machine
 
 # The clean-machine matrix (north star §34.3): the setup program installed on
 # machines that have never seen Friday, in the situations a release must
-# survive beyond the fresh-install job in installer.yml. Every leg runs on a
-# fresh GitHub-hosted Windows VM and uninstalls what it installed.
+# survive beyond the fresh-install job. Every leg runs on a fresh
+# GitHub-hosted Windows VM and uninstalls what it installed.
 #
-#   windows-2022 / windows-2025   two Windows images (§34.3-1)
+#   windows-2022 / windows-2025   the full fresh-install check
+#                  (verify-clean-install.ps1) on two Windows images (§34.3-1).
+#                  Hosted runners are Windows Server; Windows 10 and 11 client
+#                  SKUs are not available, which the evidence record says.
 #   memory-cap     Friday's server and everything it starts capped at
-#                  4,096 MiB by a Windows job object; the peak is recorded
-#                  (§34.3-2; see MEMORY_CAP_MIB below)
+#                  MEMORY_CAP_MIB of commit by a Windows job object, memory tier
+#                  skipped; it must keep serving with 10% headroom (§34.3-2)
 #   locale         a Turkish user locale (dotless i, decimal comma) (§34.3-4)
 #   standard-user  a standard, non-administrator account whose name and
 #                  profile folder are not plain ASCII (§34.3-5)
-#   evidence       one record over every leg, uploaded as an artifact
-#                  (scripts/clean_machine_evidence.py) (§34.3-8)
+#   evidence       one record over every leg; every leg must have installed the
+#                  same setup program (scripts/clean_machine_evidence.py) (§34.3-8)
 #
-# It runs on every version tag (the release gate waits for it), by hand, and
-# on pull requests that touch the installer or this matrix. The model page is
-# answered with the cloud option, so nothing is downloaded.
+# On a version tag installer.yml calls this workflow with the setup program its
+# build job made, and its release job waits for the evidence; a beta tag is
+# exempt from §34 (amendment A19) and only records. By hand, or on a pull
+# request that touches this matrix, it builds its own setup program first.
 
 on:
+  workflow_call:
+    inputs:
+      called:
+        description: "Called by installer.yml with its build's setup program"
+        type: boolean
+        default: false
+      report_only:
+        description: "Record the evidence without failing (beta tags, A19)"
+        type: boolean
+        default: false
   workflow_dispatch:
-  push:
-    tags: ["v*"]
   pull_request:
     paths:
-      - "packaging/windows/**"
+      - "packaging/windows/tests/clean-machine/**"
+      - "packaging/windows/tests/verify-clean-install.ps1"
+      - "packaging/windows/installer/**"
+      - "packaging/windows/install.ps1"
       - ".github/workflows/clean-machine.yml"
       - "scripts/clean_machine_evidence.py"
 
@@ -33,17 +48,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: clean-machine-${{ github.ref }}
+  group: clean-machine-${{ github.ref }}-${{ inputs.called && 'release' || 'own' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # What Friday may use on a small machine running cloud-only: the documents
-  # name 16 GB only for the local model, and no floor for cloud use, so this
-  # leg measures the first boot under a 4 GiB budget and records the peak.
+  # The documents name 16 GB only for the local model and give no floor for
+  # cloud use; this leg measures the first boot (memory tier skipped) under a
+  # 4 GiB commit budget. Change it here when a floor is decided.
   MEMORY_CAP_MIB: "4096"
 
 jobs:
   build:
+    if: ${{ inputs.called != true }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -66,20 +82,23 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer
-          path: packaging/windows/dist/AgentFriday-Setup-*.exe
+          path: |
+            packaging/windows/dist/AgentFriday-Setup-*.exe
+            packaging/windows/dist/AgentFriday-Setup-*.exe.sha256
           if-no-files-found: error
 
   leg:
     needs: build
+    if: ${{ always() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     name: leg (${{ matrix.leg }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { leg: windows-2022,  os: windows-2022,   variant: standard }
-          - { leg: windows-2025,  os: windows-2025,   variant: standard }
+          - { leg: windows-2022,  os: windows-2022,   variant: image }
+          - { leg: windows-2025,  os: windows-2025,   variant: image }
           - { leg: memory-cap,    os: windows-latest, variant: memory-cap }
           - { leg: locale,        os: windows-latest, variant: locale }
           - { leg: standard-user, os: windows-latest, variant: standard-user }
@@ -96,17 +115,28 @@ jobs:
           Set-Culture tr-TR
           Set-WinHomeLocation -GeoId 235
           Set-WinUserLanguageList -LanguageList tr-TR -Force
-          (Get-Culture).Name
+          # A new process reads the user locale; this one keeps its own.
+          powershell -NoProfile -Command "[Globalization.CultureInfo]::CurrentCulture.Name"
       - name: Install, first boot, uninstall (${{ matrix.leg }})
         shell: powershell
         run: |
           $exe = (Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1).FullName
           $work = Join-Path $env:RUNNER_TEMP 'clean-machine'
-          if ('${{ matrix.variant }}' -eq 'standard-user') {
-            powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\clean-machine\run-as-standard-user.ps1 -Setup $exe -WorkDir $work
-          } else {
-            powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\clean-machine\verify-clean-machine.ps1 `
-              -Setup $exe -WorkDir $work -Variant '${{ matrix.variant }}' -MemoryCapMiB ([int]$env:MEMORY_CAP_MIB)
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          [ordered]@{ leg = '${{ matrix.leg }}'; image = [string]$env:ImageOS
+                      installer_sha256 = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower() } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $work 'LEG.json') -Encoding UTF8
+          switch ('${{ matrix.variant }}') {
+            'image' {
+              powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\verify-clean-install.ps1 -Setup $exe -WorkDir $work
+            }
+            'standard-user' {
+              powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\clean-machine\run-as-standard-user.ps1 -Setup $exe -WorkDir $work
+            }
+            default {
+              powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\clean-machine\verify-clean-machine.ps1 `
+                -Setup $exe -WorkDir $work -Variant '${{ matrix.variant }}' -MemoryCapMiB ([int]$env:MEMORY_CAP_MIB) -ExpectCulture 'tr-TR'
+            }
           }
           exit $LASTEXITCODE
       - if: always()
@@ -115,13 +145,14 @@ jobs:
           name: clean-machine-${{ matrix.leg }}
           path: |
             ${{ runner.temp }}/clean-machine/RESULT.json
+            ${{ runner.temp }}/clean-machine/LEG.json
             ${{ runner.temp }}/clean-machine/*.log
             ${{ runner.temp }}/clean-machine/*.err
           if-no-files-found: ignore
 
   evidence:
-    needs: leg
-    if: always()
+    needs: [build, leg]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -130,8 +161,16 @@ jobs:
         with:
           pattern: clean-machine-*
           path: legs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installer
+          path: installer
       - name: One evidence record over every leg
-        run: python3 scripts/clean_machine_evidence.py --dir legs --sha "${{ github.sha }}" --out evidence/clean-machine-evidence.json
+        run: |
+          want=$(cut -d' ' -f1 installer/AgentFriday-Setup-*.exe.sha256 | tr -d '\r\n' | tr 'A-F' 'a-f')
+          python3 scripts/clean_machine_evidence.py --dir legs --sha "${{ github.sha }}" \
+            --installer-sha256 "$want" --out evidence/clean-machine-evidence.json \
+            ${{ inputs.report_only && '--report-only' || '' }}
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
