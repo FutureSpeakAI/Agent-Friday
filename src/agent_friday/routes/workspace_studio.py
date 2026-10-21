@@ -58,15 +58,15 @@ def owner_change(ws_id, op):
     Each refusal says what did not happen and where the change can be made. Off the record, the
     change is refused first (as the store would refuse it), so no receipt names a change that the
     privacy rule stops."""
-    from agent_friday.services import screen_click
+    from agent_friday.services import owner_press
     try:
         _admit_write()
     except PermissionError as exc:
         return api_error(exc, 'That change was refused', 403)
-    if not screen_click.screen_session(request):
-        return jsonify(status='error', code='owner_press_required',
-                       message="Nothing changed: workspace changes are made with your press in this "
-                               "workspace's Studio on this PC, or by asking Friday in chat."), 403
+    refused = owner_press.refusal(request, "Nothing changed: workspace changes are made with your press in "
+                                           "this workspace's Studio on this PC, or by asking Friday in chat.")
+    if refused is not None:
+        return refused
     from agent_friday.governance import action_gate as _gate
     try:
         _gate.record_external("workspace:" + op, surface="workspace_studio", target=ws_id)

@@ -28,8 +28,10 @@ other change.
 Every route that changes a workspace's saved state (apply, revert, reset,
 undo, restore, clear the Studio history) takes only the owner's press in
 Friday's own page and writes a signed checkpoint receipt first. A tool call
-(customize_workspace, revert_workspace) goes through the action gate like any
-other tool.
+(customize_workspace, revert_workspace) is judged by the action gate: a
+reversible change to the look (a note, accent, spacing or quick actions; no
+styles, nothing hidden) runs with a receipt, and any of its text that came from
+content Friday read raises a card first (services/taint).
 """
 
 import hashlib
@@ -965,26 +967,31 @@ def describe_patch(clean, current=None) -> list:
                               "css": "Remove the custom styles"}[key])
             continue
         if key == "note":
-            lines.append("Pin a note: “%s”" % _short(value))
+            lines.append("Pin a note: “%s”" % value)
         elif key == "accent":
             was = current.get("accent")
             lines.append("Accent colour %s%s" % (("from %s to " % was) if was and was != value else "", value))
         elif key == "density":
             lines.append("Spacing: %s" % value)
         elif key == "actions":
-            names = ", ".join("“%s”" % _short(a.get("label"), 40) for a in value) or "none"
-            lines.append("Quick-action buttons: %s" % names)
+            if not value:
+                lines.append("Quick-action buttons: none")
+            # A button's prompt is sent as the owner's own words when it is
+            # pressed later, so every prompt is shown in full.
+            for action in value:
+                lines.append("Quick-action button “%s”, which sends: “%s”" % (
+                    action.get("label"), action.get("prompt")))
         elif key == "hidden":
             if value:
                 lines.append("Hide %d part%s of this workspace: %s" % (
-                    len(value), "" if len(value) == 1 else "s", _short("; ".join(value), 300)))
+                    len(value), "" if len(value) == 1 else "s", "; ".join(value)))
             else:
                 lines.append("Hide nothing")
         elif key == "css":
             if value:
                 rules = value.count("}")
-                lines.append("Restyle this workspace (%d style rule%s): %s" % (
-                    rules, "" if rules == 1 else "s", _short(value, 300)))
+                lines.append("Restyle this workspace with %d style rule%s (all of them): %s" % (
+                    rules, "" if rules == 1 else "s", value))
             else:
                 lines.append("No style rules were usable, so styles stay as they are")
     return lines

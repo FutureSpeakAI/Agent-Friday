@@ -54,14 +54,15 @@ _OUTWARD_UNDO = {"email": "gmail:undo", "calendar": "calendar:undo"}
 def receipt_undo(rid):
     if not _RID.match(rid or ""):
         return jsonify({"status": "error", "error": "not a receipt id"}), 400
-    from agent_friday.services import item_actions, screen_click
+    from agent_friday.services import item_actions, owner_press
     # This route acts as the owner (by_owner): mail and calendar go back at
     # once, a file goes back over whatever is there now. Only the owner's own
     # press in Friday's page is that; a program on this PC that can reach the
     # API is not.
-    if not screen_click.screen_session(request):
-        return jsonify({"status": "error", "error": "Nothing was put back: undo from Friday's page on this PC, "
-                                                    "or ask Friday to undo it."}), 403
+    refused = owner_press.refusal(request, "Nothing was put back: undo from Friday's page on this PC, "
+                                           "or ask Friday to undo it.")
+    if refused is not None:
+        return refused
     rec = action_journal.get(rid)
     outward = _OUTWARD_UNDO.get((rec or {}).get("domain"))
     if outward:

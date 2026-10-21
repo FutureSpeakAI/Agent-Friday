@@ -46,8 +46,9 @@ MAX_PACKAGE_BYTES = 10 * 1024 * 1024
 MAX_MEMBERS = 500
 MAX_UNPACKED_BYTES = 50 * 1024 * 1024
 MAX_MANIFEST_BYTES = 512 * 1024
-#: How much of the procedure the card quotes; the whole text is in the staging record.
-BODY_PREVIEW = 900
+#: The longest procedure a card can show in full. A longer one is refused rather than shown in
+#: part: the owner approves exactly the text on the card, all of it.
+MAX_REVIEW_BODY = 16000
 
 _MANIFEST_NAMES = ("SKILL.md", "skill.md", "Skill.md")
 _HOOKED = {"done": False}
@@ -161,22 +162,21 @@ def _bullet(items, empty="none") -> str:
 
 
 def describe(staged: dict) -> str:
-    """The card's text: what installing this skill would make Friday do."""
+    """The card's text: everything installing this skill would add, in full. Every field the
+    install writes is on it; the procedure keeps its own lines."""
     f = staged["fields"]
-    body = " ".join(str(f.get("body") or "").split())
-    if len(body) > BODY_PREVIEW:
-        body = body[:BODY_PREVIEW - 1] + "…"
     lines = [
         "Installing adds a skill Friday follows whenever one of its triggers matches what you ask.",
         "",
         "Skill: %s" % f["name"] + (" — %s" % f["description"] if f.get("description") else ""),
         "Triggers: %s" % _bullet(f.get("triggers"), "none (it is only used when chosen by name)"),
         "Tools it uses: %s" % _bullet(f.get("tool_chain")),
-        "What it tells Friday to do: %s" % (body or "(empty)"),
+        "Counts as done when: %s" % _bullet(f.get("success_criteria"), "not stated"),
+        "Version %s, licence %s" % (f.get("version"), f.get("license")),
     ]
     if staged.get("replaces"):
-        lines.append("It REPLACES the installed skill “%s”; the current version is kept in that "
-                     "skill's history." % staged["replaces"])
+        lines.append("It REPLACES the installed skill in the folder “%s”; the current version is "
+                     "kept in that skill's history." % staged["replaces"])
     asked = staged.get("permissions_asked") or {}
     if asked:
         lines.append("The package asks to send without asking you (%s). That is NOT carried over: a skill's "
@@ -188,7 +188,25 @@ def describe(staged: dict) -> str:
         lines.append("Left out (never installed): %s%s" % (", ".join(shown),
                                                           " and %d more" % (len(left) - len(shown)) if len(left) > len(shown) else ""))
     lines.append("Source: %s" % staged.get("source_name", "a package"))
+    lines += ["", "What it tells Friday to do (all of it):", str(f.get("body") or "(empty)")]
     return "\n".join(lines)
+
+
+def _replaces(name: str):
+    """The installed skill folder an install of `name` would write over, or None. Raises
+    ImportRefused when the name belongs to a bundled skill (the bundled one would keep
+    answering to it, so the install would change nothing the owner could see)."""
+    reg = _registry()
+    safe = reg._safe_name(name)
+    try:
+        bundled = {reg._safe_name(s.name) for s in reg.load_skills([reg.BUNDLED_DIR])}
+    except Exception:  # noqa: BLE001 - an unreadable bundle dir has no names to collide with
+        bundled = set()
+    if safe in bundled:
+        raise ImportRefused("a skill that ships with Friday is already called “%s”; import it "
+                            "under another name" % name)
+    folder = reg._skill_dir(reg.SKILLS_DIR, name)
+    return folder.name if folder.exists() else None
 
 
 def stage(src, name=None, *, source_name: str = "", requested_by: str = "owner") -> dict:
@@ -210,13 +228,12 @@ def stage(src, name=None, *, source_name: str = "", requested_by: str = "owner")
         "success_criteria": list(skill.success_criteria), "version": int(skill.version or 1),
         "license": str(skill.license or "MIT"),
     }
-    existing = None
-    try:
-        installed = {reg._safe_name(s.name): s for s in reg.load_skills([reg.SKILLS_DIR])}
-        if safe in installed:
-            existing = installed[safe].name
-    except Exception as e:  # noqa: BLE001 - the card says "replaces" only when it knows
-        _log.warning("could not list installed skills for an import preview: %s", type(e).__name__)
+    if len(fields["body"]) > MAX_REVIEW_BODY:
+        raise ImportRefused("its procedure is %d characters, more than the %d a card can show in full; "
+                            "shorten it before importing" % (len(fields["body"]), MAX_REVIEW_BODY))
+    if not safe or safe.startswith((".", "_")):
+        raise ImportRefused("the skill needs a plain name")
+    existing = _replaces(skill.name)
     stage_id = "sk" + uuid.uuid4().hex[:16]
     staged = {
         "stage_id": stage_id, "fields": fields, "sha256": _fields_sha(fields),
@@ -241,7 +258,8 @@ def stage(src, name=None, *, source_name: str = "", requested_by: str = "owner")
         title=("Replace the skill “%s”" if existing else "Install the skill “%s”") % skill.name[:120],
         description=describe(staged),
         action_description="install a skill from %s" % staged["source_name"],
-        payload={"handler": KIND, "stage_id": stage_id, "sha256": staged["sha256"]},
+        payload={"handler": KIND, "stage_id": stage_id, "sha256": staged["sha256"],
+                 "review": describe(staged), "replaces": existing},
         requested_by=requested_by, action_class="outward", force_gate=True)
     return {"status": "pending_review", "approval_id": card.get("approval_id"), "stage_id": stage_id,
             "preview": {"name": skill.name, "triggers": fields["triggers"], "tool_chain": fields["tool_chain"],
@@ -294,6 +312,16 @@ def install_approved(record: dict) -> dict:
             _tell("The skill was not installed", out["why"], record["approval_id"])
             return out
         f = staged["fields"]
+        try:
+            now_replaces = _replaces(f["name"])
+        except ImportRefused as e:
+            now_replaces = str(e)
+        if now_replaces != staged.get("replaces"):
+            out = {"ok": False, "why": "what this install would replace has changed since the card was raised; "
+                                       "nothing was installed. Import the package again to see the new card"}
+            ap.mark_used(record["approval_id"], KIND, out)
+            _tell("The skill was not installed", out["why"], record["approval_id"])
+            return out
         try:
             folder = _registry().save_skill(
                 f["name"], f.get("description") or "", f.get("body") or "", f.get("triggers"),

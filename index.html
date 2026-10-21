@@ -60162,6 +60162,22 @@ function FileAccessPanel() {
       'By voice: “what files can the cloud see?”, “let it read my CV”, “take that away”. Asking by voice puts a card on screen; only your click there allows it.'),
     msg ? E('div', { role: 'status', style: Object.assign({}, muted, { marginTop: 6, color: '#9fd' }) }, msg) : null);
 }
+// A skill package's install card: everything the skill would add (the whole procedure, its triggers,
+// tools and success criteria, what it replaces and what is left out). Only a press here installs it
+// (services/skill_import_review.py).
+function SkillImportCard({ a, busy, onDecide }) {
+  const E = React.createElement;
+  const p = a.payload || {};
+  return E('div', { className: 'card', style: { marginBottom: 6, padding: 8 }, 'data-testid': 'approval-card', 'data-approval-id': a.approval_id, 'data-kind': 'skill_import' },
+    E('div', { style: { fontSize: 12 } }, a.title),
+    E('div', { 'data-testid': 'skill-import-review', tabIndex: 0, 'aria-label': 'What this skill would add',
+      style: { fontSize: 11, marginTop: 4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 260, overflowY: 'auto' } },
+      p.review || a.description),
+    E(ApprovalProvenance, { p: a.provenance }),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'approve') }, 'Install'),
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'deny') }, 'Decline')));
+}
 // The file-access approval card: one card for every path a turn asked for.
 // Each row is what Friday found on disk, not what was asked for. Approve
 // allows exactly the rows shown, and only this click can approve it (voice and
@@ -67035,6 +67051,12 @@ function ApprovalCardBody({
   // The share card has its own body: the exact payload, edit, and four choices.
   // A file-access card lists every path it would allow; see FileGrantRequestCard.
   if (a && a.kind === 'file_grant_request') return /*#__PURE__*/React.createElement(FileGrantRequestCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
+  // A skill package to install: the whole of what it would add; see SkillImportCard.
+  if (a && a.kind === 'skill_import') return /*#__PURE__*/React.createElement(SkillImportCard, {
     a: a,
     busy: busy,
     onDecide: onDecide

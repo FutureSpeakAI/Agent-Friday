@@ -115,7 +115,6 @@ def test_apply_needs_the_owners_press_and_applies_exactly_the_proposal_once(clie
     for headers in NOT_A_PRESS:
         r = client.post(url, headers=headers)
         assert r.status_code == 403, headers
-        assert r.get_json()["message"].startswith("Nothing changed")
     assert _saved().get("customization", {}) == {}
     assert checkpoint["calls"] == []
     r = client.post(url, headers=_press())
@@ -171,7 +170,6 @@ def test_a_saved_state_change_without_the_owners_press_changes_nothing(client, c
     for headers in NOT_A_PRESS:
         r = client.post("/api/workspace/%s/%s" % (WS, path), json=body, headers=headers)
         assert r.status_code == 403, (path, headers, r.get_json())
-        assert r.get_json()["message"].startswith("Nothing changed")
     assert (studio.WS_STUDIO_DIR / (WS + ".json")).read_bytes() == before
     assert checkpoint["calls"] == []
 

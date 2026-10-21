@@ -151,3 +151,64 @@ def test_undoing_a_write_outside_friday_output_is_asked_like_the_write(store):
     rid = _rid(_write(doc, "b"))
     klass, _why = item_actions.classify_undo({"receipt_id": rid})
     assert klass == "outward"
+
+
+def test_a_file_too_large_to_back_up_is_not_replaced_and_the_answer_says_why(store, monkeypatch):
+    monkeypatch.setattr(fwr, "MAX_BACKUP_FILE_BYTES", 10)
+    doc = store / "large.txt"
+    doc.write_text("more than ten bytes here", encoding="utf-8")
+    out = _write(doc, "short")
+    assert out.startswith("Write error: nothing was written") and "keeps copies of files up to" in out
+    assert doc.read_text(encoding="utf-8") == "more than ten bytes here"
+
+
+def test_an_append_is_undone_by_cutting_back_not_by_a_copy(store):
+    doc = store / "journal.log"
+    doc.write_text("a\n", encoding="utf-8")
+    rid = _rid(_write(doc, "b\n", mode="append"))
+    assert "backup" not in journal.get(rid)["undo"]["file"]
+    assert not (store / "backups" / rid).exists()
+    item_actions.undo(rid, by_owner=True)
+    assert doc.read_text(encoding="utf-8") == "a\n"
+
+
+def test_a_created_file_the_owner_changed_since_is_left_where_it_is(store):
+    doc = store / "fresh.txt"
+    rid = _rid(_write(doc, "Friday's"))
+    doc.write_text("the owner's own words now", encoding="utf-8")
+    res = item_actions.undo(rid, by_owner=True)
+    assert res["status"] == "failed" and "left where it is" in res["text"]
+    assert doc.read_text(encoding="utf-8") == "the owner's own words now"
+
+
+def test_a_receipt_naming_some_other_file_as_its_backup_restores_nothing(store, tmp_path):
+    doc = store / "target.txt"
+    doc.write_text("v1", encoding="utf-8")
+    rid = _rid(_write(doc, "v2"))
+    secret = tmp_path / "elsewhere-secret.txt"
+    secret.write_text("not a backup", encoding="utf-8")
+    rec = journal.get(rid)
+    rec["undo"]["file"]["backup"] = str(secret)
+    res = fwr.undo(rec)
+    assert res["status"] == "failed"
+    assert doc.read_text(encoding="utf-8") == "v2"
+
+
+def test_off_the_record_the_copy_stays_in_memory_and_still_undoes(store, monkeypatch):
+    monkeypatch.setattr(fwr, "_off_record", lambda: True)
+    doc = store / "private.txt"
+    doc.write_text("before", encoding="utf-8")
+    rid = _rid(_write(doc, "after"))
+    assert not (store / "backups").exists() or not any((store / "backups").iterdir())
+    assert journal.get(rid)["undo"]["file"]["backup"].startswith("memory:")
+    item_actions.undo(rid, by_owner=True)
+    assert doc.read_text(encoding="utf-8") == "before"
+
+
+def test_a_write_that_never_happened_has_nothing_to_undo(store):
+    doc = store / "never.txt"
+    rec = fwr.begin(doc, "write", 3)
+    doc.write_text("someone else's file", encoding="utf-8")
+    res = fwr.undo(journal.get(rec["receipt_id"]))
+    assert res["status"] == "failed" and "did not happen" in res["summary"]
+    assert doc.read_text(encoding="utf-8") == "someone else's file"
