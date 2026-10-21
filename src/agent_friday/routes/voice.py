@@ -164,6 +164,18 @@ def _on_a_call() -> bool:
         return False
 
 
+def _voice_on_this_desk() -> bool:
+    """This voice socket is the owner's own page on this PC: a loopback request with
+    no forwarding evidence, a local Host, and this launch's desk key in `dk`
+    (services/desk_press). Only then may a spoken yes approve a card."""
+    try:
+        from agent_friday.services import desk_press as _dp
+        return bool(_is_local_request()) and _dp.host_is_local(request) and \
+            _dp.key_matches(request.args.get('dk', ''))
+    except Exception:   # a check that cannot run is not the desk
+        return False
+
+
 def _live_conn_next():
     with _LIVE_RESUME_LOCK:
         _LIVE_CONN_GEN[0] += 1
@@ -4253,7 +4265,11 @@ if sock is not None:
         _crew_call_origin = _crew_host_runtime.capture_host_origin()
         # The owner's own voice on this PC (a paired phone or a tunnel is not): only then may the
         # router's rule-layer call carry the owner mark (notifications "quiet until morning").
-        _owner_voice = bool(_ws_authenticated) and bool(_is_local_request())
+        # ...and only with this launch's desk key, which Friday's own page on this PC
+        # carries in the socket's query (`dk`; services/desk_press). A header-stripped
+        # tunnel looks local to _is_local_request() but never has the key, so voice
+        # arriving through it can talk and decline but never approve a card.
+        _owner_voice = bool(_ws_authenticated) and _voice_on_this_desk()
 
         done = threading.Event()
 
@@ -4923,7 +4939,7 @@ if sock is not None:
                 return
         _ui_t = request.args.get('t', '')
         _ui_tok_ok = _api_token_valid(_ui_t)
-        _owner_local_live = bool(_is_local_request())     # a tunnel or a paired phone is not the owner's own voice here
+        _owner_local_live = _voice_on_this_desk()     # a tunnel or a paired phone is not the owner's own voice here
         if not _ws_auth_ok(_ui_tok_ok):
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
@@ -6762,7 +6778,7 @@ if sock is not None:
                             _live_laya.for_call(
                                 _voice_session, send=_safe_send,
                                 run_tool=lambda _n, _a: _voice_tool_run(_n, _a, _safe_send, _voice_session),
-                                trusted=bool(session.get("authenticated")) and bool(_is_local_request())
+                                trusted=bool(session.get("authenticated")) and _owner_local_live
                                 and _voice_room_mode(live_settings) != "room",
                             ).attach(session_ai, _cfg_try, asyncio.get_running_loop())
                         except Exception as _lle:

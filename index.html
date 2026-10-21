@@ -11630,6 +11630,12 @@ function apiFetch(url, opts) {
   window.fridayRefreshDeskKey = function () {
     return refreshDeskKey().then(ok => !!ok);
   };
+  /* A WebSocket cannot carry the desk key in a header, so the voice page puts it in the
+     socket's query (routes/voice.py reads `dk`). Refreshed first, so a key from an earlier
+     launch is never sent. A voice call without it can talk but never approve a card. */
+  window.fridayDeskSocketParam = function () {
+    return refreshDeskKey().then(ok => (ok && deskKey) ? 'dk=' + encodeURIComponent(deskKey) : '').catch(() => '');
+  };
   refreshDeskKey();
   if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refreshDeskKey();
@@ -69180,6 +69186,8 @@ function App() {
     if (_crewCid || convIdRef.current) _qs.push('conversation_id=' + encodeURIComponent(_crewCid || convIdRef.current));
     if (_crewCid) _qs.push('crew=1');
     if (voicePrivacyOverrideRef.current) _qs.push('privacy_layer3_override=1');
+    /* The desk key (services/desk_press): only voice on this PC's own page may approve a card by voice. */
+    try { const _dk = window.fridayDeskSocketParam ? await window.fridayDeskSocketParam() : ''; if (_dk) _qs.push(_dk); } catch (_) {}
     const ws = new WebSocket(proto + '//' + location.host + _wsUrl + (_qs.length ? '?' + _qs.join('&') : ''));
     v.ws = ws;
     if (_crewCid) {
