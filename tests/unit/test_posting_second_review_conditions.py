@@ -8,7 +8,9 @@
   a day ago does not send a target three days late, nor does a series'
   remembered decision send a late occurrence; each asks again.
 * Re-timing a late post (post now) does not make its old approval count:
-  freshness is judged against the due time the card was raised for.
+  freshness is judged against the due time the card was raised for, and a
+  later card in the same round (edit, re-arm, edit back) keeps the round's
+  earliest due time.
 * Raising the cards for a late post whose approval is too old does not
   report it as approved, so the model is not told the owner's decision
   already covers it.
@@ -212,6 +214,41 @@ def test_posting_a_late_post_now_does_not_make_its_old_approval_count(adapter):
     pub.tick()
     assert adapter.publish_calls == 1
     assert adapter.published[0]["body"] == LATE
+
+
+def test_a_later_card_in_the_round_does_not_make_an_old_approval_count(adapter):
+    """Re-timing a late post, then editing it and editing it back, keeps the
+    round's earliest due time: the weeks-old approved card for the original
+    words is still too old to send it."""
+    late = _scheduled_for(_ago(days=8), LATE)
+    old_card = _approved(late["id"], decided_hours_ago=8 * 24)
+
+    # Re-time it to now (posting now locks the post against edits, so the
+    # re-timing here is a reschedule to a minute ago; same effect on timing).
+    assert cpl.schedule_post(late["id"], {"publish_at": _ago(minutes=1)})["ok"]
+    # New words and re-arm: a card is raised for them in the same round.
+    assert cpl.update_post(late["id"], {"body": "A synthetic edit of the late post."})["ok"]
+    assert cpl.schedule_post(late["id"])["ok"]
+    pub.request_publish_approval(late["id"])
+    other = [c for c in _cards(late["id"]) if c["approval_id"] != old_card]
+    assert len(other) == 1 and other[0]["status"] == "pending", _cards(late["id"])
+    # Back to the original words and re-arm: the newest card for these words
+    # is the old approved one, so no card is raised for them.
+    assert cpl.update_post(late["id"], {"body": LATE})["ok"]
+    assert cpl.schedule_post(late["id"])["ok"]
+    post = cpl.get_post(late["id"])["post"]
+    assert pub._epoch(post["targets"][0]["publish_at"]) > time.time() - 3600, \
+        "re-arming did not keep the re-timed publish time"
+    pub.request_publish_approval(late["id"])
+
+    pub.tick()
+
+    assert adapter.publish_calls == 0, \
+        "an eight-day-old approval sent the post after a later card in its round"
+    fresh = [c for c in _cards(late["id"])
+             if c["approval_id"] not in (old_card, other[0]["approval_id"])]
+    assert len(fresh) == 1 and fresh[0]["status"] == "pending", _cards(late["id"])
+    assert LATE in fresh[0]["description"], fresh[0]["description"]
 
 
 # ── an approval too old to count is not reported as approved ───────────────
