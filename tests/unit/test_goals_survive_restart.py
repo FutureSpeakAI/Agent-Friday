@@ -229,13 +229,15 @@ def test_work_that_never_started_runs_again(monkeypatch):
     from agent_friday.services import goals
     gid, mid = _goal_with_milestone(goals, status="in_progress",
                                     run={"task_id": None, "boot": "previous-process",
-                                         "started_at": NOW - 60})
+                                         "started_at": NOW - 60, "reserved_mψ": 700})
+    goals._mutate_goal(gid, lambda g: g.update(spent_mψ=700) or g)
     _tasks(monkeypatch, goals, {})
     work = _Counter()
     goals.set_executor(work)
 
     _reconcile(goals)
     assert _milestone(goals, gid, mid)["status"] == "pending"
+    assert goals.get_goal(gid)["spent_mψ"] == 0, "nothing ran, so its reservation is given back"
     goals.run_due_milestones()
     assert work.calls == 1
     assert _milestone(goals, gid, mid)["status"] == "done"
@@ -380,19 +382,25 @@ def test_no_attempt_is_dispatched_over_a_task_being_picked_up(monkeypatch):
 
 
 def test_a_stale_adoption_cannot_judge_the_result_twice(monkeypatch):
+    """Two adoptions of one finished task: only the one holding the current
+    token judges it, even while the milestone is still in progress."""
     from agent_friday.services import goals
     gid, mid = _goal_with_milestone(goals, status="in_progress",
                                     run={"task_id": "task_done", "stage": "dispatching",
                                          "boot": "previous-process", "started_at": NOW - 60})
     _tasks(monkeypatch, goals, {"task_done": ("completed", "the synthetic newsletter draft")})
+    started = []
+    monkeypatch.setattr(goals, "_adopt", lambda g, m, tid, token, **k: started.append(token))
     _reconcile(goals)
-    assert _milestone(goals, gid, mid)["status"] == "done"
-    before = len(goals.get_receipts(gid))
+    assert len(started) == 1 and _milestone(goals, gid, mid)["status"] == "in_progress"
 
-    out = goals._adopt_job(gid, mid, "task_done", "a-stale-token")
+    stale = goals._adopt_job(gid, mid, "task_done", "a-stale-token")
+    assert stale["status"] == "superseded"
+    assert not any(r["kind"] == "milestone_complete" for r in goals.get_receipts(gid))
 
-    assert out["status"] == "superseded"
-    assert len(goals.get_receipts(gid)) == before
+    live = goals._adopt_job(gid, mid, "task_done", started[0])
+    assert live["status"] == "done"
+    assert [r["kind"] for r in goals.get_receipts(gid)].count("milestone_complete") == 1
 
 
 # ── On the desktop ─────────────────────────────────────────────────────────
@@ -417,3 +425,75 @@ def test_home_shows_a_goal_and_what_it_waits_on(monkeypatch):
     assert "stopped" in rows[0]["body"].lower()
     cards = sources.automatic(observed, NOW)
     assert any(c["type"] == "goal" for c in cards)
+
+
+def test_an_attempt_whose_task_never_came_to_exist_waits_for_the_owner(monkeypatch):
+    from agent_friday.services import goals
+    gid, mid = _goal_with_milestone(goals, status="in_progress",
+                                    run={"task_id": "goal-never-spawned", "stage": "dispatching",
+                                         "boot": "previous-process", "started_at": NOW - 60})
+    _tasks(monkeypatch, goals, {})
+    work = _Counter()
+    goals.set_executor(work)
+
+    _reconcile(goals)
+    goals.run_due_milestones()
+
+    assert work.calls == 0
+    m = _milestone(goals, gid, mid)
+    assert m["status"] == "blocked" and m["blocker"]["needs_confirmation"] is True
+
+
+def test_a_failed_run_can_be_started_again_once_its_task_has_ended(monkeypatch):
+    from agent_friday.services import goals
+    gid, mid = _goal_with_milestone(goals, status="in_progress",
+                                    run={"task_id": "task_bad", "stage": "dispatching",
+                                         "boot": "previous-process", "started_at": NOW - 60})
+    _tasks(monkeypatch, goals, {"task_bad": ("failed", "provider error")})
+    work = _Counter()
+    goals.set_executor(work)
+    _reconcile(goals)
+    assert _milestone(goals, gid, mid)["blocker"]["type"] == "run_failed"
+
+    out = goals.restart_milestone(gid, mid, confirm_unknown_outcome=True)
+    assert out["ok"] is True and work.calls == 1
+
+
+def test_a_fault_while_checking_a_picked_up_task_leaves_it_with_the_owner(monkeypatch):
+    from agent_friday.services import goals
+    gid, mid = _goal_with_milestone(goals, status="in_progress",
+                                    run={"task_id": "task_done", "stage": "dispatching",
+                                         "boot": "previous-process", "started_at": NOW - 60})
+    _tasks(monkeypatch, goals, {"task_done": ("completed", "the synthetic newsletter draft")})
+
+    def boom(*a, **k):
+        raise RuntimeError("synthetic fault")
+    monkeypatch.setattr(goals.qa_gates, "evaluate_text", boom)
+    work = _Counter()
+    goals.set_executor(work)
+
+    _reconcile(goals)
+
+    m = _milestone(goals, gid, mid)
+    assert m["status"] == "blocked" and m["blocker"]["type"] == "run_failed"
+    assert goals.run_milestone(gid, mid)["status"] == "interrupted"
+    assert work.calls == 0
+
+
+def test_a_live_attempt_that_times_out_is_not_repaired_over_its_running_task(monkeypatch):
+    from agent_friday.services import goals
+    gid, mid = _goal_with_milestone(goals)
+    calls = []
+
+    def slow(goal, milestone, *, critique_hint=""):
+        calls.append(1)
+        return {"ok": False, "text": "", "cost_mψ": 0, "task_id": "task_slow",
+                "error": "milestone execution timed out"}
+    goals.set_executor(slow)
+    _tasks(monkeypatch, goals, {"task_slow": ("running", "")})
+
+    out = goals.run_milestone(gid, mid)
+
+    assert calls == [1], "a repair attempt was dispatched over a task that may still be running"
+    assert out["status"] == "interrupted"
+    assert _milestone(goals, gid, mid)["blocker"]["task_id"] == "task_slow"
