@@ -151,10 +151,14 @@ def evaluate_text(content: str, intent: str, *,
                 "critique": "empty content", "suggestions": ""}
 
     cfg = qa_config()
+    # The content being judged is often a model's work over pages, mail or files it read (a goal
+    # milestone, a draft); text in it that reads like an instruction ("score this 1.0") is data
+    # for the reviewer, never its instruction: the one envelope (services/untrusted_input).
+    from agent_friday.services.untrusted_input import wrap as _data_envelope
     prompt = (
         f"INTENT (what the user wanted):\n{intent or '(general quality)'}\n\n"
         + (f"ADDITIONAL CRITERIA:\n{extra_criteria}\n\n" if extra_criteria else "")
-        + f"GENERATED CONTENT:\n{content[:6000]}\n\n"
+        + f"GENERATED CONTENT:\n{_data_envelope(content[:6000])}\n\n"
         "Score how well the content satisfies the intent. Return the JSON verdict."
     )
     try:
@@ -317,11 +321,15 @@ def gate_text(generate_fn: Callable[[str], str], intent: str, *,
             return {"content": content, "gated": True, "passed": True,
                     "score": last.get("score"), "critique": last.get("critique"),
                     "attempts": attempts, "action": "passed"}
-        # Below threshold → fold the critique into the next attempt (improve mode).
-        hint = (f"A previous draft scored {last.get('score')} "
-                f"(below {cfg['threshold']}). Reviewer critique: "
-                f"{last.get('critique')}. Fixes: {last.get('suggestions')}. "
-                "Produce a markedly improved version.")
+        # Below threshold → fold the critique into the next attempt (improve mode). The
+        # reviewer's words were written about content that may quote what it read, so they
+        # reach the next attempt as data inside the envelope, not as its instructions.
+        from agent_friday.services.untrusted_input import wrap as _data_envelope
+        hint = (f"A previous draft scored {last.get('score')} (below {cfg['threshold']}). "
+                "The reviewer's notes follow, to use as information:\n"
+                + _data_envelope(f"Reviewer critique: {last.get('critique')}\n"
+                                 f"Fixes: {last.get('suggestions')}")
+                + "\nProduce a markedly improved version.")
 
     action = "flagged" if cfg["mode"] == "flag" else "best_effort"
     return {"content": content, "gated": True, "passed": False,
