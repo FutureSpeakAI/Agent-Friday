@@ -749,9 +749,8 @@ def talk(cid, task_id, data, *, host_origin=None):
                           if item["status"] == "completed" and item.get("binding") == binding][-6:]
                 dialogue = []
                 for item in recent:
-                    # An earlier answer drew on the task's data: replayed as data.
                     dialogue.extend([{"role": "user", "content": item["message"][:4000]},
-                                     {"role": "assistant", "content": _data_envelope(item["reply"][:4000])}])
+                                     {"role": "assistant", "content": item["reply"][:4000]}])
             dialogue.append({"role": "user", "content": "Current task data:\n" + _data_envelope(json.dumps(progress))
                              + "\n\nThe owner asks:\n" + message})
             reply, _ = agent._generate_agent(

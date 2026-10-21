@@ -21,11 +21,11 @@ paragraphs:
 
     [End of tool output <id>.]
 
-``<id>`` is the first 16 hex digits of the SHA-256 of the (defanged) output, so
-it is the same every time the same output is wrapped (prompt caches and
-append-only history stay intact) and output cannot carry its own valid close:
-that would need text containing the hash of itself. The header tells the model
-the output ends only at the close with the same id.
+``<id>`` is the first 16 hex digits of the SHA-256 of the (defanged) output when
+it was wrapped, so it is the same every time the same output is wrapped (prompt
+caches and append-only history stay intact) and output cannot carry its own
+valid close: that would need text containing the hash of itself. The header
+tells the model the output ends only at the close with the same id.
 
 Inside the output, ``defang`` turns any imitation of the envelope's lines
 (where a line, a quoted string or a bracket would start one; any case or
@@ -33,8 +33,8 @@ spacing; HTML entities, invisible and combining characters, width forms and
 common Cyrillic/Greek look-alike letters folded first) into plainly quoted
 words, so even a model that ignores the id never sees the envelope close early.
 
-``split(text)`` gives (inner, True) for a text this module enveloped (checked by
-structure and by the id), so readers that must judge the output itself (the
+``split(text)`` gives (inner, True) for an enveloped text (its header and close
+agree on the id), so readers that must judge the output itself (the
 egress gate's JSON rescue, compaction) can work on the inner part and put the
 envelope back with ``wrap``. ``is_envelope_line`` lets the public-query check
 leave the envelope's fixed words out of "private conversation text"; the egress
@@ -144,9 +144,10 @@ def split(text):
     """(inner, True) for a text this module enveloped, else (text, False).
 
     Parsed by structure, in linear time: the first paragraph is exactly the
-    header for some id, the text ends with the close for that id, and the id is
-    the hash of what lies between. Anything else, including a look-alike with a
-    made-up id, is not an envelope."""
+    header for some id and the text ends with the close for that same id. The
+    inner text is not re-hashed: the egress gate's redactions and the PII scrub
+    legitimately change it after wrapping. Accepting a look-alike costs nothing,
+    because ``wrap`` rebuilds every envelope from a defanged inner text."""
     if not isinstance(text, str) or not text.startswith(_HEADER_START):
         return text, False
     head, sep, _rest = text.partition("\n\n")
@@ -159,10 +160,7 @@ def split(text):
     start, end = len(head) + 2, len(text) - len(close)
     if end < start or not text.endswith(close):
         return text, False
-    inner = text[start:end]
-    if _envelope_id(inner) != eid:
-        return text, False
-    return inner, True
+    return text[start:end], True
 
 
 def is_wrapped(text) -> bool:
