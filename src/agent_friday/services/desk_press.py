@@ -222,8 +222,30 @@ def allowed_origins() -> set:
 
 
 def origin_allowed(origin: str) -> bool:
-    norm = _normal_origin(origin)
-    return norm is not None and norm in allowed_origins()
+    return canonical_origin(origin) is not None
+
+
+def _origin_text(norm) -> str:
+    scheme, host, port = norm
+    shown = "[%s]" % host if ":" in host else host
+    default = 443 if scheme == "https" else 80
+    return "%s://%s" % (scheme, shown) if port == default else "%s://%s:%d" % (scheme, shown, port)
+
+
+def canonical_origin(origin: str) -> Optional[str]:
+    """Friday's own page origin, written by this server from its allowlist (never the request's
+    own bytes), when `origin` is one of them; else None. This is what goes back in
+    Access-Control-Allow-Origin, so no request value is ever echoed into a header."""
+    raw = str(origin or "")
+    if any(c in raw for c in "\r\n\x00"):
+        return None
+    norm = _normal_origin(raw)
+    if norm is None:
+        return None
+    for allowed in allowed_origins():
+        if allowed == norm:
+            return _origin_text(allowed)
+    return None
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -268,8 +290,8 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         # Only Friday's own page on this PC, as the browser reports it. A page
         # script cannot set or change Origin.
-        origin = (self.headers.get("Origin") or "").strip()
-        if not origin or not origin_allowed(origin):
+        origin = canonical_origin((self.headers.get("Origin") or "").strip())
+        if not origin:
             return None
         # Anything that relays requests says so; a direct browser fetch never does.
         for name in ("X-Forwarded-For", "X-Forwarded-Host", "Forwarded", "Via", "X-Real-IP"):

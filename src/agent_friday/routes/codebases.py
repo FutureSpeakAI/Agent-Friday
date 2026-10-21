@@ -52,25 +52,26 @@ def _press_refusal():
 def _sensitive_folder(path: str) -> bool:
     """A folder no codebase may sit in, whoever asks: Friday's own data, the roaming app data
     folder (where Windows keeps the Startup folder) and any Startup folder."""
+    # Judged on the spelling alone (no file-system access on a request's value); the folder is
+    # resolved and checked again by services/codebases when it is opened.
     import os
-    from pathlib import Path
     try:
-        p = Path(os.path.expanduser(str(path))).resolve()
+        p = os.path.normcase(os.path.abspath(os.path.expanduser(str(path))))
     except Exception:
         return True
     roots = []
     try:
         import agent_friday.core as core
-        roots.append(Path(core.FRIDAY_DIR).resolve())
+        roots.append(os.path.normcase(os.path.realpath(str(core.FRIDAY_DIR))))
+        roots.append(os.path.normcase(os.path.abspath(str(core.FRIDAY_DIR))))
     except Exception:
         pass
-    for var in ("APPDATA",):
-        if os.environ.get(var):
-            roots.append(Path(os.environ[var]).resolve())
+    if os.environ.get("APPDATA"):
+        roots.append(os.path.normcase(os.path.abspath(os.environ["APPDATA"])))
     for r in roots:
-        if p == r or r in p.parents:
+        if p == r or p.startswith(r.rstrip("\\/") + os.sep):
             return True
-    return any(part.lower() == "startup" for part in p.parts)
+    return any(part.lower() == "startup" for part in p.replace("\\", "/").split("/"))
 
 
 @codebases_bp.errorhandler(ValueError)
