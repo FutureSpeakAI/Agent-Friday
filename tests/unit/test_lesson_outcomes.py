@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from agent_friday.services import core_memory, core_memory_tools, lesson_records as lr
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 KEY = b"g" * 32
 
@@ -107,7 +108,7 @@ def test_retiring_archives_the_line_and_undo_can_bring_it_back(home):
     assert len(cards) == 1 and cards[0]["kind"] == "lesson_retire"
     assert cards[0]["payload"]["quiet_until_digest"] is True
     assert LINE not in cards[0]["description"], "the card repeats the lesson text"
-    approvals.decide(cards[0]["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide(cards[0]["approval_id"], "approve", decided_by="owner:ui")
     assert LINE not in core_memory.entries("friday")
     assert _rec(ref)["status"] == "archived"
     removed = [r for r in core_memory.recent_changes() if r.get("op") == "remove"]

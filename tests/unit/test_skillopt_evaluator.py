@@ -9,6 +9,7 @@ becomes a queued trial, not a version.
 from __future__ import annotations
 
 import pytest
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 KEY = b"g" * 32
 
@@ -73,7 +74,7 @@ def test_a_recommendation_is_a_card_and_only_a_click_changes_the_champion(home):
     assert len(cards) == 1
     approvals.decide(cards[0]["approval_id"], "approve", decided_by="owner")
     assert eng.storage("demo").best_version().version_id == base.version_id
-    approvals.decide(cards[0]["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide(cards[0]["approval_id"], "approve", decided_by="owner:ui")
     assert eng.storage("demo").best_version().version_id == cand.version_id
 
 

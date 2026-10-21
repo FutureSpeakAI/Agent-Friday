@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 
 # ── Memory dreaming files candidates for the owner's review ───────────────────
@@ -133,5 +134,6 @@ class TestLearningLoopEndToEnd:
             ll.record_trial(sid, success=True, satisfaction=0.95)
         ll.promote(threshold=0.5, min_trials=3)
         assert sid not in [s["skill_id"] for s in ll.active_skills()]
-        assert ll.decide_proposal(sid, "accept", decided_by="owner:ui")["ok"] is True
+        with pressed(): _pressed_result = ll.decide_proposal(sid, "accept", decided_by="owner:ui")["ok"] is True
+        assert _pressed_result
         assert sid in [s["skill_id"] for s in ll.active_skills()]
