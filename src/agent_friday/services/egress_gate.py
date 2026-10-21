@@ -676,12 +676,15 @@ def _grant_marker(reason: str) -> str:
     return ""
 
 
-def _off_record_now() -> bool:
+def _off_record_now(*, unknown: bool = False) -> bool:
+    """Whether the owner is off the record. `unknown` is the answer when it
+    can't be told: the call row passes True (no fingerprint is written when
+    it can't be sure), the purpose words keep False (they never claim it)."""
     try:
         from agent_friday.services import off_record as _off
         return bool(_off.active())
     except Exception:
-        return False
+        return unknown
 
 
 def _purpose() -> str:
@@ -762,7 +765,7 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
     _CALL.reset(token)
     if call is None:
         return None
-    off = _off_record_now()
+    off = _off_record_now(unknown=True)
     entry: dict[str, Any] = {
         "ts": time.time(), "kind": "call", "call_id": call["call_id"],
         # Readers that only know field rows see a row they can skip by its

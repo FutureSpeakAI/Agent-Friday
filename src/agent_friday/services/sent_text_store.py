@@ -48,12 +48,14 @@ MAX_TOTAL_BYTES = 1024 * 1024 * 1024
 _FP = re.compile(r"[0-9a-f]{64}")
 _LOCK = threading.Lock()
 _last_prune = 0.0
+_running_total: Optional[int] = None
 
 EXPLANATION_FULL = (
     "Friday keeps the full text of each send to the cloud (and any images in it) "
     "with its receipt, so you can open exactly what left this PC. It is encrypted on "
     "this PC, included when you export your data, and removed when you delete it. "
-    "Nothing is kept while you're off the record. You can switch to fingerprints "
+    "Nothing is kept while you're off the record, and a single send over 8 MB keeps "
+    "only its fingerprint. You can switch to fingerprints "
     "only: then each receipt keeps a short code that identifies what left, without "
     "the words, and the text already kept is deleted.")
 EXPLANATION_FINGERPRINT = (
@@ -137,33 +139,60 @@ def _vault_magic() -> bytes:
         return b"\x00no-vault\x00"
 
 
+def _passphrase_set() -> bool:
+    try:
+        from agent_friday.services import vault_passphrase as vp
+        return bool(vp.resolve()[0])
+    except Exception:
+        return False
+
+
+def _vault_state() -> str:
+    """"ready" (the key is in memory), "pending" (a passphrase is set and the
+    key not derived yet: the first send derives it), "failed" (a passphrase
+    is set and the key could not be derived), or "none" (no passphrase).
+    Changes nothing: no derivation, no key created."""
+    if _vault_key(derive=False) is not None:
+        return "ready"
+    if not _passphrase_set():
+        return "none"
+    import sys
+    agent = sys.modules.get("agent_friday.services.agent")
+    if agent is not None and getattr(agent, "_VAULT_KEY_READY", False):
+        return "failed"
+    return "pending"
+
+
 def sealed_with() -> Optional[str]:
     """What new entries are sealed with: "vault", "keystore", or None (nothing
-    can seal them, so nothing is kept)."""
-    if _vault_key(derive=False) is not None:
+    can seal them, so nothing is kept). Reads state only; it never derives a
+    key or creates a key store."""
+    state = _vault_state()
+    if state in ("ready", "pending"):
         return "vault"
-    try:
-        from agent_friday.services import credential_store as cs
-        blob, method = cs.protect(b"probe")
-        return None if method == "plaintext" or blob == b"probe" else "keystore"
-    except Exception:
-        return None
+    if state == "failed":
+        return None                       # never a weaker seal than the owner set up
+    return "keystore"
 
 
 def _seal(raw: bytes) -> Optional[bytes]:
-    key = _vault_key()
-    if key is not None:
+    """The vault key when a passphrase is set (and nothing else then: an entry
+    is never sealed more weakly than the owner set up); Friday's key store
+    when none is. None when it can't be sealed: nothing is kept."""
+    if _passphrase_set() or _vault_key(derive=False) is not None:
+        key = _vault_key()
+        if key is None:
+            return None
         try:
             from agent_friday.privacy import vault_crypto as vc
             blob = vc.encrypt(raw, key)
-            if blob and blob != raw:
-                return blob
+            return blob if blob and blob != raw else None
         except Exception:
-            pass
+            return None
     try:
         from agent_friday.services import credential_store as cs
         blob, method = cs.protect(raw)
-        if method != "plaintext" and blob != raw:
+        if method != "plaintext" and blob != raw and cs.looks_protected(blob):
             return blob
     except Exception:
         pass
@@ -171,8 +200,11 @@ def _seal(raw: bytes) -> Optional[bytes]:
 
 
 def _open(blob: bytes) -> Optional[bytes]:
+    """Open a kept entry. Reads never derive the vault key, and anything not
+    in a known sealed envelope is refused: a file planted in the folder is
+    not shown as what was sent."""
     if blob.startswith(_vault_magic()):
-        key = _vault_key()
+        key = _vault_key(derive=False)
         if key is None:
             return None
         try:
@@ -182,9 +214,16 @@ def _open(blob: bytes) -> Optional[bytes]:
             return None
     try:
         from agent_friday.services import credential_store as cs
+        if cs.looks_protected(blob) not in ("keystore", "dpapi"):
+            return None
         return cs.unprotect(blob)
     except Exception:
         return None
+
+
+def has(fp: str) -> bool:
+    p = _path(fp)
+    return bool(p is not None and p.is_file())
 
 
 def _path(fp: str) -> Optional[Path]:
@@ -222,7 +261,7 @@ def keep(fp: str, text: str, *, provider: str = "", model: str = "",
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, p)
-        _prune_sometimes()
+        _prune_sometimes(len(blob))
         return True
     except Exception as e:
         _log.warning("sent text could not be kept: %s", type(e).__name__)
@@ -268,11 +307,29 @@ def prune() -> int:
     return n
 
 
-def _prune_sometimes() -> None:
-    global _last_prune
-    if time.time() - _last_prune > 600:
+def _total_now() -> int:
+    d = _dir()
+    total = 0
+    for f in (d.glob("*.bin") if d.is_dir() else []):
+        try:
+            total += f.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _prune_sometimes(added: int = 0) -> None:
+    """Keep a running total so the cap holds between full scans: a burst of
+    large sends prunes as soon as it goes over, not up to ten minutes later."""
+    global _last_prune, _running_total
+    if _running_total is None or time.time() - _last_prune > 600:
         _last_prune = time.time()
+        _running_total = _total_now()
+    else:
+        _running_total += int(added)
+    if _running_total > MAX_TOTAL_BYTES:
         prune()
+        _running_total = _total_now()
 
 
 def purge_all() -> int:
@@ -335,7 +392,11 @@ def status() -> Dict[str, Any]:
         words = "The full text of each send is kept, encrypted with your vault passphrase."
     elif sealed == "keystore":
         words = ("The full text of each send is kept, encrypted with Friday's key store. No vault "
-                 "passphrase is set, so it isn't under the vault yet: set one in Privacy & Data > Vault.")
+                 "passphrase is set, so it isn't under the vault yet: set one in Privacy & Data > Vault. "
+                 "An export carries it still encrypted with this PC's key store.")
+    elif _vault_state() == "failed":
+        words = ("The full text is meant to be kept under your vault passphrase, but the vault key "
+                 "couldn't be opened, so none is kept right now.")
     else:
         words = "The full text is meant to be kept, but nothing can encrypt it right now, so none is kept."
     return {"mode": m, "keep": m == FULL, "sealed_with": sealed, "words": words,

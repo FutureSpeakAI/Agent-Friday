@@ -20353,7 +20353,7 @@ function SettingsPrivacyMap() {
     rec && E('div', { className: 'pm-receipts', role: 'region', 'aria-label': 'Receipts for ' + rec.label },
       E('div', { className: 'lk-title' }, 'Receipts: ' + rec.label),
       rec.rows.length === 0 ? E('div', { className: 'lk-words' }, 'No rows.') : E('ul', { className: 'lk-sub' }, rec.rows.map((r, i) => r.kind === 'call'
-        ? E('li', { key: i, className: 'pm-call' }, callLine(r), r.text_kept && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'Show what was sent at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showSent(r.payload_fingerprint) }, 'Show what was sent'))
+        ? E('li', { key: i, className: 'pm-call' }, callLine(r), r.still_kept && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'Show what was sent at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showSent(r.payload_fingerprint) }, 'Show what was sent'))
         : E('li', { key: i }, new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.field || '') + ' · ' + (r.action || '') + (r.reason ? ' · ' + r.reason : '')))),
       sent && E('div', { className: 'pm-sent', role: 'region', 'aria-label': 'What was sent' },
         E('div', { className: 'lk-title' }, 'Exactly what was sent' + (sent.model ? ' to ' + sent.model : '')),
@@ -20363,11 +20363,11 @@ function SettingsPrivacyMap() {
     left.other_destinations > 0 && E('div', { className: 'lk-words' }, 'And ' + left.other_destinations + ' more destination' + (left.other_destinations === 1 ? '' : 's') + ' with older sends.'),
     d.sent_text && E('div', { className: 'pm-keep', role: 'group', 'aria-label': 'The full text, or fingerprints only' },
       E('div', { className: 'lk-title' }, 'The full text, or fingerprints only'),
-      E('div', { className: 'lk-words' }, 'Now: ' + (d.sent_text.words || '') + (d.sent_text.mode === 'full' ? ' (' + (d.sent_text.kept || 0) + ' kept, ' + Math.round((d.sent_text.bytes || 0) / 1024) + ' KB)' : '')),
+      E('div', { className: 'lk-words' }, 'Now: ' + (d.sent_text.words || '') + ((d.sent_text.kept || 0) > 0 ? ' (' + d.sent_text.kept + ' kept, ' + Math.round((d.sent_text.bytes || 0) / 1024) + ' KB)' : '')),
       E('div', { className: 'lk-words' }, d.sent_text.explanation),
       E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4 }, onClick: () => setMode(d.sent_text.mode === 'full' ? 'fingerprint' : 'full') },
         d.sent_text.mode === 'full' ? 'Switch to fingerprints only (deletes the kept text)' : 'Keep the full text again'),
-      d.sent_text.mode === 'full' && (d.sent_text.kept || 0) > 0 && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4, marginLeft: 6 }, onClick: deleteKept }, 'Delete the kept text')),
+      (d.sent_text.kept || 0) > 0 && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4, marginLeft: 6 }, onClick: deleteKept }, 'Delete the kept text')),
     (left.not_recorded || []).length > 0 && E('div', { className: 'lk-words' }, 'Not in this list yet:'),
     (left.not_recorded || []).length > 0 && E('ul', { className: 'lk-sub', 'aria-label': 'Not in this list yet' }, left.not_recorded.map(n => E('li', { key: n.key }, n.what + '. ' + n.record))),
     E('h4', { className: 'pm-h' }, 'Mail sent for you'),

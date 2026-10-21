@@ -300,7 +300,7 @@ def _enc_sent_text() -> tuple:
     from agent_friday.services import sent_text_store as sts
     sealed = sts.sealed_with()
     if sts.mode() == sts.FINGERPRINT:
-        return "yes", "Nothing new is kept; anything already kept was deleted when you switched."
+        return "yes", "Nothing new is kept. Anything left from before is still encrypted; delete it below."
     if sealed == "vault":
         return "yes", "Encrypted with your vault passphrase. Nothing is written if it can't be encrypted."
     if sealed == "keystore":
@@ -716,13 +716,37 @@ def left() -> dict:
     """Every destination that has received something from Friday, from the
     egress log, as counts. Rebuilt whenever the log changes."""
     path = _egress_log()
-    return _cached("left", _stamp(path), lambda: _left(path))
+    # Also rebuilt when kept text is deleted (switch, delete, prune): the
+    # counts say what is still kept, not what once was.
+    return _cached("left", (_stamp(path), _kept_stamp()), lambda: _left(path))
+
+
+def _kept_dir() -> Path:
+    from agent_friday.paths import friday_home
+    return friday_home() / "vault" / "sent-text"
+
+
+def _kept_stamp() -> Any:
+    try:
+        st = _kept_dir().stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _kept_fps() -> set:
+    d = _kept_dir()
+    try:
+        return {f.stem for f in d.glob("*.bin")} if d.is_dir() else set()
+    except OSError:
+        return set()
 
 
 def _left(path: Path) -> dict:
     by: Dict[str, dict] = {}
     total = 0
     info: Dict[str, Any] = {}
+    kept = _kept_fps()
     try:
         for row in _rows(path, tail=True, info=info):
             total += 1
@@ -739,7 +763,7 @@ def _left(path: Path) -> dict:
                 d["calls"] += 1
                 if row.get("result") == "blocked":
                     d["calls_blocked"] += 1
-                if row.get("text_kept"):
+                if row.get("text_kept") and str(row.get("payload_fingerprint") or "") in kept:
                     d["texts_kept"] += 1
                 for key, val in (("models", row.get("model")), ("hosts", row.get("destination"))):
                     v = str(val or "")[:80]
@@ -808,7 +832,12 @@ def left_rows(to: str, limit: int = 200) -> dict:
                                                  "withheld", "grants", "payload_fingerprint", "result",
                                                  "text_kept", "note") if k in row})
     rows = list(reversed(keep))
+    kept = _kept_fps()
     for r in rows:
+        if r.get("kind") == "call":
+            # Kept when sent, and still here now (a switch, delete or prune
+            # removes the text; the receipt keeps its fingerprint).
+            r["still_kept"] = bool(r.get("text_kept") and str(r.get("payload_fingerprint") or "") in kept)
         if r.get("turn_id"):
             r["turn_receipt"] = "/api/turns/" + _quote(str(r["turn_id"])) + "/receipt"
     return {"to": to, "label": destination_words(to), "rows": rows}
