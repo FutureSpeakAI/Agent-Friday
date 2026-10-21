@@ -268,6 +268,11 @@ def _id_for(source_kind: str, ref: str) -> str:
     return source_kind + ":" + hashlib.sha1(f"{source_kind}|{ref}".encode("utf-8")).hexdigest()[:12]
 
 
+def post_card_id(post_id: str) -> str:
+    """The Media card id of a content post (the card that shows the post)."""
+    return _id_for("post", str(post_id))
+
+
 def _iso(ts: Optional[float]) -> Optional[str]:
     if not ts:
         return None
@@ -1403,6 +1408,43 @@ def set_body(card_id: str, text: str) -> Dict[str, Any]:
     return {"status": "ok", "card": get(card_id)}
 
 
+#: A post card id: "post:" and twelve hex digits (_id_for).
+_POST_CARD_ID = re.compile(r"post:[0-9a-f]{12}")
+#: When each missing post card last asked for a reindex (index_new_post_card).
+_POST_CARD_TRIED: Dict[str, float] = {}
+_POST_CARD_TRIED_LOCK = threading.Lock()
+POST_CARD_RETRY_S = 60.0
+
+
+def index_new_post_card(card_id: str) -> bool:
+    """A post card that is not indexed yet: index posts, but only when the id
+    is a well-formed post card id, a post in the content store has that card
+    id, and this id has not asked in the last POST_CARD_RETRY_S. A request for
+    any other id costs no reindex. Returns True when posts were reindexed."""
+    cid = str(card_id or "")
+    if not _POST_CARD_ID.fullmatch(cid):
+        return False
+    try:
+        from agent_friday.services import content_pipeline as cp
+        ids = cp.list_post_ids()
+    except Exception:
+        return False
+    if not any(post_card_id(pid) == cid for pid in ids):
+        return False
+    now = time.time()
+    with _POST_CARD_TRIED_LOCK:
+        last = _POST_CARD_TRIED.get(cid)
+        if last is not None and now - last < POST_CARD_RETRY_S:
+            return False
+        if len(_POST_CARD_TRIED) > 1000:
+            for k, t in list(_POST_CARD_TRIED.items()):
+                if now - t >= POST_CARD_RETRY_S:
+                    _POST_CARD_TRIED.pop(k, None)
+        _POST_CARD_TRIED[cid] = now
+    reindex_posts_only()
+    return True
+
+
 def reindex_posts_only() -> None:
     with _LOCK:
         con = _connect()
@@ -1436,7 +1478,9 @@ def patch(card_id: str, status: Optional[str] = None, project: Optional[str] = N
                     return {"status": "error", "message": r.get("error") or "Could not schedule the post."}
                 _set_override(card_id, status=None, when_ts=None)
                 reindex_posts_only()
-                return {"status": "ok", "card": get(card_id)}
+                from agent_friday.services import publisher as pub
+                return {"status": "ok", "card": get(card_id),
+                        "publisher": pub.ensure_publisher_running(pid)}
             if status in ("draft", "idea") and c["status"] == "scheduled":
                 r = cp.cancel_post(pid)
                 if not r.get("ok"):
@@ -1574,6 +1618,7 @@ def _publish_post(c: Dict[str, Any]) -> Dict[str, Any]:
     if not r.get("ok"):
         return {"status": "error", "message": r.get("error") or "The post could not be armed."}
     ap = pub.request_publish_approval(pid)
+    running = pub.ensure_publisher_running(pid)
     try:
         pub.kick()
     except Exception:
@@ -1582,9 +1627,11 @@ def _publish_post(c: Dict[str, Any]) -> Dict[str, Any]:
     targets = ap.get("targets") or []
     states = {str(t.get("state") or "") for t in targets}
     if targets and states <= {"approved", "covered by a grant"}:
-        return {"status": "ok", "message": "Publishing.", "card": get(c["id"]), "targets": targets}
+        return {"status": "ok", "message": "Publishing.", "card": get(c["id"]), "targets": targets,
+                "publisher": running}
     return {"status": "pending", "message": "A card is asking you first, for each place it goes.",
-            "targets": targets, "approval_id": next((t.get("approval_id") for t in targets if t.get("approval_id")), None)}
+            "targets": targets, "approval_id": next((t.get("approval_id") for t in targets if t.get("approval_id")), None),
+            "publisher": running}
 
 
 def _publish_description(c: Dict[str, Any]) -> str:

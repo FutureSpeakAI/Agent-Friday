@@ -904,6 +904,8 @@
       if (what === 'turn') { setCard(c.id); window.dispatchEvent(new CustomEvent('friday:media-turn', { detail: { id: c.id } })); return; }
       if (what === 'publish') {
         post('/api/media/' + encodeURIComponent(c.id) + '/' + (c.status === 'published' ? 'unpublish' : 'publish')).then(d => {
+          // Something stops it going out: say only that, never that it is publishing.
+          if (publisherNotice(d)) { if (d.status === 'ok') changed(); return; }
           if (d.status === 'pending') toast('A card is asking you first: nothing leaves this computer until you approve it.');
           else if (d.status === 'ok') { toast(d.message || 'Done.'); changed(); }
           else toast(d.message || 'Could not publish.');
@@ -963,10 +965,38 @@
 @media (max-width:900px){.md-board{grid-template-columns:repeat(5,220px)}}
 `;
   function nextStatus(s) { const o = STATUSES.map(x => x[0]); return o[Math.min(o.length - 1, o.indexOf(s) + 1)]; }
+  // When something will stop an armed post going out (the Content publisher
+  // switched off, publishing paused, no connected account), the answer says
+  // so; show it with the button that fixes it (index.html). Returns true when
+  // it did: the caller then says nothing that implies the post will go out.
+  function publisherNotice(d) {
+    if (!(d && d.publisher && d.publisher.notice)) return false;
+    if (window.fridayPublisherNotice) window.fridayPublisherNotice(d);
+    else toast(d.publisher.notice);
+    return true;
+  }
+  // A held post: show why it was held, and release it only on an explicit
+  // yes. Releasing sends nothing by itself: the post goes back through the
+  // checks and its approval card, which still asks before it goes out.
+  function releaseHeld(c, done) {
+    const pid = c && c.source_ref;
+    if (!pid) return;
+    json('/api/content/posts/' + encodeURIComponent(pid)).then(d => {
+      const held = ((d && d.post && d.post.targets) || []).filter(t => t.status === 'HELD');
+      if (!held.length) { toast('Nothing is held on this post now.'); if (done) done(); return; }
+      const why = held.map(t => (t.platform || 'a platform') + ': ' + (t.error || 'held for review')).join('\n');
+      if (!confirm('This post was held before it went out:\n' + why + '\n\nPublish it anyway? Its approval card still asks you before anything goes out.')) return;
+      post('/api/content/posts/' + encodeURIComponent(pid) + '/release', { ack: true }).then(r => {
+        if (r && r.ok) { if (!publisherNotice(r)) toast('Released. Its approval card asks you before it goes out.'); changed(); if (done) done(); }
+        else toast((r && (r.error || r.message)) || 'Could not release the post.');
+      });
+    }).catch(() => toast('Could not load the post.'));
+  }
   function moveCard(c, to) {
     if (!c || c.status === to) return Promise.resolve();
     if (to === 'published') {
       return post('/api/media/' + encodeURIComponent(c.id) + '/publish').then(d => {
+        if (publisherNotice(d)) { if (d.status === 'ok') changed(); return; }
         if (d.status === 'pending') toast('A card is asking you first: "' + c.title + '" leaves this computer only when you approve it.');
         else if (d.status === 'ok') { toast(d.message || 'Published.'); changed(); }
         else toast(d.message || 'Could not publish.');
@@ -976,7 +1006,7 @@
       const when = prompt('When should "' + c.title + '" go out? (date and time)', c.when ? c.when.slice(0, 16).replace('T', ' ') : '');
       if (!when) return Promise.resolve();
       return post('/api/media/' + encodeURIComponent(c.id), { status: 'scheduled', when }, 'PATCH').then(d => {
-        if (d.status === 'ok') { toast('Scheduled. Friday asks again before it goes.'); changed(); } else toast(d.message || 'Could not schedule.');
+        if (d.status === 'ok') { if (!publisherNotice(d)) toast('Scheduled. Friday asks again before it goes.'); changed(); } else toast(d.message || 'Could not schedule.');
       });
     }
     return post('/api/media/' + encodeURIComponent(c.id), { status: to }, 'PATCH').then(d => {
@@ -1075,7 +1105,7 @@
       if (!c || c.status === 'published') { toast('A published card cannot move; unpublish it first.'); return; }
       const t = c.when ? c.when.slice(11, 16) : '09:00';
       post('/api/media/' + encodeURIComponent(c.id), { status: 'scheduled', when: dayKey(d) + ' ' + t }, 'PATCH').then(r => {
-        if (r.status === 'ok') { toast('Moved to ' + d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + t + '. Friday asks again before it goes.'); changed(); } else toast(r.message || 'Could not move it.');
+        if (r.status === 'ok') { if (!publisherNotice(r)) toast('Moved to ' + d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + t + '. Friday asks again before it goes.'); changed(); } else toast(r.message || 'Could not move it.');
       });
     };
     const fmt = d => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
@@ -1290,6 +1320,7 @@
             h('button', { className: 'btn', onClick: () => window.fridayOpenWorkspaceTab && window.fridayOpenWorkspaceTab('media', { view: 'card', card: c.id }) }, 'Own tab'),
             c.file_url ? h('a', { className: 'btn', href: c.file_url, download: '' }, 'Export') : null,
             h('button', { className: 'btn', onClick: () => setStatus('scheduled') }, 'Schedule…'),
+            c.kind === 'post' && c.held ? h('button', { className: 'btn', 'data-testid': 'md-release-held', title: 'See why it was held, then publish it anyway. Its approval card still asks first.', onClick: () => releaseHeld(c, load) }, 'Publish anyway…') : null,
             h('button', { className: 'btn', onClick: () => onAction('publish', c) }, c.status === 'published' ? 'Unpublish…' : 'Publish…'),
             h('button', { className: 'btn btn-magenta', onClick: () => onAction('delete', c) }, 'Delete')))));
   }

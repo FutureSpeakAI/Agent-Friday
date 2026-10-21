@@ -135,9 +135,28 @@ def _notify(title: str, body: str = "", priority: str = "medium",
         pass
 
 
-def _queue_action() -> List[Dict[str, Any]]:
-    return [{"label": "Review in Content → Queue", "action": "navigate",
-             "target": {"workspace": "content", "tab": "queue"}}]
+def _post_card_target(post_id: Optional[str]) -> Dict[str, Any]:
+    """Where a post is shown now: its card in Media (the card opens the post
+    in the composer, and a held post's card can release it). Without a post
+    id, Media's "Needs you" list."""
+    if post_id:
+        try:
+            from agent_friday.services import media_index
+            return {"workspace": "media", "card": media_index.post_card_id(post_id)}
+        except Exception:
+            _log.debug("post card id unavailable", exc_info=True)
+    return {"workspace": "media", "default_view": "review"}
+
+
+def _queue_action(post_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    return [{"label": "Open the post in Media", "action": "navigate",
+             "target": _post_card_target(post_id)}]
+
+
+def _accounts_action() -> List[Dict[str, Any]]:
+    """Publishing accounts live under Settings, Connections."""
+    return [{"label": "Open Connections", "action": "navigate",
+             "target": {"workspace": "settings", "tab": "connections"}}]
 
 
 def _self_agent_id() -> str:
@@ -281,9 +300,11 @@ def start() -> Dict[str, Any]:
         # every job that runs less often. A maintenance job nobody asked for
         # should not be the loudest thing in the log.
         #
-        # `default_enabled` seeds the schedule disabled; the moment a post is
-        # scheduled the pipeline enables it (see _ensure_publisher_enabled),
-        # so this costs nothing to whoever does use the feature.
+        # `default_enabled` seeds the schedule disabled; the first time a post
+        # is armed for a platform with a connected account, the job is
+        # switched on (see ensure_publisher_running), unless the owner has
+        # switched it off themselves. So this costs nothing to whoever does
+        # use the feature.
         register_builtin_task(
             "content_publisher", tick, label="Content publisher",
             default_trigger="interval", default_spec={"every_minutes": 15},
@@ -316,6 +337,149 @@ def kick() -> Dict[str, Any]:
         return {"kicked": True, "via": "thread"}
     except Exception as e:
         return {"kicked": False, "reason": exception_text(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  The Content publisher job: on when posts are armed, and the owner's switch
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The scheduler builtin that runs tick() ships switched off. When a post is
+# armed (scheduled, posted now, released) for at least one platform with a
+# connected account, ensure_publisher_running switches it on
+# (scheduler.enable_if_seeded_off: the read, the check and the write in one
+# step under the schedules lock, never seeding a record, never writing over a
+# schedules.json it could not read), records when and why, and says so once,
+# with how many posts already approved are due now. Switching it on publishes
+# nothing: every target still meets the gate chain and the owner's card in
+# _run_target, and a post more than OVERDUE_GRACE_S late asks again.
+#
+# The owner's switch wins: once the owner has switched the job off
+# (scheduler.builtin_switched_off_by_owner), nothing here switches it back on;
+# the arming call instead carries a notice saying the post will not go out,
+# with the way to Workflows, and a notification says the same. A pause made by
+# a model's tool call is not the owner's off.
+
+PUBLISHER_REF = "content_publisher"
+PUBLISHER_SCHEDULE_ID = "sch_" + PUBLISHER_REF
+AUTO_ENABLE_REASON = "a post was scheduled for a connected account"
+
+
+def _workflows_action() -> List[Dict[str, Any]]:
+    return [{"label": "Open Workflows", "action": "navigate",
+             "target": {"workspace": "workflows"}}]
+
+
+def _platform_ready(platform: str) -> bool:
+    """A connected account, or a platform whose publishing is a hand-off
+    package that needs no account (manual mode)."""
+    try:
+        adapter = platform_registry.get_adapter(platform)
+        if adapter is None:
+            return False
+        if str(getattr(adapter, "auth_mode", "") or "") == "manual":
+            return True
+        return bool((adapter.status() or {}).get("connected"))
+    except Exception:
+        return False
+
+
+def ensure_publisher_running(post_id: str) -> Dict[str, Any]:
+    """Called when a post is armed. Switches the Content publisher job on when
+    it is still in its seeded-off state and one of the post's platforms is
+    ready, and reports whether the post can go out.
+
+    Returns {on, auto_enabled, notice, action}; `notice` (plain words) is set
+    whenever something will stop the post going out, and `action` is the
+    navigation that fixes it. Never raises; never publishes or approves
+    anything."""
+    out: Dict[str, Any] = {"on": False, "auto_enabled": False,
+                           "notice": None, "action": None}
+    try:
+        got = store.get_post(post_id)
+        if not got.get("ok"):
+            return out
+        post = got["post"]
+        armed = [t for t in (post.get("targets") or [])
+                 if t.get("status") == "PENDING"]
+        if not armed:
+            return out
+        now = time.time()
+        later = any((_epoch(t.get("publish_at")) or 0) > now for t in armed)
+        ready = [str(t.get("platform")) for t in armed
+                 if _platform_ready(str(t.get("platform") or ""))]
+
+        from agent_friday.services import scheduler as _sched
+        # Registered at boot (start()); a process that never started the
+        # publisher has no job to switch.
+        registered = PUBLISHER_REF in _sched.BUILTIN_TASKS
+        state = None
+        if registered:
+            job = _sched.enable_if_seeded_off(PUBLISHER_SCHEDULE_ID, AUTO_ENABLE_REASON,
+                                              switch=bool(ready))
+            state = job.get("state")
+            if state == "on":
+                out["on"] = True
+            elif state == "switched_on":
+                out["on"] = out["auto_enabled"] = True
+                _log.info("content publisher job switched on automatically "
+                          "(post %s armed for %s)", post_id, ", ".join(ready))
+                _notify("Content publisher turned on",
+                        "It sends your scheduled posts, each only once you have "
+                        "approved it. " + _backlog_words(now)
+                        + "You can switch it off in Workflows.",
+                        priority="medium", actions=_workflows_action(),
+                        dedupe="content-publisher-auto-on")
+
+        # What still stops this post, most fundamental first.
+        if not content_enabled():
+            out["notice"] = ("This post won't go out: publishing is switched off "
+                             "in Settings. Turn it back on there.")
+            out["action"] = {"label": "Open Settings", "target": {"workspace": "settings"}}
+        elif platform_registry.publishing_paused():
+            out["notice"] = ("This post won't go out: all publishing is paused. "
+                             "Resume it in Settings, Connections, Publishing channels.")
+            out["action"] = {"label": "Open Connections",
+                             "target": {"workspace": "settings", "tab": "connections"}}
+        elif not ready:
+            out["notice"] = ("This post won't go out: none of its platforms has a "
+                             "connected account. Connect one in Settings, Connections.")
+            out["action"] = {"label": "Open Connections",
+                             "target": {"workspace": "settings", "tab": "connections"}}
+        elif registered and state == "unreadable":
+            out["notice"] = ("This post may not go out: Friday couldn't read its list of "
+                             "scheduled jobs just now, so it can't tell whether the Content "
+                             "publisher is on. Check it in Workflows.")
+            out["action"] = {"label": "Open Workflows", "target": {"workspace": "workflows"}}
+            _notify("Friday couldn't check the Content publisher",
+                    out["notice"], priority="high", actions=_workflows_action(),
+                    dedupe=f"content-publisher-unknown:{post_id}")
+        elif registered and state == "unwritable":
+            out["notice"] = ("This post won't go out until the Content publisher is on: "
+                             "Friday tried to switch it on but couldn't save the change. "
+                             "Turn it on in Workflows.")
+            out["action"] = {"label": "Open Workflows", "target": {"workspace": "workflows"}}
+            _notify("Friday couldn't switch the Content publisher on",
+                    out["notice"], priority="high", actions=_workflows_action(),
+                    dedupe=f"content-publisher-unwritable:{post_id}")
+        elif registered and state == "missing":
+            out["notice"] = ("This post won't go out yet: the Content publisher job isn't "
+                             "set up. Restarting Friday sets it up; then check Workflows.")
+            out["action"] = {"label": "Open Workflows", "target": {"workspace": "workflows"}}
+        elif registered and not out["on"]:
+            if later:
+                out["notice"] = ("This post won't go out: the Content publisher is "
+                                 "switched off. Turn it on in Workflows.")
+            else:
+                out["notice"] = ("The Content publisher is switched off, so if this "
+                                 "post can't go out straight away it won't be tried "
+                                 "again. Turn it on in Workflows.")
+            out["action"] = {"label": "Open Workflows", "target": {"workspace": "workflows"}}
+            _notify("The Content publisher is switched off",
+                    out["notice"], priority="high", actions=_workflows_action(),
+                    dedupe=f"content-publisher-off:{post_id}")
+    except Exception:
+        _log.debug("content publisher job check failed", exc_info=True)
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -496,7 +660,7 @@ def _recover_sent_limbo(now=None, exclude=None):
         _spend_authorization(tid)
         _log_attempt(target, "failed", error=reason)
         _notify(f"Publish failed — {platform}", reason, priority="high",
-                actions=_queue_action(), dedupe=f"content-failed:{tid}")
+                actions=_queue_action(target.get("post_id")), dedupe=f"content-failed:{tid}")
         counts["failed"] = counts.get("failed", 0) + 1
     return counts, confirmed_posts
 
@@ -601,13 +765,16 @@ def _auth_read() -> Dict[str, Any]:
         return {}
 
 
-def _auth_update(tid: str, **fields) -> Dict[str, Any]:
+def _auth_update(tid: str, *, stamp: bool = True, **fields) -> Dict[str, Any]:
+    """Merge `fields` into a target's record. `at` (when the decision was
+    remembered, which the overdue rule reads) moves only when `stamp`."""
     import json
     with _AUTH_LOCK:
         data = _auth_read()
         rec = dict(data.get(tid) or {})
         rec.update(fields)
-        rec["at"] = time.time()
+        if stamp or "at" not in rec:
+            rec["at"] = time.time()
         data[tid] = rec
         path = _auth_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -627,7 +794,8 @@ def _spend_authorization(tid: str) -> None:
     arming of this target is a new round with a new card."""
     try:
         rec = _auth_get(tid)
-        _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None)
+        _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None,
+                     decision_due=None, decision_round=None)
     except Exception:
         _log.debug("could not spend the publish authorization", exc_info=True)
 
@@ -640,9 +808,23 @@ def _grant_valid(grant_id: str) -> bool:
     return False
 
 
-def _covered(rec: Dict[str, Any], sha: str) -> bool:
+def _covered(rec: Dict[str, Any], sha: str, media_sha: str = "",
+             fresh_after: Optional[float] = None) -> bool:
+    """Does this remembered decision cover these words AND this media?
+
+    A record from before the media was remembered (no `media_sha`) covers a
+    target without media only: it never vouches for pictures it did not see.
+    `fresh_after` (an overdue target, see OVERDUE_GRACE_S) also asks that the
+    decision was made at or after that time."""
     via = str(rec.get("via") or "")
     if not via or rec.get("sha") != sha:
+        return False
+    if "media_sha" in rec:
+        if str(rec.get("media_sha") or "") != str(media_sha or ""):
+            return False
+    elif media_sha:
+        return False
+    if fresh_after is not None and float(rec.get("at") or 0) < fresh_after:
         return False
     if via.startswith("grant_"):
         return _grant_valid(via)
@@ -659,6 +841,136 @@ def _media(target: Dict[str, Any], post: Dict[str, Any]) -> List[Dict[str, str]]
     return [{"filename": str(a.get("filename") or ""), "kind": str(a.get("kind") or ""),
              "content_hash": str(a.get("content_hash") or "")}
             for a in assets if isinstance(a, dict)]
+
+
+def _media_sha(target: Dict[str, Any], post: Dict[str, Any]) -> str:
+    """The fingerprint of the media a target sends ("" for none): what a
+    remembered decision saw besides the words."""
+    media = _media(target, post)
+    if not media:
+        return ""
+    import hashlib
+    import json
+    return hashlib.sha256(json.dumps(media, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def released_text_sha(target: Dict[str, Any], post: Dict[str, Any]) -> str:
+    """The fingerprint a human release ('publish anyway') is bound to: these
+    exact outbound strings (_final_texts) and this media. The store records it
+    with the release (content_pipeline.release_held); new words after the
+    release are not released."""
+    return _text_sha(_final_texts(target, post)) + ":" + _media_sha(target, post)
+
+
+# ── Overdue posts ────────────────────────────────────────────────────────────
+#: A scheduled target reached more than this long after its time is overdue:
+#: it does not go out on a decision made before the last OVERDUE_GRACE_S; its
+#: card asks again ("it was due then; it goes when you approve"). Scheduled
+#: posts did not go out while the Content publisher was off, so the first
+#: switch-on would otherwise send weeks-old approvals at once.
+OVERDUE_GRACE_S = 24 * 3600
+#: request_publish_approval's state for a target whose earlier decision is
+#: too old to count: its card asks again when the publisher reaches it.
+ASK_AGAIN_STATE = "will ask you again (more than a day late)"
+
+
+def _due_at(target: Dict[str, Any], post: Dict[str, Any]) -> Optional[float]:
+    return _epoch(target.get("publish_at")) or _epoch((post.get("schedule") or {}).get("publish_at"))
+
+
+def _decision_due(rec: Dict[str, Any]) -> Optional[float]:
+    """The due time this round's card showed when it was raised (recorded by
+    _note_card_due), or None. A decision is judged against the time it was
+    made for: posting now, rescheduling, re-arming or releasing a target moves
+    its publish_at but not the time its old card approved."""
+    if rec.get("decision_round") != int(rec.get("round") or 0):
+        return None
+    try:
+        return float(rec["decision_due"]) if rec.get("decision_due") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _note_card_due(target: Dict[str, Any], post: Dict[str, Any]) -> None:
+    """A card is being raised for this target's current round: remember the
+    due time it shows (without restamping any remembered decision)."""
+    tid = str(target.get("id"))
+    rec = _auth_get(tid)
+    _auth_update(tid, stamp=False, decision_due=_due_at(target, post),
+                 decision_round=int(rec.get("round") or 0))
+
+
+def _fresh_after(target: Dict[str, Any], post: Dict[str, Any],
+                 now: Optional[float] = None,
+                 rec: Optional[Dict[str, Any]] = None) -> Optional[float]:
+    """For a target overdue by more than OVERDUE_GRACE_S, the earliest time a
+    decision may have been made to count now; None when it is not overdue.
+
+    Lateness runs from the earlier of the target's publish_at and, given its
+    record `rec`, the due time this round's card was raised for
+    (_decision_due), so re-timing a late post does not make its old approval
+    count again."""
+    now = time.time() if now is None else now
+    due = _due_at(target, post)
+    decided_for = _decision_due(rec) if rec else None
+    if decided_for is not None:
+        due = decided_for if due is None else min(due, decided_for)
+    if due is None or now - due <= OVERDUE_GRACE_S:
+        return None
+    return now - OVERDUE_GRACE_S
+
+
+def _backlog(now: Optional[float] = None) -> Dict[str, int]:
+    """Posts waiting in the store as the publisher is switched on:
+    {"approved": posts with a target due now whose words and media are
+    already approved (they go out on its next run), "overdue": posts with a
+    target more than OVERDUE_GRACE_S late (they ask again first)}."""
+    now = time.time() if now is None else now
+    approved, overdue = set(), set()
+    from agent_friday.governance import action_gate
+    for status in ("SCHEDULED", "PUBLISHING"):
+        res = store.list_posts(status=status, limit=2000)
+        for post in (res.get("posts") or []) if res.get("ok") else []:
+            pid = str(post.get("id"))
+            for t in post.get("targets") or []:
+                if t.get("status") != "PENDING":
+                    continue
+                due = _due_at(t, post)
+                if due is None or due > now:
+                    continue
+                rec = _auth_get(str(t.get("id")))
+                if _fresh_after(t, post, now, rec) is not None:
+                    overdue.add(pid)
+                    continue
+                texts = _final_texts(t, post)
+                if _covered(rec, _text_sha(texts), _media_sha(t, post)):
+                    approved.add(pid)
+                    continue
+                card = _latest_card(action_gate.external_subject(
+                    PUBLISH_ACTION, _detail(t, post, texts)))
+                if card and card.get("status") == "approved" and not card.get("consumed"):
+                    approved.add(pid)
+    return {"approved": len(approved), "overdue": len(overdue - approved)}
+
+
+def _backlog_words(now: Optional[float] = None) -> str:
+    """The switch-on notice's count of posts already waiting, or ""."""
+    try:
+        b = _backlog(now)
+    except Exception:
+        _log.debug("could not count the waiting posts", exc_info=True)
+        return ""
+    words = ""
+    if b["approved"]:
+        n = b["approved"]
+        words += (f"{n} post{'s' if n != 1 else ''} you already approved "
+                  f"{'are' if n != 1 else 'is'} due now and go{'' if n != 1 else 'es'} "
+                  "out on its next run, after the usual checks. ")
+    if b["overdue"]:
+        n = b["overdue"]
+        words += (f"{n} post{'s' if n != 1 else ''} more than a day late will ask "
+                  "you again before going out. ")
+    return words
 
 
 def _series(post: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -701,8 +1013,12 @@ def _card_words(target: Dict[str, Any], post: Dict[str, Any], texts: List[str],
     series = _series(post)
     head = [f"Goes to: {dest}"]
     when = target.get("publish_at") or (post.get("schedule") or {}).get("publish_at")
-    head.append(f"When: {when} (UTC), once you approve" if when
-                else "When: as soon as you approve")
+    if when and _fresh_after(target, post) is not None:
+        head.append(f"When: it was due {when} (UTC) and did not go out then; "
+                    "it goes as soon as you approve")
+    else:
+        head.append(f"When: {when} (UTC), once you approve" if when
+                    else "When: as soon as you approve")
     if series:
         until = series.get("expires_at") or "you stop the series"
         head.append(f"Repeats: {series['recurrence']} until {until}. Each later post "
@@ -714,8 +1030,8 @@ def _card_words(target: Dict[str, Any], post: Dict[str, Any], texts: List[str],
     joined = "\n\n".join(texts)
     room = _CARD_TEXT_MAX - len(header)
     if len(joined) > room:
-        note = ("\n\n[{} more characters are not shown here; the full text is in "
-                "Content, Queue.]")
+        note = ("\n\n[{} more characters are not shown here; the full text is on "
+                "the post's card in Media.]")
         cut = max(0, room - len(note.format(len(joined))) - 4)
         shown = joined[:cut] + note.format(len(joined) - cut)
     else:
@@ -750,6 +1066,8 @@ def _ask(target: Dict[str, Any], post: Dict[str, Any], texts: List[str],
     named = None
     if latest and not latest.get("consumed") and latest.get("status") != "expired":
         named = latest.get("approval_id")
+    else:
+        _note_card_due(target, post)
     words = _card_words(target, post, texts, rewritten)
     v = action_gate.authorize_external(
         PUBLISH_ACTION, detail, requested_by="publisher", approval_id=named, **words)
@@ -757,10 +1075,13 @@ def _ask(target: Dict[str, Any], post: Dict[str, Any], texts: List[str],
     return v, str((card or {}).get("approval_id") or "card")
 
 
-def _parent_covers(target: Dict[str, Any], post: Dict[str, Any], sha: str) -> Optional[str]:
-    """A recurrence occurrence with unchanged words goes out under the series'
-    approval: the parent's same-platform target was decided for exactly these
-    words in exactly this series. Returns the parent target id, or None."""
+def _parent_covers(target: Dict[str, Any], post: Dict[str, Any], sha: str,
+                   fresh_after: Optional[float] = None) -> Optional[str]:
+    """A recurrence occurrence with unchanged words and media goes out under
+    the series' approval: the parent's same-platform target was decided for
+    exactly these words and media in exactly this series. Returns the parent
+    target id, or None."""
+    media_sha = _media_sha(target, post)
     src = post.get("source") or {}
     series = _series(post)
     if str(src.get("kind") or "") != "recurrence" or not series:
@@ -773,24 +1094,46 @@ def _parent_covers(target: Dict[str, Any], post: Dict[str, Any], sha: str) -> Op
         if str(pt.get("platform") or "") != platform:
             continue
         rec = _auth_get(str(pt.get("id")))
-        if _covered(rec, sha) and rec.get("series") == series:
+        if _covered(rec, sha, media_sha, fresh_after) and rec.get("series") == series:
             return str(pt.get("id"))
     return None
 
 
+def _ask_again_overdue(target: Dict[str, Any], post: Dict[str, Any],
+                       due: Optional[float]) -> None:
+    """An overdue target's earlier decision no longer counts: start a new
+    round, so the card that asks is a new one, and say so once."""
+    tid = str(target.get("id"))
+    rec = _auth_get(tid)
+    _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None,
+                 reasked_due=due, decision_due=None, decision_round=None)
+    when = target.get("publish_at") or (post.get("schedule") or {}).get("publish_at")
+    _log.info("publish target %s is overdue (due %s): asking again", tid, when)
+    _notify("A late post asks you again",
+            f"{target.get('platform')}: it was due {when} (UTC) and did not go out then. "
+            "It goes only if you approve it again; or reschedule it.",
+            priority="medium", actions=_queue_action(target.get("post_id")),
+            dedupe=f"content-overdue:{tid}")
+
+
 def _authorize_publish(target: Dict[str, Any], post: Dict[str, Any],
-                       texts: List[str], *, rewritten: bool = False) -> str:
-    """allow | card | deny for sending exactly `texts` to this target now."""
+                       texts: List[str], *, rewritten: bool = False,
+                       now: Optional[float] = None) -> str:
+    """allow | card | deny for sending exactly `texts`, and this media, to
+    this target now. A target more than OVERDUE_GRACE_S late goes out only on
+    a decision made within the last OVERDUE_GRACE_S."""
     from agent_friday.governance import action_gate
     tid = str(target.get("id"))
     platform = str(target.get("platform") or "")
     sha = _text_sha(texts)
+    media_sha = _media_sha(target, post)
     rec = _auth_get(tid)
+    fresh_after = _fresh_after(target, post, now, rec)
     via = None
-    if _covered(rec, sha):
+    if _covered(rec, sha, media_sha, fresh_after):
         via = str(rec.get("via"))
     elif not rewritten:
-        parent_tid = _parent_covers(target, post, sha)
+        parent_tid = _parent_covers(target, post, sha, fresh_after)
         if parent_tid:
             via = f"series:{parent_tid}"
     if via:
@@ -800,12 +1143,27 @@ def _authorize_publish(target: Dict[str, Any], post: Dict[str, Any],
         except action_gate.Held:
             return "deny"
         if rec.get("via") != via:
-            _auth_update(tid, sha=sha, via=via, series=_series(post),
+            _auth_update(tid, sha=sha, media_sha=media_sha, via=via, series=_series(post),
                          post_id=str(target.get("post_id")), platform=platform)
         return "allow"
+    if fresh_after is not None:
+        # An earlier decision that would have sent it is too old to count.
+        # Approved before it fell this far behind and never used, its card
+        # must not send it now: a new round raises a new card. Once per due
+        # time (a series' old approval stays old at every recheck).
+        card = _latest_card(action_gate.external_subject(
+            PUBLISH_ACTION, _detail(target, post, texts)))
+        stale_card = bool(card and card.get("status") == "approved"
+                          and not card.get("consumed")
+                          and float(card.get("decided_at") or 0) < fresh_after)
+        stale = stale_card or _covered(rec, sha, media_sha) or (
+            not rewritten and _parent_covers(target, post, sha) is not None)
+        due = _due_at(target, post)
+        if stale_card or (stale and rec.get("reasked_due") != due):
+            _ask_again_overdue(target, post, due)
     v, card_id = _ask(target, post, texts, rewritten)
     if v.action == "allow":
-        _auth_update(tid, sha=sha, via=card_id, series=_series(post),
+        _auth_update(tid, sha=sha, media_sha=media_sha, via=card_id, series=_series(post),
                      post_id=str(target.get("post_id")), platform=platform)
     return v.action
 
@@ -833,28 +1191,45 @@ def request_publish_approval(post_id: str) -> Dict[str, Any]:
             platform = str(target.get("platform") or "")
             texts = _final_texts(target, post)
             sha = _text_sha(texts)
+            media_sha = _media_sha(target, post)
             row = {"target_id": tid, "platform": platform}
-            if _covered(_auth_get(tid), sha):
+            rec = _auth_get(tid)
+            fresh_after = _fresh_after(target, post, rec=rec)
+            if _covered(rec, sha, media_sha, fresh_after):
                 row["state"] = "approved"
             elif decided.startswith("grant_") and _grant_valid(decided):
-                _auth_update(tid, sha=sha, via=decided, series=_series(post),
-                             post_id=post_id, platform=platform)
+                _auth_update(tid, sha=sha, media_sha=media_sha, via=decided,
+                             series=_series(post), post_id=post_id, platform=platform,
+                             decision_due=_due_at(target, post),
+                             decision_round=int(rec.get("round") or 0))
                 row["state"] = "covered by a grant"
+            elif fresh_after is not None and _covered(rec, sha, media_sha):
+                # Decided before it fell more than a day behind: dispatch
+                # asks again (_authorize_publish), so it is not approved.
+                row["state"] = ASK_AGAIN_STATE
             else:
                 detail = _detail(target, post, texts)
                 latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
                 if latest is None or latest.get("consumed") or latest.get("status") == "expired":
                     _ensure_decision_hook()
+                    _note_card_due(target, post)
                     action_gate.authorize_external(
                         PUBLISH_ACTION, detail, requested_by="publisher",
                         **_card_words(target, post, texts, False))
                     latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
-                row["state"] = {"approved": "approved", "denied": "declined",
-                                "blocked": "declined"}.get(
-                    str((latest or {}).get("status")),
-                    "waiting for your approval" if latest else "unavailable")
-                if latest:
-                    row["approval_id"] = latest.get("approval_id")
+                stale = bool(latest and fresh_after is not None
+                             and latest.get("status") == "approved"
+                             and not latest.get("consumed")
+                             and float(latest.get("decided_at") or 0) < fresh_after)
+                if stale:
+                    row["state"] = ASK_AGAIN_STATE
+                else:
+                    row["state"] = {"approved": "approved", "denied": "declined",
+                                    "blocked": "declined"}.get(
+                        str((latest or {}).get("status")),
+                        "waiting for your approval" if latest else "unavailable")
+                    if latest:
+                        row["approval_id"] = latest.get("approval_id")
             out["targets"].append(row)
     except Exception as e:
         _log.debug("raising publish cards failed", exc_info=True)
@@ -897,7 +1272,7 @@ def _hold(target: Dict[str, Any], reason: str) -> str:
         "platform": target.get("platform"), "reason": reason, "ok": False})
     _notify("Post held — review before publishing",
             f"{target.get('platform')}: {reason}", priority="high",
-            actions=_queue_action(), dedupe=f"content-held:{tid}")
+            actions=_queue_action(target.get("post_id")), dedupe=f"content-held:{tid}")
     return "held"
 
 
@@ -936,7 +1311,14 @@ def _run_target(target: Dict[str, Any]) -> str:
     # the H3 hold rail and the egress-divergence hold ONLY. The hard harm
     # floor (H1/H2/H4) and gate-infrastructure failures are never releasable —
     # without this marker a released target just re-holds forever.
-    released = bool((target.get("options") or {}).get("released"))
+    # The release covers the words and media the owner saw when they released
+    # it (released_sha, recorded by content_pipeline.release_held): words
+    # edited in afterwards are not released and meet the holds again. A
+    # release recorded without its fingerprint is not honoured either.
+    opts = target.get("options") or {}
+    released = bool(opts.get("released")) and \
+        opts.get("released_sha") == released_text_sha(target, post)
+    changed = " (changed after you released it)" if opts.get("released") and not released else ""
 
     # 1 GATE — moderation H1–H4 (§7.1). Blocked = permanent, no retry (§7.5);
     # an inoperable scanner fails closed to HELD (§7.3).
@@ -954,7 +1336,7 @@ def _run_target(target: Dict[str, Any]) -> str:
             # is a legitimate human release for e.g. an educational post).
             # The hard harm floors (H1/H2/H4) stay permanent FAILED below.
             if not released:
-                return _hold(target, reason)
+                return _hold(target, reason + changed)
             store.append_publish_log({
                 "event": "release_override", "target_id": tid,
                 "post_id": target.get("post_id"), "platform": platform,
@@ -965,7 +1347,7 @@ def _run_target(target: Dict[str, Any]) -> str:
                          error=reason)
             _notify("Post blocked by the harm floor",
                     f"{platform}: {verdict.get('reason') or 'blocked'}",
-                    priority="high", actions=_queue_action(),
+                    priority="high", actions=_queue_action(target.get("post_id")),
                     dedupe=f"content-blocked:{tid}")
             return "failed"
 
@@ -984,7 +1366,7 @@ def _run_target(target: Dict[str, Any]) -> str:
                         "ok": True})
                     break
                 return _hold(target,
-                             "post held — it looks like it contains private data")
+                             "post held — it looks like it contains private data" + changed)
     except Exception:
         return _hold(target, "egress gate error — held fail-closed")
 
@@ -1021,7 +1403,7 @@ def _run_target(target: Dict[str, Any]) -> str:
         store.set_target_status(tid, "FAILED", error=f"license: {license_block}")
         _log_attempt(target, "failed", error=f"license: {license_block}")
         _notify("Post blocked — license incompatible", license_block,
-                priority="high", actions=_queue_action())
+                priority="high", actions=_queue_action(target.get("post_id")))
         return "failed"
 
     # 5 BUDGET pre-check — defer without burning the attempt (§7.1 step 5).
@@ -1148,7 +1530,7 @@ def _handle_failure(target: Dict[str, Any], adapter, env: Dict[str, Any],
         store.set_target_status(tid, "FAILED", error=reason)
         _log_attempt(target, "failed", duration_s=duration, error=reason)
         _notify(f"Publish failed — {target.get('platform')}", reason,
-                priority="high", actions=_queue_action(),
+                priority="high", actions=_queue_action(target.get("post_id")),
                 dedupe=f"content-failed:{tid}")
         return "failed"
 
@@ -1175,13 +1557,13 @@ def _handle_failure(target: Dict[str, Any], adapter, env: Dict[str, Any],
                                     not_before=time.time() + 5)
             _log_attempt(target, "retrying", duration_s=duration, error=err)
             return "retrying"
-        reason = f"{err} — reconnect {target.get('platform')} in Accounts"
+        reason = (f"{err} — reconnect {target.get('platform')} in Settings, "
+                  "Connections")
         store.set_target_status(tid, "FAILED", error=reason)
         _log_attempt(target, "failed", duration_s=duration, error=reason)
         _notify(f"Publish failed — {target.get('platform')} needs re-auth",
                 reason, priority="high",
-                actions=[{"label": "Open Accounts", "action": "navigate",
-                          "target": {"workspace": "content", "tab": "accounts"}}],
+                actions=_accounts_action(),
                 dedupe=f"content-auth:{target.get('platform')}")
         return "failed"
 
@@ -1205,7 +1587,7 @@ def _handle_failure(target: Dict[str, Any], adapter, env: Dict[str, Any],
     store.set_target_status(tid, "FAILED", error=err)
     _log_attempt(target, "failed", duration_s=duration, error=err)
     _notify(f"Publish failed — {target.get('platform')}", err, priority="high",
-            actions=_queue_action(), dedupe=f"content-failed:{tid}")
+            actions=_queue_action(target.get("post_id")), dedupe=f"content-failed:{tid}")
     return "failed"
 
 

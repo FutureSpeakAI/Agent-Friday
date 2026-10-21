@@ -607,6 +607,12 @@ def list_posts(status: Optional[str] = None, platform: Optional[str] = None,
         return {"ok": False, "error": exception_text(e)}
 
 
+def list_post_ids() -> List[str]:
+    """Every post id in the store (ids only: cheap to ask)."""
+    with _LOCK, _connect() as con:
+        return [str(r[0]) for r in con.execute("SELECT id FROM posts").fetchall()]
+
+
 _POST_EDIT_KEYS = ("title", "body", "assets", "variants", "tags", "source",
                    "license", "schedule")
 # Content edits on a SCHEDULED post pull it back to DRAFT (§3.2 edit edge).
@@ -887,6 +893,9 @@ def release_held(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any
     unchanged for everything the user did NOT release."""
     try:
         now = _now_iso()
+        # Imported before taking the store lock: a first import of the
+        # publisher runs its module code, which must not run under _LOCK.
+        from agent_friday.services import publisher as _pub
         with _LOCK, _connect() as con:
             row = _fetch_post_row(con, post_id)
             if not row:
@@ -898,10 +907,16 @@ def release_held(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any
                           and (target_id is None or t["id"] == target_id)]
             if not to_release:
                 return {"ok": False, "error": "no HELD target to release"}
+            # The release is for the words and media held now: their
+            # fingerprint goes with it, and the publisher honours the release
+            # only while the target still sends exactly them (an edit made
+            # while the post stays HELD for a sibling is not released).
+            held_post = _get_post_locked(con, post_id)
             for t in to_release:
                 payload = {k: t.get(k) for k in _TARGET_PAYLOAD_KEYS}
                 opts = dict(payload.get("options") or {})
                 opts["released"] = True          # explicit human release (§7.3)
+                opts["released_sha"] = _pub.released_text_sha(t, held_post)
                 payload["options"] = opts
                 con.execute(
                     "UPDATE targets SET status='PENDING', error=NULL, not_before=0, "
