@@ -1312,8 +1312,9 @@ def _send_grant(tool_name, args, ctx) -> Optional[dict]:
 #: In safe mode these run nothing at all: a command or program can reach the
 #: network or another machine in ways no socket guard in this process sees
 #: (git remotes, \\host paths, -ComputerName).
-SAFE_MODE_HELD_TOOLS = frozenset({"run_command", "run_sandboxed", "run_powershell",
-                                  "run_python", "execute_code", "open_path", "launch_app"})
+SAFE_MODE_HELD_TOOLS = frozenset({"run_command", "run_sandboxed", "open_path", "open_url",
+                                  "browser_open", "browse_web", "install_package",
+                                  "codebase_run", "codebase_agent"})
 
 
 def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,

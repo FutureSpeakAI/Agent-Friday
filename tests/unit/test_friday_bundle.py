@@ -469,3 +469,33 @@ def test_outward_actions_are_held_even_when_a_late_restore_step_fails(homes, tmp
     with pytest.raises(OSError):
         fb.restore(out, PASS, home=b)
     assert (b / "restore" / "hold.json").exists()
+
+
+def test_the_mcp_scrubber_keeps_package_names_and_plain_settings():
+    from agent_friday.services import friday_bundle as fb
+    raw = json.dumps({"servers": {"kc": {"command": "npx", "args": ["-y", "mcp-server-keycloak", "--token=abc",
+                                                                  "--api-key", "xyz"],
+                                         "description": "Uses key=value config", "auth": "none",
+                                         "session_dir": "/tmp/s", "headers": {"Authorization": "Bearer q",
+                                                                              "X-Custom": "1"},
+                                         "url": "https://h.example.test/mcp?api_key=zz&mode=a"}}}).encode()  # pragma: allowlist secret
+    out, hits = fb._scrub_mcp(raw)
+    srv = json.loads(out)["servers"]["kc"]
+    assert srv["args"] == ["-y", "mcp-server-keycloak", "", "--api-key", ""]
+    assert srv["description"] == "Uses key=value config" and srv["auth"] == "none"
+    assert srv["session_dir"] == "/tmp/s" and srv["headers"]["X-Custom"] == "1"
+    assert srv["headers"]["Authorization"] == "" and srv["url"] == ""
+    assert hits == ["kc"]
+
+
+def test_keys_under_other_names_and_unreadable_settings_never_travel(homes):
+    from agent_friday.services import friday_bundle as fb
+    from pathlib import PurePosixPath as P
+    got = json.loads(fb._scrub_settings(json.dumps({"anthropic_key": "a", "providers": {"openai": {"key": "b"}},
+                                                    "auth_header": "Bearer c", "voice_session_mode": "push",
+                                                    "push_to_transcribe_hotkey": "ctrl"}).encode()))
+    assert got["anthropic_key"] == "" and got["providers"]["openai"]["key"] == "" and got["auth_header"] == ""
+    assert got["voice_session_mode"] == "push" and got["push_to_transcribe_hotkey"] == "ctrl"
+    assert fb._scrub_settings(b"{not json") == b"{}"
+    assert fb.category_of(P("skills/foo/.env")) is None
+    assert fb.category_of(P("skills/foo/secrets.yaml")) is None

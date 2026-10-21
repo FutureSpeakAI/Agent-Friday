@@ -124,7 +124,8 @@ _EXCLUDED_PATHS = {"vault/.governance-key", "vault/.attestation-key-ed25519",
                    # this machine's desktop-control grants: granted again on the new one
                    "governance/desktop_app_grants.json", "cc_permission"}
 #: Names never carried wherever they sit outside the owner's own content.
-_EXCLUDED_NAME_PATTERNS = (re.compile(r"^client_secret.*\.json$"),)
+_EXCLUDED_NAME_PATTERNS = (re.compile(r"^client_secret.*\.json$"), re.compile(r"^\.env(\..*)?$"),
+                           re.compile(r"^secrets\.ya?ml$"))
 #: In Friday's own folders, these names are keys, credentials or process
 #: files. They are NOT applied inside the owner's own content (a project's
 #: poetry.lock or a Keynote .key is a file like any other).
@@ -386,11 +387,12 @@ class _HashingReader:
 
 _SECRET_NAME = re.compile(
     r"(api[_-]?key|apikey|secret|password|passwd|passphrase|token|bearer|credential|"
-    r"private[_-]?key|subscription[_-]?key|auth|cookie|session|key$|pat$|pw$|pwd$)", re.I)
+    r"private[_-]?key|subscription[_-]?key|authorization|cookie|key$|pat$|pw$|pwd$)", re.I)
 _NOT_SECRET_NAME = re.compile(r"(^|_)(max_?tokens?|tokens?_(in|out|limit|budget)|token_count|"
                               r"auth_?(mode|method|type|url))$", re.I)
-_SECRET_IN_TEXT = re.compile(r"(?i)(token|key|secret|password|passwd|bearer|auth|sig)=|"
-                             r"--?[a-z0-9_-]*(token|key|secret|password|auth)[a-z0-9_-]*([= ]|$)")
+#: In a command-line argument: "--x-token=VALUE"; in a URL: "?api_key=VALUE".
+_SECRET_ARG = re.compile(r"(?i)^--?[a-z0-9_-]*(token|key|secret|password|auth)[a-z0-9_-]*=.+")
+_SECRET_QUERY = re.compile(r"(?i)[?&][a-z0-9_-]*(token|key|secret|password|passwd|sig|auth)[a-z0-9_-]*=[^&]+")
 _URL_USERINFO = re.compile(r"(?i)^([a-z][a-z0-9+.-]*://)[^/@\s]*@")
 
 
@@ -399,18 +401,19 @@ def _secret_name(name) -> bool:
     return bool(n) and not _NOT_SECRET_NAME.search(n) and bool(_SECRET_NAME.search(n))
 
 
-def _scrub_obj(obj, key=None, hits=None):
+def _scrub_obj(obj, key=None, hits=None, where=None):
     """Blank every value that is, or may hold, a credential: encrypted
     connector values, values under a credential-like name, URLs with a user
-    and password, and command-line arguments or query strings that carry a
-    token or key. Leaves names and the rest of the structure."""
+    and password or a token in the query, and command-line arguments that
+    carry one ("--api-key X", "--token=X"). Names, package names and the rest
+    of the structure stay."""
     try:
         from agent_friday.services import connector_secrets as cs
         enc = cs.is_encrypted
     except Exception:
         enc = lambda v: False  # noqa: E731
     if isinstance(obj, dict):
-        return {k: _scrub_obj(v, k, hits) for k, v in obj.items()}
+        return {k: _scrub_obj(v, k, hits, where=k) for k, v in obj.items()}
     if isinstance(obj, list):
         out, blank_next = [], False
         for v in obj:
@@ -420,15 +423,20 @@ def _scrub_obj(obj, key=None, hits=None):
                 if hits is not None:
                     hits.append(key)
                 continue
-            if isinstance(v, str) and re.fullmatch(r"--?[A-Za-z0-9_-]*(token|key|secret|password|auth)[A-Za-z0-9_-]*", v, re.I):
+            blank_next = False
+            if isinstance(v, str) and re.fullmatch(
+                    r"--?[A-Za-z0-9_-]*(token|key|secret|password|auth)[A-Za-z0-9_-]*", v, re.I):
                 blank_next = True                    # "--api-key X": X is the secret
                 out.append(v)
                 continue
-            out.append(_scrub_obj(v, key, hits))
+            out.append(_scrub_obj(v, key, hits, where=where))
         return out
     if isinstance(obj, str) and obj:
-        if enc(obj) or (key is not None and _secret_name(key)) or _SECRET_IN_TEXT.search(obj) \
-                or _URL_USERINFO.match(obj):
+        secret = (enc(obj) or (key is not None and _secret_name(key))
+                  or _URL_USERINFO.match(obj) or _SECRET_QUERY.search(obj)
+                  or obj.lower().startswith("bearer ")
+                  or (str(where).lower() == "args" and _SECRET_ARG.match(obj)))
+        if secret:
             if hits is not None:
                 hits.append(key)
             return ""
@@ -472,7 +480,7 @@ def _scrub_mcp(data: bytes) -> tuple[bytes, list]:
 
 _SETTINGS_SECRET = re.compile(
     r"(api[_-]?key|apikey|password|passwd|passphrase|client_secret|private_key|access_token|"
-    r"refresh_token|(^|_)token|(^|_)secret)$", re.I)
+    r"refresh_token|(^|_)token|(^|_)secret|(^|_)key|authorization|auth_header)$", re.I)
 
 
 def _scrub_settings(data: bytes, yaml_file: bool = False) -> bytes:
@@ -485,11 +493,14 @@ def _scrub_settings(data: bytes, yaml_file: bool = False) -> bytes:
         else:
             doc = json.loads(data)
     except Exception:
-        return data if not yaml_file else b""
+        # unreadable: never carried as it is (it could hold an old key)
+        return b"{}" if not yaml_file else b""
 
     def walk(o):
         if isinstance(o, dict):
-            return {k: ("" if _SETTINGS_SECRET.search(str(k)) and isinstance(v, str) and v else walk(v))
+            return {k: ("" if isinstance(v, str) and v and (_SETTINGS_SECRET.search(str(k))
+                                                             or v.lower().startswith("bearer "))
+                        else walk(v))
                     for k, v in o.items()}
         if isinstance(o, list):
             return [walk(v) for v in o]
