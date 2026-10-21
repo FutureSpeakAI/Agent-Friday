@@ -388,7 +388,8 @@ if (-not $Unattended) {
 
 # --- Export first: a verified bundle before anything is removed -----------
 
-$bundleMade = $null
+# (not $bundleMade: PowerShell names ignore case, so that would clear -BundleMade)
+$bundleSavedTo = $null
 if ($BundleTo) {
     Say-Step 'Saving a Friday Bundle first'
     $py = Join-Path $InstallRoot 'python\python.exe'
@@ -407,7 +408,7 @@ if ($BundleTo) {
         }
     }
     if ($ok) {
-        $bundleMade = $BundleTo
+        $bundleSavedTo = $BundleTo
         Say-Ok "Saved and verified in $BundleTo"
     } else {
         Say-Note 'The Friday Bundle could not be made, so nothing was removed.'
@@ -746,7 +747,7 @@ $receipt = [ordered]@{
     receipt          = 'agent-friday-uninstall'
     at               = (Get-Date).ToUniversalTime().ToString('o')
     data_removed     = [bool]$removeData
-    bundle_first     = ([bool]$bundleMade -or [bool]$BundleMade)
+    bundle_first     = ([bool]$bundleSavedTo -or [bool]$BundleMade)
     checks           = [ordered]@{
         install_folder_gone   = $(if ($InnoManaged) { 'removed by the setup program after this receipt' } else { -not (Test-Path -LiteralPath $InstallRoot) })
         data_folder_gone      = -not (Test-Path -LiteralPath $FridayDir)
