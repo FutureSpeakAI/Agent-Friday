@@ -991,6 +991,12 @@ def request_stop(task_id: str) -> None:
 def stop_requested(task_id: Optional[str]) -> bool:
     if not task_id:
         return False
+    try:  # Stop everything (services/global_stop): every task sees its stop.
+        import agent_friday.core as _core
+        if _core.GLOBAL_STOP.is_set():
+            return True
+    except Exception:
+        pass
     if str(task_id) in _STOP_REQUESTED:
         return True
     state = read_state(str(task_id))

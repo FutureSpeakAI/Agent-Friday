@@ -1742,6 +1742,11 @@ _TURNS = {}
 _TURNS_LOCK = threading.Lock()
 _TURN_LOCAL = threading.local()
 
+#: Set while everything is stopped (services/global_stop owns it). Every turn,
+#: task, stream and gate check reads this one Event, so a stop reaches them all
+#: before any lane is walked.
+GLOBAL_STOP = threading.Event()
+
 #: How long a turn may go with no orb activity before it is *reported* as
 #: quiet. Reported, not killed: a single model call legitimately runs minutes
 #: with nothing to say, so this is a fact the UI may show, never a verdict.
@@ -1844,7 +1849,10 @@ def turn_request_stop(turn_id):
 
 
 def turn_stop_requested(turn_id=None):
-    """Has a stop been asked for? Defaults to the turn on THIS thread."""
+    """Has a stop been asked for? Defaults to the turn on THIS thread.
+    Always True while everything is stopped (GLOBAL_STOP)."""
+    if GLOBAL_STOP.is_set():
+        return True
     tid = turn_id or getattr(_TURN_LOCAL, "turn_id", None)
     if not tid:
         return False

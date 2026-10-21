@@ -498,6 +498,10 @@ def send(approval_id: str) -> dict:
     from agent_friday.services import approvals as _ap
     from agent_friday.services import google_accounts as G
 
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): nothing is sent while stopped.
+        raise SendRefused("everything is stopped, so nothing was sent. Press Resume first.")
     appr = _ap.get_approval(approval_id)
     if not appr:
         raise SendRefused("no such approval: %s" % approval_id)
@@ -1140,6 +1144,14 @@ def _tick(now: float | None = None) -> list:
     """Send what is due. A message due more than LATE_LIMIT_S ago (Friday was
     off) is not sent: its approval is burned and the owner is told."""
     now = _time.time() if now is None else now
+    try:
+        # Stop everything (services/global_stop): nothing is sent while stopped; the
+        # rows stay held and are judged again after Resume.
+        import agent_friday.core as _core_gs
+        if _core_gs.GLOBAL_STOP.is_set():
+            return []
+    except Exception:
+        pass
     with _HELD_LOCK:
         rows = _load_held()
         due = [r for r in rows if (r.get("due") or 0) <= now]

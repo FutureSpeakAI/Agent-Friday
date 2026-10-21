@@ -475,6 +475,17 @@ def _residency_boot():
 
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────
 if not _TESTING:
+    # Stop everything (services/global_stop) survives a restart: read it FIRST, before
+    # anything below can start work (reconcile, publishing, the scheduler). A state that
+    # cannot be read boots stopped: Resume is one press away.
+    try:
+        from agent_friday.services import global_stop as _global_stop
+        if _global_stop.load_on_boot().get("stopped"):
+            print("  Stop everything: STILL STOPPED from before the restart; press Resume to let work run")
+    except Exception as _gs_err:
+        import agent_friday.core as _core_gs
+        _core_gs.GLOBAL_STOP.set()
+        print(f"  Stop everything: state not read ({_gs_err}); starting STOPPED")
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:

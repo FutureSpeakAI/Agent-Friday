@@ -2284,6 +2284,10 @@ def analyze_file():
     branches, so the file whose comment defended ungated egress was gating two
     of its four paths.
     """
+    from agent_friday.services import global_stop as _gs_an
+    if _gs_an.active():
+        return jsonify({"error": "Everything is stopped. Press Resume to analyze files.",
+                        "code": "everything_stopped"}), 423
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
 

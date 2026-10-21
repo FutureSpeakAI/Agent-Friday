@@ -54,5 +54,7 @@ def test_the_chat_handler_keeps_all_its_wrappers():
     # _withhold_pasted_keys comes first: it cleans the message before any
     # other wrapper (the trace, the privacy hold) reads the request.
     # per_turn (cloud_intent) opens each turn with no cloud intent and drops what the turn set.
-    assert names == ["route", "_withhold_pasted_keys", "_traced_turn", "_privacy_hold_turn",
-                     "per_turn"], names
+    # _stop_everything_gate (services/global_stop) is outermost: "stop everything" typed in
+    # chat acts before anything reads the turn, and nothing runs while stopped.
+    assert names == ["route", "_stop_everything_gate", "_withhold_pasted_keys", "_traced_turn",
+                     "_privacy_hold_turn", "per_turn"], names

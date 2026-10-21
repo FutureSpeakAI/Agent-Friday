@@ -1211,6 +1211,16 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
     except Exception as e:
         klass, why, failed = OUTWARD, "", f"classification failed ({e})"
     try:
+        # Stop everything (services/global_stop): every authorization fails closed while
+        # stopped, whoever asks (an approval hook, a Claude Code session, a held send).
+        import agent_friday.core as _core_gs
+        if _core_gs.GLOBAL_STOP.is_set() and not (
+                tool_name == "task_control"
+                and str((args or {}).get("op") if isinstance(args, dict) else "").lower() in ("stop", "stop_all")):
+            failed = failed or "everything is stopped (the owner pressed Stop)"
+    except Exception:
+        pass
+    try:
         # A check that could not run holds the action; not even a grant
         # overrides that, because nobody knows what the action is.
         v = (Verdict("deny", klass, f"held: {failed}") if failed
@@ -1408,6 +1418,13 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
     one that authorises. Nothing about the decision itself is relaxed by it.
     """
     from agent_friday.services import approvals as _ap
+    try:
+        import agent_friday.core as _core_gs
+        if _core_gs.GLOBAL_STOP.is_set():
+            # Stop everything (services/global_stop): held, and the card is not used up.
+            return Verdict("deny", OUTWARD, "held: everything is stopped (the owner pressed Stop)")
+    except Exception:
+        pass
     try:
         ok, integrity = verify_claws()
         if not ok:
