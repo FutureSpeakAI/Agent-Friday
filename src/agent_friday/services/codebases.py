@@ -161,7 +161,10 @@ def is_managed(cid: str) -> bool:
 # ── git ──────────────────────────────────────────────────────────────────────
 
 _GIT_IDENTITY = ["-c", "user.name=Friday", "-c", "user.email=friday@local",
-                 "-c", "core.autocrlf=false", "-c", "commit.gpgsign=false"]
+                 "-c", "core.autocrlf=false", "-c", "commit.gpgsign=false",
+                 # No hook and no file-system monitor command ever runs from a codebase's own
+                 # config: those are commands a planted file could name.
+                 "-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false"]
 
 
 def _git(repo, *args, check=True, timeout=60) -> subprocess.CompletedProcess:
@@ -294,7 +297,8 @@ def create(title: str, template: str = "static", *, conversation_id: Optional[st
         repo.mkdir(parents=True, exist_ok=False)
         _git(repo, "init", "-q", "-b", "main")
         for path, content in (files if files is not None else template_files(template, title)).items():
-            if not path or ".." in path.split("/") or path.startswith(("/", "\\", ".git", ".friday")) or "\\" in path:
+            if (not path or ".." in path.split("/") or path.startswith(("/", "\\", ".git", ".friday"))
+                    or "\\" in path or _reserved_rel(path)):
                 raise UserFacingValueError("not a file path inside the codebase: %r" % path)
             (repo / path).parent.mkdir(parents=True, exist_ok=True)
             (repo / path).write_text(content, encoding="utf-8", newline="\n")
@@ -404,14 +408,40 @@ def for_conversation(conversation_id: Optional[str]) -> Optional[dict]:
 
 # ── files ────────────────────────────────────────────────────────────────────
 
+#: Folders and files no edit may write, by any spelling Windows treats as the same name: git's
+#: own folder (its config and hooks run commands as the owner on the next `git add`), Friday's
+#: own folder, and the project files a coding agent or editor started in the codebase loads and
+#: runs (Claude Code's hooks and MCP list, an editor's tasks).
+_RESERVED_PARTS = frozenset({".git", ".friday", ".claude", ".mcp.json", ".vscode"})
+
+
+def _reserved_rel(rel: str) -> bool:
+    """True when any part of a relative path names a reserved folder or file, whatever its case,
+    with Windows' dropped trailing dots or spaces, or as an 8.3 short name (GIT~1)."""
+    for part in str(rel or "").replace("\\", "/").split("/"):
+        p = part.casefold().rstrip(". ")
+        if p in _RESERVED_PARTS or re.search(r"~\d", p):
+            return True
+    return False
+
+
 def _check_rel(repo: Path, rel: str) -> Path:
     s = str(rel or "")
     if not s or "\x00" in s or "\\" in s or s.startswith("/") or ":" in s:
         raise UserFacingValueError("invalid path %r" % rel)
-    first = s.split("/", 1)[0]
-    if first in (".git", ".friday") or any(part in ("", ".", "..") for part in s.split("/")):
+    if _reserved_rel(s) or any(part in ("", ".", "..") for part in s.split("/")):
         raise UserFacingValueError("invalid path %r" % rel)
-    return contained(repo, s)
+    target = contained(repo, s)
+    # The same test on the resolved path: whatever the spelling, nothing lands in .git or .friday.
+    try:
+        real = Path(os.path.realpath(target))
+        for name in (".git", ".friday"):
+            guard = Path(os.path.realpath(Path(repo) / name))
+            if real == guard or guard in real.parents:
+                raise UserFacingValueError("invalid path %r" % rel)
+    except OSError:
+        raise UserFacingValueError("invalid path %r" % rel)
+    return target
 
 
 def files(cid: str) -> list:
