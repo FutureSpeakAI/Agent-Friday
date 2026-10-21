@@ -2207,6 +2207,12 @@ def api_mcp_authorize_status():
 @core_bp.route('/api/mcp/reload', methods=['POST'])
 def api_mcp_reload():
     """Reload the whole MCP config from disk and restart all servers."""
+    # Starting every command on disk as the owner is a press on this PC's own screen.
+    from agent_friday.services import screen_click as _screen_click_rl
+    _refused_rl = _screen_click_rl.press_refusal(
+        request, "Reload connectors with a press in Settings, on the computer Friday runs on.")
+    if _refused_rl is not None:
+        return _refused_rl
     try:
         result = _mcp_reload()
         return jsonify({"status": "ok", "reload": result})

@@ -912,6 +912,12 @@ def api_extension_allowlist():
 
 @platform_bp.route("/api/extensions/allowlist", methods=["POST"])
 def api_extension_allowlist_add():
+    # Widening which launch commands Friday will start is a press on this PC's own screen.
+    from agent_friday.services import screen_click
+    refused = screen_click.press_refusal(
+        request, "Change the extension allowlist with a press in Settings, on the computer Friday runs on.")
+    if refused is not None:
+        return refused
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
     if not name:
