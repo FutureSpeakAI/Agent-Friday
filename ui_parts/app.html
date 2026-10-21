@@ -20357,7 +20357,7 @@ function SettingsPrivacyMap() {
     d.vault_access && E('div', { className: 'lk-words' }, d.vault_access.allowed_7_days == null ? 'I couldn’t read the private-data access log.' : 'In the last 7 days, private data was used by a model on this PC or allowed to the cloud ' + d.vault_access.allowed_7_days + ' time' + (d.vault_access.allowed_7_days === 1 ? '' : 's') + ', and refused ' + d.vault_access.refused_7_days + ' time' + (d.vault_access.refused_7_days === 1 ? '' : 's') + '.'),
     d.off_record && E('p', { className: 'lk-words', role: 'note' }, E('strong', null, 'When you go off the record. '), d.off_record.words),
     E('div', null, d.export && ctl(d.export), d.erase && ctl(d.erase)),
-    E('p', { className: 'lk-limit', role: 'note' }, E('strong', null, 'The honest limit. '), d.honest_limit),
+    E('p', { className: 'pm-limit', role: 'note' }, E('strong', null, 'The honest limit. '), d.honest_limit),
     E('div', { role: 'status', 'aria-live': 'polite', className: 'sc-msgline' }, msg),
     E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 6 }, onClick: load }, 'Check again'));
 }
