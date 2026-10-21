@@ -72,8 +72,9 @@ def _cards(monkeypatch, rows):
     monkeypatch.setattr(approvals, "list_approvals", lambda *a, **k: [dict(r) for r in rows])
 
 
-def _card(status, *, ok=None, task_id="task-wait-1", tool="send_email"):
-    row = {"approval_id": "ap-" + status, "status": status, "payload": {"task_id": task_id, "tool": tool}}
+def _card(status, *, ok=None, task_id="task-wait-1", tool="send_email", kind="tainted_action"):
+    row = {"approval_id": "ap-" + status, "kind": kind, "status": status,
+           "payload": {"task_id": task_id, "tool": tool}}
     if ok is not None:
         row.update(consumed=True, used_detail={"ok": ok})
     return row
@@ -106,10 +107,33 @@ def test_a_task_with_a_card_still_pending_stays_waiting(task, monkeypatch):
         agent.TASKS[tid]["status"] = "waiting_approval"
     _cards(monkeypatch, [_card("approved", ok=True), dict(_card("pending"), approval_id="ap-2")])
     assert agent.settle_waiting_task(tid) is None
-    _cards(monkeypatch, [{"approval_id": "ap-3", "status": "approved", "payload": {"task_id": tid}}])
+    running = dict(_card("approved"), consumed=True, used_detail={})     # the checkpoint used it; it runs
+    _cards(monkeypatch, [running])
     assert agent.settle_waiting_task(tid) is None, "an approved card still running is not settled"
     with agent.TASKS_LOCK:
         assert agent.TASKS[tid]["status"] == "waiting_approval"
+
+
+def test_only_the_tasks_own_tool_cards_count(task, monkeypatch):
+    """A cloud-spill offer names the task too, but it is not the task's action."""
+    tid, _said = task
+    with agent.TASKS_LOCK:
+        agent.TASKS[tid]["status"] = "waiting_approval"
+    _cards(monkeypatch, [_card("approved", ok=True),
+                         dict(_card("denied", kind="cloud_spill", tool=None), approval_id="ap-spill")])
+    monkeypatch.setattr(agent, "_advance_task_chain", lambda *a: None)
+    assert agent.settle_waiting_task(tid) == "complete"
+
+
+def test_a_card_decided_while_the_task_still_ran_is_settled_when_it_finishes(task, monkeypatch):
+    tid, _said = task
+    _cards(monkeypatch, [_card("denied")])
+    assert agent.settle_waiting_task(tid) is None, "still running: nothing to settle yet"
+    with agent.TASKS_LOCK:
+        agent.TASKS[tid]["status"] = "waiting_approval"          # the worker finishes, waiting
+    assert agent.settle_waiting_task(tid, from_worker=True) == "declined"
+    with agent.TASKS_LOCK:
+        assert agent.TASKS[tid]["status"] == "declined"
 
 
 def test_the_card_decision_settles_its_task(monkeypatch):
