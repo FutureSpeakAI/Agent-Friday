@@ -74,7 +74,7 @@ test('with no route picked, no mode is pressed and the card says so', () => {
   assert.equal(pressed(tree).length, 0, 'nothing is pre-selected');
   const t = text(tree);
   assert.ok(t.includes('Not chosen yet: nothing is picked for you.'), t);
-  assert.ok(t.includes('works as Cloud only does'), t);
+  assert.ok(t.includes('uses its starting setting, Cloud only.'), t);
 });
 
 test('a picked route is pressed, and only that one', () => {

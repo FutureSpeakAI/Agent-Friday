@@ -331,54 +331,83 @@ def plain_words(settings: Optional[dict] = None) -> str:
             "and asks you. Models on this computer are never capped." % (name, cap))
 
 
-#: Stamped into settings.spending_caps once migrate_daily_cap() has run, or
-#: into a new install's first settings (NEW_INSTALL), which starts with the cap on.
+#: Stamped into settings.spending_caps once migrate_daily_cap() has run.
 DAILY_CAP_STAMP = "daily_cap_on_migrated"
-NEW_INSTALL = "new_install"
-#: settings.spending_caps.daily_cap_card: "pending" (to show once), "shown".
+#: The one-time card's state, kept in the install-origin record beside
+#: settings.json (core.install_choices_state), which wholesale rewrites of
+#: settings.json cannot reach: "pending" (show once), "shown", "not_needed".
 CARD_KEY = "daily_cap_card"
 
 
-def stamp_new_install(seed: dict) -> None:
-    """A new install's first settings: the daily cap is on (the defaults carry
-    it) and the migration for older installs never runs."""
-    blk = _block(seed, "spending_caps")
-    seed["spending_caps"] = dict(blk, **{DAILY_CAP_STAMP: NEW_INSTALL})
+def seed_choices(seed: dict, origin: str) -> None:
+    """The first settings.json a process writes (no file yet). A new install
+    keeps the defaults: the daily cap on. An install that existed and lost its
+    settings.json starts with no daily cap, as before A17."""
+    from agent_friday import core
+    if origin != core.NEW_INSTALL:
+        seed["cost_budget"] = dict(_block(seed, "cost_budget"), hard_stop_daily_enabled=False)
 
 
-def migrate_daily_cap(settings: dict, stored: Optional[dict]) -> Optional[Dict[str, Any]]:
+def _card_state() -> Optional[str]:
+    from agent_friday import core
+    v = core.install_choices_state().get(CARD_KEY)
+    return v if v in ("pending", "shown", "not_needed") else None
+
+
+def _set_card_state(value: str) -> None:
+    from agent_friday import core
+    core.update_install_choices_state(**{CARD_KEY: value})
+
+
+def migrate_daily_cap(settings: dict, stored: Optional[dict], origin: str) -> Optional[Dict[str, Any]]:
     """An install from before A17 keeps the daily cap it had, once.
 
     `settings` is the merged settings dict (updated in place); `stored` is the
-    file as read. Before A17 a daily cap that was never set read as off, so a
-    stored cost_budget without `hard_stop_daily_enabled` (or no cost_budget at
-    all) is written down as explicitly off: the new default must not switch it
-    on behind anyone's back. When the daily cap ends up off and the person
-    never answered it, the one-time card is queued. Returns the delta to
-    persist, or None when the migration has already run.
+    file as read; `origin` is core.install_origin(). A NEW install keeps the
+    defaults (the cap on) and needs no card. An EXISTING one: before A17 a
+    daily cap that was never set read as off, so a stored cost_budget without
+    `hard_stop_daily_enabled` (or no cost_budget at all) is written down as
+    explicitly off, with the default figure ready for when the person turns it
+    on; the new default must not switch it on behind anyone's back. If its
+    daily cap ends up off and the person never answered it, the one-time card
+    is queued (once per install: its state lives outside settings.json).
+    Returns the delta to persist, or None when the migration has already run.
     """
+    from agent_friday import core
     blk = _block(settings, "spending_caps")
     if blk.get(DAILY_CAP_STAMP):
         return None
     stamp = _migration_stamp()
     delta: Dict[str, Any] = {"spending_caps": {DAILY_CAP_STAMP: stamp}}
+    settings["spending_caps"] = dict(blk, **{DAILY_CAP_STAMP: stamp})
+    if origin == core.NEW_INSTALL:
+        if _card_state() is None:
+            _set_card_state("not_needed")
+        return delta
     stored_cb = (stored or {}).get("cost_budget")
-    if not isinstance(stored_cb, dict) or "hard_stop_daily_enabled" not in stored_cb:
-        cb = dict(_block(settings, "cost_budget"), hard_stop_daily_enabled=False)
+    stored_cb = stored_cb if isinstance(stored_cb, dict) else None
+    if stored_cb is None or "hard_stop_daily_enabled" not in stored_cb:
+        fix: Dict[str, Any] = {"hard_stop_daily_enabled": False}
+        if stored_cb is None or "hard_stop_daily" not in stored_cb:
+            fix["hard_stop_daily"] = DAILY_CAP_DEFAULT_USD
+        # A whole block when none was stored, so a later save of one toggle
+        # never leaves the others unset.
+        cb = dict(_block(settings, "cost_budget"), **fix)
         settings["cost_budget"] = cb
-        delta["cost_budget"] = {"hard_stop_daily_enabled": False}
+        delta["cost_budget"] = dict(cb) if stored_cb is None else fix
     answered = blk.get("answered") if isinstance(blk.get("answered"), dict) else {}
-    card = blk.get(CARD_KEY)
-    if not card:
+    card = _card_state()
+    if card is None:
         card = "pending" if (daily_cap(settings) is None
                              and "cloud_daily_stop" not in answered) else "not_needed"
-        delta["spending_caps"][CARD_KEY] = card
-    settings["spending_caps"] = dict(blk, **{DAILY_CAP_STAMP: stamp, CARD_KEY: card})
+        try:
+            _set_card_state(card)
+        except Exception as e:
+            log.warning("the daily cap card's state could not be saved (%s); no card", e)
     log.info("spending caps: this install is from before the daily cap shipped on; it "
-             "keeps its daily cap as it was (%s) and %s. One-time migration "
+             "keeps its daily cap as it was (%s); card: %s. One-time migration "
              "(settings.spending_caps.%s).",
-             format_figure(_BY_KEY["cloud_daily_stop"], daily_cap(settings)),
-             "will show one card about it" if card == "pending" else "needs no card",
+             format_figure(_BY_KEY["cloud_daily_stop"], daily_cap(settings)), card,
              DAILY_CAP_STAMP)
     return delta
 
@@ -401,13 +430,12 @@ CARD_ACTIONS = [{"label": "Set my daily cap", "workspace": "settings", "tab": "c
 
 def push_daily_cap_card_if_pending() -> bool:
     """Show the one-time card to an install from before A17, once. Returns
-    True when it was pushed. The card is marked shown before it is pushed, so
-    a crash between the two never shows it twice."""
-    s = _settings()
-    if _block(s, "spending_caps").get(CARD_KEY) != "pending":
+    True when it was pushed. It is marked shown only after the push went
+    through, so a failed push is tried again at the next start; the dedupe key
+    keeps a retry from making a second card."""
+    s = _settings()          # runs the migration, which queues the card
+    if _card_state() != "pending":
         return False
-    from agent_friday.core import _save_settings
-    _save_settings({"spending_caps": {CARD_KEY: "shown"}})
     try:
         import agent_friday.notifications_engine as _ne
         _ne.push(title=CARD_TITLE, body=card_body(s), priority="high",
@@ -415,8 +443,10 @@ def push_daily_cap_card_if_pending() -> bool:
                  dedupe_key="spend-cap-intro", actions=list(CARD_ACTIONS),
                  target={"workspace": "settings", "tab": "costs"})
     except Exception as e:
-        log.warning("the daily cap card could not be shown: %s", e)
+        log.warning("the daily cap card could not be shown; it is tried again at the "
+                    "next start: %s", e)
         return False
+    _set_card_state("shown")
     return True
 
 

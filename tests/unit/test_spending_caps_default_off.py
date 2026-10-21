@@ -6,6 +6,10 @@ On origin/main two caps were on out of the box: the daily creation ceiling
 the day's spend passed it) and the orchestrator's per-workspace budgets
 (1000ψ a month, 100ψ a task). Now every cap is off until the owner sets it,
 None or 0 is no cap wherever it is read, and a cap the owner sets applies.
+
+Since north-star A17 (2026-10-21) one exception: a NEW install starts with
+the daily cap on paid cloud spend on (tests/unit/test_daily_spending_cap_on.py).
+The tests here use the shared test home, an existing install.
 """
 from __future__ import annotations
 
@@ -61,7 +65,10 @@ def test_a_workspace_has_no_task_budget_by_default(friday_dir):
     assert status["no_cap_label"] == "No cap (ask me during setup)"
 
 
-def test_every_registered_cap_is_off_in_fresh_defaults(friday_dir):
+def test_every_registered_cap_is_off_for_an_install_that_never_set_one(friday_dir):
+    """An install whose settings.json never set a cap (the shared test home is
+    an existing install). A NEW install starts with the daily cap on
+    (north-star A17): tests/unit/test_daily_spending_cap_on.py."""
     from agent_friday.services import spending_caps as sc
     _fresh_settings()
     s = core._load_settings()

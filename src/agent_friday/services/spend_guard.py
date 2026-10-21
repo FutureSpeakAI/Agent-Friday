@@ -7,8 +7,8 @@ cap available to the user though." Two caps, not one:
     unchanged -- crossing 80% warns, 100% alerts, and work continues. It is
     the cap that let a $1,189 month happen against a $50 limit, and that is
     by design: it never blocks.
-  * the HARD STOP (`cost_budget.hard_stop_daily/monthly`, off by default)
-    halts CLOUD spend when reached. Local models keep working -- the cap is
+  * the HARD STOP (`cost_budget.hard_stop_daily/monthly`; the daily one on
+    by default since A17, below) pauses CLOUD spend when reached. Local models keep working -- the cap is
     about money leaving the machine, and Ollama costs nothing.
 
 The DAILY hard stop ships ON at a modest figure (north-star A17, the owner's
@@ -261,7 +261,7 @@ def _record_halt(t: Dict[str, Any], provider: str, desc: str, attr: Dict[str, An
         from agent_friday.services import task_journal as _tj
         if _tj.current_task():
             _tj.decision("spend_cap", "refused",
-                         reason=f"${t['spend']:.2f} of ${t['limit']:.2f} {p} hard cap already spent; {desc}",
+                         reason=f"${t['spend']:.2f} of ${t['limit']:.2f} {p} spending cap already spent; {desc}",
                          alternatives=["allowed"])
     except Exception:
         pass

@@ -1710,6 +1710,15 @@ def main():
     args = parser.parse_args()
     quick = args.quick
 
+    # North-star A16/A17: decide whether this is a new install BEFORE this
+    # wizard writes settings.json itself (the installer runs it before the app
+    # has ever started), so a new install keeps the new-install choices.
+    try:
+        from agent_friday import core as _core
+        _core.install_origin()
+    except Exception:
+        pass
+
     # Seed the bundled skills (career pipeline, etc.) into ~/.friday/skills on
     # first run. A no-op the moment that directory exists at all, so this is
     # safe to call unconditionally on every wizard invocation, including
@@ -1791,8 +1800,11 @@ def main():
     _routing_existing = (existing.get("model_routing") or {}).get("mode", "")
     # A16: a new install's stored mode is not a choice, so it is never offered
     # as the answer Enter gives on the routing screen.
-    _routing_offered = "" if (existing.get("model_routing") or {}).get(
-        "route_pick_pending") is True else _routing_existing
+    try:
+        from agent_friday import core as _core
+        _routing_offered = "" if _core.route_pick_pending(existing) else _routing_existing
+    except Exception:
+        _routing_offered = ""
     # Only an answer to the routing screen is a setup choice that counts as consent for cloud
     # only; quick mode and a skipped screen keep the mode and record it as "unverified" (the
     # mode_chosen record itself is unchanged, for the background routes that read it).
@@ -1913,8 +1925,6 @@ def main():
         # there is consent (privacy/cloud_consent.ROUTING_CONSENT_VIAS). Quick mode or a
         # skipped routing screen kept the mode without asking: not consent.
         block["mode_chosen_via"] = "setup" if answered else "unverified"
-        if answered:
-            block["route_pick_pending"] = False      # A16: the owner picked
         config["model_routing"] = block
 
     # Defaults that server expects

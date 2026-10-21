@@ -174,7 +174,7 @@ def checkpoint(action: str, target: str, *, approval: Optional[dict] = None) -> 
         raise
     except Exception as e:
         if type(e).__name__ == "SpendCapReached":
-            refuse("your spending cap is reached, so this is paused: %s" % getattr(e, "user_message", ""))
+            refuse(getattr(e, "user_message", "") or str(e))
     owner = config.verified_owner_cell()
 
     if action in ("verify_sms", "verify_call"):

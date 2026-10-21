@@ -443,6 +443,15 @@ def apply_monthly_cap(amount: float | None) -> None:
         "answered": {"cloud_monthly_stop": datetime.now(timezone.utc).isoformat(timespec="seconds")}})
 
 
+def estimate_exceeds_daily_cap(monthly: str, cap: float) -> bool:
+    """True when the scheduled jobs' monthly estimate ("$12.34") spread over a
+    month is more than the daily cap allows (A17: say so before the cap pauses them)."""
+    try:
+        return float(str(monthly).lstrip("$")) / 30.0 > float(cap)
+    except (TypeError, ValueError):
+        return False
+
+
 def money_estimate() -> str:
     try:
         from agent_friday.services import scheduled_cloud
@@ -575,7 +584,9 @@ def recommended_for(stage: str):
     if stage == "posture":
         return posture_view()["recommended"]
     if stage == "money":
-        return MONEY_RECOMMENDED
+        # Keeping the cap is recommended only when one is on (A17's default);
+        # with none, the choice is the person's and nothing is labelled.
+        return MONEY_RECOMMENDED if current_daily_cap() is not None else None
     if stage == "scheduled_cloud":
         return "yes"
     return None

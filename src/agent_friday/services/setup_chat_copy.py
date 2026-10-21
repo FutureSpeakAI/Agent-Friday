@@ -65,7 +65,7 @@ CONTRACT = (
     "1. I'm a program on this PC. Nothing about you goes to the people who made me. Ever.\n"
     "2. You decide where I think: only here, or the cloud for some things. I'll ask in a minute.\n"
     "3. I ask before I send or delete anything, unless you've pre-approved it. "
-    "Cloud models cost money as I use them; a daily spending cap is on from the start, and you set it.\n"
+    "Cloud models cost money as I use them; a daily spending cap limits that, and you set it.\n"
     "4. You can see everything I remember, and change or delete it.\n"
     "5. You can stop setup any time; I'll remember where we were.\n"
     "6. I'm not a lawyer or a financial adviser. When I help with your rights "
@@ -673,6 +673,8 @@ MONEY_NOW = ("Right now I stop spending on cloud AI after ${usd:.2f} a day. "
 MONEY_NOW_NONE = "Right now there is no daily cap on what I spend on cloud AI."
 MONEY_ESTIMATE = ("\n\nWith what you've chosen so far, my scheduled jobs would "
                   "cost about {usd} a month. That's an estimate, and it errs high.")
+MONEY_ESTIMATE_OVER_CAP = (" That is more than ${cap:.2f} a day allows, so on a busy day "
+                           "they would pause at the cap.")
 MONEY_OTHER_HINT = "Or type an amount a day"
 MONEY_SET = ("Set: I stop spending on cloud AI after ${usd:.2f} a day. "
              "You can change it in Settings > Spending.")

@@ -56632,7 +56632,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   const notPicked = !mode && E('div', {
     'data-route-not-picked': '1',
     style: { fontSize: 11.5, color: '#f59e0b', fontFamily: 'var(--st-font)', marginTop: 8, lineHeight: 1.5 },
-  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' works as ' + actualLabel + ' does.');
+  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' uses its starting setting, ' + actualLabel + '.');
   const modeButtonRow = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
     modes.map(m => {
       const on = mode === m.id;
@@ -56675,7 +56675,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     : x.state === 'cloud' ? 'cloud'
     : x.state === 'cold' ? 'not loaded' : x.state === 'refused' ? 'unavailable' : x.state || '';
   const postureTxt = [
-    !mode ? 'Route not chosen yet (working as ' + actualLabel + ')' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
+    !mode ? 'Route not chosen yet (starting setting: ' + actualLabel + ')' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
     'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');

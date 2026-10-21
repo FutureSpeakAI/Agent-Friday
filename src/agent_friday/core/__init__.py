@@ -2212,6 +2212,16 @@ def _degraded_settings() -> "_DegradedSettings":
             out = _DegradedSettings(_copy.deepcopy(_SETTINGS_LAST_GOOD["value"]))
         else:
             out = _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
+            # North-star A17: the defaults carry the daily cap on, which only a
+            # new install chose to start with. An existing install read while
+            # its file is unreadable must not get a cap it never set.
+            try:
+                if install_origin() != NEW_INSTALL:
+                    out["cost_budget"] = dict(out.get("cost_budget") or {},
+                                              hard_stop_daily_enabled=False)
+            except Exception:
+                out["cost_budget"] = dict(out.get("cost_budget") or {},
+                                          hard_stop_daily_enabled=False)
     out[DEGRADED_READ_KEY] = gen
     return out
 
@@ -3765,6 +3775,14 @@ def _migrate_spending_caps(settings: dict):
         return None
 
 
+def _seed_install_choices(seed: dict) -> None:
+    try:
+        from agent_friday.services import spending_caps as _sc
+        _sc.seed_choices(seed, install_origin())
+    except Exception:
+        pass
+
+
 def _migrate_daily_cap(settings: dict, stored: dict):
     """services/spending_caps.migrate_daily_cap (north-star A17): an install
     from before the daily cap shipped on keeps the daily cap it had, and gets
@@ -3772,7 +3790,7 @@ def _migrate_daily_cap(settings: dict, stored: dict):
     persist, or None."""
     try:
         from agent_friday.services import spending_caps as _sc
-        return _sc.migrate_daily_cap(settings, stored)
+        return _sc.migrate_daily_cap(settings, stored, install_origin())
     except Exception as e:
         try:
             import logging as _lg
@@ -3794,30 +3812,97 @@ def _merge_migration_deltas(a, b):
     return out
 
 
-#: Set in a new install's first settings (north-star A16): no AI route is
-#: picked yet. The stored mode still says how Friday routes meanwhile; this
-#: says only that nobody chose it, so Settings presses no option. It is
-#: cleared by the owner's own routing change and is never set on an install
-#: that already existed, whose stored route is its current choice.
-ROUTE_PICK_PENDING_KEY = "route_pick_pending"
+# ── Is this a new install? (north-star A16 and A17) ─────────────────────────
+#
+# A16 (no AI route pre-selected) and A17 (the daily spending cap on by
+# default) treat a NEW install differently from one that already existed: an
+# existing install keeps the choices it had. Which one this is gets decided
+# once, the first time anything reads or writes settings (or the terminal
+# setup starts), and is kept in its own file beside settings.json, because
+# several writers rebuild settings.json wholesale (the terminal setup from
+# config.yaml, `friday config set`). New means nothing of a previous install
+# is here: no settings.json, no setup marker, no cost history.
+
+INSTALL_ORIGIN_NAME = "install_choices.json"
+NEW_INSTALL, EXISTING_INSTALL = "new", "existing"
+_INSTALL_ORIGIN_LOCK = threading.Lock()
+_INSTALL_ORIGIN_CACHE: dict = {}
 
 
-def _seed_new_install_choices(seed: dict) -> None:
-    mr = seed.get("model_routing")
-    seed["model_routing"] = dict(mr if isinstance(mr, dict) else {},
-                                 **{ROUTE_PICK_PENDING_KEY: True})
+def install_origin_file() -> Path:
+    return Path(FRIDAY_DIR) / INSTALL_ORIGIN_NAME
+
+
+def install_choices_state() -> dict:
+    """The install-origin record ({} when there is none or it cannot be read)."""
     try:
-        from agent_friday.services import spending_caps as _sc
-        _sc.stamp_new_install(seed)
+        data = json.loads(install_origin_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
     except Exception:
-        pass
+        return {}
+
+
+def update_install_choices_state(**fields) -> None:
+    """Merge `fields` into the install-origin record (atomic replace)."""
+    with _INSTALL_ORIGIN_LOCK:
+        cur = install_choices_state()
+        cur.update(fields)
+        p = install_origin_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(cur, indent=1), encoding="utf-8")
+        os.replace(str(tmp), str(p))
+        _INSTALL_ORIGIN_CACHE[str(p)] = cur.get("install")
+
+
+def install_origin() -> str:
+    """NEW_INSTALL or EXISTING_INSTALL, decided once and then read back.
+
+    Unreadable or unwritable means EXISTING: an install whose record cannot be
+    kept must never have its choices changed by a default."""
+    p = install_origin_file()
+    key = str(p)
+    cached = _INSTALL_ORIGIN_CACHE.get(key)
+    if cached in (NEW_INSTALL, EXISTING_INSTALL):
+        return cached
+    got = install_choices_state().get("install")
+    if got in (NEW_INSTALL, EXISTING_INSTALL):
+        _INSTALL_ORIGIN_CACHE[key] = got
+        return got
+    home = Path(FRIDAY_DIR)
+    fresh = not (Path(SETTINGS_FILE).exists() or (home / ".setup_complete").exists()
+                 or (home / "costs.db").exists() or (home / "config.yaml").exists())
+    origin = NEW_INSTALL if fresh else EXISTING_INSTALL
+    try:
+        update_install_choices_state(install=origin,
+                                     decided_at=datetime.now().isoformat(timespec="seconds"))
+    except Exception:
+        return EXISTING_INSTALL
+    return origin
 
 
 def route_pick_pending(settings=None) -> bool:
-    """True on a new install whose owner has not picked an AI route yet (A16)."""
-    s = _load_settings_raw() if settings is None else settings
-    mr = (s or {}).get("model_routing")
-    return bool(isinstance(mr, dict) and mr.get(ROUTE_PICK_PENDING_KEY) is True)
+    """True on a new install whose owner has not picked an AI route yet (A16).
+
+    The pick is the owner's own routing change (Settings, the setup chat,
+    setup completion, an answered terminal-setup routing question), which
+    records `model_routing.mode_chosen` for the stored mode. A mode the
+    terminal setup kept without asking (`mode_chosen_via` "unverified") is not
+    a pick. An install that already existed is never pending: its stored
+    route is its choice."""
+    try:
+        if install_origin() != NEW_INSTALL:
+            return False
+        s = _load_settings_raw() if settings is None else settings
+        mr = (s or {}).get("model_routing")
+        mr = mr if isinstance(mr, dict) else {}
+        mode = str(mr.get("mode") or "").strip().lower()
+        chosen = str(mr.get("mode_chosen") or "").strip().lower()
+        if not mode or chosen != mode:
+            return True
+        return str(mr.get("mode_chosen_via") or "") == "unverified"
+    except Exception:
+        return False
 
 
 def _persist_spending_caps_migration(delta: dict):
@@ -3859,10 +3944,9 @@ def _load_settings_raw():
         # Fresh installs start on the trimmed core dock; existing installs (that
         # had ~/.friday before this version added the setting) keep the full set.
         seed["show_all_workspaces"] = not _FRESH_INSTALL
-        # North-star A16 and A17, for a new install only: no AI route counts as
-        # picked until the person picks one, and the daily spending cap starts
-        # on (the migration for older installs never runs on this seed).
-        _seed_new_install_choices(seed)
+        # North-star A17: the daily spending cap starts on only on a new
+        # install; an install that lost its settings.json keeps none.
+        _seed_install_choices(seed)
         _sync_capability_routing(seed)
         # The seed is written whole or not at all, and never over a file:
         # a hard link fails when the target exists, so a settings.json that
@@ -4238,17 +4322,11 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             _mr_in = dict(_mr_in, mode_chosen=_new_mode,
                           mode_chosen_at=datetime.now(_tz.utc).isoformat(timespec="seconds"),
                           mode_chosen_via=_via)
-            # A16: the owner has now picked a route.
-            _mr_in[ROUTE_PICK_PENDING_KEY] = False
             data["model_routing"] = _mr_in
-        elif any(k in _mr_in for k in ("mode_chosen", "mode_chosen_at", "mode_chosen_via",
-                                        ROUTE_PICK_PENDING_KEY)):
-            # The pick-pending flag (A16) is the seed's to set and the owner's
-            # routing change's to clear; no other write moves it.
+        elif any(k in _mr_in for k in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")):
             data = dict(data)
             _mr_in = {k: v for k, v in _mr_in.items()
-                      if k not in ("mode_chosen", "mode_chosen_at", "mode_chosen_via",
-                                   ROUTE_PICK_PENDING_KEY)}
+                      if k not in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")}
             data["model_routing"] = _mr_in
     # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
     #

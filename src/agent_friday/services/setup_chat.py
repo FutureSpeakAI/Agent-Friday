@@ -228,10 +228,13 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
     elif stage == "money":
         usd = steps.money_estimate()
         cap = steps.current_daily_cap()
+        est = copy.MONEY_ESTIMATE.format(usd=usd) if usd else ""
+        if est and cap is not None and steps.estimate_exceeds_daily_cap(usd, cap):
+            est += copy.MONEY_ESTIMATE_OVER_CAP.format(cap=cap)
         _say(transcript, copy.MONEY_ASK.format(
             now=(copy.MONEY_NOW.format(name=agent, usd=cap) if cap is not None
                  else copy.MONEY_NOW_NONE.format(name=agent)),
-            estimate=copy.MONEY_ESTIMATE.format(usd=usd) if usd else ""), stage)
+            estimate=est), stage)
     elif stage == "scheduled_cloud":
         _say(transcript, _scheduled_cloud_question(), stage)
     elif stage == "routines":
@@ -349,7 +352,7 @@ def _prompt(st: dict) -> dict:
         p.update(card="research_review", chips=_chips((("done", "Done reviewing"),)))
     elif stage == "money":
         p.update(input="text", placeholder=copy.MONEY_OTHER_HINT,
-                 chips=_rec_chips(steps.money_choices(), steps.MONEY_RECOMMENDED)
+                 chips=_rec_chips(steps.money_choices(), steps.recommended_for("money"))
                  + _chips((skip,)))
     elif stage == "scheduled_cloud":
         p.update(chips=_rec_chips(copy.SCHEDULED_CLOUD_CHIPS, steps.recommended_for(stage)))
