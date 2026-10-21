@@ -946,10 +946,12 @@ def reencrypt_stale_provider_keys(names: list[str] | None = None) -> dict:
             # A key already under Friday's own keystore is where it should be: rewriting it
             # under the vault key would move it back to the key-per-process scheme the keystore
             # replaced (BD-08: the keystore is the only write tier).
-            if real_path.exists() and looks_protected(real_path.read_bytes()) == "keystore":
+            from agent_friday.paths import contained as _contained
+            held = _contained(_PROVIDER_KEYS_DIR, real_path.name)     # only inside the keys folder
+            if held.exists() and looks_protected(held.read_bytes()) == "keystore":
                 result["unchanged"].append(name)
                 continue
-        except OSError:
+        except (OSError, ValueError):
             pass
         old_plain = None
         try:
