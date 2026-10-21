@@ -1174,7 +1174,7 @@ _COMPACT_TOOL_DESCRIPTIONS = {
     "set_setting": "Change one Settings row by path; op=undo says where the row's own Undo is (30 days). Dock: settings.display.dock.<ws> show/hide, op=list.",
     "switch_seat": "Owner card: chat to=local|cloud, or task= for the local model.",
     "organize_calendar": "Shift calendar events by days and minutes, same length.",
-    "task_control": "Stop or steer Friday's background work; stop_all stops everything.",
+    "task_control": "Stop or steer Friday's background work.",
     "media_cards": "List Media cards (status, where each went) without moving the screen.",
     "file_access": "Which files/folders cloud models may read.",
     "organize_media": "(Un)favourite, (un)tag or move Media cards: cards=ids or selection=screen (ticked/open/pointed); two+ share one approval.",
@@ -1251,7 +1251,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
                       "category": None,
                       "key": "lane, unread, q, folder, category, sort, status, kind, project."},
     "organize_media": {"action": None, "cards": None, "value": None, "replaces": None, "why": None, "selection": None},
-    "task_control": {"target": "Workflow, task id or name words; empty: the one on screen.", "message": "For steer: what to tell it."},
+    "task_control": {"target": "Workflow, task id or name words; empty: what is on screen.", "message": "For steer: the words."},
     # The same date words media_show's `when` shows.
     "media_cards": {"when": None},
 }

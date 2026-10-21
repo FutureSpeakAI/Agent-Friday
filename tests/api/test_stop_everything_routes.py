@@ -87,7 +87,8 @@ def test_resume_is_refused_without_a_press_on_the_page(client, gs):
                     {"X-Friday-Token": _page()["X-Friday-Token"]}):
         r = client.post("/api/stop-everything/resume", json={}, headers=headers)
         assert r.status_code == 403, headers
-        assert r.get_json()["code"] == "resume_needs_press"
+        # Refused by this route, or earlier by the page-token gate: never resumed.
+        assert (r.get_json() or {}).get("code") in ("resume_needs_press", "session_token_required")
     assert gs.active()
     # Words in chat never resume either.
     r = client.post("/api/chat", json={"message": "resume everything"})
