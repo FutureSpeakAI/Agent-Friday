@@ -197,6 +197,12 @@ def _collect(root: Path) -> tuple[dict[str, bytes], dict]:
             if not _safe_name(entry.name):
                 skipped["unsupported_names"] += 1
                 continue
+            from agent_friday.services import codebases as _cb
+            if _cb._reserved_rel(relative):
+                # Never copied into a codebase: git's folder, Friday's, or project files a coding
+                # agent or editor started there would load and run (.mcp.json, .vscode, ...).
+                skipped["reserved_names"] += 1
+                continue
             if _linked(info) or (stat.S_ISREG(info.st_mode) and info.st_nlink != 1):
                 skipped["linked_entries"] += 1
                 continue

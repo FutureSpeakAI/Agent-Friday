@@ -413,6 +413,9 @@ def for_conversation(conversation_id: Optional[str]) -> Optional[dict]:
 #: own folder, and the project files a coding agent or editor started in the codebase loads and
 #: runs (Claude Code's hooks and MCP list, an editor's tasks).
 _RESERVED_PARTS = frozenset({".git", ".friday", ".claude", ".mcp.json", ".vscode"})
+#: The shape of a Windows 8.3 short name (GIT~1, MCP~1.JSO): refused when it holds "~<digit>",
+#: since it may be another spelling of a reserved name. Longer names with "~2" in them are fine.
+_SHORT_NAME = re.compile(r"^[^.]{1,8}(\.[^.]{0,3})?$")
 
 
 def _reserved_rel(rel: str) -> bool:
@@ -420,7 +423,7 @@ def _reserved_rel(rel: str) -> bool:
     with Windows' dropped trailing dots or spaces, or as an 8.3 short name (GIT~1)."""
     for part in str(rel or "").replace("\\", "/").split("/"):
         p = part.casefold().rstrip(". ")
-        if p in _RESERVED_PARTS or re.search(r"~\d", p):
+        if p in _RESERVED_PARTS or (re.search(r"~\d", p) and _SHORT_NAME.match(p)):
             return True
     return False
 
