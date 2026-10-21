@@ -103,6 +103,36 @@ def test_an_unknown_price_is_said_not_invented():
     assert other["provider"] == "anthropic"
 
 
+def test_an_anthropic_decision_through_the_registry_does_not_list_anthropic_as_unused():
+    rec = _rr().build({"provider": "cloud", "provider_name": "anthropic", "model": "claude-sonnet-5",
+                       "is_local": False}, routing_cfg={"mode": "cloud_only"})
+    other = [a for a in rec["alternatives"] if a["seat"] == "cloud"][0]
+    assert other["provider"] == "openai"
+
+
+def test_error_text_never_reaches_the_record_raw():
+    from agent_friday.user_errors import ExceptionText
+    rec = _rr().build({"provider": "cloud", "model": "m", "is_local": False,
+                       "reason": ExceptionText("Traceback ... internal detail at C:\\Users\\x")},
+                      routing_cfg={"mode": "cloud_only"})
+    assert rec["reason"] == "(error)"
+
+
+def test_the_chat_record_wins_and_is_replaced_not_duplicated():
+    from agent_friday.services import attribution as a
+    a.reset()
+    a.note_route({"model": "claude-sonnet-5", "source": "chat", "reason": "first"})
+    a.note_route({"model": "claude-sonnet-5", "source": "router", "reason": "nested helper call"})
+    a.note_route({"model": "claude-sonnet-5", "source": "chat", "reason": "final"})
+    a.record_generation("claude-sonnet-5", provider="anthropic", seat="cloud")
+    rec = a.route_record()
+    assert rec["reason"] == "final" and rec["source"] == "chat"
+    a.reset()
+    a.note_route({"model": "x", "source": "router"})
+    assert a.route_record()["verified"] is False
+    a.reset()
+
+
 def test_build_never_raises_on_nonsense():
     assert _rr().build(None)["seat"] in ("cloud", "local", "none")
     assert _rr().build({"provider": object()}, messages=[1, None, {"content": 5}])

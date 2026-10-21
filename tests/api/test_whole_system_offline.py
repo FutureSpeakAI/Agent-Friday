@@ -66,10 +66,35 @@ class _DownAnthropic:
 
 @pytest.fixture
 def cloud_down(monkeypatch, patch_app, offline_calls):
-    """No cloud provider is reachable; loopback is. Returns what tried to leave."""
+    """No cloud provider is reachable; loopback is. Returns what tried to leave.
+
+    Threads the app starts during the test are joined (bounded) at teardown, while the
+    cut is still in place, and what they tried is checked too."""
     seen = {"anthropic": [], "http": [], "socket": [], "dns": []}
 
+    # A proxy on loopback would carry cloud traffic through the loopback exception.
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+
+    import threading
+    started = []
+    real_start = threading.Thread.start
+
+    def _start(self, *a, **k):
+        started.append(self)
+        return real_start(self, *a, **k)
+    monkeypatch.setattr(threading.Thread, "start", _start)
+
     patch_app("get_anthropic_client", lambda *a, **k: _DownAnthropic(seen["anthropic"]))
+
+    real_session_request = requests.Session.request
+
+    def _session_request(self, method, url, *a, **k):
+        if not _is_loopback_url(url):
+            seen["http"].append(str(url))
+            raise requests.exceptions.ConnectionError("offline: %s" % url)
+        return real_session_request(self, method, url, *a, **k)
+    monkeypatch.setattr(requests.Session, "request", _session_request)
 
     inner_post, inner_get = requests.post, requests.get
 
@@ -132,7 +157,15 @@ def cloud_down(monkeypatch, patch_app, offline_calls):
     monkeypatch.setattr(socket.socket, "connect_ex", _connect_ex)
     monkeypatch.setattr(socket, "create_connection", _create)
     monkeypatch.setattr(socket, "getaddrinfo", _gai)
-    return seen
+    yield seen
+    import time as _t
+    deadline = _t.monotonic() + 15
+    for th in started:
+        th.join(timeout=max(0.0, deadline - _t.monotonic()))
+    if not seen.get("_cloud_allowed"):
+        assert _left(seen) == [], "a background thread tried the network: %r" % _left(seen)
+    else:
+        assert seen["socket"] == [] and seen["http"] == [] and seen["dns"] == [], _left(seen)
 
 
 @pytest.fixture
@@ -170,7 +203,7 @@ CONTROL_PLANE = ("/api/health", "/api/settings", "/api/setup/status", "/api/onbo
 
 
 def _left(seen) -> list:
-    return seen["anthropic"] + seen["http"] + seen["socket"]
+    return seen["anthropic"] + seen["http"] + seen["socket"] + seen["dns"]
 
 
 @pytest.mark.parametrize("routing", ["cloud_only", "local_preferred", "local_only"])
@@ -209,6 +242,7 @@ def test_a_local_mode_turn_is_answered_locally_and_its_record_says_why(
 def test_a_cloud_only_turn_with_the_cloud_down_fails_honestly_and_the_app_keeps_working(
         client, cloud_down, mode, local_brain):
     mode("cloud_only")
+    cloud_down["_cloud_allowed"] = True     # cloud_only may try the provider client; nothing else
     from agent_friday.services import conversations as conv
     r = client.post("/api/chat", json={"message": ASK, "conversation_id": conv.create()["id"]})
     assert r.status_code < 500, r.get_data(as_text=True)[:400]
@@ -218,6 +252,6 @@ def test_a_cloud_only_turn_with_the_cloud_down_fails_honestly_and_the_app_keeps_
     # cloud_only means the cloud: the local model is not used behind the owner's back.
     assert local_brain == []
     # Nothing beyond the provider client tried the network.
-    assert cloud_down["socket"] == [] and cloud_down["http"] == []
+    assert cloud_down["socket"] == [] and cloud_down["http"] == [] and cloud_down["dns"] == []
     for p in CONTROL_PLANE:
         assert client.get(p).status_code == 200, p
