@@ -111,7 +111,7 @@ class TestImmediatePass:
         goals.set_executor(_executor_recording_hints())
         monkeypatch.setattr(goals.qa_gates, "evaluate_text", _verdict_sequence(True))
         goals.run_milestone(g["goal_id"], mid)
-        assert goals.get_goal(g["goal_id"])["status"] == "completed"
+        assert goals.get_goal(g["goal_id"])["status"] == "met_verified"
 
     def test_multi_milestone_goal_stays_active_until_all_done(self, monkeypatch):
         g = _make_goal(milestones=[{"name": "One"}, {"name": "Two"}])
@@ -121,7 +121,7 @@ class TestImmediatePass:
         goals.run_milestone(g["goal_id"], m1)
         assert goals.get_goal(g["goal_id"])["status"] == "active"
         goals.run_milestone(g["goal_id"], m2)
-        assert goals.get_goal(g["goal_id"])["status"] == "completed"
+        assert goals.get_goal(g["goal_id"])["status"] == "met_verified"
 
     def test_second_call_on_already_done_milestone_is_a_noop(self, monkeypatch):
         # Two milestones so the GOAL stays "active" after the first completes
@@ -292,7 +292,8 @@ class TestEscalation:
         goals.set_executor(_executor_recording_hints())
         monkeypatch.setattr(goals.qa_gates, "evaluate_text", _verdict_sequence(False))
         goals.run_milestone(g["goal_id"], mid)
-        assert goals.get_goal(g["goal_id"])["status"] == "active"
+        # Not failed: it needs the owner (§17.3), who decides on the card.
+        assert goals.get_goal(g["goal_id"])["status"] == "needs_owner"
 
     def test_human_approval_of_escalation_marks_done_with_override_flag(self, monkeypatch):
         """The ONLY path that can mark an escalated milestone done: an
