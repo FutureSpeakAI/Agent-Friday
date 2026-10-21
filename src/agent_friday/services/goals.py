@@ -182,6 +182,7 @@ import os
 import threading
 import time
 import uuid
+import re
 import hashlib
 import hmac as _hmac
 from datetime import datetime, timezone
@@ -436,7 +437,10 @@ def _find_milestone(goal: Dict[str, Any], milestone_id: str) -> Optional[Dict[st
 def _normalize_milestone(m: Optional[dict]) -> Dict[str, Any]:
     m = dict(m or {})
     return {
-        "milestone_id": m.get("milestone_id") or f"ms_{uuid.uuid4().hex[:8]}",
+        # Ids are part of card subjects ("goal:milestone:suffix"): a supplied
+        # one is kept only if it is plain letters, digits and underscores.
+        "milestone_id": (m.get("milestone_id") if isinstance(m.get("milestone_id"), str)
+                         and _MILESTONE_ID.fullmatch(m.get("milestone_id")) else f"ms_{uuid.uuid4().hex[:8]}"),
         "name": (m.get("name") or "Milestone").strip()[:200],
         "due": m.get("due"),
         "done_at": m.get("done_at"),
@@ -505,6 +509,9 @@ def create_goal(*, title: str, description: str = "", owner: str = "owner",
     return goal
 
 
+_MILESTONE_ID = re.compile(r"[A-Za-z0-9_]{1,64}")
+
+
 #: Fields whose change is a change of plan: a repair attempt that began
 #: before it does not carry on (§17.9, "no new owner message superseded the plan").
 _PLAN_FIELDS = {"title", "description", "deadline", "success_criteria", "budget_cap_mψ",
@@ -512,6 +519,16 @@ _PLAN_FIELDS = {"title", "description", "deadline", "success_criteria", "budget_
 
 
 def update_goal(goal_id: str, patch: dict) -> Optional[Dict[str, Any]]:
+    """Raises ValueError for an allowed_routes value that is not a list of
+    routing modes (a string would match by substring; anything else breaks
+    the scheduler's tick for every goal)."""
+    patch = dict(patch or {})
+    if "allowed_routes" in patch:
+        clean = goal_state.valid_routes(patch["allowed_routes"])
+        if clean is None:
+            raise ValueError("allowed_routes must be a list of: " + ", ".join(goal_state.ROUTE_MODES))
+        patch["allowed_routes"] = clean
+
     def _fn(goal):
         changed = False
         for k, v in (patch or {}).items():
@@ -1200,6 +1217,12 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         # attempt is the owner's decision, made on that card.
         return {"ok": False, "status": "waits_on_card",
                 "error": "this milestone waits for your answer on its card"}
+    # The goal's allowed routes hold for every dispatch (a run now, a restart,
+    # an approval answered after the mode changed), not only the tick.
+    _route = goal_state.route_hold(goal)
+    if _route:
+        _update_milestone(goal_id, milestone_id, hold=_route)
+        return {"ok": False, "status": "held", "blocker": _route, "error": _route.get("text")}
 
     # The Q3/dissent gate MUST see the REAL instruction the executor will
     # run, not just the milestone's cosmetic name + the goal's cosmetic
@@ -1219,11 +1242,15 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
     )
 
     # A refused or lapsed card is never reused; after the owner starts the
-    # milestone again it asks afresh, on a card of its own (gate_round).
+    # milestone again it asks afresh, on a card of its own (gate_round). The
+    # card is also bound to the exact instruction: a changed plan (its steps,
+    # the goal's description or success criteria) is a new subject, so a yes
+    # given to the old text never runs the new one.
     _round = int(milestone.get("gate_round") or 0)
     gate = approvals.gate_action(
         kind="goal_milestone", subject_type="goal_milestone",
-        subject_id=f"{goal_id}:{milestone_id}" + (f":r{_round}" if _round else ""),
+        subject_id=f"{goal_id}:{milestone_id}:p{goal_state.fingerprint(action_description)}"
+                   + (f":r{_round}" if _round else ""),
         title=f"{goal.get('title')} — {milestone.get('name')}",
         description=goal.get("description", ""), action_description=action_description,
         force_gate=bool(goal.get("approval_required")),
@@ -1370,7 +1397,7 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
             _release_goal_budget(goal_id, max(0, reserved_total - total_cost))
             appr = approvals.create_approval(
                 kind="goal_milestone_confirm", subject_type="goal_milestone",
-                subject_id=f"{goal_id}:{milestone_id}:confirm",
+                subject_id=_card_subject(goal_id, milestone_id, "confirm", milestone),
                 title=f"Confirm milestone: {milestone.get('name')}",
                 description=last_text[:1000], action_description=action_description,
                 force_gate=True, cost_estimate_mψ=0, interest_model=_safe_interest_model(),
@@ -1459,7 +1486,7 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
     _log_work_entry(goal, milestone, last_verdict, total_cost, status="FAILED", receipt=receipt)
     appr = approvals.create_approval(
         kind="goal_milestone_escalation", subject_type="goal_milestone",
-        subject_id=f"{goal_id}:{milestone_id}:escalation",
+        subject_id=_card_subject(goal_id, milestone_id, "escalation", milestone),
         title=f"{escalation_reason.capitalize()}: {milestone.get('name')}",
         description=(last_verdict or {}).get("critique", "") or escalation_reason,
         action_description=action_description,
@@ -1554,7 +1581,7 @@ def _on_escalation_decided(approval: Dict[str, Any]) -> None:
     if status == "approved":
         _accept_escalated_milestone(goal_id, milestone_id)
     elif status in ("denied", "expired"):
-        _update_milestone(goal_id, milestone_id, status="failed")
+        _refuse_result(goal_id, milestone_id, status)
 
 
 def _accept_manual_confirmation(goal_id: str, milestone_id: str, approval: Dict[str, Any]) -> None:
@@ -1585,7 +1612,7 @@ def _on_confirm_decided(approval: Dict[str, Any]) -> None:
     if status == "approved":
         _accept_manual_confirmation(goal_id, milestone_id, approval)
     elif status in ("denied", "expired"):
-        _update_milestone(goal_id, milestone_id, status="failed")
+        _refuse_result(goal_id, milestone_id, status)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1616,9 +1643,27 @@ def _on_confirm_decided(approval: Dict[str, Any]) -> None:
 
 #: Blocker types that only the owner (or the task they resume) can clear.
 _OWNER_BLOCKERS = ("interrupted", "run_failed", "no_progress", "plan_changed",
-                   "approval_denied", "approval_expired", "approval_stale")
+                   "approval_denied", "approval_expired", "approval_stale", "result_refused")
 #: Of those, the ones stopped by a card: starting again asks on a new card.
-_CARD_BLOCKERS = ("approval_denied", "approval_expired", "approval_stale")
+_CARD_BLOCKERS = ("approval_denied", "approval_expired", "approval_stale", "result_refused")
+
+
+def _card_subject(goal_id: str, milestone_id: str, suffix: str, milestone: Dict[str, Any]) -> str:
+    """The subject of a milestone's result card (confirm/escalation), one per
+    gate round, so a card the owner refused is never the one asked again."""
+    rnd = int((milestone or {}).get("gate_round") or 0)
+    return f"{goal_id}:{milestone_id}:{suffix}" + (f":r{rnd}" if rnd else "")
+
+
+def _refuse_result(goal_id: str, milestone_id: str, status: str) -> None:
+    """The owner refused (or let lapse) a milestone's result card: it stops,
+    blocked on a typed reason, and only the owner starts it again."""
+    m = _find_milestone(get_goal(goal_id) or {}, milestone_id) or {}
+    words = "was refused on its card" if status == "denied" else "lapsed on its card without an answer"
+    _update_milestone(goal_id, milestone_id, status="blocked", blocker=goal_state.blocker(
+        "policy_blocked", f"The result of “{m.get('name') or 'this step'}” {words}. "
+        "Start it again when you want another attempt.", type="result_refused",
+        needs_confirmation=True))
 
 
 def _note_run(goal_id: Optional[str], milestone_id: Optional[str], **fields) -> None:
@@ -1949,7 +1994,7 @@ def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dic
     if (goal.get("verification_mode") or "auto") == "manual":
         appr = approvals.create_approval(
             kind="goal_milestone_confirm", subject_type="goal_milestone",
-            subject_id=f"{goal_id}:{milestone_id}:confirm",
+            subject_id=_card_subject(goal_id, milestone_id, "confirm", milestone),
             title=f"Confirm milestone: {milestone.get('name')}",
             description=text[:1000], action_description=action_description,
             force_gate=True, cost_estimate_mψ=0, interest_model=_safe_interest_model(),
@@ -1975,7 +2020,7 @@ def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dic
     # never says "waits for you" without the card it waits on.
     appr = approvals.create_approval(
         kind="goal_milestone_escalation", subject_type="goal_milestone",
-        subject_id=f"{goal_id}:{milestone_id}:escalation",
+        subject_id=_card_subject(goal_id, milestone_id, "escalation", milestone),
         title=f"After a restart, the result did not pass its check: {milestone.get('name')}",
         description=(verdict or {}).get("critique", "") or "verification failed",
         action_description=action_description,

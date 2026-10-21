@@ -128,7 +128,12 @@ def get_goal_route(goal_id):
 @login_required
 def update_goal_route(goal_id):
     patch = request.get_json(silent=True) or {}
-    goal = _goals.update_goal(goal_id, patch)
+    if not isinstance(patch, dict):
+        return jsonify({"ok": False, "error": "send a JSON object"}), 400
+    try:
+        goal = _goals.update_goal(goal_id, patch)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     if not goal:
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "goal": goal})

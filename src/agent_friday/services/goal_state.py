@@ -275,15 +275,38 @@ def continuation_hold(goal: Dict[str, Any], milestone: Dict[str, Any], *,
         return blocker("needs_user_input",
                        f"I don't know what would prove “{name}” done, so I won't start it on my "
                        "own. Say what result you expect.", type="no_expected_evidence")
-    if goal.get("allowed_routes"):
-        try:
-            from agent_friday.services import cloud_mode_policy as cmp
-            mode = cmp.current_mode()
-        except Exception:
-            mode = None
-        if mode not in goal["allowed_routes"]:
-            return blocker("policy_blocked", f"This goal may only run with {', '.join(goal['allowed_routes'])}; "
-                           f"the current mode is {mode or 'unknown'}.", type="route")
+    return route_hold(goal)
+
+
+ROUTE_MODES = ("local_only", "local_preferred", "cloud_preferred", "cloud_only")
+
+
+def valid_routes(value: Any) -> Optional[list]:
+    """A clean allowed_routes list, or None when the value is not one."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) and v in ROUTE_MODES for v in value):
+        return None
+    return list(dict.fromkeys(value))
+
+
+def route_hold(goal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The route blocker when the current routing mode is not one this goal
+    allows. Checked before every dispatch, not only on the scheduler's tick;
+    an unreadable list or mode fails closed."""
+    routes = goal.get("allowed_routes")
+    if not routes:
+        return None
+    clean = valid_routes(routes)
+    try:
+        from agent_friday.services import cloud_mode_policy as cmp
+        mode = cmp.current_mode()
+    except Exception:
+        mode = None
+    if clean is None or mode not in clean:
+        shown = ", ".join(clean) if clean else "a route I can't read"
+        return blocker("policy_blocked", f"This goal may only run with {shown}; "
+                       f"the current mode is {mode or 'unknown'}.", type="route")
     return None
 
 
