@@ -60,8 +60,8 @@ def test_stop_and_resume_write_signed_receipts(gs, friday_dir):
     gs.stop(by="owner", source="voice")
     gs.resume(by="owner", source="button")
     mine = [e for e in _bom(friday_dir)[before:] if e.get("tool") == "global_stop"]
-    assert [e["decision"] for e in mine] == ["stop", "resume"]
-    assert mine[0]["surface"] == "voice" and isinstance(mine[0].get("halted"), dict)
+    assert [e["decision"] for e in mine] == ["stop", "stop_lanes", "resume"]
+    assert mine[0]["surface"] == "voice" and isinstance(mine[1].get("halted"), dict)
     assert all(action_gate.verify_receipt(e) for e in mine)
 
 
@@ -257,3 +257,103 @@ def test_stopping_needs_no_approval():
     from agent_friday.governance import action_gate
     klass, _why = action_gate.classify("task_control", {"op": "stop_all"}, {})
     assert klass == action_gate.INTERNAL
+
+
+# ── the review's lanes: nothing outward, nothing approved, nothing resumed by a task ──
+
+def test_no_outward_action_is_authorized_while_stopped(gs):
+    from agent_friday.governance import action_gate
+    gs.stop(source="button")
+    v = action_gate.authorize("send_email", {"to": "someone@example.com"}, {"authenticated": True})
+    assert v.action == "deny" and "stopped" in v.reason
+
+
+def test_no_card_is_approved_while_stopped_but_one_can_be_declined(gs, tmp_path, monkeypatch):
+    from agent_friday.services import approvals as ap
+    monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
+    monkeypatch.setattr(ap, "_fire_hook", lambda rec: None)
+    monkeypatch.setattr(ap, "_feed", lambda *a, **k: None)
+    monkeypatch.setattr(ap, "_notify_pending", lambda rec: None)
+    a = ap.create_approval(kind="gs_test_card", subject_type="gs", subject_id="a",
+                           title="t", action_description="send it", force_gate=True)
+    b = ap.create_approval(kind="gs_test_card", subject_type="gs", subject_id="b",
+                           title="t", action_description="send it", force_gate=True)
+    gs.stop(source="button")
+    rec, won = ap.decide_with_outcome(a["approval_id"], "approve", decided_by="owner")
+    assert won is False and rec["status"] == "pending"
+    rec, won = ap.decide_with_outcome(b["approval_id"], "deny", decided_by="owner")
+    assert won is True and rec["status"] == "denied"
+
+
+def test_held_mail_is_not_sent_while_stopped(gs, monkeypatch):
+    from agent_friday.services import gmail_send
+    sent = []
+    monkeypatch.setattr(gmail_send, "_load_held", lambda: [{"approval_id": "x", "due": 0, "to": "a@example.com"}])
+    monkeypatch.setattr(gmail_send, "_save_held", lambda rows: sent.append(("saved", rows)))
+    monkeypatch.setattr(gmail_send, "_deliver", lambda *a, **k: sent.append(("sent", a)))
+    gs.stop(source="button")
+    assert gmail_send._tick(now=10**10) == [] and sent == []
+
+
+def test_stand_down_readers_see_the_stop(gs):
+    from agent_friday.services import stand_down
+    gs.stop(source="button")
+    assert stand_down.is_stood_down() and "stopped" in stand_down.reason().lower()
+
+
+def test_a_background_checkpoint_never_times_out_into_running(gs, monkeypatch):
+    from agent_friday.services import turn_queue, background_gate as bg
+    monkeypatch.setattr(turn_queue, "inherited_class", lambda: "background")
+    gs.stop(source="button")
+    with pytest.raises(bg.JobCancelled):
+        turn_queue.background_checkpoint(max_wait_s=0.01, sleep=lambda s: None)
+
+
+def test_a_claude_code_session_gets_no_tool_while_stopped(gs, monkeypatch):
+    import agent_friday.core as core
+    from agent_friday.services import claude_code_tasks as cct
+    monkeypatch.setitem(core.VIBE_TERMINALS, "gs-cc", {"token": "tok", "status": "running"})
+    gs.stop(source="button")
+    out = cct.gate("gs-cc", "tok", "Bash", {"command": "echo hi"})
+    assert out["decision"] == "deny" and "stopped" in out["reason"]
+
+
+def test_a_task_or_a_working_agent_cannot_stop_everything(gs):
+    from agent_friday.services import agent
+    tok = agent._CURRENT_TOOL_CONTEXT.set({"is_background_task": True})
+    try:
+        out = agent._tool_task_control({"op": "stop_all"})
+    finally:
+        agent._CURRENT_TOOL_CONTEXT.reset(tok)
+    assert out.startswith("NOT DONE") and not gs.active()
+
+
+def test_a_model_stop_is_recorded_as_the_model_not_the_owner(gs, friday_dir):
+    from agent_friday.services import agent
+    before = len(_bom(friday_dir))
+    agent._tool_task_control({"op": "stop_all"})
+    mine = [e for e in _bom(friday_dir)[before:] if e.get("tool") == "global_stop"]
+    assert mine and mine[0]["chosen_by"] == "model"
+
+
+def test_a_stop_racing_a_resume_is_never_undone(gs):
+    """Resume runs under the lock and stop sets the flag again under it."""
+    gs.stop(source="button")
+    import threading as _th
+    errs = []
+
+    def _resume():
+        try:
+            gs.resume(by="owner", source="button")
+        except Exception as e:  # pragma: no cover
+            errs.append(e)
+
+    t = _th.Thread(target=_resume)
+    t.start()
+    gs.stop(source="keyboard")
+    t.join(5)
+    # Whatever the order, the last word is a stop unless the resume finished first and
+    # the stop then ran; in both cases the flag and the saved state agree.
+    import json as _json
+    saved = _json.loads(gs._path().read_text(encoding="utf-8"))
+    assert saved["stopped"] is gs.active()

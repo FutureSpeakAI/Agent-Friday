@@ -87,3 +87,13 @@ def test_stop_is_post_only(client, gs):
     assert client.get("/api/stop-everything").get_json()["stopped"] is False
     assert client.put("/api/stop-everything").status_code in (404, 405)
     assert not gs.active()
+
+
+def test_a_press_through_a_tunnel_or_forward_does_not_resume(client, gs):
+    """The page reached through a tunnel carries the same token; only this PC's own page resumes."""
+    client.post("/api/stop-everything", json={})
+    for extra in ({"X-Forwarded-For": "203.0.113.9"}, {"CF-Connecting-IP": "203.0.113.9"}):
+        h = dict(_page(), **extra)
+        r = client.post("/api/stop-everything/resume", json={}, headers=h)
+        assert r.status_code == 403, extra
+    assert gs.active()
