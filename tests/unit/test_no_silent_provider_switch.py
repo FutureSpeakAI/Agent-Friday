@@ -14,7 +14,18 @@ from __future__ import annotations
 import pytest
 
 from agent_friday.services import model_router as mr
-from agent_friday.services import provider_fallback as pf
+
+try:
+    from agent_friday.services import provider_fallback as pf
+except ImportError:  # the old tree a red run is aimed at: the ladder tests still run and
+    pf = None        # fail by their own assertions (the other provider gets called)
+
+
+def _withheld(excinfo):
+    """The ladder ended in ProviderSwitchWithheld (checked by name, so the old tree fails
+    by assertion: there the call does not raise at all)."""
+    assert type(excinfo.value).__name__ == "ProviderSwitchWithheld", excinfo.value
+    return excinfo.value
 
 MSG = [{"role": "user", "content": "write a haiku about espresso"}]
 
@@ -40,12 +51,14 @@ def _anthropic_key_present(monkeypatch):
 
 @pytest.fixture
 def notices(monkeypatch):
-    pf._reset_for_tests()
+    if pf is not None:
+        pf._reset_for_tests()
     seen = []
     from agent_friday import notifications_engine as ne
     monkeypatch.setattr(ne, "push", lambda **kw: seen.append(kw) or {}, raising=False)
     yield seen
-    pf._reset_for_tests()
+    if pf is not None:
+        pf._reset_for_tests()
 
 
 def _text_ladder(monkeypatch, routing):
@@ -110,11 +123,11 @@ def test_local_legs_are_not_this_rules_business():
 
 def test_an_anthropic_failure_is_said_and_offered_not_switched(monkeypatch, notices):
     claude, oai, _local = _text_ladder(monkeypatch, {"mode": "cloud_only"})
-    with pytest.raises(pf.ProviderSwitchWithheld) as e:
+    with pytest.raises(Exception) as e:
         mr._generate_text_untraced(MSG)
     assert claude.calls >= 1
     assert oai.calls == 0, "the other cloud provider was called without the owner's say-so"
-    offer = e.value.offer()
+    offer = _withheld(e).offer()
     assert offer["kind"] == "cloud_provider_offer" and offer["alternative"] == "openai"
     assert [c["id"] for c in offer["choices"]] == ["use_alternative", "retry_same"]
     assert not any(c.get("selected") for c in offer["choices"])
@@ -162,8 +175,9 @@ def test_the_agent_ladder_withholds_the_switch_too(monkeypatch, notices):
     monkeypatch.setattr(agent_mod, "_call_claude_agent", cloud)
     monkeypatch.setattr(agent_mod, "_call_openai", oai)
     monkeypatch.setattr(agent_mod, "_call_ollama", _Leg(exc=RuntimeError("no ollama")))
-    with pytest.raises(pf.ProviderSwitchWithheld):
+    with pytest.raises(Exception) as _e_any:
         agent_mod._generate_agent(MSG, system="sys")
+    _withheld(_e_any)
     assert cloud.calls == 1 and oai.calls == 0
 
 
@@ -230,9 +244,10 @@ def test_no_raw_error_text_reaches_the_offer_or_the_notice(monkeypatch, notices)
     _text_ladder(monkeypatch, {"mode": "cloud_only"})
     secretish = "Incorrect API key provided: sk-proj-abcd...wxyz at https://api.example.invalid/v1 req_123"
     monkeypatch.setattr(mr, "_call_claude", lambda m, **kw: (_ for _ in ()).throw(RuntimeError(secretish)))
-    with pytest.raises(pf.ProviderSwitchWithheld) as e:
+    with pytest.raises(Exception) as e:
         mr._generate_text_untraced(MSG)
-    shown = e.value.text() + str(e.value.offer()) + str(notices)
+    w = _withheld(e)
+    shown = w.text() + str(w.offer()) + str(notices)
     for leak in ("sk-proj", "api.example.invalid", "req_123"):
         assert leak not in shown, leak
 
