@@ -38,5 +38,7 @@ def test_off_the_record_says_connected_services_still_keep_records(source):
     m = re.search(r"const FRIDAY_OFF_RECORD_NOTICE = '([^']+)'", text)
     assert m, "no off-the-record notice"
     assert "can still keep their own records" in m.group(1)
-    # Shown on screen whenever off the record is on, beside its switch.
-    assert re.search(r"agentSettings\.off_record\s*&&[^;]{0,400}FRIDAY_OFF_RECORD_NOTICE", text, re.S)
+    assert "keeps the minimum receipt" in m.group(1)
+    # Shown on screen whenever storage is actually off (the same test the chat box
+    # uses), beside its switch.
+    assert re.search(r"fridayOffRecordFrom\(agentSettings\)\s*&&[^;]{0,400}FRIDAY_OFF_RECORD_NOTICE", text, re.S)

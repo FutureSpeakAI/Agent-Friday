@@ -48,3 +48,12 @@ def test_a_cross_site_page_cannot_read_it(client, tmp_path, monkeypatch):
     assert client.get("/api/privacy/map", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
     resp = client.get("/api/privacy/map", headers={"Sec-Fetch-Site": "cross-site"})
     assert resp.status_code == 403
+
+
+def test_the_read_only_observer_cannot_read_it(client, tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    assert client.get("/api/privacy/map").status_code == 200
+    from types import SimpleNamespace
+    from agent_friday.routes import privacy_map as route
+    monkeypatch.setattr(route, "g", SimpleNamespace(friday_principal="observer"))
+    assert client.get("/api/privacy/map").status_code == 403
