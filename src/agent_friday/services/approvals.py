@@ -809,11 +809,11 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
         if decision == "approve" and screen_only is not None and decided_by not in screen_only:
             return dict(rec), False
-        if decision == "approve" and source == "voice" and not voice_on_this_desk():
+        if decision == "approve" and source == "voice" and voice_off_this_desk():
             # A spoken yes counts only from a voice call on Friday's own page on this PC
-            # (the desk key on the socket, routes/voice.py), proved positively: a voice
-            # decision made with no voice call's context (a thread, a hook, a future fast
-            # path) does not approve either. Voice through a tunnel may decline, never approve.
+            # (the desk key on the socket, routes/voice.py). Voice through a tunnel or a
+            # forward may decline, never approve. Every production voice decision runs
+            # inside a voice call's tool call (agent._execute_tool), which carries the flag.
             return dict(rec), False
         if (decision == "approve" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
                 and decided_by not in LAYA_CARD_APPROVERS):

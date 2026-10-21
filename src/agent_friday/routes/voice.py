@@ -4681,11 +4681,11 @@ if sock is not None:
                                          "_crew_host_origin": _crew_call_origin,
                                          "conversation_id": _tool_session.get("conversation_id"),
                                          "provider": _prov,
-                                         "is_voice": True,
-                                         "surface": "voice-local",
                                          # The owner on this PC (desk key on the socket): only then
                                          # may a spoken yes approve (services/approvals).
                                          "owner_local": bool(_owner_voice),
+                                         "is_voice": True,
+                                         "surface": "voice-local",
                                          "owner_text": str(user_text or "")[:4000],
                                          "owner_text_at": _time.time(),
                                          # The local mind or an honest failure,
