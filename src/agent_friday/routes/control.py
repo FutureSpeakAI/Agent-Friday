@@ -169,7 +169,10 @@ def stop_everything():
 @login_required
 def stop_everything_resume():
     from agent_friday.services import global_stop as _gs, screen_click
-    if not screen_click.screen_session(request):
+    # The owner's page on THIS PC: a page reached through a tunnel, a forward or the LAN
+    # carries the same token, so the press must also arrive over loopback with no
+    # forwarding evidence (core._is_local_request).
+    if not (screen_click.screen_session(request) and core._is_local_request()):
         return jsonify({"status": "refused", "code": "resume_needs_press",
                         "error": "Resume is a press of the Resume button on Friday's own screen."}), 403
     try:

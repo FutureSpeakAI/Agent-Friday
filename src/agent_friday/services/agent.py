@@ -7805,8 +7805,15 @@ def _tool_task_control(inp):
         # Stop everything (services/global_stop): every lane at once. Never needs approval;
         # resuming is a press on the screen, so no tool can undo it.
         from agent_friday.services import global_stop as _gs
-        _voice = bool(_cloud_voice() or _voice_room())
-        res = _gs.stop(by="owner", source="voice" if _voice else "tool",
+        _ctx_gs = _CURRENT_TOOL_CONTEXT.get() or {}
+        if _ctx_gs.get("is_background_task") or _ctx_gs.get("crew_agent_id"):
+            # Only the owner stops everything; a task or a working agent cannot.
+            return "NOT DONE: only the owner can stop everything. Stop this task instead (op=stop)."
+        _surf = str(_CURRENT_SURFACE.get() or _ctx_gs.get("surface") or "")
+        _voice = bool(_cloud_voice() or _voice_room() or _surf.startswith("voice"))
+        # Who: the owner's own words routed here (a voice rule, chat), or a model's call.
+        _by = "owner" if (_voice or _CURRENT_OWNER_TEXT.get()) else "model"
+        res = _gs.stop(by=_by, source="voice" if _voice else "tool",
                        reason=str(inp.get("target") or "")[:120])
         return "EVERYTHING_STOPPED: " + _gs.SPOKEN_STOPPED + (
             "" if res.get("receipt") else " (The stop receipt could not be written.)")
@@ -13497,8 +13504,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     # surface. Only another stop may pass, so "stop everything" said twice still works.
     from agent_friday.services import global_stop as _global_stop
     if _global_stop.active() and not (
-            name == "task_control"
-            and str((tool_input or {}).get("op") or "").strip().lower() in ("stop", "stop_all")):
+            name == "task_control" and isinstance(tool_input, dict)
+            and str(tool_input.get("op") or "").strip().lower() in ("stop", "stop_all")):
         _receipts.record(name, ok=False, denied=True, detail="everything is stopped")
         return _global_stop.refusal()
     _crew_denial = _host_action_denial(name, session_ctx)
@@ -17655,15 +17662,17 @@ def _start_kill_hotkey():
                 _log_context("cc_action", {"action": "kill_hotkey_ctrl_shift_q"})
             except Exception:
                 pass
-            # The one emergency key stops everything (services/global_stop), not only
-            # computer control: it works from any app, even while Friday's page is frozen.
+        def _on_stop_everything():
+            # Stop everything (services/global_stop) from any app, even while Friday's
+            # page is frozen. Its own chord: Ctrl+Shift+Q is also a browser's Quit.
             try:
                 from agent_friday.services import global_stop as _gs
-                _gs.stop(by="owner", source="keyboard", reason="Ctrl+Shift+Q")
+                _gs.stop(by="owner", source="keyboard", reason="Ctrl+Alt+Shift+S")
             except Exception as _gs_err:
-                _log.warning("Ctrl+Shift+Q: stop everything failed: %s", _gs_err)
+                _log.warning("Ctrl+Alt+Shift+S: stop everything failed: %s", _gs_err)
 
-        hk = _kb.GlobalHotKeys({'<ctrl>+<shift>+q': _on_kill})
+        hk = _kb.GlobalHotKeys({'<ctrl>+<shift>+q': _on_kill,
+                                '<ctrl>+<alt>+<shift>+s': _on_stop_everything})
         hk.start()
         _log.info("Global kill hotkey active: Ctrl+Shift+Q")
     except ImportError:

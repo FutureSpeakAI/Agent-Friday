@@ -7,7 +7,7 @@
    approval. Resume is a press of the banner's button on this page (the server
    refuses a resume from anywhere else); work that was stopped stays stopped.
 
-   Also stops: typing "stop everything" in chat, saying it, or Ctrl+Shift+Q
+   Also stops: typing "stop everything" in chat, saying it, or Ctrl+Alt+Shift+S
    anywhere on the PC. The banner is driven by GET /api/stop-everything, polled,
    and by the `everything_stopped` frame a voice call receives. */
 (function (root) {
@@ -90,7 +90,7 @@
       body: JSON.stringify({ source: source || 'button' }) })
       .then(function (r) { return r.json(); })
       .then(function (d) { set(!!(d && d.stopped)); if (d && d.message) toast(d.message); return d; })
-      .catch(function () { toast('Stop did not reach Friday — press Ctrl+Shift+Q.', true); poll(); });
+      .catch(function () { toast('Stop did not reach Friday — press Ctrl+Alt+Shift+S.', true); poll(); });
   }
 
   function poll() {
@@ -110,7 +110,7 @@
         var R = root.React;
         return R.createElement('button', {
           type: 'button', className: 'friday-stop-everything',
-          title: 'Stop everything Friday is doing (Ctrl+Shift+Q from anywhere)',
+          title: 'Stop everything Friday is doing (Ctrl+Alt+Shift+S from anywhere)',
           'aria-label': 'Stop everything',
           onClick: function () { stopEverything('button'); },
           style: { cursor: 'pointer', fontSize: 11, padding: '2px 9px', borderRadius: 5, color: '#ffd0d0',

@@ -260,7 +260,12 @@ def answer_twiml(cfg: dict, p: dict) -> str:
     voicemail is off).
     """
     owner = config.verified_owner_cell()
-    if cfg.get("live_calls") and owner and p.get("From") == owner:
+    try:
+        import agent_friday.core as _core_gs
+        _stopped = _core_gs.GLOBAL_STOP.is_set()   # Stop everything: no live call, voicemail only
+    except Exception:
+        _stopped = False
+    if cfg.get("live_calls") and owner and p.get("From") == owner and not _stopped:
         try:
             from agent_friday.phone import live_call
             if live_call.available():

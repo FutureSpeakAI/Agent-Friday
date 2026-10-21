@@ -375,9 +375,25 @@ class CallBridge:
 
 def serve_media_stream(ws, cfg: dict) -> None:
     """The ingress hands a validated WebSocket here."""
+    from agent_friday.services import global_stop as _gs
+    if _gs.active():
+        try:
+            ws.close()
+        except Exception:
+            pass
+        return
     bridge = CallBridge(ws)
+
+    def _hang_up():   # Stop everything ends a live phone call too
+        try:
+            ws.close()
+        except Exception:
+            pass
+    _gs_off = _gs.on_stop(_hang_up)
     try:
         while True:
+            if _gs.active():
+                break
             raw = ws.receive(timeout=60)
             if raw is None:
                 break
@@ -390,6 +406,7 @@ def serve_media_stream(ws, cfg: dict) -> None:
     except Exception as e:
         _log.warning("live call ended with an error: %s", e)
     finally:
+        _gs_off()
         try:
             from agent_friday.phone import spool
             spool.ledger_update_by_sid(bridge.call_sid,

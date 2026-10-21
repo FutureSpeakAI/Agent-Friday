@@ -287,6 +287,51 @@ def _halt_halters() -> int:
     return sum(1 for fn in fns if _call(fn))
 
 
+def _halt_claude_code() -> int:
+    """Claude Code sessions Friday launched (VIBE_TERMINALS): marked stopped and ended,
+    the same three steps as the per-session Stop (routes/code.py)."""
+    import subprocess
+    from datetime import datetime
+    import agent_friday.core as core
+    n = 0
+    for tid, entry in list(core.VIBE_TERMINALS.items()):
+        if entry.get("status") not in ("running", "awaiting_approval", "starting"):
+            continue
+        entry["status"] = "stopped"
+        entry["stopped"] = datetime.now().isoformat()
+        pid = entry.get("pid")
+        if pid and os.name == "nt":
+            try:
+                subprocess.run(["taskkill", "/PID", str(int(pid)), "/T", "/F"], capture_output=True,
+                               timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except Exception as exc:
+                _log.warning("stop: Claude Code session %s not ended: %s", tid, exc)
+        n += 1
+    try:
+        core._persist_vibe_terminals()
+    except Exception:
+        pass
+    return n
+
+
+def _halt_interactive_sessions() -> int:
+    """Interactive command sessions (services/interactive_sessions): every one ended."""
+    from agent_friday.services import interactive_sessions as isess
+    with isess._LOCK:
+        rows = [(sid, s.get("pid")) for sid, s in isess._SESSIONS.items()
+                if s.get("status") not in ("exited", "killed", "stopped")]
+    for _sid, pid in rows:
+        if pid:
+            isess._kill_pid(int(pid))
+    return len(rows)
+
+
+def _halt_media() -> int:
+    """A ComfyUI image or video render in flight is interrupted."""
+    from agent_friday.services import local_image
+    return 1 if local_image.interrupt_comfy(timeout=3) else 0
+
+
 _LANES = (
     ("chat_turns", _halt_turns),
     ("tasks", _halt_tasks),
@@ -295,7 +340,33 @@ _LANES = (
     ("voice_calls", _halt_halters),
     ("computer_control", _halt_computer_control),
     ("background", lambda: (_pause_background(), 1)[1]),
+    ("claude_code", _halt_claude_code),
+    ("interactive_sessions", _halt_interactive_sessions),
+    ("media", _halt_media),
 )
+
+#: A lane that has not answered in this long is reported as "timeout"; the stop does
+#: not wait for it (its flag-based refusals already hold).
+LANE_TIMEOUT_S = 4.0
+
+
+def _walk_lanes() -> Dict[str, Any]:
+    results: Dict[str, Any] = {}
+    threads = []
+    for name, fn in _LANES:
+        def _run(name=name, fn=fn):
+            try:
+                results[name] = fn()
+            except Exception as exc:
+                _log.warning("stop: the %s lane failed: %s", name, exc)
+                results[name] = "error"
+        th = threading.Thread(target=_run, name="global-stop-" + name, daemon=True)
+        th.start()
+        threads.append((name, th))
+    deadline = time.monotonic() + LANE_TIMEOUT_S
+    for name, th in threads:
+        th.join(max(0.0, deadline - time.monotonic()))
+    return {name: results.get(name, "timeout") for name, _th in threads}
 
 
 def _receipt(decision: str, *, by: str, source: str, reason: str = "",
@@ -316,32 +387,36 @@ def _norm_source(source: str) -> str:
 
 
 def stop(*, by: str = "owner", source: str = "button", reason: str = "") -> Dict[str, Any]:
-    """Stop everything. Idempotent; never needs approval; never raises."""
+    """Stop everything. Idempotent; never needs approval; never raises.
+
+    Order: the flag (every gate sees it at once), the saved state, the receipt (written
+    before any lane is walked, so a lane that hangs cannot keep the stop off the record),
+    then every lane in parallel with a short timeout, then a second receipt naming what
+    each lane did."""
     source = _norm_source(source)
+    by = str(by or "owner")[:40]
     _flag().set()                       # first: every gate sees it before any lane is walked
     now = time.time()
     with _LOCK:
+        _flag().set()                   # again under the lock: a resume racing this stop loses
         was = bool(_STATE.get("stopped"))
         if not was:
             _STATE.clear()
-            _STATE.update({"stopped": True, "since": now, "by": str(by or "owner")[:40],
+            _STATE.update({"stopped": True, "since": now, "by": by,
                            "source": source, "reason": str(reason or "")[:200]})
         st = dict(_STATE)
         save_error = _write_file(st)
-    halted: Dict[str, Any] = {}
-    for name, fn in _LANES:
-        try:
-            halted[name] = fn()
-        except Exception as exc:
-            _log.warning("stop: the %s lane failed: %s", name, exc)
-            halted[name] = "error"
     receipt_error = None
     try:
-        _receipt("stop" if not was else "stop_again", by=str(by or "owner"), source=source,
-                 reason=reason, halted=halted)
+        _receipt("stop" if not was else "stop_again", by=by, source=source, reason=reason)
     except Exception as exc:
         receipt_error = str(exc)[:200] or type(exc).__name__
         _log.error("stop receipt not written: %s", receipt_error)
+    halted = _walk_lanes()
+    try:
+        _receipt("stop_lanes", by=by, source=source, halted=halted)
+    except Exception as exc:
+        _log.error("stop lanes receipt not written: %s", exc)
     _log.warning("EVERYTHING STOPPED (by=%s, source=%s): %s", by, source, halted)
     out = dict(st, stopped=True, halted=halted, receipt=receipt_error is None,
                already=was, text=SPOKEN_STOPPED)
@@ -354,16 +429,17 @@ def stop(*, by: str = "owner", source: str = "button", reason: str = "") -> Dict
 
 def resume(*, by: str = "owner", source: str = "button") -> Dict[str, Any]:
     """Let work run again. The caller has checked the owner's press. Receipt first:
-    if it cannot be written nothing resumes (ResumeHeld)."""
+    if it cannot be written nothing resumes (ResumeHeld). The whole of it runs under
+    the lock, so a stop arriving meanwhile is never undone."""
     source = _norm_source(source)
-    if not active():
-        return dict(state(), stopped=False, already=True)
-    try:
-        _receipt("resume", by=str(by or "owner"), source=source)
-    except Exception as exc:
-        raise ResumeHeld("the resume receipt could not be written, so nothing resumed: %s"
-                         % (str(exc)[:160] or type(exc).__name__)) from exc
     with _LOCK:
+        if not active():
+            return dict(state(), stopped=False, already=True)
+        try:
+            _receipt("resume", by=str(by or "owner"), source=source)
+        except Exception as exc:
+            raise ResumeHeld("the resume receipt could not be written, so nothing resumed: %s"
+                             % (str(exc)[:160] or type(exc).__name__)) from exc
         prev = dict(_STATE)
         _STATE.clear()
         _STATE.update({"stopped": False, "resumed_at": time.time(), "resumed_by": str(by)[:40],
@@ -373,11 +449,11 @@ def resume(*, by: str = "owner", source: str = "button") -> Dict[str, Any]:
             # Saved state still says stopped: a restart would come back stopped. Say so.
             _log.error("resume not saved: %s", save_error)
         _flag().clear()
-    try:
-        from agent_friday.services import turn_queue
-        turn_queue.clear_background_pause("global_stop")
-    except Exception:
-        pass
+        try:
+            from agent_friday.services import turn_queue
+            turn_queue.clear_background_pause("global_stop")
+        except Exception:
+            pass
     out = dict(state(), stopped=False, text=RESUMED_TEXT)
     if save_error:
         out["save_error"] = save_error

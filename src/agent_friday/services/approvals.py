@@ -765,6 +765,14 @@ def decide(approval_id: str, decision: str, *, decided_by: str = "owner",
     return rec
 
 
+def _everything_stopped() -> bool:
+    try:
+        import agent_friday.core as _core_gs
+        return _core_gs.GLOBAL_STOP.is_set()
+    except Exception:
+        return False
+
+
 def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "owner",
                         note: str = "") -> tuple:
     """`decide()`, also saying whether THIS call made the decision.
@@ -783,6 +791,10 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if rec is None:
             return None, False
         if rec.get("status") != "pending":
+            return dict(rec), False
+        if decision == "approve" and _everything_stopped():
+            # Stop everything (services/global_stop): nothing is approved while stopped,
+            # because an approval runs its action. Declining stays open; the card waits.
             return dict(rec), False
         screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
         if decision == "approve" and screen_only is not None and decided_by not in screen_only:

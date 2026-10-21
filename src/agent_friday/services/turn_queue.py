@@ -640,6 +640,12 @@ def background_checkpoint(max_wait_s: Optional[float] = None,
     t0 = time.monotonic()
     while background_pause_reason() and time.monotonic() - t0 < limit:
         sleep(0.25)
+    # Stop everything (services/global_stop) ends a background job, it never times out
+    # into running again.
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        from agent_friday.services.background_gate import JobCancelled
+        raise JobCancelled("Everything is stopped; this background job was stopped.")
     return True
 
 
