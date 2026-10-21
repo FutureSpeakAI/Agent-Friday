@@ -21,7 +21,7 @@ import pytest
 
 from agent_friday.services import agent
 
-SECRET = "synthetic-outside-content-7f3a"
+OUTSIDE_TEXT = "synthetic-outside-content-7f3a"
 
 
 def _read(path) -> str:
@@ -37,7 +37,7 @@ def outside(tmp_path):
     """A file outside the home folder (pytest's temp folder is a sibling of the test home)."""
     f = tmp_path / "elsewhere" / "notes.txt"
     f.parent.mkdir(parents=True)
-    f.write_text(SECRET, encoding="utf-8")
+    f.write_text(OUTSIDE_TEXT, encoding="utf-8")
     return f
 
 
@@ -47,7 +47,7 @@ def home(test_home):
 
 
 def _refused(out: str) -> bool:
-    return out.startswith("[SANDBOX DENY]") and SECRET not in out
+    return out.startswith("[SANDBOX DENY]") and OUTSIDE_TEXT not in out
 
 
 # ── reading ───────────────────────────────────────────────────────────────────
@@ -55,8 +55,8 @@ def _refused(out: str) -> bool:
 def test_a_file_in_the_owners_documents_is_read(home):
     f = home / "Documents" / "plan.txt"
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text("the plan " + SECRET, encoding="utf-8")
-    assert SECRET in _read(f)
+    f.write_text("the plan " + OUTSIDE_TEXT, encoding="utf-8")
+    assert OUTSIDE_TEXT in _read(f)
 
 
 def test_a_file_outside_the_home_folder_is_not_read(outside):
@@ -66,7 +66,7 @@ def test_a_file_outside_the_home_folder_is_not_read(outside):
 def test_another_programs_data_is_not_read(home):
     f = home / "AppData" / "Roaming" / "SomeApp" / "state.json"
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(SECRET, encoding="utf-8")
+    f.write_text(OUTSIDE_TEXT, encoding="utf-8")
     assert _refused(_read(f))
 
 
@@ -74,19 +74,19 @@ def test_fridays_own_state_is_not_read_but_her_outputs_are(friday_dir):
     import agent_friday.core as core
     inner = Path(friday_dir) / "governance" / "notes.txt"
     inner.parent.mkdir(parents=True, exist_ok=True)
-    inner.write_text(SECRET, encoding="utf-8")
+    inner.write_text(OUTSIDE_TEXT, encoding="utf-8")
     assert _refused(_read(inner))
     made = Path(core.DAILY_CREATIONS_DIR) / "made.txt"
     made.parent.mkdir(parents=True, exist_ok=True)
-    made.write_text("made " + SECRET, encoding="utf-8")
-    assert SECRET in _read(made)
+    made.write_text("made " + OUTSIDE_TEXT, encoding="utf-8")
+    assert OUTSIDE_TEXT in _read(made)
 
 
 # ── writing ───────────────────────────────────────────────────────────────────
 
 def test_a_write_outside_the_home_folder_writes_nothing(tmp_path):
     target = tmp_path / "out" / "w.txt"
-    out = _write(target, SECRET)
+    out = _write(target, OUTSIDE_TEXT)
     assert out.startswith("[SANDBOX DENY]")
     assert not target.exists() and not target.parent.exists()
 
@@ -110,7 +110,7 @@ def test_a_grant_opens_a_folder_for_its_ops_only_and_a_revoke_closes_it(outside)
     g, why = pp.add_grant(str(outside.parent), ["read"], days=7, purpose="test")
     assert g, why
     try:
-        assert SECRET in _read(outside)
+        assert OUTSIDE_TEXT in _read(outside)
         assert _write(outside.parent / "new.txt").startswith("[SANDBOX DENY]"), "a read grant allowed a write"
     finally:
         assert pp.revoke(g["id"])
@@ -184,7 +184,7 @@ def _escape_spellings(home: Path, outside: Path):
 def test_no_spelling_walks_around_the_policy(home, outside, kind):
     spelled = _escape_spellings(home, outside)[kind]
     out = _read(spelled)
-    assert SECRET not in out, (kind, spelled)
+    assert OUTSIDE_TEXT not in out, (kind, spelled)
     assert _write(spelled, "y").startswith(("[SANDBOX DENY]", "Write error")), (kind, spelled)
 
 
@@ -219,9 +219,9 @@ def _junction_or_link(link: Path, target: Path) -> bool:
 def test_trailing_dots_spaces_and_case_do_not_reach_application_data(home, spelling):
     real = home / "AppData" / "Roaming" / "App"
     real.mkdir(parents=True, exist_ok=True)
-    (real / "s.txt").write_text(SECRET, encoding="utf-8")
+    (real / "s.txt").write_text(OUTSIDE_TEXT, encoding="utf-8")
     spelled = str(home / spelling / "Roaming" / "App" / "s.txt")
-    assert SECRET not in _read(spelled)
+    assert OUTSIDE_TEXT not in _read(spelled)
     assert _write(str(home / spelling / "Roaming" / "App" / "w.txt")).startswith("[SANDBOX DENY]")
 
 
@@ -230,8 +230,8 @@ def test_trailing_dots_spaces_and_case_do_not_reach_application_data(home, spell
 def test_sign_in_stores_and_dot_tricks_are_refused(home, rel):
     f = home / rel.replace("./", "/")
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(SECRET, encoding="utf-8")
-    assert SECRET not in _read(str(home / rel))
+    f.write_text(OUTSIDE_TEXT, encoding="utf-8")
+    assert OUTSIDE_TEXT not in _read(str(home / rel))
 
 
 @pytest.mark.parametrize("rel", [".gitconfig", ".bashrc", "Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1",
@@ -245,7 +245,7 @@ def test_files_run_or_obeyed_at_start_up_are_never_written(home, rel):
 def test_the_real_application_data_folder_is_off_limits_wherever_it_is(tmp_path, monkeypatch):
     elsewhere = tmp_path / "RoamingElsewhere"
     elsewhere.mkdir()
-    (elsewhere / "s.txt").write_text(SECRET, encoding="utf-8")
+    (elsewhere / "s.txt").write_text(OUTSIDE_TEXT, encoding="utf-8")
     monkeypatch.setenv("APPDATA", str(elsewhere))
     monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     assert _refused(_read(elsewhere / "s.txt"))
@@ -289,7 +289,7 @@ def test_search_does_not_follow_a_junction_into_application_data(home):
     from agent_friday.services import file_search
     app = home / "AppData" / "Roaming" / "Hidden"
     app.mkdir(parents=True, exist_ok=True)
-    (app / "needle-7f3a.txt").write_text(SECRET, encoding="utf-8")
+    (app / "needle-7f3a.txt").write_text(OUTSIDE_TEXT, encoding="utf-8")
     docs = home / "Documents"
     docs.mkdir(parents=True, exist_ok=True)
     link = docs / "j"
