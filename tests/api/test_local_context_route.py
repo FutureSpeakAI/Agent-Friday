@@ -13,6 +13,7 @@ from agent_friday.services import egress_gate as eg
 from agent_friday.services import local_context as lc
 from agent_friday.services import sensitivity_classifier as sc
 from agent_friday.services import voice_live_channel as vlc
+from tests.desk_press_support import desk_headers      # an approve is a press on this PC's screen
 
 CID = "conv-share-route"
 RAW = "On weekends {{person: Dana | their partner}} likes the farmers market."
@@ -37,16 +38,16 @@ def card(monkeypatch, tmp_path):
 def test_send_decides_once_and_delivers_the_shown_text(client, card):
     aid, heard = card
     shown = approvals.get_approval(aid)["payload"]["text"]
-    r = client.post(f"/api/local-context/{aid}/act", json={"action": "send"})
+    r = client.post(f"/api/local-context/{aid}/act", json={"action": "send"}, headers=desk_headers())
     assert r.status_code == 200 and r.get_json()["won"] is True
     assert heard == [("context", shown)]
-    again = client.post(f"/api/local-context/{aid}/act", json={"action": "send"}).get_json()
+    again = client.post(f"/api/local-context/{aid}/act", json={"action": "send"}, headers=desk_headers()).get_json()
     assert again["won"] is False and len(heard) == 1
 
 
 def test_allow_for_this_conversation_sends_and_grants(client, card):
     aid, heard = card
-    r = client.post(f"/api/local-context/{aid}/act", json={"action": "allow_conversation"})
+    r = client.post(f"/api/local-context/{aid}/act", json={"action": "allow_conversation"}, headers=desk_headers())
     assert r.get_json()["ok"] and heard and heard[0][0] == "context"
     nxt = lc.request("And on Sundays?", conversation_id=CID, cloud_model="gemini-3.8-live",
                      answer_fn=lambda q: (RAW, "local-seat"))
@@ -56,11 +57,11 @@ def test_allow_for_this_conversation_sends_and_grants(client, card):
 def test_edit_asks_once_more_when_the_check_would_change_it(client, card):
     aid, _heard = card
     d = client.post(f"/api/local-context/{aid}/act",
-                    json={"action": "edit", "text": "Ring 512-555-0199 first."}).get_json()
+                    json={"action": "edit", "text": "Ring 512-555-0199 first."}, headers=desk_headers()).get_json()
     assert d.get("needs_confirm") and "[phone number 1]" in d["checked"]
     d = client.post(f"/api/local-context/{aid}/act",
                     json={"action": "edit", "text": "Ring 512-555-0199 first.",
-                          "accept": "checked"}).get_json()
+                          "accept": "checked"}, headers=desk_headers()).get_json()
     assert d["ok"] and d["approval"]["payload"]["text"] == "Ring [phone number 1] first."
 
 

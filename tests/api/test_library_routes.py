@@ -29,7 +29,9 @@ def _as_the_page(client):
     """Requests arrive the way the Library page sends them: same-origin, with its own Origin."""
     import agent_friday.core as core
     client.environ_base.update({"HTTP_SEC_FETCH_SITE": "same-origin", "HTTP_ORIGIN": "http://localhost",
-                                "HTTP_X_FRIDAY_TOKEN": core._API_SESSION_TOKEN})
+                                "HTTP_X_FRIDAY_TOKEN": core._API_SESSION_TOKEN,
+                                # a press on this PC's screen (services/desk_press)
+                                "HTTP_X_FRIDAY_DESK": __import__("tests.desk_press_support", fromlist=["x"]).desk_key()})
 
 
 def _lib(tmp_path):

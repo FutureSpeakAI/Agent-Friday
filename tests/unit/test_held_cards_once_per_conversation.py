@@ -20,6 +20,7 @@ import pytest
 from agent_friday.services import approvals as ap
 from agent_friday.services import cloud_release as cr
 from agent_friday.services import egress_gate as eg
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 pytestmark = pytest.mark.held_cards
 
@@ -99,7 +100,7 @@ def test_a_conversation_never_shows_the_same_content_twice(gate):
     card = _cards()[0]
     assert "this conversation's next cloud calls" in card["description"]
     assert "comes back changed" in card["description"]
-    cr.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): cr.decide(card["approval_id"], "approve", decided_by="owner:ui")
     # Send holds for the conversation it was asked in, with no new card.
     assert _clock(1) in _sent_system(_turn(_clock(1)))
     assert _clock(1) in _sent_system(_turn(_clock(1)))
@@ -115,7 +116,7 @@ def test_a_conversation_never_shows_the_same_content_twice(gate):
 
 def test_a_send_in_a_conversation_is_for_that_provider_only(gate):
     _turn(_clock(1))
-    cr.decide(_cards()[0]["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): cr.decide(_cards()[0]["approval_id"], "approve", decided_by="owner:ui")
     out = _turn(_clock(1), provider="openrouter", model="some/model")
     assert MARK not in _sent_system(out)
     assert sorted(c["payload"]["where"]["provider"] for c in _cards()) == ["anthropic", "openrouter"]
@@ -125,7 +126,7 @@ def test_a_send_with_no_conversation_runs_out(gate):
     _turn(_clock(1), conversation=None)
     card = _cards()[0]
     assert "the next cloud calls in the next 30 minutes" in card["description"]
-    cr.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): cr.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert _clock(1) in _sent_system(_turn(_clock(1), conversation=None))
     data = json.loads((gate / "cloud_release.json").read_text(encoding="utf-8"))
     data["once"] = {}

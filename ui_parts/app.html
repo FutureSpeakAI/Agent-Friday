@@ -191,6 +191,56 @@ function apiFetch(url, opts){
     return pending;
   }
   window.fridayRefreshSessionToken = refreshSessionToken;
+  // DESK KEY. A press on an approval card counts only when it was made on this
+  // PC's own screen (services/desk_press.py). Friday's page, open in a browser on
+  // this PC, fetches this launch's desk key from a door on 127.0.0.1 that a
+  // browser on another device cannot reach (127.0.0.1 there is that device), and
+  // sends it on every same-origin state change. On another device the fetch fails
+  // and nothing is sent, so a tap there approves nothing. The key lives only in
+  // this closure, never on window.
+  let deskKey = '';
+  let deskPending = null;
+  function deskCapablePage() {
+    try {
+      const h = String(window.location.hostname || '').toLowerCase();
+      return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1' || /^agent\.[a-z0-9-]+$/.test(h);
+    } catch (e) {
+      return false;
+    }
+  }
+  function refreshDeskKey() {
+    if (!deskCapablePage()) return Promise.resolve(false);
+    if (!deskPending) {
+      deskPending = rawFetch('/api/desk/where', {
+        cache: 'no-store'
+      }).then(r => r.ok ? r.json() : null).then(w => {
+        const port = w && Number(w.port);
+        if (!port || port < 1 || port > 65535 || Math.floor(port) !== port) return false;
+        return rawFetch('http://127.0.0.1:' + port + '/desk-key', {
+          cache: 'no-store',
+          credentials: 'omit',
+          mode: 'cors'
+        }).then(r => r.ok ? r.json() : null).then(d => {
+          if (d && typeof d.key === 'string' && d.key) {
+            deskKey = d.key;
+            return true;
+          }
+          return false;
+        });
+      }).catch(() => false).then(ok => {
+        deskPending = null;
+        return ok;
+      });
+    }
+    return deskPending;
+  }
+  window.fridayRefreshDeskKey = function () {
+    return refreshDeskKey().then(ok => !!ok);
+  };
+  refreshDeskKey();
+  if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshDeskKey();
+  });
   if (typeof setInterval === 'function') {
     const refreshTimer = setInterval(refreshSessionToken, 3600000);
     if (refreshTimer && typeof refreshTimer.unref === 'function') refreshTimer.unref();
@@ -204,6 +254,7 @@ function apiFetch(url, opts){
   window.fetch = function (input, init) {
     let guarded = false;
     let sent = '';
+    let sentDesk = '';
     try {
       const tok = window.__FRIDAY_API_TOKEN || '';
       const isReq = typeof Request !== 'undefined' && input instanceof Request;
@@ -214,6 +265,8 @@ function apiFetch(url, opts){
           const headers = new Headers(init && init.headers || (isReq ? input.headers : undefined));
           if (!headers.has('X-Friday-Token')) headers.set('X-Friday-Token', tok);
           sent = headers.get('X-Friday-Token');
+          if (deskKey && !headers.has('X-Friday-Desk')) headers.set('X-Friday-Desk', deskKey);
+          sentDesk = headers.get('X-Friday-Desk') || '';
           guarded = !isReq && replayable(init && init.body);
           init = Object.assign({}, init, {
             headers
@@ -226,15 +279,34 @@ function apiFetch(url, opts){
     // A token the server no longer knows is answered with a coded 403: fetch
     // the current one and send the same request once more.
     return first.then(async res => {
-      if (res.status !== 403) return res;
+      const deskStale = !!(res.headers && res.headers.get('X-Friday-Desk-Stale'));
+      if (res.status !== 403) {
+        // Friday restarted under this tab: fetch this launch's key for the next press.
+        if (deskStale) refreshDeskKey();
+        return res;
+      }
       let code = '';
       try {
         code = (await res.clone().json()).code || '';
       } catch (e) {}
-      if (code !== 'session_token_required') return res;
-      if (!(await refreshSessionToken()) || window.__FRIDAY_API_TOKEN === sent) return res;
+      // Refused for a session token the server no longer knows (it rotated, or Friday
+      // restarted), or for want of this launch's desk key (Friday restarted, or the key had
+      // not loaded yet): fetch whatever is stale and send the same request once more. Only
+      // these coded refusals are retried; each is answered before the route does anything.
+      const needToken = code === 'session_token_required';
+      const needDesk = code === 'desk_proof_required' || deskStale;
+      if (!needToken && !needDesk) return res;
       const headers = new Headers(init.headers);
-      headers.set('X-Friday-Token', window.__FRIDAY_API_TOKEN);
+      let changed = false;
+      if (needToken && (await refreshSessionToken()) && window.__FRIDAY_API_TOKEN && window.__FRIDAY_API_TOKEN !== sent) {
+        headers.set('X-Friday-Token', window.__FRIDAY_API_TOKEN);
+        changed = true;
+      }
+      if ((await refreshDeskKey()) && deskKey && deskKey !== sentDesk) {
+        headers.set('X-Friday-Desk', deskKey);
+        changed = true;
+      }
+      if (!changed) return res;
       return rawFetch(input, Object.assign({}, init, {
         headers
       }));

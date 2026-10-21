@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 OLD_KEY = "retired-session-secret-for-this-test"   # pragma: allowlist secret
 
@@ -57,11 +58,11 @@ def test_a_grant_added_through_the_route_persists_and_is_listed(client, tmp_path
     folder = tmp_path / "notes"
     folder.mkdir()
 
-    made = client.post("/api/privacy/file-grants", json={"path": str(p), "scope": "file"})
+    made = client.post("/api/privacy/file-grants", json={"path": str(p), "scope": "file"}, headers=desk_headers())
     assert made.status_code == 200
     gid = made.get_json()["grant"]["id"]
     made_f = client.post("/api/privacy/file-grants",
-                         json={"path": str(folder), "scope": "folder", "expiry_days": 7})
+                         json={"path": str(folder), "scope": "folder", "expiry_days": 7}, headers=desk_headers())
     assert made_f.status_code == 200
     fid = made_f.get_json()["grant"]["id"]
 
@@ -126,7 +127,7 @@ def test_the_reattest_route_refuses_a_line_no_known_key_signed(client, tmp_path)
     sha = hashlib.sha256(line.encode("utf-8")).hexdigest()
 
     resp = client.post("/api/privacy/file-grants/reattest",
-                       json={"line_sha256": sha, "confirmed_by": "owner"})
+                       json={"line_sha256": sha, "confirmed_by": "owner"}, headers=desk_headers())
 
     assert resp.status_code == 400
     text = ledger.read_text(encoding="utf-8")

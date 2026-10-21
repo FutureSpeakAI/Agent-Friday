@@ -19,6 +19,7 @@ import pytest
 
 from agent_friday.services import laya, laya_calibration as lc, laya_personal as lp, laya_personal_fit as fit
 from agent_friday.services import laya_personal_store as store, laya_router as lr
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -1255,7 +1256,7 @@ def test_the_loosening_card_is_screen_only_so_a_spoken_yes_cannot_approve_it(w, 
 
 def test_the_owners_click_on_the_card_loosens_that_one_head_and_wins_over_a_learned_tightening(w, cards):
     out = fit.request_loosening("router", "act", 0.48)
-    cards.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): cards.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
     assert lc.effective_threshold("router", "act") == pytest.approx(0.48)
     assert lp.act_threshold(lp.OWNER_PROFILE, lr.ACT_THRESHOLD) == pytest.approx(0.48)
     # a card for a different value is not a token for this one
@@ -1277,7 +1278,7 @@ def test_outward_tools_never_graduate_from_ask_through_learning(w, cards):
     assert lc.may_graduate("search_web") is False and lc.may_graduate("search_news") is False
     out = cards.create_approval(kind=lc.APPROVAL_KIND, subject_type="t", subject_id="grad", title="x", force_gate=True,
                                 payload={"head": "graduate", "name": "search_web", "value": 1.0})
-    cards.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): cards.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")
     assert lc.may_graduate("search_web", owner_token=out["approval_id"]) is False        # even with a real token
 
 
@@ -1484,7 +1485,7 @@ def test_a_voice_wipe_only_raises_a_card_and_a_spoken_yes_cannot_approve_it(w, t
     cards.decide_with_outcome(card["approval_id"], "approve", decided_by="owner")             # the in-process / voice default
     assert cards.get_approval(card["approval_id"])["status"] == "pending" and len(w.rows()) == 1
     assert "laya_wipe_request" in cards.SCREEN_ONLY_KINDS
-    cards.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")          # the click
+    with pressed(): cards.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")          # the click
     assert not store.profile_dir(lp.OWNER_PROFILE).exists()
     assert any(n[0] == "done:wipe" for n in w.notices)
     # red when: wipe runs on a spoken yes, or SCREEN_ONLY_KINDS loses the kind
@@ -2078,7 +2079,7 @@ def test_the_guard_compares_with_the_threshold_in_force_including_an_owner_appro
     assert lr._tier1("maybe that one").decision == "ask"                              # the shipped base: 0.535 < 0.55
     assert _tier1_for("maybe that one").decision == "ask"
     out = fit.request_loosening("router", "act", 0.48)
-    cards.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")   # the click
+    with pressed(): cards.decide_with_outcome(out["approval_id"], "approve", decided_by="owner:ui")   # the click
     r = _tier1_for("maybe that one")
     assert (r.decision, r.tool) == ("tool", "get_briefing")                           # the owner's own score is honoured
     assert lr._tier1("maybe that one").decision == "ask"                              # and nobody else's route moved

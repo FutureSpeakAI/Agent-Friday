@@ -38,6 +38,42 @@ def _fail(exc, code=400):
     return api_error(exc, "Couldn't complete that codebase request", code, key="error")
 
 
+def _press_refusal():
+    """None for a press on this PC's own screen (services/desk_press), else the coded 403.
+
+    A codebase on a folder of the owner's choosing lets Friday write files there, and a file
+    written in the right folder runs as the owner (a startup script, Friday's own connector
+    list). That is the owner's own act at this PC, never a request that merely looks local."""
+    from agent_friday.services import screen_click
+    return screen_click.press_refusal(
+        request, "Open a folder as a codebase with a press on the Code page, on the computer Friday runs on.")
+
+
+def _sensitive_folder(path: str) -> bool:
+    """A folder no codebase may sit in, whoever asks: Friday's own data, the roaming app data
+    folder (where Windows keeps the Startup folder) and any Startup folder."""
+    # Judged on the spelling alone (no file-system access on a request's value); the folder is
+    # resolved and checked again by services/codebases when it is opened.
+    import os
+    try:
+        p = os.path.normcase(os.path.abspath(os.path.expanduser(str(path))))
+    except Exception:
+        return True
+    roots = []
+    try:
+        import agent_friday.core as core
+        roots.append(os.path.normcase(os.path.realpath(str(core.FRIDAY_DIR))))
+        roots.append(os.path.normcase(os.path.abspath(str(core.FRIDAY_DIR))))
+    except Exception:
+        pass
+    if os.environ.get("APPDATA"):
+        roots.append(os.path.normcase(os.path.abspath(os.environ["APPDATA"])))
+    for r in roots:
+        if p == r or p.startswith(r.rstrip("\\/") + os.sep):
+            return True
+    return any(part.lower() == "startup" for part in p.replace("\\", "/").split("/"))
+
+
 @codebases_bp.errorhandler(ValueError)
 def _bad_value(e):
     return _fail(e)
@@ -58,6 +94,14 @@ def list_codebases():
 @login_required
 def create_codebase():
     body = request.get_json(silent=True) or {}
+    outside = [str(body[k]) for k in ("path", "study_path") if body.get(k)]
+    if outside:
+        refused = _press_refusal()
+        if refused is not None:
+            return refused
+        if any(_sensitive_folder(p) for p in outside):
+            return _bad("That folder holds Friday's own data or programs that start with Windows, "
+                        "so it cannot be opened as a codebase.")
     title = str(body.get("title") or "").strip() or "Untitled"
     cid = body.get("conversation_id") or None
     from agent_friday.services import conversations as convs
@@ -127,6 +171,12 @@ def codebase_write(cid):
     rel = str(body.get("path") or "")
     if "content" not in body:
         return _bad("content is required")
+    if not cb.is_managed(cid):
+        # A hand edit in a folder the owner opened (not one Friday made under its own data):
+        # a press on this PC's own screen.
+        refused = _press_refusal()
+        if refused is not None:
+            return refused
     st = cb.write(cid, rel, str(body.get("content") or ""))
     return jsonify({"status": "ok", "step": st})
 

@@ -26,6 +26,7 @@ from agent_friday.services import laya_router as lr
 from agent_friday.services import laya_safe_writes as sw
 from agent_friday.services import point_act as pa
 from tests.screen_fixtures import ACCOUNTS, Page, install_fake_gmail, item, newsletter_stage, ref, report
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 CONV = "conv-sw"
 OWNER_WORDS = "archive these"
@@ -344,7 +345,7 @@ def test_on_approval_runs_exactly_the_rows_and_the_receipt_undoes_them(gmail, mo
     _go("archive these", stage)
     gmail.found["acct_work"].append("t99")                        # new mail lands before the answer
     card = _pending()[0]
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete"
     assert [c for c in gmail.calls if c[0] == "apply"] == [("apply", "acct_work", ("t1", "t2"), "archive")]
@@ -377,7 +378,7 @@ def test_laya_cannot_approve_her_own_card(gmail, monkeypatch):
     assert ap.get_approval(card["approval_id"])["status"] == "pending" and gmail.changes() == []
     # a typed yes does not approve a card Laya raised either; the owner's click on its Approve button does
     assert ia.answer_card(card["approval_id"], "approve", "yes")["text"] == ia.LAYA_CARD_BUTTON
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert ia.wait_for(card["approval_id"], 10)["status"] == "complete"
 
 
@@ -538,7 +539,7 @@ def test_a_label_that_vanishes_while_the_card_waits_is_not_made_at_run_time(gmai
     Page(monkeypatch)
     _go("label these as receipts", stage)
     gmail.labels["acct_work"] = []                              # deleted before the owner answered
-    ap.decide(_pending()[0]["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(_pending()[0]["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(_pending_or_last_id(), 10)
     assert rec["status"] == "failed" and not [c for c in gmail.calls if c[0] == "create_label"]
     assert gmail.changes() == []
@@ -708,7 +709,7 @@ def test_end_to_end_the_card_the_run_and_the_receipt_name_the_same_rows(gmail, m
             continue
         r, out = _go(text, stage)
         card = [c for c in _pending() if c["payload"]["refs"] == [ref(i) for i in rows]][-1]
-        ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+        with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
         rec = ia.wait_for(card["approval_id"], 10)
         done = [c for c in gmail.calls if c[0] in ("apply", "modify")]
         tids = sorted(t for c in done for t in c[2])
@@ -814,14 +815,14 @@ def test_every_allowed_verb_round_trips_through_undo_exactly(mail, monkeypatch, 
     _go(text, stage)
     assert mail.labels == before, "nothing changes before the card is answered"
     card = _pending()[0]
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete", rec
     assert all(mail.labels[k] == before[k] for k in mail.labels if k[1] in ("t4", "t5", "t6")), "only the three rows move"
     assert mail.labels != before, "the approved change really happened, so the round trip is not vacuous (%s)" % action
     out = ia.undo(rec["receipt_id"], conversation_id=CONV)                     # Laya's "undo that": a card, as the change was
     assert out["status"] == "pending_approval"
-    ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(out["approval_id"], "approve", decided_by="owner:ui")
     undone = ia.wait_for(out["approval_id"], 10)
     assert undone["status"] == "complete", undone
     assert mail.labels == before, "undo puts every label back exactly (%s)" % action
@@ -1135,16 +1136,20 @@ def test_m2_widening_through_the_real_settings_route_needs_the_pages_own_click(s
     from agent_friday.routes import core_routes as cr
     core = settings_file
     body = {"owner_action": "laya_safe_writes", "settings": {"laya_safe_writes": "on"}}
-    good = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": core._current_api_token()}
+    from tests.desk_press_support import desk_key
+    good = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": core._current_api_token(),
+            "X-Friday-Desk": desk_key()}       # a press on this PC's screen (services/desk_press)
 
     def post(headers, b=body):
-        with Flask(__name__).test_request_context("/api/settings", method="POST", json=b, headers=headers):
+        with Flask(__name__).test_request_context("/api/settings", method="POST", json=b, headers=headers,
+                                                  environ_base={"REMOTE_ADDR": "127.0.0.1"}):
             out = cr.api_settings()
         return out[1] if isinstance(out, tuple) else 200
 
     no_site = {k: v for k, v in good.items() if k != "Sec-Fetch-Site"}
+    no_desk = {k: v for k, v in good.items() if k != "X-Friday-Desk"}
     for bad in ({**good, "Origin": "http://evil.example"}, {**good, "X-Friday-Token": "not-the-token"},
-                no_site, {**good, "Sec-Fetch-Site": "cross-site"}, {}):
+                no_site, {**good, "Sec-Fetch-Site": "cross-site"}, no_desk, {}):
         assert post(bad) == 403, bad
     assert core._load_settings().get("laya_safe_writes", "off") == "off"
     assert post({**good}, {"settings": {"laya_safe_writes": "on"}}) == 200        # no owner_action: saved, not widened
@@ -1361,7 +1366,7 @@ def test_the_executed_batch_carries_a_laya_receipt(gmail, monkeypatch):
     _go("archive these", stage)
     card = _pending()[0]
     assert card["requested_by"] == "laya:safe_write"
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     rec = ia.wait_for(card["approval_id"], 10)
     assert rec["status"] == "complete" and rec["origin"] == "laya_safe_write"
     assert rec["laya"]["by"] == "laya:safe_write" and rec["laya"]["rows_chosen"] == "the rows you ticked"

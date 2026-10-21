@@ -33,6 +33,7 @@ import logging
 from urllib.parse import quote_plus
 
 import pytest
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 MEDICAID_Q = "disability OR Medicaid OR Social Security"
 CIVIL_Q = "transgender rights Texas court ruling"
@@ -871,7 +872,7 @@ def test_send_sends_that_exact_string_and_dont_send_sends_nothing(cards, wire):
     _hold(SHARED_Q)
     assert wire["sent"] == [], "the query went out before the owner decided"
     [card] = _pending(ap)
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert wire["sent"] == [SHARED_Q]
     assert not any(SHARED_Q in t for t in wire["topic"]),         "the approved string went through the topic gate"
     assert ap.get_approval(card["approval_id"]).get("consumed") is True
@@ -879,7 +880,7 @@ def test_send_sends_that_exact_string_and_dont_send_sends_nothing(cards, wire):
     other = "the doctor wants to talk on Thursday about results"
     _hold(other)
     [card] = _pending(ap)
-    ap.decide(card["approval_id"], "deny", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "deny", decided_by="owner:ui")
     assert wire["sent"] == [SHARED_Q], "Don't send sent the query"
     assert any("Don't send" in t and "Nothing was sent" in t for t in posted)
     assert all(other not in t for t in posted)
@@ -922,7 +923,7 @@ def test_a_floor_item_is_refused_even_with_approval(cards, wire, floor):
                  "conversation_id": CONV_ID,
                  "public_query": {"provider": "anthropic", "model": "claude-x",
                                   "engine": "DuckDuckGo", "texts": [q]}})
-    ap.decide(rec["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(rec["approval_id"], "approve", decided_by="owner:ui")
     assert all(NEVER_TOKEN not in s for s in wire["sent"]), \
         "an approval let a never-send token out"
 
@@ -942,7 +943,7 @@ def test_a_cloud_voice_seat_asks_and_a_local_seat_does_not(cards, wire):
     assert _hold(SHARED_Q, provider="ollama", model="glm-4.6:cloud").startswith(
         "[APPROVAL CARD RAISED]")
     for c in _pending(ap):
-        ap.decide(c["approval_id"], "deny", decided_by="owner:ui")
+        with pressed(): ap.decide(c["approval_id"], "deny", decided_by="owner:ui")
 
     voice_q = "the doctor wants to talk on Thursday about results"
     said = V._voice_tool_run("search_web", {"query": voice_q}, lambda _o: None,
@@ -1038,7 +1039,7 @@ def test_a_query_longer_than_the_card_is_not_carded_or_sent(cards, wire):
 
     card = _crafted_card(ap, long_q, long_q[:1000])
     assert card["action_description"] != long_q
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert wire["sent"] == [], "Send ran text the card never showed"
     assert any("did not match" in t for t in cards["posted"])
 
@@ -1115,7 +1116,7 @@ def test_the_approved_search_report_names_the_card_and_is_scrubbed(cards, wire, 
     ap = cards["ap"]
     _hold(SHARED_Q)
     [card] = _pending(ap)
-    ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): ap.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert wire["sent"] == [SHARED_Q]
     [report] = [t for t in cards["posted"] if t.startswith("Approved search (card ")]
     assert addr not in report and '{"query"' not in report

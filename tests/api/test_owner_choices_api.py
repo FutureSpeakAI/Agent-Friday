@@ -28,7 +28,11 @@ SCHEDULED = {"is_background_task": True, "schedule_id": "sch_weekly_status", "ta
 def client(app):
     import agent_friday.core as core
     c = app.test_client()
-    c.environ_base["HTTP_X_FRIDAY_TOKEN"] = core._current_api_token()
+    # Friday's page on this PC: its token, a press's browser metadata and the desk key
+    # (services/desk_press), which making a pre-approval demands.
+    from tests.desk_press_support import desk_headers as _desk
+    for _k, _v in _desk().items():
+        c.environ_base["HTTP_" + _k.upper().replace("-", "_")] = _v
     return c
 
 
@@ -117,7 +121,8 @@ def test_the_card_answer_records_the_ticks_and_settings_lists_and_forgets_them(c
     monkeypatch.setattr(screen_click, "screen_session", lambda req: False)
     r = client.post("/api/privacy/cloud-release/%s/decide" % card["approval_id"],
                     json={"decision": "approve", "remember": {"thread": False, "sender": True}})
-    assert r.status_code == 400 and approvals.get_approval(card["approval_id"])["status"] == "pending"
+    # Refused with the code that has the page fetch the desk key (services/desk_press).
+    assert r.status_code == 403 and approvals.get_approval(card["approval_id"])["status"] == "pending"
     monkeypatch.setattr(screen_click, "screen_session", lambda req: True)
     r = client.post("/api/privacy/cloud-release/%s/decide" % card["approval_id"],
                     json={"decision": "approve", "remember": {"thread": False, "sender": True}})
