@@ -90,14 +90,17 @@ def note_decision(task_id: Optional[str], *, point: str, chosen: Any, reason: An
     entry = {"point": str(point)[:40], "chosen": _one_line(chosen, 200), "at": time.time()}
     if reason:
         entry["reason"] = _one_line(reason, 300)
-    if point == "approval":
-        led["approvals"] = (led["approvals"] + [entry])[-_BOOK_KEEP:]
-    elif point in ("seat_select", "ladder_fallback"):
-        led["routes"] = (led["routes"] + [{"route": entry["chosen"], "why": point, "at": entry["at"]}])[-_BOOK_KEEP:]
-    elif point in ("spend_cap", "gate", "stop", "blocked"):
-        led["blockers"] = (led["blockers"] + [entry])[-_BOOK_KEEP:]
-    led["decisions"] = (led["decisions"] + [entry])[-_BOOK_KEEP:]
-    save(task_id, led)
+    # In memory, under the lock the save serialises under: written with the
+    # task's next step (note_tool) or its end, not on every model call.
+    with _LOCK:
+        _fill(led)
+        if point == "approval":
+            led["approvals"] = (led["approvals"] + [entry])[-_BOOK_KEEP:]
+        elif point in ("seat_select", "ladder_fallback"):
+            led["routes"] = (led["routes"] + [{"route": entry["chosen"], "why": point, "at": entry["at"]}])[-_BOOK_KEEP:]
+        elif point in ("spend_cap", "gate", "stop", "blocked"):
+            led["blockers"] = (led["blockers"] + [entry])[-_BOOK_KEEP:]
+        led["decisions"] = (led["decisions"] + [entry])[-_BOOK_KEEP:]
 
 
 def note_model_call(task_id: Optional[str], *, model: Any = None, provider: Any = None, seat: Any = None,
@@ -105,30 +108,34 @@ def note_model_call(task_id: Optional[str], *, model: Any = None, provider: Any 
     led = load(task_id)
     if led is None:
         return
-    c = led["cost"]
-    c["calls"] = int(c.get("calls") or 0) + 1
-    for key, val in (("tokens_in", tokens_in), ("tokens_out", tokens_out)):
+    with _LOCK:
+        _fill(led)
+        c = led["cost"]
+        c["calls"] = int(c.get("calls") or 0) + 1
+        for key, val in (("tokens_in", tokens_in), ("tokens_out", tokens_out)):
+            try:
+                c[key] = int(c.get(key) or 0) + int(val or 0)
+            except (TypeError, ValueError):
+                pass
         try:
-            c[key] = int(c.get(key) or 0) + int(val or 0)
+            c["usd"] = round(float(c.get("usd") or 0) + float(cost_usd or 0), 6)
         except (TypeError, ValueError):
             pass
-    try:
-        c["usd"] = round(float(c.get("usd") or 0) + float(cost_usd or 0), 6)
-    except (TypeError, ValueError):
-        pass
-    route = "/".join(str(x) for x in (provider, model) if x)
-    if route and (not led["routes"] or led["routes"][-1].get("route") != route):
-        led["routes"] = (led["routes"] + [{"route": route, "why": "ran", "seat": seat, "at": time.time()}])[-_BOOK_KEEP:]
-    save(task_id, led)
+        route = "/".join(str(x) for x in (provider, model) if x)
+        if route and (not led["routes"] or led["routes"][-1].get("route") != route):
+            led["routes"] = (led["routes"] + [{"route": route, "why": "ran", "seat": seat,
+                                               "at": time.time()}])[-_BOOK_KEEP:]
 
 
 def note_verification(task_id: Optional[str], *, verified: bool, evidence: Any = None) -> None:
     led = load(task_id)
     if led is None:
         return
-    led["verification"] = {"verified": bool(verified), "evidence": _one_line(evidence, 300) if evidence else None,
-                           "at": time.time()}
-    save(task_id, led)
+    with _LOCK:
+        _fill(led)
+        led["verification"] = {"verified": bool(verified),
+                               "evidence": _one_line(evidence, 300) if evidence else None, "at": time.time()}
+    save(task_id, led)                    # the task's end: everything it kept goes to disk
 
 
 # One live object per task, so the loop (compaction absorbing summaries) and

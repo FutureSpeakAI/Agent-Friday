@@ -234,12 +234,19 @@ def risk_reasons(goal: Dict[str, Any], now: Optional[float] = None) -> List[str]
 
 
 HEALTH_WORDS = {"good": "on track", "watch": "worth a look", "poor": "needs attention"}
+#: Health levels: good / watch / poor while a goal is open; "ended" once it
+#: is met, ended, failed or archived (its words are then its state).
 STALL_DAYS = 7
 
 
-def _verified(m: Dict[str, Any]) -> bool:
+def _checked(m: Dict[str, Any]) -> bool:
+    """For health: the step's result passed its check, the automatic one
+    (ran and scored) or, on a goal the owner verifies by hand, the owner's
+    own confirmation. A skipped check or an override is not a check."""
     v = m.get("verification") or {}
-    return v.get("status") == "ok" and v.get("score") is not None and not v.get("human_override")
+    if not v.get("passed") or v.get("human_override"):
+        return False
+    return (v.get("status") == "ok" and v.get("score") is not None) or v.get("status") == "manual"
 
 
 def health(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
@@ -254,6 +261,12 @@ def health(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
     open_ms = [m for m in ms if m.get("status") != "done"]
     signals: List[Dict[str, str]] = []
     level = "good"
+    state = normalize(goal)
+    if state not in LIVE and state not in ("proposed", "approved", "paused"):
+        # Met, ended, failed or archived: nothing is "at risk" any more.
+        return {"level": "ended", "words": STATE_WORDS.get(state, state),
+                "signals": [{"key": "progress", "words": f"{len(done)} of {len(ms)} steps done.",
+                             "level": "good"}] if ms else []}
 
     def add(key: str, words: str, lvl: str) -> None:
         nonlocal level
@@ -298,12 +311,15 @@ def health(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
         lvl = "poor" if spent >= cap else ("watch" if spent >= AT_RISK_BUDGET * cap else "good")
         add("budget", f"Used {spent} of {cap} mψ.", lvl)
     b = goal.get("budget") if isinstance(goal.get("budget"), dict) else {}
-    minutes = int(b.get("runtime_minutes") or 0) if str(b.get("runtime_minutes") or "0").isdigit() else 0
+    try:
+        minutes = int(float(b.get("runtime_minutes") or 0))
+    except (TypeError, ValueError):
+        minutes = 0
     if minutes:
         used = round(float(goal.get("spent_runtime_s") or 0) / 60)
         add("runtime", f"Used {used} of {minutes} minutes of work.",
             "poor" if used >= minutes else ("watch" if used >= AT_RISK_BUDGET * minutes else "good"))
-    unchecked = [m for m in done if not _verified(m)]
+    unchecked = [m for m in done if not _checked(m)]
     if unchecked:
         add("verification", f"{len(unchecked)} finished step{'s were' if len(unchecked) != 1 else ' was'} accepted without its check passing.", "watch")
     return {"level": level, "words": HEALTH_WORDS[level], "signals": signals}

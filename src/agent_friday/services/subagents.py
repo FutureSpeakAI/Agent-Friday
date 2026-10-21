@@ -33,8 +33,9 @@ _SUBAGENT_RING_CEILING = 2
 
 #: Tools that start more work of their own (§17.14-3): a scoped subagent may
 #: call them only when its scope allows subagents.
-SPAWN_TOOLS = frozenset({"spawn_task", "run_workflow", "deep_research", "schedule_job",
-                         "ask_crew", "steer_crew", "talk_crew"})
+SPAWN_TOOLS = frozenset({"spawn_task", "run_workflow", "workflow_action", "deep_research",
+                         "schedule_job", "ask_crew", "steer_crew", "talk_crew", "task_control",
+                         "create_website", "start_creative_pipeline", "submit_work_order"})
 
 
 class SubagentScope:
@@ -227,6 +228,10 @@ def save_custom_scope(data: dict) -> dict:
     name = (data.get("name") or "").strip()
     if not name:
         raise UserFacingValueError("scope requires a 'name'")
+    if name in BUILTIN_SCOPES:
+        # A built-in (goal-milestone above all) is never redefined: every
+        # autonomous task under it would be widened at once.
+        raise UserFacingValueError(f"'{name}' is a built-in scope; choose another name")
     scope = SubagentScope(data)  # normalizes + clamps the ring ceiling
     custom = _load_custom_scopes()
     custom[name] = scope.to_dict()
@@ -259,22 +264,24 @@ def spawn_scoped_subagent(name: str, prompt: str, scope: str = "researcher",
     return {"task_id": task_id, "scope": sc.to_dict()}
 
 
-def nested_spawn_check(parent_task_id: str, child_scope: str | None) -> tuple:
+def nested_spawn_check(parent_task_id: str, child_scope: str | None, *,
+                       continuation: bool = False) -> tuple:
     """(ok, reason, scope to inherit) for a task spawned by `parent_task_id`.
     An unscoped parent is Friday's own work and may spawn freely (its
-    children are still checked by the governance gate). A scoped parent must
-    allow subagents, and the child may be no broader than it; a child given
-    no scope runs under the parent's."""
+    children are still checked by the governance gate). `continuation` is
+    the same work going on (a chain step, a follow-up, a retry, named by its
+    caller): it keeps the parent's scope. Anything else a scoped task starts
+    is a subagent: the parent must allow subagents, and the child may be no
+    broader than it; a child given no scope runs under the parent's."""
     parent = get_task_scope(parent_task_id)
     if parent is None:
         return True, "", None
-    if not child_scope or child_scope == parent.name:
-        # The same work going on (a chain step, a follow-up, a retry) under
-        # the same scope. A scoped task's own model cannot get here by
-        # spawning: the spawn tools are refused by its scope (allows()).
+    if continuation and (not child_scope or child_scope == parent.name):
         return True, "", parent.name
     if not parent.allow_subagents:
         return False, f"the '{parent.name}' scope this work runs under does not allow subagents", None
+    if not child_scope or child_scope == parent.name:
+        return True, "", parent.name
     try:
         child = get_scope(child_scope)
     except Exception:
@@ -285,7 +292,7 @@ def nested_spawn_check(parent_task_id: str, child_scope: str | None) -> tuple:
     return True, "", None
 
 
-def register_scope_for_task(task_id: str, scope: str) -> SubagentScope:
+def register_scope_for_task(task_id: str, scope: str, *, budget_from: str | None = None) -> SubagentScope:
     """Apply a named scope to a task_id, atomically, BEFORE that task's
     worker thread can execute any tool call.
 
@@ -302,8 +309,17 @@ def register_scope_for_task(task_id: str, scope: str) -> SubagentScope:
     """
     sc = get_scope(scope)  # raises KeyError for an unknown scope — fail loud
     with _LOCK:
+        if task_id in _SCOPED_TASKS:
+            # Never reset a live task's step count or clock.
+            return _SCOPED_TASKS[task_id]["scope"]
+        spawned, steps = time.time(), 0
+        parent = _SCOPED_TASKS.get(budget_from) if budget_from else None
+        if parent is not None:
+            # A subagent shares its parent's budget: it starts with what the
+            # parent has already used, so spawning cannot multiply it.
+            spawned, steps = parent["spawned"], parent["steps"]
         _SCOPED_TASKS[task_id] = {
-            "scope": sc, "name": scope, "spawned": time.time(), "steps": 0,
+            "scope": sc, "name": scope, "spawned": spawned, "steps": steps,
         }
     return sc
 

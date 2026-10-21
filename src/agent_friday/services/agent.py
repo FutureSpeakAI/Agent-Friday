@@ -6930,6 +6930,15 @@ def _task_pinned(task_id) -> bool:
         return bool((TASKS.get(task_id) or {}).get('pin_to_seat'))
 
 
+def _principal_of(value) -> str:
+    """A task's principal (§17.6): "owner", or "crew:<agent id>" for a Crew
+    agent's work. Anything else (a goal's "you", text a model wrote) is the owner."""
+    v = str(value or "")
+    if re.fullmatch(r"crew:[A-Za-z0-9_.-]{1,64}", v):
+        return v
+    return "owner"
+
+
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
@@ -7054,31 +7063,27 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     with TASKS_LOCK:
         if task_id in TASKS:
             return task_id
-    # §17.14: a child is no broader than the task that spawns it.
-    _parent_id = parent_task_id
-    if _parent_id is None:
+    # §17.14: a child is no broader than the task that spawns it. A task
+    # spawned while another task runs is that task's child (its lineage, its
+    # stop, its outside-content flag), whether or not the caller said so.
+    _continuation = parent_task_id is not None
+    if parent_task_id is None:
         try:
-            _parent_id = _journal().current_task()
+            parent_task_id = _journal().current_task() or None
         except Exception:
-            _parent_id = None
-    if _parent_id:
+            parent_task_id = None
+    _subagent_budget_from = None
+    if parent_task_id:
         from agent_friday.services import subagents as _sa
-        _ok, _why, _inherit = _sa.nested_spawn_check(_parent_id, scope)
+        _ok, _why, _inherit = _sa.nested_spawn_check(parent_task_id, scope, continuation=_continuation)
         if not _ok:
             raise PermissionError(_why)
+        if _inherit and not scope and not _continuation:
+            # A subagent shares its parent's remaining steps and time.
+            _subagent_budget_from = parent_task_id
         scope = scope or _inherit
     with TASKS_LOCK:
-        _parent_rec = dict(TASKS.get(_parent_id) or {}) if _parent_id else {}
-    if scope:
-        try:
-            from agent_friday.services.subagents import register_scope_for_task
-            register_scope_for_task(task_id, scope)
-        except Exception as e:
-            import logging as _log
-            _log.getLogger(__name__).error(
-                "subagent scope %r could not be applied to task %s — "
-                "refusing to spawn UNSCOPED: %s", scope, task_id, e)
-            raise RuntimeError(f"could not apply required scope {scope!r}: {e}") from e
+        _parent_rec = dict(TASKS.get(parent_task_id) or {}) if parent_task_id else {}
     from agent_friday.services import crew_runtime as _crew_runtime
     _browser_origin = _crew_runtime.HOST_ORIGIN.get() or _crew_runtime.capture_host_origin()
     _browser_scope = None
@@ -7118,8 +7123,9 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # §17.6: whose task, which goal it serves, what it should produce
             # and how that is checked. Inherited from the parent task; never
             # parsed from a description a model wrote.
-            'principal': (principal or _parent_rec.get('principal')
-                          or (("crew:" + str(crew_context.get("agent_id"))) if crew_context else "owner")),
+            # Only "owner" or "crew:<id>": never free text a model shaped.
+            'principal': _principal_of(principal or _parent_rec.get('principal')
+                                       or (("crew:" + str(crew_context.get("agent_id"))) if crew_context else "owner")),
             'goal_ancestry': goal_ancestry or _parent_rec.get('goal_ancestry'),
             'expected_outputs': expected_outputs,
             'verification_plan': verification_plan,
@@ -7168,6 +7174,21 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'trace_id': "tr_" + uuid.uuid4().hex[:16],
             'parent_trace_id': _rtrace.current(),
         }
+    # The scope is registered once the record exists and before the worker
+    # thread starts (never for a duplicate or a refused spawn, which return
+    # above): no window in which the task's first tool call runs unscoped.
+    if scope:
+        try:
+            from agent_friday.services.subagents import register_scope_for_task
+            register_scope_for_task(task_id, scope, budget_from=_subagent_budget_from)
+        except Exception as e:
+            with TASKS_LOCK:
+                TASKS.pop(task_id, None)
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "subagent scope %r could not be applied to task %s — "
+                "refusing to spawn UNSCOPED: %s", scope, task_id, e)
+            raise RuntimeError(f"could not apply required scope {scope!r}: {e}") from e
     # Durable from the first instant (TV2): the created event, the state
     # snapshot and the index row exist before the worker thread starts, so
     # a crash one millisecond later still leaves a record.
@@ -8214,6 +8235,9 @@ def _tool_spawn_task(inp):
                       conversation_id=_CURRENT_CONVERSATION.get())
     except PermissionError as e:
         return json.dumps({'status': 'refused', 'message': "Did not spawn '%s': %s" % (name, e)})
+    if not tid:
+        return json.dumps({'status': 'refused', 'message': "Did not spawn '%s': the task it belongs to "
+                                                            "has been asked to stop." % name})
     return json.dumps({
         'task_id': tid,
         'status': 'running',
