@@ -1285,6 +1285,10 @@ def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
     if not raw:
         return "read_file error: 'path' is required."
+    # Where file tools may reach (services/path_policy, BD-26), judged on the resolved
+    # path here as well as in the sandbox hook, which settings can switch off. Key
+    # material keeps its own refusal (and its signed receipt) first.
+    from agent_friday.services import path_policy as _pp
     try:
         p = Path(raw).expanduser().resolve()
     except Exception as e:
@@ -1293,6 +1297,9 @@ def _tool_read_file(inp):
     from agent_friday.services import credential_paths as _cred
     if _cred.check(p):
         return _cred.refusal(p)
+    p, _why = _pp.judge(raw, "read")
+    if p is None:
+        return _pp.refusal(raw, _why, "read")
     if not p.exists():
         return f"File not found: {p}.{_suggest_near_miss(p)}"
     if not p.is_file():
@@ -1429,8 +1436,12 @@ def _tool_write_file(inp):
         return "write_file error: 'path' is required."
     if mode not in ('write', 'append'):
         mode = 'write'
+    from agent_friday.services import path_policy as _pp
+    _p_ok, _why = _pp.judge(raw, "write")
+    if _p_ok is None:
+        return _pp.refusal(raw, _why, "write")
     try:
-        p = Path(raw).expanduser().resolve()
+        p = _p_ok
         p.parent.mkdir(parents=True, exist_ok=True)
         if mode == 'append':
             with open(p, 'a', encoding='utf-8') as f:

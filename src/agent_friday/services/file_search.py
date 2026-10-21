@@ -61,6 +61,13 @@ def _configured_roots() -> dict:
                 continue
     except Exception:
         pass
+    try:  # folders the owner granted for reading (services/path_policy)
+        from agent_friday.services import path_policy as _pp
+        for g in _pp.grants():
+            if "read" in (g.get("ops") or []):
+                roots[g["id"]] = Path(g["root"])
+    except Exception:
+        pass
     return roots
 
 

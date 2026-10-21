@@ -135,6 +135,44 @@ def cc_kill():
     return jsonify({"killed": True, "message": "Computer control terminated. All permissions revoked."})
 
 
+# ── Folders Friday may use (services/path_policy, BD-26) ─────────────────────
+#
+# A grant widens where the file tools may read or write, so it is a press on
+# Friday's own page on this PC (screen_session AND _is_local_request). Revoking
+# only narrows, so any page request may do it.
+
+@control_bp.route('/api/files/folder-grants', methods=['GET'])
+@login_required
+def folder_grants_list():
+    from agent_friday.services import path_policy as _pp
+    rows = [{k: g.get(k) for k in ("id", "root", "ops", "purpose", "granted_at", "expires_at")}
+            for g in _pp.grants()]
+    return jsonify({"status": "ok", "grants": rows, "max_days": _pp.MAX_GRANT_DAYS})
+
+
+@control_bp.route('/api/files/folder-grants', methods=['POST'])
+@login_required
+def folder_grants_add():
+    from agent_friday.services import path_policy as _pp, screen_click
+    if not (screen_click.screen_session(request) and core._is_local_request()):
+        return jsonify({"status": "refused", "code": "needs_press",
+                        "error": "Allow a folder with the control on Friday's own screen."}), 403
+    data = request.get_json(silent=True) or {}
+    g, why = _pp.add_grant(str(data.get("path") or ""), list(data.get("ops") or []),
+                           days=data.get("days") or _pp.DEFAULT_GRANT_DAYS,
+                           purpose=str(data.get("purpose") or ""))
+    if g is None:
+        return jsonify({"status": "error", "error": why}), 400
+    return jsonify({"status": "ok", "grant": {k: g.get(k) for k in ("id", "root", "ops", "purpose", "expires_at")}})
+
+
+@control_bp.route('/api/files/folder-grants/<grant_id>', methods=['DELETE'])
+@login_required
+def folder_grants_revoke(grant_id):
+    from agent_friday.services import path_policy as _pp
+    return jsonify({"status": "ok", "revoked": _pp.revoke(str(grant_id))})
+
+
 # ── File permissions (WO-17) ────────────────────────────────────────────────
 #
 # Authenticated HTTP endpoints only — there is no grant tool in CLAUDE_TOOLS,
