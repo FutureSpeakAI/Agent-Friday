@@ -34,7 +34,14 @@ _log = logging.getLogger("friday.privacy_map")
 #: Per-store measuring bound: entries visited, then "at least" is said.
 MAX_ENTRIES = 20000
 #: Per-store measuring time bound, seconds.
-MAX_SECONDS = 1.5
+MAX_SECONDS = 1.0
+#: All stores together: one request never walks the disk for longer than this.
+MAX_TOTAL_SECONDS = 4.0
+#: How long a measured size is reused before the disk is walked again.
+SIZE_CACHE_SECONDS = 60.0
+#: The most of a log read for one summary: its newest part. A record that is
+#: never rotated (the egress log) is summarised from its end, never its start.
+MAX_TAIL_BYTES = 64 * 1024 * 1024
 #: A log line longer than this is skipped (it cannot be a real egress row).
 MAX_LINE = 64 * 1024
 #: Most egress rows read for the summary; past that the summary says so.
@@ -49,13 +56,13 @@ DESTINATION_WORDS = {
     "mistral": "Mistral", "groq": "Groq", "deepseek": "DeepSeek", "perplexity": "Perplexity",
     "together": "Together AI", "brave": "Brave Search", "firecrawl": "Firecrawl",
     "duckduckgo": "DuckDuckGo", "elevenlabs": "ElevenLabs", "huggingface": "Hugging Face",
-    "ollama": "Ollama cloud models", "kie": "KIE",
+    "ollama": "Ollama cloud models", "kie": "KIE", "google-gemini": "Google Gemini",
 }
 
 #: Sends that do not pass the egress gate yet, and where each keeps its own record.
 NOT_RECORDED = (
     {"key": "mail", "what": "Email Friday sends for you",
-     "record": "Each send is recorded in sent_mail.jsonl and shown under Mail below."},
+     "record": "Each send is recorded with its recipients and subject in sent_mail.jsonl, and counted under Mail below."},
     {"key": "mcp", "what": "Calls to tool servers you added (MCP)",
      "record": "Not recorded as a send yet. Each call that changes something is an action with its own card."},
     {"key": "connectors", "what": "Calls to connected services' own APIs (for example Calendar or Tasks writes not made through Friday's tools)",
@@ -63,13 +70,16 @@ NOT_RECORDED = (
     {"key": "publishing", "what": "Posts to social and publishing accounts",
      "record": "Each post has an approval card and a publishing record."},
     {"key": "fetches", "what": "Web pages Friday opens to read",
-     "record": "The address goes to that website; the page text is not sent anywhere else."},
+     "record": ("The address, which Friday chose, goes to that website. When a cloud model reads the "
+                "page, the page text goes to that model as part of the conversation, and that send is "
+                "in this list under the model's name.")},
 )
 
 HONEST_LIMIT = (
-    "This map lists what Friday itself keeps and sends. It cannot see copies "
-    "other programs make, what a website or service does with what it receives, "
-    "or files you saved elsewhere yourself.")
+    "This map lists what Friday itself keeps and sends, and counts everything "
+    "else in Friday's folder under one line. It cannot see copies other programs "
+    "make, what a website or service does with what it receives, or files you "
+    "saved elsewhere yourself.")
 
 
 def _home() -> Path:
@@ -160,15 +170,56 @@ _FOREVER = "Kept until you delete it."
 
 # ── encryption, read from the store that decides it ───────────────────────────
 
-def _enc_vault() -> tuple:
+def _vault_on() -> Optional[bool]:
+    """The live lock, read the way Privacy & Data > Vault reads it: derive
+    the key first (it is derived lazily), then read the state it set."""
+    try:
+        from agent_friday.services import agent as _agent
+        _agent._get_vault_key()
+    except Exception:
+        pass
     try:
         from agent_friday import core
-        on = bool((getattr(core, "_VAULT_ENCRYPTION_STATE", {}) or {}).get("enabled"))
+        return bool((getattr(core, "_VAULT_ENCRYPTION_STATE", {}) or {}).get("enabled"))
     except Exception:
+        return None
+
+
+def _enc_vault() -> tuple:
+    on = _vault_on()
+    if on is None:
         return "unknown", "I couldn't tell whether it is encrypted."
     if on:
         return "yes", "Encrypted with your passphrase (AES-256-GCM)."
     return "no", "Readable on this disk: no passphrase is set (Privacy & Data > Vault)."
+
+
+def _enc_wiki() -> tuple:
+    try:
+        from agent_friday.services.wiki_engine import _wiki_encrypted_sections
+        locked = sorted(_wiki_encrypted_sections())
+    except Exception:
+        return "unknown", "I couldn't tell which parts of the wiki are encrypted."
+    if locked and _vault_on():
+        return "partly", ("Readable on this disk, except the sections you chose to lock ("
+                          + ", ".join(locked[:6]) + "), which are encrypted with your passphrase.")
+    return "no", "Readable on this disk (no wiki section is locked)."
+
+
+def _enc_keys() -> tuple:
+    try:
+        from agent_friday.services import keystore
+        wrap = keystore.describe().get("wrap")
+    except Exception:
+        return "unknown", "I couldn't tell how the keys are locked."
+    if wrap == "passphrase":
+        return "yes", "Encrypted, and the key that opens them is locked with your passphrase."
+    if wrap == "dpapi":
+        return "yes", "Encrypted, and the key that opens them is locked with Windows' protection for your account."
+    if wrap is None:
+        return "unknown", "Friday's key store doesn't exist yet; nothing has been stored through it."
+    return "partly", ("Encrypted, but the key that opens them is kept in Friday's folder without a "
+                      "passphrase, so anyone who can read that folder can open them. Never put in an export.")
 
 
 def _enc_tasks() -> tuple:
@@ -177,9 +228,12 @@ def _enc_tasks() -> tuple:
         on = bool(task_journal.settings().get("encrypt_at_rest", True))
     except Exception:
         return "unknown", "I couldn't tell whether it is encrypted."
-    if on:
-        return "yes", "Encrypted on disk with Windows' protection, or your passphrase when one is set."
-    return "no", "Readable on this disk: encryption for task records is switched off."
+    if not on:
+        return "no", "Readable on this disk: encryption for task records is switched off."
+    if _vault_on():
+        return "yes", "Encrypted on disk with your passphrase's key."
+    return "yes", ("Encrypted on disk with Windows' protection for your account (anything running "
+                   "as you on this PC can open it); with a passphrase set, with its key.")
 
 
 def _enc(state: str, words: str):
@@ -237,15 +291,24 @@ def _stores() -> List[dict]:
         {"key": "library", "name": "Your library",
          "holds": "The documents you added and the index Friday searches them with.",
          "paths": ["library"],
-         "enc": _enc("partly", "Its index is encrypted when its key is on this PC; added copies are readable."),
+         "enc": _enc("partly", "Documents on the vault shelf are sealed with your vault key. The search "
+                               "index is encrypted only when this PC has the encrypted database engine and "
+                               "its key; I don't open the library to check from here. Other copies are readable."),
          "ret": lambda: _FOREVER,
          "controls": [_ctl("delete", "Remove or forget a document", "Select a document in the Library to remove it.",
                            nav={"workspace": "library"}), _EXPORT_ALL]},
-        {"key": "vault", "name": "Private records and notes",
-         "holds": "Finance, health, legal and family records, and your wiki.",
-         "paths": ["vault", "wiki"], "enc": _enc_vault, "ret": lambda: _FOREVER,
+        {"key": "vault", "name": "Private records",
+         "holds": "Finance, health, legal and family records.",
+         "paths": ["finance", "health", "vault/legal", "vault/finances", "vault/family"],
+         "enc": _enc_vault, "ret": lambda: _FOREVER,
          "controls": [_ctl("settings", "Vault settings", "Set or change the passphrase that locks it.",
                            nav=dict(_PRIVACY_TAB, section="Vault")), _EXPORT_ALL, _ERASE_ALL]},
+        {"key": "wiki", "name": "Your wiki",
+         "holds": "Notes Friday keeps for you and with you, by section.",
+         "paths": ["wiki"], "enc": _enc_wiki, "ret": lambda: _FOREVER,
+         "controls": [_ctl("settings", "Wiki sections", "Choose which sections stay off the cloud.",
+                           nav=dict(_PRIVACY_TAB, section="Wiki sections kept off the cloud")),
+                      _EXPORT_ALL, _ERASE_ALL]},
         {"key": "meetings", "name": "Meetings",
          "holds": "Recordings and transcripts of meetings you asked Friday to capture.",
          "paths": ["meetings"],
@@ -292,16 +355,18 @@ def _stores() -> List[dict]:
          "controls": [_EXPORT_ALL, _ERASE_ALL]},
         {"key": "receipts", "name": "Receipts and audit logs",
          "holds": "Signed records of approvals, actions, sends and what left this PC.",
-         "paths": ["actions", "decision-bom.jsonl", "governance", "sent_mail.jsonl",
-                   "activity_ledger.jsonl", "vault/egress-log.jsonl"],
+         "paths": ["actions", "decision-bom.jsonl", "governance", "sent_mail.jsonl", "mail_outbox",
+                   "activity_ledger.jsonl", "vault/egress-log.jsonl", "vault/access-log.jsonl",
+                   "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl"],
          "enc": _enc("no", "Readable on this disk; each is signed or chained so a change shows."),
          "ret": lambda: "Kept until you delete them, so the record stays whole. The activity record rotates at about 20 MB.",
          "controls": [_ctl("settings", "Friday's changes", "Every action with its receipt and undo.",
                            nav={"workspace": "system"}), _EXPORT_ALL]},
         {"key": "credentials", "name": "Keys and sign-ins",
          "holds": "Provider keys and account sign-ins Friday uses for you.",
-         "paths": ["security", "providers", "google_accounts", "mcp_oauth", "platforms"],
-         "enc": _enc("yes", "Encrypted with Windows' protection or Friday's key store; never put in an export."),
+         "paths": ["security", "providers", "google_accounts", "mcp_oauth", "platforms",
+                   "credentials.json"],
+         "enc": _enc_keys,
          "ret": lambda: "Kept until you disconnect the account or remove the key.",
          "controls": [_ctl("delete", "Disconnect", "Remove a key or sign out of an account.",
                            nav={"workspace": "settings", "tab": "connections"}), _ERASE_ALL]},
@@ -316,27 +381,47 @@ def _stores() -> List[dict]:
     ]
 
 
-def _measure(root: Path, rel_paths: Iterable[str]) -> dict:
+_REPARSE = 0x400   # FILE_ATTRIBUTE_REPARSE_POINT: a junction or a link on Windows
+
+
+def _is_link(entry_or_path) -> bool:
+    """A symlink, or (on Windows) a junction or other reparse point: never
+    followed, so a measure can't walk out of Friday's folder."""
+    try:
+        if isinstance(entry_or_path, os.DirEntry):
+            if entry_or_path.is_symlink():
+                return True
+            st = entry_or_path.stat(follow_symlinks=False)
+        else:
+            if entry_or_path.is_symlink():
+                return True
+            st = os.lstat(entry_or_path)
+        return bool(getattr(st, "st_file_attributes", 0) & _REPARSE)
+    except OSError:
+        return True
+
+
+def _measure(root: Path, rel_paths: Iterable[str], deadline: float) -> dict:
     """Bytes and files under each path, bounded in entries and time. Never
-    follows a link out of Friday's folder."""
+    follows a link or junction out of Friday's folder."""
     total, files, complete, present = 0, 0, True, False
-    deadline = time.monotonic() + MAX_SECONDS
+    deadline = min(deadline, time.monotonic() + MAX_SECONDS)
     seen = 0
     for rel in rel_paths:
         p = root / rel
         try:
-            if p.is_symlink():
+            if not os.path.lexists(p) or _is_link(p):
                 continue
             if p.is_file():
                 present = True
-                total += p.stat().st_size
+                total += os.lstat(p).st_size
                 files += 1
                 continue
             if not p.is_dir():
                 continue
             present = True
             stack = [p]
-            while stack:
+            while stack and complete:
                 d = stack.pop()
                 try:
                     with os.scandir(d) as it:
@@ -346,7 +431,7 @@ def _measure(root: Path, rel_paths: Iterable[str]) -> dict:
                                 complete = False
                                 break
                             try:
-                                if e.is_symlink():
+                                if _is_link(e):
                                     continue
                                 if e.is_dir(follow_symlinks=False):
                                     stack.append(Path(e.path))
@@ -357,8 +442,6 @@ def _measure(root: Path, rel_paths: Iterable[str]) -> dict:
                                 continue
                 except OSError:
                     continue
-                if not complete:
-                    break
         except OSError:
             continue
         if not complete:
@@ -366,7 +449,24 @@ def _measure(root: Path, rel_paths: Iterable[str]) -> dict:
     return {"bytes": total, "files": files, "complete": complete, "present": present}
 
 
+_SIZE_CACHE: Dict[tuple, tuple] = {}
+
+
+def _measured(root: Path, key: str, rel_paths: List[str], deadline: float) -> dict:
+    ck = (str(root), key, tuple(rel_paths))
+    hit = _SIZE_CACHE.get(ck)
+    if hit and time.monotonic() - hit[0] < SIZE_CACHE_SECONDS:
+        return hit[1]
+    if time.monotonic() > deadline:
+        return {"bytes": 0, "files": 0, "complete": False, "present": True, "skipped": True}
+    m = _measure(root, rel_paths, deadline)
+    _SIZE_CACHE[ck] = (time.monotonic(), m)
+    return m
+
+
 def _size_words(m: dict) -> str:
+    if m.get("skipped"):
+        return "Not measured this time (the page stops measuring after a few seconds)."
     if not m["present"]:
         return "Nothing stored yet."
     b = m["bytes"]
@@ -380,10 +480,31 @@ def _size_words(m: dict) -> str:
     return ("At least " + words + ".") if not m["complete"] else (words + ".")
 
 
+def _everything_else(home: Path, listed: List[str]) -> dict:
+    """Top-level entries of Friday's folder that no line above covers."""
+    covered = {Path(p).parts[0].lower() for p in listed if Path(p).parts}
+    rest = []
+    try:
+        for e in sorted(os.scandir(home), key=lambda e: e.name.lower()):
+            if e.name.lower() not in covered:
+                rest.append(e.name)
+    except OSError:
+        pass
+    return {"key": "everything_else", "name": "Everything else in Friday's folder",
+            "holds": ("Other things Friday keeps that have no line of their own yet"
+                      + (": " + ", ".join(rest[:12]) + ("…" if len(rest) > 12 else "") if rest else "")
+                      + ". Some of them can hold parts of what you asked or did."),
+            "paths": rest[:200], "enc": _enc("unknown", "I haven't checked these one by one; treat them as readable."),
+            "ret": lambda: _FOREVER, "controls": [_EXPORT_ALL, _ERASE_ALL]}
+
+
 def stores() -> List[dict]:
     home = _home()
     out = []
-    for s in _stores():
+    deadline = time.monotonic() + MAX_TOTAL_SECONDS
+    registry = _stores()
+    registry.append(_everything_else(home, [p for s in registry for p in s["paths"]]))
+    for s in registry:
         try:
             state, enc_words = s["enc"]()
         except Exception:
@@ -392,9 +513,9 @@ def stores() -> List[dict]:
             ret = s["ret"]()
         except Exception:
             ret = "I couldn't tell how long it is kept."
-        m = _measure(home, s["paths"])
+        m = _measured(home, s["key"], list(s["paths"]), deadline)
         out.append({"key": s["key"], "name": s["name"], "holds": s["holds"],
-                    "where": [str(Path(p)) for p in s["paths"]],
+                    "where": [str(Path(p)) for p in s["paths"]] or ["(nothing else)"],
                     "encrypted": state, "encrypted_words": enc_words,
                     "retention_words": ret, "size_words": _size_words(m),
                     "bytes": m["bytes"], "files": m["files"], "present": m["present"],
@@ -409,18 +530,37 @@ def _egress_log() -> Path:
     return Path(egress_gate._DEFAULT_LOG)
 
 
-def _rows(path: Path) -> Iterable[dict]:
-    """Every well-formed row of a JSONL log, oldest first, bounded."""
+def _rows(path: Path, *, tail: bool = False, info: Optional[dict] = None) -> Iterable[dict]:
+    """Well-formed rows of a JSONL log, oldest first. With `tail`, only the
+    newest MAX_TAIL_BYTES are read (the start of a long log is what is left
+    out, never its end); `info["complete"]` says whether the whole file was
+    read. Lines over MAX_LINE are skipped without being held in memory."""
+    if info is not None:
+        info["complete"] = True
     if not path.exists():
         return
-    n = 0
     with open(path, "rb") as fh:
-        for raw in fh:
-            n += 1
-            if n > MAX_ROWS:
+        if tail:
+            size = os.fstat(fh.fileno()).st_size
+            if size > MAX_TAIL_BYTES:
+                fh.seek(size - MAX_TAIL_BYTES)
+                fh.readline(MAX_LINE + 1)          # drop the partial first line
+                if info is not None:
+                    info["complete"] = False
+        n = 0
+        while True:
+            raw = fh.readline(MAX_LINE + 1)
+            if not raw:
                 return
             if len(raw) > MAX_LINE:
+                while raw and not raw.endswith(b"\n"):
+                    raw = fh.readline(MAX_LINE + 1)  # skip the rest of an oversized line
                 continue
+            n += 1
+            if n > MAX_ROWS:
+                if info is not None:
+                    info["complete"] = False
+                return
             try:
                 row = json.loads(raw.decode("utf-8", errors="replace"))
             except ValueError:
@@ -447,16 +587,22 @@ def left() -> dict:
     path = _egress_log()
     by: Dict[str, dict] = {}
     total = 0
+    info: Dict[str, Any] = {}
     try:
-        for row in _rows(path):
+        for row in _rows(path, tail=True, info=info):
             total += 1
             provider = str(row.get("provider") or "")[:80]
             d = by.setdefault(provider, {"to": provider, "label": destination_words(provider),
                                          "sent": 0, "sent_with_parts_withheld": 0, "stopped": 0,
                                          "files_or_images": 0, "background": 0, "off_record": 0,
+                                         "unrestricted_calls": 0,
                                          "first": None, "last": None, "fields": {}})
             action = row.get("action")
-            if action == "allow":
+            if row.get("field") == "*":
+                # One summary row per call under "Cloud for everything" (A14):
+                # a call, not an item of text, so it is counted on its own.
+                d["unrestricted_calls"] += 1
+            elif action == "allow":
                 d["sent"] += 1
             elif action == "redact":
                 d["sent"] += 1
@@ -465,7 +611,7 @@ def left() -> dict:
                 d["stopped"] += 1
             if row.get("tier") == "UNCLASSIFIABLE":
                 d["files_or_images"] += 1
-            if not row.get("turn_id"):
+            if not row.get("turn_id") and row.get("tier") != "UNCLASSIFIABLE":
                 d["background"] += 1
             if row.get("reason") == "off the record":
                 d["off_record"] += 1
@@ -486,7 +632,7 @@ def left() -> dict:
         dests.append(d)
     return {"destinations": dests, "rows": total, "readable": readable,
             "log": "vault/egress-log.jsonl",
-            "complete": total < MAX_ROWS,
+            "complete": bool(info.get("complete", True)),
             "not_recorded": list(NOT_RECORDED)}
 
 
@@ -500,8 +646,8 @@ def left_rows(to: str, limit: int = 200) -> dict:
     receipts behind one line of the map."""
     limit = max(1, min(int(limit or 200), MAX_RECEIPTS))
     keep: deque = deque(maxlen=limit)
-    for row in _rows(_egress_log()):
-        if str(row.get("provider") or "") == to:
+    for row in _rows(_egress_log(), tail=True):
+        if str(row.get("provider") or "")[:80] == to:
             keep.append({k: row.get(k) for k in ("ts", "provider", "field", "tier", "action",
                                                  "reason", "turn_id", "bytes") if k in row})
     rows = list(reversed(keep))
@@ -589,26 +735,40 @@ def services() -> dict:
             "nav": {"workspace": "settings", "tab": "connections"}}
 
 
+#: Tiers that mean private data (privacy/vault_access writes the tier name).
+_PRIVATE_TIERS = ("TIER_2", "TIER_3", "TIER_4")
+
+
 def vault_access(now: Optional[float] = None) -> dict:
+    """How often, in the last 7 days, something asked to use private data and
+    what the checks decided: allowed and refused, from the access log and
+    its one rotated file."""
     now = now or time.time()
-    path = _home() / "vault" / "access-log.jsonl"
-    week = 0
+    base = _home() / "vault"
+    allowed = refused = 0
     last = None
-    for row in _rows(path):
-        ts = _ts(row)
-        if ts is None:
-            continue
-        last = ts if last is None else max(last, ts)
-        if ts >= now - 7 * 86400:
-            week += 1
-    return {"last_7_days": week, "last": last, "record": "vault/access-log.jsonl"}
+    for path in (base / "access-log.1.jsonl", base / "access-log.jsonl"):
+        for row in _rows(path, tail=True):
+            ts = _ts(row)
+            if ts is None or ts < now - 7 * 86400:
+                continue
+            if str(row.get("tier") or "") not in _PRIVATE_TIERS:
+                continue
+            if row.get("allowed"):
+                allowed += 1
+                last = ts if last is None else max(last, ts)
+            else:
+                refused += 1
+    return {"allowed_7_days": allowed, "refused_7_days": refused, "last_allowed": last,
+            "record": "vault/access-log.jsonl"}
 
 
 OFF_RECORD_WORDS = (
-    "Off the record, Friday saves nothing about the conversation. Services you "
-    "connected (mail, calendar, publishing) can still keep their own records of "
-    "anything they are asked to do, and Friday keeps the minimum receipt for "
-    "each outward action.")
+    "Off the record, Friday saves nothing about the conversation itself. It still "
+    "keeps the minimum receipt of each outward action and each send to the cloud, "
+    "and services you connected (mail, "
+    "calendar, publishing) can still keep their own records of anything they are "
+    "asked to do.")
 
 
 def off_record() -> dict:
@@ -634,14 +794,13 @@ def view(now: Optional[float] = None) -> dict:
 
     return {
         "generated_at": now,
-        "folder": str(_home()),
         "stores": safe(stores, []),
         "left": safe(left, {"destinations": [], "rows": 0, "readable": False,
                             "not_recorded": list(NOT_RECORDED)}),
         "mail": safe(mail, {"sent": 0, "failed": 0, "recipients": []}),
         "grants": safe(grants, {"actions": None, "files": None}),
         "services": safe(services, {"readable": False, "connected": [], "remote": []}),
-        "vault_access": safe(lambda: vault_access(now), {"last_7_days": None, "last": None}),
+        "vault_access": safe(lambda: vault_access(now), {"allowed_7_days": None, "refused_7_days": None}),
         "off_record": safe(off_record, {"on": None, "words": OFF_RECORD_WORDS}),
         "export": _EXPORT_ALL, "erase": _ERASE_ALL,
         "honest_limit": HONEST_LIMIT,
