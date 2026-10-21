@@ -51,7 +51,7 @@ def test_a_new_install_has_no_route_picked(real_settings):
     core._load_settings_raw()                       # the first read seeds settings.json
     assert core.SETTINGS_FILE.exists()
     assert _pending(core) is True
-    # How Friday routes meanwhile is unchanged (the factory mode, unchosen).
+    # Meanwhile Friday is local-only (A16a, tests/unit/test_unpicked_route_is_local_only.py).
     assert cloud_intent.mode_was_chosen() is False
 
 
@@ -77,8 +77,11 @@ def test_a_route_the_terminal_setup_kept_without_asking_is_not_a_pick(real_setti
     assert _pending(core, s) is True
     s["model_routing"]["mode_chosen_via"] = "setup"
     assert _pending(core, s) is False
-    # A real owner click whose request could not be proven on-screen is still a pick.
+    # A16a: a routing change that could not be tied to the owner's own screen
+    # is recorded but is not a pick, so Friday stays local-only.
     s["model_routing"]["mode_chosen_via"] = "unverified"
+    assert _pending(core, s) is True
+    s["model_routing"]["mode_chosen_via"] = "consent_screen"
     assert _pending(core, s) is False
 
 
