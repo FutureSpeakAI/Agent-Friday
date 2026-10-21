@@ -381,13 +381,31 @@ def apply_never_send(items: list) -> list:
 
 # ── money ────────────────────────────────────────────────────────────────────
 
-MONEY_CHOICES = (("none", "No cap"), ("5", "$5 a month"), ("10", "$10 a month"),
-                 ("25", "$25 a month"))
-MONEY_RECOMMENDED = "10"
+# North-star A17: a daily cap on paid cloud spend is already ON when setup
+# starts (spending_caps.DAILY_CAP_DEFAULT_USD). The money step shows it in
+# plain words and lets the person keep it, pick another figure, or have none.
+#: The other daily figures offered beside "keep".
+MONEY_CHOICES = (("1", "$1 a day"), ("5", "$5 a day"), ("10", "$10 a day"),
+                 ("none", "No daily cap"))
+MONEY_KEEP = "keep"
+#: The recommendation is a label on the chip, never a pre-selection.
+MONEY_RECOMMENDED = MONEY_KEEP
+
+
+def current_daily_cap() -> float | None:
+    from agent_friday.services import spending_caps
+    return spending_caps.daily_cap(_settings())
+
+
+def money_choices() -> tuple:
+    """The chips for the money step: keep what is set now, or another figure."""
+    cap = current_daily_cap()
+    keep = ("Keep $%.2f a day" % cap) if cap is not None else "Keep no daily cap"
+    return ((MONEY_KEEP, keep),) + MONEY_CHOICES
 
 
 def parse_amount(text: str) -> float | None:
-    """A monthly figure from "$12", "12 dollars", "twelve" is not attempted."""
+    """A daily figure from "$3", "3 dollars", "$2.50 a day"; words are not read."""
     m = re.search(r"(\d{1,5}(?:\.\d{1,2})?)", str(text or ""))
     if not m:
         return None
@@ -395,10 +413,25 @@ def parse_amount(text: str) -> float | None:
     return v if 0 < v <= 10000 else None
 
 
+def apply_daily_cap(amount: float | None) -> None:
+    """A figure sets the daily cap on paid cloud spend and keeps it on; None
+    switches it off. Either way the cap counts as answered (the keys the
+    spending-caps registry and services/spend_guard read)."""
+    from datetime import datetime, timezone
+    if amount:
+        _save_block("cost_budget", {"hard_stop_daily": float(amount),
+                                    "hard_stop_daily_enabled": True})
+    else:
+        _save_block("cost_budget", {"hard_stop_daily_enabled": False})
+    _save_block("spending_caps", {
+        "asked": True,
+        "answered": {"cloud_daily_stop": datetime.now(timezone.utc).isoformat(timespec="seconds")}})
+
+
 def apply_monthly_cap(amount: float | None) -> None:
-    """A figure turns the monthly hard stop on at that amount; None leaves it
-    off. Either way the cap counts as asked (the same keys the spending-caps
-    registry reads)."""
+    """A figure turns the monthly cap on at that amount; None leaves it off.
+    Either way the cap counts as asked (Settings > Spending sets it now; the
+    setup conversation asks about the daily cap, A17)."""
     from datetime import datetime, timezone
     if amount:
         _save_block("cost_budget", {"hard_stop_monthly": float(amount),

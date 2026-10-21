@@ -264,6 +264,10 @@ _ALL = [
        NEEDS_YOU, "cloud-voice-scope", source="local-voice"),
     _e("LV9", "services/local_voice_readiness.py:_revert_call_scope", "cloud_voice_call_ended",
        UPDATES, "cloud-voice-call-ended", source="local-voice"),
+    # North-star A17: once, on an install from before the daily spending cap shipped on, the
+    # card that explains the new cap and takes the owner to set it (or keep no cap).
+    _e("SC1", "services/spending_caps.py:push_daily_cap_card_if_pending", "spend_cap_intro",
+       NEEDS_YOU, "spend-cap-intro", source="spending-caps"),
     # Laya's personal learning (services/laya_personal.notify): the one-time "Laya learns from your
     # corrections" notice, and the confirmations of forget / reset / go back / wipe. Never carries the
     # owner's words.

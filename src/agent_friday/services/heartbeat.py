@@ -432,7 +432,7 @@ def run(rec) -> dict:
         t = _budget_tripped()
         if t:
             raise _held("budget_cap",
-                        f"your {t['period']} hard spending cap is reached "
+                        f"your {t['period']} spending cap is reached "
                         f"(${t['spend']:.2f} of ${t['limit']:.2f}), so the "
                         f"heartbeat did not call {model}")
     to_cloud = where == "cloud"

@@ -1,10 +1,18 @@
 """Every spending cap Friday has, in one place, ready for the first-run setup
 conversation to ask about.
 
-The owner's decision: spending caps do NOT ship on. They become part of the
-first-run setup conversation (a separate spec builds that conversation; this
-module only gets the caps ready to be asked). So every cap below ships OFF,
-and None (or 0) means "no cap" everywhere its reader reads it.
+The owner's ruling (north-star amendment A17, 2026-10-21): ONE cap ships on,
+the daily cap on everything sent to paid cloud services, at a modest
+DAILY_CAP_DEFAULT_USD a day. The person can change it at setup and in
+Settings > Spending, and it is always shown in plain words (plain_words()).
+Work that reaches it pauses with a card (services/spend_guard). Every other
+cap below ships OFF, and None (or 0) means "no cap" everywhere its reader
+reads it.
+
+An install from before A17 keeps the caps it had: migrate_daily_cap() makes
+its daily cap explicitly what it already was and queues one card
+(push_daily_cap_card_if_pending) that explains the new cap and takes the
+person to set it.
 
 CAPS is the registry. Each entry says what the cap limits, in plain words,
 the figure the setup conversation suggests, and how to read and write it
@@ -27,6 +35,9 @@ from typing import Any, Callable, Dict, List, Optional
 log = logging.getLogger("friday.spending_caps")
 
 NO_CAP_LABEL = "No cap (ask me during setup)"
+
+#: The daily cap a new install starts with (A17): modest, on, the person's to change.
+DAILY_CAP_DEFAULT_USD = 2.00
 
 
 def _num(v) -> Optional[float]:
@@ -105,10 +116,11 @@ CAPS: List[Dict[str, Any]] = [
         "label": "Daily cloud spending stop",
         "unit": "USD/day",
         "scope": "everything sent to cloud models in a day",
-        "suggested": 5.00,
-        "question": ("Do you want a hard daily ceiling on what {name} spends on cloud "
-                     "models? When it is reached, cloud work stops until you raise it; "
-                     "models on this computer keep working. Suggested {suggested} a day."),
+        "suggested": DAILY_CAP_DEFAULT_USD,
+        "question": ("{name} stops spending on cloud AI after {suggested} a day, unless you "
+                     "change it. Work that reaches it pauses and asks you; models on this "
+                     "computer keep working. Keep {suggested}, pick another amount, or no "
+                     "daily cap?"),
         "reader": "services/spend_guard.py:check",
         "get": _get_stop("daily"),
         "set": _set_stop("daily"),
@@ -119,8 +131,8 @@ CAPS: List[Dict[str, Any]] = [
         "unit": "USD/month",
         "scope": "everything sent to cloud models in a month",
         "suggested": 50.00,
-        "question": ("And a monthly ceiling on cloud spending, with the same hard stop? "
-                     "Suggested {suggested} a month."),
+        "question": ("Do you also want a monthly limit on cloud spending? Work that "
+                     "reaches it pauses the same way. Suggested {suggested} a month."),
         "reader": "services/spend_guard.py:check",
         "get": _get_stop("monthly"),
         "set": _set_stop("monthly"),
@@ -297,6 +309,115 @@ def migrate_settings(settings: dict) -> Optional[Dict[str, Any]]:
                  v, "yes" if "daily_creation" in answered else "no")
     settings["spending_caps"] = dict(blk, **{MIGRATION_STAMP: stamp})
     return delta
+
+
+# ── A17: the daily cap in plain words, the migration, the one-time card ─────
+
+def daily_cap(settings: Optional[dict] = None) -> Optional[float]:
+    """The daily cap on paid cloud spend in dollars, or None for no daily cap."""
+    s = _settings() if settings is None else settings
+    return _BY_KEY["cloud_daily_stop"]["get"](s)
+
+
+def plain_words(settings: Optional[dict] = None) -> str:
+    """The daily cap as one sentence a person understands (A17)."""
+    s = _settings() if settings is None else settings
+    name = _her_name(s)
+    cap = daily_cap(s)
+    if cap is None:
+        return ("There is no daily cap: %s can spend on cloud AI without a daily limit. "
+                "You can set one here." % name)
+    return ("%s stops spending on cloud AI after $%.2f a day. Work that reaches it pauses "
+            "and asks you. Models on this computer are never capped." % (name, cap))
+
+
+#: Stamped into settings.spending_caps once migrate_daily_cap() has run, or
+#: into a new install's first settings (NEW_INSTALL), which starts with the cap on.
+DAILY_CAP_STAMP = "daily_cap_on_migrated"
+NEW_INSTALL = "new_install"
+#: settings.spending_caps.daily_cap_card: "pending" (to show once), "shown".
+CARD_KEY = "daily_cap_card"
+
+
+def stamp_new_install(seed: dict) -> None:
+    """A new install's first settings: the daily cap is on (the defaults carry
+    it) and the migration for older installs never runs."""
+    blk = _block(seed, "spending_caps")
+    seed["spending_caps"] = dict(blk, **{DAILY_CAP_STAMP: NEW_INSTALL})
+
+
+def migrate_daily_cap(settings: dict, stored: Optional[dict]) -> Optional[Dict[str, Any]]:
+    """An install from before A17 keeps the daily cap it had, once.
+
+    `settings` is the merged settings dict (updated in place); `stored` is the
+    file as read. Before A17 a daily cap that was never set read as off, so a
+    stored cost_budget without `hard_stop_daily_enabled` (or no cost_budget at
+    all) is written down as explicitly off: the new default must not switch it
+    on behind anyone's back. When the daily cap ends up off and the person
+    never answered it, the one-time card is queued. Returns the delta to
+    persist, or None when the migration has already run.
+    """
+    blk = _block(settings, "spending_caps")
+    if blk.get(DAILY_CAP_STAMP):
+        return None
+    stamp = _migration_stamp()
+    delta: Dict[str, Any] = {"spending_caps": {DAILY_CAP_STAMP: stamp}}
+    stored_cb = (stored or {}).get("cost_budget")
+    if not isinstance(stored_cb, dict) or "hard_stop_daily_enabled" not in stored_cb:
+        cb = dict(_block(settings, "cost_budget"), hard_stop_daily_enabled=False)
+        settings["cost_budget"] = cb
+        delta["cost_budget"] = {"hard_stop_daily_enabled": False}
+    answered = blk.get("answered") if isinstance(blk.get("answered"), dict) else {}
+    card = blk.get(CARD_KEY)
+    if not card:
+        card = "pending" if (daily_cap(settings) is None
+                             and "cloud_daily_stop" not in answered) else "not_needed"
+        delta["spending_caps"][CARD_KEY] = card
+    settings["spending_caps"] = dict(blk, **{DAILY_CAP_STAMP: stamp, CARD_KEY: card})
+    log.info("spending caps: this install is from before the daily cap shipped on; it "
+             "keeps its daily cap as it was (%s) and %s. One-time migration "
+             "(settings.spending_caps.%s).",
+             format_figure(_BY_KEY["cloud_daily_stop"], daily_cap(settings)),
+             "will show one card about it" if card == "pending" else "needs no card",
+             DAILY_CAP_STAMP)
+    return delta
+
+
+CARD_TITLE = "New: a daily spending cap"
+
+
+def card_body(settings: Optional[dict] = None) -> str:
+    s = _settings() if settings is None else settings
+    name = _her_name(s)
+    return ("%s can now stop spending on cloud AI after an amount you choose each day. "
+            "New installs start at $%.2f a day. Yours has no daily cap, so nothing has "
+            "changed: set one, or keep no cap, in Settings > Spending. Work that reaches "
+            "a cap pauses and asks you; models on this computer are never capped."
+            % (name, DAILY_CAP_DEFAULT_USD))
+
+
+CARD_ACTIONS = [{"label": "Set my daily cap", "workspace": "settings", "tab": "costs"}]
+
+
+def push_daily_cap_card_if_pending() -> bool:
+    """Show the one-time card to an install from before A17, once. Returns
+    True when it was pushed. The card is marked shown before it is pushed, so
+    a crash between the two never shows it twice."""
+    s = _settings()
+    if _block(s, "spending_caps").get(CARD_KEY) != "pending":
+        return False
+    from agent_friday.core import _save_settings
+    _save_settings({"spending_caps": {CARD_KEY: "shown"}})
+    try:
+        import agent_friday.notifications_engine as _ne
+        _ne.push(title=CARD_TITLE, body=card_body(s), priority="high",
+                 source="spending-caps", kind="spend_cap_intro", emitter="SC1",
+                 dedupe_key="spend-cap-intro", actions=list(CARD_ACTIONS),
+                 target={"workspace": "settings", "tab": "costs"})
+    except Exception as e:
+        log.warning("the daily cap card could not be shown: %s", e)
+        return False
+    return True
 
 
 def mark_asked() -> None:

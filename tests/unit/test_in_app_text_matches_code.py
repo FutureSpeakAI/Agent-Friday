@@ -104,7 +104,7 @@ def test_the_brave_key_named_to_the_model_is_one_the_search_reads():
 def test_the_promise_about_asking_carves_out_pre_approvals_and_spend():
     from agent_friday.services import setup_chat_copy as copy
     assert "I ask before I send or delete anything, unless you've pre-approved it." in copy.CONTRACT
-    assert "monthly ceiling" in copy.CONTRACT
+    assert "a daily spending cap is on from the start" in copy.CONTRACT   # north-star A17
     assert any("pre-approve" in line for line in copy.MEMORY_ALWAYS_ASK)
 
 

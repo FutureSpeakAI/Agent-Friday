@@ -898,7 +898,7 @@ CLAUDE_TOOLS = [
          "query": {"type": "string", "description": "The user's words for the thing."},
          "id": {"type": "string", "description": "An exact id: Gmail thread id, file path, wiki path, graph node id, YYYY-MM-DD, meeting or post id."},
          "workspace": {"type": "string", "description": "For kind=workspace: which workspace."},
-         "section": {"type": "string", "description": "A tab or section by name or id, e.g. 'feed', 'Models', 'Hard stop'."}},
+         "section": {"type": "string", "description": "A tab or section by name or id, e.g. 'feed', 'Models', 'Spending caps'."}},
          "required": ["kind"]}},
     {"name": "queue_status", "description": "Read the Local AI queue: background work on the local model, what waits and why. Read-only.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -5237,6 +5237,10 @@ _FOLLOW_UP_LOCK = threading.Lock()
 # Every mutation below is written to disk before it returns, so a restart can
 # rebuild this dict and mark whatever was running as interrupted instead of
 # forgetting it. Journal writes never raise into the worker (TV12).
+#: How a task's result says the owner's spending cap paused it (north-star A17).
+SPEND_CAP_PAUSE_MARK = '[Paused by your spending cap]'
+
+
 def _is_terminal_status(status):
     from agent_friday.services.task_journal import is_terminal
     return is_terminal(status)
@@ -6320,16 +6324,17 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
             _task_log(task_id, f'Chain advance error: {ce}')
     except Exception as e:
         traceback.print_exc()
-        # The hard spending cap (services/spend_guard) halts a task at its
-        # next cloud call. Say so in the task's own result, not as a generic
-        # error: the steps that ran are in the task log, files written stay
-        # written, and the task can be re-run once the cap is lifted.
+        # The owner's spending cap (services/spend_guard) pauses a task at its
+        # next paid cloud call. Say so in the task's own result, in plain words
+        # (north-star A17), not as a generic error: the steps that ran are in
+        # the task log, files written stay written, and the task can be asked
+        # for again once the cap allows.
         if type(e).__name__ == 'SpendCapReached':
             _task_set(task_id, status='failed',
-                      result=f'[Halted by hard spending cap] {e}', ended=_time.time())
-            _task_log(task_id, f'HALTED by hard spending cap: {e}')
+                      result=f'{SPEND_CAP_PAUSE_MARK} {e}', ended=_time.time())
+            _task_log(task_id, f'PAUSED by the spending cap: {e}')
             _report_task_completion(task_id, name, 'failed',
-                                    f'[Halted by hard spending cap] {e}')
+                                    f'{SPEND_CAP_PAUSE_MARK} {e}')
             return
         _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
         _task_log(task_id, f'Error: {e}')
@@ -6738,7 +6743,7 @@ def _report_workflow_completion(task_id, name, status, result_text):
         if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout'):
             _task_set(task_id, delivery={'status': 'deferred', 'reason': 'Next workflow step owns delivery.'})
             return
-        if status in ('failed', 'error') and index < len(steps) and not str(result_text).startswith('[Halted by hard spending cap]'):
+        if status in ('failed', 'error') and index < len(steps) and not str(result_text).startswith(SPEND_CAP_PAUSE_MARK):
             if int(rec.get('chain_retry') or 0) < int(steps[index].get('retries', 1)):
                 return
         if (rec.get('delivery') or {}).get('status') in ('delivered', 'suppressed'):

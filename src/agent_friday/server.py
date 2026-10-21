@@ -528,6 +528,16 @@ if not _TESTING:
     except Exception as _frm_err:
         print(f"  First-run models: unavailable ({_frm_err})")
 
+    # North-star A17: an install from before the daily spending cap shipped on
+    # kept its own cap; it gets one card explaining the new cap, once, with a
+    # press to set it (services/spending_caps).
+    try:
+        from agent_friday.services import spending_caps as _sc
+        threading.Thread(target=_sc.push_daily_cap_card_if_pending, daemon=True,
+                         name="daily-cap-card").start()
+    except Exception as _sc_err:
+        print(f"  Daily spending cap card: unavailable ({_sc_err})")
+
     threading.Thread(target=_start_kill_hotkey, daemon=True).start()
     # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central is
     # disabled for general release; re-enable once there are 50+ skills.

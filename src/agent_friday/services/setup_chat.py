@@ -227,7 +227,10 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
         _say(transcript, copy.RESEARCH_REVIEW, stage)
     elif stage == "money":
         usd = steps.money_estimate()
+        cap = steps.current_daily_cap()
         _say(transcript, copy.MONEY_ASK.format(
+            now=(copy.MONEY_NOW.format(name=agent, usd=cap) if cap is not None
+                 else copy.MONEY_NOW_NONE.format(name=agent)),
             estimate=copy.MONEY_ESTIMATE.format(usd=usd) if usd else ""), stage)
     elif stage == "scheduled_cloud":
         _say(transcript, _scheduled_cloud_question(), stage)
@@ -346,7 +349,7 @@ def _prompt(st: dict) -> dict:
         p.update(card="research_review", chips=_chips((("done", "Done reviewing"),)))
     elif stage == "money":
         p.update(input="text", placeholder=copy.MONEY_OTHER_HINT,
-                 chips=_rec_chips(steps.MONEY_CHOICES, steps.MONEY_RECOMMENDED)
+                 chips=_rec_chips(steps.money_choices(), steps.MONEY_RECOMMENDED)
                  + _chips((skip,)))
     elif stage == "scheduled_cloud":
         p.update(chips=_rec_chips(copy.SCHEDULED_CLOUD_CHIPS, steps.recommended_for(stage)))
@@ -466,8 +469,7 @@ def receipt(st: dict | None = None) -> list:
         ("Never-send list", "%d of your own, plus the built-in protections"
          % int(st.get("never_send_added") or 0), how("never_send")),
         ("The lock", *_lock_row(acks)),
-        ("Monthly ceiling", {"none": "no cap", "skipped": "no cap", "": "not asked"}
-         .get(st.get("money") or "", "$%s a month" % (st.get("money") or "")), how("money")),
+        ("Daily spending cap", _money_row(st), how("money")),
         ("Routines", ", ".join(st.get("routines_on") or []) or "none scheduled", how("routines")),
         ("Spoken approvals in a room", (by.get("room_voice") or {}).get("decision") or "",
          how("room_voice")),
@@ -1268,30 +1270,45 @@ def _on_scheduled_cloud(st, transcript, value, text):
     _enter(st, transcript, "routines")
 
 
+def _money_row(st: dict) -> str:
+    """The receipt's line for the daily cap (A17): what is set now."""
+    if not st.get("money"):
+        return "not asked"
+    cap = steps.current_daily_cap()
+    return ("$%.2f a day" % cap) if cap is not None else "no daily cap"
+
+
 def _on_money(st, transcript, value, text):
+    """The daily cap on paid cloud spend (north-star A17). It is already on
+    when this is asked; skipping keeps it as it is."""
     text = _guard_text(text)
     if value == "skip" or _is_skip(text):
         _heard(transcript, copy.SKIP, "money")
-        _say(transcript, copy.MONEY_SKIPPED, "money")
+        cap = steps.current_daily_cap()
+        _say(transcript, copy.MONEY_SKIPPED.format(usd=cap) if cap is not None
+             else copy.MONEY_SKIPPED_NONE, "money")
         st["money"] = "skipped"
-        record.append("money", "no cap", "default")
+        record.append("money", ("daily cap $%.2f" % cap) if cap is not None else "no daily cap",
+                      "default")
         _enter(st, transcript, "scheduled_cloud")
         return
     v = str(value) if value is not None else ""
     low = text.lower().strip()
-    if v == "none" or low in ("none", "no", "no cap", "no limit", "nothing"):
+    if v == "none" or low in ("none", "no", "no cap", "no limit", "nothing", "no daily cap"):
         amount = None
+    elif v == steps.MONEY_KEEP or low in ("keep", "keep it"):
+        amount = steps.current_daily_cap()
     elif v in dict(steps.MONEY_CHOICES):
         amount = float(v)
     else:
         amount = steps.parse_amount(text)
         if amount is None:
-            _refuse_choice([lbl for _v, lbl in steps.MONEY_CHOICES] + [copy.MONEY_OTHER_HINT])
-    steps.apply_monthly_cap(amount)
+            _refuse_choice([lbl for _v, lbl in steps.money_choices()] + [copy.MONEY_OTHER_HINT])
+    steps.apply_daily_cap(amount)
     st["money"] = ("%.2f" % amount) if amount else "none"
-    _heard(transcript, ("$%.2f a month" % amount) if amount else "No cap", "money")
+    _heard(transcript, ("$%.2f a day" % amount) if amount else "No daily cap", "money")
     _say(transcript, copy.MONEY_SET.format(usd=amount) if amount else copy.MONEY_NONE, "money")
-    record.append("money", "monthly cap" if amount else "no cap", _how(st),
+    record.append("money", "daily cap" if amount else "no daily cap", _how(st),
                   amount_usd=round(amount, 2) if amount else 0)
     _enter(st, transcript, "scheduled_cloud")
 

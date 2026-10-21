@@ -84,6 +84,11 @@ class TestOffRecordCopyIsPersistentNotSession:
             # the settings-write path itself (save/POST handlers, which
             # legitimately flip it in response to the user's own click).
             for line in text.splitlines():
+                # A ContextVar declared with default=False is a per-request
+                # flag (the pilot's privacy context), not the setting being
+                # reset; it is not a session boundary (north-star A15).
+                if "ContextVar(" in line:
+                    continue
                 if "off_record" in line and (
                         "= False" in line or "=False" in line) and \
                         "save(" not in line and "request" not in line.lower():

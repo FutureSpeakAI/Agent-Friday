@@ -11,7 +11,13 @@ cap available to the user though." Two caps, not one:
     halts CLOUD spend when reached. Local models keep working -- the cap is
     about money leaving the machine, and Ollama costs nothing.
 
-Neither is imposed; the user chooses, the same shape as local/cloud.
+The DAILY hard stop ships ON at a modest figure (north-star A17, the owner's
+ruling of 2026-10-21; services/spending_caps.DAILY_CAP_DEFAULT_USD): the
+person can change it at setup and in Settings > Spending, or switch it off.
+Installs from before A17 keep what they had. What the person reads calls it
+their spending cap, in plain words, and work that reaches it PAUSES with a
+card (what paused, spent against the cap, how to go on, one press to the
+cap); "hard stop" is the code's name only.
 
 WHERE IT STOPS. check() sits at the choke points every paid call already
 passes through: model_router._seal_or_block (every text/tool cloud call),
@@ -79,11 +85,18 @@ class SpendCapReached(UserFacingError, RuntimeError):
     def __init__(self, period: str, spend: float, limit: float, what: str):
         self.period, self.spend, self.limit, self.what = period, spend, limit, what
         super().__init__(
-            f"Hard spending cap reached: ${spend:.2f} of ${limit:.2f} "
-            f"{period} cap already spent, so {what} was not sent to the cloud. "
-            f"Local models still work. To resume cloud work: raise the cap or "
-            f"switch the hard stop off in Settings > Spending."
+            f"Paused by your spending cap: ${spend:.2f} of your ${limit:.2f} "
+            f"{_per(period)} cap is spent, so {what} was not sent to the cloud. "
+            f"Nothing done so far is lost. {_resume_hint(period)}"
         )
+
+
+def _per(period: str) -> str:
+    return "a day" if period == "daily" else "a month"
+
+
+#: The one press every spending-cap card carries: to the cap itself.
+CAP_ACTIONS = [{"label": "Change my spending cap", "workspace": "settings", "tab": "costs"}]
 
 
 # ── configuration ────────────────────────────────────────────────────────────
@@ -187,14 +200,16 @@ def _push(title: str, body: str, dedupe_key: str, priority: str = "high") -> Non
         import agent_friday.notifications_engine as _ne
         _ne.push(title=title, body=body, priority=priority, source="spend-guard",
                  kind="spend_halt", dedupe_key=dedupe_key,
-                 target={"workspace": "system", "tab": "costs"})
+                 actions=list(CAP_ACTIONS),
+                 target={"workspace": "settings", "tab": "costs"})
     except Exception as e:
         _log.warning("spend halt notification failed: %s", e)
 
 
-def _resume_hint() -> str:
-    return ("Local models keep working. To resume cloud work: raise the cap, "
-            "or switch the hard stop off, in Settings > Spending.")
+def _resume_hint(period: str = "daily") -> str:
+    when = "tomorrow" if period == "daily" else "next month"
+    return (f"Paid cloud work can go again {when}, or now if you raise the cap in "
+            f"Settings > Spending. Models on this computer keep working.")
 
 
 def notify_if_tripped() -> Optional[Dict[str, Any]]:
@@ -208,10 +223,10 @@ def notify_if_tripped() -> Optional[Dict[str, Any]]:
         return None
     p = t["period"]
     _push(
-        f"🛑 Hard spending cap reached — cloud work stopped",
-        f"${t['spend']:.2f} of your ${t['limit']:.2f} {p} cap is spent. Friday "
-        f"will refuse every further cloud call this {'day' if p == 'daily' else 'month'}; "
-        f"anything already in flight finishes. {_resume_hint()}",
+        "Spending cap reached: paid cloud work is paused",
+        f"${t['spend']:.2f} of your ${t['limit']:.2f} {_per(p)} spending cap is spent. "
+        f"Anything already in flight finishes; nothing more is sent to paid cloud "
+        f"services this {'day' if p == 'daily' else 'month'}. {_resume_hint(p)}",
         dedupe_key=f"spend_halt:trip:{p}:{_stamp(p)}",
     )
     return t
@@ -233,13 +248,13 @@ def _record_halt(t: Dict[str, Any], provider: str, desc: str, attr: Dict[str, An
     # the trip notification.
     key_bits = attr.get("schedule_id") or attr.get("task_id") or desc
     _push(
-        f"🛑 Stopped by the hard spending cap: {desc[:80]}",
-        f"Not sent to {provider}: {desc}. ${t['spend']:.2f} of ${t['limit']:.2f} "
-        f"{p} cap already spent. Nothing was rolled back -- work done so far is "
-        f"kept and this can be re-run once the cap is lifted. {_resume_hint()}",
+        f"Paused by your spending cap: {desc[:80]}",
+        f"Not sent to {provider}: {desc}. ${t['spend']:.2f} of your ${t['limit']:.2f} "
+        f"{_per(p)} cap is spent. Nothing was rolled back: work done so far is kept, "
+        f"and you can ask for this again. {_resume_hint(p)}",
         dedupe_key=f"spend_halt:{p}:{_stamp(p)}:{key_bits}",
     )
-    _log.warning("HARD SPENDING CAP: refused %s (%s) -- $%.2f of $%.2f %s",
+    _log.warning("SPENDING CAP: paused %s (%s) -- $%.2f of $%.2f %s",
                  desc, provider, t["spend"], t["limit"], p)
     # Task journal (task-visibility.md TV4, point=spend_cap).
     try:
@@ -277,8 +292,15 @@ def status() -> Dict[str, Any]:
         t = tripped()
     except Exception as e:
         _log.warning("spend guard status: %s", e)
+    try:
+        from agent_friday.services import spending_caps as _sc
+        plain = _sc.plain_words()
+    except Exception:
+        plain = ""
     return {"hard_stop": hs, "enabled": enabled(), "tripped": t,
-            "recent_halts": recent_halts(), "resume": _resume_hint()}
+            "recent_halts": recent_halts(),
+            "resume": _resume_hint((t or {}).get("period") or "daily"),
+            "plain": plain}
 
 
 def reset_for_tests() -> None:

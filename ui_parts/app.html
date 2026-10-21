@@ -24155,7 +24155,7 @@ function SettingsTabCosts() {
       lineHeight: 1.5
     }, mono)
   }, ("Alert-only: crossing 80% warns, 100% alerts. " + fridayName() + " is never blocked from working."))), /*#__PURE__*/React.createElement(StSection, {
-    title: "Hard stop"
+    title: "Spending caps"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       fontSize: 10,
@@ -24163,7 +24163,7 @@ function SettingsTabCosts() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, ("The cap that actually stops. When an enabled period's spend reaches its limit, " + fridayName() + " refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud.")), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
+  }, (hardStop && hardStop.plain ? hardStop.plain : (fridayName() + " stops spending on cloud AI when a cap below is reached. Work that reaches it pauses and asks you. Models on this computer are never capped.")) + " Change the amounts or switch a cap off here."), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
     style: {
       border: '1px solid #ff0080',
       background: 'rgba(255,0,128,0.08)',
@@ -24179,7 +24179,7 @@ function SettingsTabCosts() {
       color: '#ff0080',
       marginBottom: 4
     }
-  }, "🛑 Hard cap reached — cloud work is stopped"), usd(hardStop.tripped.spend), " of ", usd(hardStop.tripped.limit), " ", hardStop.tripped.period, " cap spent. ", hardStop.resume), /*#__PURE__*/React.createElement("div", {
+  }, "Paused: your spending cap is reached"), usd(hardStop.tripped.spend), " of ", usd(hardStop.tripped.limit), " ", hardStop.tripped.period, " cap spent. ", hardStop.resume), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -24193,7 +24193,7 @@ function SettingsTabCosts() {
     onClick: () => saveBudget({
       hard_stop_daily_enabled: !costBudget.hard_stop_daily_enabled
     })
-  }, "Daily stop"), /*#__PURE__*/React.createElement("span", {
+  }, "Daily cap"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: dim
@@ -24231,7 +24231,7 @@ function SettingsTabCosts() {
     onClick: () => saveBudget({
       hard_stop_monthly_enabled: !costBudget.hard_stop_monthly_enabled
     })
-  }, "Monthly stop"), /*#__PURE__*/React.createElement("span", {
+  }, "Monthly cap"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: dim

@@ -56626,7 +56626,14 @@ function CloudConsentRow({ consent, onChanged, compact }) {
 
 function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   const modes = d.routing_modes || [];
-  const modeButtons = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
+  // A16: nothing is pre-selected. With no mode picked, no button is pressed and
+  // the card says what Friday does until the owner picks.
+  const actualLabel = ((modes.filter(m => m.id === d.routing_mode)[0]) || {}).label || d.routing_mode || 'the starting setting';
+  const notPicked = !mode && E('div', {
+    'data-route-not-picked': '1',
+    style: { fontSize: 11.5, color: '#f59e0b', fontFamily: 'var(--st-font)', marginTop: 8, lineHeight: 1.5 },
+  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' works as ' + actualLabel + ' does.');
+  const modeButtonRow = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
     modes.map(m => {
       const on = mode === m.id;
       return E('button', {
@@ -56644,6 +56651,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
           savingMode === m.id && E('span', { style: { fontSize: 9, color: '#f59e0b' } }, 'saving...')),
         E('div', { style: { fontSize: 11.5, color: 'var(--st-dim)', fontFamily: 'var(--st-font)', marginTop: 3, lineHeight: 1.45 } }, m.help));
     }));
+  const modeButtons = E('div', null, modeButtonRow, notPicked);
   // An older server build answers without `soup`. Say so, and keep the mode
   // buttons: a control that vanishes because the payload is short is the
   // silent failure this card exists to end.
@@ -56667,7 +56675,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     : x.state === 'cloud' ? 'cloud'
     : x.state === 'cold' ? 'not loaded' : x.state === 'refused' ? 'unavailable' : x.state || '';
   const postureTxt = [
-    mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
+    !mode ? 'Route not chosen yet (working as ' + actualLabel + ')' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
     'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');
@@ -57079,7 +57087,9 @@ function SettingsTabIntelligence({ s, save }) {
     // What answers you, where, at what cost, and the routing mode that
     // governs every job below it.
     E(ModelSoupCard, {
-      soup: d.soup, d: d, mode: d.routing_mode || 'local_preferred',
+      // North-star A16: on a new install no mode is pressed until the owner
+      // picks one (routing_mode_picked false); an older server omits the flag.
+      soup: d.soup, d: d, mode: d.routing_mode_picked === false ? '' : (d.routing_mode || ''),
       setMode: setMode, savingMode: savingMode, reload: reload,
     }),
 
@@ -64998,7 +65008,7 @@ function SettingsTabCosts() {
       lineHeight: 1.5
     }, mono)
   }, ("Alert-only: crossing 80% warns, 100% alerts. " + fridayName() + " is never blocked from working."))), /*#__PURE__*/React.createElement(StSection, {
-    title: "Hard stop"
+    title: "Spending caps"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       fontSize: 10,
@@ -65006,7 +65016,7 @@ function SettingsTabCosts() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, ("The cap that actually stops. When an enabled period's spend reaches its limit, " + fridayName() + " refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud.")), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
+  }, (hardStop && hardStop.plain ? hardStop.plain : (fridayName() + " stops spending on cloud AI when a cap below is reached. Work that reaches it pauses and asks you. Models on this computer are never capped.")) + " Change the amounts or switch a cap off here."), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
     style: {
       border: '1px solid #ff0080',
       background: 'rgba(255,0,128,0.08)',
@@ -65022,7 +65032,7 @@ function SettingsTabCosts() {
       color: '#ff0080',
       marginBottom: 4
     }
-  }, "🛑 Hard cap reached — cloud work is stopped"), usd(hardStop.tripped.spend), " of ", usd(hardStop.tripped.limit), " ", hardStop.tripped.period, " cap spent. ", hardStop.resume), /*#__PURE__*/React.createElement("div", {
+  }, "Paused: your spending cap is reached"), usd(hardStop.tripped.spend), " of ", usd(hardStop.tripped.limit), " ", hardStop.tripped.period, " cap spent. ", hardStop.resume), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -65036,7 +65046,7 @@ function SettingsTabCosts() {
     onClick: () => saveBudget({
       hard_stop_daily_enabled: !costBudget.hard_stop_daily_enabled
     })
-  }, "Daily stop"), /*#__PURE__*/React.createElement("span", {
+  }, "Daily cap"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: dim
@@ -65074,7 +65084,7 @@ function SettingsTabCosts() {
     onClick: () => saveBudget({
       hard_stop_monthly_enabled: !costBudget.hard_stop_monthly_enabled
     })
-  }, "Monthly stop"), /*#__PURE__*/React.createElement("span", {
+  }, "Monthly cap"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: dim

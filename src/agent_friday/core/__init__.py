@@ -2789,18 +2789,20 @@ DEFAULT_SETTINGS = {
     # drive budget-alert notifications: crossing 80% warns, 100% alerts. The
     # alert cap never blocks — Friday is never silently stopped by it.
     #
-    # hard_stop_* (maintainer ruling: "we do want a stopping cap available
-    # to the user") is the SECOND cap: when its enabled period's
-    # spend reaches the limit, services/spend_guard refuses every further
-    # cloud call (local models keep working), loudly — ledger row +
-    # notification naming what stopped and how to resume. Off by default;
-    # the user chooses, neither cap is imposed.
+    # hard_stop_* is the SECOND cap, the one that stops: when its enabled
+    # period's spend reaches the limit, services/spend_guard pauses every
+    # further paid cloud call (local models keep working), with a card naming
+    # what paused and how to go on. The DAILY one ships ON at a modest figure
+    # (north-star A17, the owner's ruling of 2026-10-21; the figure is
+    # services/spending_caps.DAILY_CAP_DEFAULT_USD), changeable at setup and in
+    # Settings > Spending. Installs from before A17 keep theirs
+    # (spending_caps.migrate_daily_cap). The monthly one ships off.
     "cost_budget": {
         "daily": 5.0,
         "monthly": 50.0,
         "daily_enabled": False,
         "monthly_enabled": False,
-        "hard_stop_daily": 0.0,
+        "hard_stop_daily": 2.0,
         "hard_stop_monthly": 0.0,
         # THE STUCK-MODEL GUARD, shown beside the spending limits because that
         # is where the owner decides what may stop his work.
@@ -2811,7 +2813,7 @@ DEFAULT_SETTINGS = {
         # 2026-09-25 removal of the round, time and token caps, and why it
         # defaults ON. It is still his to switch off.
         "loop_guard_enabled": True,
-        "hard_stop_daily_enabled": False,
+        "hard_stop_daily_enabled": True,
         "hard_stop_monthly_enabled": False,
     },
     # ── Task journal (docs/design/active/task-visibility.md) ──
@@ -3763,6 +3765,61 @@ def _migrate_spending_caps(settings: dict):
         return None
 
 
+def _migrate_daily_cap(settings: dict, stored: dict):
+    """services/spending_caps.migrate_daily_cap (north-star A17): an install
+    from before the daily cap shipped on keeps the daily cap it had, and gets
+    one card about it. Changes `settings` in place; returns the delta to
+    persist, or None."""
+    try:
+        from agent_friday.services import spending_caps as _sc
+        return _sc.migrate_daily_cap(settings, stored)
+    except Exception as e:
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "daily cap migration skipped (%s: %s)", type(e).__name__, e)
+        except Exception:
+            pass
+        return None
+
+
+def _merge_migration_deltas(a, b):
+    """Two settings deltas as one, merged a block deep (both may carry spending_caps)."""
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in (a or {}).items()}
+    for k, v in (b or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = dict(out[k], **v)
+        else:
+            out[k] = v
+    return out
+
+
+#: Set in a new install's first settings (north-star A16): no AI route is
+#: picked yet. The stored mode still says how Friday routes meanwhile; this
+#: says only that nobody chose it, so Settings presses no option. It is
+#: cleared by the owner's own routing change and is never set on an install
+#: that already existed, whose stored route is its current choice.
+ROUTE_PICK_PENDING_KEY = "route_pick_pending"
+
+
+def _seed_new_install_choices(seed: dict) -> None:
+    mr = seed.get("model_routing")
+    seed["model_routing"] = dict(mr if isinstance(mr, dict) else {},
+                                 **{ROUTE_PICK_PENDING_KEY: True})
+    try:
+        from agent_friday.services import spending_caps as _sc
+        _sc.stamp_new_install(seed)
+    except Exception:
+        pass
+
+
+def route_pick_pending(settings=None) -> bool:
+    """True on a new install whose owner has not picked an AI route yet (A16)."""
+    s = _load_settings_raw() if settings is None else settings
+    mr = (s or {}).get("model_routing")
+    return bool(isinstance(mr, dict) and mr.get(ROUTE_PICK_PENDING_KEY) is True)
+
+
 def _persist_spending_caps_migration(delta: dict):
     """Write the one-time spending-caps migration (and its stamp) once per
     process. A failed write is retried by the next process; every read in
@@ -3802,6 +3859,10 @@ def _load_settings_raw():
         # Fresh installs start on the trimmed core dock; existing installs (that
         # had ~/.friday before this version added the setting) keep the full set.
         seed["show_all_workspaces"] = not _FRESH_INSTALL
+        # North-star A16 and A17, for a new install only: no AI route counts as
+        # picked until the person picks one, and the daily spending cap starts
+        # on (the migration for older installs never runs on this seed).
+        _seed_new_install_choices(seed)
         _sync_capability_routing(seed)
         # The seed is written whole or not at all, and never over a file:
         # a hard link fails when the target exists, so a settings.json that
@@ -3868,6 +3929,9 @@ def _load_settings_raw():
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _smart_found = _migrate_smart_routing_mode(merged)
         _caps_delta = _migrate_spending_caps(merged)
+        _daily_cap_delta = _migrate_daily_cap(merged, data)
+        if _daily_cap_delta:
+            _caps_delta = _merge_migration_deltas(_caps_delta, _daily_cap_delta)
         _sync_capability_routing(merged)
         _remember_good_settings(merged)
         with _SETTINGS_CACHE_LOCK:
@@ -4174,11 +4238,17 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             _mr_in = dict(_mr_in, mode_chosen=_new_mode,
                           mode_chosen_at=datetime.now(_tz.utc).isoformat(timespec="seconds"),
                           mode_chosen_via=_via)
+            # A16: the owner has now picked a route.
+            _mr_in[ROUTE_PICK_PENDING_KEY] = False
             data["model_routing"] = _mr_in
-        elif any(k in _mr_in for k in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")):
+        elif any(k in _mr_in for k in ("mode_chosen", "mode_chosen_at", "mode_chosen_via",
+                                        ROUTE_PICK_PENDING_KEY)):
+            # The pick-pending flag (A16) is the seed's to set and the owner's
+            # routing change's to clear; no other write moves it.
             data = dict(data)
             _mr_in = {k: v for k, v in _mr_in.items()
-                      if k not in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")}
+                      if k not in ("mode_chosen", "mode_chosen_at", "mode_chosen_via",
+                                   ROUTE_PICK_PENDING_KEY)}
             data["model_routing"] = _mr_in
     # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
     #

@@ -807,14 +807,22 @@ def step_routing(total: int, step: int, existing_mode: str) -> str:
         console.print(f"       [dim]{c['detail']}[/dim]")
         console.print()
 
-    default = "1" if not capable else "3"
+    # North-star A16: nothing is pre-selected. The recommendation above is a
+    # label; Enter alone picks nothing and the question is asked again. Only an
+    # install that already has a route the owner chose keeps it as the answer
+    # Enter gives (`existing_mode`; a new install passes "").
+    default = ""
     if existing_mode:
         for i, c in enumerate(choices):
             if c["mode"] == existing_mode:
                 default = str(i + 1)
     while True:
         pick = Prompt.ask(f"  [cyan]Where should Friday think (1-{len(choices)})[/cyan]",
-                          default=default)
+                          default=default, show_default=bool(default))
+        if not str(pick or "").strip():
+            console.print(f"  [yellow]Nothing is picked for you. Enter a number from 1 to "
+                          f"{len(choices)}.[/yellow]")
+            continue
         try:
             idx = int(pick) - 1
             if 0 <= idx < len(choices):
@@ -1781,12 +1789,16 @@ def main():
 
     # ── Screen 3: where your words go ──
     _routing_existing = (existing.get("model_routing") or {}).get("mode", "")
+    # A16: a new install's stored mode is not a choice, so it is never offered
+    # as the answer Enter gives on the routing screen.
+    _routing_offered = "" if (existing.get("model_routing") or {}).get(
+        "route_pick_pending") is True else _routing_existing
     # Only an answer to the routing screen is a setup choice that counts as consent for cloud
     # only; quick mode and a skipped screen keep the mode and record it as "unverified" (the
     # mode_chosen record itself is unchanged, for the background routes that read it).
     config["_routing_answered"] = False
     if not quick and _ask("routing"):
-        config["routing_mode"] = step_routing(total_steps, 3, _routing_existing)
+        config["routing_mode"] = step_routing(total_steps, 3, _routing_offered)
         config["_routing_answered"] = True
     else:
         config["routing_mode"] = _routing_existing or "cloud_only"
@@ -1901,6 +1913,8 @@ def main():
         # there is consent (privacy/cloud_consent.ROUTING_CONSENT_VIAS). Quick mode or a
         # skipped routing screen kept the mode without asking: not consent.
         block["mode_chosen_via"] = "setup" if answered else "unverified"
+        if answered:
+            block["route_pick_pending"] = False      # A16: the owner picked
         config["model_routing"] = block
 
     # Defaults that server expects
