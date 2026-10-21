@@ -200,6 +200,11 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
     import requests
 
     url = (url or "").strip()
+    # North-star A16a: no web page is read until a route is chosen.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_fetch", "fetch")
+    if _held:
+        return _fail(url, _held, "route_not_chosen")
     key = _url_key(url)
     root = _store_root()
     meta_path = root / f"{key}.json"

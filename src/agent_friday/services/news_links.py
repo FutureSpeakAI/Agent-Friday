@@ -163,6 +163,8 @@ def _decode_old(gid: str) -> str:
 
 def _fetch(url: str, data: str | None = None) -> str:
     """GET through the SSRF guard; POST only to Google's fixed exchange endpoint."""
+    from agent_friday.services.cloud_intent import hold_outbound
+    hold_outbound("web_fetch", "news link")         # A16a: raises RouteNotChosen
     if data is None:
         from agent_friday.services.web_safety import safe_get
         return safe_get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}).text

@@ -1047,6 +1047,10 @@ class BrowserSession:
     # -- operations (worker thread) --
 
     def op_open(self, url: str) -> dict:
+        from agent_friday.services.cloud_intent import outbound_held
+        _held = outbound_held("web_fetch", "browser open")      # A16a
+        if _held:
+            raise BrowserRefused(f"not opened: {_held}")
         ok, why = self.url_allowed(url, navigation=True)
         if not ok:
             raise BrowserRefused(f"not opened: {why}")

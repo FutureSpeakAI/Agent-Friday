@@ -170,6 +170,50 @@ def route_unpicked() -> bool:
         return False
 
 
+#: What Friday says when web search, reading a web page or an add-on connector
+#: is held because no route is picked yet (A16a, owner ruling 2026-10-21).
+ROUTE_NOT_CHOSEN_WEB_TEXT = (
+    "You haven't chosen where I think yet, so I stay on this computer: no cloud AI, "
+    "no web search or web pages, and no add-on connectors. Choose where I think: on "
+    "this computer, in the cloud, or both (Settings > Models).")
+
+#: The kinds of outbound use A16a holds besides cloud AI.
+HELD_KINDS = ("web_search", "web_fetch", "connector")
+
+
+class RouteNotChosen(RuntimeError):
+    """Web search, a web page or an add-on connector was asked for before the
+    owner chose where Friday thinks (A16a). ``str()`` is the sentence to show."""
+
+    def __init__(self, kind: str = "", what: str = ""):
+        self.kind = str(kind or "")
+        self.what = str(what or "")
+        super().__init__(ROUTE_NOT_CHOSEN_WEB_TEXT)
+
+
+def outbound_held(kind: str, what: str = "") -> str:
+    """The refusal sentence when `kind` (one of HELD_KINDS) must not go out
+    because no route is picked yet, else "". Never raises."""
+    try:
+        if route_unpicked():
+            try:
+                import logging
+                logging.getLogger("friday.cloud_intent").debug(
+                    "A16a: %s held before a route was chosen (%s)", kind, str(what)[:80])
+            except Exception:
+                pass
+            return ROUTE_NOT_CHOSEN_WEB_TEXT
+    except Exception:
+        pass
+    return ""
+
+
+def hold_outbound(kind: str, what: str = "") -> None:
+    """Raise RouteNotChosen when `kind` must not go out yet (A16a)."""
+    if outbound_held(kind, what):
+        raise RouteNotChosen(kind, what)
+
+
 class NoCloudIntent(RuntimeError):
     """A cloud transport was called in a local mode with no recorded intent."""
 

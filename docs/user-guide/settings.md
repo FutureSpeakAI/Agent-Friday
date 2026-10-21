@@ -90,8 +90,9 @@ service's card.
   says whether it is ready and why if not. Nothing is picked for you: on a new
   install no routing mode is pressed until you choose one (here or in setup),
   and the card says "Not chosen yet". Until you choose, Friday works only on
-  this computer and sends nothing to the cloud, even with a key entered; where
-  it would have offered the cloud it offers **Choose where Friday thinks**
+  this computer and sends nothing to the cloud, even with a key entered: no
+  cloud AI, no web search or web pages, and no add-on connectors (they wait,
+  and start once you choose). Where it would have offered any of these it offers **Choose where Friday thinks**
   instead. An install that already had a mode keeps it.
 - **Model for each job.** Click a job to choose its model. The list shows only
   models that can do that job. Voice is chosen in Voice.

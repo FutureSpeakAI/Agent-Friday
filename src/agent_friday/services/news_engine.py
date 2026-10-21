@@ -584,6 +584,9 @@ def _parse_feed(url, limit=12, timeout=None):
         hit = _RSS_CACHE.get(url)
         if hit and (now - hit[0]) < _RSS_CACHE_TTL:
             return hit[1][:limit]
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_fetch", "news feed"):         # A16a
+        return []
     try:
         import urllib.request
         import feedparser
@@ -690,6 +693,9 @@ def _brave_results(query, limit=8):
     """
     if not (query or "").strip():
         # An empty beat (Local with nothing set) has nothing to search for.
+        return []
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_search", "news search"):      # A16a
         return []
     try:
         from agent_friday.services.web_search import brave_key as _bk
@@ -1574,6 +1580,9 @@ def _fetch_brutalist_links(limit=200):
         from bs4 import BeautifulSoup
     except Exception as e:
         print(f"  [brutalist] missing dependency: {e}")
+        return []
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_fetch", "news scrape"):       # A16a
         return []
     try:
         resp = requests.get(_BRUTALIST_URL, timeout=15,

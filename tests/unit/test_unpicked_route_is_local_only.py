@@ -381,6 +381,210 @@ def test_the_router_refusal_asks_to_choose_not_to_send_to_claude(real_settings):
     assert "send this one turn to Claude" not in out["warning"]
 
 
+# ── web search, web pages and add-on connectors (owner ruling 2026-10-21) ───
+
+def _web_text() -> str:
+    return getattr(cloud_intent, "ROUTE_NOT_CHOSEN_WEB_TEXT", "no web hold yet")
+
+
+def _no_network(monkeypatch):
+    import requests
+    import urllib.request
+    monkeypatch.setattr(requests, "get", _never)
+    monkeypatch.setattr(requests, "post", _never)
+    monkeypatch.setattr(requests, "head", _never)
+    monkeypatch.setattr(urllib.request, "urlopen", _never)
+
+
+def test_web_search_is_held_with_the_choose_prompt(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    _no_network(monkeypatch)
+    from agent_friday.services import web_search as ws
+    for fn in ("_wigolo_search", "_firecrawl_search", "_brave", "_duckduckgo"):
+        if hasattr(ws, fn):
+            monkeypatch.setattr(ws, fn, _never)
+    out = ws.search("weather in Lisbon")
+    assert out["results"] == [] and out["detail"] == _web_text()
+    monkeypatch.setattr(ws, "brave_key", lambda: "BSA-test")  # pragma: allowlist secret
+    assert ws.verify_key()["summary"] == _web_text()
+
+
+def test_firecrawl_is_held(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    _no_network(monkeypatch)
+    from agent_friday.services import firecrawl as fc
+    monkeypatch.setattr(fc, "configured", lambda: True)
+    monkeypatch.setattr(fc, "api_key", lambda: "fc-test")  # pragma: allowlist secret
+    assert fc.search("x")["error"] == _web_text()
+    assert fc.scrape("https://example.com")["error"] == _web_text()
+    assert fc.credits()["error"] == _web_text()
+
+
+def test_a_held_search_is_not_cached_as_broken(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    _no_network(monkeypatch)
+    from agent_friday.services import web_search as ws
+    monkeypatch.setitem(ws._canary_cache, "ok", None)
+    out = ws.canary(force=True)
+    assert out.get("route_not_chosen") is True and out["detail"] == _web_text()
+    assert ws._canary_cache["ok"] is None
+
+
+def test_job_board_scans_and_google_say_held_not_broken(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    _no_network(monkeypatch)
+    from agent_friday.services import career_ops, google_accounts, gmail_read
+    with pytest.raises(career_ops.CareerError) as e:
+        career_ops.fetch_json("https://boards-api.greenhouse.io/v1/boards/x/jobs")
+    assert str(e.value) == _web_text()
+    monkeypatch.setattr(google_accounts, "_raw_credentials", _never)
+    monkeypatch.setattr(google_accounts, "_mark_status", _never)
+    assert google_accounts.credentials_for("acct1") is None
+    assert gmail_read._no_creds("acct1")["error"] == _web_text()
+
+
+def test_reading_a_web_page_is_held(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    _no_network(monkeypatch)
+    from agent_friday.services import web_fetch, page_reader
+    res = web_fetch.fetch("https://example.com/a", use_cache=False)
+    assert res["ok"] is False and res["error"] == _web_text()
+    with pytest.raises(Exception) as e:
+        page_reader.fetch("https://example.com/b")
+    assert str(e.value) == _web_text()
+
+
+class _FakeServer:
+    def __init__(self):
+        self.status = ""
+        self.tools = []
+        self.started = 0
+
+    def start(self):
+        self.started += 1
+        self.status = "ready"
+        return True
+
+    def stop(self):
+        pass
+
+    def call_tool(self, *a, **k):
+        raise AssertionError("an add-on connector was called before a route was chosen")
+
+
+def test_add_on_connectors_wait_and_are_not_called(real_settings):
+    real_settings._load_settings_raw()
+    from agent_friday import mcp_client
+    mgr = mcp_client.MCPManager()
+    sp = _FakeServer()
+    mgr.servers = {"github": sp}
+    mgr.start_all()
+    mgr._start_one("github", None)
+    assert sp.started == 0
+    assert sp.status == getattr(mcp_client, "WAITING_FOR_ROUTE", "waiting_for_route")
+    assert mgr.restart("github") is False and sp.started == 0
+    out = mgr.call("github", "search_issues", {})
+    assert out.startswith("[NOT RUN]") and _web_text() in out
+
+
+def test_choosing_a_route_starts_the_waiting_connectors(real_settings, monkeypatch):
+    core = real_settings
+    core._load_settings_raw()
+    from agent_friday import mcp_client
+    from agent_friday.services import agent
+    mgr = mcp_client.MCPManager()
+    sp = _FakeServer()
+    mgr.servers = {"github": sp}
+    mgr.start_all()
+    assert sp.started == 0 and sp.status == "waiting_for_route", "held before the pick"
+    monkeypatch.setattr(agent, "_MCP_MANAGER", mgr)
+    monkeypatch.setattr(agent, "_mcp_register_server_tools", lambda *a, **k: None)
+    core._save_settings({"model_routing": {"mode": "local_preferred"}}, owner_routing_change=True,
+                        routing_change_via="settings")
+    import time
+    for _ in range(50):
+        if sp.started:
+            break
+        time.sleep(0.05)
+    assert sp.started == 1 and sp.status == "ready"
+
+
+def test_connecting_a_connector_or_signing_in_to_google_is_held(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    _no_network(monkeypatch)
+    from agent_friday.services import connectors, google_accounts
+    monkeypatch.setattr(connectors, "_launch_google_connect", _never)
+    monkeypatch.setattr(connectors, "_connect_mcp", _never)
+    for key in [k for k, d in connectors.CONNECTOR_DEFS.items() if d.get("kind") in ("oauth", "mcp")][:4]:
+        out = connectors.connect_connector(key, {})
+        assert out["ok"] is False and out["message"] == _web_text(), key
+    monkeypatch.setattr(google_accounts, "_mark_status", _never)
+    monkeypatch.setattr(google_accounts, "_raw_credentials", _never)
+    assert google_accounts.credentials_for("acct1") is None
+
+
+def test_the_agent_refuses_web_and_connector_tools_plainly(real_settings):
+    real_settings._load_settings_raw()
+    from agent_friday.services import agent
+    hook = getattr(agent, "_hook_route_not_chosen", None)
+    assert hook is not None, "no tool hook holds web and connector tools"
+
+    class _Ctx:
+        def __init__(self, name):
+            self.tool_name = name
+            self.input = {}
+    for name in ("search_web", "browse_web", "deep_research", "browser_open", "mcp_github_search",
+                 "search_news", "career_scan", "query_calendar", "create_calendar_event",
+                 "draft_email", "read_doc", "site_action", "domain_action"):
+        verdict = hook(_Ctx(name))
+        assert verdict != agent._hooks.ALLOW and _web_text() in str(verdict), name
+    assert hook(_Ctx("read_file")) == agent._hooks.ALLOW
+    pre = [h for h in agent._hooks.list_hooks() if h["phase"] == "pre"]
+    mine = next(h for h in pre if h["name"] == "route_not_chosen")
+    assert mine["critical"] is True
+
+
+def test_channels_and_social_posting_are_held(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    from agent_friday.services.channels import base
+    from agent_friday.services import platforms
+
+    class _Chan(base.ChannelAdapter):
+        name = "telegram"
+
+        def token(self):
+            return "t"
+
+        def _send_raw(self, chat_id, text):
+            raise AssertionError("a message went out before a route was chosen")
+    ch = _Chan()
+    assert ch.start()["error"] == "route_not_chosen" and not ch._running
+    assert ch.send("1", "hi")["error"] == "route_not_chosen"
+    class _Adapter:
+        def configure(self, cfg):
+            pass
+    monkeypatch.setattr(platforms, "_held", lambda mod: False)
+    monkeypatch.setattr(platforms, "_make_adapter", lambda mod: _Adapter())
+    monkeypatch.setattr(platforms, "load_config", lambda: {})
+    monkeypatch.setattr(platforms, "_ADAPTERS", {})
+    for name in list(platforms.ADAPTER_MODULES)[:3]:
+        assert platforms.get_adapter(name) is None, name
+
+
+def test_existing_installs_keep_web_and_connectors(real_settings, monkeypatch):
+    core = real_settings
+    core.SETTINGS_FILE.write_text(json.dumps({"agent_name": "T", "model_routing": {"mode": "cloud_only"}}),
+                                  encoding="utf-8")
+    core._invalidate_settings_cache()
+    assert cloud_intent.outbound_held("web_search") == ""
+    from agent_friday import mcp_client
+    mgr = mcp_client.MCPManager()
+    sp = _FakeServer()
+    mgr.servers = {"github": sp}
+    mgr._start_one("github", None)
+    assert sp.started == 1
+
+
 # ── the page ─────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("page", ["index.html", "ui_parts/app.html"])

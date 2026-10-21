@@ -4225,7 +4225,23 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                     update_install_choices_state(route_picked=True)
             except Exception:
                 pass
+            _after_route_pick()
     return out
+
+
+def _after_route_pick() -> None:
+    """A16a: once a route is chosen, the add-on connectors that were held
+    start. Only in a running app (the agent module already loaded); never
+    imports it, never blocks the save."""
+    import sys as _sys
+    _agent = _sys.modules.get("agent_friday.services.agent")
+    fn = getattr(_agent, "_mcp_resume_after_route_pick", None) if _agent else None
+    if fn is None:
+        return
+    try:
+        threading.Thread(target=fn, name="mcp-after-route-pick", daemon=True).start()
+    except Exception:
+        pass
 
 
 #: How an owner routing change was made, as `model_routing.mode_chosen_via`

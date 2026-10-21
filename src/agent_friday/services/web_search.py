@@ -185,6 +185,11 @@ def verify_key(key: str | None = None) -> dict:
     if not k:
         return {"configured": False, "valid": None,
                 "summary": "No Brave key is configured."}
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search", "brave key check")
+    if _held:
+        return {"configured": True, "valid": None, "endpoints": {}, "limits": {},
+                "summary": _held, "route_not_chosen": True}
 
     endpoints = {
         "web": "https://api.search.brave.com/res/v1/web/search",
@@ -624,6 +629,13 @@ def search(query: str, count: int = 10) -> dict:
     if not q:
         return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
                 "backend": "none", "detail": "empty query"}
+    # North-star A16a: no web search (any backend, wigolo included: it
+    # searches the internet) until the owner chooses where Friday thinks.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search", "search")
+    if _held:
+        return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
+                "backend": "none", "detail": _held, "route_not_chosen": True}
     # The chain, in order, skipping backends that are not configured. Each
     # attempt records what it learned, so health cannot drift from reality and
     # the caller is always told which backend ACTUALLY answered — a result
@@ -747,6 +759,10 @@ def canary(force: bool = False) -> dict:
     ok = out.get("status") == SearchStatus.OK and bool(out.get("results"))
     detail = out.get("detail") or ("search is answering normally" if ok else
                                    f"status={out.get('status')}")
+    if out.get("route_not_chosen"):
+        # A16a: held, not broken; never cached, so a pick takes effect at once.
+        return {"ok": False, "detail": detail, "backend": "none", "cached": False,
+                "route_not_chosen": True}
     _canary_cache.update({"ts": now, "ok": ok, "detail": detail})
     return {"ok": ok, "detail": detail, "backend": out.get("backend"),
             "cached": False}

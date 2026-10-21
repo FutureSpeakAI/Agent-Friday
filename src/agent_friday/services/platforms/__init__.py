@@ -202,6 +202,10 @@ def get_adapter(name: str):
     mod = _norm(name)
     if mod not in ADAPTER_MODULES or _held(mod):
         return None
+    # North-star A16a: no social platform is reached before a route is chosen.
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("connector", "platform " + mod):
+        return None
     a = _ADAPTERS.get(mod)
     if a is not None:
         return a

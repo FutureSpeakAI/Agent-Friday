@@ -410,6 +410,10 @@ def start(seeds: dict, reader: dict, *, engine: ResearchEngine | None = None,
     """
     if (reader or {}).get("kind") not in ("local", "cloud"):
         raise NoModel("no model is available to read pages")
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search", "setup research")      # A16a
+    if _held:
+        raise UserFacingValueError(_held)
     plan = build_queries(seeds)
     if not plan["queries"]:
         raise UserFacingValueError("nothing to search for: add your name or a handle")
