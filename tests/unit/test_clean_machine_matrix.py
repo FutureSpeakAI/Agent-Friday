@@ -80,6 +80,12 @@ def test_a_beta_only_records_and_a_missing_build_hash_fails():
     assert "^[0-9a-f]{64}$" in run and "exit 1" in run
 
 
+def test_the_standard_user_leg_proves_it_installed_into_the_accounts_own_profile():
+    src = (REPO / "packaging/windows/tests/clean-machine/verify-clean-machine.ps1").read_text(encoding="utf-8-sig")
+    assert "Win32_UserProfile" in src and "$inOwnProfile" in src
+    assert "-and $inOwnProfile" in src
+
+
 def test_the_standard_user_leg_leaves_nothing_behind():
     src = (REPO / "packaging/windows/tests/clean-machine/run-as-standard-user.ps1").read_text(encoding="utf-8-sig")
     fin = src.split("finally {", 1)[1]
