@@ -297,21 +297,27 @@ _PLAIN = _enc("no", "Readable on this disk (not encrypted yet).")
 
 
 def _enc_sent_text() -> tuple:
-    state, words = _enc_keys()
-    if state == "partly":
-        return "partly", ("Encrypted with Friday's key store, whose key is kept in Friday's folder "
-                          "without a passphrase. Nothing is written if encryption isn't available.")
-    if state == "yes":
-        return "yes", "Encrypted with Friday's key store. Nothing is written if encryption isn't available."
-    return state, words
+    from agent_friday.services import sent_text_store as sts
+    sealed = sts.sealed_with()
+    if sts.mode() == sts.FINGERPRINT:
+        return "yes", "Nothing new is kept; anything already kept was deleted when you switched."
+    if sealed == "vault":
+        return "yes", "Encrypted with your vault passphrase. Nothing is written if it can't be encrypted."
+    if sealed == "keystore":
+        state, _ = _enc_keys()
+        return ("partly" if state == "partly" else "yes"), (
+            "Encrypted with Friday's key store, not the vault: no vault passphrase is set. "
+            "Set one in Privacy & Data > Vault. Nothing is written if it can't be encrypted.")
+    return "no", "Nothing can encrypt it right now, so nothing is kept."
 
 
 def _ret_sent_text() -> str:
     try:
         from agent_friday.services import sent_text_store as sts
-        if not sts.enabled():
-            return "Not kept: only a fingerprint of each send is recorded."
-        return f"Kept {sts.days()} days, then deleted; turning it off deletes it all."
+        if sts.mode() == sts.FINGERPRINT:
+            return "Fingerprints only: the words of each send are not kept."
+        return ("Kept with its receipt until you delete it; past 1 GB the oldest goes first. "
+                "Switching to fingerprints only deletes it all.")
     except Exception:
         return "I couldn't tell how long it is kept."
 
@@ -435,12 +441,13 @@ def _stores() -> List[dict]:
          "ret": lambda: "Kept until you delete them, so the record stays whole. The activity record rotates at about 20 MB.",
          "controls": [_ctl("settings", "Friday's changes", "Every action with its receipt and undo.",
                            nav={"workspace": "system"}), _EXPORT_ALL]},
-        {"key": "sent_text", "name": "The exact text of what was sent (only if you chose it)",
-         "holds": ("The words of each send to the cloud, kept so a receipt can show exactly what left. "
-                   "Off unless you turn it on below; by default only a fingerprint is kept."),
+        {"key": "sent_text", "name": "The full text of what was sent",
+         "holds": ("The content of each send to the cloud, kept with its receipt so you can open exactly "
+                   "what left. Kept by default; you can switch to fingerprints only."),
          "paths": ["vault/sent-text"], "enc": _enc_sent_text, "ret": _ret_sent_text,
-         "controls": [_ctl("delete", "Keep or delete it", "Turn keeping off to delete it all.",
-                           nav=dict(_PRIVACY_TAB, section="Privacy map"))]},
+         "controls": [_ctl("delete", "Delete it, or keep fingerprints only",
+                           "Delete the kept text now, or switch to fingerprints only.",
+                           nav=dict(_PRIVACY_TAB, section="Privacy map")), _EXPORT_ALL]},
         {"key": "credentials", "name": "Keys and sign-ins",
          "holds": "Provider keys and account sign-ins Friday uses for you.",
          "paths": ["security", "providers", "google_accounts", "mcp_oauth", "platforms",
@@ -944,11 +951,11 @@ def off_record() -> dict:
 def _sent_text_status() -> dict:
     from agent_friday.services import sent_text_store as sts
     st = sts.status()
-    return {k: st[k] for k in ("keep", "days", "kept", "bytes", "explanation")}
+    return {k: st[k] for k in ("mode", "keep", "sealed_with", "words", "kept", "bytes", "explanation")}
 
 
 def sent_text(sha: str) -> Optional[dict]:
-    """The kept text of one send, by its fingerprint, if the owner chose to keep it."""
+    """The kept content of one send, by its fingerprint (kept by default, A20)."""
     from agent_friday.services import sent_text_store as sts
     return sts.read(sha)
 
@@ -973,7 +980,8 @@ def view(now: Optional[float] = None) -> dict:
         "services": safe(services, {"readable": False, "connected": [], "remote": []}),
         "vault_access": safe(lambda: vault_access(now), {"allowed_7_days": None, "refused_7_days": None}),
         "off_record": safe(off_record, {"on": None, "words": OFF_RECORD_WORDS}),
-        "sent_text": safe(_sent_text_status, {"keep": None}),
+        "sent_text": safe(_sent_text_status, {"mode": None, "keep": None,
+                                              "words": "I couldn't tell whether the full text is kept."}),
         "export": _EXPORT_ALL, "erase": _ERASE_ALL,
         "honest_limit": HONEST_LIMIT,
     }

@@ -59391,8 +59391,11 @@ function SettingsPrivacyMap() {
     .then(x => setRec({ to, label: x.label, rows: x.rows || [] })).catch(() => setMsg('Could not read the receipts.'));
   const showSent = sha => apiFetch('/api/privacy/map/sent/' + encodeURIComponent(sha)).then(r => r.json())
     .then(x => x.ok ? setSent({ sha, text: x.text, model: x.model }) : setMsg(x.message || 'That text was not kept.')).catch(() => setMsg('Could not read the kept text.'));
-  const keepText = on => apiFetch('/api/privacy/sent-text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keep: on }) })
-    .then(r => r.json()).then(x => { setMsg(x.ok ? (on ? 'The exact text of each send is now kept for ' + x.days + ' days.' : 'Only fingerprints are kept now; ' + (x.deleted || 0) + ' kept text(s) deleted.') : (x.message || 'Nothing changed.')); load(); }).catch(() => setMsg('Could not reach the server.'));
+  const post = (url, body) => apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+  const setMode = mode => post('/api/privacy/sent-text', { mode })
+    .then(x => { setMsg(x.ok ? (mode === 'full' ? 'The full text of each new send is kept with its receipt again.' : 'Only fingerprints are kept now; ' + (x.deleted || 0) + ' kept text(s) deleted.') : (x.message || 'Nothing changed.')); load(); }).catch(() => setMsg('Could not reach the server.'));
+  const deleteKept = () => post('/api/privacy/sent-text/delete', {})
+    .then(x => { setMsg(x.ok ? (x.deleted || 0) + ' kept text(s) deleted. Their fingerprints stay in the receipts.' : (x.message || 'Nothing was deleted.')); load(); }).catch(() => setMsg('Could not reach the server.'));
   const callLine = r => new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.purpose || 'a send') + (r.model ? ' · ' + r.model : '') + (r.destination ? ' · to ' + r.destination : '') + ' · ' + (r.result || '') + (r.withheld ? ' · ' + r.withheld + ' part(s) withheld' : '') + (r.grants && r.grants.length ? ' · allowed by: ' + r.grants.join(', ') : '') + (r.bytes ? ' · ' + r.bytes + ' bytes' : '') + (r.payload_fingerprint ? ' · fingerprint ' + r.payload_fingerprint.slice(0, 12) : '');
   if (!d) return E(StSection, { title: 'Privacy map', desc: 'What is kept on this PC, where, for how long, and what has left it and to whom.' },
     E('div', { className: 'sc-sub' }, msg || 'Reading…'));
@@ -59402,6 +59405,7 @@ function SettingsPrivacyMap() {
   const svc = d.services || {};
   const gr = d.grants || {};
   return E(StSection, { title: 'Privacy map', desc: 'What is kept on this PC, where, for how long, and what has left it and to whom.' },
+    d.sent_text && E('div', { className: 'lk-words pm-mode', role: 'status' }, 'What left this PC: ' + (d.sent_text.words || '')),
     E('h4', { className: 'pm-h' }, 'What is kept on this PC'),
     E('ul', { className: 'pm-list', 'aria-label': 'What is kept on this PC' }, (d.stores || []).map(s => E('li', { key: s.key, className: 'pm-store pm-' + s.encrypted },
       E('div', { className: 'lk-title' }, s.name),
@@ -59416,7 +59420,7 @@ function SettingsPrivacyMap() {
     left.complete === false && E('div', { className: 'lk-words' }, 'The record is long, so these counts cover its newest part.'),
     dests.length > 0 && E('ul', { className: 'pm-list', 'aria-label': 'What has left this PC' }, dests.map(x => E('li', { key: x.to, className: 'pm-dest' },
       E('div', { className: 'lk-title' }, x.label),
-      x.calls > 0 && E('div', { className: 'lk-words' }, x.calls + ' send' + (x.calls === 1 ? '' : 's') + (x.calls_blocked ? ' (' + x.calls_blocked + ' stopped)' : '') + (x.hosts && x.hosts.length ? ' to ' + x.hosts.join(', ') : '') + (x.models && x.models.length ? ', model ' + x.models.join(', ') : '') + (x.texts_kept ? '; exact text kept for ' + x.texts_kept : '; fingerprints only') + '.'),
+      x.calls > 0 && E('div', { className: 'lk-words' }, x.calls + ' send' + (x.calls === 1 ? '' : 's') + (x.calls_blocked ? ' (' + x.calls_blocked + ' stopped)' : '') + (x.hosts && x.hosts.length ? ' to ' + x.hosts.join(', ') : '') + (x.models && x.models.length ? ', model ' + x.models.join(', ') : '') + (x.texts_kept ? '; full text kept for ' + x.texts_kept : '; fingerprints only') + '.'),
       E('div', { className: 'lk-words' }, x.sent + ' item' + (x.sent === 1 ? '' : 's') + ' sent' + (x.sent_with_parts_withheld ? ' (' + x.sent_with_parts_withheld + ' with parts withheld)' : '') + (x.stopped ? ', ' + x.stopped + ' stopped before leaving' : '') + (x.files_or_images ? ', ' + x.files_or_images + ' files or images' : '') + (x.background ? ', ' + x.background + ' from background work' : '') + (x.unrestricted_calls ? ', ' + x.unrestricted_calls + ' calls under Cloud for everything' : '') + '. ' + (x.first ? 'From ' + when(x.first) + ' to ' + when(x.last) + '.' : '')),
       x.fields && x.fields.length > 0 && E('div', { className: 'lk-words' }, 'What kind: ' + x.fields.join(', ')),
       E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4 }, 'aria-label': 'Show the receipts for ' + x.label, onClick: () => receipts(x.to) }, 'Show the receipts')))),
@@ -59431,12 +59435,13 @@ function SettingsPrivacyMap() {
         E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setSent(null) }, 'Close')),
       E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setRec(null) }, 'Close the receipts')),
     left.other_destinations > 0 && E('div', { className: 'lk-words' }, 'And ' + left.other_destinations + ' more destination' + (left.other_destinations === 1 ? '' : 's') + ' with older sends.'),
-    d.sent_text && E('div', { className: 'pm-keep', role: 'group', 'aria-label': 'Keeping the exact text' },
-      E('div', { className: 'lk-title' }, 'Fingerprints, or the exact text'),
+    d.sent_text && E('div', { className: 'pm-keep', role: 'group', 'aria-label': 'The full text, or fingerprints only' },
+      E('div', { className: 'lk-title' }, 'The full text, or fingerprints only'),
+      E('div', { className: 'lk-words' }, 'Now: ' + (d.sent_text.words || '') + (d.sent_text.mode === 'full' ? ' (' + (d.sent_text.kept || 0) + ' kept, ' + Math.round((d.sent_text.bytes || 0) / 1024) + ' KB)' : '')),
       E('div', { className: 'lk-words' }, d.sent_text.explanation),
-      E('div', { className: 'lk-words' }, d.sent_text.keep ? 'Now: the exact text is kept for ' + d.sent_text.days + ' days (' + (d.sent_text.kept || 0) + ' kept, ' + Math.round((d.sent_text.bytes || 0) / 1024) + ' KB).' : 'Now: only fingerprints are kept.'),
-      E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4 }, onClick: () => keepText(!d.sent_text.keep) },
-        d.sent_text.keep ? 'Stop keeping the text and delete what is kept' : 'Keep the exact text for ' + (d.sent_text.days || 30) + ' days')),
+      E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4 }, onClick: () => setMode(d.sent_text.mode === 'full' ? 'fingerprint' : 'full') },
+        d.sent_text.mode === 'full' ? 'Switch to fingerprints only (deletes the kept text)' : 'Keep the full text again'),
+      d.sent_text.mode === 'full' && (d.sent_text.kept || 0) > 0 && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4, marginLeft: 6 }, onClick: deleteKept }, 'Delete the kept text')),
     (left.not_recorded || []).length > 0 && E('div', { className: 'lk-words' }, 'Not in this list yet:'),
     (left.not_recorded || []).length > 0 && E('ul', { className: 'lk-sub', 'aria-label': 'Not in this list yet' }, left.not_recorded.map(n => E('li', { key: n.key }, n.what + '. ' + n.record))),
     E('h4', { className: 'pm-h' }, 'Mail sent for you'),

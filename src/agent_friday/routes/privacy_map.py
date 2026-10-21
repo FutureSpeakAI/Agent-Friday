@@ -65,21 +65,29 @@ def privacy_map_sent(sha):
 
 @privacy_map_bp.route("/api/privacy/sent-text", methods=["POST"])
 def privacy_sent_text_choice():
-    """Keep the exact text of sends, or stop (which deletes what was kept).
-    The owner's click in Friday's own window only."""
+    """Full text with each receipt (the default, A20) or fingerprints only
+    (which deletes what was kept). The owner's click in Friday's own window."""
     from agent_friday.services import screen_click, sent_text_store
     if not request.is_json:
         return jsonify({"ok": False, "message": "JSON body required"}), 415
     if not screen_click.screen_session(request):
         return jsonify({"ok": False, "message": "This changes only from the privacy map in Friday's window."}), 403
-    body = request.get_json(silent=True) or {}
-    keep = body.get("keep")
-    if not isinstance(keep, bool):
-        return jsonify({"ok": False, "message": "say keep: true or false"}), 400
-    days = body.get("days")
-    if days is not None and (not isinstance(days, int) or isinstance(days, bool)):
-        return jsonify({"ok": False, "message": "days must be a whole number"}), 400
+    mode = (request.get_json(silent=True) or {}).get("mode")
+    if mode not in (sent_text_store.FULL, sent_text_store.FINGERPRINT):
+        return jsonify({"ok": False, "message": "say mode: full or fingerprint"}), 400
     try:
-        return jsonify({"ok": True, **sent_text_store.set_keep(keep, days)})
+        return jsonify({"ok": True, **sent_text_store.set_mode(mode)})
     except sent_text_store.ChoiceRefused as e:
         return jsonify({"ok": False, "message": str(e)}), 409
+
+
+@privacy_map_bp.route("/api/privacy/sent-text/delete", methods=["POST"])
+def privacy_sent_text_delete():
+    """Delete the full text kept with the receipts, now. The owner's click in
+    Friday's own window only; the fingerprints in the ledger stay."""
+    from agent_friday.services import screen_click, sent_text_store
+    if not request.is_json:
+        return jsonify({"ok": False, "message": "JSON body required"}), 415
+    if not screen_click.screen_session(request):
+        return jsonify({"ok": False, "message": "This changes only from the privacy map in Friday's window."}), 403
+    return jsonify({"ok": True, **sent_text_store.delete_kept()})
