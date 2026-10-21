@@ -1062,6 +1062,16 @@ _RUNNING_MILESTONES_LOCK = threading.Lock()
 
 
 @visible_job('Goal milestone', kind='goal_milestone', workspace='goals')
+def _everything_stopped() -> bool:
+    """The owner pressed Stop everything (services/global_stop). A check that
+    cannot run counts as stopped: no milestone work or verdict without it."""
+    try:
+        from agent_friday.services import global_stop
+        return global_stop.active()
+    except Exception:
+        return True
+
+
 def run_milestone(goal_id: str, milestone_id: str) -> Dict[str, Any]:
     """Advance one milestone by one attempt-cycle (which itself contains a
     bounded internal repair loop). NEVER marks a milestone done on a failed
@@ -1071,6 +1081,9 @@ def run_milestone(goal_id: str, milestone_id: str) -> Dict[str, Any]:
     yet approved, creates/reuses an approval card and returns without
     executing — approvals.py's decision hook re-invokes this once approved.
     """
+    if _everything_stopped():
+        return {"ok": False, "status": "everything_stopped",
+                "error": "Everything is stopped. Press Resume on the red bar to run this milestone."}
     run_key = f"{goal_id}:{milestone_id}"
     with _RUNNING_MILESTONES_LOCK:
         if run_key in _RUNNING_MILESTONES:
@@ -1818,8 +1831,14 @@ def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dic
 def adopt_resumed(*, background: bool = True) -> List[Dict[str, Any]]:
     """Every scheduler tick: settle runs an earlier process left, and pick up
     the result of any interrupted task the owner has since resumed. Starts no
-    milestone work of its own."""
+    milestone work of its own.
+
+    Nothing is settled while everything is stopped (services/global_stop):
+    judging a finished task needs the model, a stopped model call is not a
+    verdict, and the first tick after Resume settles it."""
     out: List[Dict[str, Any]] = []
+    if _everything_stopped():
+        return out
     for g in list_goals():
         if g.get("status") in TERMINAL_STATUSES:
             continue

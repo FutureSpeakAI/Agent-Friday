@@ -497,3 +497,51 @@ def test_a_live_attempt_that_times_out_is_not_repaired_over_its_running_task(mon
     assert calls == [1], "a repair attempt was dispatched over a task that may still be running"
     assert out["status"] == "interrupted"
     assert _milestone(goals, gid, mid)["blocker"]["task_id"] == "task_slow"
+
+
+# ── While everything is stopped (services/global_stop) ─────────────────────
+def test_a_finished_task_is_not_judged_while_everything_is_stopped(monkeypatch):
+    """A stopped model call is not a verdict: the milestone waits for Resume,
+    then its result is checked."""
+    from agent_friday.services import goals, global_stop
+    gid, mid = _goal_with_milestone(goals, status="in_progress",
+                                    run={"task_id": "task_done", "boot": "previous-process",
+                                         "started_at": NOW - 60})
+    _tasks(monkeypatch, goals, {"task_done": ("completed", "the synthetic newsletter draft")})
+    judged = []
+
+    def stopped_check(content, intent, **kw):
+        judged.append(content)
+        raise global_stop.EverythingStopped("everything is stopped")
+    monkeypatch.setattr(goals.qa_gates, "evaluate_text", stopped_check)
+    monkeypatch.setattr(global_stop, "active", lambda: True)
+
+    _reconcile(goals)
+
+    assert judged == []
+    assert _milestone(goals, gid, mid)["status"] == "in_progress"
+    assert "milestone_complete" not in [r["kind"] for r in goals.get_receipts(gid)]
+
+    monkeypatch.setattr(global_stop, "active", lambda: False)
+    monkeypatch.setattr(goals.qa_gates, "evaluate_text", lambda content, intent, **kw: {
+        "status": "ok", "passed": True, "score": 0.9, "threshold": 0.7,
+        "critique": "", "suggestions": ""})
+    goals.adopt_resumed(background=False)
+
+    assert _milestone(goals, gid, mid)["status"] == "done"
+
+
+def test_a_milestone_run_is_refused_at_once_while_everything_is_stopped(monkeypatch):
+    from agent_friday.services import goals, global_stop
+    gid, mid = _goal_with_milestone(goals)
+    work = _Counter()
+    goals.set_executor(work)
+    monkeypatch.setattr(global_stop, "active", lambda: True)
+
+    started = time.time()
+    out = goals.run_milestone(gid, mid)
+
+    assert out["status"] == "everything_stopped" and out["ok"] is False
+    assert time.time() - started < 5
+    assert work.calls == 0
+    assert _milestone(goals, gid, mid)["status"] == "pending"
