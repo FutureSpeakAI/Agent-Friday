@@ -170,16 +170,39 @@ def normalize(spec: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def autonomy_for(goal: Dict[str, Any], milestone: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+_RANK = {"never": 0, "ask_me": 1, "on_its_own": 2}
+
+
+def loosens(current: Any, change: Any) -> List[str]:
+    """The categories a change of autonomy makes looser than they are now."""
+    cur = autonomy(current if isinstance(current, dict) else {})
+    new = autonomy(dict(cur, **(change if isinstance(change, dict) else {})))
+    return [c for c in AUTONOMY_CATEGORIES if _RANK[new[c]] > _RANK[cur[c]]]
+
+
+#: What the approval gate's own classification of the real instruction says
+#: a step does, as an autonomy category (services/approvals.classify).
+Q3_CATEGORY = {"spend": "spend", "irreversible": "delete", "external_message": "send", "outward": "send"}
+
+
+def autonomy_for(goal: Dict[str, Any], milestone: Dict[str, Any],
+                 inferred: Tuple[str, ...] = ()) -> Tuple[List[str], List[str]]:
     """(categories that must ask, categories that are never allowed) for one
-    step of a goal. A goal without a schema-2 autonomy map, or a step with no
-    planned actions, asks for nothing new: the existing gate decides."""
+    step of a schema-2 goal: what the step declares it does, together with
+    what the gate's classification of its real instruction says it does
+    (`inferred`). A step that declares nothing is unknown, and asks. A goal
+    without an autonomy map asks for nothing new: the existing gate decides."""
     a = goal.get("autonomy")
     if not isinstance(a, dict):
         return [], []
     a = autonomy(a)
-    cats = [c for c in (milestone.get("planned_actions") or []) if c in AUTONOMY_CATEGORIES]
-    return [c for c in cats if a[c] == "ask_me"], [c for c in cats if a[c] == "never"]
+    declared = [c for c in (milestone.get("planned_actions") or []) if c in AUTONOMY_CATEGORIES]
+    cats = list(dict.fromkeys(declared + [c for c in inferred if c in AUTONOMY_CATEGORIES]))
+    ask = [c for c in cats if a[c] == "ask_me"]
+    never = [c for c in cats if a[c] == "never"]
+    if not declared:
+        ask.append("unknown")
+    return ask, never
 
 
 def _uses(goal: Dict[str, Any], category: str) -> bool:
@@ -222,18 +245,30 @@ def summary(goal: Dict[str, Any]) -> str:
     if goal["evidence_required"]:
         lines.append("Proof: " + "; ".join(e["what"] for e in goal["evidence_required"]) + ".")
     if goal["milestones"]:
-        lines.append("Steps: " + "; ".join(f"{i + 1}. {m['name']}" for i, m in enumerate(goal["milestones"])) + ".")
+        lines.append("Steps: " + "; ".join(
+            f"{i + 1}. {m['name']} ({', '.join(CATEGORY_WORDS[c] for c in m['planned_actions'])}"
+            + (f", due {str(m['due'])[:10]}" if m.get("due") else "") + ")"
+            for i, m in enumerate(goal["milestones"])) + ".")
     lines.append("On my own I may " + (", ".join(by["on_its_own"]) or "do nothing") + ".")
     if by["ask_me"]:
         lines.append("I ask you first before I " + ", ".join(by["ask_me"]) + ".")
     if by["never"]:
         lines.append("I never " + ", ".join(by["never"]) + " for this goal.")
     b = goal["budget"]
-    limits = [f"{b['mψ']} mψ" if b["mψ"] else "", _money(b["money_cents"]) + " in money" if b["money_cents"] else "",
+    limits = [f"{b['mψ']} mψ" if b["mψ"] else "",
               f"{b['runtime_minutes']} minutes of work" if b["runtime_minutes"] else ""]
     limits = [x for x in limits if x]
     lines.append("Limits: " + (", ".join(limits) if limits else "no budget set") + "."
                  + (" Deadline: " + str(goal["deadline"])[:10] + "." if goal["deadline"] else " No deadline."))
+    if b["money_cents"] or _uses(goal, "spend"):
+        lines.append("I can't count money yet, so every spend asks you first"
+                     + (f" (you said at most {_money(b['money_cents'])})." if b["money_cents"] else "."))
+    if goal["permitted_tools"]:
+        lines.append("Tools named for it: " + ", ".join(goal["permitted_tools"]) + " (recorded; not enforced yet).")
+    other = [t for t in goal["triggers"] if t["kind"] != "manual"]
+    lines.append("It starts when you start it." if not other else
+                 "Starts: " + "; ".join(f"{t['kind']} {t['spec']}".strip() for t in other)
+                 + " (recorded; you still start it yourself for now).")
     if goal["constraints"]:
         lines.append("Keep to: " + "; ".join(goal["constraints"]) + ".")
     if goal["people"]:
