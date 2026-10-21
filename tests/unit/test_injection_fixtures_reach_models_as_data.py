@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.test_web_tasks import isolated  # noqa: F401  (fixture: website tasks on a scratch home)
+
 try:
     from agent_friday.services import untrusted_input as ui
 except ImportError:  # the old tree a red run is aimed at: its assertions fail, not this import
@@ -40,9 +42,7 @@ def _fixture(name: str) -> str:
     return (FIXTURES / name).read_text(encoding="utf-8")
 
 
-def _assert_enveloped(text: str, name: str, *, withheld_ok: str | None = None):
-    if withheld_ok is not None and text == withheld_ok:
-        return                                    # withheld whole by the egress gate: nothing of it got through
+def _assert_enveloped(text: str, name: str):
     assert ui is not None, "services/untrusted_input does not exist"
     assert ui.is_wrapped(text), "%s reached the model outside the envelope: %r" % (name, text[:200])
     assert text.count("[End of tool output ") == 1, name
@@ -120,7 +120,6 @@ class _Resp:
 @pytest.mark.parametrize("name", MEDIA)
 def test_anthropic_loop(monkeypatch, name):
     from agent_friday.services import agent as ag
-    from agent_friday.services import egress_gate as eg
     sent = []
 
     class _Messages:
@@ -139,8 +138,10 @@ def test_anthropic_loop(monkeypatch, name):
     results = [b for b in sent[1][-1]["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
     assert len(results) == 1
     content = results[0]["content"]
-    _assert_enveloped(content if isinstance(content, str) else content[0]["text"], name,
-                      withheld_ok=eg._TOOL_RESULT_WITHHELD)
+    # The fake client stands where the provider SDK is, so no egress gate runs here: what the
+    # loop built is what is checked, and a withheld result cannot pass this test by accident.
+    _assert_enveloped(content, name)
+    assert CANARY in content
 
 
 # ── background results injected into a live voice call ──────────────────────
@@ -187,8 +188,13 @@ def test_a_chat_reply_of_the_turn_itself_is_not_wrapped(monkeypatch):
 
 # ── a website task's page ────────────────────────────────────────────────────
 
-def test_a_website_tasks_page_is_in_the_envelope():
-    from agent_friday.services import web_tasks
-    page = _fixture("web_page.txt")
-    shown = "\nCURRENT PAGE:\n" + web_tasks._data_envelope(page[:web_tasks.PAGE_CHARS_TO_MODEL])
-    _assert_enveloped(shown.split("CURRENT PAGE:\n", 1)[1], "web_page.txt")
+def test_a_website_tasks_page_reaches_its_model_in_the_envelope(isolated):  # noqa: F811
+    from tests.unit.test_web_tasks import FakeBrowser, FakeModel, plan, ports
+    from agent_friday.services import web_tasks as wt
+    hostile = {"https://shop.example.com/": _fixture("web_page.txt")}
+    model = FakeModel([{"give_up": {"reason": "read it"}}])
+    wt.run("t-injection", plan(), ports(FakeBrowser(hostile), model))
+    assert model.prompts, "the task never asked its model"
+    shown = model.prompts[0].split("CURRENT PAGE:\n", 1)[1]
+    _assert_enveloped(shown, "web_page.txt")
+    assert CANARY in shown
