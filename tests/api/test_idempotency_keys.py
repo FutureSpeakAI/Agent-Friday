@@ -75,6 +75,18 @@ def test_reads_are_not_affected(client, runs):
     assert r.status_code == 200 and r.headers.get("Idempotent-Replayed") is None
 
 
+def test_a_route_that_reads_its_own_body_still_sees_it_after_the_key_check():
+    """The idempotency check reads the body first (to fingerprint it); a route that read the raw
+    stream itself (the browser workspaces) then saw nothing and refused the request."""
+    import agent_friday.core as core
+    from agent_friday.routes import agent_workspaces
+    with core.app.test_request_context("/api/browser/workspaces/x", method="POST",
+                                       json={"workspace_id": "w1"}):
+        from flask import request
+        request.get_data(cache=True)                       # what the key check does
+        assert agent_workspaces._body(("workspace_id",)) == {"workspace_id": "w1"}
+
+
 def test_a_key_is_scoped_to_its_caller():
     from agent_friday.services import idempotency as idem
     idem.reset_for_tests()
