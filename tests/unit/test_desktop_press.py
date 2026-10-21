@@ -430,6 +430,24 @@ def test_the_page_on_another_device_never_reaches_for_the_desk_key(tmp_path):
     assert out["last"] == 403
 
 
+@pytest.mark.parametrize("rel", [".GIT/config", ".git./config", ".Git/hooks/pre-commit", "GIT~1/config",
+                                 "sub/.git/config", ".FRIDAY/x", ".claude/settings.json", ".MCP.json",
+                                 ".vscode/tasks.json"])
+def test_no_codebase_edit_reaches_git_or_an_agents_project_files_by_any_spelling(tmp_path, rel):
+    """An edit to a codebase Friday manages needs no press, so it must never land in git's own
+    folder (its config or a hook runs a command as the owner on the next git add) or in files a
+    coding agent loads and runs. Windows treats these spellings as the same names."""
+    from agent_friday.services import codebases as cb
+    with pytest.raises(ValueError):
+        cb._check_rel(tmp_path, rel)
+
+
+def test_git_in_a_codebase_never_runs_a_hook_or_a_monitor_command():
+    from agent_friday.services import codebases as cb
+    flat = " ".join(cb._GIT_IDENTITY)
+    assert "core.hooksPath=" in flat and "core.fsmonitor=false" in flat
+
+
 def test_the_lan_bind_switch_is_marked_unsafe_in_its_startup_warning():
     text = (REPO / "src/agent_friday/server.py").read_text(encoding="utf-8")
     assert "UNSAFE: FRIDAY_BIND_HOST is a developer-only switch" in text
