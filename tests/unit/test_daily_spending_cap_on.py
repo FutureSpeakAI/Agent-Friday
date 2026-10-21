@@ -45,25 +45,48 @@ def _on_disk(core) -> dict:
 
 # ── a new install: on, modest, in plain words ────────────────────────────────
 
+def _card(core):
+    return getattr(core, "install_choices_state", lambda: {})().get("daily_cap_card")
+
+
+def _push_card():
+    fn = getattr(sc, "push_daily_cap_card_if_pending", None)
+    return bool(fn()) if fn else False
+
+
 def test_a_new_install_starts_with_the_daily_cap_on(real_settings):
     core = real_settings
     s = core._load_settings()
     cb = _on_disk(core)["cost_budget"]
     assert cb["hard_stop_daily_enabled"] is True
     assert 0 < cb["hard_stop_daily"] <= 5.0, "the default daily cap is modest"
-    assert cb["hard_stop_daily"] == sc.DAILY_CAP_DEFAULT_USD
-    assert sc.daily_cap(s) == sc.DAILY_CAP_DEFAULT_USD
+    assert cb["hard_stop_daily"] == getattr(sc, "DAILY_CAP_DEFAULT_USD", None)
     from agent_friday.services import spend_guard
     assert spend_guard.enabled() is True
-    # A new install never gets the card for older installs.
-    assert core._load_settings()["spending_caps"].get(sc.CARD_KEY) in (None, "not_needed")
-    assert sc.push_daily_cap_card_if_pending() is False
+    assert s["cost_budget"]["hard_stop_daily_enabled"] is True
+    # A new install never gets the card meant for older installs.
+    assert _card(core) == "not_needed"
+    assert _push_card() is False
+
+
+def test_a_new_install_set_up_by_the_terminal_setup_first_keeps_the_cap(real_settings):
+    """The installer runs the terminal setup before the app has ever started:
+    it decides the install is new, then writes settings.json itself, with no
+    cost_budget. The app's first read must still see the cap on, with no card."""
+    core = real_settings
+    getattr(core, "install_origin", lambda: None)()   # what setup_wizard.main() does first
+    core.SETTINGS_FILE.write_text(json.dumps({"agent_name": "TEST AGENT",
+                                              "setup_complete": True}), encoding="utf-8")
+    core._invalidate_settings_cache()
+    s = core._load_settings()
+    assert getattr(sc, "daily_cap", lambda _s: None)(s) == 2.0
+    assert _card(core) == "not_needed"
 
 
 def test_the_cap_is_said_in_plain_words(real_settings):
     core = real_settings
     s = core._load_settings()
-    words = sc.plain_words(s)
+    words = getattr(sc, "plain_words", lambda _s: "")(s)
     assert "stops spending on cloud AI after $2.00 a day" in words
     assert "pauses" in words and "hard stop" not in words.lower()
     off = dict(s, cost_budget=dict(s["cost_budget"], hard_stop_daily_enabled=False))
@@ -83,22 +106,53 @@ def test_an_existing_install_with_no_daily_cap_keeps_none_and_gets_one_card(real
     core = real_settings
     s = _existing(core, {"cost_budget": {"daily": 5.0, "monthly": 50.0}})
     assert sc.daily_cap(s) is None, "the update must not switch the cap on"
-    assert _on_disk(core)["cost_budget"]["hard_stop_daily_enabled"] is False
-    assert _on_disk(core)["spending_caps"][sc.CARD_KEY] == "pending"
+    cb = _on_disk(core)["cost_budget"]
+    assert cb["hard_stop_daily_enabled"] is False
+    assert cb["daily"] == 5.0 and cb["monthly"] == 50.0
+    assert _card(core) == "pending"
     pushed = []
     import agent_friday.notifications_engine as ne
     monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw) or kw)
-    assert sc.push_daily_cap_card_if_pending() is True
-    assert sc.push_daily_cap_card_if_pending() is False, "the card shows once"
+    assert _push_card() is True
+    assert _push_card() is False, "the card shows once"
     assert len(pushed) == 1
     card = pushed[0]
     assert card["title"] == "New: a daily spending cap"
     assert "nothing has changed" in card["body"] and "$2.00 a day" in card["body"]
     assert card["actions"] == [{"label": "Set my daily cap", "workspace": "settings", "tab": "costs"}]
     assert card["emitter"] == "SC1" and card["priority"] == "high"
-    # A later process does not queue it again.
+    assert _card(core) == "shown"
+
+
+def test_a_card_that_could_not_be_shown_is_tried_again(real_settings, monkeypatch):
+    core = real_settings
+    _existing(core, {"cost_budget": {}})
+    import agent_friday.notifications_engine as ne
+
+    def _down(**kw):
+        raise OSError("notifications store busy")
+    monkeypatch.setattr(ne, "push", _down)
+    assert _push_card() is False
+    assert _card(core) == "pending"
+    monkeypatch.setattr(ne, "push", lambda **kw: kw)
+    assert _push_card() is True and _card(core) == "shown"
+
+
+def test_the_card_is_never_queued_twice_even_when_settings_json_is_rewritten(real_settings, monkeypatch):
+    """The terminal setup and `friday config set` rewrite settings.json whole
+    from config.yaml, dropping the migration's stamp. The card's state lives
+    beside settings.json, so it is not queued again."""
+    core = real_settings
+    _existing(core, {"cost_budget": {}})
+    import agent_friday.notifications_engine as ne
+    monkeypatch.setattr(ne, "push", lambda **kw: kw)
+    assert _push_card() is True
+    core.SETTINGS_FILE.write_text(json.dumps({"agent_name": "TEST AGENT"}), encoding="utf-8")
+    monkeypatch.setattr(core, "_CAPS_MIGRATION_TRIED", [False])
     core._invalidate_settings_cache()
-    assert core._load_settings()["spending_caps"][sc.CARD_KEY] == "shown"
+    s = core._load_settings()
+    assert sc.daily_cap(s) is None, "a rewrite does not switch an existing install's cap on"
+    assert _card(core) == "shown" and _push_card() is False
 
 
 def test_an_existing_install_with_no_cost_block_at_all_is_not_switched_on(real_settings):
@@ -107,14 +161,17 @@ def test_an_existing_install_with_no_cost_block_at_all_is_not_switched_on(real_s
     assert sc.daily_cap(s) is None
     from agent_friday.services import spend_guard
     assert spend_guard.enabled() is False
+    cb = _on_disk(core)["cost_budget"]
+    assert cb["hard_stop_daily_enabled"] is False
+    assert cb["hard_stop_daily"] == 2.0, "turning it on later starts at the default figure"
 
 
 def test_an_existing_install_with_its_own_daily_cap_keeps_it_and_needs_no_card(real_settings):
     core = real_settings
     s = _existing(core, {"cost_budget": {"hard_stop_daily": 7.5, "hard_stop_daily_enabled": True}})
     assert sc.daily_cap(s) == 7.5
-    assert _on_disk(core)["spending_caps"][sc.CARD_KEY] == "not_needed"
-    assert sc.push_daily_cap_card_if_pending() is False
+    assert _card(core) == "not_needed"
+    assert _push_card() is False
 
 
 def test_an_existing_install_that_switched_the_cap_off_keeps_it_off(real_settings):
@@ -124,20 +181,29 @@ def test_an_existing_install_that_switched_the_cap_off_keeps_it_off(real_setting
     assert _on_disk(core)["cost_budget"]["hard_stop_daily"] == 3.0
 
 
-def test_the_migration_runs_once(real_settings):
+def test_an_existing_install_that_lost_its_settings_file_is_not_switched_on(real_settings):
     core = real_settings
-    _existing(core, {"cost_budget": {}})
-    core._save_settings({"cost_budget": {"hard_stop_daily": 4.0, "hard_stop_daily_enabled": True}})
+    (core.FRIDAY_DIR / ".setup_complete").write_text("done", encoding="utf-8")
+    s = core._load_settings()                 # no settings.json: the seed is written
+    assert getattr(core, "install_origin", lambda: "")() == "existing"
+    assert s["cost_budget"]["hard_stop_daily_enabled"] is False
+
+
+def test_an_unreadable_settings_file_does_not_switch_an_existing_install_on(real_settings):
+    core = real_settings
+    core.SETTINGS_FILE.write_text("{ not json", encoding="utf-8")
     core._invalidate_settings_cache()
-    assert sc.daily_cap(core._load_settings()) == 4.0, "a later choice is the owner's"
+    s = core._load_settings_raw()
+    assert core._is_degraded_settings(s)
+    assert s["cost_budget"]["hard_stop_daily_enabled"] is False
 
 
 def test_the_boot_shows_the_card_and_it_is_a_registered_notice():
     src = (REPO / "src/agent_friday/server.py").read_text(encoding="utf-8")
     assert "_sc.push_daily_cap_card_if_pending" in src
     from agent_friday.services import notice_registry as nr
-    e = nr.REGISTRY["SC1"]
-    assert e.kind == "spend_cap_intro" and e.place == nr.NEEDS_YOU
+    e = nr.REGISTRY.get("SC1")
+    assert e is not None and e.kind == "spend_cap_intro" and e.place == nr.NEEDS_YOU
 
 
 # ── reaching it pauses, with a card ──────────────────────────────────────────
@@ -200,7 +266,7 @@ def test_the_spending_page_says_it_in_plain_words(page):
 
 def test_the_setup_promise_names_the_daily_cap():
     from agent_friday.services import setup_chat_copy as copy
-    assert "a daily spending cap is on from the start" in copy.CONTRACT
+    assert "a daily spending cap limits that, and you set it" in copy.CONTRACT
     assert "monthly ceiling" not in copy.CONTRACT
 
 
