@@ -59377,6 +59377,7 @@ function SettingsPrivacyMap() {
   const [msg, setMsg] = useState('');
   const [rec, setRec] = useState(null);
   const [sent, setSent] = useState(null);
+  const [man, setMan] = useState(null);
   const load = useCallback(() => {
     apiFetch('/api/privacy/map').then(r => r.json()).then(x => { setD(x); setMsg(''); }).catch(() => setMsg('Could not read the privacy map.'));
   }, []);
@@ -59391,6 +59392,16 @@ function SettingsPrivacyMap() {
     .then(x => setRec({ to, label: x.label, rows: x.rows || [] })).catch(() => setMsg('Could not read the receipts.'));
   const showSent = sha => apiFetch('/api/privacy/map/sent/' + encodeURIComponent(sha)).then(r => r.json())
     .then(x => x.ok ? setSent({ sha, text: x.text, model: x.model }) : setMsg(x.message || 'That text was not kept.')).catch(() => setMsg('Could not read the kept text.'));
+  const showManifest = id => apiFetch('/api/privacy/manifest/' + encodeURIComponent(id)).then(r => r.json())
+    .then(x => x.ok ? setMan(x.manifest) : setMsg(x.message || 'That manifest was not found.')).catch(() => setMsg('Could not read the manifest.'));
+  const manLines = m => [
+    'For: ' + (m.principal || 'unknown') + ' · ' + (m.purpose || 'a send') + ' · to ' + (m.destination || m.provider || 'unknown') + (m.model ? ' (' + m.model + ')' : ''),
+    'Parts: ' + ((m.sources || []).map(s => s.part + ' (' + s.sensitivity + (s.action !== 'allow' ? ', ' + s.action : '') + (s.count > 1 ? ', ' + s.count + ' times' : '') + ')').join('; ') || 'none recorded'),
+    'Sensitivity seen: ' + ((m.sensitivity_classes || []).join(', ') || 'none'),
+    'Withheld: ' + (m.withheld || 0) + (m.grants && m.grants.length ? ' · allowed by: ' + m.grants.join(', ') : ''),
+    'About ' + (m.estimated_tokens || 0) + ' tokens (an estimate from its size)',
+    m.previewed_words || (m.previewed ? 'You previewed it.' : 'Not previewed.'),
+  ].concat((m.assembled_sections || []).length ? ['Prompt sections this turn assembled: ' + m.assembled_sections.map(s => s.name + (s.sent === false ? ' (not sent)' : '')).join(', ')] : []);
   const post = (url, body) => apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
   const setMode = mode => post('/api/privacy/sent-text', { mode })
     .then(x => { setMsg(x.ok ? (mode === 'full' ? 'The full text of each new send is kept with its receipt again.' : 'Only fingerprints are kept now; ' + (x.deleted || 0) + ' kept text(s) deleted.') : (x.message || 'Nothing changed.')); load(); }).catch(() => setMsg('Could not reach the server.'));
@@ -59427,12 +59438,17 @@ function SettingsPrivacyMap() {
     rec && E('div', { className: 'pm-receipts', role: 'region', 'aria-label': 'Receipts for ' + rec.label },
       E('div', { className: 'lk-title' }, 'Receipts: ' + rec.label),
       rec.rows.length === 0 ? E('div', { className: 'lk-words' }, 'No rows.') : E('ul', { className: 'lk-sub' }, rec.rows.map((r, i) => r.kind === 'call'
-        ? E('li', { key: i, className: 'pm-call' }, callLine(r), r.still_kept && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'Show what was sent at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showSent(r.payload_fingerprint) }, 'Show what was sent'))
+        ? E('li', { key: i, className: 'pm-call' }, callLine(r), r.still_kept && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'Show what was sent at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showSent(r.payload_fingerprint) }, 'Show what was sent'),
+            r.manifest_id && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'What went into the send at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showManifest(r.manifest_id) }, 'What went into it'))
         : E('li', { key: i }, new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.field || '') + ' · ' + (r.action || '') + (r.reason ? ' · ' + r.reason : '')))),
       sent && E('div', { className: 'pm-sent', role: 'region', 'aria-label': 'What was sent' },
         E('div', { className: 'lk-title' }, 'Exactly what was sent' + (sent.model ? ' to ' + sent.model : '')),
         E('pre', { className: 'pm-sent-text', style: { whiteSpace: 'pre-wrap', maxHeight: 320, overflow: 'auto', fontSize: 11 } }, String(sent.text || '')),
         E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setSent(null) }, 'Close')),
+      man && E('div', { className: 'pm-manifest', role: 'region', 'aria-label': 'What went into this send' },
+        E('div', { className: 'lk-title' }, 'What went into this send'),
+        E('ul', { className: 'lk-sub' }, manLines(man).map((t, i) => E('li', { key: i }, t))),
+        E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setMan(null) }, 'Close')),
       E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setRec(null) }, 'Close the receipts')),
     left.other_destinations > 0 && E('div', { className: 'lk-words' }, 'And ' + left.other_destinations + ' more destination' + (left.other_destinations === 1 ? '' : 's') + ' with older sends.'),
     d.sent_text && E('div', { className: 'pm-keep', role: 'group', 'aria-label': 'The full text, or fingerprints only' },
