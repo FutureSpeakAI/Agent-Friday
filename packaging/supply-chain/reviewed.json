@@ -1,0 +1,24 @@
+{
+ "about": "Reviewed exceptions for scripts/supply_chain.py (north star 34.2-10, 34.2-17, 34.17-6). A licence entry clears one package whose licence (exactly as the SBOM reads it) is not permissive or not machine-readable; an advisory entry clears one advisory id (or an alias) for one package. Every entry names why, who reviewed it and until when; after `until` it no longer counts and the gate fails again. Entries carried over from THIRD_PARTY_LICENSES.md are the project's existing record and still need the release lead's confirmation before the public 1.0 (amendment A19).",
+ "licences": [
+  {"package": "mutagen", "licence": "GPL-2.0-or-later",
+   "reason": "Recorded in THIRD_PARTY_LICENSES.md (GPL-2.0-or-later, installed by the installer, recommended tier). Used as a library for audio metadata; FutureSpeak.AI distributes it unmodified in the wheelhouse.",
+   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
+  {"package": "piper-tts", "licence": "GPL-3.0-or-later",
+   "reason": "Recorded in THIRD_PARTY_LICENSES.md (GPL-3.0-or-later, piper1-gpl, recommended tier): the local text-to-speech engine, shipped unmodified.",
+   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
+  {"package": "imageio-ffmpeg", "licence": "BSD-2-Clause AND GPL-3.0-or-later",
+   "reason": "Recorded in THIRD_PARTY_LICENSES.md: BSD-2-Clause wrapper plus the GPL-3.0 ffmpeg.exe it bundles, run as a separate program.",
+   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
+  {"package": "pypdfium2", "licence": "BSD-3-Clause, Apache-2.0, dependency licenses",
+   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0 (permissive).",
+   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
+  {"package": "sherpa-onnx", "licence": "Apache licensed, as found in the LICENSE file",
+   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records Apache-2.0 (permissive).",
+   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"},
+  {"package": "tiktoken", "licence": "(none found)",
+   "reason": "The wheel names no licence; THIRD_PARTY_LICENSES.md records MIT (Copyright (c) 2022 OpenAI, Shantanu Jain).",
+   "reviewed_by": "THIRD_PARTY_LICENSES.md record, carried over 2026-10-21; release lead to confirm", "until": "2027-01-31"}
+ ],
+ "advisories": []
+}

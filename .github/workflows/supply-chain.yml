@@ -1,0 +1,62 @@
+name: supply-chain
+
+# What the Windows setup program carries, its licences and its known
+# vulnerabilities (north star §34.2-10, §34.2-17, §34.17-6):
+#
+#   resolve    the wheelhouse collected the way build-installer.ps1 collects it
+#              (pip download --only-binary=:all:, CPython 3.12 on Windows), so
+#              the versions judged are the versions shipped
+#   sbom       a CycloneDX 1.5 SBOM of every wheel, the vendored browser code
+#              and the bundled CPython, kept as an artifact
+#   licences   copyleft, unknown or missing licences fail unless reviewed in
+#              packaging/supply-chain/reviewed.json
+#   audit      every package's exact version asked of OSV; a HIGH, CRITICAL or
+#              unreadable-severity advisory fails unless reviewed
+#
+# It runs on every version tag (the release gate waits for it), on pull
+# requests that change what is shipped, weekly (an advisory published after a
+# release is still found) and by hand.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "17 6 * * 1"
+  pull_request:
+    paths:
+      - "packaging/windows/requirements/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "static/vendor/**"
+      - "packaging/supply-chain/**"
+      - "scripts/supply_chain.py"
+      - ".github/workflows/supply-chain.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  supply-chain:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Resolve the shipped wheelhouse, write the SBOM, judge licences, audit advisories
+        shell: pwsh
+        run: |
+          python scripts/supply_chain.py all --resolve --wheels "$env:RUNNER_TEMP\wheels" --out supply-chain --version "${{ github.ref_name }}"
+          exit $LASTEXITCODE
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: supply-chain
+          path: supply-chain/*.json
+          if-no-files-found: ignore
