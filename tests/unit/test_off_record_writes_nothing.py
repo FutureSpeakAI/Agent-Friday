@@ -443,7 +443,8 @@ def test_native_crew_delegation_checks_call_origin_before_logging_and_execution(
     if boundary != "public":
         assert "NOT DONE" in responses[0]["response"]["result"]
     else:
-        assert responses[0]["response"]["result"] == "accepted"
+        from agent_friday.services.untrusted_input import wrap
+        assert responses[0]["response"]["result"] == wrap("accepted")
 
 
 @pytest.mark.parametrize("origin_kind", ["private", "ended-public", "public", "missing"])

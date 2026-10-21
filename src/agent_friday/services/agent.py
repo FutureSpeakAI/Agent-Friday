@@ -115,6 +115,7 @@ from agent_friday.services.model_router import (
 from agent_friday.services import tool_hooks as _hooks
 from agent_friday.services import taint as _taint_mod
 from agent_friday.services import reasoning_trace as _rtrace
+from agent_friday.services import untrusted_input as _untrusted
 from agent_friday.services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -8082,8 +8083,10 @@ def _advance_task_chain_once(task_id, result_text):
             step = steps[nxt]
             prompt = _workflow_prompt(chain, step['prompt'], t.get('workflow_baseline'))
             if step.get('with_context', True) and result_text:
+                # The previous step read mail, pages or files: what it produced is data
+                # for this step (services/untrusted_input), never part of its task.
                 prompt = (f"Context from the previous step "
-                          f"(\"{t.get('name')}\"):\n\n{result_text[:6000]}\n\n"
+                          f"(\"{t.get('name')}\"):\n\n{_untrusted.wrap(result_text[:6000])}\n\n"
                           f"---\n\nYour task:\n{prompt}")
             _task_log(task_id, f"→ chaining to step {nxt + 1}/{len(steps)}: {step['name']}")
             _journal().decision("chain_advance", f"step {nxt + 1}/{len(steps)}: {step['name']}",
@@ -8112,7 +8115,7 @@ def _advance_task_chain_once(task_id, result_text):
         prompt = (oc.get('prompt') or oc.get('spawn') or '').strip()
         if oc.get('with_context', True) and result_text:
             prompt = (f"Context from the previous task (\"{t.get('name')}\"):\n\n"
-                      f"{result_text[:6000]}\n\n---\n\nYour task:\n{prompt}")
+                      f"{_untrusted.wrap(result_text[:6000])}\n\n---\n\nYour task:\n{prompt}")
         _task_log(task_id, f"→ on_complete: spawning '{nxt_name}'")
         return _spawn_task(
             name=nxt_name, prompt=prompt,
@@ -9372,7 +9375,29 @@ def _cc_rate_ok():
         if len(_CC_ACTION_TS) >= _CC_MAX_PER_SEC:
             return False
         _CC_ACTION_TS.append(now)
+    try:
+        # A click or key Friday makes on this PC's screen must never count as the owner's
+        # press on an approval card (services/desk_press refuses presses for a few seconds).
+        from agent_friday.services import desk_press as _dp_cc
+        _dp_cc.note_machine_input()
+    except Exception:
+        return False        # cannot mark it: do not act
     return True
+
+
+class _DeskMarkUnavailable(Exception):
+    """services/desk_press could not be told that Friday is about to drive the mouse or keyboard."""
+
+
+def _desk_machine_input():
+    """While Friday's own mouse or keyboard action runs, and for a few seconds after it ends, no
+    press on an approval card counts (services/desk_press.machine_input). Raises
+    _DeskMarkUnavailable when the mark cannot be made, so the caller does not act."""
+    try:
+        from agent_friday.services import desk_press as _dp_cc
+        return _dp_cc.machine_input()
+    except Exception as e:
+        raise _DeskMarkUnavailable(str(e))
 
 
 def _tool_move_mouse(inp):
@@ -9389,7 +9414,8 @@ def _tool_move_mouse(inp):
     x = int(round(int((inp or {}).get('x', 0)) * _CC_LAST_SHOT["scale_x"]))
     y = int(round(int((inp or {}).get('y', 0)) * _CC_LAST_SHOT["scale_y"]))
     try:
-        _pag.moveTo(x, y, duration=0.25)
+        with _desk_machine_input():
+            _pag.moveTo(x, y, duration=0.25)
         _log_context("cc_action", {"action": "move_mouse", "x": x, "y": y})
         return f"Mouse moved to ({x}, {y})."
     except Exception as e:
@@ -9412,7 +9438,8 @@ def _tool_click(inp):
     if button not in ('left', 'right', 'middle'):
         button = 'left'
     try:
-        _pag.click(x, y, button=button)
+        with _desk_machine_input():
+            _pag.click(x, y, button=button)
         _log_context("cc_action", {"action": "click", "x": x, "y": y, "button": button})
         return f"Clicked {button} at ({x}, {y})."
     except Exception as e:
@@ -9434,7 +9461,8 @@ def _tool_type_text(inp):
     if not _cc_rate_ok():
         return "Rate limited."
     try:
-        _pag.write(text, interval=0.03)
+        with _desk_machine_input():
+            _pag.write(text, interval=0.03)
         _log_context("cc_action", {"action": "type_text", "chars": len(text)})
         return f"Typed {len(text)} characters."
     except Exception as e:
@@ -9454,7 +9482,8 @@ def _tool_press_key(inp):
     if not _cc_rate_ok():
         return "Rate limited."
     try:
-        _pag.press(key)
+        with _desk_machine_input():
+            _pag.press(key)
         _log_context("cc_action", {"action": "press_key", "key": key})
         return f"Pressed key: {key}."
     except Exception as e:
@@ -9515,7 +9544,8 @@ def _tool_scroll(inp):
     amount = max(1, min(20, int((inp or {}).get('amount', 3))))
     clicks = -amount if direction == 'down' else amount
     try:
-        _pag.scroll(clicks)
+        with _desk_machine_input():
+            _pag.scroll(clicks)
         _log_context("cc_action", {"action": "scroll", "direction": direction, "amount": amount})
         return f"Scrolled {direction} {amount} step(s)."
     except Exception as e:
@@ -12942,7 +12972,7 @@ def _deny_awaiting_card(session_id):
         return None
     try:
         from agent_friday.services import approvals as _appr
-        _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat")
+        _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat", source="typed")
     except Exception as e:
         _log.warning("could not deny confirmation card %s: %s", aid, e)
         return None
@@ -13509,19 +13539,23 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     voice surface's own helpers). It runs through exactly the same chain;
     there is no other way to invoke a tool handler.
     """
+    # Every return before the handler runs is Friday's own line about the call (a
+    # refusal, a fix-it, a hold), not a tool's output: marked so the loops hand it
+    # to the model as Friday's words, outside the data envelope (services/untrusted_input).
+    _own = _untrusted.FridaysWords
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
-        return _crew_denial
+        return _own(_crew_denial)
     if (session_ctx or {}).get("crew_agent_id"):
         from agent_friday.services import crew_runtime
         if (session_ctx or {}).get("crew_chat_only"):
             reason = "[CREW DENY] This conversation with a working agent has no tool authority."
             _receipts.record(name, ok=False, denied=True, detail=reason)
-            return reason
+            return _own(reason)
         if crew_runtime.pending_steering((session_ctx or {}).get("task_id")):
             reason = "[CREW STEER PENDING] A new user instruction is queued. This tool did not run; receive it at the next model round."
             _receipts.record(name, ok=False, denied=True, detail=reason)
-            return reason
+            return _own(reason)
     handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
@@ -13537,11 +13571,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             hint = ("Closest registered tools: "
                     + ", ".join(suggestions)) if suggestions else \
                    "No similarly-named tool is registered."
-            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so "
-                    f"nothing ran and no result was produced. {hint} "
-                    f"Retry with an exact name from your tool list, or tell "
-                    f"the user you could not do it. Do not describe an "
-                    f"outcome: there isn't one.")
+            return _own(f"TOOL CALL FAILED — no tool named '{name}' exists, so "
+                        f"nothing ran and no result was produced. {hint} "
+                        f"Retry with an exact name from your tool list, or tell "
+                        f"the user you could not do it. Do not describe an "
+                        f"outcome: there isn't one.")
 
     # Arguments are checked against the tool's own schema before any gate
     # sees them. A call that does not fit never runs: the model gets back
@@ -13552,7 +13586,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     if _arg_error:
         _receipts.record(name, ok=False, denied=True, detail="invalid arguments")
         _call_verifier.receipt(name, _checked, "verifier_fixit", "invalid arguments", session_ctx)
-        return _arg_error
+        return _own(_arg_error)
     tool_input = _restore_placeholders(_checked or {}, pii_lookup)
     # A scheduled job or workflow made to SEND its emails (kept sending by the one-time mark in
     # services/email_jobs, or switched to send on its Workflows card) sends, as it did before
@@ -13571,7 +13605,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
                                session_ctx)
         if _vout.kind != "cached":
             _receipts.record(name, ok=False, denied=True, detail=_vout.message)
-        return _vout.message
+            return _own(_vout.message)
+        return _vout.message          # an earlier result of this read: tool output, enveloped like any
     # The gate and handler must act on the same codebase even if the chat is
     # rebound while its turn runs. Pin implicit scope before every pre-hook.
     if name in ("codebase_edit", "codebase_undo", "codebase_read", "codebase_understand") and not str(tool_input.get("codebase_id") or "").strip():
@@ -13586,7 +13621,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         if not _scope_rec or not _scope_rec.get("id"):
             _reason = f"[NOT RUN] '{name}': this turn has no resolvable codebase. Open its codebase conversation before trying again."
             _receipts.record(name, ok=False, denied=True, detail=_reason)
-            return _reason
+            return _own(_reason)
         tool_input = dict(tool_input, codebase_id=_scope_rec["id"])
 
     _host_name = name if name in CLAUDE_TOOL_HANDLERS else _resolve_tool_name(name)[0]
@@ -13617,10 +13652,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     session_ctx = ctx.session_ctx
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
-        return _crew_denial
+        return _own(_crew_denial)
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
-        return verdict.reason
+        return _own(verdict.reason)
 
     # Say what is about to happen BEFORE it happens, and only once it will
     # happen: derived from the tool actually being invoked, after every gate
@@ -15295,9 +15330,11 @@ def _make_mcp_handler(server_name: str, tool_name: str):
         payload = _mcp_fit_envelope(server_name, tool_name, inp or {})
         # A desktop tool acts on whatever app is under the pointer or in
         # front NOW; the checkpoint looked a moment ago. Look again.
+        desktop = False
         try:
             from agent_friday.services import desktop_grants as _dg
-            if _dg.is_desktop_server(server_name):
+            desktop = bool(_dg.is_desktop_server(server_name))
+            if desktop:
                 ok, why = _dg.recheck(
                     f"mcp_{_mcp_sanitize(server_name)}_{_mcp_sanitize(tool_name)}",
                     payload)
@@ -15309,6 +15346,14 @@ def _make_mcp_handler(server_name: str, tool_name: str):
             ok, explanation = _mcp_gate_args(server_name, tool_name, payload)
             if not ok:
                 return explanation
+        if desktop:
+            # A desktop connector clicks and types on this PC's screen like Computer Control:
+            # while it acts, and for a few seconds after, no press on an approval card counts.
+            try:
+                with _desk_machine_input():
+                    return _MCP_MANAGER.call(server_name, tool_name, payload)
+            except _DeskMarkUnavailable:
+                return "Not done: Friday could not mark its own desktop action, so it did not act."
         return _MCP_MANAGER.call(server_name, tool_name, payload)
     return _handler
 
@@ -15535,14 +15580,15 @@ def _screenshot_result_to_block(tool_use_id, result):
     return {
         "type": "tool_result",
         "tool_use_id": tool_use_id,
-        "content": [
-            {"type": "text", "text": data.get('note', 'Screenshot captured.')},
+        # The picture (a web page, a document, the desktop) is the source's, like
+        # its text: both sit inside the one data envelope (services/untrusted_input).
+        "content": _untrusted.wrap_blocks(
+            data.get('note', 'Screenshot captured.'),
             {"type": "image", "source": {
                 "type": "base64",
                 "media_type": data.get('media_type', 'image/png'),
                 "data": b64,
-            }},
-        ],
+            }}),
     }
 
 
@@ -16722,7 +16768,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tu.id,
-                    "content": result,
+                    # What the tool returned is data, never instructions: one envelope for every
+                    # result (services/untrusted_input). The trace and ledger above keep it raw.
+                    "content": _untrusted.wrap(result),
                 })
             convo.append({"role": "user", "content": tool_results})
             if _tool_changes:
@@ -17607,13 +17655,15 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             # small window, so it gets the result without formatting
             # boilerplate; the data is unchanged and the trace keeps the
             # original. A cloud seat gets the result exactly as returned.
-            if _compact_seat == "local":
+            if _compact_seat == "local" and not isinstance(result, _untrusted.FridaysWords):
                 try:
                     from agent_friday.services.tool_result_compact import compact as _compact_result
                     result = _compact_result(result)
                 except Exception:
                     pass
-            convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
+            # The tool's output is data, never instructions (services/untrusted_input),
+            # wrapped after compaction so the envelope itself is never compacted away.
+            convo.append({"role": "tool", "tool_call_id": tcid, "content": _untrusted.wrap(result)})
 
     # Reached only when a tool loop really did spend its whole budget: a
     # tool-less call always returns from the final-answer branch above, and

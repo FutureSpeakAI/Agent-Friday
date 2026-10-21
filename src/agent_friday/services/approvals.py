@@ -322,7 +322,7 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
 _OFF_RECORD_CARDS: Dict[str, dict] = {}
 _RECEIPT_KEYS = ("approval_id", "kind", "subject_type", "policy_class", "gated",
                  "status", "consumed", "created_at", "expires_at", "decided_at",
-                 "decided_by", "used_at", "off_record")
+                 "decided_by", "decided_source", "decided_check", "used_at", "off_record")
 
 
 def _disk_view(record: dict) -> dict:
@@ -561,6 +561,10 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
         "expiry_paused": False,  # A4 flips this while the owner's channel is unreachable
         "decided_at": None,
         "decided_by": None,
+        # Nobody decides a card raised pending; one raised already approved was let
+        # through by the policy table (an internal action), one blocked by Law 1.
+        "decided_source": (None if status == "pending" else
+                           ("law1_block" if status == "blocked" else "auto_policy")),
         "decision_note": "",
     }
     try:
@@ -611,6 +615,7 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
         "created_at": now, "expires_at": None, "expiry_paused": False,
         "decided_at": None if law1_blocked else now,
         "decided_by": None if law1_blocked else "grant:" + str(grant_id),
+        "decided_source": "law1_block" if law1_blocked else "standing_grant",
         "decision_note": "" if law1_blocked else "pre-approved by you in Settings",
         "pre_approved": str(grant_id),
     }
@@ -684,6 +689,10 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
                 != json.dumps(tool_input, sort_keys=True)):
             return False
         now = time.time()
+        if rec.get("status") == "pending":
+            # The owner's typed yes in chat on this PC (agent.prepare_confirmation_ctx admits
+            # it only from the app's page with a verified press: owner_surface).
+            rec["decided_source"] = "typed"
         rec.update(status="approved", consumed=True, executing_at=now,
                    used_at=now, used_by="chat_confirmation", decided_at=now,
                    decided_by="owner", decision_note="answered in chat")
@@ -758,19 +767,19 @@ def gate_action(*, kind: str, subject_type: str, subject_id: str, title: str,
 # ═══════════════════════════════════════════════════════════════════════════
 
 def decide(approval_id: str, decision: str, *, decided_by: str = "owner",
-           note: str = "") -> Optional[Dict[str, Any]]:
+           note: str = "", source: str = "") -> Optional[Dict[str, Any]]:
     """Resolve a pending approval. decision: 'approve' | 'deny'.
 
     Idempotent/no-op on a card that isn't currently "pending" (returns the
     card unchanged) — blocked (Law-1) and already-decided cards can't be
     re-opened through this path. Fires any registered decision hook for the
     card's `kind` (best-effort; a hook failure is logged, never raised)."""
-    rec, _won = decide_with_outcome(approval_id, decision, decided_by=decided_by, note=note)
+    rec, _won = decide_with_outcome(approval_id, decision, decided_by=decided_by, note=note, source=source)
     return rec
 
 
 def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "owner",
-                        note: str = "") -> tuple:
+                        note: str = "", source: str = "") -> tuple:
     """`decide()`, also saying whether THIS call made the decision.
 
     Returns (record, won). `won` is True for exactly one caller per card: the
@@ -781,6 +790,19 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     """
     if decision not in ("approve", "deny"):
         raise ValueError("decision must be 'approve' or 'deny'")
+    # "owner:ui" is a press on this PC's own screen. It is taken only from a request
+    # that screen_click.decided_by verified as one; any other caller naming it (a
+    # label in code, a tool's surface, a chat turn, a request that never pressed)
+    # decides as the plain owner, which no screen-only card accepts.
+    decided_by = str(decided_by or "owner")
+    if decided_by == SCREEN_LABEL and not _press_granted(approval_id):
+        decided_by = "owner"
+    named = source if source in _CALLER_SOURCES else ""
+    source, check = decision_source(decided_by, approval_id)
+    if named and source != "desktop_press":
+        # The caller knows the channel better than the label does (a typed "no" in chat is
+        # decided as the plain owner). It can name a channel; it can never name a press.
+        source = named
     with _LOCK:
         recs = _read_store()
         rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
@@ -804,12 +826,98 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
+        rec["decided_source"] = source
+        if check is not None:
+            rec["decided_check"] = check
         rec["decision_note"] = note
         _write_store(recs)
         out = dict(rec)
     _feed("card_resolved", out)
     _fire_hook(out)
     return out, True
+
+
+#: The label a verified press on this PC's own screen carries (services/screen_click.SCREEN).
+SCREEN_LABEL = "owner:ui"
+
+#: Labels a text-message or chat channel writes, mapped to the receipt's source.
+_TYPED_SURFACES = frozenset({"chat", "typed", "app", "palette", "reflex"})
+_MESSAGE_SURFACES = frozenset({"sms", "text", "telegram", "discord", "channel", "whatsapp", "phone", "email"})
+#: Sources a caller may name for its own decision (decide(source=...)). Never desktop_press:
+#: that one is only ever worked out from a verified press.
+_CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday"})
+
+
+def _press_granted(approval_id=None) -> bool:
+    try:
+        from agent_friday.services import screen_click as _sc
+        return _sc.granted_press(approval_id)
+    except Exception:
+        return False
+
+
+def _request_press_check() -> Optional[dict]:
+    """The press test's parts for the current request, or None outside a request."""
+    try:
+        from flask import has_request_context, request
+        if not has_request_context():
+            return None
+        from agent_friday.services import screen_click as _sc
+        return _sc.press_check(request)
+    except Exception:
+        return None
+
+
+def decision_source(decided_by: str, approval_id=None) -> tuple:
+    """(source, check) for a decision's receipt: WHERE it was made, in a fixed word.
+
+    desktop_press        a press on this PC's own screen (verified: local, local Host, desk key)
+    voice                the owner's voice through the voice path
+    typed                a reply typed in chat
+    text_message         a reply over a text channel (SMS, Telegram, ...)
+    page_not_on_this_pc  Friday's page, but reached from another device, a tunnel or the network
+    page_without_desk_key Friday's page on this PC's address, without this launch's desk key
+    page_on_this_pc      Friday's page on this PC, in a request that was not an approve press
+    local_program        a request on this PC that is not Friday's page (a script, the tray, the CLI)
+    in_process           Friday's own code, outside any request
+    standing_grant / system / friday   written by the server for those deciders
+    other                any other label (kept in decided_by)
+
+    `check` is the press test's parts when the decision came over HTTP, else None."""
+    label = str(decided_by or "")
+    low = label.lower()
+    if label.startswith("grant:"):
+        return "standing_grant", None
+    if label.startswith("system:"):
+        return "system", None
+    if label.startswith("friday:"):
+        return "friday", None
+    if "voice" in low:
+        return "voice", None
+    surface = low.split(":", 1)[1] if low.startswith("owner:") else ""
+    if surface in _TYPED_SURFACES:
+        return "typed", None
+    if surface in _MESSAGE_SURFACES:
+        return "text_message", None
+    check = _request_press_check()
+    if label == SCREEN_LABEL:
+        # Only reached after decide_with_outcome checked the press was granted.
+        return "desktop_press", check
+    if label in ("owner", "owner:caption") or not label:
+        if check is None:
+            return "in_process", None
+        if _press_granted(approval_id):
+            # A verified press on a decide route that did not claim the screen (the caption's button).
+            return "desktop_press", check
+        if not check.get("page"):
+            return "local_program" if check.get("local") else "page_not_on_this_pc", check
+        if not (check.get("local") and check.get("host_local")):
+            return "page_not_on_this_pc", check
+        if not check.get("desk_key"):
+            return "page_without_desk_key", check
+        # Friday's page on this PC, but not an approve route's press (a chat turn, a setting).
+        return "page_on_this_pc", check
+    return "other", check
 
 
 def _is_cloud_release_card(rec: dict) -> bool:
@@ -862,6 +970,7 @@ def expire_matching(match, by: str, note: str = "") -> int:
                     r["status"] = "expired"
                     r["decided_at"] = time.time()
                     r["decided_by"] = by
+                    r["decided_source"] = "system"
                     r["decision_note"] = note
                     expired.append(dict(r))
         if expired:
@@ -901,6 +1010,7 @@ def _expire_due(now: float, notify: bool = True) -> List[Dict[str, Any]]:
                 r["status"] = "expired"
                 r["decided_at"] = now
                 r["decided_by"] = "system:expiry"
+                r["decided_source"] = "system"
                 expired.append(dict(r))
         if expired:
             _write_store(recs)

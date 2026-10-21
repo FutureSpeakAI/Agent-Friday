@@ -605,6 +605,11 @@ def _injection_text(text: str, kind: str) -> str:
     body = text if kind in _INJECT_APPROVED_AS_SHOWN else _gate_voice_tool_result(text, kind)
     if kind in ("declined", "notice"):
         body = body + "]"
+    elif kind not in _INJECT_APPROVED_AS_SHOWN and body:
+        # Work and tool output is data, never instructions: the one envelope
+        # (services/untrusted_input), around what the gate let through.
+        from agent_friday.services.untrusted_input import wrap as _data_envelope
+        body = _data_envelope(body)
     return _INJECT_LEADS.get(kind, _INJECT_LEADS["result"]) + body
 
 
@@ -3442,16 +3447,26 @@ def local_context_act(approval_id):
     rec = approvals.get_approval(approval_id)
     if not rec or rec.get("kind") != lc.KIND:
         return jsonify({"ok": False, "error": "no share request with that id"}), 404
+    if action not in ("send", "decline", "allow_conversation", "edit"):
+        return jsonify({"ok": False, "error": "action must be send, decline, allow_conversation or edit"}), 400
+    from agent_friday.services import screen_click
+    if action != "decline":
+        # Send, its standing form (allow for this conversation) and Edit (which changes the
+        # words a later Send releases) are a press on the card in Friday's page on this PC; the
+        # label is never taken on trust. Decline is open to any channel.
+        refused = screen_click.press_refusal(
+            request, "Send this with a press on the card, on the computer Friday runs on.")
+        if refused is not None:
+            return refused
     if action == "edit":
         return jsonify(lc.edit(approval_id, d.get("text") or "", accept=d.get("accept")))
     if action == "allow_conversation":
         if rec.get("status") == "pending":
             lc.grant_for_conversation((rec.get("payload") or {}).get("conversation_id"))
         action = "send"
-    if action not in ("send", "decline"):
-        return jsonify({"ok": False, "error": "action must be send, decline, allow_conversation or edit"}), 400
     out, won = approvals.decide_with_outcome(
-        approval_id, "approve" if action == "send" else "deny", decided_by="owner:ui")
+        approval_id, "approve" if action == "send" else "deny",
+        decided_by=screen_click.decided_by(request, "owner:ui", for_ids=[approval_id]))
     return jsonify({"ok": bool(out), "won": won, "approval": out})
 
 
@@ -6031,7 +6046,12 @@ if sock is not None:
                                 return refused
                             _tell_hold()
                             _took = _time.time() - _orb_t0
-                            result = _mark_if_stale(result, fname, _orb_t0,
+                            # What the tool returned reaches the model as data, never as
+                            # instructions: the one envelope (services/untrusted_input), put
+                            # on after the egress gate has judged the output itself. Friday's
+                            # own "late result" line stays outside it.
+                            from agent_friday.services.untrusted_input import wrap as _data_envelope
+                            result = _mark_if_stale(_data_envelope(result), fname, _orb_t0,
                                                     _user_words_ts[0], _time.time())
                             _log.info("voice tool result: %s -> %d chars in %.2fs",
                                       fname, len(result or ''), _took)
