@@ -189,3 +189,18 @@ def test_a_package_named_by_path_is_read_only_from_the_owners_folders(client, sk
     r = client.post("/api/skills/import", json={"path": str(docs / "weekly-tidy.zip")})
     assert r.status_code == 202 and r.get_json()["status"] == "pending_review"
     assert not _installed(skills["root"])
+
+
+def test_a_package_with_characters_a_card_cannot_show_is_refused(client, skills):
+    hidden = MANIFEST.replace("Read the week's notes", "Read the week's notes\u200b\U000E0041")
+    r = _upload(client, _zip(manifest=hidden))
+    assert r.status_code == 400 and "cannot show" in r.get_json()["error"]
+    assert not _installed(skills["root"])
+
+
+def test_a_name_another_installed_skill_answers_to_is_refused(client, skills):
+    other = skills["root"] / "my-folder"
+    other.mkdir(parents=True)
+    (other / "SKILL.md").write_text("---\nname: weekly-tidy\ndescription: mine\n---\nmine\n", encoding="utf-8")
+    r = _upload(client, _zip())
+    assert r.status_code == 400 and "already installed" in r.get_json()["error"]

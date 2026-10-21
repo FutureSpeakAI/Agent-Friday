@@ -46,8 +46,9 @@ MAX_BACKUP_FILE_BYTES = 200 * 1024 ** 2
 MAX_BACKUP_BYTES = 2 * 1024 ** 3
 #: Free space a backup must leave on the drive that holds Friday's folder.
 FREE_HEADROOM_BYTES = 512 * 1024 ** 2
-#: Off the record, the largest file whose copy is held in memory.
+#: Off the record, the largest file whose copy is held in memory, and the most held at once.
 MAX_MEMORY_BACKUP_BYTES = 20 * 1024 ** 2
+MAX_MEMORY_BACKUPS_TOTAL = 200 * 1024 ** 2
 
 _LOCK = threading.Lock()
 _MEM_BACKUPS: dict[str, bytes] = {}
@@ -96,8 +97,12 @@ def _human(n: float) -> str:
 def describe_target(raw_path: str) -> dict:
     """What a write to `raw_path` would do, for the card that asks first:
     {"exists", "size", "words"}. `words` is the plain sentence."""
+    raw = str(raw_path or "")
+    if raw.startswith(("\\\\", "//")):
+        # A network or device path: not touched before the owner decides.
+        return {"exists": False, "size": 0, "words": "write %s (a network or device path)" % raw}
     try:
-        p = Path(os.path.expanduser(str(raw_path or ""))).resolve()
+        p = Path(os.path.expanduser(raw)).resolve()
     except (OSError, RuntimeError, ValueError):
         return {"exists": False, "size": 0, "words": "create %s" % raw_path}
     if p.is_file():
@@ -132,12 +137,19 @@ def _keep_copy(path: Path, rid: str, size: int) -> tuple[str, str]:
         data = path.read_bytes()
         if len(data) != size:
             raise BackupFailed("%s changed while it was being copied" % path.name)
-        _MEM_BACKUPS[rid] = data
+        with _LOCK:
+            _MEM_BACKUPS[rid] = data
+            # The oldest copies go first once the total passes its cap; their receipts say so.
+            while sum(len(v) for v in _MEM_BACKUPS.values()) > MAX_MEMORY_BACKUPS_TOTAL and len(_MEM_BACKUPS) > 1:
+                old = min(k for k in _MEM_BACKUPS if k != rid)
+                _MEM_BACKUPS.pop(old, None)
+                journal.update(old, backup_removed="its in-memory copy was dropped to keep off-record copies "
+                                                   "under %s" % _human(MAX_MEMORY_BACKUPS_TOTAL))
         return _MEM_PREFIX + rid, hashlib.sha256(data).hexdigest()
     try:
         free = shutil.disk_usage(str(backups_root().parent if backups_root().parent.exists() else Path.home())).free
     except OSError:
-        free = 0
+        raise BackupFailed("the free space for a copy of %s could not be checked" % path.name)
     if free < size + FREE_HEADROOM_BYTES:
         raise BackupFailed("there is not enough free space to keep a copy of %s (%s) first"
                            % (path.name, _human(size)))
@@ -156,7 +168,17 @@ def begin(path: Path, mode: str, content_len: int, *, conversation_id: str | Non
     """Keep what is at `path` (if anything) and write the receipt. Call BEFORE
     writing. Returns the receipt. Raises BackupFailed when the earlier version
     cannot be kept; the caller then writes nothing."""
-    path = Path(path)
+    try:
+        return _begin(Path(path), mode, content_len, conversation_id=conversation_id)
+    except BackupFailed:
+        raise
+    except OSError as e:     # a locked or unreadable file: nothing is written, and the answer says so
+        raise BackupFailed("%s could not be read to keep its earlier version (%s)" % (Path(path).name, type(e).__name__))
+
+
+def _begin(path: Path, mode: str, content_len: int, *, conversation_id: str | None = None) -> dict:
+    if _MEM_BACKUPS and not _off_record():
+        _drop_memory_copies("off the record ended, and its in-memory copies went with it")
     if path.exists() and not path.is_file():
         raise BackupFailed("%s is not an ordinary file" % path.name)
     rid = journal.new_id()
@@ -186,6 +208,14 @@ def begin(path: Path, mode: str, content_len: int, *, conversation_id: str | Non
                          surface="write_file")
     _prune(keep=rid)
     return rec
+
+
+def _drop_memory_copies(why: str) -> None:
+    with _LOCK:
+        gone = list(_MEM_BACKUPS)
+        _MEM_BACKUPS.clear()
+    for rid in gone:
+        journal.update(rid, backup_removed=why)
 
 
 def finish(receipt_id: str, ok: bool, *, error: str = "") -> dict | None:
@@ -246,7 +276,12 @@ def undo(receipt: dict) -> dict:
         if not item.get("path"):
             raise OSError("the receipt names no file")
         status = receipt.get("status")
+        if status == "pending" and item.get("existed") and item.get("backup"):
+            status = "partial"        # stopped mid-write (Friday was closed): its copy is the way back
         if status not in ("complete", "partial"):
+            if not item.get("existed"):
+                raise OSError("that write did not finish, so Friday did not make %s; if a file is there now it "
+                              "is left where it is" % path.name)
             raise OSError("that write did not happen (%s), so there is nothing to put back" % (status or "unknown"))
         now_sha = _sha256(path) if path.is_file() else None
         after = item.get("after_sha256")
@@ -261,7 +296,10 @@ def undo(receipt: dict) -> dict:
                 newer = journal.home_trash(rid) / ("newer-" + path.name)
                 _copy_checked(path, newer)
                 kept_newer = str(newer)
+            seen_size = path.stat().st_size
             with open(path, "r+b") as fh:
+                if os.fstat(fh.fileno()).st_size != seen_size:
+                    raise OSError("it is still being added to, so it is left as it is; try again")
                 fh.truncate(before_size)
             said = "Cut %s back to how it was before Friday added to it." % path.name
         elif item.get("existed"):

@@ -206,7 +206,26 @@ def _replaces(name: str):
         raise ImportRefused("a skill that ships with Friday is already called “%s”; import it "
                             "under another name" % name)
     folder = reg._skill_dir(reg.SKILLS_DIR, name)
+    try:
+        installed = reg.load_skills([reg.SKILLS_DIR])
+    except Exception:  # noqa: BLE001 - an unreadable skills dir has no names to collide with
+        installed = []
+    for other in installed:
+        other_folder = Path(str(getattr(other, "path", "") or ""))
+        if (str(other.name).casefold() == str(name).casefold() and other_folder.name != folder.name):
+            # Another skill already answers to this name from a different folder (or a legacy file):
+            # installing would leave two skills with one name, and which one runs would be chance.
+            raise ImportRefused("a skill called \u201c%s\u201d is already installed (in %s); import this one "
+                                "under another name, or archive that one first" % (name, other_folder.name))
     return folder.name if folder.exists() else None
+
+
+#: Characters a card cannot show: format controls (zero-width, bidi overrides, tag characters)
+#: and other invisible code points. A procedure with them is refused, never approved unseen.
+def _invisible(text: str) -> list:
+    import unicodedata
+    return sorted({"U+%04X" % ord(ch) for ch in str(text or "")
+                   if unicodedata.category(ch) in ("Cf", "Co", "Cn") or 0xE0000 <= ord(ch) <= 0xE007F})
 
 
 def stage(src, name=None, *, source_name: str = "", requested_by: str = "owner") -> dict:
@@ -228,6 +247,10 @@ def stage(src, name=None, *, source_name: str = "", requested_by: str = "owner")
         "success_criteria": list(skill.success_criteria), "version": int(skill.version or 1),
         "license": str(skill.license or "MIT"),
     }
+    hidden = _invisible(json.dumps(fields, ensure_ascii=False))
+    if hidden:
+        raise ImportRefused("the package holds characters a card cannot show (%s); remove them and import "
+                            "it again" % ", ".join(hidden[:8]))
     if len(fields["body"]) > MAX_REVIEW_BODY:
         raise ImportRefused("its procedure is %d characters, more than the %d a card can show in full; "
                             "shorten it before importing" % (len(fields["body"]), MAX_REVIEW_BODY))

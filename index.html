@@ -74408,7 +74408,7 @@ function App() {
       /* Anything waiting on a decision takes the caption's place. Polled
          rather than pushed, because the widget must not depend on the React
          tree having mounted — in the PiP window it has not. */
-      var CAPTION_NEVER_DECIDES = ['file_grant_request', 'file_access_reset'];
+      var CAPTION_NEVER_DECIDES = ['file_grant_request', 'file_access_reset', 'skill_import'];
       function pollApprovals() {
         if (approvalTimer) clearInterval(approvalTimer);
         var tick = function () {

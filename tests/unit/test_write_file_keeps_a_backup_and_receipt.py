@@ -212,3 +212,26 @@ def test_a_write_that_never_happened_has_nothing_to_undo(store):
     res = fwr.undo(journal.get(rec["receipt_id"]))
     assert res["status"] == "failed" and "did not happen" in res["summary"]
     assert doc.read_text(encoding="utf-8") == "someone else's file"
+
+
+def test_a_file_that_cannot_be_read_first_is_not_written_and_the_answer_says_why(store, monkeypatch):
+    doc = store / "locked.log"
+    doc.write_text("a\n", encoding="utf-8")
+
+    def locked(path, limit=None):
+        raise PermissionError("locked by another program")
+
+    monkeypatch.setattr(fwr, "_sha256", locked)
+    out = _write(doc, "b\n", mode="append")
+    assert out.startswith("Write error: nothing was written") and "could not be read" in out
+    assert doc.read_text(encoding="utf-8") == "a\n"
+
+
+def test_a_write_cut_off_mid_way_can_still_be_undone_from_its_copy(store):
+    doc = store / "interrupted.txt"
+    doc.write_text("whole", encoding="utf-8")
+    rec = fwr.begin(doc, "write", 4)             # Friday closed before finish() ran
+    doc.write_text("ha", encoding="utf-8")
+    res = fwr.undo(journal.get(rec["receipt_id"]))
+    assert res["status"] == "complete", res["summary"]
+    assert doc.read_text(encoding="utf-8") == "whole"

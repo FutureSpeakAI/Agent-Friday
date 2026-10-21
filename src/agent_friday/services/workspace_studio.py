@@ -393,6 +393,16 @@ def _sanitize_selector(sel):
     return sel
 
 
+def _shown(text):
+    """Text as a card shows it: format controls (zero-width, bidi overrides, tag
+    characters) and other invisible code points removed, so what the owner reads
+    in a proposal is all there is (a quick action's prompt is later sent as the
+    owner's own words)."""
+    import unicodedata
+    return "".join(ch for ch in str(text) if unicodedata.category(ch) not in ("Cf", "Co", "Cn")
+                   and not 0xE0000 <= ord(ch) <= 0xE007F)
+
+
 def _sanitize_patch(patch):
     """Coerce a raw model patch into the whitelisted, typed shape."""
     if not isinstance(patch, dict):
@@ -404,7 +414,7 @@ def _sanitize_patch(patch):
         if k == "css":
             out["css"] = _sanitize_css(v)
         elif k in ("note", "summary"):
-            out[k] = (str(v)[:1500]).strip() if v is not None else None
+            out[k] = (_shown(v)[:1500]).strip() if v is not None else None
         elif k == "accent":
             if v is None:
                 out["accent"] = None
@@ -424,8 +434,8 @@ def _sanitize_patch(patch):
                 for a in v[:8]:
                     if isinstance(a, dict) and a.get("label") and a.get("prompt"):
                         acts.append({
-                            "label": str(a["label"])[:40],
-                            "prompt": str(a["prompt"])[:400],
+                            "label": _shown(a["label"])[:40],
+                            "prompt": _shown(a["prompt"])[:400],
                         })
                 out["actions"] = acts
             elif v is None:
