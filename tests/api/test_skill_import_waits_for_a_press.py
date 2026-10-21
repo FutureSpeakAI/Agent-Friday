@@ -114,6 +114,21 @@ def test_the_owners_press_installs_exactly_what_the_card_showed(client, skills):
     assert approvals.get_approval(aid)["consumed"] is True
 
 
+def test_a_held_install_says_so_in_fixed_words(client, skills, monkeypatch):
+    """The card and the notice say the checkpoint held it; the exception's own text (which can
+    quote a path or an OS error) is not shown."""
+    def held(action, **kw):
+        raise ag.Held("the signed receipt could not be written (C:\\Users\\someone\\private.key: denied)")
+    monkeypatch.setattr(ag, "record_external", held)
+    aid = _upload(client, _zip()).get_json()["approval_id"]
+    client.post("/api/approvals/%s/decide" % aid, json={"decision": "approve", "decided_by": "owner:ui"},
+                headers=_press())
+    assert not _installed(skills["root"])
+    why = approvals.get_approval(aid)["used_detail"]["why"]
+    assert why.startswith("the action checkpoint held the install") and "nothing was installed" in why
+    assert "private.key" not in why and "someone" not in why
+
+
 def test_a_declined_card_installs_nothing(client, skills):
     aid = _upload(client, _zip()).get_json()["approval_id"]
     r = client.post("/api/approvals/%s/decide" % aid, json={"decision": "deny"})

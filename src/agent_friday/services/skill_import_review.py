@@ -348,7 +348,11 @@ def install_approved(record: dict) -> dict:
             _gate.record_external("skill:import", surface="approval_card",
                                   approval_id=record["approval_id"], target=staged["fields"]["name"][:200])
         except _gate.Held as e:
-            out = {"ok": False, "why": "the action checkpoint held the install (%s); nothing was installed" % e}
+            # The card and the notice carry a fixed sentence; the exception's own text (which can
+            # quote a file path or an OS error) stays in the log.
+            _log.info("skill import held by the action gate: %s", type(e).__name__)
+            out = {"ok": False, "why": "the action checkpoint held the install (its integrity check or "
+                                       "signed receipt failed); nothing was installed"}
             ap.mark_used(record["approval_id"], KIND, out)
             _tell("The skill was not installed", out["why"], record["approval_id"])
             return out
