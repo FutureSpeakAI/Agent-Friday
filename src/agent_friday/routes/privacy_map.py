@@ -79,4 +79,7 @@ def privacy_sent_text_choice():
     days = body.get("days")
     if days is not None and (not isinstance(days, int) or isinstance(days, bool)):
         return jsonify({"ok": False, "message": "days must be a whole number"}), 400
-    return jsonify({"ok": True, **sent_text_store.set_keep(keep, days)})
+    try:
+        return jsonify({"ok": True, **sent_text_store.set_keep(keep, days)})
+    except sent_text_store.ChoiceRefused as e:
+        return jsonify({"ok": False, "message": str(e)}), 409

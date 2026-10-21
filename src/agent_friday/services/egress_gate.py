@@ -1,4 +1,4 @@
-﻿"""
+"""
 Egress Gate — the security boundary for all outbound cloud API calls.
 
 seal_outbound(payload, provider) runs immediately before EVERY cloud HTTP call,
@@ -636,20 +636,31 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
 
 
 # ── The egress ledger's call rows (north star §29.6, BD-15 slice P2) ─────────
-# Every send that leaves through seal_outbound or gate_text gets ONE call row
-# beside its field rows: destination, purpose, context-manifest id, the
-# sensitivity classes seen, how many fields were withheld, the grants that
-# let otherwise restricted content through, a SHA-256 fingerprint of exactly
-# what left, the time, the model and the result. The words themselves are
-# not in the ledger (§29.6: "does not store the full sensitive payload by
-# default"); the owner may choose to keep them, encrypted, in
-# services/sent_text_store, tied to the row by the same fingerprint.
+# Every send that leaves through seal_outbound, gate_text, gate_worker_payload
+# or a stand-alone field gate gets ONE call row beside its field rows:
+# destination, purpose, context-manifest id, the sensitivity classes seen, how
+# many fields were withheld, the grants that let otherwise restricted content
+# through, a fingerprint of the content the gate released, the time, the model
+# and the result. The row is written when the gate releases the content to the
+# caller, before the provider answers: "sent" means released to be sent.
+#
+# THE FINGERPRINT is HMAC-SHA256 of the released content in canonical JSON,
+# keyed with the governance key. Keyed, so nobody who can read the ledger can
+# confirm a guess at a short send ("yes", a search query) by hashing it. It
+# proves which content the gate released; the HTTP client serialises that same
+# content again (its own key order and spacing), so it is not a hash of the
+# bytes on the wire. Off the record no fingerprint is written at all.
+#
+# The words themselves are not in the ledger (§29.6: "does not store the full
+# sensitive payload by default"). The owner may choose to keep them, encrypted,
+# in services/sent_text_store, filed under the same fingerprint.
 
 _CALL: contextvars.ContextVar = contextvars.ContextVar("egress_call", default=None)
 
 #: The largest payload the gate lets leave in one call (§26.7 payload-size
-#: check). Images travel inside model payloads, so this is generous; anything
-#: larger is refused and recorded, never truncated silently.
+#: check). Images travel inside model payloads, so this is generous (above the
+#: largest provider request limit); anything larger is refused and recorded,
+#: never truncated silently.
 MAX_PAYLOAD_BYTES = int(os.environ.get("FRIDAY_EGRESS_MAX_PAYLOAD_BYTES", str(48 * 1024 * 1024)))
 
 
@@ -665,14 +676,18 @@ def _grant_marker(reason: str) -> str:
     return ""
 
 
-def _purpose() -> str:
-    """Why this send happened, in words that never quote the content."""
+def _off_record_now() -> bool:
     try:
         from agent_friday.services import off_record as _off
-        if _off.active():
-            return "off the record"
+        return bool(_off.active())
     except Exception:
-        pass
+        return False
+
+
+def _purpose() -> str:
+    """Why this send happened, in words that never quote the content."""
+    if _off_record_now():
+        return "off the record"
     try:
         from agent_friday.services import turn_plan as _tp
         if _tp.current_turn_id():
@@ -683,14 +698,6 @@ def _purpose() -> str:
         from agent_friday.services import task_journal as _tj
         if _tj.current_task():
             return "a background task"
-    except Exception:
-        pass
-    try:
-        from agent_friday.services import visible_jobs as _vj
-        job = _vj.current_job() if hasattr(_vj, "current_job") else None
-        kind = getattr(job, "kind", None) if job is not None else None
-        if kind:
-            return "background work (%s)" % str(kind)[:40]
     except Exception:
         pass
     return "background work"
@@ -711,22 +718,39 @@ def _destination(provider: str) -> str:
     return str(provider or "unknown")
 
 
-def _fingerprint(obj: Any) -> tuple:
-    """(sha256 hex, byte length, canonical text) of what leaves."""
+def _canonical(obj: Any) -> str:
     if isinstance(obj, str):
-        text = obj
-    else:
-        text = json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str)
+        return obj
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _fingerprint(obj: Any) -> tuple:
+    """(keyed fingerprint hex or None, byte length, canonical text) of the
+    content the gate released. None when the governance key is unavailable:
+    an unkeyed hash would let anyone confirm guesses, so none is written."""
+    text = _canonical(obj)
     raw = text.encode("utf-8")
-    return hashlib.sha256(raw).hexdigest(), len(raw), text
+    try:
+        import hmac as _hmac
+        from agent_friday.governance.proof_of_integrity import get_governance_key
+        key = get_governance_key()
+        fp = _hmac.new(key, b"egress-fingerprint\x00" + raw, hashlib.sha256).hexdigest()
+    except Exception:
+        fp = None
+    return fp, len(raw), text
 
 
-def _open_call(provider: str, model: str, via: str):
-    # A send made while another is being sealed (the judgment gate asking a
-    # cloud judge, say) is its own send with its own row.
+def _open_call(provider: str, model: str, via: str, *, joinable: bool = False):
+    """Start one send's row. Inside a joinable send (gate_worker_payload, which
+    seals the body and then gates its prompt) the inner steps are part of the
+    same send and open nothing. Any other send made while one is being sealed
+    (the judgment gate asking a cloud judge, say) is its own send."""
+    cur = _CALL.get()
+    if cur is not None and cur.get("joinable"):
+        return None
     return _CALL.set({"call_id": "eg-" + uuid.uuid4().hex[:16], "provider": provider,
                       "model": model or "", "via": via, "fields": 0, "withheld": 0,
-                      "grants": set()})
+                      "grants": set(), "joinable": joinable})
 
 
 def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
@@ -738,6 +762,7 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
     _CALL.reset(token)
     if call is None:
         return None
+    off = _off_record_now()
     entry: dict[str, Any] = {
         "ts": time.time(), "kind": "call", "call_id": call["call_id"],
         # Readers that only know field rows see a row they can skip by its
@@ -758,19 +783,22 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
     entry["manifest_id"] = "cm-" + (_turn or call["call_id"])
     if note:
         entry["note"] = note[:200]
+    entry["text_kept"] = False
     if sent is not None:
-        sha, size, text = _fingerprint(sent)
-        entry["payload_sha256"] = sha
+        fp, size, text = _fingerprint(sent)
         entry["bytes"] = size
-        # Kept only for sends recorded in the real ledger (a self-test probe
-        # writes to its own throwaway log and is never kept).
-        real = log_path is None or Path(log_path) == Path(_DEFAULT_LOG)
-        try:
-            from agent_friday.services import sent_text_store as _sts
-            entry["text_kept"] = bool(real and _sts.keep(sha, text, provider=call["provider"],
-                                                         model=call["model"], purpose=entry["purpose"]))
-        except Exception:
-            entry["text_kept"] = False
+        if fp and not off:
+            entry["payload_fingerprint"] = fp
+            entry["fingerprint_alg"] = "hmac-sha256"
+            # Kept only for sends recorded in the real ledger (a self-test
+            # probe writes to its own throwaway log and is never kept).
+            real = log_path is None or Path(log_path) == Path(_DEFAULT_LOG)
+            try:
+                from agent_friday.services import sent_text_store as _sts
+                entry["text_kept"] = bool(real and _sts.keep(fp, text, provider=call["provider"],
+                                                             model=call["model"], purpose=entry["purpose"]))
+            except Exception:
+                entry["text_kept"] = False
     dest = log_path or _DEFAULT_LOG
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -780,6 +808,13 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
     except Exception:
         pass
     return entry
+
+
+def _result_of(out: Any) -> str:
+    c = _CALL.get()
+    if out in (None, ""):
+        return "nothing_sent"
+    return "sent_with_parts_withheld" if (c and c["withheld"]) else "sent"
 
 
 def record_binary_egress(provider: str, field: str, *, action: str,
@@ -1013,9 +1048,22 @@ def _owner_released(text: str, provider: str) -> bool:
 
 def _gate_text(text: str, provider: str, field: str,
                log_path: Path | None = None) -> str:
-    """See _gate_text_held; this opens the scope whose held spans become one card."""
-    with _held_scope(provider):
-        return _gate_text_held(text, provider, field, log_path)
+    """See _gate_text_held; this opens the scope whose held spans become one card.
+
+    Called on its own (a tool's query, a voice line, a calendar write: the
+    sites that gate one field rather than a whole payload), it is a send of
+    its own and gets its own ledger row; inside a sealed payload it is one
+    field of that send."""
+    standalone = _CALL.get() is None
+    call_tok = _open_call(provider, "", "field:" + str(field)[:40]) if standalone else None
+    try:
+        with _held_scope(provider):
+            out = _gate_text_held(text, provider, field, log_path)
+    except BaseException:
+        _close_call(call_tok, None, result="blocked", log_path=log_path)
+        raise
+    _close_call(call_tok, out, result=_result_of(out), log_path=log_path)
+    return out
 
 
 def _gate_text_held(text: str, provider: str, field: str,
@@ -1931,16 +1979,17 @@ def gate_text(text: str, provider: str, field: str = "prompt",
     tok = _DEST_CLOUD.set(True)
     call_tok = _open_call(provider, model, "gate_text:" + str(field)[:40])
     try:
+        if len(str(text or "").encode("utf-8")) > MAX_PAYLOAD_BYTES:
+            _log(provider, field, Tier.SENSITIVE, "block",
+                 "text of over %d bytes is over the size limit" % MAX_PAYLOAD_BYTES, log_path)
+            raise RuntimeError("Egress text over the size limit; cloud send blocked.")
         out = _gate_text(text, provider, field, log_path)
     except BaseException:
         _close_call(call_tok, None, result="blocked", log_path=log_path)
         raise
     finally:
         _DEST_CLOUD.reset(tok)
-    _c = _CALL.get()
-    _close_call(call_tok, out, result=("nothing_sent" if not out else
-                                       "sent_with_parts_withheld" if (_c and _c["withheld"]) else "sent"),
-                log_path=log_path)
+    _close_call(call_tok, out, result=_result_of(out), log_path=log_path)
     return out
 
 
@@ -2000,10 +2049,18 @@ def gate_worker_payload(
             f"send to {base_url!r} blocked. Fix the gate or use a local model."
         )
 
-    sealed = seal_outbound(dict(payload), provider, log_path, model=model)
-    if isinstance(sealed.get("prompt"), str):
-        sealed["prompt"] = gate_text(sealed["prompt"], provider, "prompt",
-                                     log_path, model=model)
+    # One send, one ledger row: sealing the body and gating its prompt are
+    # steps of the same send.
+    call_tok = _open_call(provider, model, "gate_worker_payload", joinable=True)
+    try:
+        sealed = seal_outbound(dict(payload), provider, log_path, model=model)
+        if isinstance(sealed.get("prompt"), str):
+            sealed["prompt"] = gate_text(sealed["prompt"], provider, "prompt",
+                                         log_path, model=model)
+    except BaseException:
+        _close_call(call_tok, None, result="blocked", log_path=log_path)
+        raise
+    _close_call(call_tok, sealed, result=_result_of(sealed), log_path=log_path)
     return sealed
 
 
@@ -2182,7 +2239,7 @@ def seal_outbound(
     try:
         _size = len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
     except Exception:
-        _size = 0
+        _size = MAX_PAYLOAD_BYTES + 1     # a payload that can't be measured doesn't leave
     if _size > MAX_PAYLOAD_BYTES:
         # §26.7: a payload over the limit does not leave, and the refusal is
         # recorded. Never truncated silently.
@@ -2197,10 +2254,7 @@ def seal_outbound(
         _close_call(_call_tok, None, result="blocked", log_path=log_path,
                     note="the gate stopped this send")
         raise
-    _c = _CALL.get()
-    _close_call(_call_tok, _sealed,
-                result="sent_with_parts_withheld" if (_c and _c["withheld"]) else "sent",
-                log_path=log_path)
+    _close_call(_call_tok, _sealed, result=_result_of(_sealed), log_path=log_path)
     return _sealed
 
 

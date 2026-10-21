@@ -20319,7 +20319,7 @@ function SettingsPrivacyMap() {
     .then(x => x.ok ? setSent({ sha, text: x.text, model: x.model }) : setMsg(x.message || 'That text was not kept.')).catch(() => setMsg('Could not read the kept text.'));
   const keepText = on => apiFetch('/api/privacy/sent-text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keep: on }) })
     .then(r => r.json()).then(x => { setMsg(x.ok ? (on ? 'The exact text of each send is now kept for ' + x.days + ' days.' : 'Only fingerprints are kept now; ' + (x.deleted || 0) + ' kept text(s) deleted.') : (x.message || 'Nothing changed.')); load(); }).catch(() => setMsg('Could not reach the server.'));
-  const callLine = r => new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.purpose || 'a send') + (r.model ? ' · ' + r.model : '') + (r.destination ? ' · to ' + r.destination : '') + ' · ' + (r.result || '') + (r.withheld ? ' · ' + r.withheld + ' part(s) withheld' : '') + (r.grants && r.grants.length ? ' · allowed by: ' + r.grants.join(', ') : '') + (r.bytes ? ' · ' + r.bytes + ' bytes' : '') + (r.payload_sha256 ? ' · fingerprint ' + r.payload_sha256.slice(0, 12) : '');
+  const callLine = r => new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.purpose || 'a send') + (r.model ? ' · ' + r.model : '') + (r.destination ? ' · to ' + r.destination : '') + ' · ' + (r.result || '') + (r.withheld ? ' · ' + r.withheld + ' part(s) withheld' : '') + (r.grants && r.grants.length ? ' · allowed by: ' + r.grants.join(', ') : '') + (r.bytes ? ' · ' + r.bytes + ' bytes' : '') + (r.payload_fingerprint ? ' · fingerprint ' + r.payload_fingerprint.slice(0, 12) : '');
   if (!d) return E(StSection, { title: 'Privacy map', desc: 'What is kept on this PC, where, for how long, and what has left it and to whom.' },
     E('div', { className: 'sc-sub' }, msg || 'Reading…'));
   const left = d.left || {};
@@ -20349,7 +20349,7 @@ function SettingsPrivacyMap() {
     rec && E('div', { className: 'pm-receipts', role: 'region', 'aria-label': 'Receipts for ' + rec.label },
       E('div', { className: 'lk-title' }, 'Receipts: ' + rec.label),
       rec.rows.length === 0 ? E('div', { className: 'lk-words' }, 'No rows.') : E('ul', { className: 'lk-sub' }, rec.rows.map((r, i) => r.kind === 'call'
-        ? E('li', { key: i, className: 'pm-call' }, callLine(r), r.text_kept && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'Show what was sent at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showSent(r.payload_sha256) }, 'Show what was sent'))
+        ? E('li', { key: i, className: 'pm-call' }, callLine(r), r.text_kept && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'Show what was sent at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showSent(r.payload_fingerprint) }, 'Show what was sent'))
         : E('li', { key: i }, new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.field || '') + ' · ' + (r.action || '') + (r.reason ? ' · ' + r.reason : '')))),
       sent && E('div', { className: 'pm-sent', role: 'region', 'aria-label': 'What was sent' },
         E('div', { className: 'lk-title' }, 'Exactly what was sent' + (sent.model ? ' to ' + sent.model : '')),
@@ -20360,7 +20360,7 @@ function SettingsPrivacyMap() {
     d.sent_text && E('div', { className: 'pm-keep', role: 'group', 'aria-label': 'Keeping the exact text' },
       E('div', { className: 'lk-title' }, 'Fingerprints, or the exact text'),
       E('div', { className: 'lk-words' }, d.sent_text.explanation),
-      E('div', { className: 'lk-words' }, d.sent_text.keep ? 'Now: the exact text is kept for ' + d.sent_text.days + ' days (' + (d.sent_text.kept || 0) + ' kept).' : 'Now: only fingerprints are kept.'),
+      E('div', { className: 'lk-words' }, d.sent_text.keep ? 'Now: the exact text is kept for ' + d.sent_text.days + ' days (' + (d.sent_text.kept || 0) + ' kept, ' + Math.round((d.sent_text.bytes || 0) / 1024) + ' KB).' : 'Now: only fingerprints are kept.'),
       E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4 }, onClick: () => keepText(!d.sent_text.keep) },
         d.sent_text.keep ? 'Stop keeping the text and delete what is kept' : 'Keep the exact text for ' + (d.sent_text.days || 30) + ' days')),
     (left.not_recorded || []).length > 0 && E('div', { className: 'lk-words' }, 'Not in this list yet:'),

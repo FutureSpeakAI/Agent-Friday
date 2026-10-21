@@ -798,7 +798,7 @@ def left_rows(to: str, limit: int = 200) -> dict:
             keep.append({k: row.get(k) for k in ("ts", "kind", "provider", "field", "tier", "action",
                                                  "reason", "turn_id", "bytes", "call_id", "model",
                                                  "destination", "purpose", "manifest_id", "fields",
-                                                 "withheld", "grants", "payload_sha256", "result",
+                                                 "withheld", "grants", "payload_fingerprint", "result",
                                                  "text_kept", "note") if k in row})
     rows = list(reversed(keep))
     for r in rows:
@@ -944,7 +944,7 @@ def off_record() -> dict:
 def _sent_text_status() -> dict:
     from agent_friday.services import sent_text_store as sts
     st = sts.status()
-    return {k: st[k] for k in ("keep", "days", "kept", "explanation")}
+    return {k: st[k] for k in ("keep", "days", "kept", "bytes", "explanation")}
 
 
 def sent_text(sha: str) -> Optional[dict]:
