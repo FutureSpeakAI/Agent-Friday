@@ -768,11 +768,18 @@ def _auth_read() -> Dict[str, Any]:
 def _auth_update(tid: str, *, stamp: bool = True, **fields) -> Dict[str, Any]:
     """Merge `fields` into a target's record. `at` (when the decision was
     remembered, which the overdue rule reads) moves only when `stamp`."""
+    return _auth_change(tid, lambda rec: fields, stamp=stamp)
+
+
+def _auth_change(tid: str, change, *, stamp: bool = True) -> Dict[str, Any]:
+    """Merge `change(record)` into a target's record, reading and writing it
+    under one hold of the lock, so a change computed from the record (the
+    next round, this round's due time) is not lost to a write in between."""
     import json
     with _AUTH_LOCK:
         data = _auth_read()
         rec = dict(data.get(tid) or {})
-        rec.update(fields)
+        rec.update(change(dict(rec)))
         if stamp or "at" not in rec:
             rec["at"] = time.time()
         data[tid] = rec
@@ -793,9 +800,9 @@ def _spend_authorization(tid: str) -> None:
     """A permanent failure or a decline: the decision is spent and the next
     arming of this target is a new round with a new card."""
     try:
-        rec = _auth_get(tid)
-        _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None,
-                     decision_due=None, decision_round=None)
+        _auth_change(tid, lambda rec: dict(
+            round=int(rec.get("round") or 0) + 1, sha=None, via=None,
+            decision_due=None, decision_round=None))
     except Exception:
         _log.debug("could not spend the publish authorization", exc_info=True)
 
@@ -891,13 +898,27 @@ def _decision_due(rec: Dict[str, Any]) -> Optional[float]:
         return None
 
 
+def _earliest_due(rec: Dict[str, Any], due: Optional[float]) -> Optional[float]:
+    """The earlier of `due` and the due time already noted for this round.
+    A round keeps the earliest due time any of its cards showed: a later card
+    in the same round (new words after re-timing a late post) must not make
+    an older, still unused approval in that round look fresh again."""
+    prev = _decision_due(rec)
+    if due is None:
+        return prev
+    return due if prev is None else min(prev, due)
+
+
 def _note_card_due(target: Dict[str, Any], post: Dict[str, Any]) -> None:
     """A card is being raised for this target's current round: remember the
-    due time it shows (without restamping any remembered decision)."""
+    due time it shows, keeping the round's earliest (without restamping any
+    remembered decision). A decision made later stamps its own `at`, so it
+    still counts."""
     tid = str(target.get("id"))
-    rec = _auth_get(tid)
-    _auth_update(tid, stamp=False, decision_due=_due_at(target, post),
-                 decision_round=int(rec.get("round") or 0))
+    due = _due_at(target, post)
+    _auth_change(tid, lambda rec: dict(
+        decision_due=_earliest_due(rec, due),
+        decision_round=int(rec.get("round") or 0)), stamp=False)
 
 
 def _fresh_after(target: Dict[str, Any], post: Dict[str, Any],
@@ -1104,9 +1125,9 @@ def _ask_again_overdue(target: Dict[str, Any], post: Dict[str, Any],
     """An overdue target's earlier decision no longer counts: start a new
     round, so the card that asks is a new one, and say so once."""
     tid = str(target.get("id"))
-    rec = _auth_get(tid)
-    _auth_update(tid, round=int(rec.get("round") or 0) + 1, sha=None, via=None,
-                 reasked_due=due, decision_due=None, decision_round=None)
+    _auth_change(tid, lambda rec: dict(
+        round=int(rec.get("round") or 0) + 1, sha=None, via=None,
+        reasked_due=due, decision_due=None, decision_round=None))
     when = target.get("publish_at") or (post.get("schedule") or {}).get("publish_at")
     _log.info("publish target %s is overdue (due %s): asking again", tid, when)
     _notify("A late post asks you again",
@@ -1198,10 +1219,12 @@ def request_publish_approval(post_id: str) -> Dict[str, Any]:
             if _covered(rec, sha, media_sha, fresh_after):
                 row["state"] = "approved"
             elif decided.startswith("grant_") and _grant_valid(decided):
-                _auth_update(tid, sha=sha, media_sha=media_sha, via=decided,
-                             series=_series(post), post_id=post_id, platform=platform,
-                             decision_due=_due_at(target, post),
-                             decision_round=int(rec.get("round") or 0))
+                due = _due_at(target, post)
+                _auth_change(tid, lambda r: dict(
+                    sha=sha, media_sha=media_sha, via=decided,
+                    series=_series(post), post_id=post_id, platform=platform,
+                    decision_due=_earliest_due(r, due),
+                    decision_round=int(r.get("round") or 0)))
                 row["state"] = "covered by a grant"
             elif fresh_after is not None and _covered(rec, sha, media_sha):
                 # Decided before it fell more than a day behind: dispatch
