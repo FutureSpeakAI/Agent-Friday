@@ -1233,6 +1233,16 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         total_cost += int(work.get("cost_mψ") or 0)
         if work.get("task_id") and work.get("task_id") != attempt_task_id:
             _note_run(goal_id, milestone_id, task_id=work.get("task_id"))
+        if work.get("task_id") and "timed out" in str(work.get("error") or ""):
+            # The task may still be running (and acting). A repair attempt
+            # dispatched over it could do the same thing twice: stop here,
+            # and let the goal pick its result up if it finishes.
+            _block(goal_id, milestone_id, {
+                "type": "interrupted", "task_id": work.get("task_id"), "needs_confirmation": True,
+                "task_resumable": False, "task_needs_confirmation": False,
+                "text": _interrupted_words(milestone.get("name") or "this milestone", {}, "still_running")},
+                note="its task outlasted the milestone's time; no repair attempt was dispatched over it")
+            return {"ok": False, "status": "interrupted", "task_id": work.get("task_id")}
         if work.get("interrupted"):
             # The task stopped without finishing (its process went away).
             # Whether its last step happened is the task's question, not a
@@ -1582,8 +1592,8 @@ def _interrupted_words(name: str, verdict: Dict[str, Any], outcome: str) -> str:
                 "had started or what it finished. Nothing was run again. Start the milestone "
                 "again only if you're sure nothing needs checking first.")
     if outcome == "still_running":
-        return (f"After a restart, the task for “{name}” was still running when the milestone's "
-                "time ran out. Nothing was run again; Friday checks its result if it finishes.")
+        return (f"The task for “{name}” was still running when the milestone's time ran out. "
+                "Nothing was run again; Friday checks its result if it finishes.")
     if verdict.get("resumable") and verdict.get("needs_confirmation"):
         return (f"Friday stopped while “{name}” was running, and one of its steps may or may "
                 f"not have happened{(' (' + reason + ')') if reason else ''}. Nothing was "
@@ -1696,7 +1706,27 @@ def _adopt_job(goal_id: str, milestone_id: str, tid: str, token: str) -> Dict[st
     if goal is None or m is None:
         return {"ok": False, "status": "superseded"}
     timeout = int(goal.get("milestone_timeout_seconds") or DEFAULT_MILESTONE_TIMEOUT_SECONDS)
-    res = _await_task(tid, m, timeout)
+    try:
+        res = _await_task(tid, m, timeout)
+        return _settle_adopted(goal_id, milestone_id, tid, token, m, res)
+    except Exception as e:
+        # A fault inside Friday must never leave an adopted milestone looking
+        # busy for good: it waits for the owner, nothing re-run.
+        _log.error("goal %s milestone %s: adoption failed inside Friday: %s", goal_id, milestone_id, e)
+        try:
+            if _still_adopted(goal_id, milestone_id, tid, token) is not None:
+                _block(goal_id, milestone_id, {
+                    "type": "run_failed", "task_id": tid, "needs_confirmation": True,
+                    "text": (f"After a restart, checking “{m.get('name')}” stopped because of a fault "
+                             "inside Friday. Nothing was run again. Start it again when you're ready.")},
+                    note="adoption stopped by a fault inside Friday; nothing was re-run")
+        except Exception:
+            pass
+        return {"ok": False, "status": "error"}
+
+
+def _settle_adopted(goal_id: str, milestone_id: str, tid: str, token: str,
+                    m: Dict[str, Any], res: Dict[str, Any]) -> Dict[str, Any]:
     with _ADOPT_LOCK:
         if _still_adopted(goal_id, milestone_id, tid, token) is None:
             return {"ok": False, "status": "superseded"}
@@ -1704,7 +1734,7 @@ def _adopt_job(goal_id: str, milestone_id: str, tid: str, token: str) -> Dict[st
             return _finish_adopted(goal_id, milestone_id, res.get("text") or "", tid)
         name = m.get("name") or "this milestone"
         if res.get("interrupted"):
-            _reconcile_milestone(goal_id, milestone_id, background=False, force=True)
+            _reconcile_milestone(goal_id, milestone_id, background=True, force=True)
             return {"ok": False, "status": "interrupted"}
         if "timed out" in str(res.get("error") or ""):
             _block(goal_id, milestone_id, {
@@ -1763,13 +1793,8 @@ def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dic
         _log_work_entry(goal, milestone, verdict, 0, status="COMPLETED", receipt=receipt)
         _maybe_complete_goal(goal_id)
         return {"ok": True, "status": "done", "receipt": receipt}
-    _update_milestone(goal_id, milestone_id, status="escalated", verification=verdict,
-                      artifacts=[text[:2000]] if text else [],
-                      **_closed_run(goal_id, milestone_id))
-    receipt = _make_receipt(goal, milestone, kind="verification_failed_escalated",
-                            verdict=verdict, cost_mψ=0, artifact_text=text,
-                            note=note + "; the result did not pass its check")
-    _append_receipt(goal_id, receipt)
+    # The owner's card first, then the state that points at it: a milestone
+    # never says "waits for you" without the card it waits on.
     appr = approvals.create_approval(
         kind="goal_milestone_escalation", subject_type="goal_milestone",
         subject_id=f"{goal_id}:{milestone_id}:escalation",
@@ -1779,7 +1804,14 @@ def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dic
         force_gate=True, cost_estimate_mψ=0, interest_model=_safe_interest_model(),
         payload={"last_text": text[:4000], "verdict": verdict},
     )
-    _update_milestone(goal_id, milestone_id, approval_id=appr.get("approval_id"))
+    _update_milestone(goal_id, milestone_id, status="escalated", verification=verdict,
+                      artifacts=[text[:2000]] if text else [],
+                      approval_id=appr.get("approval_id"),
+                      **_closed_run(goal_id, milestone_id))
+    receipt = _make_receipt(goal, milestone, kind="verification_failed_escalated",
+                            verdict=verdict, cost_mψ=0, artifact_text=text,
+                            note=note + "; the result did not pass its check")
+    _append_receipt(goal_id, receipt)
     return {"ok": False, "status": "escalated", "approval_id": appr.get("approval_id")}
 
 
@@ -1867,7 +1899,10 @@ def restart_milestone(goal_id: str, milestone_id: str, *,
         return {"ok": False, "status": "not_stopped",
                 "error": "this milestone was not stopped by a restart or a failed run"}
     tid = blocker.get("task_id")
-    if tid and _task_now(tid)[1] in ("running", "done"):
+    outcome = _task_now(tid)[1] if tid else "missing"
+    if outcome == "running" or (outcome == "done" and blocker.get("type") == "interrupted"):
+        # Its task is going again, or finished and is about to be checked
+        # (adopt_resumed picks up an interrupted blocker's finished task).
         return {"ok": False, "status": "task_continuing",
                 "error": "its task is running again or has finished; Friday will check its result"}
     if blocker.get("needs_confirmation", True) and not confirm_unknown_outcome:
