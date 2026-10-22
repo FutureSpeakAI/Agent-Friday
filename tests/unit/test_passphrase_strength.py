@@ -22,7 +22,10 @@ WEAK = ["xxxxxxxxxxxxxxxxxxxx", "password1234", "qwertyuiop123456", "abcdefghijk
         # review round 1: words mode and mixed strings were fooled
         "aaaa bbbb cccc dddd", "abcd efgh ijkl mnop", "qwer tyui asdf zxcv", "zzzz yyyy xxxx wwww",
         "abc abd abe abf", "dog cat sun hat", "P@ssw0rd2024!!", "a1b2c3d4e5f6g7", "1q2w3e4r5t6y7u",
-        "!@#$%^&*()_+", "L3tm31n2023"]
+        "!@#$%^&*()_+", "L3tm31n2023",
+        # review round 2: repeated units, shifted walks, stepped digits
+        "Aa1!Aa1!Aa1!", "Zz9(Zz9(Zz9(", "Ab!Ab!Ab!Ab!", "12!@12!@12!@", "P4ssw0rdP4ssw0rd",
+        "13579135791357913579!", "01/01/2000 01/01/2000", "!Q@W#E$R%T^Y", "1234 5678 9012 3456"]
 STRONG = ["orbit lantern pepper tundra violet 42", "violet anchor drizzle mammoth",
           "kL9#vQ2!mZ7@pX4$", "ci clean machine walnut harbour quartz"]
 

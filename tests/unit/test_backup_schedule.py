@@ -239,3 +239,69 @@ def test_the_sealed_record_never_travels_in_a_bundle():
     from pathlib import PurePosixPath
     from agent_friday.services import friday_bundle as fb
     assert fb.category_of(PurePosixPath("vault/.bundle-schedule-passphrase")) is None
+
+
+
+def _with_fast(monkeypatch):
+    from agent_friday.services import friday_bundle as fb
+    real = fb.create
+    monkeypatch.setattr(fb, "create", lambda out, pw, **k: real(out, pw, **dict(k, kdf_profile=_fast())))
+
+
+def test_a_planted_list_cannot_make_rotation_delete_the_owners_bundles(home, tmp_path, monkeypatch):
+    """Review round 2 (S1): untagged entries, or the real ones reordered."""
+    from agent_friday.services import backup_schedule as bs
+    _with_fast(monkeypatch)
+    dest = tmp_path / "out"
+    _on(bs, dest, keep=3)
+    made = []
+    for _ in range(3):
+        made.append(bs.run_now()["file"])
+        time.sleep(1.1)
+    d = json.loads(bs.schedule_path().read_text(encoding="utf-8"))
+    real = d["made"]
+    fake = [{"file": "friday-scheduled-20990101-00000%dZ.fridaybundle" % i, "bundle_id": "x%d" % i,
+             "at": time.time() - 10, "verified": True} for i in range(5)]
+    d["made"] = list(reversed(real)) + fake          # newest first, then entries with no tag
+    bs.schedule_path().write_text(json.dumps(d), encoding="utf-8")
+    bs.run_now()
+    left = {p.name for p in dest.glob("*.fridaybundle")}
+    assert made[1] in left and made[2] in left, "the newest real bundles were deleted"
+    assert made[0] not in left, "rotation still removes the oldest real one"
+
+
+def test_a_time_in_the_future_does_not_stop_the_schedule(home, tmp_path, monkeypatch):
+    """Review round 2 (S2)."""
+    from agent_friday.services import backup_schedule as bs
+    _with_fast(monkeypatch)
+    _on(bs, tmp_path / "out")
+    bs.schedule_path().parent.mkdir(parents=True, exist_ok=True)
+    bs.schedule_path().write_text(json.dumps({"last_run": 9e10, "last_ok": 9e10,
+                                              "last_rehearsal": 9e10}), encoding="utf-8")
+    assert bs.due()
+    st = bs.state()
+    assert st["last_ok"] is None and st["last_rehearsal"] is None
+
+
+def test_the_doctor_says_when_scheduled_bundles_are_overdue(home, tmp_path, monkeypatch):
+    from agent_friday.services import backup_schedule as bs
+    from agent_friday.services import doctor
+    _with_fast(monkeypatch)
+    _on(bs, tmp_path / "out", every="daily")
+    bs.run_now()
+    d = json.loads(bs.schedule_path().read_text(encoding="utf-8"))
+    d["last_ok"] = d["last_run"] = time.time() - 4 * 86400
+    bs.schedule_path().write_text(json.dumps(d), encoding="utf-8")
+    assert doctor._c_backup() == ("degraded", "scheduled_bundle_overdue")
+
+
+def test_without_a_keychain_a_schedule_cannot_be_turned_on(home, tmp_path, monkeypatch):
+    """Review round 2 (B1): on a system with no keychain nothing in the data
+    folder stands in for it."""
+    from agent_friday.services import backup_schedule as bs
+    monkeypatch.setenv("FRIDAY_SCHEDULE_SECRET", "keyring")      # sys.modules["keyring"] is None here
+    with pytest.raises(bs.ScheduleError) as e:
+        _on(bs, tmp_path / "out")
+    assert "credential store" in str(e.value)
+    assert not (home / "vault" / ".bundle-schedule-passphrase").exists()
+    assert bs.state()["enabled"] is False
