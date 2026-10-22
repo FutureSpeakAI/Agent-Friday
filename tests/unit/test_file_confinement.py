@@ -285,6 +285,44 @@ def test_a_read_only_command_that_reads_outside_is_carded(outside, home):
     assert ag.classify_command("Get-Content ~/Documents/report.txt")[0] == ag.INTERNAL
 
 
+def test_a_listing_of_a_folder_above_home_is_names_only(home):
+    from agent_friday.governance import action_gate as ag
+    above = Path(home).parent
+    assert ag.classify_command(f'Get-ChildItem "{above}"')[0] == ag.INTERNAL
+    if os.name == "nt":
+        # a leading slash is a switch on Windows, not a path
+        assert ag.classify_command("Get-ChildItem /s")[0] in (ag.INTERNAL, ag.OUTWARD)
+    else:
+        assert ag.classify_command("cat /etc/hostname")[0] == ag.OUTWARD
+
+
+def test_a_sandbox_root_inside_an_application_data_folder_still_works(tmp_path, monkeypatch):
+    """Windows keeps %TEMP% under LOCALAPPDATA. A root the owner sets there must not be
+    refused whole; zones are carved out of the root, never around it."""
+    appdata = tmp_path / "Local"
+    root = appdata / "Temp" / "work"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("LOCALAPPDATA", str(appdata))
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(root))
+    f = root / "doc.txt"
+    f.write_text(OUTSIDE_TEXT, encoding="utf-8")
+    assert OUTSIDE_TEXT in _read(f)
+    sibling = appdata / "OtherApp" / "state.json"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_text(OUTSIDE_TEXT, encoding="utf-8")
+    assert _refused(_read(sibling))
+
+
+def test_application_data_inside_the_home_stays_refused(home, monkeypatch):
+    appdata = home / "AppData" / "Local"
+    appdata.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("LOCALAPPDATA", str(appdata))
+    f = appdata / "Vendor" / "cache.db"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(OUTSIDE_TEXT, encoding="utf-8")
+    assert _refused(_read(f))
+
+
 def test_search_does_not_follow_a_junction_into_application_data(home):
     from agent_friday.services import file_search
     app = home / "AppData" / "Roaming" / "Hidden"
