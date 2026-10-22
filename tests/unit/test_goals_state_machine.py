@@ -113,15 +113,17 @@ class TestTransitions:
         assert g["status"] == "paused"
         g = goals.transition_goal(g["goal_id"], "active")
         assert g["status"] == "active"
+        # The owner's own "this is done" is recorded as their judgment.
         g = goals.transition_goal(g["goal_id"], "completed")
-        assert g["status"] == "completed"
+        assert g["status"] == "met_unverified"
+        assert g["completion"]["by"] == "owner" and g["completion"]["verified"] is False
 
     @pytest.mark.parametrize("start,target", [
         ("proposed", "active"),        # must go through 'approved' first
         ("proposed", "completed"),
-        ("completed", "active"),       # terminal
-        ("cancelled", "active"),       # terminal
         ("active", "proposed"),        # can't go backwards
+        ("active", "met_verified"),    # only the goal's own checks set it
+        ("paused", "met_unverified"),
     ])
     def test_illegal_transition_raises(self, start, target):
         g = goals.create_goal(title="Illegal transition goal", status=start)
@@ -168,7 +170,7 @@ class TestTransitions:
         g = goals.create_goal(title="Failed then cancelled", status="active")
         g = goals.transition_goal(g["goal_id"], "failed")
         g = goals.transition_goal(g["goal_id"], "cancelled")
-        assert g["status"] == "cancelled"
+        assert g["status"] == "abandoned"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

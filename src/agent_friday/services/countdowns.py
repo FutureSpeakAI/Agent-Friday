@@ -65,7 +65,7 @@ _EVENT_WORDS = tuple((kind, re.compile(r"\b(?:%s)\b" % "|".join(map(re.escape, w
     ("deadline", ("deadline", "due", "launch", "submit", "filing")),
 ))
 _ACCEPTED_TODO = ("approved", "pending", "open", "in_progress")
-_LIVE_GOAL = ("approved", "active")
+_LIVE_GOAL = ("approved", "active", "waiting", "needs_owner", "at_risk")
 _OPEN_MILESTONE = ("pending", "in_progress", "verifying", "escalated", "blocked")
 
 

@@ -18,6 +18,7 @@ backend/API-first.
                                                    {"confirm_unknown_outcome": true}
                                                    from a click on Friday's own page
   GET    /api/goals/<goal_id>/receipts            signed proof-of-work receipts
+  GET    /api/goals/summary                       the Goals card (?finished=1 adds archived)
   GET    /api/goals/review                        latest weekly review doc
   POST   /api/goals/review/run                    force-run the weekly review job now
 
@@ -111,10 +112,18 @@ def desk_where():
 @goals_bp.route("/api/goals", methods=["GET"])
 def list_goals_route():
     status = request.args.get("status")
-    if status and status not in _goals.STATUSES:
-        return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)}"}), 400
+    if status and status not in _goals.STATUSES + _goals.LEGACY_STATUSES + ("live",):
+        return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)} or 'live'"}), 400
     return jsonify({"ok": True, "goals": _goals.list_goals(status=status),
                     "unreadable": _goals.unreadable_goals()})
+
+
+@goals_bp.route("/api/goals/summary", methods=["GET"])
+def goals_summary_route():
+    """The Goals card: every goal with its state, what each milestone waits
+    on, and the moves the owner can make (§17.13)."""
+    include = request.args.get("finished") in ("1", "true", "yes")
+    return jsonify({"ok": True, **_goals.summaries(include_finished=include)})
 
 
 @goals_bp.route("/api/goals", methods=["POST"])
@@ -128,8 +137,8 @@ def create_goal_route():
     if verification_mode not in ("auto", "manual"):
         return jsonify({"ok": False, "error": "verification_mode must be 'auto' or 'manual'"}), 400
     status = data.get("status", "proposed")
-    if status not in _goals.STATUSES:
-        return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)}"}), 400
+    if status not in ("proposed", "draft", "approved", "active", "paused"):
+        return jsonify({"ok": False, "error": "a new goal starts proposed, approved, active or paused"}), 400
     try:
         goal = _goals.create_goal(
             title=title, description=data.get("description", ""),
@@ -158,7 +167,12 @@ def get_goal_route(goal_id):
 @login_required
 def update_goal_route(goal_id):
     patch = request.get_json(silent=True) or {}
-    goal = _goals.update_goal(goal_id, patch)
+    if not isinstance(patch, dict):
+        return jsonify({"ok": False, "error": "send a JSON object"}), 400
+    try:
+        goal = _goals.update_goal(goal_id, patch)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     if not goal:
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "goal": goal})
@@ -169,7 +183,7 @@ def update_goal_route(goal_id):
 def transition_goal_route(goal_id):
     data = request.get_json(silent=True) or {}
     new_status = (data.get("status") or "").strip()
-    if new_status not in _goals.STATUSES:
+    if new_status not in _goals.STATUSES + _goals.LEGACY_STATUSES:
         return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)}"}), 400
     try:
         goal = _goals.transition_goal(goal_id, new_status, reason=data.get("reason", ""))
