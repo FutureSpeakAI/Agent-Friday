@@ -518,6 +518,14 @@ class SeatSupervisor:
                     rec["user_paused"] = True
                 else:
                     rec.pop("user_paused", None)
+        # The task's own record says it is paused too (NS-17.7-1), journaled as a state change.
+        import sys as _sys
+        _ag = _sys.modules.get("agent_friday.services.agent")
+        if _ag is not None:
+            try:
+                _ag._task_set(task_id, user_paused=bool(paused))
+            except Exception:
+                pass
         self.pump()
         return True
 

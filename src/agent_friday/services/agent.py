@@ -5349,12 +5349,25 @@ def _task_set(task_id, **fields):
             return
         prev_status = t.get('status')
         prev_started = t.get('started')
+        prev_snap = dict(t)
         snap = dict(t)
         snap.update(fields)
         new_status = snap.get('status')
         name = snap.get('name')
         created = snap.get('created')
         ended = snap.get('ended')
+    # The North Star state (services/task_states, NS-17.7-1) is kept on the record and each
+    # change is journaled, beside the status transitions below.
+    try:
+        from agent_friday.services import task_states as _ts
+        _stop = _journal().stop_requested(task_id)
+        prev_state = prev_snap.get('state') or _ts.derive(prev_snap, stop_requested=_stop)
+        new_state = _ts.derive(snap, stop_requested=_stop)
+    except Exception:
+        prev_state = new_state = None
+    if new_state:
+        snap['state'] = new_state
+        fields = dict(fields, state=new_state)
     # Disk BEFORE memory (TV1: the journal is the source of truth, TASKS is
     # its cache). This used to update TASKS first and write afterwards, so a
     # reader polling /api/tasks could see a terminal status that state.json
@@ -5373,6 +5386,8 @@ def _task_set(task_id, **fields):
                    and not prev_started)
     try:
         tj = _journal()
+        if new_state and new_state != prev_state:
+            tj.append(task_id, "state", state=new_state, was=prev_state)
         if new_status != prev_status or first_start:
             if new_status == 'running':
                 tj.append(task_id, "started", model=snap.get('model'),
@@ -5396,6 +5411,16 @@ def _task_set(task_id, **fields):
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+
+
+def _planning_over(session_ctx):
+    """The task's first reasoning step has begun: it is no longer planning (NS-17.7-1)."""
+    try:
+        tid = _journal().resolve_task_id(session_ctx)
+        if tid and (TASKS.get(tid) or {}).get('phase') == 'planning':
+            _task_set(tid, phase='working')
+    except Exception:
+        pass
 
 
 def _off_record_active():
@@ -5936,7 +5961,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         return
     _tj.push_task(task_id)
     _heartbeat = _tj.Heartbeat(task_id).start()
-    _task_set(task_id, status='running', started=_time.time())
+    # Planning until its first reasoning step (NS-17.7-1); the loop ends it (_planning_over).
+    _task_set(task_id, status='running', started=_time.time(), phase='planning')
     _task_log(task_id, f'Spawning agent: {name}'
                        + (f' (timeout: {int(timeout)}s)' if timeout else ''))
     if description:
@@ -16303,6 +16329,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             _tj_loop.checkpoint(iter_count, "model_call",
                                 f"Reasoning (step {iter_count}) on {model or ANTHROPIC_MODEL_DEFAULT}",
                                 session_ctx=session_ctx)
+            _planning_over(session_ctx)
             if _steer_inject:
                 _tj_loop.steer(_steer_inject, source="operator-file", session_ctx=session_ctx)
                 _append_steer(convo, _steer_inject)
@@ -17048,6 +17075,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
         # Anthropic loop; the coverage test counts these against rounds.
         _tj_loop.checkpoint(_round, "model_call", f"Reasoning (step {_round}) on {model}",
                             session_ctx=session_ctx)
+        _planning_over(session_ctx)
         # Every round reports, not only the ones that call tools — a local
         # model that reasons for three rounds before picking a tool was
         # previously indistinguishable from one that had not started.

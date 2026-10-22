@@ -1064,6 +1064,10 @@ def request_stop(task_id: str) -> None:
     st = read_state(task_id)
     if st is not None:
         st["stop_requested"] = time.time()
+        if not is_terminal(st.get("status")):
+            # NS-17.7-1: asked to stop, stops at its next step.
+            st["state"] = "cancel_requested"
+            append(task_id, "state", state="cancel_requested", was=st.get("state"))
         write_state(task_id, st)
 
 
