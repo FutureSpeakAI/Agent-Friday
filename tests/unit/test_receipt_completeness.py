@@ -187,7 +187,7 @@ def test_an_approved_text_goes_through_the_hold_like_every_outward_executor(monk
     approval = {"approval_id": "ap-phone", "status": "approved"}
     with pytest.raises(phone.PhoneRefused) as e:
         phone.checkpoint("sms", "+15551234567", approval=approval)
-    assert "held for the test" in str(e.value) or "held" in str(e.value)
+    assert "held for the test" in str(e.value)
     src = open(phone.__file__, encoding="utf-8").read()
     assert "_gate._receipt(" not in src
 
@@ -257,3 +257,29 @@ def test_the_audit_reads_only_signed_entries_and_the_last_thirty_days():
     old = L.append("outcome", {"tool": "send_email", "status": "ok"})
     r = receipt_audit.audit(now=time.time() + 40 * 86400)
     assert r["orphan_count"] == 0                                    # older than the look
+
+
+
+def test_an_approval_name_alone_does_not_hide_a_run_and_an_old_seq_is_looked_up(monkeypatch):
+    """Review round 2 (1, 2)."""
+    from agent_friday.services import receipt_audit
+    d = L.append("decision", {"tool": "send_email", "class": "outward", "decision": "confirm",
+                              "args_hash": "x", "via": "tool_call"}, durable=True)
+    L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": d["seq"],
+                         "decision_hash": d["hash"], "approval": "anything"})   # no such yes
+    L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": 999999,
+                         "approval": "anything"})                             # no such decision
+    L.append("outcome", {"tool": "send_email", "status": "ok", "approval": "ap-not-on-record"})
+    r = receipt_audit.audit()
+    assert r["orphan_count"] == 3, r["orphan_outcomes"]
+    # an outcome naming a decision older than the look is checked, not skipped
+    old = L.append("decision", {"tool": "send_email", "class": "outward", "decision": "deny",
+                                "args_hash": "x", "via": "tool_call"}, durable=True)
+    later = time.time() + 5 * 86400
+    real_time = time.time
+    monkeypatch.setattr(time, "time", lambda: real_time() + 5 * 86400)
+    L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": old["seq"],
+                         "decision_hash": old["hash"]})
+    monkeypatch.setattr(time, "time", real_time)
+    r = receipt_audit.audit(now=later + 1, window_s=86400.0)
+    assert any("deny" in o["why"] for o in r["orphan_outcomes"])
