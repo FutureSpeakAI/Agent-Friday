@@ -108,6 +108,11 @@ def test_hostile_formulas_and_styles_are_checked_in_linear_time(tmp_path):
     t0 = _t.time()
     qa.check(page)
     assert _t.time() - t0 < 2.0
+    titled = tmp_path / "t.html"
+    titled.write_text("<html><title>" + "a<b>" * 100000 + "</title></html>", encoding="utf-8")
+    t0 = _t.time()
+    qa.check(titled)
+    assert _t.time() - t0 < 5.0
 
 
 def test_the_isolated_check_gives_the_same_answer_and_gives_up_on_time(tmp_path):
