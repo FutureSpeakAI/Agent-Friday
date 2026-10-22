@@ -1081,8 +1081,8 @@ def _pending_move(key: Optional[bytes], enc_name: str) -> bool:
 
 def _walk_archived(plain: bytes, key: bytes, r: dict) -> str:
     """'' when the archived file's own chain is whole and matches its entry."""
-    w = _walk_bytes(plain, key)
-    if w["problems"] or w["flagged"]:
+    w = _walk_bytes(plain, key, str(r.get("name") or "archived"))
+    if w["problems"]:
         return "an archived file's own chain does not hold"
     if (w["first_seq"] != r.get("first_seq") or w["first_prev"] != r.get("first_prev")
             or w["last_seq"] != r.get("last_seq") or w["last_hash"] != r.get("last_hash")
@@ -1108,6 +1108,26 @@ def _archived_entries(key: bytes, kinds: Optional[Iterable[str]] = None) -> list
     if m.get("kid") != key_id(key) or not _hmac.compare_digest(
             _manifest_sig(key, _manifest_body(m)), str(m.get("sig"))):
         raise LedgerError("the archive list was changed")
+    # the live record must continue from the list's end, and no archived file
+    # may lie outside it: a list put back from an earlier copy is refused
+    tail = _manifest_tail(m)
+    listed = {str((r or {}).get("name")) + ".enc" for r in rs}
+    for f in archive_dir().glob("actions-*.jsonl.enc"):
+        if f.name not in listed and not _pending_move(key, f.name):
+            raise LedgerError("an archived file is not in the signed list")
+    cov = {str((r or {}).get("name")) for r in rs}
+    first = None
+    for p in segments():
+        if p.name != LIVE_NAME and p.name in cov:
+            continue
+        try:
+            first = next((e for e, _r, _n, _t in _iter_lines(p) if isinstance(e, dict)), None)
+        except OSError:
+            first = None
+        if first is not None:
+            break
+    if first is not None and tail and (first.get("seq") != tail[0] + 1 or first.get("prev") != tail[1]):
+        raise LedgerError("the live record does not continue from the archive")
     want = frozenset(kinds) if kinds else None
     rows_cache = _STATE.setdefault("arch_rows", {})
     out = []
@@ -1248,10 +1268,11 @@ def _walk_bytes(plain: bytes, key: bytes, name: str = "archived") -> dict:
 def archive_old(*, now: Optional[float] = None, days: Optional[int] = None) -> dict:
     """Move sealed segments whose newest entry is older than the period into
     the encrypted archive (A22). Only while the ledger has no open break, only
-    whole segments, oldest first and contiguous, and never one with a break or
-    a flag in it. Nothing is deleted: the plain segment is removed only after
-    its encrypted copy (checked to open to the same bytes) and the signed list
-    are on disk. Returns what moved."""
+    whole segments, oldest first and contiguous, and never one with a break in
+    it (a flagged entry only once the owner acknowledged it). One segment per
+    hold of the locks, so writers wait for one file at most. Nothing is
+    deleted: the plain segment is removed only after its encrypted copy
+    (checked to open to the same bytes) and the signed list are on disk."""
     days = archive_after_days() if days is None else normalise_archive_days(days)
     if days == 0:
         return {"archived": 0, "why": "archiving is off"}
@@ -1268,23 +1289,60 @@ def archive_old(*, now: Optional[float] = None, days: Optional[int] = None) -> d
     # locks; under them only what changed since is checked again
     if not verify(force=True).get("ok"):
         return {"archived": 0, "why": "the ledger has a break; nothing is archived until it is reviewed"}
-    with _TLOCK:
-        _check_dir()
-        with _lock():
-            _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
-            try:
-                return _archive_locked(key, cutoff, days, moved)
-            finally:
-                _HELD_HERE.n -= 1
+    why = None
+    for _ in range(100000):
+        with _TLOCK:
+            _check_dir()
+            with _lock():
+                _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
+                try:
+                    step = _archive_one_locked(key, cutoff, days)
+                finally:
+                    _HELD_HERE.n -= 1
+        if step.get("why"):
+            why = step["why"]
+        if step.get("moved"):
+            moved.append(step["moved"])
+        if not step.get("more"):
+            break
+    out = {"archived": len(moved), "records": sum(x["records"] for x in moved),
+           "through": moved[-1]["last_ts"] if moved else None, "after_days": days}
+    if why and not moved:
+        out["why"] = why
+    return out
 
 
-def _archive_locked(key: bytes, cutoff: float, days: int, moved: list) -> dict:
-    """archive_old's work; the caller holds both locks."""
+def _acked_flags(report: dict) -> set:
+    return {tuple(_ack_key(p)) for p in report.get("problems", [])
+            if p.get("acknowledged") and p.get("segment") == "entry"}
+
+
+def _next_first(after: Path) -> Optional[dict]:
+    """The first entry of the file after `after` (the next sealed one or the live file)."""
+    segs = segments()
+    try:
+        i = [x.name for x in segs].index(after.name)
+    except ValueError:
+        return None
+    for nxt in segs[i + 1:]:
+        try:
+            e = next((e for e, _r, _n, _t in _iter_lines(nxt) if isinstance(e, dict)), None)
+        except OSError:
+            return None
+        if e is not None:
+            return e
+    return None
+
+
+def _archive_one_locked(key: bytes, cutoff: float, days: int) -> dict:
+    """One step of archive_old; the caller holds both locks. Returns
+    {"moved": entry} or {"why": ...}, and "more" when another step may follow."""
     # checked again under the write lock, so nothing changes between the
     # check and the move (the cached deep result when no file changed)
     r = verify(force=False, migrate=False)
     if not r.get("ok"):
-        return {"archived": 0, "why": "the ledger has a break; nothing is archived until it is reviewed"}
+        return {"why": "the ledger has a break; nothing is archived until it is reviewed"}
+    acked = _acked_flags(r)
     m = _read_manifest()
     ranges = list((m or {}).get("ranges") or [])
     tail = _manifest_tail(m) or (0, GENESIS)
@@ -1294,9 +1352,7 @@ def _archive_locked(key: bytes, cutoff: float, days: int, moved: list) -> dict:
             left.unlink()                        # a crash's leftovers (writers hold this lock)
         except OSError:
             pass
-    finished: list[str] = []
-    sealed = [p for p in segments() if p.name != LIVE_NAME]
-    for p in sealed:
+    for p in [x for x in segments() if x.name != LIVE_NAME]:
         plain = p.read_bytes()
         name = p.name
         sha_plain = hashlib.sha256(plain).hexdigest()
@@ -1307,25 +1363,31 @@ def _archive_locked(key: bytes, cutoff: float, days: int, moved: list) -> dict:
             if (done.get("sha256_plain") == sha_plain
                     and _enc_holds(key, name, sha_plain, done.get("sha256_enc"))):
                 if _unlink_retry(p):
-                    finished.append(name)
+                    _append_locked(key, [("archived", {"segments": [], "finished": [name],
+                                                       "after_days": days})], True)
+                    return {"more": True}
                 continue
-            break
-        w = _walk_bytes(plain, key)
-        if (w["problems"] or w["flagged"] or not w["records"]
+            return {"why": "a file under an archived name holds other bytes"}
+        w = _walk_bytes(plain, key, name)
+        unacked = [f for f in w["flagged"]
+                   if ("seq", f.get("seq"), f.get("hash"), _flag_reason(f)) not in acked]
+        if (w["problems"] or unacked or not w["records"]
                 or w["first_seq"] != tail[0] + 1 or w["first_prev"] != tail[1]):
-            break
-        ts = [e["t"] for e in (_safe_json(x) for x in plain.split(b"\n") if x.strip())
+            return {"why": "a segment with a break or an unreviewed flag stays live"}
+        nxt = _next_first(p)
+        if nxt is not None and (nxt.get("seq") != w["last_seq"] + 1 or nxt.get("prev") != w["last_hash"]):
+            return {"why": "the next file does not follow this one; nothing is archived"}
+        ts = [e["t"] for e, _r, _n, _t in _lines_of(plain)
               if isinstance(e, dict) and isinstance(e.get("t"), (int, float))]
         if not ts or max(ts) >= cutoff:
-            break
-        ad = archive_dir()
+            return {}
         ad.mkdir(parents=True, exist_ok=True)
         dst = ad / (name + ".enc")
         if dst.exists():
             # an earlier run stopped after writing the copy: adopt it
             # when it opens to the same bytes, otherwise stop here
             if not _enc_holds(key, name, sha_plain):
-                break
+                return {"why": "an archived copy under this name holds other bytes"}
             blob = dst.read_bytes()
         else:
             blob = _seal_blob(key, name, plain)
@@ -1343,7 +1405,7 @@ def _archive_locked(key: bytes, cutoff: float, days: int, moved: list) -> dict:
                 except OSError:
                     pass
             if not _enc_holds(key, name, sha_plain):
-                break
+                return {"why": "the archived copy did not read back"}
         entry = {"name": name, "first_seq": w["first_seq"], "last_seq": w["last_seq"],
                  "first_prev": w["first_prev"], "last_hash": w["last_hash"],
                  "records": w["records"],
@@ -1356,23 +1418,15 @@ def _archive_locked(key: bytes, cutoff: float, days: int, moved: list) -> dict:
         _write_manifest(key, ranges)
         _fsync_dir(ad)
         _unlink_retry(p)        # still open in a reader on Windows: removed next time
-        tail = (w["last_seq"], w["last_hash"])
-        moved.append(entry)
-    _STATE["seg_cache"] = {}
-    with _CACHE_LOCK:
-        _STATE["verified"] = None
-    if moved or finished:
-        _append_locked(key, [("archived", {"segments": [x["name"] for x in moved],
-                            "finished": finished,
-                            "first_seq": moved[0]["first_seq"] if moved else None,
-                            "last_seq": moved[-1]["last_seq"] if moved else None,
-                            "last_hash": moved[-1]["last_hash"] if moved else None,
-                            "records": sum(x["records"] for x in moved),
-                            "through": moved[-1]["last_ts"] if moved else None,
-                            "after_days": days})],
-                        True)
-    return {"archived": len(moved), "records": sum(x["records"] for x in moved),
-            "through": moved[-1]["last_ts"] if moved else None, "after_days": days}
+        _STATE["seg_cache"] = {}
+        with _CACHE_LOCK:
+            _STATE["verified"] = None
+        _append_locked(key, [("archived", {"segments": [name], "finished": [],
+                                           "first_seq": entry["first_seq"], "last_seq": entry["last_seq"],
+                                           "last_hash": entry["last_hash"], "records": entry["records"],
+                                           "through": entry["last_ts"], "after_days": days})], True)
+        return {"moved": entry, "more": True}
+    return {}
 
 
 def archive_summary() -> dict:
@@ -1713,8 +1767,9 @@ def verify(*, force: bool = True, migrate: bool = True) -> dict:
         # a forced or periodic full check re-reads sealed segments too: an
         # edit that put back a segment's size and mtime is caught here
         _STATE["seg_cache"] = {}
-        _STATE["arch_cache"] = {}
-        _STATE["arch_rows"] = {}
+        if force or not fresh:
+            _STATE["arch_cache"] = {}
+            _STATE["arch_rows"] = {}
     try:
         key = _key()
     except Exception:
@@ -1895,9 +1950,11 @@ def _migration_state_locked() -> dict:
     done: set = set()
     complete = False
     sources: list = []
-    if _manifest_tail(_read_manifest()) is not None:
+    if _archive_trace() or _chain_start_missing():
         # an archive exists only once old files were dealt with (archive_old
-        # waits for them): the switch is over
+        # waits for them), and a chain whose start is gone was not started by
+        # this switch: either way the switch is over, and an old file that
+        # appears now is quarantined, never read
         complete = True
         try:
             sources = list(_archived_entries(_key()))
@@ -1921,6 +1978,32 @@ def _migration_state_locked() -> dict:
             if isinstance(m, dict) and m.get("file_sha256"):
                 counts[m["file_sha256"]] = counts.get(m["file_sha256"], 0) + 1
     return {"counts": counts, "done": done, "complete": complete}
+
+
+def _archive_trace() -> bool:
+    """Any sign an archive was made: its list (readable or not) or a file."""
+    ad = archive_dir()
+    try:
+        return ad.is_dir() and ((ad / ARCHIVE_MANIFEST).exists()
+                                or any(ad.glob("actions-*.jsonl.enc")))
+    except OSError:
+        return True
+
+
+def _first_on_disk() -> Optional[dict]:
+    for p in segments():
+        try:
+            for e, _raw, _n, _t in _iter_lines(p):
+                if isinstance(e, dict):
+                    return e
+        except OSError:
+            continue
+    return None
+
+
+def _chain_start_missing() -> bool:
+    e = _first_on_disk()
+    return e is not None and (e.get("seq") != 1 or e.get("prev") != GENESIS)
 
 
 def _file_sha256(p: Path) -> str:
@@ -1980,11 +2063,17 @@ def migrate_legacy() -> dict:
             try:
                 present = _legacy_present()
                 empty = (not any(p.exists() and p.stat().st_size for p in segments())
-                         and _manifest_tail(_read_manifest()) is None)
+                         and not _archive_trace())
                 if not present and not empty:
                     return {"migrated": moved}
-                state = _migration_state_locked() if not empty else {"counts": {}, "done": set(),
-                                                                     "complete": False}
+                try:
+                    anchored = (anchor_get()[0] or (0, ""))[0] > 0
+                except Exception:
+                    anchored = True
+                # an empty ledger that was anchored was removed: an old file
+                # found now is quarantined, never read into a fresh chain
+                state = (_migration_state_locked() if not empty
+                         else {"counts": {}, "done": set(), "complete": anchored})
                 d = ledger_dir()
                 for kind, paths in _legacy_stores():
                     for p in paths:
@@ -2029,10 +2118,6 @@ def migrate_legacy() -> dict:
                             "lines": n_lines, "imported": n_imported + already,
                             "unreadable": n_unreadable, "kept_as": kept})], True)
                         moved.append({"store": kind, "from": _rel(p), "lines": n_lines})
-                try:
-                    anchored = anchor_get()[0] is not None
-                except Exception:
-                    anchored = True
                 if empty and anchored:
                     pass        # an anchored ledger that is now empty was removed: verify() says so
                 elif not state["complete"] and not _legacy_present():

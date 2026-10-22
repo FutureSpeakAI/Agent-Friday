@@ -274,7 +274,10 @@ def api_ledger():
 @login_required
 def api_ledger_verify():
     try:
-        return jsonify({"status": "ok", "report": action_ledger.verify(force=True)})
+        from agent_friday.core import _is_local_request
+        # a full check opens every archived file: on this PC at once, from
+        # elsewhere the last result (at most FULL_RECHECK_S old)
+        return jsonify({"status": "ok", "report": action_ledger.verify(force=_is_local_request())})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The action ledger could not be checked.")
 
