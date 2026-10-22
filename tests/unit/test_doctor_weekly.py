@@ -219,6 +219,7 @@ def test_an_off_record_session_keeps_counts_out_for_thirty_days(weekly, monkeypa
     """Review round 2 (3, 4): heard at the session's end, not only by the tick."""
     from agent_friday.services import off_record
     weekly.answer("weekly")
+    weekly.install_hooks()
     off_record.end()                       # the hook notes it
     st = json.loads(weekly._path().read_text(encoding="utf-8"))
     assert st["last_off_record_at"]
@@ -239,3 +240,40 @@ def test_the_weekly_text_passes_the_privacy_gate_whole(weekly):
     text = weekly._render(doctor.build(), False)
     assert egress_gate.gate_text(text, provider="futurespeak-mail", field="doctor_report") == text
     assert "Doctor report" not in text.splitlines()[0]
+
+
+
+def test_a_cleared_file_does_not_bring_off_record_figures_back(weekly):
+    """Closing review (F3): the mark is kept in memory too."""
+    from agent_friday.services import off_record
+    weekly.answer("weekly")
+    weekly.install_hooks()
+    off_record.end()
+    weekly._path().write_text("{}", encoding="utf-8")
+    assert "left out this week" in weekly.prepare()["text"]
+
+
+def test_a_ledger_with_a_break_offers_nothing(weekly):
+    """Closing review (F2): the answer is read strictly; a break answers never."""
+    from agent_friday.services import action_ledger as L
+    weekly.answer("weekly")
+    p = L.live_path()
+    p.write_text(p.read_text(encoding="utf-8").replace('"weekly"', '"WEEKLY"'), encoding="utf-8")
+    L.reset_caches()
+    st = weekly.status()
+    assert st["answer"] == "never" and st["ledger_unreadable"] is True and st["item"] is None
+
+
+def test_a_never_still_holds_after_its_receipt_is_archived(weekly, monkeypatch):
+    """Closing review (F1): the answer is read from the archive too."""
+    import time as _t
+    from agent_friday.services import action_ledger as L
+    weekly.answer("never")
+    with L._TLOCK:
+        L._check_dir()
+        with L._lock():
+            L._seal_live_locked(L.ledger_dir(), L.live_path())
+    L.reset_caches()
+    L.append("activity", {"kind": "x"})
+    assert L.archive_old(now=_t.time() + 800 * 86400, days=730)["archived"] == 1
+    assert weekly.status()["answer"] == "never" and weekly.next_item() is None
