@@ -45,7 +45,7 @@ def test_each_change_of_state_is_journaled_and_kept_on_the_record(task):
     ag._task_set(TID, phase="working")
     ag._task_set(TID, user_paused=True)
     ag._task_set(TID, user_paused=False)
-    ag._task_set(TID, status="complete", ended=time.time(), result="done")
+    ag._task_set(TID, status="complete", ended=time.time(), result="done", verified=True)
     assert _states() == ["planning", "running", "paused", "running", "completed_verified"]
     assert tj.read_state(TID).get("state") == "completed_verified"
     assert ag.TASKS[TID].get("state") == "completed_verified"
@@ -74,11 +74,16 @@ def test_a_stop_request_is_a_state_until_the_task_stops(task):
     ({"status": "failed:watchdog-kill"}, False, "failed"),
     ({"status": "timeout"}, False, "failed"),
     ({"status": "completed_unverified"}, False, "completed_unverified"),
-    ({"status": "complete"}, False, "completed_verified"),
+    ({"status": "complete", "verified": True}, False, "completed_verified"),
+    ({"status": "complete"}, False, "completed_unverified"),
+    ({"status": "skipped"}, False, "cancelled"),
+    ({"status": "complete", "user_paused": True, "waiting_on": {"kind": "input"},
+      "phase": "planning"}, True, "completed_unverified"),
     ({"status": "interrupted"}, False, "recovered_after_crash"),
 ], ids=["queued", "planning", "running", "waiting-approval", "waiting-approval-card",
         "waiting-input", "waiting-seat", "paused", "cancel-requested", "cancelled",
-        "failed", "timeout", "unverified", "verified", "recovered"])
+        "failed", "timeout", "unverified", "verified", "complete-without-evidence", "skipped",
+        "finished-beats-stale-flags", "recovered"])
 def test_every_north_star_state_is_reachable(rec, stop, want):
     from agent_friday.services import task_states as ts
     assert ts.derive(rec, stop_requested=stop) == want
@@ -87,4 +92,21 @@ def test_every_north_star_state_is_reachable(rec, stop, want):
 
 def test_a_finished_task_is_never_told_to_stop():
     from agent_friday.services import task_states as ts
-    assert ts.derive({"status": "complete"}, stop_requested=True) == "completed_verified"
+    assert ts.derive({"status": "complete", "verified": True}, stop_requested=True) == "completed_verified"
+
+
+def test_a_pause_in_the_seat_queue_is_journaled(task):
+    ag._task_set(TID, status="queued-for-seat")
+    with ag.TASKS_LOCK:
+        ag.TASKS[TID]["user_paused"] = True          # the queue changes the record in place
+    ag._task_set(TID, user_paused=True)
+    assert _states()[-2:] == ["waiting_for_external_event", "paused"]
+
+
+def test_a_task_recovered_at_the_next_start_says_so(task):
+    ag._task_set(TID, status="running", started=time.time())
+    tj.index_put(TID, "States", "running", time.time())
+    tj.reconcile_on_boot()
+    st = tj.read_state(TID)
+    assert st.get("state") == "recovered_after_crash" and st.get("exit") in ("closed", "unexpected")
+    assert _states()[-1:] == ["recovered_after_crash"]
