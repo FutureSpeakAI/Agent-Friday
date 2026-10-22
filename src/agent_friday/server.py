@@ -555,6 +555,12 @@ if not _TESTING:
                 _bs.tick()
             except Exception as _bs_err:
                 print(f"  Scheduled bundles: skipped ({_bs_err})")
+            try:
+                # the weekly Doctor ask (A3): a quiet card at most once a week; it sends nothing
+                from agent_friday.services import doctor_weekly as _dw
+                _dw.tick()
+            except Exception:
+                pass
             __import__("time").sleep(900)
     threading.Thread(target=_backup_schedule_loop, daemon=True, name="backup-schedule").start()
 

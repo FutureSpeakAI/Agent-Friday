@@ -61,6 +61,7 @@ KIND_LABELS = {
     "migration_complete": "Old receipts all brought in",
     "setting_changed": "You changed a ledger setting",
     "backup": "Scheduled backup",
+    "doctor_weekly": "Weekly Doctor report",
 }
 
 _LAST_FULL = [0.0]

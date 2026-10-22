@@ -293,3 +293,46 @@ def bundle_schedule_act(what):
             pass
     _threading.Thread(target=_go, name="bundle-schedule-" + what, daemon=True).start()
     return jsonify({"status": "ok", "started": what})
+
+
+# ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
+
+@doctor_bp.route("/api/doctor/weekly", methods=["GET"])
+@login_required
+def doctor_weekly_status():
+    from agent_friday.services import doctor_weekly
+    return jsonify({"status": "ok", **doctor_weekly.status()})
+
+
+@doctor_bp.route("/api/doctor/weekly/<what>", methods=["POST"])
+@login_required
+def doctor_weekly_act(what):
+    """answer {choice, local_only_too} | prepare | send {sha256, account_id} | skip.
+    prepare shows the exact text; every other step is a press on Friday's own
+    page, on this PC. Send raises the normal approval card: nothing leaves until
+    the owner approves it there."""
+    from agent_friday.core import _is_local_request
+    from agent_friday.services import doctor_weekly
+    if what not in ("answer", "prepare", "send", "skip"):
+        return jsonify({"status": "error", "error": "Unknown action."}), 404
+    if what == "prepare":
+        if not _is_local_request():
+            return jsonify({"status": "error", "error": "On this PC only."}), 403
+    elif not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Decide this on Friday's own page, on this PC."}), 403
+    body = request.get_json(silent=True) or {}
+    try:
+        if what == "answer":
+            return jsonify({"status": "ok", **doctor_weekly.answer(
+                str(body.get("choice") or ""), local_only_too=body.get("local_only_too") is True)})
+        if what == "prepare":
+            return jsonify({"status": "ok", **doctor_weekly.prepare()})
+        if what == "send":
+            return jsonify({"status": "ok", **doctor_weekly.send(
+                str(body.get("sha256") or ""), account_id=body.get("account_id") or None)})
+        return jsonify({"status": "ok", **doctor_weekly.skip()})
+    except doctor_weekly.WeeklyError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "That could not be done.")

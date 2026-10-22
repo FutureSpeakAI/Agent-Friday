@@ -282,6 +282,10 @@ _ALL = [
        route=STREAM, ledger=False),
     _e("L06", "routes/voice.py:_run_routed_front_turn", "router_receipt", RECEIPTS, "",
        route=STREAM, ledger=False),
+    # The weekly "send a Doctor report?" card (A3): in Needs you, raised once a week at most,
+    # never interrupting (tier FYI), nothing sent without the owner's approval card.
+    _e("L07", "services/doctor_weekly.py:tick", "doctor_weekly", NEEDS_YOU,
+       "doctor-weekly:{week}", source="doctor"),
     # Quiet turned on by the owner (voice, chat or the page): a visible line in Updates that never
     # merges with another, so every activation can be seen.
     _e("NQ1", "services/notification_tools.py:_quiet", "quiet_on", UPDATES, "quiet-on:{surface}:{seq}",
@@ -344,7 +348,7 @@ _ALL = [
 REGISTRY: dict = {e.id: e for e in _ALL}
 CENSUS_IDS = tuple("E%02d" % i for i in range(1, 83))
 #: Emitters live has gained since the 82-emitter census, registered by the same rule.
-LIVE_IDS = tuple("L%02d" % i for i in range(1, 7))
+LIVE_IDS = tuple("L%02d" % i for i in range(1, 8))
 
 _BY_KIND_SOURCE: dict = {}
 _BY_KIND: dict = {}

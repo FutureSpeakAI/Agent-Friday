@@ -75,6 +75,27 @@
   <p id="sched-note" role="status"></p>
 </section>
 
+<section id="weekly" aria-labelledby="weekly-h">
+  <h2 id="weekly-h">Weekly report to FutureSpeak</h2>
+  <p>Nothing about Friday leaves this PC by itself. If you like, Friday asks once a week whether to email this report to FutureSpeak from your own account. You see exactly what would be sent, and you decide each time.</p>
+  <p class="muted" id="weekly-promise"></p>
+  <p id="weekly-state" role="status"></p>
+  <div id="weekly-ask" hidden>
+    <button id="w-yes" type="button">Yes, ask me weekly</button>
+    <button id="w-notnow" type="button">Not now</button>
+    <button id="w-never" type="button">Never ask again</button>
+    <label id="w-local-wrap" hidden><input type="checkbox" id="w-local"> Also while Friday is in local-only mode</label>
+  </div>
+  <div id="weekly-card" hidden>
+    <p>This is the exact text that would be sent to <span id="w-to"></span>:</p>
+    <pre id="w-text"></pre>
+    <button id="w-send" type="button">Send</button>
+    <button id="w-skip" type="button">Skip this week</button>
+    <button id="w-stop" type="button">Stop asking</button>
+  </div>
+  <p id="weekly-note" role="status"></p>
+</section>
+
 <section aria-labelledby="rep-h">
   <h2 id="rep-h">Report</h2>
   <button id="run" type="button">Run the checks</button>
@@ -228,6 +249,36 @@
   });
   $('sched-run').addEventListener('click', () => act('run'));
   $('sched-rehearse').addEventListener('click', () => act('rehearse'));
+  // the weekly ask (A3): one question, then a card a week; nothing sends without the approval card
+  let wSha = null;
+  function weekly() {
+    api('/api/doctor/weekly').then(({ d }) => {
+      text($('weekly-promise'), d.promise || '');
+      $('w-to').textContent = d.address || '';
+      $('weekly-ask').hidden = d.answer === 'weekly';
+      $('w-local-wrap').hidden = !d.local_only;
+      const words = { weekly: 'You said: ask me weekly.', not_now: 'You said: not now.', never: 'You said: never ask again.' };
+      text($('weekly-state'), (words[d.answer] || 'Friday has not asked yet.') +
+        (d.off_record ? ' Off the record: nothing is prepared.' : '') +
+        (d.answer === 'weekly' && d.decided_this_week ? ' Done for this week.' : ''));
+      $('weekly-card').hidden = true;
+      if (d.item === 'weekly') {
+        api('/api/doctor/weekly/prepare', { method: 'POST', body: '{}' }).then(({ ok, d: p }) => {
+          if (!ok) { text($('weekly-note'), p.error || 'The report could not be prepared.'); return; }
+          wSha = p.sha256; $('w-text').textContent = p.text; $('weekly-card').hidden = false;
+        });
+      }
+    });
+  }
+  const wpost = (what, body) => api('/api/doctor/weekly/' + what, { method: 'POST', body: JSON.stringify(body || {}) })
+    .then(({ ok, d }) => { text($('weekly-note'), ok ? (d.detail || 'Saved.') : (d.error || 'Not done.')); weekly(); });
+  $('w-yes').addEventListener('click', () => wpost('answer', { choice: 'weekly', local_only_too: $('w-local').checked }));
+  $('w-notnow').addEventListener('click', () => wpost('answer', { choice: 'not_now' }));
+  $('w-never').addEventListener('click', () => wpost('answer', { choice: 'never' }));
+  $('w-send').addEventListener('click', () => wpost('send', { sha256: wSha }));
+  $('w-skip').addEventListener('click', () => wpost('skip'));
+  $('w-stop').addEventListener('click', () => wpost('answer', { choice: 'never' }));
+  weekly();
   schedState();
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
