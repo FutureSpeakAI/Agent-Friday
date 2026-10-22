@@ -549,6 +549,8 @@ if not _TESTING:
     # safe mode (a backup is part of repairing Friday).
     def _backup_schedule_loop():
         from agent_friday.services import backup_schedule as _bs
+        from agent_friday.services import doctor_weekly as _dw0   # hears off-the-record ends
+        _dw0.install_hooks()
         __import__("time").sleep(120)
         while True:
             try:

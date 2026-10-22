@@ -20,6 +20,7 @@ def weekly(tmp_path, monkeypatch):
     from agent_friday.services import cloud_intent, doctor_weekly, off_record
     monkeypatch.setattr(cloud_intent, "routing_mode", lambda *a, **k: "cloud_only")
     monkeypatch.setattr(off_record, "active", lambda *a, **k: False)
+    doctor_weekly._PREPARED.clear()
     return doctor_weekly
 
 
@@ -181,9 +182,7 @@ def test_the_emailed_report_says_it_was_chosen_and_a_partly_off_record_week_leav
     weekly.answer("weekly")
     p = weekly.prepare()
     assert "by hand only" not in p["text"] and weekly.SHARING in p["text"]
-    st = json.loads(weekly._path().read_text(encoding="utf-8"))
-    st["prepared"] = None
-    weekly._path().write_text(json.dumps(st), encoding="utf-8")
+    weekly._PREPARED.clear()
     monkeypatch.setattr(off_record, "active", lambda *a, **k: True)
     weekly.tick()                                                    # notes the week
     monkeypatch.setattr(off_record, "active", lambda *a, **k: False)
@@ -191,17 +190,40 @@ def test_the_emailed_report_says_it_was_chosen_and_a_partly_off_record_week_leav
     assert "left out this week" in p["text"]
 
 
-def test_the_page_reuses_this_weeks_text_and_a_changed_saved_text_is_refused(weekly, monkeypatch):
-    """Review round 1 (low 3, 4)."""
-    _Mail().install(monkeypatch)
+def test_the_page_reuses_this_weeks_text_and_planted_text_is_never_shown_or_sent(weekly, monkeypatch):
+    """Review round 1 (low 3, 4) and round 2 (1): the text lives in memory only."""
+    import hashlib as _h
+    mail = _Mail().install(monkeypatch)
     weekly.answer("weekly")
+    planted = "planted words in the owner's name"
+    weekly._path().parent.mkdir(parents=True, exist_ok=True)
+    weekly._path().write_text(json.dumps({"prepared": {"week": weekly.week_key(), "text": planted,
+                                                       "sha256": _h.sha256(planted.encode()).hexdigest()}}),
+                              encoding="utf-8")
     a, b = weekly.prepare(), weekly.prepare()
-    assert a["sha256"] == b["sha256"]
-    st = json.loads(weekly._path().read_text(encoding="utf-8"))
-    st["prepared"]["text"] += "\nplanted line"
-    weekly._path().write_text(json.dumps(st), encoding="utf-8")
+    assert a["sha256"] == b["sha256"] and planted not in a["text"]
     with pytest.raises(weekly.WeeklyError):
-        weekly.send(a["sha256"])
+        weekly.send(_h.sha256(planted.encode()).hexdigest())
+    weekly.send(a["sha256"])
+    assert planted not in mail.sent[0]["body"]
+
+
+def test_the_answer_comes_from_its_signed_receipt_not_a_file(weekly):
+    """Review round 2 (2): a planted file cannot say yes, or yes in local-only mode."""
+    weekly._path().parent.mkdir(parents=True, exist_ok=True)
+    weekly._path().write_text(json.dumps({"answer": "weekly", "local_only_ok": True}), encoding="utf-8")
+    assert weekly.status()["answer"] is None and weekly.next_item() == "ask"
+
+
+def test_an_off_record_session_keeps_counts_out_for_thirty_days(weekly, monkeypatch):
+    """Review round 2 (3, 4): heard at the session's end, not only by the tick."""
+    from agent_friday.services import off_record
+    weekly.answer("weekly")
+    off_record.end()                       # the hook notes it
+    st = json.loads(weekly._path().read_text(encoding="utf-8"))
+    assert st["last_off_record_at"]
+    p = weekly.prepare()
+    assert "left out this week" in p["text"] and '"action_ledger"' not in p["text"]
 
 
 def test_nothing_is_prepared_when_no_weekly_report_is_due(weekly):

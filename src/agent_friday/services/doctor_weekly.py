@@ -36,9 +36,13 @@ futurespeak once a week". The person decides every single time:
   error counts and speed figures are left out of the report, since they may
   come from that time.
 
-State is `<home>/doctor/weekly.json`. A data-folder writer can make the card
-appear; it can never make anything send (every send is the owner's press on
-the approval card).
+The owner's answer (and the local-only yes) is read from its signed receipt
+in the action ledger, never from a file. `<home>/doctor/weekly.json` holds only
+when the card was offered, decided, and when off the record was last seen; a
+data-folder writer can make the card appear or skip a week, never make
+anything send (every send is the owner's press on the approval card) and
+never choose its text: the text shown and sent is kept in this process's
+memory only (after a restart it is made again).
 """
 from __future__ import annotations
 
@@ -72,6 +76,11 @@ ASK_AGAIN_S = 28 * 86400.0
 SUBJECT = "Agent Friday diagnostic report"
 
 _LOCK = threading.Lock()
+#: This week's prepared text, in memory only: {"week", "report_id", "text", "sha256"}.
+_PREPARED: dict = {}
+#: How far back an off-the-record session keeps counts and speed out of the report
+#: (the error counts read the log's tail and speed covers the process's lifetime).
+OFF_RECORD_SHADOW_S = 30 * 86400.0
 
 
 class WeeklyError(ValueError):
@@ -93,8 +102,8 @@ def week_key(t: Optional[float] = None) -> str:
 
 
 def _state() -> dict:
-    st = {"answer": None, "answered_at": None, "local_only_ok": False, "offered_week": None,
-          "asked_at": None, "decided_week": None, "prepared": None, "off_record_weeks": []}
+    st = {"offered_week": None, "asked_at": None, "decided_week": None,
+          "off_record_weeks": [], "last_off_record_at": None}
     try:
         d = json.loads(_path().read_text(encoding="utf-8"))
         if isinstance(d, dict):
@@ -103,19 +112,58 @@ def _state() -> dict:
                     st[k] = d[k]
     except (OSError, ValueError):
         pass
-    if st["answer"] not in ANSWERS:
-        st["answer"] = None
-    if not isinstance(st["prepared"], dict):
-        st["prepared"] = None
-    st["local_only_ok"] = st["local_only_ok"] is True
     if not isinstance(st["off_record_weeks"], list):
         st["off_record_weeks"] = []
-    if not isinstance(st["asked_at"], (int, float)) or st["asked_at"] > time.time() + 600:
-        st["asked_at"] = None
+    for k in ("asked_at", "last_off_record_at"):
+        if not isinstance(st[k], (int, float)) or st[k] > time.time() + 600:
+            st[k] = None
+    st.update(_answer_on_record())
     return st
 
 
+def _answer_on_record() -> dict:
+    """The owner's newest answer, from its signed receipt in the action ledger
+    (only entries whose signature holds count)."""
+    out = {"answer": None, "answered_at": None, "local_only_ok": False}
+    try:
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries(["doctor_weekly"], newest_first=True, verified=True,
+                                     where=lambda e: (e.get("rec") or {}).get("event") == "answer",
+                                     limit=1)
+    except Exception:
+        rows = []
+    if rows:
+        rec = rows[0].get("rec") or {}
+        if rec.get("answer") in ANSWERS:
+            out.update(answer=rec["answer"], answered_at=rows[0].get("t"),
+                       local_only_ok=rec.get("local_only_too") is True)
+    return out
+
+
+def _note_off_record() -> None:
+    """Off the record was on (its end, or a tick while on): counts and speed
+    stay out of the report for OFF_RECORD_SHADOW_S."""
+    with _LOCK:
+        st = _state()
+        st["last_off_record_at"] = time.time()
+        if week_key() not in st["off_record_weeks"]:
+            st["off_record_weeks"] = (st["off_record_weeks"] + [week_key()])[-8:]
+        _save(st)
+    _PREPARED.clear()
+
+
+def install_hooks() -> None:
+    """Hear the end of every off-the-record session (services/off_record.on_end)."""
+    try:
+        from agent_friday.services import off_record
+        off_record.on_end(_note_off_record)
+    except Exception:
+        pass
+
+
 def _save(st: dict) -> None:
+    st = {k: st.get(k) for k in ("offered_week", "asked_at", "decided_week", "off_record_weeks",
+                                 "last_off_record_at")}
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".%d.tmp" % os.getpid())
@@ -179,14 +227,13 @@ def answer(choice: str, *, local_only_too: bool = False) -> dict:
     """The owner's answer to the ask (or Settings turning it back on/off)."""
     if choice not in ANSWERS:
         raise WeeklyError("Choose: ask me weekly, not now, or never ask again.")
-    with _LOCK:
-        st = _state()
-        st.update(answer=choice, answered_at=time.time(),
-                  local_only_ok=bool(local_only_too) if choice == "weekly" else False)
-        if choice != "weekly":
-            st["prepared"] = None
-        _save(st)
-    _receipt("answer", answer=choice, local_only_too=bool(local_only_too) and choice == "weekly")
+    from agent_friday.services import action_ledger
+    # the answer is its signed receipt: if it cannot be written, nothing changed
+    action_ledger.append("doctor_weekly", {"event": "answer", "answer": choice,
+                                           "local_only_too": bool(local_only_too) and choice == "weekly"},
+                         durable=True)
+    if choice != "weekly":
+        _PREPARED.clear()
     return status()
 
 
@@ -203,6 +250,7 @@ def _render(rep: dict, partly_off_record: bool) -> str:
         r["errors"] = {}
         perf = dict(r.get("performance") or {})
         perf.pop("providers", None)
+        perf.pop("action_ledger", None)
         r["performance"] = perf
     text = doctor.render_text(r)
     first, _, rest = text.partition("\n")
@@ -223,31 +271,31 @@ def prepare() -> dict:
     st = _state()
     if next_item(st) != "weekly":
         raise WeeklyError("There is no weekly report to look at now.")
-    p = st.get("prepared") or {}
-    if p.get("week") == week_key() and isinstance(p.get("text"), str) and \
-            hashlib.sha256(p["text"].encode("utf-8")).hexdigest() == p.get("sha256"):
+    p = dict(_PREPARED)
+    if p.get("week") == week_key() and isinstance(p.get("text"), str):
         text, sha, rid = p["text"], p["sha256"], p.get("report_id")
     else:
         from agent_friday.services import doctor, egress_gate
         rep = doctor.build()
-        text = egress_gate.gate_text(_render(rep, week_key() in st["off_record_weeks"]),
-                                     provider="futurespeak-mail", field="doctor_report")
+        last = st.get("last_off_record_at")
+        shadow = (week_key() in st["off_record_weeks"]
+                  or bool(last and time.time() - last < OFF_RECORD_SHADOW_S))
+        text = egress_gate.gate_text(_render(rep, shadow), provider="futurespeak-mail",
+                                     field="doctor_report")
         if not text:
             raise WeeklyError("The privacy check held the whole report back; nothing can be sent.")
         sha, rid = hashlib.sha256(text.encode("utf-8")).hexdigest(), rep.get("id")
-        with _LOCK:
-            st = _state()
-            st["prepared"] = {"report_id": rid, "sha256": sha, "week": week_key(),
-                              "at": time.time(), "text": text}
-            _save(st)
+        _PREPARED.clear()
+        _PREPARED.update(report_id=rid, sha256=sha, week=week_key(), text=text)
     return {"report_id": rid, "text": text, "sha256": sha, "to": FUTURESPEAK_DOCTOR_ADDRESS,
             "subject": "%s (reference %s)" % (SUBJECT, _ref(rid)),
             "promise": PROMISE}
 
 
 def _prepared_text(st: dict, sha256: str) -> tuple[str, dict]:
-    """The text the owner saw (its SHA-256 is what the page sent back)."""
-    p = st.get("prepared") or {}
+    """The text the owner saw (kept in memory; its SHA-256 is what the page
+    sent back)."""
+    p = dict(_PREPARED)
     text = p.get("text")
     if (not p or p.get("week") != week_key() or not isinstance(text, str)
             or hashlib.sha256(text.encode("utf-8")).hexdigest() != sha256 or p.get("sha256") != sha256):
@@ -331,8 +379,8 @@ def skip() -> dict:
     with _LOCK:
         st = _state()
         st["decided_week"] = week_key()
-        st["prepared"] = None
         _save(st)
+    _PREPARED.clear()
     _receipt("skipped", week=week_key())
     return status()
 
@@ -342,11 +390,7 @@ def tick() -> Optional[dict]:
     partly off the record, then raise this week's quiet card in Needs you when
     one is due (never twice in a week; never interrupting). Sends nothing."""
     if _off_record():
-        with _LOCK:
-            st = _state()
-            if week_key() not in st["off_record_weeks"]:
-                st["off_record_weeks"] = (st["off_record_weeks"] + [week_key()])[-8:]
-                _save(st)
+        _note_off_record()
         return None
     st = _state()
     item = next_item(st)
@@ -371,3 +415,6 @@ def tick() -> Optional[dict]:
             st["asked_at"] = time.time()
         _save(st)
     return {"offered": item}
+
+
+install_hooks()
