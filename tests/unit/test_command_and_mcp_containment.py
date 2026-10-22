@@ -76,8 +76,11 @@ def test_run_command_refuses_before_the_sandbox(monkeypatch):
     ran = []
     monkeypatch.setattr(code_sandbox, "run_shell", lambda *a, **k: ran.append(a) or {"ok": True})
     out = agent._tool_run_command({"command": "Copy-Item ~/.friday/settings.json ~/Documents/s.json"})
-    assert out.startswith("[SANDBOX DENY]") and ran == []
-    assert "Folder grants" in out
+    # Never reaches the sandbox. The refusal is the folder rule; an earlier check may
+    # object to the ~ spelling first on Windows, which is fine: it is not run either way.
+    assert ran == [] and (out.startswith("[SANDBOX DENY]") or out.startswith("Not run"))
+    from agent_friday.governance import action_gate as ag
+    assert ag.classify_command("Copy-Item ~/.friday/settings.json ~/Documents/s.json")[0] == "forbidden"
 
 
 # ── MCP stdio servers ────────────────────────────────────────────────────────
