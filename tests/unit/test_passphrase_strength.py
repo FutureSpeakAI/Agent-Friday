@@ -25,7 +25,11 @@ WEAK = ["xxxxxxxxxxxxxxxxxxxx", "password1234", "qwertyuiop123456", "abcdefghijk
         "!@#$%^&*()_+", "L3tm31n2023",
         # review round 2: repeated units, shifted walks, stepped digits
         "Aa1!Aa1!Aa1!", "Zz9(Zz9(Zz9(", "Ab!Ab!Ab!Ab!", "12!@12!@12!@", "P4ssw0rdP4ssw0rd",
-        "13579135791357913579!", "01/01/2000 01/01/2000", "!Q@W#E$R%T^Y", "1234 5678 9012 3456"]
+        "13579135791357913579!", "01/01/2000 01/01/2000", "!Q@W#E$R%T^Y", "1234 5678 9012 3456",
+        # review round 3: look-alike spellings of words, password-list words
+        "Tr0ub4dor&3xy", "Dr4g0nSl4y3r!", "M0nk3yB4n4n4!", "Ch4rl13B0y!!", "J3nn1f3r1985!",
+        "L1v3rp00l!23", "Sh4d0wM4st3r", "W3lc0m3H0m3!", "S3cur1ty2024!", "B4s3b4ll!F4n",
+        "Tr0ub4dor&3Tr0ub4dor&3", "monkey dragon shadow master", "John Smith 1980", "Kitty!Cat!123"]
 STRONG = ["orbit lantern pepper tundra violet 42", "violet anchor drizzle mammoth",
           "kL9#vQ2!mZ7@pX4$", "ci clean machine walnut harbour quartz"]
 
