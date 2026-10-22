@@ -127,7 +127,8 @@ def test_autonomy_values_are_validated():
 
 
 def test_a_goal_that_used_its_minutes_does_not_start_more_work():
-    g = goals.define_goal(FULL, gd.draft(FULL)["summary_id"])
+    spec = dict(FULL, budget={"runtime_minutes": 30})      # no mψ cap, so the minutes are what stop it
+    g = goals.define_goal(spec, gd.draft(spec)["summary_id"])
     goal = dict(goals.get_goal(g["goal_id"]), status="active", spent_runtime_s=30 * 60)
     hold = goal_state.continuation_hold(goal, goal["milestones"][0])
     assert hold and hold["category"] == "budget_exhausted" and hold.get("type") == "runtime"
