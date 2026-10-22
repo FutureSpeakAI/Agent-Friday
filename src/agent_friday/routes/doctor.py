@@ -237,9 +237,13 @@ def bundle_strength():
 @doctor_bp.route("/api/bundle/schedule", methods=["GET"])
 @login_required
 def bundle_schedule_get():
+    from agent_friday.core import _is_local_request
     from agent_friday.services import backup_schedule
     try:
-        return jsonify({"status": "ok", "schedule": backup_schedule.public_state()})
+        st = backup_schedule.public_state()
+        if not _is_local_request() and st.get("folder"):
+            st["folder"] = "(shown on this PC only)"      # a share name can say a lot
+        return jsonify({"status": "ok", "schedule": st})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The backup schedule could not be read.")
 
@@ -256,7 +260,7 @@ def bundle_schedule_set():
     body = request.get_json(silent=True) or {}
     try:
         st = backup_schedule.set_schedule(
-            enabled=bool(body.get("enabled")), every=str(body.get("every") or "weekly"),
+            enabled=body.get("enabled"), every=str(body.get("every") or "weekly"),
             folder=body.get("folder"), keep=body.get("keep", backup_schedule.DEFAULT_KEEP),
             rehearse_days=body.get("rehearse_days", backup_schedule.DEFAULT_REHEARSE_DAYS),
             passphrase=(body.get("passphrase") or None) if isinstance(body.get("passphrase"), str) else None)

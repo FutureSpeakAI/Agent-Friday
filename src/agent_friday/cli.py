@@ -2075,6 +2075,7 @@ def _cmd_bundle_schedule(args):
             if pw == "":
                 return 1
             st = bs.set_schedule(enabled=True, every=args.every, folder=folder, keep=args.keep,
+                                 rehearse_days=bs.state().get("rehearse_days", bs.DEFAULT_REHEARSE_DAYS),
                                  passphrase=pw)
         elif what == "run":
             r = bs.run_now()

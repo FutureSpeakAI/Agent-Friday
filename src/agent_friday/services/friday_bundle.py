@@ -115,7 +115,7 @@ _EXCLUDED_TOPS = {"runtime", "local_voice", "models", "cache", "backups", "logs"
                   "browser-sessions"}
 #: Exact paths (and folders) never carried, relative, POSIX, lower case.
 _EXCLUDED_PATHS = {"vault/.governance-key", "vault/.attestation-key-ed25519",
-                   "vault/.attestation-key-ed25519.pub", "vault/.action-ledger-anchor",
+                   "vault/.attestation-key-ed25519.pub", "vault/.action-ledger-anchor", "vault/.bundle-schedule-passphrase",
                    "secret_key", "friday_server.lock", "friday_server.pid",
                    "friday_server.port", "startup-report.json", "friday.log",
                    "server_stderr.log", "ledger/.lock", "phone/secrets",

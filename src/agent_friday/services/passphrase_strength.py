@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import math
 import re
+from typing import Optional
 
 MIN_LENGTH = 12
+MAX_LENGTH = 256
 FLOOR_BITS = 50.0
 _SCORES = (28.0, 36.0, FLOOR_BITS, 64.0)      # score 1..4 thresholds
 
@@ -52,7 +54,12 @@ _COMMON_WORDS = {
 }
 
 _RUNS = ("abcdefghijklmnopqrstuvwxyz", "qwertyuiop", "asdfghjkl", "zxcvbnm",
-         "01234567890", "1qaz2wsx3edc")
+         "`1234567890-=", "~!@#$%^&*()_+", "1qaz2wsx3edc4rfv5tgb", "qazwsxedcrfvtgbyhnujm")
+#: Adjacent pairs that belong to a run, either way round (built once).
+_PAIRS = {(r[i], r[i + 1]) for r in _RUNS for i in range(len(r) - 1)}
+_PAIRS |= {(b, a) for a, b in _PAIRS}
+_LEET = str.maketrans({"@": "a", "4": "a", "0": "o", "1": "i", "!": "i", "3": "e", "$": "s",
+                       "5": "s", "7": "t", "+": "t", "8": "b", "9": "g", "|": "l"})
 
 
 def _class_size(s: str) -> int:
@@ -69,25 +76,39 @@ def _class_size(s: str) -> int:
 
 
 def _run_length(s: str) -> int:
-    """Characters that belong to a keyboard or alphabet run of 3 or more."""
+    """Characters that belong to a keyboard or alphabet run of 3 or more
+    (one pass: each neighbouring pair is looked up)."""
     low = s.lower()
-    hit = [False] * len(low)
-    for run in _RUNS:
-        for direction in (run, run[::-1]):
-            for i in range(len(low) - 2):
-                for j in range(len(low), i + 2, -1):
-                    if low[i:j] in direction:
-                        for k in range(i, j):
-                            hit[k] = True
-                        break
-    return sum(hit)
+    total, streak = 0, 1
+    for i in range(1, len(low)):
+        if (low[i - 1], low[i]) in _PAIRS:
+            streak += 1
+        else:
+            if streak >= 3:
+                total += streak
+            streak = 1
+    if streak >= 3:
+        total += streak
+    return total
 
 
-def _chars_bits(s: str) -> float:
-    """Bits for a string taken character by character, after the guessers' tricks."""
+def _interleaved_runs(s: str) -> bool:
+    """Letters and digits that each make a run when taken apart (a1b2c3,
+    1q2w3e): a walk, not a choice."""
+    letters = "".join(c for c in s.lower() if c.isalpha())
+    digits = "".join(c for c in s if c.isdigit())
+    if len(letters) < 3 or len(digits) < 3 or len(letters) + len(digits) < 0.8 * len(s):
+        return False
+    return _run_length(letters) >= len(letters) - 1 and _run_length(digits) >= len(digits) - 1
+
+
+def _chars_bits(s: str, classes: Optional[str] = None) -> float:
+    """Bits for a string taken character by character, after the guessers'
+    tricks. `classes`: the whole passphrase, whose character classes count
+    (a chunk of one class inside a mixed passphrase is not a choice of 95)."""
     if not s:
         return 0.0
-    per = math.log2(_class_size(s))
+    per = math.log2(_class_size(classes if classes is not None else s))
     bits = 0.0
     prev = None
     repeats = 0
@@ -108,15 +129,22 @@ WORD_BITS = 12.5
 
 
 def _word_bits(w: str) -> float:
+    """A word from a guesser's list: short words are few; a "word" of one or
+    two distinct letters, or a run, is no word at all."""
     lw = w.lower()
     if lw in _COMMON_WORDS or len(lw) <= 2:
         return 4.0
-    return WORD_BITS + (1.0 if w != lw and w != lw.capitalize() else 0.0)
+    base = 9.0 if len(lw) == 3 else 11.0 if len(lw) == 4 else WORD_BITS
+    base += 1.0 if w != lw and w != lw.capitalize() else 0.0
+    if len(set(lw)) < 3 or _run_length(lw) >= len(lw) - 1:
+        return min(base, _chars_bits(w))
+    return min(base, _chars_bits(w))
 
 
 def _mixed_bits(s: str) -> float:
     """A string without word separators: letter runs of four or more are
-    words, the rest goes character by character; a chunk seen before is free."""
+    words, the rest goes character by character (classes of the whole
+    string); a chunk seen before is free."""
     bits = 0.0
     seen = set()
     for chunk in re.findall(r"[A-Za-z]+|[^A-Za-z]+", s):
@@ -126,9 +154,9 @@ def _mixed_bits(s: str) -> float:
             continue
         seen.add(key)
         if chunk.isalpha() and len(chunk) >= 4:
-            bits += min(_chars_bits(chunk), _word_bits(chunk))
+            bits += min(_chars_bits(chunk, s), _word_bits(chunk))
         else:
-            bits += _chars_bits(chunk)
+            bits += _chars_bits(chunk, s)
     return bits
 
 
@@ -154,7 +182,11 @@ def assess(passphrase: str) -> dict:
     """{score 0-4, ok, bits, length, feedback [plain sentences]}."""
     pw = passphrase if isinstance(passphrase, str) else ""
     feedback = []
+    if len(pw) > MAX_LENGTH:
+        return {"score": 0, "ok": False, "bits": 0.0, "length": len(pw),
+                "feedback": ["Use at most %d characters." % MAX_LENGTH], "label": "too long"}
     squashed = re.sub(r"[\s\-_.]+", "", pw).lower()
+    plain = re.sub(r"[\d\W_]+$", "", squashed).translate(_LEET)
     tokens = re.findall(r"[A-Za-z]+|[^A-Za-z\s\-_.]+", pw)
     words = [t for t in tokens if t.isalpha() and len(t) >= 2]
     extras = "".join(t for t in tokens if not t.isalpha())
@@ -163,7 +195,8 @@ def assess(passphrase: str) -> dict:
         bits = _words_bits(words, seps, extras)
     else:
         bits = _mixed_bits(pw)
-    if squashed in _COMMON or re.sub(r"\d+$", "", squashed) in _COMMON:
+    if (squashed in _COMMON or re.sub(r"\d+$", "", squashed) in _COMMON
+            or plain in _COMMON or re.sub(r"[\d\W_]+$", "", plain) in _COMMON):
         bits = min(bits, 10.0)
         feedback.append("This is one of the first passphrases a guesser tries.")
     if pw and len(set(pw)) <= 2:
@@ -175,7 +208,12 @@ def assess(passphrase: str) -> dict:
     if "friday" in squashed:
         bits -= 6.0
         feedback.append("Leave out the name Friday; guessers try it first.")
+    if _interleaved_runs(pw):
+        bits = min(bits, 20.0)
+        feedback.append("Letters and digits that count up together are easy to guess.")
     if _run_length(pw) >= 4:
+        if _run_length(pw) >= len(re.sub(r"\s", "", pw)) - 1:
+            bits = min(bits, 16.0)
         feedback.append("Avoid keyboard or alphabet runs such as qwerty or abcd.")
     bits = max(bits, 0.0)
     score = sum(1 for t in _SCORES if bits >= t)

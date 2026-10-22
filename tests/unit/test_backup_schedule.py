@@ -64,8 +64,9 @@ def test_turning_it_on_needs_a_folder_outside_friday_and_a_strong_passphrase(hom
         _on(bs, tmp_path / "out", passphrase=None)        # none kept yet
     st = _on(bs, tmp_path / "out")
     assert st["enabled"] and st["passphrase_kept"]
-    raw = bs.schedule_path().read_text(encoding="utf-8")
+    raw = bs.schedule_path().read_text(encoding="utf-8") if bs.schedule_path().exists() else ""
     assert PASS not in raw, "the passphrase is never in the schedule file"
+    assert str(tmp_path / "out") not in raw, "nor the folder: it is sealed with the passphrase"
 
 
 def test_a_due_bundle_is_made_verified_rotated_and_on_record(home, tmp_path, monkeypatch):
@@ -164,3 +165,77 @@ def test_the_doctor_view_names_no_folder_or_file(home, tmp_path):
     from agent_friday.services import backup_schedule as bs
     _on(bs, tmp_path / "out")
     assert str(tmp_path) not in json.dumps(bs.doctor_view())
+
+
+
+def test_files_planted_in_the_data_folder_never_turn_a_schedule_on_or_redirect_it(home, tmp_path, monkeypatch):
+    """Review round 1 (B1, S1): a planted schedule.json and a plain passphrase
+    file made Friday write the keychain's secrets into an attacker's bundle."""
+    from agent_friday.services import backup_schedule as bs
+    monkeypatch.setenv("FRIDAY_SCHEDULE_SECRET", "keyring")     # the real stores, not the test memory
+    evil = tmp_path / "attacker-share"
+    bs.schedule_path().parent.mkdir(parents=True, exist_ok=True)
+    bs.schedule_path().write_text(json.dumps({"enabled": True, "folder": str(evil), "keep": 1,
+                                              "every": "daily"}), encoding="utf-8")
+    f = home / "vault" / ".bundle-schedule-passphrase"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(PASS, encoding="utf-8")                       # plain text the attacker knows
+    st = bs.state()
+    assert st["enabled"] is False and st["folder"] is None
+    assert not bs.due() and bs.tick() is None
+    assert not evil.exists()
+
+
+def test_a_redirected_folder_in_the_state_file_is_never_used(home, tmp_path, monkeypatch):
+    from agent_friday.services import backup_schedule as bs
+    from agent_friday.services import friday_bundle as fb
+    real = fb.create
+    monkeypatch.setattr(fb, "create", lambda out, pw, **k: real(out, pw, **dict(k, kdf_profile=_fast())))
+    mine, evil = tmp_path / "mine", tmp_path / "attacker"
+    _on(bs, mine)
+    d = json.loads(bs.schedule_path().read_text(encoding="utf-8")) if bs.schedule_path().exists() else {}
+    d.update(folder=str(evil), keep=1, made=[{"file": "..\\..\\x.fridaybundle", "bundle_id": "b"},
+                                           {"file": str(tmp_path / "victim.txt"), "bundle_id": "b"}, "x"])
+    bs.schedule_path().parent.mkdir(parents=True, exist_ok=True)
+    bs.schedule_path().write_text(json.dumps(d), encoding="utf-8")
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me", encoding="utf-8")
+    r = bs.run_now()
+    assert (mine / r["file"]).exists() and not evil.exists()
+    assert victim.read_text(encoding="utf-8") == "keep me"
+    assert bs.public_state()["keep"] == 2
+
+
+def test_an_unverified_bundle_is_not_left_behind_and_failures_back_off(home, tmp_path, monkeypatch):
+    """Review round 1 (S4)."""
+    from agent_friday.services import backup_schedule as bs
+    from agent_friday.services import friday_bundle as fb
+    real = fb.create
+    monkeypatch.setattr(fb, "create", lambda out, pw, **k: real(out, pw, **dict(k, kdf_profile=_fast())))
+    monkeypatch.setattr(fb, "verify", lambda *a, **k: {"ok": False})
+    dest = tmp_path / "out"
+    _on(bs, dest)
+    for _ in range(3):
+        with pytest.raises(fb.BundleError):
+            bs.run_now()
+    assert not list(dest.glob("*.fridaybundle"))
+    st = bs.state()
+    assert st["failures"] == 3
+    assert bs.next_due(st) >= st["last_run"] + 4 * 3600 - 1
+
+
+def test_turning_it_off_removes_the_record_from_every_store(home, tmp_path, monkeypatch):
+    """Review round 1 (S5)."""
+    from agent_friday.services import backup_schedule as bs
+    f = home / "vault" / ".bundle-schedule-passphrase"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"left over from a time without a keychain")
+    _on(bs, tmp_path / "out")
+    bs.set_schedule(enabled=False)
+    assert not f.exists() and bs.public_state()["passphrase_kept"] is False
+
+
+def test_the_sealed_record_never_travels_in_a_bundle():
+    from pathlib import PurePosixPath
+    from agent_friday.services import friday_bundle as fb
+    assert fb.category_of(PurePosixPath("vault/.bundle-schedule-passphrase")) is None
