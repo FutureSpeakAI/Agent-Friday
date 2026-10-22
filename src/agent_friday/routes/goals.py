@@ -125,6 +125,24 @@ def create_goal_route():
     return jsonify({"ok": True, "goal": goal}), 201
 
 
+@goals_bp.route("/api/goals/drafts", methods=["GET"])
+@login_required
+def goal_drafts_route():
+    """Goal drafts Friday wrote from conversation (draft_goal), waiting for
+    the owner: each with its questions, plain summary and summary_id."""
+    from agent_friday.services import goal_tools
+    return jsonify({"ok": True, "drafts": goal_tools.drafts()})
+
+
+@goals_bp.route("/api/goals/drafts/<draft_id>", methods=["DELETE"])
+@login_required
+def goal_draft_discard_route(draft_id):
+    from agent_friday.services import goal_tools
+    if not goal_tools.discard(str(draft_id)[:40]):
+        return jsonify({"ok": False, "error": "no such draft"}), 404
+    return jsonify({"ok": True})
+
+
 @goals_bp.route("/api/goals/draft", methods=["POST"])
 @login_required
 def draft_goal_route():
@@ -156,6 +174,10 @@ def define_goal_route():
         goal = _goals.define_goal(body["goal"], body.get("summary_id"))
     except goal_definition.DefinitionRefused as e:
         return jsonify({"ok": False, "error": str(e)}), 409
+    if isinstance(body.get("draft_id"), str):
+        # A draft Friday wrote from conversation is used up once confirmed.
+        from agent_friday.services import goal_tools
+        goal_tools.discard(body["draft_id"][:40])
     return jsonify({"ok": True, "goal": goal}), 201
 
 

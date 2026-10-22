@@ -12353,6 +12353,16 @@ try:
 except Exception as _qte:  # never let optional deps break the agent import
     print(f"  [QUEUE] registration skipped: {_qte}")
 
+# draft_goal (north star §17.4): turn what the owner wants into a goal draft
+# that waits in System > Goals for the owner's confirming click. Loaded on
+# demand; it creates and starts nothing. See services/goal_tools.py.
+try:
+    from agent_friday.services import goal_tools as _goal_tools
+    _goal_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS,
+                         workspace_tools=WORKSPACE_TOOLS)
+except Exception as _gte:  # never let optional deps break the agent import
+    print(f"  [GOALS] draft_goal registration skipped: {_gte}")
+
 # What Laya has learned about the owner, and forgetting it (laya_learning): the
 # spoken side of Settings > Laya > What Laya learned. A shared text tool; voice
 # reaches it through the router's hand-off. See services/laya_learning_tools.py.
