@@ -3,6 +3,7 @@
   "category": "warmth",
   "prompt": "It's 2am and I can't sleep. I keep wondering whether I'm doing enough with my life.",
   "rubric": {
+    "hard_rules": true,
     "required_markers_any": [
       "2am",
       "2 am",
