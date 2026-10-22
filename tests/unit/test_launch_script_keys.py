@@ -43,7 +43,7 @@ def _script(tmp_path, anthropic_env, name="start.bat", eol="\r\n"):
     body = eol.join([
         "@echo off",
         f"set {anthropic_env}={VALUE}",
-        "set FRIDAY_PASSWORD=vault-pass-stays-here",
+        "set FRIDAY_PASSWORD=vault-pass-stays-here",  # pragma: allowlist secret
         'set "OTHER_SETTING=keep me"',
         'cd /d "C:\\Friday"',
         "python server.py",
@@ -66,7 +66,7 @@ def test_a_key_moves_and_the_line_is_blanked_in_place(tmp_path, anthropic_env, c
     assert [len(x) for x in old_lines] == [len(x) for x in new_lines]
     assert new_lines[1].startswith("rem ")
     # Everything else is untouched, and named when it is a set line it did not move.
-    assert "set FRIDAY_PASSWORD=vault-pass-stays-here" in new_lines
+    assert "set FRIDAY_PASSWORD=vault-pass-stays-here" in new_lines  # pragma: allowlist secret
     assert "python server.py" in new_lines
     assert "FRIDAY_PASSWORD" in r["left"]
     # The original is kept, encrypted.
@@ -218,7 +218,7 @@ def test_a_leftover_temp_file_is_removed(tmp_path):
 def test_core_restores_moved_keys_at_import():
     src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "core" / "__init__.py").read_text(encoding="utf-8")
     body = src[src.index("def _bootstrap_env_from_launch_scripts"):]
-    body = body[:body.index("_bootstrap_env_from_launch_scripts()")]
+    body = body[:body.index("\n_bootstrap_env_from_launch_scripts()")]
     assert "restore_moved_keys(already_loaded=loaded, force_names=_FORCE_OVERRIDE)" in body
 
 
