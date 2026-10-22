@@ -127,11 +127,12 @@ def bench(model_id: str, *, profile: dict | None = None, runner=None, arbiter=No
     rec = model_store.get(model_id)
     if not rec or not rec.get("path"):
         return {"status": "error", "error": "%s is not in the store" % model_id}
-    if rec.get("held"):
+    held = model_store.held_reason(model_id, rec)
+    if held:
         # A held model may not take the GPU yet: measuring it would park the
         # brain for a model no seat can use (spec core_models_flint_laya_bonsai2,
         # CT-E24). Its own seat measures it when that exists.
-        return {"status": "skipped", "error": "held: %s" % rec["held"]}
+        return {"status": "skipped", "error": "held: %s" % held}
     binary = bench_binary_for(rec.get("engine"))
     if runner is None and binary is None:
         return {"status": "error", "error": "no llama-bench binary is installed beside the engine"}

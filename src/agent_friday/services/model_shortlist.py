@@ -111,14 +111,23 @@ def held_repos() -> dict:
     return out
 
 
+def held_architectures() -> dict:
+    """lower-cased GGUF architecture -> hold reason, for every held model."""
+    return {str(m["architecture"]).lower(): str(m["seat_hold"])
+            for m in _load().get("models") or []
+            if m.get("seat_hold") and m.get("architecture")}
+
+
 def held_reason(model_id: str, rec: dict | None = None) -> str | None:
     """Why the installed model ``model_id`` may not fill any seat, or None.
 
     Decided when the record is READ, from the record and from the shipped
     shortlist together, so a write path that rebuilds the record (a rollback,
     a re-registration, an override) can never lift a hold, and a copy of a
-    held model's files under another id (a pasted repo) is held too. A
-    shortlist that cannot be read leaves only the record's own field.
+    held model's files under another id is held too: by the repo it came
+    from, or by the architecture its file declares (another quantizer's copy,
+    a local import). A shortlist that cannot be read leaves only the record's
+    own field.
     """
     rec = rec if isinstance(rec, dict) else {}
     if rec.get("held"):
@@ -127,8 +136,12 @@ def held_reason(model_id: str, rec: dict | None = None) -> str | None:
         hold = seat_hold(model_id)
         if hold:
             return hold
-        repo = str((rec.get("origin") or {}).get("repo") or "").lower()
-        return held_repos().get(repo) if repo else None
+        origin = rec.get("origin") if isinstance(rec.get("origin"), dict) else {}
+        repo = str(origin.get("repo") or "").lower()
+        if repo and repo in held_repos():
+            return held_repos()[repo]
+        arch = str(rec.get("architecture") or "").lower()
+        return held_architectures().get(arch) if arch else None
     except Exception as e:  # noqa: BLE001 - an unreadable list must not hold every model
         logging.getLogger("friday.model_shortlist").warning(
             "seat holds: the shortlist could not be read (%s); only recorded holds apply", e)
