@@ -213,3 +213,41 @@ def test_the_detail_names_what_was_taken_back(home, monkeypatch):
     authority.revoke_all("owner:test")
     d = authority.status()["detail"]
     assert d["send_grants_revoked"] == ["sg-9"]
+
+
+def test_an_approved_card_not_yet_used_is_withdrawn(home):
+    """Review round 2 (M1): it would otherwise run by itself after a restore."""
+    from agent_friday.services import approvals, authority
+    card = approvals.create_approval(kind="governed_action", title="Archive mail", subject_type="external_action",
+                                     subject_id="mail:abc", action_description="x", payload={}, force_gate=True)
+    aid = card["approval_id"] if "approval_id" in card else card.get("approval", {}).get("approval_id")
+    approvals.decide(aid, "approve")
+    out = authority.revoke_all("owner:test")
+    assert out["approved_withdrawn"] >= 1
+    assert approvals.get_approval(aid)["status"] == "expired"
+
+
+def test_one_grant_that_will_not_go_does_not_leave_the_others(home, monkeypatch):
+    """Review round 2 (L1)."""
+    from agent_friday.governance import send_grants
+    from agent_friday.services import authority
+    monkeypatch.setattr(send_grants, "list_grants", lambda *a, **k: [{"grant_id": "a"}, {"grant_id": "b"}])
+    gone = []
+
+    def revoke(gid, by="owner"):
+        if gid == "a":
+            raise OSError("locked")
+        gone.append(gid)
+        return True
+    monkeypatch.setattr(send_grants, "revoke", revoke)
+    out = authority.revoke_all("owner:test")
+    assert gone == ["b"] and out["send_grants_revoked"] == ["b"]
+    assert any(e.startswith("a:") for e in out["errors"])
+
+
+def test_a_connector_tool_in_capitals_is_held_too(home):
+    """Review round 2 (L4)."""
+    from agent_friday.services import authority
+    authority.revoke_all("owner:test")
+    v = action_gate._decide("MCP_bank_get_balance", action_gate.INTERNAL, "", {}, False, {}, True)
+    assert v.action == "deny" and "revoked" in v.reason

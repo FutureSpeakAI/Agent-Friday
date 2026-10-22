@@ -1366,12 +1366,12 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         try:
             from agent_friday.services import safe_mode as _sm
             _why = _sm.refusal("connectors") if _sm.active() else _authority_hold()
-        except Exception:
-            _why = None
+        except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+            _why = "safe mode could not be checked (%s)" % type(e).__name__
         if _why:
             return Verdict("deny", klass, f"held: {_why}")
     if klass == INTERNAL:
-        if str(tool_name).startswith("mcp_"):
+        if str(tool_name).lower().startswith("mcp_"):
             # a connector tool judged internal (a clean read under the card
             # setting) still reaches a connected service
             _why = _authority_hold()
@@ -1388,8 +1388,8 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         try:
             from agent_friday.services import safe_mode as _sm
             _why = _sm.refusal("connector_reads") or _authority_hold()
-        except Exception:
-            _why = None
+        except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+            _why = "safe mode could not be checked (%s)" % type(e).__name__
         if _why:
             return Verdict("deny", klass, f"held: {_why}")
         # A read at a connected service: runs unasked, receipted as observe.

@@ -302,7 +302,8 @@
   $('auth-revoke').addEventListener('click', () => {
     if (!confirm('Revoke all action authority now?')) return;
     api('/api/authority/revoke-all', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
-      text($('auth-note'), ok ? 'Revoked. Waiting approvals withdrawn: ' + (d.approvals_expired || 0) + '; jobs paused: ' + ((d.jobs_paused || []).length) + '.' : (d.error || 'Not done.'));
+      text($('auth-note'), ok ? 'Revoked. Waiting approvals withdrawn: ' + ((d.approvals_expired || 0) + (d.approved_withdrawn || 0)) + '; jobs paused: ' + ((d.jobs_paused || []).length) + '.' +
+        ((d.errors || []).length ? ' Some parts could not be taken back (they are held all the same): ' + d.errors.join('; ') + '.' : '') : (d.error || 'Not done.'));
       authState();
     });
   });

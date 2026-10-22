@@ -842,6 +842,29 @@ def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
     return ""
 
 
+def withdraw_unused_approved(by: str, note: str = "") -> int:
+    """Move every APPROVED card that has not been used to 'expired': the
+    owner's revocation of all action authority (services/authority.py) takes
+    back yeses not yet acted on, so none runs by itself after a restore.
+    Returns how many."""
+    withdrawn: List[Dict[str, Any]] = []
+    with _LOCK:
+        recs = _read_store()
+        for r in recs:
+            if r.get("status") in ("approved", "auto_approved") and not r.get("used_by") \
+                    and not r.get("consumed"):
+                r["status"] = "expired"
+                r["decided_at"] = time.time()
+                r["decided_by"] = by
+                r["decision_note"] = note
+                withdrawn.append(dict(r))
+        if withdrawn:
+            _write_store(recs)
+    for rec in withdrawn:
+        _feed("card_resolved", rec)
+    return len(withdrawn)
+
+
 def expire_matching(match, by: str, note: str = "") -> int:
     """Move every PENDING card for which ``match(record)`` is true to 'expired' (never approves anything) and
     fire the card hooks. Used when what raised the cards is switched off. Returns how many."""

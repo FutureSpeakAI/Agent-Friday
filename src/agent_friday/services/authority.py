@@ -76,8 +76,11 @@ def _newest_receipt() -> Optional[dict]:
     if hit is not None:
         _SEEN["rec"] = hit
     elif cold and _SEEN.get("rec") is None:
-        # a fresh process: the receipt may have moved into the archive (A22)
+        # a fresh process: the receipt may have moved into the archive (A22).
+        # Read strictly: an archive that cannot be read raises, and revoked()
+        # then holds (and this look is tried again next time)
         rows = action_ledger.entries(["authority"], newest_first=True, verified=True, archive=True,
+                                     strict=True, gate=False,
                                      where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"),
                                      limit=1)
         _SEEN["rec"] = rows[0] if rows else None
@@ -155,50 +158,48 @@ def revoke_all(by: str = "owner:ui") -> dict:
         from agent_friday.services import approvals
         return approvals.expire_matching(lambda r: True, by=by, note="all action authority revoked")
 
+    def _approved_unused():
+        from agent_friday.services import approvals
+        return approvals.withdraw_unused_approved(by=by, note="all action authority revoked")
+
+    def _each(items, act):
+        """Act on each item on its own: one failing never leaves the rest."""
+        done = []
+        for it in items:
+            try:
+                if act(it):
+                    done.append(it)
+            except Exception as e:  # noqa: BLE001
+                out.setdefault("errors", []).append("%s: %s" % (it, type(e).__name__))
+        return done
+
     def _gate_grants():
         from agent_friday.governance import action_gate
-        ids = []
-        for g in action_gate.list_grants():
-            gid = str(g.get("grant_id") or "")
-            if action_gate.revoke_grant(gid):
-                ids.append(gid)
-        return ids
+        ids = [str(g.get("grant_id") or "") for g in action_gate.list_grants() if g.get("grant_id")]
+        return _each(ids, action_gate.revoke_grant)
 
     def _send_grants():
         from agent_friday.governance import send_grants
-        ids = []
-        for g in send_grants.list_grants():
-            gid = str(g.get("grant_id") or "")
-            if gid and send_grants.revoke(gid, by=by):
-                ids.append(gid)
-        return ids
+        ids = [str(g.get("grant_id")) for g in send_grants.list_grants() if g.get("grant_id")]
+        return _each(ids, lambda gid: send_grants.revoke(gid, by=by))
 
     def _file_grants():
         from agent_friday.services import file_grants
-        ids = []
-        for g in file_grants.list_grants():
-            gid = g.get("id") or g.get("grant_id")
-            if gid:
-                file_grants.revoke(str(gid))
-                ids.append(str(gid))
-        return ids
+        ids = [str(g.get("id") or g.get("grant_id")) for g in file_grants.list_grants()
+               if g.get("id") or g.get("grant_id")]
+        return _each(ids, lambda gid: file_grants.revoke(gid) is not None)
 
     def _desktop():
         from agent_friday.services import desktop_grants
-        apps = list(desktop_grants.grants())
-        for a in apps:
-            desktop_grants.remove_grant(a)
-        return apps
+        return _each(list(desktop_grants.grants()), lambda a: desktop_grants.remove_grant(a) is not None)
 
     def _sites():
         from agent_friday.governance import web_sites
-        narrowed = []
         rows = web_sites.all_sites()
-        for name, row in (rows.items() if isinstance(rows, dict) else ((r.get("site"), r) for r in rows)):
-            if (row or {}).get("level") != "may_read":
-                web_sites.narrow(name, made_by="owner:ui")      # the owner's own act, whatever surface
-                narrowed.append(name)
-        return narrowed
+        pairs = rows.items() if isinstance(rows, dict) else ((r.get("site"), r) for r in rows)
+        acting = [name for name, row in pairs if (row or {}).get("level") != "may_read"]
+        # the owner's own act, whatever surface it came from; None: not narrowed
+        return _each(acting, lambda name: web_sites.narrow(name, made_by="owner:ui") is not None)
 
     def _jobs():
         from agent_friday.services import scheduler
@@ -218,7 +219,8 @@ def revoke_all(by: str = "owner:ui") -> dict:
                 stopped.append(name)
         return stopped
 
-    for key, fn in (("approvals_expired", _approvals), ("grants_revoked", _gate_grants),
+    for key, fn in (("approvals_expired", _approvals), ("approved_withdrawn", _approved_unused),
+                    ("grants_revoked", _gate_grants),
                     ("send_grants_revoked", _send_grants), ("file_grants_revoked", _file_grants),
                     ("desktop_grants_removed", _desktop), ("sites_narrowed", _sites),
                     ("jobs_paused", _jobs), ("channels_stopped", _channels)):
