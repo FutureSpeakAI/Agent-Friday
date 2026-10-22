@@ -214,11 +214,13 @@ def spawn_scoped_subagent(name: str, prompt: str, scope: str = "researcher",
     """
     sc = get_scope(scope)
     from agent_friday.services.agent import _spawn_task
-    task_id = _spawn_task(name, prompt + sc.contract_text(), description)
-    with _LOCK:
-        _SCOPED_TASKS[task_id] = {
-            "scope": sc, "name": name, "spawned": time.time(), "steps": 0,
-        }
+    # The scope goes in WITH the spawn: _spawn_task registers it before the
+    # worker starts (no window where the first tool call runs unscoped), and the
+    # record carries it, so anything that re-dispatches the task (a restart, a
+    # move to the cloud) keeps it.
+    task_id = _spawn_task(name, prompt + sc.contract_text(), description, scope=scope)
+    if task_id and get_task_scope(task_id) is None:
+        register_scope_for_task(task_id, scope)     # a dispatcher that did not register it
     return {"task_id": task_id, "scope": sc.to_dict()}
 
 

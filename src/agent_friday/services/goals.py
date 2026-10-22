@@ -874,7 +874,12 @@ def _default_executor(goal: Dict[str, Any], milestone: Dict[str, Any], *,
     terminal = {"complete", "completed", "completed_unverified", "failed",
                "timeout", "error", "cancelled"}
     while time.time() < deadline:
-        snap = _task_snapshot(tid) or {}
+        # follow=True: a milestone the owner moved to the cloud is the task
+        # that replaced it (services/cloud_spill), not a 'superseded' record.
+        try:
+            snap = _task_snapshot(tid, follow=True) or {}
+        except TypeError:             # a stand-in snapshot without `follow`
+            snap = _task_snapshot(tid) or {}
         if snap.get("status") in terminal:
             if snap.get("status") in ("failed", "error"):
                 return {"ok": False, "text": "", "cost_mψ": 0,

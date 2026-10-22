@@ -5406,10 +5406,21 @@ def _off_record_active():
         return False
 
 
-def _task_snapshot(task_id=None):
+def _task_snapshot(task_id=None, follow=False):
+    """One task (or all). `follow`: a task the owner moved elsewhere (status
+    'superseded', `superseded_by` set: a cloud spill) answers with the task that
+    replaced it, so a caller waiting on the original id (a goal milestone) sees the
+    work that actually runs instead of timing out on a record that never will."""
     with TASKS_LOCK:
         if task_id is not None:
             t = TASKS.get(task_id)
+            hops = 0
+            while (follow and t and t.get('status') == 'superseded' and t.get('superseded_by')
+                   and hops < 5):
+                nxt = TASKS.get(t['superseded_by'])
+                if not nxt:
+                    break
+                t, hops = nxt, hops + 1
             if not t:
                 return None
             t = dict(t)
@@ -7519,6 +7530,13 @@ def _prepare_task_start(task_id):
 def requeue_task(rec):
     """Recreate a never-started thread with its original owner and restrictions."""
     if not _prepare_task_start(rec['task_id']):
+        return None
+    # Crew work and engine-run jobs need their runner, which a record does not
+    # hold: re-admitting them as a plain agent loop would widen what they do.
+    if rec.get('crew_context') or rec.get('job_kind') == 'runner':
+        _task_set(rec['task_id'], status='interrupted', ended=_time.time(),
+                  status_reason='This ran on its own engine and could not be re-admitted '
+                                'after the restart; start it again from where it came from.')
         return None
     return _spawn_task(rec.get('name') or 'Task', rec.get('prompt') or '',
         description=rec.get('description') or '', chain=rec.get('chain'),

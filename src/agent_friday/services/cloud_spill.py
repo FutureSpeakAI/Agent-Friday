@@ -169,7 +169,7 @@ def _waits_by_rule(record: Dict[str, Any]) -> bool:
     return "idle" in why or "your chat" in why or "your call" in why
 
 
-def spill_blocked(record: Dict[str, Any]) -> Optional[str]:
+def spill_blocked(record: Dict[str, Any], cloud_model: Optional[str] = None) -> Optional[str]:
     """Why this task may not move to a cloud model at all, or None.
 
     A task's limits travel with it (see on_decision); these are the limits a cloud
@@ -191,6 +191,13 @@ def spill_blocked(record: Dict[str, Any]) -> Optional[str]:
         return "it was started off the record"
     if r.get("crew_context"):
         return "it is crew work bound to its own agent and runner"
+    if (r.get("job_kind") or "") == "runner" or r.get("research_commission_id"):
+        return "its work is done by its own engine, not the agent loop"
+    pin = r.get("cloud_pin")
+    if pin and cloud_model:
+        import json as _json
+        if str(cloud_model) not in _json.dumps(pin, default=str):
+            return "it is pinned to a different cloud model"
     return None
 
 
@@ -198,7 +205,7 @@ def should_offer(record: Dict[str, Any], *, wait_s: float = 0.0) -> bool:
     """Is this a moment worth interrupting the user for?"""
     if not enabled():
         return False
-    if spill_blocked(record or {}):
+    if spill_blocked(record or {}, cloud_alternative(record or {})):
         return False           # it cannot run on the cloud with its limits intact
     if (record or {}).get("status") != "queued-for-seat":
         return False
@@ -331,7 +338,7 @@ def on_decision(card: Dict[str, Any]) -> None:
         return
     # A limit a cloud run cannot honour keeps the task waiting for its seat,
     # whatever the card said (the card should not have been offered).
-    blocked = spill_blocked(rec)
+    blocked = spill_blocked(rec, cloud)
     if blocked:
         _log.warning("cloud spill: %s stays queued for its local seat: %s", task_id, blocked)
         _report(rec, task_id, f"This stays queued for the local seat: {blocked}, so it "
@@ -350,11 +357,40 @@ def on_decision(card: Dict[str, Any]) -> None:
         return
     opts["pin_to_seat"] = False            # the model named is the cloud one
     opts.pop("task_id", None)              # a new task, never the queued one's id
+    # A scope registered after spawn (subagents.spawn_scoped_subagent did this) is
+    # not on the record: read it from the scope registry itself. A scope that is
+    # registered but cannot be named is not moved at all.
+    if not opts.get("scope"):
+        try:
+            from agent_friday.services import subagents as _sub
+            with _sub._LOCK:
+                reg = dict(_sub._SCOPED_TASKS.get(task_id) or {})
+            if reg:
+                sc_name = getattr(reg.get("scope"), "name", None)
+                if not sc_name:
+                    _log.warning("cloud spill: %s has a scope that cannot be named; stays queued", task_id)
+                    _report(rec, task_id, "This stays queued for the local seat: its limits could "
+                                          f"not be carried to {cloud}.")
+                    return
+                opts["scope"] = sc_name
+        except Exception as e:
+            _log.error("cloud spill: could not read %s's scope (%s); not spilling", task_id, e)
+            return
     # Take the parked worker out of the queue FIRST. If the seat frees a
     # microsecond from now, the local promotion must not find a thread to
-    # start for a task that is about to run on the cloud.
+    # start for a task that is about to run on the cloud. No parked worker means
+    # the seat already took it (or it is gone): nothing is spilled.
     with _PENDING_TASK_THREADS_LOCK:
         parked = _PENDING_TASK_THREADS.pop(task_id, None)
+    if parked is None:
+        _log.info("cloud spill: %s has no parked worker (the seat took it); not spilling", task_id)
+        return
+    with TASKS_LOCK:
+        still_queued = (TASKS.get(task_id) or {}).get("status") == "queued-for-seat"
+    if not still_queued:
+        with _PENDING_TASK_THREADS_LOCK:
+            _PENDING_TASK_THREADS.setdefault(task_id, parked)
+        return
     try:
         new_id = _spawn_task(rec.get("name") or "Task", rec.get("prompt") or "",
                              description=rec.get("description") or "",
@@ -363,21 +399,31 @@ def on_decision(card: Dict[str, Any]) -> None:
                              model=cloud,
                              tools=rec.get("tools"),
                              on_complete=rec.get("on_complete"),
-                             crew_context=rec.get("crew_context"),
                              **opts)
     except Exception as e:
-        # _spawn_task fails closed when a scope cannot be applied: nothing ran.
-        # The task goes back in the queue it came from, so the seat still runs it.
-        if parked is not None:
+        new_id, err = None, e
+    else:
+        err = None
+    if not new_id:
+        # _spawn_task fails closed when a scope cannot be applied, and returns
+        # nothing for a task stopped meanwhile: nothing ran. The worker goes back
+        # in its queue only if the task is still waiting there.
+        with TASKS_LOCK:
+            waiting = (TASKS.get(task_id) or {}).get("status") == "queued-for-seat"
+        if waiting:
             with _PENDING_TASK_THREADS_LOCK:
                 _PENDING_TASK_THREADS.setdefault(task_id, parked)
-        _log.error("cloud spill: could not dispatch %s to %s with its limits (%s); "
-                   "it stays queued", task_id, cloud, e)
+        _log.error("cloud spill: %s was not moved to %s (%s); %s", task_id, cloud,
+                   err or "nothing was started", "it stays queued" if waiting else "it is no longer queued")
+        _report(rec, task_id, f"This was not moved to {cloud}: its limits could not be carried "
+                              f"there. " + ("It stays queued for the local seat." if waiting
+                                            else "It is no longer queued; see the task list."))
         return
     with TASKS_LOCK:
         live = TASKS.get(task_id)
         if live is not None:
             live["status"] = "superseded"
+            live["superseded_by"] = new_id
             live["status_reason"] = (
                 f"You chose to run this on {cloud} rather than wait for the "
                 f"local seat. Running as {new_id}.")
