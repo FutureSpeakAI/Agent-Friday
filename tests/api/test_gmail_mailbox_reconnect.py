@@ -61,7 +61,7 @@ def test_reconnect_with_sending_is_one_consent_for_both(client):
     assert d["login_hint"] == "me@example.test"
     # "new" is judged against what this account actually granted (read only here)
     by = {x["scope"]: x for x in d["requested_scopes"]}
-    assert by[ga.CALENDAR_RW]["new"] and by[ga.GMAIL_SEND]["new"] and not by[ga.GMAIL_READ]["new"]
+    assert by[ga.CALENDAR_READ]["new"] and by[ga.GMAIL_SEND]["new"] and not by[ga.GMAIL_READ]["new"]
     # the callback leg rebuilds the same scope set
     pending = ra._PENDING[d["state"]]
     assert pending["include_send"] is True and pending["include_modify"] is True
