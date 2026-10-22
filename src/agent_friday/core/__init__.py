@@ -3843,39 +3843,34 @@ def install_origin_file() -> Path:
     return Path(FRIDAY_DIR) / INSTALL_ORIGIN_NAME
 
 
-#: path -> ((mtime_ns, size), parsed dict, or None when unreadable). Every
-#: settings read asks whether a route is picked (A16a), so the record is
-#: parsed once per change, not once per read.
-_INSTALL_RECORD_READ: dict = {}
+#: Its own decoder: the record is read under every settings read (A16a), and
+#: must not show up in (or be skewed by) anything that counts json.loads calls.
 _INSTALL_RECORD_DECODER = json.JSONDecoder()
 
 
 def _read_install_record():
-    """(exists, data): data is the record dict, or None when the file exists
-    but cannot be read as one."""
+    """(state, data). state is "missing", "ok" (data is the record dict),
+    "damaged" (the file holds no JSON object) or "busy" (it could not be read
+    just now: on Windows a scanner or another process can hold it for a moment;
+    never taken as damage). Read fresh every time: a cached answer could
+    outlive a write the cache did not see."""
     p = install_origin_file()
     try:
-        st = p.stat()
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "missing", None
     except OSError:
-        return False, None
-    sig = (st.st_mtime_ns, st.st_size)
-    hit = _INSTALL_RECORD_READ.get(str(p))
-    if hit and hit[0] == sig:
-        return True, hit[1]
+        return "busy", None
     try:
-        # Its own decoder: this runs under every settings read, and must not
-        # show up in (or be skewed by) anything that counts json.loads calls.
-        data = _INSTALL_RECORD_DECODER.decode(p.read_text(encoding="utf-8"))
-        data = data if isinstance(data, dict) else None
-    except Exception:
-        data = None
-    _INSTALL_RECORD_READ[str(p)] = (sig, data)
-    return True, data
+        data = _INSTALL_RECORD_DECODER.decode(text)
+    except ValueError:
+        return "damaged", None
+    return ("ok", data) if isinstance(data, dict) else ("damaged", None)
 
 
 def install_choices_state() -> dict:
     """The install-origin record ({} when there is none or it cannot be read)."""
-    _exists, data = _read_install_record()
+    _state, data = _read_install_record()
     return dict(data) if isinstance(data, dict) else {}
 
 
@@ -3883,8 +3878,7 @@ def install_record_unreadable() -> bool:
     """True when the install-origin record exists but cannot be read as one
     (damaged, half-written, not a JSON object). Such a record is never
     overwritten: what it said is unknown, so nothing may be decided over it."""
-    exists, data = _read_install_record()
-    return bool(exists) and data is None
+    return _read_install_record()[0] == "damaged"
 
 
 def update_install_choices_state(**fields) -> None:
@@ -3904,7 +3898,6 @@ def update_install_choices_state(**fields) -> None:
         tmp = p.with_name(p.name + ".tmp")
         tmp.write_text(json.dumps(cur, indent=1), encoding="utf-8")
         os.replace(str(tmp), str(p))
-        _INSTALL_RECORD_READ.pop(str(p), None)
         _INSTALL_ORIGIN_CACHE[str(p)] = cur.get("install")
 
 
