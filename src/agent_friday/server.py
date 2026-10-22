@@ -497,6 +497,13 @@ if not _TESTING:
     try:
         from agent_friday.services.credential_store import bootstrap_provider_env_detail
         _pk_detail = bootstrap_provider_env_detail()
+        # Constants core computed at import (GEMINI_API_KEY) take a key that
+        # moved out of start.bat and is now in the store.
+        try:
+            from agent_friday.services.launch_script_keys import refresh_core_constants
+            refresh_core_constants()
+        except Exception:
+            pass
         # Gate on candidates existing at all, not on the count that
         # succeeded: printing only a nonzero success count means a run where
         # every stored key fails to decrypt prints NOTHING, the least visible
