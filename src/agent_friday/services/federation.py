@@ -222,7 +222,7 @@ def get_peer_card() -> Dict[str, Any]:
 #  PEER DISCOVERY
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _record_card_fetch(url: str, result: str) -> None:
+def _record_card_fetch(url: str, result) -> None:
     try:
         from agent_friday.services import egress_gate as _eg
         _eg.record_address("federation", url, result, prefix="federation")
@@ -253,8 +253,8 @@ def discover_peer(url: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
-        except Exception:
-            _record_card_fetch(well_known_url, "sent_unconfirmed")
+        except Exception as e:
+            _record_card_fetch(well_known_url, e)     # a 4xx refused it; anything else may have been seen
             raise
         _record_card_fetch(well_known_url, "sent")
         card = json.loads(raw.decode("utf-8"))

@@ -436,6 +436,7 @@ def send_to_peer(
     ok, why = check_peer_endpoint(peer_endpoint)
     if not ok:
         return {"ok": False, "error": f"refused_endpoint: {why}"}
+    attempted = False
     try:
         url = peer_endpoint.rstrip("/") + "/api/federation/inbox"
         body = json.dumps(envelope_dict).encode("utf-8")
@@ -445,6 +446,7 @@ def send_to_peer(
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        attempted = True                    # from here the envelope may have left
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
         _record_peer_send(url, envelope_dict, "sent")
@@ -457,7 +459,8 @@ def send_to_peer(
         _record_peer_send(url, envelope_dict, e)
         return {"ok": False, "error": f"http_{e.code}", "status": e.code}
     except Exception as e:
-        _record_peer_send(url if "url" in locals() else peer_endpoint, envelope_dict, e)
+        if attempted:                       # a local error before the send records nothing
+            _record_peer_send(url, envelope_dict, e)
         return {"ok": False, "error": exception_text(e)}
 
 

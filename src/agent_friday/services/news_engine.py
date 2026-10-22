@@ -597,7 +597,7 @@ def _parse_feed(url, limit=12, timeout=None):
         hit = _RSS_CACHE.get(url)
         if hit and (now - hit[0]) < _RSS_CACHE_TTL:
             return hit[1][:limit]
-    recorded = False
+    recorded = attempted = False
     try:
         import urllib.request
         import feedparser
@@ -611,6 +611,7 @@ def _parse_feed(url, limit=12, timeout=None):
             if modified:
                 headers["If-Modified-Since"] = modified
         req = urllib.request.Request(url, headers=headers)
+        attempted = True                     # from here the address may have left
         try:
             with urllib.request.urlopen(
                     req, timeout=timeout or _RSS_FETCH_TIMEOUT_S) as resp:
@@ -644,7 +645,7 @@ def _parse_feed(url, limit=12, timeout=None):
     except urllib.error.HTTPError:
         return []
     except Exception:
-        if not recorded:                     # once per request, however it ends
+        if attempted and not recorded:       # once per request, never for a local error
             _record_feed(url, "sent_unconfirmed")
         return []
 
