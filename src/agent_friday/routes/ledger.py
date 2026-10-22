@@ -216,6 +216,17 @@ def workspace_entry(e: dict, key) -> dict:
     return out
 
 
+def _read(kinds, *, archive: bool, **kw):
+    """(entries, why the archive could not be read or None). With the archive,
+    it is read strictly: a missing or changed archive is said, never dropped."""
+    if not archive:
+        return action_ledger.entries(kinds, **kw), None
+    try:
+        return action_ledger.entries(kinds, archive=True, strict=True, **kw), None
+    except action_ledger.LedgerError as e:
+        return action_ledger.entries(kinds, archive=False, **kw), str(e)
+
+
 def _key_or_none():
     try:
         return action_ledger._key()
@@ -248,12 +259,13 @@ def ledger_page():
 def api_ledger():
     try:
         kinds, where, limit, archive = _filters(request.args)
-        rows = action_ledger.entries(kinds, newest_first=True, limit=limit, where=where,
-                                     archive=archive)
+        rows, archive_error = _read(kinds, newest_first=True, limit=limit, where=where,
+                                    archive=archive)
         key = _key_or_none()
         return jsonify({"status": "ok", "ledger": action_ledger.summary(),
                         "entries": [workspace_entry(e, key) for e in rows], "count": len(rows),
-                        "kinds": KIND_LABELS, "archive_searched": archive})
+                        "kinds": KIND_LABELS, "archive_searched": archive and not archive_error,
+                        "archive_error": archive_error})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The action ledger could not be read.")
 
@@ -310,8 +322,11 @@ def api_ledger_export():
             args = request.args.to_dict()
             args["limit"] = "500"
             kinds, where, _limit, archive = _filters(args)
-            rows = action_ledger.entries(kinds, newest_first=False, where=where, archive=archive,
-                                         limit=EXPORT_MAX)
+            rows, archive_error = _read(kinds, newest_first=False, where=where, archive=archive,
+                                        limit=EXPORT_MAX)
+            if archive_error:
+                return jsonify({"status": "error", "code": "archive_unreadable",
+                                "error": "The archive could not be read (%s); nothing was exported." % archive_error}), 409
             body = "".join(json.dumps(e, sort_keys=True, separators=(",", ":")) + "\n" for e in rows)
             name, ctype = "friday-ledger-%s.jsonl" % stamp, "application/x-ndjson"
         resp = Response(body, content_type=ctype)

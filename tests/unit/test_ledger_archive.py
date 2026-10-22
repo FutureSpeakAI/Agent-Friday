@@ -313,3 +313,48 @@ def test_new_segments_never_take_an_archived_name():
     _seal()
     names = {p.name for p in (L.ledger_dir() / L.SEGMENTS_DIR).glob("actions-*.jsonl")}
     assert names and not names & archived
+
+
+def test_an_old_receipt_file_planted_after_archiving_is_quarantined_not_read():
+    """Review round 2: archiving the segment that held migration_complete
+    re-opened the import, so a planted old receipt became signed history."""
+    from agent_friday.paths import friday_home
+    _old_and_new()
+    L.archive_old(now=_later(), days=730)
+    assert L.verify()["ok"]
+    planted = friday_home() / "actions" / "receipts.jsonl"
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text(json.dumps({"receipt_id": "rcpt_evil", "status": "complete",
+                                   "undo": {"moves": [{"src": "a", "dst": "b"}]}}) + "\n",
+                       encoding="utf-8")
+    L.reset_caches()
+    L.append("activity", {"kind": "tool_call", "tool": "next_start"})
+    assert not [e for e in L.entries(["action"], archive=True) if e["rec"].get("receipt_id") == "rcpt_evil"]
+    assert any(e["kind"] == "legacy_reappeared" for e in L.entries())
+    assert not L.verify()["ok"] and L.hold_reason()
+
+
+def test_a_crash_on_the_first_archive_does_not_stop_strict_readers(monkeypatch):
+    _old_and_new()
+    real = L._write_manifest
+    monkeypatch.setattr(L, "_write_manifest", lambda *a, **k: (_ for _ in ()).throw(OSError("power")))
+    with pytest.raises(OSError):
+        L.archive_old(now=_later(), days=730)
+    monkeypatch.setattr(L, "_write_manifest", real)
+    L.reset_caches()
+    assert len(L.entries(["decision"], strict=True)) == 4
+
+
+def test_strict_reads_of_a_large_archive_open_each_file_once(monkeypatch):
+    for month in range(30):
+        L.append("send_grant", {"event": "revoked", "grant_id": "g%d" % month}, durable=True)
+        _seal()
+    L.append("activity", {"kind": "x"})
+    assert L.archive_old(now=_later(), days=730)["archived"] == 30
+    calls = []
+    real = L._open_blob
+    monkeypatch.setattr(L, "_open_blob", lambda *a: (calls.append(a[1]), real(*a))[1])
+    for _ in range(3):
+        L.append("activity", {"kind": "x"})
+        assert len(L.entries(["send_grant"], strict=True)) == 30
+    assert len(calls) == 30, len(calls)

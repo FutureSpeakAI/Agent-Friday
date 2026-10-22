@@ -131,7 +131,7 @@
       const sel = $('kind');
       if (sel.options.length === 1) Object.entries(d.kinds || {}).forEach(([k, v]) => { const o = el('option', v); o.value = k; sel.appendChild(o); });
       render(d.entries || [], append);
-      $('count').textContent = (append ? 'More: ' : 'Showing ') + (d.entries || []).length + ' entr' + ((d.entries || []).length === 1 ? 'y' : 'ies') + (d.archive_searched ? ', the archive included.' : '.');
+      $('count').textContent = (append ? 'More: ' : 'Showing ') + (d.entries || []).length + ' entr' + ((d.entries || []).length === 1 ? 'y' : 'ies') + (d.archive_searched ? ', the archive included.' : '.') + (d.archive_error ? ' The archive could not be read: ' + d.archive_error + '.' : '');
       $('more').hidden = (d.entries || []).length < 100;
     });
   }

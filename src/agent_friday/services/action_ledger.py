@@ -823,7 +823,7 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
                 try:
                     with _TLOCK:
                         _check_dir()
-                        arch = _archived_entries(key)
+                        arch = _archived_entries(key, want)
                 except Exception as e:  # noqa: BLE001
                     if strict:
                         raise LedgerError("the action ledger's archive could not be read (%s)" % e)
@@ -1091,12 +1091,13 @@ def _walk_archived(plain: bytes, key: bytes, r: dict) -> str:
     return ""
 
 
-def _archived_entries(key: bytes) -> list[list[dict]]:
-    """Every archived file's entries, oldest file first (decrypted once per
-    process and file)."""
+def _archived_entries(key: bytes, kinds: Optional[Iterable[str]] = None) -> list[list[dict]]:
+    """Every archived file's entries (of `kinds`, when given), oldest file
+    first. Rows of a kind filter are kept in memory per file (a strict reader
+    such as revocations asks again often); a read of everything is not kept."""
     m = _read_manifest()
     if m is None:
-        if _archive_gone():
+        if _archive_gone(key):
             raise LedgerError("the action ledger's archive is missing")
         return []
     rs = m.get("ranges")
@@ -1107,32 +1108,43 @@ def _archived_entries(key: bytes) -> list[list[dict]]:
     if m.get("kid") != key_id(key) or not _hmac.compare_digest(
             _manifest_sig(key, _manifest_body(m)), str(m.get("sig"))):
         raise LedgerError("the archive list was changed")
+    want = frozenset(kinds) if kinds else None
     rows_cache = _STATE.setdefault("arch_rows", {})
     out = []
     for r in rs:
         name = str(r.get("name"))
         sha = str(r.get("sha256_enc"))
-        hit = rows_cache.get(name)
-        if hit and hit[0] == sha:
-            out.append(hit[1])
+        ck = (name, sha, want)
+        if want is not None and ck in rows_cache:
+            out.append(rows_cache[ck])
             continue
         blob = (archive_dir() / (name + ".enc")).read_bytes()
         if hashlib.sha256(blob).hexdigest() != sha:
             raise LedgerError("an archived file was changed or replaced")
         plain = _open_blob(key, name, blob)
         rows = [e for e in (_safe_json(x) for x in plain.split(b"\n") if x.strip())
-                if isinstance(e, dict)]
-        if len(rows_cache) >= 24:
-            rows_cache.pop(next(iter(rows_cache)))
-        rows_cache[name] = (sha, rows)
+                if isinstance(e, dict) and (want is None or e.get("kind") in want)]
+        if want is not None:
+            if len(rows_cache) >= 4096:
+                rows_cache.pop(next(iter(rows_cache)))
+            rows_cache[ck] = rows
         out.append(rows)
     return out
 
 
 def _covered_names() -> dict:
-    """{segment name: sha256 of its plain bytes} for every archived segment."""
-    rs = (_read_manifest() or {}).get("ranges")
-    if not isinstance(rs, list):
+    """{segment name: sha256 of its plain bytes} for every archived segment,
+    from the list only when its signature holds (a forged list hides nothing)."""
+    m = _read_manifest()
+    rs = (m or {}).get("ranges")
+    if not isinstance(rs, list) or not rs:
+        return {}
+    try:
+        key = _key()
+    except Exception:
+        return {}
+    if m.get("kid") != key_id(key) or not _hmac.compare_digest(
+            _manifest_sig(key, _manifest_body(m)), str(m.get("sig"))):
         return {}
     return {str(r.get("name")): str(r.get("sha256_plain")) for r in rs if isinstance(r, dict)}
 
@@ -1146,11 +1158,12 @@ def _reader_segments() -> list[Path]:
     return [p for p in segments() if p.name == LIVE_NAME or p.name not in cov]
 
 
-def _archive_gone() -> bool:
+def _archive_gone(key: Optional[bytes] = None) -> bool:
     """No archive list, yet the live record does not start at the first entry
-    (or archived files lie about without their list): the archive was removed."""
+    (or archived files lie about without their list): the archive was removed.
+    A copy written by a move that stopped before its list is not that."""
     ad = archive_dir()
-    if ad.is_dir() and any(ad.glob("actions-*.jsonl.enc")):
+    if ad.is_dir() and any(not _pending_move(key, p.name) for p in ad.glob("actions-*.jsonl.enc")):
         return True
     for p in segments():
         try:
@@ -1190,6 +1203,33 @@ def _new_month_locked(live: Path) -> bool:
     return (a.tm_year, a.tm_mon) < (b.tm_year, b.tm_mon)
 
 
+def _unlink_retry(p: Path) -> bool:
+    for i in range(10):
+        try:
+            os.unlink(p)
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            time.sleep(0.02 * (i + 1))
+        except OSError:
+            return False
+    return False
+
+
+def _fsync_dir(d: Path) -> None:
+    if os.name == "nt" or not _fsync_durable():
+        return
+    try:
+        fd = os.open(str(d), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
 def _enc_holds(key: bytes, name: str, sha_plain: str, sha_enc: Optional[str] = None) -> bool:
     """The archived copy of `name` is on disk and opens to exactly those bytes."""
     try:
@@ -1201,12 +1241,8 @@ def _enc_holds(key: bytes, name: str, sha_plain: str, sha_enc: Optional[str] = N
         return False
 
 
-def _walk_bytes(plain: bytes, key: bytes) -> dict:
-    import tempfile
-    with tempfile.TemporaryDirectory() as td:
-        tp = Path(td) / "seg.jsonl"
-        tp.write_bytes(plain)
-        return _walk(tp, key, False)
+def _walk_bytes(plain: bytes, key: bytes, name: str = "archived") -> dict:
+    return _walk(Path(SEGMENTS_DIR) / name, key, False, data=plain)
 
 
 def archive_old(*, now: Optional[float] = None, days: Optional[int] = None) -> dict:
@@ -1226,6 +1262,14 @@ def archive_old(*, now: Optional[float] = None, days: Optional[int] = None) -> d
     with _TLOCK:
         _check_dir()
         _ensure_migrated()
+    if _legacy_present():
+        return {"archived": 0, "why": "older receipt files are still being brought in"}
+    # the deep check (every archived file opened and walked) runs without the
+    # locks; under them only what changed since is checked again
+    if not verify(force=True).get("ok"):
+        return {"archived": 0, "why": "the ledger has a break; nothing is archived until it is reviewed"}
+    with _TLOCK:
+        _check_dir()
         with _lock():
             _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
             try:
@@ -1236,14 +1280,21 @@ def archive_old(*, now: Optional[float] = None, days: Optional[int] = None) -> d
 
 def _archive_locked(key: bytes, cutoff: float, days: int, moved: list) -> dict:
     """archive_old's work; the caller holds both locks."""
-    # checked under the write lock, so nothing changes between the
-    # check and the move
-    r = verify(force=True, migrate=False)
+    # checked again under the write lock, so nothing changes between the
+    # check and the move (the cached deep result when no file changed)
+    r = verify(force=False, migrate=False)
     if not r.get("ok"):
         return {"archived": 0, "why": "the ledger has a break; nothing is archived until it is reviewed"}
     m = _read_manifest()
     ranges = list((m or {}).get("ranges") or [])
     tail = _manifest_tail(m) or (0, GENESIS)
+    ad = archive_dir()
+    for left in (list(ad.glob("*.tmp")) if ad.is_dir() else []):
+        try:
+            left.unlink()                        # a crash's leftovers (writers hold this lock)
+        except OSError:
+            pass
+    finished: list[str] = []
     sealed = [p for p in segments() if p.name != LIVE_NAME]
     for p in sealed:
         plain = p.read_bytes()
@@ -1255,7 +1306,8 @@ def _archive_locked(key: bytes, cutoff: float, days: int, moved: list) -> dict:
             # only when the archived copy opens to these very bytes
             if (done.get("sha256_plain") == sha_plain
                     and _enc_holds(key, name, sha_plain, done.get("sha256_enc"))):
-                os.unlink(p)
+                if _unlink_retry(p):
+                    finished.append(name)
                 continue
             break
         w = _walk_bytes(plain, key)
@@ -1302,18 +1354,22 @@ def _archive_locked(key: bytes, cutoff: float, days: int, moved: list) -> dict:
                  "archived_at": _now()[0]}
         ranges.append(entry)
         _write_manifest(key, ranges)
-        os.unlink(p)
+        _fsync_dir(ad)
+        _unlink_retry(p)        # still open in a reader on Windows: removed next time
         tail = (w["last_seq"], w["last_hash"])
         moved.append(entry)
     _STATE["seg_cache"] = {}
     with _CACHE_LOCK:
         _STATE["verified"] = None
-    if moved:
+    if moved or finished:
         _append_locked(key, [("archived", {"segments": [x["name"] for x in moved],
-                            "first_seq": moved[0]["first_seq"], "last_seq": moved[-1]["last_seq"],
-                            "last_hash": moved[-1]["last_hash"],
+                            "finished": finished,
+                            "first_seq": moved[0]["first_seq"] if moved else None,
+                            "last_seq": moved[-1]["last_seq"] if moved else None,
+                            "last_hash": moved[-1]["last_hash"] if moved else None,
                             "records": sum(x["records"] for x in moved),
-                            "through": moved[-1]["last_ts"], "after_days": days})],
+                            "through": moved[-1]["last_ts"] if moved else None,
+                            "after_days": days})],
                         True)
     return {"archived": len(moved), "records": sum(x["records"] for x in moved),
             "through": moved[-1]["last_ts"] if moved else None, "after_days": days}
@@ -1348,16 +1404,40 @@ def _ack_key(p: dict) -> tuple:
     return ("line", p.get("segment"), p.get("line"), p.get("raw_sha256"), p.get("reason"))
 
 
-def _walk(path: Path, key: Optional[bytes], is_live: bool) -> dict:
+def _lines_of(data: bytes) -> Iterator[tuple[Optional[dict], bytes, int, bool]]:
+    """_iter_lines over bytes already in memory (archived files are never
+    written out in plain)."""
+    n = 0
+    for raw in data.splitlines(keepends=True):
+        n += 1
+        terminated = raw.endswith(b"\n")
+        if terminated:
+            raw = raw[:-1]
+        if raw.endswith(b"\r"):
+            raw = raw[:-1]
+        if not raw.strip():
+            continue
+        if not terminated:
+            yield None, raw, n, False
+            continue
+        try:
+            e = json.loads(raw)
+            yield (e if isinstance(e, dict) else None), raw, n, True
+        except ValueError:
+            yield None, raw, n, True
+
+
+def _walk(path: Path, key: Optional[bytes], is_live: bool, data: Optional[bytes] = None) -> dict:
     """One file's lines: their internal links, hashes and signatures. The link
-    from the file before is checked by the caller (first_seq, first_prev)."""
+    from the file before is checked by the caller (first_seq, first_prev).
+    `data`: the file's bytes, already read (nothing is written to disk)."""
     kid = key_id(key) if key else None
     label = _seg_label(path)
     res = {"records": 0, "first_seq": None, "first_prev": None, "first_line": 1,
            "first_raw": b"", "last_seq": None, "last_hash": None,
            "problems": [], "acks": [], "flagged": [], "foreign": 0}
     last_seq = last_hash = None
-    rows = list(_iter_lines(path))
+    rows = list(_lines_of(data) if data is not None else _iter_lines(path))
     for idx, (e, raw, n, terminated) in enumerate(rows):
         if e is None:
             if (is_live and not terminated and idx == len(rows) - 1
@@ -1808,11 +1888,24 @@ def _legacy_check(kind: str, rec: dict) -> Optional[bool]:
 
 
 def _migration_state_locked() -> dict:
+    """What the switch from the old receipt files has done so far: archived
+    entries count too (A22), and an archive that cannot be read counts as a
+    finished switch, so an old file planted later is quarantined, never read."""
     counts: dict[str, int] = {}
     done: set = set()
     complete = False
-    for p in segments():
-        for e, _raw, _n, _t in _iter_lines(p):
+    sources: list = []
+    if _manifest_tail(_read_manifest()) is not None:
+        # an archive exists only once old files were dealt with (archive_old
+        # waits for them): the switch is over
+        complete = True
+        try:
+            sources = list(_archived_entries(_key()))
+        except Exception:
+            return {"counts": counts, "done": done, "complete": True}
+    for src in sources + list(segments()):
+        rows = ((e, b"", 0, True) for e in src) if isinstance(src, list) else _iter_lines(src)
+        for e, _raw, _n, _t in rows:
             if not isinstance(e, dict):
                 continue
             r = e.get("rec") or {}
@@ -1886,7 +1979,8 @@ def migrate_legacy() -> dict:
             _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
             try:
                 present = _legacy_present()
-                empty = not any(p.exists() and p.stat().st_size for p in segments())
+                empty = (not any(p.exists() and p.stat().st_size for p in segments())
+                         and _manifest_tail(_read_manifest()) is None)
                 if not present and not empty:
                     return {"migrated": moved}
                 state = _migration_state_locked() if not empty else {"counts": {}, "done": set(),
