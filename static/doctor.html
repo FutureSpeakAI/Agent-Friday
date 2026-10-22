@@ -295,7 +295,9 @@
   $('w-stop').addEventListener('click', () => wpost('answer', { choice: 'never' }));
   function authState() {
     api('/api/authority').then(({ d }) => {
-      text($('auth-state'), d.revoked ? 'Revoked since ' + (d.at || '') + '. Outward actions and connected-service reads are held.' : 'In force.');
+      text($('auth-state'), d.unreadable
+        ? 'Held: whether authority was revoked could not be checked, because the action ledger could not be read (' + (d.error || 'unknown') + '). Look at the Ledger page (/ledger), then restore here.'
+        : d.revoked ? 'Revoked since ' + (d.at || 'earlier') + '. Outward actions and connected-service reads are held.' : 'In force.');
       $('auth-revoke').hidden = !!d.revoked; $('auth-restore').hidden = !d.revoked;
     });
   }

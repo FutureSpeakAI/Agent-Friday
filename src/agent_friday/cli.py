@@ -2232,7 +2232,12 @@ def main():
                 print("Restored." if out.get("restored") else "Action authority was not revoked.")
             else:
                 st = _auth.status()
-                print("Action authority: %s" % ("REVOKED since %s" % st["at"] if st["revoked"] else "in force"))
+                if st.get("unreadable"):
+                    print("Action authority: HELD (the action ledger could not be read: %s; "
+                          "look at the Ledger, then restore)" % st.get("error"))
+                else:
+                    print("Action authority: %s" % ("REVOKED since %s" % (st["at"] or "earlier")
+                                                     if st["revoked"] else "in force"))
             rv = 0
         except _auth.AuthorityError as e:
             print(str(e))
