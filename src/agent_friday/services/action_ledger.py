@@ -303,7 +303,12 @@ def _is_link(p: Path) -> bool:
     import stat as _st
     if _st.S_ISLNK(st.st_mode):
         return True
-    return bool(getattr(st, "st_file_attributes", 0) & 0x400)
+    if not getattr(st, "st_file_attributes", 0) & 0x400:
+        return False
+    tag = getattr(st, "st_reparse_tag", None)
+    # a name surrogate (symlink, junction, mount point) points elsewhere;
+    # cloud-file and dedup tags do not
+    return True if tag is None else bool(tag & 0x20000000)
 
 
 def _anchor_file() -> Path:
@@ -800,7 +805,7 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
             limit: Optional[int] = None,
             where: Optional[Callable[[dict], bool]] = None,
             verified: bool = False, strict: bool = False,
-            archive: Optional[bool] = None) -> list[dict]:
+            archive: Optional[bool] = None, gate: Optional[bool] = None) -> list[dict]:
     """Entries (whole lines), optionally filtered by kind and a predicate.
 
     `verified`: only lines whose hash and signature hold under this device's
@@ -809,11 +814,16 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
     readers that must fail closed, such as revoked grants). Otherwise never
     raises, and an unreadable line is skipped (verify() reports it).
     `archive`: read the encrypted archive (A22) as well; by default only a
-    strict reader does (a revocation two years old still counts)."""
+    strict reader does (a revocation two years old still counts).
+    `gate`: refuse while the ledger has an open break (by default a strict
+    reader does; the Ledger workspace reads on, to show the break). A strict
+    read also refuses a matching line whose signature does not hold."""
     want = set(kinds) if kinds else None
     if archive is None:
         archive = strict
-    if strict:
+    if gate is None:
+        gate = strict
+    if gate:
         try:
             ok = verify(force=False).get("ok")
         except Exception:
@@ -821,7 +831,7 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
         if not ok:
             raise LedgerError("the action ledger has a break to review; strict readers wait")
     key = None
-    if verified or archive:
+    if verified or archive or strict:
         try:
             key = _key()
         except Exception:
@@ -864,6 +874,8 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
                         continue
                     if verified and not entry_ok(e, key):
                         continue
+                    if strict and gate and not verified and not entry_ok(e, key):
+                        raise LedgerError("a line of the action ledger does not hold its signature")
                     if where is not None:
                         try:
                             if not where(e):
@@ -1912,10 +1924,10 @@ def acknowledge(by: str, note: str = "", *, reviewed: Optional[list] = None) -> 
         # read of the tip, which could take in a change made since the review)
         with _lock():
             _move_anchor_locked(out["seq"], out["hash"], force=True)
-        try:
-            kept = anchor_get()[0]
-        except Exception:
-            kept = None
+            try:
+                kept = anchor_get()[0]
+            except Exception:
+                kept = None
         if kept != (out["seq"], out["hash"]):
             raise LedgerError("the acknowledgement was written, but the record kept outside the "
                               "data folder could not be updated; try again")
