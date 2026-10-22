@@ -14,7 +14,7 @@ This module reads the ledger and says what is missing:
 * an **outcome without its decision** (no decision at that seq, a decision for
   another tool, or a decision that denied it, yet it ran): something acted
   outside the checkpoint. A problem; the Doctor marks the receipt check
-  degraded and the Ledger shows it.
+  degraded.
 * an **allowed outward decision with no outcome** after a grace period: the
   call never reported back (a crash mid-action, or a path that skips the
   outcome). Unverified, not proof of harm.
@@ -29,16 +29,31 @@ from typing import Optional
 
 #: How long an allowed decision may wait for its outcome before it counts as missing.
 GRACE_S = 3600.0
-#: Decisions that carried an action out (deny and card/confirm-pending do not).
+#: How far back the audit looks (a finding older than this has been seen).
+WINDOW_S = 30 * 86400.0
+#: Decisions that let an action run; "confirm" and "card" ran only on the
+#: owner's yes (the outcome then names it: approval, chat yes or grant).
 RAN = ("allow",)
+OWNER = ("confirm", "card")
 
 
-def audit(*, now: Optional[float] = None, include_archive: bool = False, limit: int = 50) -> dict:
-    """{ok, decisions, outcomes, orphan_outcomes: [...], open_decisions: [...], counts}."""
+def audit(*, now: Optional[float] = None, include_archive: bool = False, limit: int = 50,
+          window_s: float = WINDOW_S) -> dict:
+    """{ok, decisions, outcomes, orphan_outcomes: [...], open_decisions: [...], counts}.
+    Only entries whose signature holds are read, from the last `window_s`."""
     from agent_friday.governance import action_gate as G
     from agent_friday.services import action_ledger as L
     now = time.time() if now is None else float(now)
-    rows = L.entries(["decision", "outcome"], newest_first=False, archive=include_archive)
+    since = now - window_s
+    margin = since - 86400.0
+    rows = L.entries(["decision", "outcome"], newest_first=False, archive=include_archive,
+                     verified=True,
+                     where=lambda e: isinstance(e.get("t"), (int, float)) and e["t"] >= margin)
+    try:
+        archived_through = int(L.archive_summary().get("last_seq") or 0)
+    except Exception:
+        archived_through = 0
+    first_seq = next((e.get("seq") for e in rows if isinstance(e.get("seq"), int)), 0)
     decisions: dict = {}
     by_approval: dict = {}
     outcome_for: set = set()
@@ -51,16 +66,20 @@ def audit(*, now: Optional[float] = None, include_archive: bool = False, limit: 
             if rec.get("approval"):
                 by_approval.setdefault(str(rec["approval"]), []).append(e.get("seq"))
             continue
+        if not (isinstance(e.get("t"), (int, float)) and e["t"] >= since):
+            continue
         n_out += 1
         dseq = rec.get("decision_seq")
         hit = decisions.get(dseq) if dseq is not None else None
         why = None
         if hit is None:
             appr = rec.get("approval")
+            if isinstance(dseq, int) and (dseq <= archived_through or dseq < first_seq):
+                continue                  # its decision is older than this look (or archived)
             if appr and str(appr) in by_approval:
                 outcome_for.update(by_approval[str(appr)])
             elif appr:
-                why = "ran on an approval with no receipt"
+                pass                      # ran on the owner's yes (a chat yes or a grant has no card receipt)
             elif dseq is None:
                 why = "ran with no decision receipt"
             else:
@@ -71,7 +90,9 @@ def audit(*, now: Optional[float] = None, include_archive: bool = False, limit: 
                 why = "names a decision whose receipt changed"
             elif str(drec.get("tool")) != str(rec.get("tool")):
                 why = "names a decision for another tool"
-            elif drec.get("decision") not in RAN and rec.get("status") in ("ok", "error"):
+            elif rec.get("status") in ("ok", "error") and not (
+                    drec.get("decision") in RAN
+                    or (drec.get("decision") in OWNER and rec.get("approval"))):
                 why = "ran although its decision was %s" % drec.get("decision")
             outcome_for.add(dseq)
         if why:
@@ -81,23 +102,26 @@ def audit(*, now: Optional[float] = None, include_archive: bool = False, limit: 
     for seq, (d, drec) in decisions.items():
         if drec.get("class") not in (G.OUTWARD, G.OBSERVE):
             continue
+        if not (isinstance(d.get("t"), (int, float)) and d["t"] >= since):
+            continue
         n_dec += 1
         if drec.get("decision") not in RAN or seq in outcome_for:
             continue
-        if "args_hash" not in drec:
-            continue                    # an executor outside a tool call: its decision is the record
+        if drec.get("via") != "tool_call":
+            continue                    # decided outside a tool call: its decision is the record
         t = d.get("t")
         if isinstance(t, (int, float)) and now - t < GRACE_S:
             continue
         open_.append({"seq": seq, "tool": drec.get("tool")})
     return {"ok": not orphans, "decisions": n_dec, "outcomes": n_out,
             "orphan_outcomes": orphans[:limit], "orphan_count": len(orphans),
-            "open_decisions": open_[:limit], "open_count": len(open_)}
+            "open_decisions": open_[:limit], "open_count": len(open_),
+            "window_days": round(window_s / 86400.0, 1)}
 
 
 def doctor_check() -> tuple:
     """(state, code) for the Doctor: degraded when something ran without its
-    decision, unverified when allowed actions never reported back."""
+    decision, unverified when allowed actions never reported back (last 30 days)."""
     try:
         r = audit()
     except Exception as e:  # noqa: BLE001

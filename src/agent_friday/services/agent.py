@@ -13469,7 +13469,9 @@ def _outcome_recorder(name, decision, ctx):
     elif isinstance(approved, str):
         approval = approved
     klass = (decision or {}).get("class")
-    wanted = klass in (_g.OUTWARD, _g.OBSERVE) or (decision is None and approval)
+    wanted = klass in (_g.OUTWARD, _g.OBSERVE) or bool(approval)
+    if (decision or {}).get("decision") == "deny" and not approval:
+        wanted = False                    # the decision itself says nothing ran
     done = []
 
     def _write(status, detail=""):
@@ -13600,16 +13602,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
 
     # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
     # A DENY short-circuits; the deny message is what the model sees as the result.
-    # The decision receipt the checkpoint writes is caught here, so the call's
-    # outcome receipt names it (governance/action_gate.record_outcome).
-    from agent_friday.governance import action_gate as _gate_rcpt
-    _lr_tok = _gate_rcpt.LAST_RECEIPT.set(None)
-    try:
-        verdict = _hooks.run_pre_hooks(ctx)
-        _decision = _gate_rcpt.LAST_RECEIPT.get()
-    finally:
-        _gate_rcpt.LAST_RECEIPT.reset(_lr_tok)
-    _outcome = _outcome_recorder(name, _decision, ctx)
+    # The governance hook keeps the decision it wrote on the call, so the
+    # call's outcome receipt names it (governance/action_gate.record_outcome).
+    verdict = _hooks.run_pre_hooks(ctx)
+    _outcome = _outcome_recorder(name, ctx.meta.get("decision_receipt"), ctx)
     # Trusted hooks can restore a deferred Crew task's identity. Handlers and
     # subsequent checks use that scope, while the original host origin stays fixed.
     if _host_scoped:
@@ -13617,10 +13613,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     session_ctx = ctx.session_ctx
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
+        _outcome("held", "crew_host")
         return _crew_denial
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
-        _outcome("held", verdict.reason)          # a later check held what the checkpoint allowed
+        _outcome("held", "pre_hook")              # a later check held what the checkpoint allowed
         return verdict.reason
 
     # Say what is about to happen BEFORE it happens, and only once it will
@@ -14451,9 +14448,15 @@ def _hook_governance(ctx):
     # the owner pre-approved does not stop the grant (`_taint_clean` checks
     # every other flag); everywhere else the flag stands as it is.
     _clean = _taint_clean(d, key, ctx.session_ctx)
-    v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
-                        tainted=(d.action == "ask"), clean=_clean,
-                        grant_tainted=(d.action == "ask" and not _clean))
+    _lr = _gate.LAST_RECEIPT.set(None)
+    try:
+        v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
+                            tainted=(d.action == "ask"), clean=_clean,
+                            grant_tainted=(d.action == "ask" and not _clean), via="tool_call")
+        # this call's own decision, for its outcome receipt (_outcome_recorder)
+        ctx.meta["decision_receipt"] = _gate.LAST_RECEIPT.get()
+    finally:
+        _gate.LAST_RECEIPT.reset(_lr)
     ctx.meta["governance"] = v
     if (v.detail or {}).get("grant_withheld"):
         # A pre-approval names these recipients but the call drew on outside

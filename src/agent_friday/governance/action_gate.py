@@ -1111,8 +1111,9 @@ _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
                             "plan_version")
 
 
-def _receipt(entry: dict) -> None:
-    """Sign and append. Raises on failure, so the caller can hold the action."""
+def _receipt(entry: dict) -> dict:
+    """Sign and append; returns the ledger entry. Raises on failure, so the
+    caller can hold the action."""
     try:
         from agent_friday.services import off_record as _off
         if _off.active():
@@ -1128,18 +1129,12 @@ def _receipt(entry: dict) -> None:
     # the action runs. The entry keeps its own HMAC as well, so a decision can
     # still be checked on its own (verify_receipt).
     from agent_friday.services import action_ledger
-    out = action_ledger.append("decision", entry, durable=True)
-    try:
-        LAST_RECEIPT.set({"seq": out.get("seq"), "hash": out.get("hash"), "tool": entry.get("tool"),
-                          "class": entry.get("class"), "decision": entry.get("decision"),
-                          "approval": entry.get("approval")})
-    except Exception:
-        pass
+    return action_ledger.append("decision", entry, durable=True)
 
 
-#: The decision receipt written last in this context: _execute_tool clears it
-#: before the checkpoint runs and reads it after, so the outcome of the call
-#: names the exact decision it carried out (north star §18.9, NS-34.17-7).
+#: The checkpoint's last decision in this context (set by authorize only):
+#: the governance hook stores it on the call, so the call's outcome names the
+#: exact decision it carried out (north star §18.9, NS-34.17-7).
 LAST_RECEIPT: ContextVar = ContextVar("friday_last_decision_receipt", default=None)
 
 #: Outcome statuses an outcome entry may carry.
@@ -1151,9 +1146,16 @@ def record_outcome(tool: str, decision: Optional[dict], status: str, *,
                    detail: str = "") -> None:
     """The terminal receipt of an outward or reading action: what happened
     after the decision (it ran: ok or error; the handler refused; a later
-    check held it), linked to the decision's seq and hash. Never raises."""
+    check held it), linked to the decision's seq and hash. `detail` is a
+    fixed code, never free text, and is left out off the record. Never raises."""
     try:
         from agent_friday.services import action_ledger
+        try:
+            from agent_friday.services import off_record as _off
+            if _off.active():
+                detail = ""
+        except Exception:
+            pass
         action_ledger.try_append("outcome", {
             "tool": tool, "status": status if status in OUTCOMES else "error",
             "decision_seq": (decision or {}).get("seq"), "decision_hash": (decision or {}).get("hash"),
@@ -1238,7 +1240,7 @@ def _interactive(ctx: dict) -> bool:
 
 def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] = None,
               *, tainted: bool = False, clean: bool = False,
-              grant_tainted: Optional[bool] = None) -> Verdict:
+              grant_tainted: Optional[bool] = None, via: str = "") -> Verdict:
     """Decide whether this action may run now. Never raises.
 
     `tainted`: a detail came from outside content badly enough to need a card.
@@ -1273,8 +1275,11 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
-        _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
+        _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
+                  # "tool_call": the governance hook of _execute_tool, whose
+                  # call writes an outcome (services/receipt_audit expects one)
+                  "via": via or None,
                   "args_hash": hashlib.sha256(json.dumps(args or {}, sort_keys=True,
                                                          default=str).encode()).hexdigest(),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
@@ -1287,6 +1292,9 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "chosen_by": _chosen_by(ctx),
                   "plan_version": _plan_version(),
                   "turn_id": _turn_id()})
+        _out = _out if isinstance(_out, dict) else {}
+        LAST_RECEIPT.set({"seq": _out.get("seq"), "hash": _out.get("hash"), "tool": tool_name,
+                          "class": v.klass, "decision": v.action})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":
