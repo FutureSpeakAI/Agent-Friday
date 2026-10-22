@@ -576,7 +576,8 @@ def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary",
               for_write: bool = False) -> dict:
     """One event as the planner needs it: its title, when it starts and ends, its time zone, whether it is an
     all-day entry, how many guests it has, and whether this calendar's copy may change its time
-    (`organizer_self`: the calendar it is read from organises it; `guests_can_modify`). Reads only."""
+    (`organizer_self`: the calendar it is read from organises it; `guests_can_modify`). Reads only;
+    with `for_write` it also requires an account that may change the calendar (a move's plan)."""
     if not _cal(calendar_id):
         return {"error": "that is not a calendar id; nothing was changed"}
     # `for_write`: the read that plans a change (a move) needs an account that may make it,
