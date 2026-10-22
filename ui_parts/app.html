@@ -191,6 +191,56 @@ function apiFetch(url, opts){
     return pending;
   }
   window.fridayRefreshSessionToken = refreshSessionToken;
+  // DESK KEY. A press on an approval card counts only when it was made on this
+  // PC's own screen (services/desk_press.py). Friday's page, open in a browser on
+  // this PC, fetches this launch's desk key from a door on 127.0.0.1 that a
+  // browser on another device cannot reach (127.0.0.1 there is that device), and
+  // sends it on every same-origin state change. On another device the fetch fails
+  // and nothing is sent, so a tap there approves nothing. The key lives only in
+  // this closure, never on window.
+  let deskKey = '';
+  let deskPending = null;
+  function deskCapablePage() {
+    try {
+      const h = String(window.location.hostname || '').toLowerCase();
+      return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1' || /^agent\.[a-z0-9-]+$/.test(h);
+    } catch (e) {
+      return false;
+    }
+  }
+  function refreshDeskKey() {
+    if (!deskCapablePage()) return Promise.resolve(false);
+    if (!deskPending) {
+      deskPending = rawFetch('/api/desk/where', {
+        cache: 'no-store'
+      }).then(r => r.ok ? r.json() : null).then(w => {
+        const port = w && Number(w.port);
+        if (!port || port < 1 || port > 65535 || Math.floor(port) !== port) return false;
+        return rawFetch('http://127.0.0.1:' + port + '/desk-key', {
+          cache: 'no-store',
+          credentials: 'omit',
+          mode: 'cors'
+        }).then(r => r.ok ? r.json() : null).then(d => {
+          if (d && typeof d.key === 'string' && d.key) {
+            deskKey = d.key;
+            return true;
+          }
+          return false;
+        });
+      }).catch(() => false).then(ok => {
+        deskPending = null;
+        return ok;
+      });
+    }
+    return deskPending;
+  }
+  window.fridayRefreshDeskKey = function () {
+    return refreshDeskKey().then(ok => !!ok);
+  };
+  refreshDeskKey();
+  if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshDeskKey();
+  });
   if (typeof setInterval === 'function') {
     const refreshTimer = setInterval(refreshSessionToken, 3600000);
     if (refreshTimer && typeof refreshTimer.unref === 'function') refreshTimer.unref();
@@ -204,6 +254,7 @@ function apiFetch(url, opts){
   window.fetch = function (input, init) {
     let guarded = false;
     let sent = '';
+    let sentDesk = '';
     try {
       const tok = window.__FRIDAY_API_TOKEN || '';
       const isReq = typeof Request !== 'undefined' && input instanceof Request;
@@ -214,6 +265,8 @@ function apiFetch(url, opts){
           const headers = new Headers(init && init.headers || (isReq ? input.headers : undefined));
           if (!headers.has('X-Friday-Token')) headers.set('X-Friday-Token', tok);
           sent = headers.get('X-Friday-Token');
+          if (deskKey && !headers.has('X-Friday-Desk')) headers.set('X-Friday-Desk', deskKey);
+          sentDesk = headers.get('X-Friday-Desk') || '';
           guarded = !isReq && replayable(init && init.body);
           init = Object.assign({}, init, {
             headers
@@ -226,15 +279,34 @@ function apiFetch(url, opts){
     // A token the server no longer knows is answered with a coded 403: fetch
     // the current one and send the same request once more.
     return first.then(async res => {
-      if (res.status !== 403) return res;
+      const deskStale = !!(res.headers && res.headers.get('X-Friday-Desk-Stale'));
+      if (res.status !== 403) {
+        // Friday restarted under this tab: fetch this launch's key for the next press.
+        if (deskStale) refreshDeskKey();
+        return res;
+      }
       let code = '';
       try {
         code = (await res.clone().json()).code || '';
       } catch (e) {}
-      if (code !== 'session_token_required') return res;
-      if (!(await refreshSessionToken()) || window.__FRIDAY_API_TOKEN === sent) return res;
+      // Refused for a session token the server no longer knows (it rotated, or Friday
+      // restarted), or for want of this launch's desk key (Friday restarted, or the key had
+      // not loaded yet): fetch whatever is stale and send the same request once more. Only
+      // these coded refusals are retried; each is answered before the route does anything.
+      const needToken = code === 'session_token_required';
+      const needDesk = code === 'desk_proof_required' || deskStale;
+      if (!needToken && !needDesk) return res;
       const headers = new Headers(init.headers);
-      headers.set('X-Friday-Token', window.__FRIDAY_API_TOKEN);
+      let changed = false;
+      if (needToken && (await refreshSessionToken()) && window.__FRIDAY_API_TOKEN && window.__FRIDAY_API_TOKEN !== sent) {
+        headers.set('X-Friday-Token', window.__FRIDAY_API_TOKEN);
+        changed = true;
+      }
+      if ((await refreshDeskKey()) && deskKey && deskKey !== sentDesk) {
+        headers.set('X-Friday-Desk', deskKey);
+        changed = true;
+      }
+      if (!changed) return res;
       return rawFetch(input, Object.assign({}, init, {
         headers
       }));
@@ -1665,6 +1737,16 @@ function fridayToast(msg, opts) {
     var message = document.createElement('span');
     message.textContent = text;
     el.appendChild(message);
+    // An optional action: {label, run} — one button that does what the
+    // notice says to do (e.g. "Open Workflows").
+    var act = opts && opts.action;
+    if (act && act.label && typeof act.run === 'function') {
+      var go = document.createElement('button');
+      go.type = 'button'; go.textContent = String(act.label);
+      go.style.cssText = 'margin-left:12px;min-height:28px;padding:0 10px;background:transparent;color:inherit;border:1px solid currentColor;border-radius:5px;cursor:pointer';
+      go.onclick = function () { el.remove(); try { act.run(); } catch (e) { /* the notice already said what to do */ } };
+      el.appendChild(go);
+    }
     var dismiss = document.createElement('button');
     dismiss.type = 'button'; dismiss.textContent = '×';
     dismiss.setAttribute('aria-label', 'Dismiss notification');
@@ -1686,6 +1768,19 @@ function fridayToast(msg, opts) {
   } catch (e) { /* a notice that throws is worse than no notice */ }
 }
 window.fridayToast = fridayToast;
+
+// The answer to arming a post carries `publisher` (services/publisher
+// ensure_publisher_running): when something will stop the post going out it
+// has a plain `notice` and the `action` that fixes it. Say it, with that one
+// button. Returns true when there was something to say.
+function fridayPublisherNotice(d) {
+  var p = d && d.publisher;
+  if (!p || !p.notice) return false;
+  var a = p.action && p.action.target ? p.action : null;
+  fridayToast(p.notice, { error: true, action: a ? { label: a.label || 'Open', run: function () { fridayNavigate(a.target); } } : null });
+  return true;
+}
+window.fridayPublisherNotice = fridayPublisherNotice;
 
 // A workspace's passing notice ("Copied", "Saved", "Could not save") is
 // Friday's one toast: the same look and place in every workspace, in a window
@@ -10276,7 +10371,7 @@ function WorkflowsWS() {
       {focusedSlug && <button type="button" className="wfx-link" onClick={() => setFocusedSlug('')}>Show other workflows</button>}
       {!wfs.length && <p className="wfx-quiet">{projectFilter || focusedSlug ? 'No workflows match this view. Create one above or choose another project.' : 'Begin with one useful result. You can run it once, then make it a routine.'}</p>}
       {wfs.map(w => <WfCard key={w.id || w.slug} w={w} busy={!!busy} onAction={action} onToggle={toggle} onDelete={remove} onEdit={setEditing} />)}
-      {routines.length > 0 && <details className="wfx-disclosure" open={showRoutines} onToggle={e => setShowRoutines(e.currentTarget.open)}><summary>{fridayName()}'s built-in routines · {routines.filter(r => r.enabled).length} on</summary>{routines.map(r => <div key={r.schedule_id} className="wfx-row wfx-routine"><div className="wfx-grow"><strong>{r.name}</strong><div className="wfx-quiet" data-testid="wf-routine-line">{wfRoutineLine(r)}</div></div>{r.announces_finish && <span className="wfx-quiet" aria-hidden="true">Tell me when it finishes</span>}{r.announces_finish && <WfSwitch disabled={!!busy} on={r.finish_notice} label={'Tell me when ' + r.name + ' finishes'} onChange={() => toggleFinish(r)} />}<WfSwitch disabled={!!busy} on={r.enabled} label={'Run ' + r.name} onChange={() => toggle(r)} /></div>)}</details>}
+      {routines.length > 0 && <details className="wfx-disclosure" open={showRoutines} onToggle={e => setShowRoutines(e.currentTarget.open)}><summary>{fridayName()}'s built-in routines · {routines.filter(r => r.enabled).length} on</summary>{routines.map(r => <div key={r.schedule_id} className="wfx-row wfx-routine"><div className="wfx-grow"><strong>{r.name}</strong><div className="wfx-quiet" data-testid="wf-routine-line">{wfRoutineLine(r)}</div>{r.note && <div className="wfx-quiet" data-testid="wf-routine-note">{r.note}</div>}</div>{r.announces_finish && <span className="wfx-quiet" aria-hidden="true">Tell me when it finishes</span>}{r.announces_finish && <WfSwitch disabled={!!busy} on={r.finish_notice} label={'Tell me when ' + r.name + ' finishes'} onChange={() => toggleFinish(r)} />}<WfSwitch disabled={!!busy} on={r.enabled} label={'Run ' + r.name} onChange={() => toggle(r)} /></div>)}</details>}
     </>}
   </div>;
 }
@@ -11884,7 +11979,7 @@ function NewsWS(){
          <div className="fp-masthead" style={{marginTop:12}}>
            <div>
              <div className="fp-title">{fridayName()}'s Editorial</div>
-             <div className="fp-sub">{(editorial.generated_central||editorial.week||'')+(editorial.regenerated?' · rewritten for stronger pushback':'')+(typeof editorial.independence_score==='number'?(' · independence '+editorial.independence_score.toFixed(2)):'')}</div>
+             <div className="fp-sub">{(editorial.generated_central||editorial.week||'')+(editorial.regenerated?' · first attempt came back empty, written again':'')+(typeof editorial.independence_score==='number'?(' · independence '+editorial.independence_score.toFixed(2)):'')}</div>
            </div>
            <div style={{display:'flex',gap:6,alignItems:'center'}}>
              {edList.length>1&&<select className="input" style={{fontSize:11,maxWidth:160}} value={editorial.id} onChange={e=>loadEdWeek(e.target.value)}>
@@ -13190,8 +13285,8 @@ function FinanceWS(){
     </div>}
     {view==='contacts'&&<div>
       <div className="card-title">Financial Contacts</div>
-      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your Financial Advisor</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
-      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your CPA / Accountant</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
+      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your Financial Advisor</div><div style={{fontSize:11,color:'#888'}}>Placeholder: this tab does not read any file yet.</div></div></div></div>
+      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your CPA / Accountant</div><div style={{fontSize:11,color:'#888'}}>Placeholder: this tab does not read any file yet.</div></div></div></div>
     </div>}
     {fridayHeldOn('federation')&&view==='wallet'&&<WalletPanel/>}
     {view==='quickref'&&<div>
@@ -13727,14 +13822,18 @@ function ContentComposeTab({platforms,prefillPost,slot,onNavAccounts}){
       else if(action==='now'){
         const r=await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'});
         const d=await r.json().catch(()=>({}));
-        flash(d&&d.ok===false?(d.message||d.reason||'Publish failed'):'Approve the card to publish — it shows the exact text and where it goes');
+        // When something stops it going out, its notice is the whole answer.
+        flash(d&&d.ok===false?(d.message||d.reason||'Publish failed'):(d&&d.publisher&&d.publisher.notice)||'Approve the card to publish — it shows the exact text and where it goes');
+        if(d&&d.ok!==false)fridayPublisherNotice(d);
       }else if(action==='schedule'){
         const sc={timezone:Intl.DateTimeFormat().resolvedOptions().timeZone};
         if(schedAt)sc.publish_at=new Date(schedAt).toISOString();else sc.optimal_time=true;
         const r=await fetch('/api/content/posts/'+id+'/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sc)});
         const d=await r.json().catch(()=>({}));
-        if(d&&d.conflicts&&d.conflicts.length)flash('⚠ Scheduled with '+d.conflicts.length+' conflict warning(s) — see the Calendar');
+        if(d&&d.ok!==false&&d.publisher&&d.publisher.notice)flash(d.publisher.notice);
+        else if(d&&d.conflicts&&d.conflicts.length)flash('⚠ Scheduled with '+d.conflicts.length+' conflict warning(s) — see the Calendar');
         else flash(d&&d.ok===false?(d.message||'Schedule failed'):'📅 Scheduled');
+        if(d&&d.ok!==false)fridayPublisherNotice(d);
         setSchedOpen(false);
       }
     }catch(e){flash('Request failed — is the content pipeline backend running?')}
@@ -14073,9 +14172,30 @@ function ContentAccountsTab({platforms,reload}){
     try{
       const r=await fetch('/api/content/platforms/'+name+'/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
       const d=await r.json();
-      if(d.connect_url){window.open(d.connect_url,'friday-oauth-'+name,'width=560,height=720');flash('Complete the sign-in in the popup — this card refreshes automatically.');setTimeout(()=>reload&&reload(),4000)}
-      else flash(d.message||d.reason||'The connect flow is not available yet.');
+      openSignIn(name,d);
     }catch(e){flash('Connect failed — is the content pipeline backend running?')}
+  };
+  // What the connect route answered, said as it is: a sign-in window that
+  // really opened, the developer-app details an OAuth platform still needs,
+  // or the reason it can't be connected.
+  const[appNeeds,setAppNeeds]=useState({});
+  const openSignIn=(name,d)=>{
+    if(d&&d.connect_url){const w=window.open(d.connect_url,'friday-oauth-'+name,'width=560,height=720');
+      if(w){flash('Sign in to '+cpMeta(name).label+' in the window that opened and approve access. This card refreshes when you come back.');setTimeout(()=>reload&&reload(),4000)}
+      else flash('Your browser blocked the sign-in window. Allow pop-ups for '+fridayName()+' and press Connect again.')}
+    else if(d&&d.needs==='client'){setAppNeeds(s=>({...s,[name]:d}));setAuthOpen(name);flash(d.message)}
+    else flash((d&&(d.message||d.error||d.reason))||cpMeta(name).label+" can't be connected from here yet.");
+  };
+  const submitApp=async(name)=>{
+    const need=appNeeds[name]||{};const vals=authVals[name]||{};const bodyOut={};
+    (need.fields||[]).forEach(f=>{if((vals[f]||'').trim())bodyOut[f]=vals[f].trim()});
+    try{const r=await fetch('/api/content/platforms/'+name+'/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(bodyOut)});
+      const d=await r.json();
+      // The app's details are saved either way; never keep the secret in the page.
+      setAuthVals(v=>({...v,[name]:{}}));
+      if(d&&d.connect_url)setAuthOpen('');
+      openSignIn(name,d);
+    }catch(e){flash('Connect failed')}
   };
   const submitAuth=async(name)=>{
     try{const r=await fetch('/api/content/platforms/'+name+'/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(authVals[name]||{})});
@@ -14092,7 +14212,9 @@ function ContentAccountsTab({platforms,reload}){
     if(!window.confirm('Disconnect '+cpMeta(name).label+('? ' + fridayName() + ' revokes the platform-side grant where the API allows it and purges the local credential.')))return;
     try{await fetch('/api/content/platforms/'+name,{method:'DELETE'});flash('Disconnected');reload&&reload()}catch(e){flash('Disconnect failed')}
   };
-  const testPost=async(name)=>{try{const r=await fetch('/api/content/platforms/'+name+'/test',{method:'POST'});const d=await r.json();flash(d&&d.ok===false?(d.message||'Test failed'):(d.message||'✓ Test post sent (private/self where the platform allows)'))}catch(e){flash('Test failed')}};
+  // Check connection: the route checks the saved credential and posts
+  // nothing; its own words say what was checked.
+  const checkConnection=async(name)=>{try{const r=await fetch('/api/content/platforms/'+name+'/test',{method:'POST'});const d=await r.json();flash((d&&d.message)||(d&&d.ok?'The saved credential is there. Nothing was posted.':'Could not check the connection. Nothing was posted.'))}catch(e){flash('Could not check the connection. Nothing was posted.')}};
   const pauseAll=()=>fetch('/api/content/pause',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:!paused})}).then(r=>r.json()).then(()=>{setPaused(!paused);flash(!paused?'⏸ All publishing paused':'▶ Publishing resumed')}).catch(()=>flash('Pause endpoint unavailable'));
   const saveGlobals=()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{content:{staging_base_url:staging,conflict_window_hours:Number(confWin)||2}}})}).then(r=>r.json()).then(d=>flash(d.status==='ok'?'Saved':'Save failed')).catch(()=>flash('Save failed'));
   const daysLeft=iso=>{if(!iso)return null;const d=Math.ceil((new Date(iso)-Date.now())/86400000);return isNaN(d)?null:d};
@@ -14127,7 +14249,7 @@ function ContentAccountsTab({platforms,reload}){
           <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
             {!conn&&<button className="btn" style={{fontSize:11,fontWeight:700,padding:'4px 14px'}} onClick={()=>connect(p)}>{isManual?'Enable manual mode':'🔗 Connect'}</button>}
             {conn&&<button className="btn" style={{fontSize:10}} onClick={()=>connect(p)}>Re-authenticate</button>}
-            {conn&&<button className="btn" style={{fontSize:10}} onClick={()=>testPost(name)}>Test post</button>}
+            {conn&&<button className="btn" style={{fontSize:10}} title={'Checks the saved sign-in with '+(p.label||m.label)+'. Posts nothing.'} onClick={()=>checkConnection(name)}>Check connection</button>}
             {conn&&<button className="btn btn-magenta" style={{fontSize:10,color:'#ff8aa0'}} onClick={()=>disconnect(name)}>Disconnect</button>}
           </div>
           {authOpen===name&&pasteAuth&&<div style={{marginTop:8}}>
@@ -14142,6 +14264,12 @@ function ContentAccountsTab({platforms,reload}){
             {name!=='bluesky'&&name!=='mastodon'&&<input type="password" className="input" style={{width:'100%',fontSize:11,marginBottom:4,boxSizing:'border-box'}} placeholder="Paste access token" value={(authVals[name]||{}).secret||''} onChange={e=>setAV(name,'secret',e.target.value)}/>}
             <button className="btn" style={{fontSize:10,fontWeight:600}} onClick={()=>submitAuth(name)}>Save & connect</button>
             <div style={{fontSize:9,color:'#666',marginTop:3}}>Stored encrypted in {fridayName()}'s credential vault — never plaintext, never logged.</div>
+          </div>}
+          {authOpen===name&&!pasteAuth&&appNeeds[name]&&<div style={{marginTop:8}} data-testid="cp-oauth-app-form">
+            <div style={{fontSize:10,color:'#a8a8b4',lineHeight:1.5,marginBottom:6}}>Create an app in {p.label||m.label}'s developer site, set its redirect address to <code style={{userSelect:'all',wordBreak:'break-all'}}>{appNeeds[name].redirect_uri||"this computer's callback address"}</code>, then enter its details here. {fridayName()} then opens {p.label||m.label}'s sign-in page.</div>
+            {(appNeeds[name].fields||[]).map(f=><input key={f} type={f==='client_secret'?'password':'text'} className="input" autoComplete="off" aria-label={({client_id:'Client ID',client_key:'Client key',client_secret:'Client secret'})[f]||f} style={{width:'100%',fontSize:11,marginBottom:4,boxSizing:'border-box'}} placeholder={({client_id:'Client ID',client_key:'Client key',client_secret:'Client secret'})[f]||f} value={(authVals[name]||{})[f]||''} onChange={e=>setAV(name,f,e.target.value)}/>)}
+            <button className="btn" style={{fontSize:10,fontWeight:600}} onClick={()=>submitApp(name)}>Save and sign in</button>
+            <div style={{fontSize:9,color:'#666',marginTop:3}}>The client secret is stored encrypted on this computer and is never shown again or logged.</div>
           </div>}
           {authOpen===name&&isManual&&<div style={{marginTop:8}}>
             {name==='substack'&&<input className="input" aria-label="Publication address" placeholder="https://yourname.substack.com" style={{width:'100%',fontSize:11,marginBottom:4,boxSizing:'border-box'}} value={((authVals[name]||{}).options||{}).publication_url||''} onChange={e=>setAV(name,'options',{publication_url:e.target.value})}/>}
@@ -14183,8 +14311,10 @@ function QuickPostModal({payload,onClose}){
   },[body,sel.join(',')]);
   const createDraft=async()=>{
     const r=await fetch('/api/content/posts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,body,assets,platforms:sel.map(p=>({platform:p,format:'post'})),source:payload.source||{kind:payload.asset?'creation':'chat',ref:(payload.asset&&payload.asset.filename)||''}})});
-    const d=await r.json();return(d.post&&d.post.id)||d.id||null;
+    const d=await r.json();cardRef.current=d.media_card||null;return(d.post&&d.post.id)||d.id||null;
   };
+  // The new post's card in Media: the full composer is that card.
+  const cardRef=useRef(null);
   const ship=async(mode)=>{
     if(busy)return;if(!body.trim()){flash('Write something first');return}
     if(mode!=='composer'&&sel.length===0){flash('Pick a platform');return}
@@ -14193,12 +14323,14 @@ function QuickPostModal({payload,onClose}){
       const id=await createDraft();
       if(!id){flash('Could not create the post — is the content pipeline backend running?');setBusy(false);return}
       if(mode==='composer'){
-        if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'content'});
-        fridayNavigate({workspace:'content',tab:'compose',post:id});onClose();return;
+        // Posts are cards in Media now; the card opens this post in the
+        // composer. (The old Content workspace redirects to Media's board.)
+        if(!cardRef.current){flash('The post was saved as a draft, but its card could not be found. Open it from Media.');setBusy(false);return}
+        fridayNavigate({workspace:'media',card:cardRef.current});onClose();return;
       }
       await fetch('/api/content/posts/'+id+'/compose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platforms:sel})}).catch(()=>{});
-      if(mode==='now'){await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'});flash('Approve the card to publish — it shows the exact text and where it goes')}
-      else{await fetch('/api/content/posts/'+id+'/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({optimal_time:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone})});flash('📅 Scheduled at the next optimal slot')}
+      if(mode==='now'){const d=await fetch('/api/content/posts/'+id+'/publish-now',{method:'POST'}).then(r=>r.json()).catch(()=>({}));flash(d&&d.ok===false?(d.message||d.error||'Could not post it'):(d&&d.publisher&&d.publisher.notice)||'Approve the card to publish — it shows the exact text and where it goes');if(d&&d.ok!==false)fridayPublisherNotice(d)}
+      else{const d=await fetch('/api/content/posts/'+id+'/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({optimal_time:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone})}).then(r=>r.json()).catch(()=>({}));flash(d&&d.ok===false?(d.message||d.error||'Could not schedule it'):(d&&d.publisher&&d.publisher.notice)||'📅 Scheduled at the next optimal slot');if(d&&d.ok!==false)fridayPublisherNotice(d)}
       setTimeout(onClose,1200);
     }catch(e){flash('Request failed')}
     setBusy(false);
@@ -14215,7 +14347,7 @@ function QuickPostModal({payload,onClose}){
       {assets[0]&&<div style={{fontSize:10,color:'#8891a8',marginBottom:6}}>📎 {assets[0].filename}</div>}
       <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
         {chipSet.map(p=>{const m=cpMeta(p.name);const on=sel.includes(p.name);const conn=!!(p.status&&p.status.connected);return(
-          <button key={p.name} className="btn" disabled={!conn} title={conn?m.label:(m.label+' not connected — open Content → Accounts')} onClick={()=>setSel(s=>on?s.filter(x=>x!==p.name):[...s,p.name])}
+          <button key={p.name} className="btn" disabled={!conn} title={conn?m.label:(m.label+' not connected — connect it in Settings → Connections')} onClick={()=>setSel(s=>on?s.filter(x=>x!==p.name):[...s,p.name])}
             style={{fontSize:10,padding:'2px 8px',opacity:conn?1:0.35,background:on?m.color+'2e':'rgba(255,255,255,0.03)',border:'1px solid '+(on?m.color:'rgba(255,255,255,0.1)')}}>{m.ico} {m.label}</button>);})}
       </div>
       {preview&&sel[0]&&<div style={{marginBottom:8}}>
@@ -17000,12 +17132,22 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip, curated })
       setMsg({ ok: true, text: "Google's consent screen opened in your browser. It lists the same permissions; come back here once you've approved." });
     } else if (c.kind === 'oauth_connector') {
       const d = await post(c.endpoint, {});
-      openUrl(d.auth_url);
-      setMsg({ ok: true, text: d.message || 'Approve access in the browser window that opened.' });
+      // Say only what happened: a sign-in page this card opened, or none.
+      if (scSafeUrl(d.auth_url)) {
+        openUrl(d.auth_url);
+        setMsg({ ok: true, text: 'The sign-in page opens in a new browser tab (if nothing opened, allow pop-ups for this page and try again). Approve access there, then come back and press Test connection.' });
+      } else setMsg({ ok: !!d.message, text: d.message || 'No sign-in page opened: this service gave no sign-in address. Try again, or check its setup.' });
     } else if (c.kind === 'platform_oauth') {
-      const d = await post(c.endpoint, {});
-      openUrl(d.connect_url);
-      setMsg({ ok: true, text: 'Approve access in the browser window that opened.' });
+      // Not post(): a platform that needs the owner's developer app, or can't
+      // be connected yet, answers ok:false with words of its own to show.
+      const r = await scJSON(c.endpoint, 'POST', {});
+      const d = r.data || {};
+      if (r.ok && d.ok !== false && scSafeUrl(d.connect_url)) {
+        openUrl(d.connect_url);
+        setMsg({ ok: true, text: 'The sign-in page opens in a new browser tab (if nothing opened, allow pop-ups for this page and try again). Approve access there, then come back and press Test connection.' });
+      } else if (d.needs === 'client') {
+        setMsg({ ok: false, text: it.label + ' needs your own developer app before it can connect. Nothing opened. Enter the app\'s details on the ' + it.label + ' card under Settings, Connections, Publishing channels, then press Save and sign in there.' });
+      } else setMsg({ ok: false, text: d.message || d.error || 'No sign-in page opened: this platform has no sign-in set up yet.' });
     } else if (c.kind === 'local_endpoint') {
       const f = c.field || {};
       const v = (vals[f.key] !== undefined ? vals[f.key] : (f.value || '')).trim();
@@ -17329,7 +17471,7 @@ function SetupResearchReview({ research, onChanged }) {
     return (
       <div className="sc-card">
         <h2 tabIndex={-1} data-sc-focus="">The search is running</h2>
-        <p className="sc-sub">It runs as a background task; you can watch it in the tray. Findings appear here for review, and nothing is kept until you accept it.</p>
+        <p className="sc-sub">It runs as a background task; you can watch it on its task card in System. Findings appear here for review, and nothing is kept until you accept it.</p>
       </div>
     );
   }
@@ -17982,7 +18124,7 @@ function SetupChat({ onDone }) {
                 <span className="sc-sr">{m.role === 'user' ? 'You: ' : (st.agent_name || fridayName()) + ': '}</span>
                 {m.text}
                 {m.model && <div className="sc-badge">{'Read by ' + m.model}</div>}
-                {m.task_id && <div className="sc-badge">Running as a background task: see the tray</div>}
+                {m.task_id && <div className="sc-badge">Running as a background task: see its task card in System</div>}
                 {m.link === 'windows_users' && (
                   <div className="sc-row"><button type="button" className="sc-btn" onClick={openWindowsUsers}>Open Windows' Other users page</button></div>
                 )}
@@ -28015,7 +28157,7 @@ function App(){
     let cut=r.lastIndexOf(' ',CHAT_RESULT_CAP);
     if(cut<CHAT_RESULT_CAP*0.8)cut=CHAT_RESULT_CAP;
     const remaining=r.length-cut;
-    return r.slice(0,cut)+`\n\n*(cut off here — ${remaining} more character${remaining===1?'':'s'}. Open this task in the Task Tray to read the rest.)*`;
+    return r.slice(0,cut)+`\n\n*(cut off here — ${remaining} more character${remaining===1?'':'s'}. Open this task's card in System and choose View Results to read the rest.)*`;
   };
   // ─── Background Task Runner (poll /api/tasks) ───
   const[bgTasks,setBgTasks]=useState([]);

@@ -39,7 +39,20 @@ def _guard(write: bool = True):
         origin = request.headers.get("Origin")
         if origin and urlparse(origin).netloc != request.host:
             return jsonify({"ok": False, "error": "cross-origin request refused"}), 403
+        # "Local" alone is what a header-stripped tunnel also looks like. Who may text approvals,
+        # which account and secrets answer them, and where the number points are the owner's own
+        # acts at this PC: a press on its own screen (services/desk_press).
+        bad = _press_needed()
+        if bad:
+            return bad
     return None
+
+
+def _press_needed():
+    """None for a press on this PC's own screen (services/desk_press), else the coded 403."""
+    from agent_friday.services import screen_click
+    return screen_click.press_refusal(request, "Change this with a press in Settings, on the computer "
+                                               "Friday runs on.")
 
 
 def _refused(e: Exception, code: int = 400):
@@ -63,8 +76,9 @@ def phone_config():
     bad = _guard()
     if bad:
         return bad
+    patch = (request.get_json(silent=True) or {}).get("patch") or {}
     try:
-        config.update((request.get_json(silent=True) or {}).get("patch") or {})
+        config.update(patch)
     except (config.ConfigError, ValueError, TypeError) as e:
         return _refused(e)
     ingress = service.apply_enabled_state()
