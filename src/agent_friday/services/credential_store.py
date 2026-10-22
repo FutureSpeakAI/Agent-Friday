@@ -1,4 +1,4 @@
-"""
+﻿"""
 credential_store — encryption-at-rest for OAuth tokens and other secrets.
 
 Multi-account Google support stores live access/refresh tokens on disk. Plaintext
