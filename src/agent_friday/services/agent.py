@@ -15652,6 +15652,9 @@ _TOOL_DENY_SENTINELS = (
 #: run when the owner decides (services/approval_executor). It is emphatically
 #: not a success either, which is the distinction the ledger was missing.
 _TOOL_PENDING_SENTINELS = ("[APPROVAL CARD RAISED]",)
+# Results that say the action did not happen, beyond the classes above. Goal
+# checks (services/goal_evidence) count only calls that went through.
+_TOOL_NOT_RUN_SENTINELS = ("[BLOCKED", "[DECLINED]", "[NOT RUN]", "[HELD", "[REFUSED")
 # "TOOL CALL FAILED" is the unknown-name message _execute_tool now returns.
 # It MUST be listed here: _tool_call_status classifies anything unrecognised as
 # 'ok', so a failure prefix missing from this tuple is a failed call reporting
@@ -15768,15 +15771,22 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
         _presence.tool_finished(name, ok=(_tool_call_status(result) != "error"))
     except Exception:
         pass
+    # Whether the call went through, decided once from its result (a card
+    # raised, a refusal, an unknown tool or bad arguments is not "ok"): the
+    # journal and the ledger record this, and goal checks rely on it (§17.12).
+    _ok = _tool_call_status(result) == "ok" and not (
+        isinstance(result, str) and result.startswith(_TOOL_NOT_RUN_SENTINELS))
     try:
         from agent_friday.services import task_ledger as _tl
-        _tl.note_tool(_journal().current_task(), name, args, result)
+        # A file counts as written only by a successful local-write tool (ring 1).
+        _tl.note_tool(_journal().current_task(), name, args, result,
+                      wrote=bool(_ok and TOOL_RINGS.get(name, 2) == 1))
     except Exception:
         pass
     try:
         _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
                              result=_tier_safe_summary(result, limit=400, kind="result"),
-                             duration_ms=int(duration_ms or 0))
+                             ok=_ok, duration_ms=int(duration_ms or 0))
     except Exception:
         pass
     if not orb_id:

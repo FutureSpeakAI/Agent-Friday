@@ -830,6 +830,16 @@ def _maybe_complete_goal(goal_id: str) -> Optional[Dict[str, Any]]:
         milestones = goal.get("milestones") or []
         if milestones and all(m.get("status") == "done" for m in milestones):
             verified = goal_state._all_verified(goal)
+            # §17.12: the goal's own proof, judged on every milestone's run.
+            try:
+                from agent_friday.services import goal_evidence as _ge
+                gj = _ge.judge_goal(goal)
+            except Exception as e:
+                gj = {"met": False, "conditions": [], "errors": [type(e).__name__]}
+            if gj.get("conditions") or gj.get("errors"):
+                goal["goal_check"] = gj
+            if gj.get("met") is not True:
+                verified = False
             goal["status"] = "met_verified" if verified else "met_unverified"
             goal["completion"] = {"by": "verification" if verified else "owner_accepted_milestones",
                                   "verified": verified, "at": _now_iso()}
@@ -2157,7 +2167,11 @@ def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dic
                           **_closed_run(goal_id, milestone_id))
         return {"ok": False, "status": "pending_manual_confirmation",
                 "approval_id": appr.get("approval_id")}
-    verdict = _verify(goal, milestone, text, criteria_text, task_id=tid, since=None)
+    # The original attempt's start (recorded before its work was dispatched):
+    # a file older than that cannot be this run's work.
+    _began = (milestone.get("run") or {}).get("attempt_started_at")
+    verdict = _verify(goal, milestone, text, criteria_text, task_id=tid,
+                      since=float(_began) if _began else None)
     if verdict.get("passed"):
         _update_milestone(goal_id, milestone_id, status="done", done_at=_now_iso(),
                           verification=verdict, artifacts=[text[:2000]],

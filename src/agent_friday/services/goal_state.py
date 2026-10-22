@@ -89,6 +89,7 @@ def _all_verified(goal: Dict[str, Any]) -> bool:
         # (no output, no model reachable, an unreadable score) passes the
         # milestone but proves nothing, so the goal is met, unverified.
         if m.get("status") != "done" or not v.get("passed") or v.get("human_override") \
+                or v.get("needs_owner_confirm") \
                 or v.get("status") != "ok" or v.get("score") is None:
             return False
     return True

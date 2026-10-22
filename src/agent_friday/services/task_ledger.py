@@ -213,13 +213,22 @@ def note_pending(task_id: Optional[str], name: str, args: Any) -> None:
     save(task_id, led)
 
 
-def note_tool(task_id: Optional[str], name: str, args: Any, result: Any) -> None:
-    """A tool finished (or was denied): record the step and clear pending."""
+def note_tool(task_id: Optional[str], name: str, args: Any, result: Any, *, wrote: bool = False) -> None:
+    """A tool finished (or was denied): record the step and clear pending.
+    `wrote`: it was a local-write tool that went through, so the paths in its
+    arguments are files the task really wrote (goal checks count only these;
+    `files` also holds paths a task merely read or mentioned)."""
     led = load(task_id)
     if led is None:
         return
     with _LOCK:                           # save() serialises under the same lock
         record_step(led, name, args, result)
+        if wrote:
+            fw = led.setdefault("files_written", [])
+            for p in _paths_in(args):
+                if p not in fw:
+                    fw.append(p)
+            del fw[:-200]
         led["pending"] = None
     save(task_id, led)
 
