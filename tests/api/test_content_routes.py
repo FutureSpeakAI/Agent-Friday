@@ -479,7 +479,7 @@ def test_platform_callback_state_binding(client):
     res = client.get("/api/content/platforms/mock/callback?state=s-good")
     assert res.status_code == 302
     loc = res.headers["Location"]
-    assert "workspace=content" in loc and "tab=accounts" in loc
+    assert "workspace=settings" in loc and "tab=connections" in loc
     assert "connected=mock" in loc
     # single-use: replaying the same state fails
     res = client.get("/api/content/platforms/mock/callback?state=s-good")

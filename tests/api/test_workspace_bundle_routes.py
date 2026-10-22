@@ -7,6 +7,7 @@ import pytest
 from agent_friday.services import codebases as cb
 from agent_friday.services import conversations as convs
 from agent_friday.services import workspace_bundles as wb
+from tests.desk_press_support import desk_headers      # an approve is a press on this PC's screen
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +30,7 @@ def test_improve_swap_rollback_through_the_routes(client):
     assert r.status_code == 200
     card = r.get_json()["approval"]
     assert card["kind"] == "workspace_swap" and card["status"] == "pending"
-    r = client.post(f"/api/approvals/{card['approval_id']}/decide", json={"decision": "approve"})
+    r = client.post(f"/api/approvals/{card['approval_id']}/decide", json={"decision": "approve"}, headers=desk_headers())
     assert r.status_code == 200
     bundles = client.get("/api/workspaces/bundles").get_json()["workspaces"]
     assert [w["id"] for w in bundles] == ["chore-wheel"]
@@ -52,7 +53,7 @@ def test_improve_swap_rollback_through_the_routes(client):
     assert r.status_code == 200
     card = client.post("/api/workspaces/swap", json={"codebase_id": out["codebase_id"]}).get_json()["approval"]
     assert card["payload"]["workspace_id"] == "chore-wheel"
-    client.post(f"/api/approvals/{card['approval_id']}/decide", json={"decision": "approve"})
+    client.post(f"/api/approvals/{card['approval_id']}/decide", json={"decision": "approve"}, headers=desk_headers())
     versions = client.get("/api/workspaces/chore-wheel/versions").get_json()
     assert len(versions["versions"]) == 2 and versions["current"] != first
     assert b"data-v='2'" in client.get("/api/workspaces/chore-wheel/bundle").data
