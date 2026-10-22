@@ -71,14 +71,13 @@ def _ring(name: str) -> int:
 def _journal_calls(task_id: str) -> List[Dict[str, Any]]:
     from agent_friday.services import task_journal as tj
     try:
-        evs = tj.read(task_id)
+        calls = tj.read(task_id, strict=True, kind="tool_call")
     except Exception as e:
         raise _Unreadable(f"the run's journal ({type(e).__name__})")
-    calls = [e for e in evs if isinstance(e, dict) and e.get("kind") == "tool_call"]
-    return calls[-_KEEP_CALLS:]
+    return [e for e in calls if isinstance(e, dict)][-_KEEP_CALLS:]
 
 
-def _receipts(task_id: str) -> List[Dict[str, Any]]:
+def _receipts(task_ids: set) -> List[Dict[str, Any]]:
     import json
     from agent_friday.governance import action_gate as ag
     try:
@@ -95,13 +94,13 @@ def _receipts(task_id: str) -> List[Dict[str, Any]]:
         raise _Unreadable(f"the action receipts ({type(e).__name__})")
     out = []
     for raw in lines:
-        if task_id not in raw:
+        if not any(t in raw for t in task_ids):
             continue
         try:
             row = json.loads(raw)
         except ValueError:
             continue
-        if isinstance(row, dict) and row.get("task_id") == task_id:
+        if isinstance(row, dict) and row.get("task_id") in task_ids:
             try:
                 ok = bool(ag.verify_receipt(row))
             except Exception:
@@ -131,9 +130,16 @@ def collect(task_ids: List[str], since: Optional[float]) -> Dict[str, Any]:
     """What is on record for one or more runs. `errors` names any source
     that could not be read."""
     ev: Dict[str, Any] = {"calls": [], "receipts": [], "files": [], "errors": []}
-    for tid in [t for t in task_ids if t]:
-        for key, fn in (("calls", lambda t=tid: _journal_calls(t)), ("receipts", lambda t=tid: _receipts(t)),
-                        ("files", lambda t=tid: _files(t, since))):
+    ids = [t for t in task_ids if t]
+    if ids:
+        try:
+            ev["receipts"] = _receipts(set(ids))          # one read of the receipts for every run
+        except _Unreadable as e:
+            ev["errors"].append(str(e))
+        except Exception as e:
+            ev["errors"].append(f"receipts ({type(e).__name__})")
+    for tid in ids:
+        for key, fn in (("calls", lambda t=tid: _journal_calls(t)), ("files", lambda t=tid: _files(t, since))):
             try:
                 ev[key].extend(fn())
             except _Unreadable as e:
@@ -143,10 +149,30 @@ def collect(task_ids: List[str], since: Optional[float]) -> Dict[str, Any]:
     return ev
 
 
+def _self_gated() -> set:
+    try:
+        from agent_friday.governance import action_gate as ag
+        return set(getattr(ag, "SELF_GATED", ()) or ())
+    except Exception:
+        return set()
+
+
+#: A tool's result that says it did not send (a draft queued behind a card).
+_NOT_SENT = re.compile(r"[\"']?sent[\"']?\s*:\s*false|[\"']?queued[\"']?\s*:\s*true", re.I)
+
+
 def _allowed_outward(receipts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    outward = _outward_tools()
+    """Signed receipts where the checkpoint itself allowed an outward action.
+    A self-gated tool's allow only means "its own card decides", never that
+    anything happened, so it does not count."""
+    gated = _self_gated()
     return [r for r in receipts if r.get("_verified") and r.get("decision") == "allow"
-            and (str(r.get("class") or "").lower() == "outward" or r.get("tool") in outward)]
+            and str(r.get("class") or "").lower() == "outward" and r.get("tool") not in gated]
+
+
+def _through(calls: List[Dict[str, Any]], tools: set) -> List[Dict[str, Any]]:
+    return [e for e in calls if e.get("ok") is True and e.get("name") in tools
+            and not _NOT_SENT.search(str(e.get("result_summary") or ""))]
 
 
 def judge(condition: Dict[str, str], ev: Dict[str, Any], text: str) -> Dict[str, Any]:
@@ -163,14 +189,14 @@ def judge(condition: Dict[str, str], ev: Dict[str, Any], text: str) -> Dict[str,
                                        if names else "the run wrote no file that is there now")
     elif kind == "message_sent":
         allowed = _allowed_outward(ev["receipts"])
-        allowed_tools = {r.get("tool") for r in allowed}
-        sends = [e for e in ev["calls"] if e.get("ok") is True and e.get("name") in allowed_tools]
+        sends = _through(ev["calls"], {r.get("tool") for r in allowed})
         out["cites"] = [{"source": "task journal", "seq": e.get("seq"), "tool": e.get("name")} for e in sends[:5]] + \
                        [{"source": "action receipt", "tool": r.get("tool"), "decision": "allow"} for r in allowed[:5]]
         out["met"] = bool(sends)
         out["why"] = "" if sends else "no outward action went through with a signed receipt"
     elif kind == "receipt":
-        allowed = _allowed_outward(ev["receipts"])
+        through = {e.get("name") for e in _through(ev["calls"], {r.get("tool") for r in ev["receipts"]})}
+        allowed = [r for r in _allowed_outward(ev["receipts"]) if r.get("tool") in through]
         out["cites"] = [{"source": "action receipt", "tool": r.get("tool"), "decision": "allow"} for r in allowed[:5]]
         out["met"] = bool(allowed)
         out["why"] = "" if allowed else "no signed receipt allowed an outward action for the run"
@@ -178,7 +204,7 @@ def judge(condition: Dict[str, str], ev: Dict[str, Any], text: str) -> Dict[str,
         outward = _outward_tools()
         returned = set()
         for e in ev["calls"]:
-            if e.get("ok") is True and (e.get("name") in outward or _ring(str(e.get("name"))) == 1):
+            if e.get("ok") is True and e.get("name") in outward:
                 returned.update(_URL.findall(str(e.get("result_summary") or "")))
         urls = [u for u in _URL.findall(text or "") if u in returned]
         out["cites"] = [{"source": "task journal", "url": u} for u in urls[:5]]

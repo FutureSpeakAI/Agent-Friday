@@ -823,6 +823,14 @@ def _maybe_complete_goal(goal_id: str) -> Optional[Dict[str, Any]]:
     only when every milestone passed its own automated check; a milestone
     the owner accepted over a failed check, or confirmed by hand, makes it
     "met, unverified" (§17.3: only the verification engine sets verified)."""
+    # §17.12: the goal's own proof, judged on every milestone's run, outside
+    # the goal's lock (it reads the record files).
+    try:
+        from agent_friday.services import goal_evidence as _ge
+        goal_check = _ge.judge_goal(get_goal(goal_id) or {})
+    except Exception as e:
+        goal_check = {"met": False, "conditions": [], "errors": [type(e).__name__]}
+
     def _fn(goal):
         cur = goal_state.normalize(goal)
         if cur not in LIVE_STATUSES:
@@ -830,12 +838,7 @@ def _maybe_complete_goal(goal_id: str) -> Optional[Dict[str, Any]]:
         milestones = goal.get("milestones") or []
         if milestones and all(m.get("status") == "done" for m in milestones):
             verified = goal_state._all_verified(goal)
-            # §17.12: the goal's own proof, judged on every milestone's run.
-            try:
-                from agent_friday.services import goal_evidence as _ge
-                gj = _ge.judge_goal(goal)
-            except Exception as e:
-                gj = {"met": False, "conditions": [], "errors": [type(e).__name__]}
+            gj = goal_check
             if gj.get("conditions") or gj.get("errors"):
                 goal["goal_check"] = gj
             if gj.get("met") is not True:
@@ -1552,6 +1555,33 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         # The attempt reached its check: whatever stopped it before is not
         # "the same stop again" (§17.10 counts runs of identical stops).
         _update_milestone(goal_id, milestone_id, blocker_history=[])
+        if verdict.get("status") == "skipped" and verdict.get("basis", "").startswith("receipts"):
+            # The record could not be read: that is not "the proof is
+            # missing", and another attempt would only redo the work. Stop
+            # and say so; the owner starts it again once the record reads.
+            _release_goal_budget(goal_id, max(0, reserved_total - total_cost))
+            _update_milestone(goal_id, milestone_id, verification=verdict, artifacts=[last_text[:2000]])
+            _block(goal_id, milestone_id, goal_state.blocker(
+                "missing_evidence", f"I couldn't check “{milestone.get('name')}”: {verdict.get('critique')}.",
+                type="check_unavailable", needs_confirmation=True),
+                note="the check could not read the run's record; no further attempt")
+            return {"ok": False, "status": "check_unavailable", "verification": verdict}
+        if verdict.get("passed") and verdict.get("needs_owner_confirm"):
+            # Part of the proof is the owner's to give: their card, as for a
+            # goal they verify by hand. Friday never ticks it for them.
+            _release_goal_budget(goal_id, max(0, reserved_total - total_cost))
+            appr = approvals.create_approval(
+                kind="goal_milestone_confirm", subject_type="goal_milestone",
+                subject_id=_card_subject(goal_id, milestone_id, "confirm", milestone),
+                title=f"Confirm milestone: {milestone.get('name')}",
+                description=last_text[:1000], action_description=action_description,
+                force_gate=True, cost_estimate_mψ=0, interest_model=_safe_interest_model(),
+                payload={"draft_text": last_text[:4000], "check": verdict.get("conditions")},
+            )
+            _update_milestone(goal_id, milestone_id, status="verifying", verification=verdict,
+                              approval_id=appr.get("approval_id"), artifacts=[last_text[:2000]],
+                              **_closed_run(goal_id, milestone_id))
+            return {"ok": False, "status": "pending_manual_confirmation", "approval_id": appr.get("approval_id")}
         if not verdict.get("passed"):
             why = goal_state.repeated(marks[:-1], critique=str(verdict.get("critique") or ""))
             marks[-1]["critique"] = goal_state.fingerprint(verdict.get("critique") or "")
@@ -1780,7 +1810,8 @@ def _on_confirm_decided(approval: Dict[str, Any]) -> None:
 
 #: Blocker types that only the owner (or the task they resume) can clear.
 _OWNER_BLOCKERS = ("interrupted", "run_failed", "no_progress", "plan_changed",
-                   "approval_denied", "approval_expired", "approval_stale", "result_refused")
+                   "approval_denied", "approval_expired", "approval_stale", "result_refused",
+                   "check_unavailable")
 #: Of those, the ones stopped by a card: starting again asks on a new card.
 _CARD_BLOCKERS = ("approval_denied", "approval_expired", "approval_stale", "result_refused")
 

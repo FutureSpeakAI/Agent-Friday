@@ -245,7 +245,7 @@ def _checked(m: Dict[str, Any]) -> bool:
     (ran and scored) or, on a goal the owner verifies by hand, the owner's
     own confirmation. A skipped check or an override is not a check."""
     v = m.get("verification") or {}
-    if not v.get("passed") or v.get("human_override"):
+    if not v.get("passed") or v.get("human_override") or v.get("needs_owner_confirm"):
         return False
     return (v.get("status") == "ok" and v.get("score") is not None) or v.get("status") == "manual"
 
