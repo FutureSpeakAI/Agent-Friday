@@ -464,6 +464,10 @@ def _tool_save_output(inp):
                         import shutil
                         shutil.copyfileobj(src, dst)
                 except OSError as e:
+                    try:
+                        cand.unlink()               # no half-copied file left behind
+                    except OSError:
+                        pass
                     return "save_output: downloaded to %s but could not name it (%s)" % (saved, e)
             try:
                 saved.unlink()

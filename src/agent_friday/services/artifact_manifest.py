@@ -374,6 +374,10 @@ def submit(name: str, args: Any, result: Any, *, task_id: Optional[str] = None,
         _QUEUE.put_nowait(job)
         return True
     except queue.Full:
+        # Dropped, not guessed: a file with no line claims nothing (lookup
+        # returns None), but the gap is logged.
+        import logging
+        logging.getLogger(__name__).warning("artifact manifest queue full; %s call not recorded", name)
         return False
 
 

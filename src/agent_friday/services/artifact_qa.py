@@ -30,6 +30,7 @@ import csv
 import io
 import re
 import struct
+import sys
 import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
@@ -492,6 +493,7 @@ class _Html(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.lang = None
         self._title: List[str] = []
+        self._title_len = 0
         self._in_title = False
         self._in_style = False
         self.headings: List[int] = []
@@ -527,8 +529,9 @@ class _Html(HTMLParser):
 
     def handle_data(self, data):
         if self._in_title:
-            if sum(map(len, self._title)) < 4096:
+            if self._title_len < 4096:
                 self._title.append(data)
+                self._title_len += len(data)
         elif self._in_style:
             self.styles.append(data)
         else:
@@ -679,10 +682,14 @@ def check_isolated(path, timeout: float = CHECK_TIMEOUT_S) -> Dict:
     content. Never raises."""
     import json
     import subprocess
-    import sys
     p = Path(path)
+    kind = p.suffix.lower().lstrip(".")
     if p.suffix.lower() not in _CHECKERS:
-        return {"ok": True, "kind": p.suffix.lower().lstrip("."), "checked": False, "findings": []}
+        return {"ok": True, "kind": kind, "checked": False, "findings": []}
+    if getattr(sys, "frozen", False):
+        # A frozen build's executable is the app, not Python: never start it.
+        return {"ok": True, "kind": kind, "checked": False,
+                "findings": [_finding("validity", "warn", "the check cannot run in this build")]}
     code = ("import importlib.util,json,sys\n"
             "s=importlib.util.spec_from_file_location('artifact_qa',sys.argv[1])\n"
             "m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\n"
@@ -692,8 +699,14 @@ def check_isolated(path, timeout: float = CHECK_TIMEOUT_S) -> Dict:
                              capture_output=True, timeout=timeout, text=True,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         res = json.loads(out.stdout or "{}")
-        if isinstance(res, dict) and "findings" in res:
-            return res
+        # The child's answer is data, accepted only in exactly the expected shape.
+        fs = res.get("findings") if isinstance(res, dict) else None
+        if (isinstance(res, dict) and isinstance(res.get("ok"), bool) and isinstance(res.get("checked"), bool)
+                and isinstance(fs, list) and len(fs) <= MAX_FINDINGS
+                and all(isinstance(f, dict) and all(isinstance(f.get(k), str) for k in ("check", "severity", "message"))
+                        and f["severity"] in ("error", "warn") for f in fs)):
+            return {"ok": res["ok"], "kind": kind, "checked": res["checked"],
+                    "findings": [_finding(f["check"], f["severity"], f["message"]) for f in fs]}
         raise ValueError("no result")
     except subprocess.TimeoutExpired:
         why = "the check did not finish within %d seconds, so the file was not checked" % timeout
