@@ -149,7 +149,7 @@ try {
     $notesFile = Join-Path $GuardDir 'rollback_notes.jsonl'
     $notesBefore = @(Get-Content -LiteralPath $notesFile -ErrorAction SilentlyContinue).Count
     $server = Start-Friday
-    $page = Wait-Served $server
+    $reply = Wait-Served $server
     $log = Get-Content -LiteralPath (Join-Path $WorkDir ("server-{0}.log" -f $n)) -Raw -ErrorAction SilentlyContinue
     Check 'rollback' ($log -match 'rolled back to the last proven-bootable state') `
           $(if ($log -match '(Boot guard:[^\r\n]*)') { $Matches[1] } else { 'no boot-guard line in the server log' })
@@ -166,13 +166,13 @@ try {
     $notes = @(Get-Content -LiteralPath $notesFile -ErrorAction SilentlyContinue)
     Check 'note' (($notes.Count -gt $notesBefore) -and ($notes[-1] -match 'Rolled back')) "$($notes.Count - $notesBefore) new note(s)"
     $health = $null
-    if ($page) {
-        $token = [regex]::Match($page.Content, 'window\.__FRIDAY_API_TOKEN="([^"]+)"').Groups[1].Value
+    if ($reply) {
+        $token = [regex]::Match($reply.Content, 'window\.__FRIDAY_API_TOKEN="([^"]+)"').Groups[1].Value
         try { $health = (Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/health" -Headers @{ 'X-Friday-Token' = $token } `
                          -UseBasicParsing -TimeoutSec 60).Content | ConvertFrom-Json } catch { }
     }
-    Check 'serves-again' (($null -ne $page) -and ($page.Content -match 'FRIDAY') -and ([string]$health.version -eq $ExpectedVersion)) `
-          "page served: $($null -ne $page); /api/health version: $($health.version) (expected $ExpectedVersion)"
+    Check 'serves-again' (($null -ne $reply) -and ($reply.Content -match 'FRIDAY') -and ([string]$health.version -eq $ExpectedVersion)) `
+          "page served: $($null -ne $reply); /api/health version: $($health.version) (expected $ExpectedVersion)"
     Check 'data-intact' ((Get-Content -LiteralPath $sentinel -Raw -ErrorAction SilentlyContinue).Trim() -eq $stamp) 'the data folder was not touched'
 }
 finally {
