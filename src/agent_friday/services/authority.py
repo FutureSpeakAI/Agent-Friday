@@ -53,6 +53,20 @@ def _marker() -> Path:
 _SEEN: dict = {}
 
 
+def _archive_present() -> bool:
+    """Whether the ledger has an archive (A22) a receipt could have moved
+    into. Anything there, a link in its place or a check that fails counts:
+    the strict read below then decides (and holds if it cannot read it)."""
+    from agent_friday.services import action_ledger
+    a = action_ledger.ledger_dir() / action_ledger.ARCHIVE_DIR
+    try:
+        if not os.path.lexists(a):
+            return False
+        return not a.is_dir() or a.is_symlink() or any(a.iterdir())
+    except OSError:
+        return True
+
+
 def _newest_receipt() -> Optional[dict]:
     """The newest revoke/restore receipt in the ledger (signed entries only).
     Read on every outward decision, so only entries new since the last look
@@ -75,7 +89,7 @@ def _newest_receipt() -> Optional[dict]:
             ["authority"], 0, where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"))
     if hit is not None:
         _SEEN["rec"] = hit
-    elif cold and _SEEN.get("rec") is None:
+    elif cold and _SEEN.get("rec") is None and _archive_present():
         # a fresh process: the receipt may have moved into the archive (A22).
         # Read strictly: an archive that cannot be read raises, and revoked()
         # then holds (and this look is tried again next time)

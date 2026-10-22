@@ -299,3 +299,28 @@ def test_an_open_break_still_refuses_restore(monkeypatch, tmp_path):
     monkeypatch.setattr(action_ledger, "hold_reason", lambda: "the action ledger has a break")
     with pytest.raises(authority.AuthorityError):
         authority.restore()
+
+
+def test_a_fresh_ledger_with_no_archive_is_not_read_strictly(monkeypatch, tmp_path):
+    """CI on #308 (windows, test_reflex_chat): a cold start read the whole
+    ledger strictly for an archive that did not exist, and any hiccup held
+    every action as "could not be checked". No archive: nothing to look for."""
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import action_ledger, authority
+    authority._SEEN.clear()
+    real = action_ledger.entries
+
+    def no_strict_archive(*a, **k):
+        if k.get("archive") and k.get("strict"):
+            raise action_ledger.LedgerError("strict archive read")
+        return real(*a, **k)
+    monkeypatch.setattr(action_ledger, "entries", no_strict_archive)
+    assert not authority._archive_present()
+    assert authority.revoked() is None
+    # an archive folder with something in it is read (and holds if unreadable)
+    authority._SEEN.clear()
+    arch = action_ledger.ledger_dir() / action_ledger.ARCHIVE_DIR
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "stray.enc").write_bytes(b"x")
+    assert authority._archive_present()
+    assert (authority.revoked() or {}).get("unreadable") is True
