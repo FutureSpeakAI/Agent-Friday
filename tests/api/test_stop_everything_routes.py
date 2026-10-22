@@ -40,8 +40,14 @@ def gs(tmp_path, monkeypatch):
 
 def _page():
     import agent_friday.core as core
-    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-            "X-Friday-Token": core._current_api_token()}
+    h = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
+         "X-Friday-Token": core._current_api_token()}
+    try:   # this launch's desk key, which Friday's page sends on a press (services/desk_press)
+        from agent_friday.services import desk_press
+        h["X-Friday-Desk"] = desk_press._KEY
+    except ImportError:
+        pass
+    return h
 
 
 def test_the_button_stops_everything(client, gs):
