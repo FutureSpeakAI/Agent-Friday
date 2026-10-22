@@ -24,11 +24,11 @@ const DATA = { goals: [{
     can_restart: true, restart_needs_confirmation: true, can_run: false, verified: false }],
 }], unreadable: [] };
 
-function render(calls, confirms, data = DATA, open = null, answer = true, def = null, preview = null) {
+function render(calls, confirms, data = DATA, open = null, answer = true, def = null, preview = null, drafts = []) {
   const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/\r\n/g, '\n');
   const createElement = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) });
   let slot = 0;
-  const slots = [data, '', false, open, def, preview];
+  const slots = [data, '', false, open, def, preview, drafts];
   const ctx = vm.createContext({
     React: { createElement }, useState: init => { const i = slot++; return [i in slots ? slots[i] : init, () => {}]; },
     useEffect: () => {}, useCallback: fn => fn, encodeURIComponent, setInterval: () => 0, clearInterval: () => {},
@@ -95,6 +95,24 @@ test('each goal says how it is doing, in words (17.15)', () => {
   const node = all(tree, n => n.props && n.props['data-goal-health'] === 'poor')[0];
   assert.ok(node, 'no health line');
   assert.equal(label(node), 'Health: needs attention. 1 step waits for you.');
+});
+
+test('a draft Friday wrote from conversation waits for the owner, who confirms or discards it (G6)', () => {
+  const ready = { draft_id: 'gd_synthetic', title: 'Synthetic', spec: { title: 'Synthetic' }, questions: [],
+    summary: 'Friday drafted this goal from your conversation. Nothing happens until you confirm it.', summary_id: 'sid1' };
+  let calls = [];
+  let tree = render(calls, [], DATA, null, true, null, null, [ready]);
+  const text = all(tree, () => true).flatMap(n => (n.children || []).filter(c => typeof c === 'string')).join(' ');
+  assert.ok(text.includes('Draft from your conversation: Synthetic') && text.includes('Nothing happens until you confirm it.'));
+  let buttons = all(tree, n => n.type === 'button');
+  buttons.find(b => label(b) === 'Create this goal as summarised').props.onClick();
+  assert.equal(calls.at(-1)[0], '/api/goals/define');
+  assert.deepEqual(JSON.parse(calls.at(-1)[2]), { goal: { title: 'Synthetic' }, summary_id: 'sid1', draft_id: 'gd_synthetic' });
+  buttons.find(b => label(b) === 'Discard the draft').props.onClick();
+  assert.deepEqual([calls.at(-1)[0], calls.at(-1)[1]], ['/api/goals/drafts/gd_synthetic', 'DELETE']);
+  // With questions still open there is nothing to confirm yet.
+  tree = render([], [], DATA, null, true, null, null, [{ ...ready, questions: [{ key: 'people', ask: 'Who will it reach?' }] }]);
+  assert.ok(!all(tree, n => n.type === 'button').some(b => label(b) === 'Create this goal as summarised'));
 });
 
 test('a restart whose outcome is known does not ask and claims nothing', () => {
