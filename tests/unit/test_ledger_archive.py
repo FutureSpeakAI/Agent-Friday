@@ -692,3 +692,34 @@ def test_a_line_garbled_or_renamed_within_the_cache_window_is_refused(monkeypatc
     p.write_text("\n".join(["not json"] + lines[1:]) + "\n", encoding="utf-8")
     with pytest.raises(L.LedgerError):
         L.entries(["send_grant"], strict=True)
+
+
+
+@pytest.mark.parametrize("tail", [b" ", b"\r", b"\t "])
+def test_whitespace_after_the_last_line_hides_nothing_from_strict_reads(tail):
+    """Closing review (D1): whitespace with no newline is no unfinished write."""
+    L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
+    L.append("send_grant", {"event": "revoked", "grant_id": "g2"}, durable=True)
+    with open(L.live_path(), "ab") as f:
+        f.write(tail)
+    L.reset_caches()
+    got = {e["rec"]["grant_id"] for e in L.entries(["send_grant"], strict=True)}
+    assert got == {"g1", "g2"}
+    got = {e["rec"]["grant_id"] for e in L.entries(["send_grant"], strict=True, newest_first=False)}
+    assert got == {"g1", "g2"}
+
+
+def test_strict_reads_of_sealed_files_are_checked_once(monkeypatch):
+    """Closing review (performance): a sealed file is checked line by line once
+    per signature, then its rows of those kinds come from memory."""
+    for i in range(5):
+        L.append("send_grant", {"event": "revoked", "grant_id": "g%d" % i}, durable=True)
+    _seal()
+    L.append("activity", {"kind": "x"})
+    assert len(L.entries(["send_grant"], strict=True)) == 5
+    calls = []
+    real = L.entry_ok
+    monkeypatch.setattr(L, "entry_ok", lambda e, k: calls.append(1) or real(e, k))
+    for _ in range(3):
+        assert len(L.entries(["send_grant"], strict=True)) == 5
+    assert len(calls) <= 3 * 3, len(calls)          # the live file only (2 lines + migration)

@@ -552,9 +552,9 @@ def _reverse_lines(path: Path) -> Iterator[bytes]:
             rest = parts[0]
             for line in reversed(parts[1:]):
                 if line.strip():
-                    yield line.rstrip(b"\r")
+                    yield line[:-1] if line.endswith(b"\r") else line
         if rest.strip():
-            yield rest.rstrip(b"\r")
+            yield rest[:-1] if rest.endswith(b"\r") else rest
 
 
 def _safe_json(raw: bytes):
@@ -864,12 +864,42 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
             check = strict and gate and not verified
             acked_raw = set(_STATE.get("acked_raw") or ()) if check else set()
             for p in order:
+                cache_key = None
+                if (check and not isinstance(p, list) and p.name != LIVE_NAME
+                        and want is not None and where is None and limit is None):
+                    try:
+                        st_ = p.stat()
+                        cache_key = (str(p), st_.st_size, st_.st_mtime_ns, _tail_digest(p),
+                                     frozenset(want), frozenset(acked_raw), key_id(key))
+                    except OSError:
+                        cache_key = None
+                    hit = _STATE.setdefault("strict_rows", {}).get(cache_key) if cache_key else None
+                    if hit is not None:
+                        out.extend(reversed(hit) if newest_first else hit)
+                        continue
+                if cache_key is not None:
+                    # a sealed file checked line by line once; its rows of these kinds kept
+                    rows_ = []
+                    for e, raw, _n, _t in _iter_lines(p):
+                        if not isinstance(e, dict) or not entry_ok(e, key):
+                            if raw is None or hashlib.sha256(raw).hexdigest() not in acked_raw:
+                                raise LedgerError("a line of the action ledger does not hold its signature")
+                            if not isinstance(e, dict):
+                                continue
+                        if e.get("kind") in want:
+                            rows_.append(e)
+                    sr = _STATE.setdefault("strict_rows", {})
+                    if len(sr) > 512:
+                        sr.clear()
+                    sr[cache_key] = rows_
+                    out.extend(reversed(rows_) if newest_first else rows_)
+                    continue
                 if isinstance(p, list):
                     it = ((e, None) for e in (reversed(p) if newest_first else p))
                 else:
                     it = (((_safe_json(raw), raw) for raw in _reverse_lines(p)) if newest_first
                           else ((e, r) for e, r, _n, _t in _iter_lines(p)))
-                    if check and p.name == LIVE_NAME and not _ends_cleanly(p):
+                    if check and p.name == LIVE_NAME and _unfinished_tail(p):
                         # a write another process has not finished: not a line yet
                         it = _drop_unfinished(it, newest_first)
                 for e, raw in it:
@@ -908,6 +938,21 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
                 raise LedgerError("the ledger could not be read (%s)" % type(e).__name__)
             return out
     return []
+
+
+def _unfinished_tail(path: Path) -> bool:
+    """The file ends in bytes after its last newline that are more than
+    whitespace: a write not finished (whitespace alone is no line at all)."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            f.seek(max(0, size - 65536))
+            tail = f.read()
+    except OSError:
+        return False
+    i = tail.rfind(b"\n")
+    rest = tail[i + 1:] if i >= 0 else tail
+    return bool(rest.strip())
 
 
 def _drop_unfinished(it, newest_first: bool):
