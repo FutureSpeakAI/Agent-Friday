@@ -301,26 +301,43 @@ def test_an_open_break_still_refuses_restore(monkeypatch, tmp_path):
         authority.restore()
 
 
-def test_a_fresh_ledger_with_no_archive_is_not_read_strictly(monkeypatch, tmp_path):
-    """CI on #308 (windows, test_reflex_chat): a cold start read the whole
-    ledger strictly for an archive that did not exist, and any hiccup held
-    every action as "could not be checked". No archive: nothing to look for."""
+def test_a_moment_the_record_cannot_be_opened_is_tried_again(monkeypatch, tmp_path):
+    """CI on #308 (windows py3.11, test_reflex_chat): a file being replaced by
+    an append cannot be opened for a moment on Windows; one failed strict read
+    held every action. It is tried again; a break that stays holds."""
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
     from agent_friday.services import action_ledger, authority
-    authority._SEEN.clear()
+    monkeypatch.setattr(authority.time, "sleep", lambda s: None)
     real = action_ledger.entries
+    fails = {"n": 1}
 
-    def no_strict_archive(*a, **k):
-        if k.get("archive") and k.get("strict"):
-            raise action_ledger.LedgerError("strict archive read")
+    def flaky(*a, **k):
+        if k.get("strict") and fails["n"] > 0:
+            fails["n"] -= 1
+            raise PermissionError(13, "being replaced")
         return real(*a, **k)
-    monkeypatch.setattr(action_ledger, "entries", no_strict_archive)
-    assert not authority._archive_present()
-    assert authority.revoked() is None
-    # an archive folder with something in it is read (and holds if unreadable)
+    monkeypatch.setattr(action_ledger, "entries", flaky)
     authority._SEEN.clear()
-    arch = action_ledger.ledger_dir() / action_ledger.ARCHIVE_DIR
-    arch.mkdir(parents=True, exist_ok=True)
-    (arch / "stray.enc").write_bytes(b"x")
-    assert authority._archive_present()
+    assert authority.revoked() is None
+    fails["n"] = 99
+    authority._SEEN.clear()
     assert (authority.revoked() or {}).get("unreadable") is True
+
+
+def test_the_archive_is_always_read_strictly_on_a_cold_start(monkeypatch, tmp_path):
+    """Review of 6de27267a: skipping the strict read when the archive folder
+    is missing let a deleted archive (or a rolled-back live file) hide a
+    revocation from connected reads; the cold look and a rollback read strictly."""
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import action_ledger, authority
+    seen = []
+    real = action_ledger.entries
+    monkeypatch.setattr(action_ledger, "entries",
+                        lambda *a, **k: (seen.append(bool(k.get("strict"))), real(*a, **k))[1])
+    authority._SEEN.clear()
+    authority.revoked()
+    assert True in seen                              # no archive folder at all: still read strictly
+    seen.clear()
+    authority._SEEN.update(through=10 ** 6, stats=None)   # as if the ledger went back
+    authority.revoked()
+    assert True in seen

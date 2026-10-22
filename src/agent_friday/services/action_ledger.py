@@ -976,7 +976,8 @@ def newest_since(kinds: Iterable[str], since_seq: int,
                  where: Optional[Callable[[dict], bool]] = None) -> tuple[Optional[dict], int]:
     """(the newest signed entry of `kinds` after `since_seq` that `where`
     picks, or None; the newest seq on disk). Reads from the end and stops at
-    `since_seq`, so a caller that remembers the seq reads only what is new."""
+    `since_seq`, so a caller that remembers the seq reads only what is new.
+    A tip below `since_seq` means the ledger went back (cut or rolled back)."""
     want = set(kinds)
     try:
         key = _key()
@@ -984,7 +985,7 @@ def newest_since(kinds: Iterable[str], since_seq: int,
         return None, since_seq
     with _TLOCK:
         _check_dir()
-    tip = since_seq
+    tip = 0              # the newest signed seq actually on disk: a caller sees a rollback
     for p in reversed(_reader_segments()):
         try:
             for raw in _reverse_lines(p):

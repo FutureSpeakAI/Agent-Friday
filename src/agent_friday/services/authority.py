@@ -53,18 +53,24 @@ def _marker() -> Path:
 _SEEN: dict = {}
 
 
-def _archive_present() -> bool:
-    """Whether the ledger has an archive (A22) a receipt could have moved
-    into. Anything there, a link in its place or a check that fails counts:
-    the strict read below then decides (and holds if it cannot read it)."""
-    from agent_friday.services import action_ledger
-    a = action_ledger.ledger_dir() / action_ledger.ARCHIVE_DIR
-    try:
-        if not os.path.lexists(a):
-            return False
-        return not a.is_dir() or a.is_symlink() or any(a.iterdir())
-    except OSError:
-        return True
+#: A strict read that fails is tried again this many times: on Windows a file
+#: being replaced by an append (os.replace) cannot be opened for a moment.
+#: A real break stays broken across the tries and holds.
+STRICT_TRIES = 3
+
+
+def _strict_look(action_ledger) -> list:
+    last: Exception = RuntimeError("not read")
+    for i in range(STRICT_TRIES):
+        try:
+            return action_ledger.entries(
+                ["authority"], newest_first=True, verified=True, archive=True, strict=True,
+                gate=False, where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"),
+                limit=1)
+        except Exception as e:  # noqa: BLE001 - re-raised after the last try
+            last = e
+            time.sleep(0.05 * (i + 1))
+    raise last
 
 
 def _newest_receipt() -> Optional[dict]:
@@ -84,19 +90,17 @@ def _newest_receipt() -> Optional[dict]:
         ["authority"], int(_SEEN["through"]),
         where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"))
     if tip < int(_SEEN["through"]):
-        _SEEN.update(through=0, rec=None)            # the ledger went back: read it all again
+        _SEEN.update(through=0, rec=None)            # the ledger went back: read it all again,
+        cold = True                                  # strictly (archive and anchor) if nothing is found
         hit, tip = action_ledger.newest_since(
             ["authority"], 0, where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"))
     if hit is not None:
         _SEEN["rec"] = hit
-    elif cold and _SEEN.get("rec") is None and _archive_present():
+    elif cold and _SEEN.get("rec") is None:
         # a fresh process: the receipt may have moved into the archive (A22).
         # Read strictly: an archive that cannot be read raises, and revoked()
         # then holds (and this look is tried again next time)
-        rows = action_ledger.entries(["authority"], newest_first=True, verified=True, archive=True,
-                                     strict=True, gate=False,
-                                     where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"),
-                                     limit=1)
+        rows = _strict_look(action_ledger)
         _SEEN["rec"] = rows[0] if rows else None
     _SEEN["through"] = tip
     _SEEN["stats"] = stats
