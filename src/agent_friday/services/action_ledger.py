@@ -287,11 +287,23 @@ def entry_ok(e: dict, key: Optional[bytes]) -> bool:
 # ── The anchor outside the data folder ──────────────────────────────────────
 
 def _anchor_account() -> str:
-    try:
-        where = str(ledger_dir().resolve())
-    except OSError:
-        where = str(ledger_dir())
+    """One keychain account per data folder, named from the folder as Friday
+    is configured to use it: never from where a link or junction points, so
+    a junction swapped in for ledger/ cannot pick another (empty) account."""
+    where = os.path.normcase(os.path.abspath(str(ledger_dir())))
     return "action-ledger:" + hashlib.sha256(where.encode("utf-8")).hexdigest()[:16]
+
+
+def _is_link(p: Path) -> bool:
+    """A symlink or (on Windows) a junction or other reparse point."""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    import stat as _st
+    if _st.S_ISLNK(st.st_mode):
+        return True
+    return bool(getattr(st, "st_file_attributes", 0) & 0x400)
 
 
 def _anchor_file() -> Path:
@@ -801,6 +813,13 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
     want = set(kinds) if kinds else None
     if archive is None:
         archive = strict
+    if strict:
+        try:
+            ok = verify(force=False).get("ok")
+        except Exception:
+            ok = False
+        if not ok:
+            raise LedgerError("the action ledger has a break to review; strict readers wait")
     key = None
     if verified or archive:
         try:
@@ -824,6 +843,8 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
                     with _TLOCK:
                         _check_dir()
                         arch = _archived_entries(key, want)
+                except FileNotFoundError:
+                    raise
                 except Exception as e:  # noqa: BLE001
                     if strict:
                         raise LedgerError("the action ledger's archive could not be read (%s)" % e)
@@ -1113,6 +1134,8 @@ def _strict_anchor_check(m: Optional[dict]) -> None:
                     return
                 if e["seq"] < aseq:
                     break
+        except FileNotFoundError:
+            raise                        # sealed or archived meanwhile: the reader lists again
         except OSError:
             raise LedgerError("the ledger could not be read")
     tail = _manifest_tail(m) if isinstance(m, dict) else None
@@ -1624,6 +1647,11 @@ def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
     foreign = 0
     arch = _check_archive(key, deep)
     problems.extend(arch["problems"])
+    for linked in (ledger_dir(), ledger_dir() / SEGMENTS_DIR, ledger_dir() / ARCHIVE_DIR):
+        if _is_link(linked):
+            problems.append({"segment": "folder", "line": 0, "seq": None,
+                             "reason": "a ledger folder is a link or junction to somewhere else (%s)"
+                                       % linked.name, "raw_sha256": ""})
     total, last_seq, last_hash = 0, arch["last_seq"], arch["last_hash"]
     segs = segments()
     cache = _STATE.setdefault("seg_cache", {})
@@ -1884,6 +1912,13 @@ def acknowledge(by: str, note: str = "", *, reviewed: Optional[list] = None) -> 
         # read of the tip, which could take in a change made since the review)
         with _lock():
             _move_anchor_locked(out["seq"], out["hash"], force=True)
+        try:
+            kept = anchor_get()[0]
+        except Exception:
+            kept = None
+        if kept != (out["seq"], out["hash"]):
+            raise LedgerError("the acknowledgement was written, but the record kept outside the "
+                              "data folder could not be updated; try again")
         _STATE["max_seen"] = out["seq"]
     return {"acknowledged": len(items), "report": verify(force=True)}
 

@@ -567,3 +567,46 @@ def test_strict_readers_refuse_a_cut_record_even_without_an_archive():
     L.reset_caches()
     with pytest.raises(L.LedgerError):
         L.entries(["send_grant"], strict=True)
+
+
+def test_a_ledger_folder_swapped_for_a_link_is_a_break_and_keeps_its_anchor(tmp_path):
+    """Review round 6: a junction on ledger/ named another keychain account."""
+    import os
+    L.append("decision", {"tool": "x"}, durable=True)
+    acct = L._anchor_account()
+    d = L.ledger_dir()
+    old = tmp_path / "older-copy"
+    shutil.copytree(d, old)
+    L.append("decision", {"tool": "y"}, durable=True)
+    shutil.move(str(d), str(tmp_path / "moved-away"))
+    try:
+        os.symlink(old, d, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot make links")
+    L.reset_caches()
+    assert L._anchor_account() == acct
+    rep = L.verify()
+    assert not rep["ok"]
+    assert any("link" in p["reason"] for p in rep["problems"])
+    assert L.hold_reason()
+
+
+def test_strict_readers_wait_while_the_ledger_has_an_open_break():
+    L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
+    L.append("activity", {"kind": "x"})
+    p = L.live_path()
+    p.write_text(p.read_text(encoding="utf-8").replace('"x"', '"X"'), encoding="utf-8")
+    L.reset_caches()
+    with pytest.raises(L.LedgerError):
+        L.entries(["send_grant"], strict=True)
+
+
+def test_an_acknowledgement_that_cannot_keep_its_anchor_says_so(monkeypatch):
+    L.append("decision", {"tool": "x"}, durable=True)
+    p = L.live_path()
+    p.write_text(p.read_text(encoding="utf-8").replace('"x"', '"X"'), encoding="utf-8")
+    L.reset_caches()
+    rep = L.verify()
+    monkeypatch.setattr(L, "_anchor_set", lambda *a, **k: (_ for _ in ()).throw(OSError("keychain")))
+    with pytest.raises(L.LedgerError):
+        L.acknowledge("owner:test", reviewed=[q for q in rep["problems"] if not q["acknowledged"]])

@@ -710,6 +710,10 @@ def _add_ledger(tar, home: Path, ledger_files, manifest_files) -> Optional[dict]
             manifest_files.append({"path": rel.as_posix(), "size": got[0],
                                    "sha256": got[1], "category": cat})
         try:
+            if os.path.normcase(os.path.abspath(str(action_ledger.ledger_dir()))) == \
+                    os.path.normcase(os.path.abspath(str(home / "ledger"))):
+                seq, tip = action_ledger._read_tip_locked()
+                return {"last_seq": seq, "tip": tip} if seq else None
             live = home / "ledger" / action_ledger.LIVE_NAME
             last = None
             if live.exists():
