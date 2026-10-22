@@ -79,10 +79,18 @@ def test_the_card_says_what_the_server_is_where_it_lives_and_shows_no_key(home, 
     assert len(cards) == 1
     card = cards[0]
     assert "mcp.example.com" in card["title"]
-    assert "Notes search" in card["description"] and "https://mcp.example.com/mcp" in card["description"]
+    assert "Notes search" in card["description"] and "https://mcp.example.com" in card["description"]
+    assert "sign-in token" in card["description"], "the card says the token goes there too"
     assert "zq-not-a-real-key" not in json.dumps(card), "the address's query can carry a key"
     mc.MCPServerHTTP("Notes search", REMOTE).start()
     assert len(approvals.list_approvals(kind="mcp_host")) == 1, "one card per host, not one per start"
+
+
+def test_a_key_in_the_address_path_is_not_shown_either(home, no_network):
+    from agent_friday.services import approvals
+    mc.MCPServerHTTP("hooks", "https://hooks.example.com/api/mcp/s/zqpathsecret77/mcp").start()
+    card = approvals.list_approvals(kind="mcp_host", status="pending")[0]
+    assert "zqpathsecret77" not in json.dumps(card)
 
 
 def test_only_a_press_on_screen_approves_it(home, no_network):
@@ -107,8 +115,32 @@ def test_a_declined_host_is_not_asked_again_at_every_start(home, no_network):
     srv.start()
     assert "you declined it" in srv.error
     assert len(approvals.list_approvals(kind="mcp_host")) == 1
-    srv.ask_again = True                            # a restart from Settings
+    srv.ask_again = True                            # a restart pressed in Settings
     srv.start()
+    assert len(approvals.list_approvals(kind="mcp_host", status="pending")) == 1
+
+
+def test_a_card_that_expired_unanswered_is_asked_again(home, no_network):
+    from agent_friday.services import approvals
+    srv = mc.MCPServerHTTP("probe", REMOTE)
+    srv.start()
+    card = approvals.list_approvals(kind="mcp_host", status="pending")[0]
+    approvals._patch(card["approval_id"], status="expired")
+    srv.start()
+    assert "you declined it" not in srv.error
+    assert len(approvals.list_approvals(kind="mcp_host", status="pending")) == 1
+
+
+def test_a_restart_without_the_owners_press_does_not_ask_again(home, no_network):
+    from agent_friday.services import approvals
+    mgr = mc.MCPManager()
+    mgr.load_config({"servers": {"probe": {"url": REMOTE}}})
+    mgr.restart("probe")
+    card = approvals.list_approvals(kind="mcp_host", status="pending")[0]
+    approvals.decide_with_outcome(card["approval_id"], "deny", decided_by="owner:ui")
+    mgr.restart("probe")
+    assert approvals.list_approvals(kind="mcp_host", status="pending") == []
+    mgr.restart("probe", ask_again=True)
     assert len(approvals.list_approvals(kind="mcp_host", status="pending")) == 1
 
 
@@ -136,18 +168,61 @@ def test_this_computer_needs_no_row_but_friday_herself_is_never_a_server(home, m
     assert not mcp_hosts.allowed("http://192.168.1.20:8123/mcp"), "the local network is not this computer"
 
 
-def test_servers_configured_before_the_list_stay_reachable_once(home):
+@pytest.mark.parametrize("url", [
+    "http://127.1:3999/api", "http://2130706433:3999/api", "http://0.0.0.0:3999/api",
+    "http://[::]:3999/api", "http://[::ffff:127.0.0.1]:3999/api",
+], ids=["short", "integer", "unspecified4", "unspecified6", "mapped"])
+def test_odd_spellings_of_an_address_are_refused_not_asked(home, url):
     from agent_friday.governance import mcp_hosts
-    (home / "mcp_servers.json").write_text(json.dumps({"servers": {
-        "linear": {"url": "https://mcp.linear.app/mcp"},
-        "off": {"url": "https://off.example.org/mcp", "enabled": False}}}), encoding="utf-8")
+    assert "written in a way Friday does not reach" in mcp_hosts.check(url)
+    mcp_hosts.approve(url, made_by="owner:ui")
+    assert "written in a way Friday does not reach" in mcp_hosts.check(url), \
+        "not even a row on the list makes such an address reachable"
+
+
+@pytest.mark.parametrize("url", [
+    "https://user@mcp.example.com/mcp", "https://mcp.example.com%2eevil.example/mcp",
+    "https://evil.example\\@mcp.example.com/mcp",
+], ids=["userinfo", "escape", "backslash"])
+def test_addresses_two_parsers_read_differently_are_refused(home, url):
+    from agent_friday.governance import mcp_hosts
+    assert "not a plain http or https web address" in mcp_hosts.check(url)
+
+
+def test_servers_configured_at_the_first_start_stay_reachable_once(home):
+    from agent_friday.governance import mcp_hosts
+    cfg = {"servers": {"linear": {"url": "https://mcp.linear.app/mcp"},
+                       "off": {"url": "https://off.example.org/mcp", "enabled": False}}}
+    assert mcp_hosts.carry_over_at_boot(cfg) == 1
     assert mcp_hosts.allowed("https://mcp.linear.app/mcp")
     assert mcp_hosts.all_hosts()["mcp.linear.app:443"]["made_by"] == "carried_over"
     assert not mcp_hosts.allowed("https://off.example.org/mcp")
-    (home / "mcp_servers.json").write_text(json.dumps({"servers": {
-        "new": {"url": "https://later.example.net/mcp"}}}), encoding="utf-8")
+    cfg["servers"]["new"] = {"url": "https://later.example.net/mcp"}
+    assert mcp_hosts.carry_over_at_boot(cfg) == 0, "it runs once"
     assert not mcp_hosts.allowed("https://later.example.net/mcp"), \
         "a server added after the list exists needs the owner's press"
+
+
+def test_a_server_added_on_a_fresh_install_is_never_carried_over(home):
+    """No start-up carry-over has run: checking a newly added server never adopts it."""
+    from agent_friday.governance import mcp_hosts
+    (home / "mcp_servers.json").write_text(json.dumps({"servers": {
+        "new": {"url": "https://fresh.example.net/mcp"}}}), encoding="utf-8")
+    assert "you have not allowed" in mcp_hosts.check("https://fresh.example.net/mcp")
+    assert mcp_hosts.all_hosts() == {}
+
+
+def test_a_deleted_or_emptied_list_is_never_refilled_from_the_configuration(home):
+    from agent_friday.governance import mcp_hosts
+    cfg = {"servers": {"a": {"url": "https://a.example.net/mcp"}}}
+    mcp_hosts.carry_over_at_boot(cfg)
+    (home / "mcp_hosts.json").unlink()
+    cfg["servers"]["b"] = {"url": "https://b.example.net/mcp"}
+    assert mcp_hosts.carry_over_at_boot(cfg) == 0
+    assert not mcp_hosts.allowed("https://b.example.net/mcp")
+    (home / "mcp_hosts.json").write_text(json.dumps({"x.example.net:443": {"host": "x"}}),
+                                        encoding="utf-8")
+    assert "changed outside Friday" in mcp_hosts.check("https://a.example.net/mcp")
 
 
 class _Redirector(BaseHTTPRequestHandler):
@@ -186,6 +261,7 @@ def _serve(handler):
 
 
 def test_a_redirect_to_another_host_is_not_followed(home):
+    _Recorder.hits = []
     other = _serve(_Recorder)
     _Redirector.target = "http://localhost:%d/collect" % other.server_address[1]
     first = _serve(_Redirector)
