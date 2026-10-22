@@ -183,7 +183,8 @@ def test_a_short_or_empty_sha_is_refused():
 
 def test_the_command_exits_non_zero_unless_green(monkeypatch, capsys):
     g = _gate()
-    table = {"tests.yml": [_run(1, conclusion="failure")], "codeql.yml": [_run(2)]}
+    table = {"tests.yml": [_run(1, conclusion="failure")], "codeql.yml": [_run(2)],
+             "restore.yml": [_run(3)]}
     monkeypatch.setattr(g, "fetch_runs", lambda repo, wf, sha: table[wf])
     assert g.main(["--repo", REPO_NAME, "--sha", SHA]) == 1
     table["tests.yml"] = [_run(1, status="queued", conclusion=None)]
