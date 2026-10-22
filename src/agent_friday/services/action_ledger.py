@@ -1091,11 +1091,45 @@ def _walk_archived(plain: bytes, key: bytes, r: dict) -> str:
     return ""
 
 
+def _strict_anchor_check(m: Optional[dict]) -> None:
+    """A strict reader refuses a ledger that does not hold its anchor (the
+    record kept outside the data folder): cut, rolled back, or replaced."""
+    try:
+        anchor = anchor_get()[0]
+    except Exception:
+        raise LedgerError("the ledger's anchor could not be read")
+    if not anchor or anchor[0] <= 0:
+        return
+    aseq, ahash = anchor
+    for p in reversed(_reader_segments()):
+        try:
+            for raw in _reverse_lines(p):
+                e = _safe_json(raw)
+                if not isinstance(e, dict) or not isinstance(e.get("seq"), int):
+                    continue
+                if e["seq"] == aseq:
+                    if e.get("hash") != ahash or body_hash(e) != ahash:
+                        raise LedgerError("the record kept outside the data folder was replaced")
+                    return
+                if e["seq"] < aseq:
+                    break
+        except OSError:
+            raise LedgerError("the ledger could not be read")
+    tail = _manifest_tail(m) if isinstance(m, dict) else None
+    if tail and aseq <= tail[0]:
+        if aseq == tail[0] and tail[1] != ahash:
+            raise LedgerError("the record kept outside the data folder was replaced")
+        return                           # inside the archive (its signed list holds it)
+    raise LedgerError("entries are missing: the ledger is behind the record kept outside the data folder")
+
+
 def _archived_entries(key: bytes, kinds: Optional[Iterable[str]] = None) -> list[list[dict]]:
     """Every archived file's entries (of `kinds`, when given), oldest file
     first. Rows of a kind filter are kept in memory per file (a strict reader
-    such as revocations asks again often); a read of everything is not kept."""
+    such as revocations asks again often); a read of everything is not kept.
+    Raises when the ledger does not hold its anchor."""
     m = _read_manifest()
+    _strict_anchor_check(m)
     if m is None:
         if _archive_gone(key):
             raise LedgerError("the action ledger's archive is missing")
@@ -1128,12 +1162,6 @@ def _archived_entries(key: bytes, kinds: Optional[Iterable[str]] = None) -> list
             break
     if first is not None and tail and (first.get("seq") != tail[0] + 1 or first.get("prev") != tail[1]):
         raise LedgerError("the live record does not continue from the archive")
-    try:
-        anchor = anchor_get()[0]
-    except Exception:
-        raise LedgerError("the ledger's anchor could not be read")
-    if anchor and anchor[0] > max(_read_tip_locked()[0], tail[0] if tail else 0):
-        raise LedgerError("entries are missing: the ledger is behind the record kept outside the data folder")
     want = frozenset(kinds) if kinds else None
     rows_cache = _STATE.setdefault("arch_rows", {})
     out = []
@@ -1771,6 +1799,7 @@ def verify(*, force: bool = True, migrate: bool = True) -> dict:
             fresh = time.time() - (_STATE.get("full_at") or 0.0) < FULL_RECHECK_S
         if not force and cached and cached[0] == stats and fresh:
             return dict(cached[1])
+        full = force or not fresh
         # a forced or periodic full check re-reads sealed segments too: an
         # edit that put back a segment's size and mtime is caught here
         if force or not fresh:
@@ -1789,7 +1818,9 @@ def verify(*, force: bool = True, migrate: bool = True) -> dict:
         with _CACHE_LOCK:
             if _stats() == stats:
                 _STATE["verified"] = (stats, report)
-                _STATE["full_at"] = time.time()
+                if full:
+                    # only a check that re-read every file restarts the clock
+                    _STATE["full_at"] = time.time()
     return dict(report)
 
 
@@ -2019,7 +2050,11 @@ def _chain_is_genuine() -> bool:
         return False
     first = _first_on_disk()
     if first is None:
-        return True
+        try:
+            a = anchor_get()[0]
+        except Exception:
+            return False
+        return a is None or a[0] == 0
     if not (entry_ok(first, key) and first.get("seq") == 1 and first.get("prev") == GENESIS):
         return False
     rep = _verify_files(key)
@@ -2095,8 +2130,9 @@ def migrate_legacy() -> dict:
             _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
             try:
                 present = _legacy_present()
-                empty = (not any(p.exists() and p.stat().st_size for p in segments())
-                         and not _archive_trace())
+                # empty: no entry anywhere (bytes that are not an entry count
+                # as nothing) and no sign of an archive
+                empty = _first_on_disk() is None and not _archive_trace()
                 if not present and not empty:
                     return {"migrated": moved}
                 try:
@@ -2141,10 +2177,10 @@ def migrate_legacy() -> dict:
                             batch.append((kind, rec))
                             n_imported += 1
                             if len(batch) >= 2000:
-                                _append_locked(key, batch, False)
+                                _append_locked(key, batch, True)
                                 batch = []
                         if batch:
-                            _append_locked(key, batch, False)
+                            _append_locked(key, batch, True)
                         kept = _set_aside(p, d / "legacy", digest)
                         _append_locked(key, [("migration", {
                             "store": kind, "from": _rel(p), "file_sha256": digest,

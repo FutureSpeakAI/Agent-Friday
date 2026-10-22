@@ -532,3 +532,38 @@ def test_strict_readers_refuse_a_rolled_back_list_with_no_live_record_left():
     L.reset_caches()
     with pytest.raises(L.LedgerError):
         L.entries(["send_grant"], strict=True)
+
+
+@pytest.mark.parametrize("junk", [b"\n", b"[]\n", b"garbage"])
+def test_bytes_that_are_not_an_entry_do_not_reopen_the_switch(junk):
+    """Review round 5: an anchored ledger emptied down to a line that is not an entry."""
+    L.migrate_legacy()
+    L.append("decision", {"tool": "x"}, durable=True)
+    shutil.rmtree(L.ledger_dir())
+    L.ledger_dir().mkdir(parents=True)
+    L.live_path().write_bytes(junk)
+    _plant_old_receipt()
+    assert not _evil_read()
+
+
+def test_ordinary_rechecks_do_not_postpone_the_full_reread(monkeypatch):
+    """Review round 5: every recompute restarted the full-check clock, so an
+    edit that kept a sealed file's size, time and tail could hide for good."""
+    _old_and_new(n_old=3, n_new=1)
+    L.verify(force=True)
+    full_at = L._STATE["full_at"]
+    L.append("activity", {"kind": "x"})
+    L.verify(force=False)
+    assert L._STATE["full_at"] == full_at
+
+
+def test_strict_readers_refuse_a_cut_record_even_without_an_archive():
+    """Review round 5: the strict anchor check ran only with an archive."""
+    L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
+    L.append("send_grant", {"event": "revoked", "grant_id": "g2"}, durable=True)
+    lines = L.live_path().read_text(encoding="utf-8").splitlines()
+    L.live_path().write_text("\n".join(lines[:-1]) + "\n" +
+                             json.dumps({"seq": 99999999, "hash": "x"}) + "\n", encoding="utf-8")
+    L.reset_caches()
+    with pytest.raises(L.LedgerError):
+        L.entries(["send_grant"], strict=True)
