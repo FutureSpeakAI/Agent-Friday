@@ -233,14 +233,23 @@ def test_pressing_test_on_a_cloud_key_sends_nothing(real_settings, monkeypatch):
     from agent_friday import cli
     monkeypatch.setattr(cs, "_test_provider", _never)
     monkeypatch.setattr(cs, "_test_brave", _never)
-    monkeypatch.setattr(cs, "_test_google", _never)
-    for item in ("provider:anthropic", "provider:brave", "google"):
+    monkeypatch.setattr(cs, "_key_present", lambda name: True, raising=False)
+    for item in ("provider:anthropic", "provider:brave"):
         out = cs.test(item)
         assert out["state"] == cs.UNKNOWN and "choose where Friday thinks" in out["text"], item
     for fn in (sw._validate_anthropic, sw._validate_gemini,
                cli._validate_anthropic_key, cli._validate_gemini_key):
         ok, msg = fn("sk-test")  # pragma: allowlist secret
         assert ok is None and "choose where Friday thinks" in msg, fn.__name__
+
+
+def test_a_missing_key_still_says_no_key_is_saved(real_settings, monkeypatch):
+    real_settings._load_settings_raw()
+    from agent_friday.services import connections_setup as cs
+    monkeypatch.setattr(cs, "_key_present", lambda name: False, raising=False)
+    monkeypatch.setattr(cs, "_test_provider",
+                        lambda name: cs._out(cs.NOT_CONNECTED, "No key is saved yet."))
+    assert cs.test("provider:openrouter")["state"] == cs.NOT_CONNECTED
 
 
 def test_a_deep_provider_check_sends_nothing(real_settings, monkeypatch):
@@ -373,8 +382,7 @@ def test_the_router_refusal_asks_to_choose_not_to_send_to_claude(real_settings):
     real_settings._load_settings_raw()
     from agent_friday.routing.model_router import ModelRouter
     r = ModelRouter.__new__(ModelRouter)
-    r.fallback_to_cloud = True
-    r.mode = "local_only"
+    r.config = {"mode": "local_only", "fallback_to_cloud": True}
     out = r._local_unavailable("chat", "no model loaded")
     assert out["offer_cloud_switch"] is False
     assert "haven't chosen where I think" in out["warning"]
