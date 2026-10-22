@@ -72,7 +72,7 @@ def test_host_rules():
 
 
 def test_an_allowed_host_passes_and_is_recorded(origin):
-    s = ep.open_session("approved command", mode="enforce", allow_hosts=["127.0.0.1"])
+    s = ep.open_session("approved command", mode="enforce", allow_hosts=["127.0.0.1:%d" % origin])
     code, body = _get(s["url"], "http://127.0.0.1:%d/x" % origin)
     assert code == 200 and body == b"hello from origin"
     row = ep.record()[-1]
@@ -84,6 +84,18 @@ def test_a_host_off_the_list_is_refused_and_recorded(origin):
     code, body = _get(s["url"], "http://127.0.0.1:%d/x" % origin)
     assert code == 403 and b"not on the allowlist" in body
     assert ep.record()[-1]["allowed"] is False
+
+
+def test_another_port_needs_listing(origin):
+    s = ep.open_session("approved command", mode="enforce", allow_hosts=["127.0.0.1"])
+    code, body = _get(s["url"], "http://127.0.0.1:%d/" % origin)
+    assert code == 403 and b"port" in body
+
+
+def test_a_name_that_resolves_to_this_pc_is_refused(origin):
+    s = ep.open_session("approved command", mode="enforce", allow_hosts=["localhost:%d" % origin])
+    code, body = _get(s["url"], "http://localhost:%d/" % origin)
+    assert code == 403 and b"this PC" in body
 
 
 def test_deny_mode_refuses_everything(origin):
@@ -100,15 +112,17 @@ def test_observe_mode_passes_and_records(origin):
 def test_no_credential_no_passage(origin):
     s = ep.open_session("approved command", mode="observe")
     port = int(s["url"].rsplit(":", 1)[1])
+    before = len(ep.record())
     code, _ = _get("http://127.0.0.1:%d" % port, "http://127.0.0.1:%d/" % origin)
     assert code == 407
+    assert len(ep.record()) == before          # an unknown caller is counted, never recorded
     # A closed session's credential stops working.
     ep.close_session(s["token"])
     assert _get(s["url"], "http://127.0.0.1:%d/" % origin)[0] == 407
 
 
 def test_connect_tunnels_only_to_an_allowed_host(origin):
-    s = ep.open_session("approved command", mode="enforce", allow_hosts=["127.0.0.1"])
+    s = ep.open_session("approved command", mode="enforce", allow_hosts=["127.0.0.1:%d" % origin])
     port = int(s["url"].rsplit(":", 1)[1])
     auth = base64.b64encode(("friday:" + s["token"]).encode()).decode()
     with socket.create_connection(("127.0.0.1", port), timeout=10) as c:
