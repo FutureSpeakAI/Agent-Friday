@@ -528,6 +528,15 @@ if not _TESTING:
     except Exception as _frm_err:
         print(f"  First-run models: unavailable ({_frm_err})")
 
+    # A21: an install that finished setup before the key store passphrase became the default
+    # is offered it once, on a card (services/keystore_offer). Never forced.
+    try:
+        from agent_friday.services import keystore_offer as _ko
+        threading.Thread(target=_ko.push_card_if_pending, daemon=True,
+                         name="keystore-offer-card").start()
+    except Exception as _ko_err:
+        print(f"  Key store offer: unavailable ({type(_ko_err).__name__})")
+
     threading.Thread(target=_start_kill_hotkey, daemon=True).start()
     # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central is
     # disabled for general release; re-enable once there are 50+ skills.

@@ -50,7 +50,33 @@ def store_vault_passphrase(passphrase: str) -> bool:
     except Exception:
         pass
     _vp.reset_cache()
+    _protect_saved_keys(vault_pass)
     return True
+
+
+def _keys_left_unprotected() -> bool:
+    """The owner unticked "also lock my saved keys" on the setup screen (onboarding acks)."""
+    import agent_friday.core as core
+    try:
+        acks = json.loads((core.FRIDAY_DIR / "onboarding.json").read_text(encoding="utf-8"))
+        return bool(isinstance(acks, dict) and acks.get("keys_unprotected"))
+    except Exception:
+        return False
+
+
+def _protect_saved_keys(vault_pass: str) -> None:
+    """A21: the same passphrase locks the key store's root key, by default; the owner can
+    have opted out on the setup screen. Never raises: a wrap that does not work leaves the key
+    store as it was and says so in the record."""
+    try:
+        from agent_friday.services import keystore_offer as _ko
+        if _keys_left_unprotected():
+            _ko.record("skipped", "setup")
+            return
+        ok, _why = _ko.protect_keystore(vault_pass)
+        _ko.record("protected" if ok else "failed", "setup")
+    except Exception:
+        pass
 
 
 def routing_delta(mode: str) -> dict:

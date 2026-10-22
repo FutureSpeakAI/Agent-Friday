@@ -1457,9 +1457,16 @@ def api_onboarding_acks():
 
     data = request.get_json(silent=True) or {}
     from datetime import datetime, timezone
-    for k in ("collects_ack", "cloud_ack", "third_party_ack", "vault_skipped"):
+    for k in ("collects_ack", "cloud_ack", "third_party_ack", "vault_skipped", "keys_unprotected"):
         if k in data:
             state[k] = bool(data[k])
+    if data.get("vault_skipped") is True or data.get("keys_unprotected") is True:
+        # A21: setup asked and the owner chose not to lock the saved keys: no card later.
+        try:
+            from agent_friday.services import keystore_offer as _ko
+            _ko.record("skipped", "setup")
+        except Exception:
+            pass
     if data.get("updates_choice") in ("on", "off"):
         state["updates_choice"] = data["updates_choice"]
     if data.get("call_mode_choice") in ("automatic", "ask", "off"):

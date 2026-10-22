@@ -50171,6 +50171,8 @@ function ConsentFlow({ onDone }) {
   const [i, setI] = React.useState(0);
   const [pass, setPass] = React.useState('');
   const [pass2, setPass2] = React.useState('');
+  // A21: the vault passphrase also locks the saved keys, on by default; the owner may untick it.
+  const [protectKeys, setProtectKeys] = React.useState(true);
   const [mode, setMode] = React.useState('');
   const [upd, setUpd] = React.useState('');
   const [calls, setCalls] = React.useState('');
@@ -50221,10 +50223,10 @@ function ConsentFlow({ onDone }) {
 
   const onVaultNext = (skip) => {
     setErr('');
-    if (skip) { setPass(''); ack({ vault_skipped: true }); advance(); return; }
+    if (skip) { setPass(''); ack({ vault_skipped: true, keys_unprotected: true }); advance(); return; }
     if (!pass) { setErr('Enter a passphrase, or choose Skip for now.'); return; }
     if (pass !== pass2) { setErr('The two passphrases do not match.'); return; }
-    ack({ vault_skipped: false });
+    ack({ vault_skipped: false, keys_unprotected: !protectKeys });
     advance();
   };
 
@@ -50281,6 +50283,13 @@ function ConsentFlow({ onDone }) {
           border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8
         }
       }),
+      s.keys_tick && React.createElement('label', {
+        style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, fontSize: 14, color: '#cfd6dd', cursor: 'pointer' }
+      },
+        React.createElement('input', {
+          type: 'checkbox', checked: protectKeys, 'data-testid': 'vault-keys-tick',
+          onChange: e => setProtectKeys(e.target.checked)
+        }), s.keys_tick),
       err && React.createElement('div', {
         style: { color: '#ff0080', fontSize: 12, marginTop: 8 }
       }, err)),

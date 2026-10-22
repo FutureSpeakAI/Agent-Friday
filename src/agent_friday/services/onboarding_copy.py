@@ -129,6 +129,17 @@ like. Friday encrypts whatever already exists the next time she starts, so
 nothing is stranded - but everything written before then will have spent that
 time readable."""
 
+#: A21 (2026-10-21): the same passphrase locks the saved keys, by default.
+VAULT_KEYS = """\
+The same passphrase also locks Friday's saved keys: the AI provider keys and
+account sign-ins she keeps on this computer, so the file holding them is
+useless to anyone who copies it. Start-up stays automatic. This is on unless
+you untick it below. If the passphrase is ever lost, you would enter those keys
+and sign in again; nothing else is lost with them."""
+
+#: The tick box under the passphrase fields (on by default).
+VAULT_KEYS_TICK = "Also lock my saved keys with this passphrase (recommended)"
+
 VAULT_WARNING = """\
 If you lose this passphrase the files cannot be recovered. There is no
 reset. Put it in your password manager, or write it down somewhere you would
@@ -302,8 +313,8 @@ def screen(name: str) -> dict:
         # only unrecoverable fact on the screen. Rendering it as one more
         # paragraph in a stack of five buries it.
         return {"title": VAULT_TITLE,
-                "blocks": [VAULT, VAULT_SCOPE, VAULT_LOCATION],
-                "warning": VAULT_WARNING}
+                "blocks": [VAULT, VAULT_SCOPE, VAULT_KEYS, VAULT_LOCATION],
+                "warning": VAULT_WARNING, "keys_tick": VAULT_KEYS_TICK}
     if name == "routing":
         return {"title": ROUTING_TITLE, "blocks": [ROUTING],
                 "choices": [{"mode": m, "label": lbl, "detail": det}
