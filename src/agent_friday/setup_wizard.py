@@ -592,7 +592,7 @@ def _record_onboarding(**kv) -> None:
         # A21: setup asked; with no passphrase the saved keys stay unlocked, by the owner's choice.
         try:
             from agent_friday.services import keystore_offer as _ko
-            _ko.record("skipped", "setup")
+            _ko.record_skip_during_setup("setup")
         except Exception:
             pass
 
@@ -1192,7 +1192,18 @@ def _vault_keep_existing(total: int, existing: str, source: str,
 
 
 def _offer_to_lock_saved_keys(pw: str) -> None:
-    """A21: the same passphrase locks the saved keys, by default; the owner can say no."""
+    """A21: the same passphrase locks the saved keys, by default; the owner can say no.
+    Never stops the wizard: the passphrase is already stored when this runs."""
+    try:
+        _ask_to_lock_saved_keys(pw)
+    except (KeyboardInterrupt, EOFError):
+        raise
+    except Exception as e:
+        console.print(f"  [yellow]Your saved keys were not locked ({type(e).__name__}). You can "
+                      "lock them later in Settings > Privacy & Data.[/yellow]\n")
+
+
+def _ask_to_lock_saved_keys(pw: str) -> None:
     from agent_friday.services import keystore_offer as _ko
     from agent_friday.services.onboarding_copy import VAULT_KEYS
     console.print("  " + VAULT_KEYS.replace("\n", "\n  ") + "\n")
@@ -1205,7 +1216,7 @@ def _offer_to_lock_saved_keys(pw: str) -> None:
                       "  You can lock them later in Settings > Privacy & Data.[/dim]\n")
         return
     ok, why = _ko.protect_keystore(pw)
-    _ko.record("protected" if ok else "failed", "setup")
+    _ko.record("protected" if ok else "failed", "setup", why)
     console.print("  [green]Saved keys locked with your passphrase.[/green]\n" if ok
                   else "  [yellow]Not locked: " + why + ".[/yellow]\n")
 

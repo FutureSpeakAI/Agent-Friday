@@ -21,21 +21,23 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 
 _log = logging.getLogger("friday.keystore_offer")
 
 FILE_NAME = "keystore_offer.json"
+_LOCK = threading.Lock()   # the start-up card thread and request handlers both write the record
 
 CARD_TITLE = "Lock your saved keys with a passphrase?"
 CARD_BODY = ("Friday keeps your AI provider keys and account sign-ins encrypted on this computer. "
-             "The key that unlocks them is protected only by this Windows account's file "
+             "The key that unlocks them is protected only by this computer account's file "
              "permissions. A passphrase (your vault passphrase) can lock it too, so the file alone "
              "is useless to anyone who copies it. Start-up stays automatic. If you ever lose the "
              "passphrase, you would enter those keys and sign-ins again; locking them loses nothing "
              "else. This is optional, and you can do it any time in Settings > Privacy & Data (set a "
              "vault passphrase there first if you have not).")
-CARD_ACTIONS = [{"label": "Lock my saved keys", "workspace": "settings", "tab": "privacy"}]
+CARD_ACTIONS = [{"label": "Open Privacy & Data to lock them", "workspace": "settings", "tab": "privacy"}]
 
 
 def _path():
@@ -52,18 +54,35 @@ def state() -> dict:
 
 
 def _write(**fields) -> dict:
-    d = dict(state(), **fields, at=datetime.now(timezone.utc).isoformat())
-    p = _path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(FILE_NAME + ".tmp")
-    tmp.write_text(json.dumps(d, indent=1, sort_keys=True), encoding="utf-8")
-    tmp.replace(p)
-    return d
+    with _LOCK:
+        d = dict(state(), **fields, at=datetime.now(timezone.utc).isoformat())
+        p = _path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(FILE_NAME + ".tmp")
+        tmp.write_text(json.dumps(d, indent=1, sort_keys=True), encoding="utf-8")
+        tmp.replace(p)
+        return d
 
 
-def record(decided: str, via: str) -> dict:
-    """Record the owner's decision (setup's choice, or a skip). After this no card is shown."""
-    return _write(decided=decided, via=via, card=state().get("card") or "not_needed")
+#: Decisions that end the offer. "failed" does not: the owner wanted the lock and did not get it,
+#: so the one-time card still comes, with the reason.
+SETTLED = ("protected", "skipped", "already")
+
+
+def record(decided: str, via: str, why: str = "") -> dict:
+    """Record the owner's decision (setup's choice, or a skip). After a settled one no card is
+    shown. `why` is the plain reason a lock did not happen (never a secret)."""
+    return _write(decided=decided, via=via, why=str(why or "")[:300],
+                  card=state().get("card") or "not_needed")
+
+
+def record_skip_during_setup(via: str = "setup") -> bool:
+    """A skip counts only while setup is still asking, and never over an earlier decision: on a
+    finished install the one-time card is the place to decide."""
+    if _setup_finished() or state().get("decided") in SETTLED:
+        return False
+    record("skipped", via)
+    return True
 
 
 def passphrase_is_kept(passphrase: str) -> bool:
@@ -118,7 +137,7 @@ def push_card_if_pending() -> str:
     """For an install that finished setup before A21: one card, once. Returns what happened:
     'decided' | 'setup_pending' | 'already' | 'shown' | 'failed'."""
     st = state()
-    if st.get("decided") or st.get("card") == "shown":
+    if st.get("decided") in SETTLED or st.get("card") == "shown":
         return "decided"
     if not _setup_finished():
         return "setup_pending"                  # setup will ask
@@ -134,7 +153,10 @@ def push_card_if_pending() -> str:
         pass
     try:
         import agent_friday.notifications_engine as _ne
-        notice = _ne.push(title=CARD_TITLE, body=CARD_BODY, priority="high", source="security",
+        body = CARD_BODY
+        if st.get("decided") == "failed" and st.get("why"):
+            body = ("Setup tried to lock your saved keys and could not: " + st["why"] + ". " + body)
+        notice = _ne.push(title=CARD_TITLE, body=body, priority="high", source="security",
                           kind="keystore_offer", emitter="KS1", dedupe_key="keystore-passphrase-offer",
                           tier="needs_you", actions=list(CARD_ACTIONS),
                           target={"workspace": "settings", "tab": "privacy"})

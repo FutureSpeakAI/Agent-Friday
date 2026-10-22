@@ -33,8 +33,9 @@ _SETTINGS_KEYS = ('agent_name', 'orchestrator_model', 'subagent_model',
                   'distribution', 'demo_mode', 'capability_routing')
 
 
-def store_vault_passphrase(passphrase: str) -> bool:
-    """Arm at-rest vault encryption now. Never logged, never written in clear."""
+def store_vault_passphrase(passphrase: str, report: dict | None = None) -> bool:
+    """Arm at-rest vault encryption now. Never logged, never written in clear.
+    `report`, when given, receives what happened to the saved keys (A21): keys_locked, keys_why."""
     vault_pass = (passphrase or "").strip()
     if not vault_pass:
         return False
@@ -50,7 +51,9 @@ def store_vault_passphrase(passphrase: str) -> bool:
     except Exception:
         pass
     _vp.reset_cache()
-    _protect_saved_keys(vault_pass)
+    outcome = _protect_saved_keys(vault_pass)
+    if report is not None:
+        report.update(outcome)
     return True
 
 
@@ -64,19 +67,23 @@ def _keys_left_unprotected() -> bool:
         return False
 
 
-def _protect_saved_keys(vault_pass: str) -> None:
+def _protect_saved_keys(vault_pass: str) -> dict:
     """A21: the same passphrase locks the key store's root key, by default; the owner can
     have opted out on the setup screen. Never raises: a wrap that does not work leaves the key
-    store as it was and says so in the record."""
+    store as it was, says why (in the answer and the record), and the one-time card offers it
+    again after setup."""
     try:
         from agent_friday.services import keystore_offer as _ko
         if _keys_left_unprotected():
             _ko.record("skipped", "setup")
-            return
-        ok, _why = _ko.protect_keystore(vault_pass)
-        _ko.record("protected" if ok else "failed", "setup")
-    except Exception:
-        pass
+            return {"keys_locked": False, "keys_why": "you chose to leave them as they are"}
+        ok, why = _ko.protect_keystore(vault_pass)
+        _ko.record("protected" if ok else "failed", "setup", why)
+        return {"keys_locked": bool(ok), "keys_why": why}
+    except Exception as e:
+        return {"keys_locked": False,
+                "keys_why": f"locking them did not work ({type(e).__name__}); you can lock them "
+                            "later in Settings > Privacy & Data"}
 
 
 def routing_delta(mode: str) -> dict:
@@ -120,8 +127,9 @@ def complete_setup(data: dict, *, routing_via: str = "unverified") -> dict:
                 cs.set_provider_key(pname, kv)
                 cs.hot_reload_provider_key(pname, kv)
 
-    # 2) Vault passphrase.
-    store_vault_passphrase(data.get('vault_passphrase') or '')
+    # 2) Vault passphrase (and, A21, the saved keys: the answer says what happened to them).
+    keys_report: dict = {}
+    store_vault_passphrase(data.get('vault_passphrase') or '', report=keys_report)
 
     # 3) Settings delta (NO secrets), including the routing mode.
     delta = {k: data[k] for k in _SETTINGS_KEYS if k in data}
@@ -169,7 +177,7 @@ def complete_setup(data: dict, *, routing_via: str = "unverified") -> dict:
         _SETUP_MARKER.write_text(datetime.now().isoformat(), encoding='utf-8')
     except Exception:
         pass
-    return {"status": "ok"}
+    return {"status": "ok", **keys_report}
 
 
 def save_routing_answer(mode: str, *, via: str = "posture") -> None:

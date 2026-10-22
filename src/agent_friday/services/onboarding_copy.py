@@ -133,9 +133,9 @@ time readable."""
 VAULT_KEYS = """\
 The same passphrase also locks Friday's saved keys: the AI provider keys and
 account sign-ins she keeps on this computer, so the file holding them is
-useless to anyone who copies it. Start-up stays automatic. This is on unless
-you untick it below. If the passphrase is ever lost, you would enter those keys
-and sign in again; nothing else is lost with them."""
+useless to anyone who copies it. Start-up stays automatic. This is on by
+default, and you can say no. Locking the keys adds nothing to what a lost
+passphrase already costs: for the keys, you would enter them and sign in again."""
 
 #: The tick box under the passphrase fields (on by default).
 VAULT_KEYS_TICK = "Also lock my saved keys with this passphrase (recommended)"

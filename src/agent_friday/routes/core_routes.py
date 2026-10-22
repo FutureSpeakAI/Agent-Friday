@@ -1465,8 +1465,7 @@ def api_onboarding_acks():
         # during setup, and never over a decision already made.
         try:
             from agent_friday.services import keystore_offer as _ko
-            if not _ko._setup_finished() and not _ko.state().get("decided"):
-                _ko.record("skipped", "setup")
+            _ko.record_skip_during_setup("setup")
         except Exception:
             pass
     if data.get("updates_choice") in ("on", "off"):
