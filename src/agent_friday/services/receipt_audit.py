@@ -71,15 +71,17 @@ def audit(*, now: Optional[float] = None, include_archive: bool = False, limit: 
         n_out += 1
         dseq = rec.get("decision_seq")
         hit = decisions.get(dseq) if dseq is not None else None
+        if hit is None and isinstance(dseq, int):
+            hit = _lookup(L, dseq)        # older than this look, or archived: found, not skipped
         why = None
         if hit is None:
             appr = rec.get("approval")
-            if isinstance(dseq, int) and (dseq <= archived_through or dseq < first_seq):
-                continue                  # its decision is older than this look (or archived)
-            if appr and str(appr) in by_approval:
-                outcome_for.update(by_approval[str(appr)])
-            elif appr:
-                pass                      # ran on the owner's yes (a chat yes or a grant has no card receipt)
+            if dseq is None and appr:
+                # the approved-card path runs before the checkpoint: the card is its decision
+                if str(appr) in by_approval:
+                    outcome_for.update(by_approval[str(appr)])
+                elif not _approval_real(str(appr), None):
+                    why = "ran on an approval that is not on record"
             elif dseq is None:
                 why = "ran with no decision receipt"
             else:
@@ -92,7 +94,8 @@ def audit(*, now: Optional[float] = None, include_archive: bool = False, limit: 
                 why = "names a decision for another tool"
             elif rec.get("status") in ("ok", "error") and not (
                     drec.get("decision") in RAN
-                    or (drec.get("decision") in OWNER and rec.get("approval"))):
+                    or (drec.get("decision") in OWNER and rec.get("approval")
+                        and _approval_real(str(rec["approval"]), drec))):
                 why = "ran although its decision was %s" % drec.get("decision")
             outcome_for.add(dseq)
         if why:
@@ -117,6 +120,34 @@ def audit(*, now: Optional[float] = None, include_archive: bool = False, limit: 
             "orphan_outcomes": orphans[:limit], "orphan_count": len(orphans),
             "open_decisions": open_[:limit], "open_count": len(open_),
             "window_days": round(window_s / 86400.0, 1)}
+
+
+def _lookup(L, seq: int):
+    """(entry, rec) of one signed decision anywhere in the ledger, or None."""
+    try:
+        rows = L.entries(["decision"], newest_first=True, verified=True, archive=True,
+                         where=lambda e: e.get("seq") == seq, limit=1)
+    except Exception:
+        return None
+    if rows and isinstance(rows[0].get("rec"), dict):
+        return rows[0], rows[0]["rec"]
+    return None
+
+
+def _approval_real(appr: str, drec) -> bool:
+    """The owner's yes the outcome names exists: a chat yes (set only by the
+    confirmation gate), the decision's own grant, or an approval card on
+    record that was approved."""
+    if appr.startswith("chat:"):
+        return True
+    if drec and drec.get("grant") and appr == drec.get("grant"):
+        return True
+    try:
+        from agent_friday.services import approvals
+        a = approvals.get_approval(appr) or {}
+    except Exception:
+        return False
+    return str(a.get("status") or "") in ("approved", "used", "executed", "done", "auto_approved")
 
 
 def doctor_check() -> tuple:
