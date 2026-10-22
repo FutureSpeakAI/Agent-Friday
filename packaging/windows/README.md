@@ -398,7 +398,7 @@ Kept here because every one of them looked like working code.
   separately.
 - **No code signing.** The `.cmd` and `.ps1` files are unsigned, so
   SmartScreen may warn on first run. Worth solving before wide distribution.
-- **`get-pip.py` is not hash-pinned** — upstream regenerates it at a stable URL
-  with no published hash. The installer records that it was *not* verified
-  rather than implying it was. `sources.json` explains how to pin it properly
-  if you want that.
+- **Every download setup runs is pinned.** `get-pip.py` comes from one commit
+  of `pypa/get-pip` and the Ollama installer from one GitHub release asset,
+  each with its SHA-256 and size in `sources.json`. An empty pin refuses like
+  a wrong file (`lib/Download.ps1`). `sources.json` says how to bump each.

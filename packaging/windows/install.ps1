@@ -970,7 +970,7 @@ if (-not $localWanted) {
     Say-Step 'Setting up the part that runs AI on this laptop'
     Say-Detail 'This is what lets Friday work without sending anything to the internet.'
 
-    $ollamaOutcome = Install-Ollama -CacheDir $CacheDir -InstallerUrl $script:Sources.ollama.url
+    $ollamaOutcome = Install-Ollama -CacheDir $CacheDir -InstallerUrl $script:Sources.ollama.url -ExpectedSha256 $script:Sources.ollama.sha256
 
     if ($ollamaOutcome.Installed) {
         Say-Ok 'Ready.'
