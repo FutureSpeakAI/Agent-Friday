@@ -1131,7 +1131,7 @@ def _voice_tool_surface_note():
         "back denied, say the permission is off and offer to walk the user to the "
         "toggle. Do not say you took one.\n\n"
         "FOR ANYTHING SUBSTANTIAL, USE delegate_to_friday (or spawn_task for a "
-        "long-running workflow the user wants to watch in the Task Tray). Do not "
+        "long-running workflow the user wants to watch on its task card in System). Do not "
         "narrate the work as though you are doing it inline - in voice you are "
         "not.\n\n"
     )

@@ -2976,7 +2976,10 @@ def _editorial_markdown(week_id, when, body, banned, score, regenerated):
     if score is not None:
         note = f"*Independence score: {score:.2f}"
         if regenerated:
-            note += " — first draft was too safe, so I rewrote it with more pushback"
+            # `regenerated` is set only when the first attempt came back
+            # empty (see _generate_weekly_editorial); nothing is rewritten
+            # for its score, so the note says what happened and no more.
+            note += " — the first attempt came back empty, so it was written again"
         note += ".*"
         parts.append("")
         parts.append(note)
