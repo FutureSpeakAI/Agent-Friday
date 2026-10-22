@@ -322,13 +322,17 @@ _USE_FLUSHED: dict = {}
 def _credential_name(path) -> str:
     """A credential's name: its path under Friday's data folder, with forward slashes."""
     # String work only (no filesystem lookup): the name is a label, never opened.
-    try:
-        rel = os.path.relpath(os.path.abspath(os.fspath(path)), os.path.abspath(os.fspath(core.FRIDAY_DIR)))
-    except Exception:
-        return os.path.basename(os.fspath(path))
-    if rel.startswith("..") or os.path.isabs(rel):
-        return os.path.basename(os.fspath(path))
-    return rel.replace(os.sep, "/")
+    here = os.path.abspath(os.fspath(path))
+    home = os.fspath(core.FRIDAY_DIR)
+    # the folder as written and as resolved (a path a caller resolved, e.g. Windows short names)
+    for base in (os.path.abspath(home), os.path.realpath(home)):
+        try:
+            rel = os.path.relpath(here, base)
+        except Exception:
+            continue
+        if not (rel.startswith("..") or os.path.isabs(rel)):
+            return rel.replace(os.sep, "/")
+    return os.path.basename(here)
 
 
 def _use_file() -> Path:
