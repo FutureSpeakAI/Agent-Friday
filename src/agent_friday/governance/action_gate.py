@@ -644,7 +644,8 @@ def _command_reach_reason(cmd: str) -> str:
             # A folder ABOVE the home (C:\Users, C:\) shows names only to a
             # listing; it holds no content of its own to read.
             try:
-                q = _P(_os.path.expanduser(expanded)).resolve(strict=False)
+                # Text only (no filesystem access): normalised, not resolved.
+                q = _P(_os.path.normpath(_os.path.abspath(_os.path.expanduser(expanded))))
                 if _pp._within_folded(_pp._home(), q):
                     continue
             except Exception:
