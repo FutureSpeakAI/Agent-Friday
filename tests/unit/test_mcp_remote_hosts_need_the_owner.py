@@ -182,7 +182,7 @@ def test_odd_spellings_of_an_address_are_refused_not_asked(home, url):
 
 @pytest.mark.parametrize("url", [
     "https://user@mcp.example.com/mcp", "https://mcp.example.com%2eevil.example/mcp",
-    "https://evil.example\\@mcp.example.com/mcp",
+    "https://mcp.example.com\\.evil.example/mcp",
 ], ids=["userinfo", "escape", "backslash"])
 def test_addresses_two_parsers_read_differently_are_refused(home, url):
     from agent_friday.governance import mcp_hosts
@@ -223,6 +223,10 @@ def test_a_deleted_or_emptied_list_is_never_refilled_from_the_configuration(home
     (home / "mcp_hosts.json").write_text(json.dumps({"x.example.net:443": {"host": "x"}}),
                                         encoding="utf-8")
     assert "changed outside Friday" in mcp_hosts.check("https://a.example.net/mcp")
+    mcp_hosts.approve("https://a.example.net/mcp", made_by="owner:ui")
+    assert mcp_hosts.allowed("https://a.example.net/mcp"), "the owner's press starts the list again"
+    assert not mcp_hosts.allowed("https://x.example.net/mcp"), "an unsigned row is not kept"
+    assert not mcp_hosts.allowed("https://b.example.net/mcp")
 
 
 class _Redirector(BaseHTTPRequestHandler):
