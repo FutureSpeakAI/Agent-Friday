@@ -93,6 +93,21 @@ Deliberately outside the checkpoint, with the reason:
   they are now inside the checkpoint: one approval card per task mints a
   scoped grant, and every action the session takes asks Friday's gate
   through a per-task hook (`services/claude_code_tasks.py`).
+
+  **Amended 2026-10-21.** "The owner acting" is now taken only from the
+  owner's press in Friday's page (`services/owner_press`: same-origin page,
+  the page's session token and, with the desk-press check, this launch's desk
+  key), never from a body that says `requested_by: "ui:..."`. A local program
+  could send that label. The owner's writes that leave the PC also pass the
+  checkpoint's integrity check and signed receipt (`record_external`) before
+  anything is sent: the Calendar page (add, answer, move, undo), the receipts
+  undo, workspace changes, skill installs (fix/write-paths-through-gate), and
+  every Messages change that reaches Gmail or a mailing list (archive, labels,
+  Trash, spam, importance, read state in Gmail, restore, unsubscribe, the
+  inbox clean-up, saving a Gmail draft; `services/mail_owner`,
+  fix/mail-changes-through-gate). Changes that stay in Friday (snooze, mute)
+  need the press alone. Cancelling a held send stays open: stopping a send
+  is always allowed.
 * **Deterministic open/navigate intents** (`chat.py:598/627`): the user's own
   words, same turn, local and reversible.
 * **Higgsfield's direct connector call** (`higgsfield_generate.py:99`,

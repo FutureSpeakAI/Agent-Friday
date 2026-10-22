@@ -9,6 +9,7 @@ import pytest
 
 from agent_friday.routes import messages as routes_messages
 from agent_friday.services import mail_proposals
+from tests.owner_press_support import press
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ def test_the_owners_archive_on_a_ticked_batch_runs_with_no_card(msg_client, monk
     ids, gmail = _rows()
     for action in ("archive", "trash", "spam", "read", "flag"):
         r = msg_client.post("/api/messages/action", json={"ids": ids, "action": action, "gmail": gmail,
-                                                      "requested_by": "ui:messages"})
+                                                      "requested_by": "ui:messages"}, headers=press())
         assert r.status_code == 200, (action, r.get_json())
     assert carded == [] and [a for a, _n in ran] == ["archive", "trash", "spam", "read", "flag"]
     assert all(n == 142 for _a, n in ran)

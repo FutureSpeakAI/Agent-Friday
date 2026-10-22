@@ -1215,7 +1215,7 @@ The owner's confirmed drag. `{calendar_key, start_time, end_time, confirmed: tru
 Which connected accounts may send (scopes Google actually granted); the accounts drafts can be saved to.
 
 ### `POST /api/mail/draft`
-Save a draft in Gmail Drafts. Sends nothing.
+Save a draft in Gmail Drafts. Sends nothing. The owner's press in Friday's page only, through the action checkpoint (else 403, nothing saved).
 
 ### `POST /api/mail/request` · `POST /api/mail/send`
 Queue a message for the owner's approval (sends nothing); send a message the owner already approved.
@@ -1224,7 +1224,7 @@ Queue a message for the owner's approval (sends nothing); send a message the own
 Recent send attempts (successes and failures); sends waiting in the unattended Undo window; cancel one.
 
 ### `GET|POST /api/mail/unsubscribe` · `POST /api/mail/modify` · `POST /api/mail/modify/undo` · `GET|POST /api/mail/labels`
-Inbox clean-up and label actions.
+Inbox clean-up and label actions. A change (POST) is the owner's press in Friday's page, never a body that says `requested_by: "ui:..."`; one that reaches Gmail or a mailing list passes the action checkpoint (`record_external`) first, and a hold answers 403 with nothing changed. A request from Friday to unsubscribe raises an approval card (202). The same applies to `POST /api/messages/action` (Friday may ask for archive, Trash, spam and mute with a card), `POST /api/messages/restore` and `POST /api/inbox-cleanup/*` (`services/mail_owner.py`).
 
 ---
 
