@@ -388,10 +388,11 @@ def _sign_event(entry: Dict[str, Any]) -> Dict[str, Any]:
 
 def _append_event(entry: Dict[str, Any]) -> None:
     try:
+        # the one action ledger (services/action_ledger.py), kind "dissent";
+        # EVENTS_PATH is where events were kept before it
+        from agent_friday.services import action_ledger
         with _LOCK:
-            EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with EVENTS_PATH.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            action_ledger.append("dissent", entry)
     except Exception as e:
         _log.error("dissent event append FAILED: %s", e)
 
@@ -436,23 +437,18 @@ def record_dissent_event(action_description: str, result: Dict[str, Any]) -> Dic
 def read_dissent_events(limit: int = 200) -> List[Dict[str, Any]]:
     """Newest-last (file order); tail-limited. [] on any failure or if the
     log doesn't exist yet — a fresh install has never dissented."""
-    if not EVENTS_PATH.exists():
-        return []
     out: List[Dict[str, Any]] = []
     try:
-        with EVENTS_PATH.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    out.append(json.loads(line))
-                except Exception:
-                    continue
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries(["dissent"], newest_first=True, limit=max(0, int(limit)))
+        for e in reversed(rows):
+            rec = e.get("rec")
+            if isinstance(rec, dict):
+                out.append({k: v for k, v in rec.items() if k != "_migrated"})
     except Exception as e:
         _log.warning("read_dissent_events failed: %s", e)
         return []
-    return out[-limit:]
+    return out[-limit:] if limit else []
 
 
 def verify_dissent_event(entry: Dict[str, Any]) -> bool:

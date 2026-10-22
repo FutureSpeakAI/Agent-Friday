@@ -632,6 +632,21 @@ class FridayTray:
     def _restart(self, _icon, _item) -> None:
         threading.Thread(target=self.restart_server, daemon=True).start()
 
+    def _restart_safe(self, _icon, _item) -> None:
+        """Safe mode (services/safe_mode.py) from the next start until the
+        owner leaves it on the Doctor page; then restart now."""
+        try:
+            from agent_friday.services import safe_mode
+            safe_mode.set_next_start(True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[tray] could not choose safe mode: {e}")
+            return
+        threading.Thread(target=self.restart_server, daemon=True).start()
+
+    def _open_doctor(self, _icon, _item) -> None:
+        threading.Thread(target=lambda: webbrowser.open(_ui_url().rstrip("/") + "/doctor"),
+                         name="friday-open-doctor", daemon=True).start()
+
     def _open_voice_log(self, _icon, _item) -> None:
         if VOICE_LOG.exists():
             os.startfile(str(VOICE_LOG))  # type: ignore[attr-defined]
@@ -688,6 +703,8 @@ class FridayTray:
         return pystray.Menu(
             pystray.MenuItem("Open " + brand.PRODUCT_NAME, self._open_ui, default=True),
             pystray.MenuItem("Restart Server", self._restart),
+            pystray.MenuItem("Restart in Safe Mode", self._restart_safe),
+            pystray.MenuItem("Open Doctor", self._open_doctor),
             pystray.MenuItem("Voice Debug Log", self._open_voice_log),
             pystray.MenuItem(self._status_label, None, enabled=False),
             pystray.MenuItem(lambda _i: self.ptt.label(), None, enabled=False),

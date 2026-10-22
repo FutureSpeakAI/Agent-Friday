@@ -202,11 +202,18 @@ def run_pre_hooks(ctx: HookContext) -> PreVerdict:
 
     Applies any MODIFY verdicts to ``ctx.input`` in place as it goes.
     """
+    try:
+        from agent_friday.services import safe_mode as _sm
+        _extensions_off = not _sm.allows("tool_hooks")
+    except Exception:
+        _extensions_off = False
     for hook in list(_PRE_HOOKS):
         if not _applies(hook, ctx.tool_name):
             continue
         if not hook_enabled(hook.name, hook.critical):
             continue
+        if _extensions_off and getattr(hook, "source", "builtin") != "builtin":
+            continue          # safe mode: hooks the owner added do not run
         denial = _admission_denial(ctx)
         if denial:
             return DENY(denial)
@@ -240,11 +247,18 @@ def run_pre_hooks(ctx: HookContext) -> PreVerdict:
 
 def run_post_hooks(ctx: HookContext, result: str) -> str:
     """Run the PostToolUse chain, threading ``result`` through each hook."""
+    try:
+        from agent_friday.services import safe_mode as _sm
+        _extensions_off = not _sm.allows("tool_hooks")
+    except Exception:
+        _extensions_off = False
     for hook in list(_POST_HOOKS):
         if not _applies(hook, ctx.tool_name):
             continue
         if not hook_enabled(hook.name, hook.critical):
             continue
+        if _extensions_off and getattr(hook, "source", "builtin") != "builtin":
+            continue          # safe mode: hooks the owner added do not run
         denial = _admission_denial(ctx)
         if denial:
             return denial

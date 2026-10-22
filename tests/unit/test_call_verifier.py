@@ -75,10 +75,7 @@ def run(name, args, ctx=None):
 
 
 def receipts():
-    p = action_gate.receipts_path()
-    if not p.exists():
-        return []
-    return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return action_gate.receipts()              # the action ledger's decisions
 
 
 # ── 1. schema ────────────────────────────────────────────────────────────────

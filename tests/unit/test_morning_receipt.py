@@ -1,6 +1,6 @@
 """The morning receipt reads the signed decision log honestly.
 
-Every checkpoint decision is a signed line in decision-bom.jsonl. The receipt
+Every checkpoint decision is a signed entry in the action ledger. The receipt
 page lists them for a window of time with each signature checked: a line
 that was edited after signing, or that carries no signature, is shown as
 not verified -- never dropped, never shown as verified.
@@ -35,7 +35,8 @@ def home(tmp_path, monkeypatch):
 
 
 def _lines(home):
-    return (home / "decision-bom.jsonl").read_text(encoding="utf-8").splitlines()
+    # decisions are entries in the action ledger (services/action_ledger.py)
+    return [json.dumps(r) for r in action_gate.receipts()]
 
 
 def test_authorize_signs_a_receipt_that_names_its_task(home):
@@ -53,14 +54,13 @@ def test_receipts_are_listed_verified_and_a_tampered_one_is_flagged(home):
     action_gate.authorize("read_file", {}, {"session_id": "s"})
     lines = _lines(home)
     # Tamper with the calendar receipt: a "card" rewritten as "allow".
-    tampered = json.loads(lines[1])
-    assert tampered["decision"] == "card"
-    tampered["decision"] = "allow"
-    lines[1] = json.dumps(tampered)
+    assert json.loads(lines[1])["decision"] == "card"
+    from tests import ledger_support
+    ledger_support.tamper("decision", lambda r: r.get("tool") == "create_calendar_event",
+                          lambda r: r.update(decision="allow"))
     # And a line with no signature at all.
-    lines.append(json.dumps({"tool": "forged", "decision": "allow",
-                             "timestamp": json.loads(lines[0])["timestamp"]}))
-    (home / "decision-bom.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    ledger_support.forge("decision", {"tool": "forged", "decision": "allow",
+                                      "timestamp": json.loads(lines[0])["timestamp"]})
 
     out = morning_receipt.build(time.time() - 3600)
     by_tool = {a["tool"]: a for a in out["actions"]}

@@ -67,25 +67,17 @@ def build(since: float, until: Optional[float] = None) -> dict[str, Any]:
     unreadable = 0
     counts = {"allow": 0, "confirm": 0, "card": 0, "deny": 0}
     verified_n = unverified_n = 0
-    path = action_gate.receipts_path()
+    # Every decision is an entry in the action ledger (services/action_ledger.py);
+    # `line` is its place there.
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except FileNotFoundError:
-        lines = []
+        rows = action_gate.receipts(with_seq=True)
     except Exception:
-        lines = []
-    for n, line in enumerate(lines, 1):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except Exception:
-            unreadable += 1
-            continue
+        rows = []
+    for entry in rows:
         if not isinstance(entry, dict):
             unreadable += 1
             continue
+        n = entry.get("_seq")
         at = _ts(entry.get("timestamp"))
         if at is None or at < since or at > until:
             continue

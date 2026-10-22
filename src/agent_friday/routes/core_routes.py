@@ -29,7 +29,6 @@ from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
 import agent_friday.core as core
 from agent_friday.core import (
     CREATIONS_DIR,
-    DECISION_BOM_FILE,
     DEFAULT_AGENT_PERSONALITY,
     FRIDAY_DIR,
     SERVER_START_TS,
@@ -1061,7 +1060,7 @@ def _health_payload():
             "enabled": True,
             "version": "v4.4",
             "policy": "cLaws",
-            "decision_bom": str(DECISION_BOM_FILE),
+            "decision_bom": "ledger/actions.jsonl (kind decision)",
             "ring_permissions": {
                 "ring_0_read": "always_allowed",
                 "ring_1_write": "always_allowed",

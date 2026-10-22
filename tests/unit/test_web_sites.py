@@ -90,9 +90,10 @@ def test_history_is_append_only(store):
     ws.set_site("example.com", "may_read", made_by="owner:ui")
     ws.set_site("example.com", "may_act", made_by="owner:voice-confirmed")
     ws.remove("example.com", made_by="owner:voice")
-    lines = (store / "web_sites_history.jsonl").read_text().splitlines()
-    assert [json.loads(l)["event"] for l in lines] == ["set", "set", "remove"]
-    assert json.loads(lines[1])["previous"]["level"] == "may_read"
+    from tests import ledger_support               # history lives in the action ledger
+    rows = ledger_support.rows("web_site")
+    assert [r["event"] for r in rows] == ["set", "set", "remove"]
+    assert rows[1]["previous"]["level"] == "may_read"
     assert ws.level_for("example.com") is None
 
 

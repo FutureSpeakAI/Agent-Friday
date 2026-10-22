@@ -80,6 +80,14 @@ def safe_mode() -> bool:
     if str(os.environ.get("FRIDAY_SAFE_MODE", "")).strip().lower() in (
             "1", "true", "yes", "on"):
         return True
+    try:
+        # Safe mode (services/safe_mode.py: extensions and the cloud off)
+        # implies this narrower lock.
+        from agent_friday.services import safe_mode as _sm
+        if _sm.active():
+            return True
+    except Exception:
+        pass
     return (STATE_DIR / "SAFE_MODE").exists()
 
 

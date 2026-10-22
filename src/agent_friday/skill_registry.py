@@ -339,6 +339,14 @@ def _find_manifest(folder: Path) -> Optional[Path]:
 # ── loading ─────────────────────────────────────────────────────
 
 def _default_dirs():
+    # Safe mode (services/safe_mode.py): only the skills shipped with the app;
+    # nothing the owner added or Friday learned is loaded.
+    try:
+        from agent_friday.services import safe_mode as _sm
+        if not _sm.allows("skills"):
+            return [BUNDLED_DIR]
+    except Exception:
+        pass
     return [SKILLS_DIR, BUNDLED_DIR]
 
 

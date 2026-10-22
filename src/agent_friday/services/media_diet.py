@@ -127,26 +127,22 @@ def enforce_docs(docs: list[dict], where: str) -> list[dict]:
 
 def _receipt(entry: dict) -> None:
     try:
-        p = receipts_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(dict(entry, at=time.strftime("%Y-%m-%dT%H:%M:%S")), ensure_ascii=False) + "\n")
-    except OSError as e:
+        # the one action ledger (services/action_ledger.py), kind "media_diet";
+        # receipts_path() is where receipts were kept before it
+        from agent_friday.services import action_ledger
+        action_ledger.append("media_diet", dict(entry, at=time.strftime("%Y-%m-%dT%H:%M:%S")))
+    except Exception as e:
         _log.warning("media diet receipt not written: %s", e)
 
 
 def recent_receipts(limit: int = 20) -> list[dict]:
     try:
-        lines = receipts_path().read_text(encoding="utf-8").splitlines()
-    except OSError:
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries(["media_diet"], newest_first=True, limit=max(0, int(limit)))
+    except Exception:
         return []
-    out = []
-    for ln in lines[-limit:]:
-        try:
-            out.append(json.loads(ln))
-        except ValueError:
-            continue
-    return list(reversed(out))
+    return [{k: v for k, v in e["rec"].items() if k != "_migrated"}
+            for e in rows if isinstance(e.get("rec"), dict)]
 
 
 # ── proposals ───────────────────────────────────────────────────────────────

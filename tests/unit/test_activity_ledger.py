@@ -96,26 +96,23 @@ def test_filters():
     assert len(al.read(limit=2)) == 2
 
 
-def test_rotation(monkeypatch):
-    monkeypatch.setattr(al, "_MAX_BYTES", 300)
+def test_rows_are_never_dropped_when_the_ledger_grows(monkeypatch):
+    """Activity rows are entries of the action ledger, which never drops
+    anything (an append-only store): a full file is sealed as a segment and
+    the chain goes on in a new one; read() spans every segment."""
+    from agent_friday.services import action_ledger
+    monkeypatch.setattr(action_ledger, "SEGMENT_MAX", 300)
     for i in range(20):
         al.record("tool_call", tool=f"tool_{i}", ok=True, duration_ms=i)
-    rotated = Path(str(al.LEDGER_FILE) + ".1")
-    assert rotated.exists(), "ledger should have rotated to .1"
-    # Single-generation rotation: only live + .1 are kept, so total retained =
-    # lines(live) + lines(.1); read() must span BOTH, newest first.
-    live_lines = al.LEDGER_FILE.read_text(encoding="utf-8").splitlines()
-    rot_lines = rotated.read_text(encoding="utf-8").splitlines()
+    assert len(action_ledger.segments()) > 1, "the ledger should have sealed a segment"
     events = al.read(limit=100)
-    assert len(events) == len(live_lines) + len(rot_lines)
-    assert 0 < len(events) < 20  # older generations were dropped by rotation
-    assert events[0]["tool"] == "tool_19"  # newest first across files
-    # Events are contiguous from the newest backwards (no gaps in retained set).
-    idx = [int(e["tool"].split("_")[1]) for e in events]
-    assert idx == list(range(19, 19 - len(events), -1))
+    assert [e["tool"] for e in events] == [f"tool_{i}" for i in range(19, -1, -1)]
+    assert action_ledger.verify()["intact"]
 
 
 def test_thread_safety_smoke():
+    from agent_friday.services import action_ledger
+
     def _writer(n):
         for i in range(20):
             al.record("tool_call", tool=f"w{n}_i{i}", ok=True, duration_ms=1)
@@ -126,16 +123,19 @@ def test_thread_safety_smoke():
     for t in threads:
         t.join()
 
-    lines = al.LEDGER_FILE.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 200
+    lines = action_ledger.live_path().read_text(encoding="utf-8").splitlines()
     # Every line is intact JSON (no interleaved partial writes).
-    for line in lines:
-        json.loads(line)
+    rows = [json.loads(line) for line in lines]
+    assert len([r for r in rows if r["kind"] == "activity"]) == 200
     assert len(al.read(limit=500)) == 200
+    assert action_ledger.verify()["intact"]
 
 
 def test_record_never_raises_on_bad_path(monkeypatch, tmp_path):
-    # Point at an unwritable location — record must swallow and return False.
-    monkeypatch.setattr(al, "LEDGER_FILE",
-                        tmp_path / "no_dir_here" / "\0bad" / "x.jsonl")
+    # Point at an unwritable location: record must swallow and return False.
+    blocker = tmp_path / "a_file"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("FRIDAY_LEDGER_DIR", str(blocker / "ledger"))   # under a file
+    from agent_friday.services import action_ledger
+    action_ledger.reset_caches()
     assert al.record("tool_call", tool="x", ok=True, duration_ms=1) is False

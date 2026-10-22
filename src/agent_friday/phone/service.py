@@ -1084,6 +1084,9 @@ def start() -> None:
     ingress.set_listener(lambda _k: _WAKE.set())
     if os.environ.get("FRIDAY_TESTING"):
         return
+    from agent_friday.services import safe_mode as _sm
+    if not _sm.allows("phone"):
+        return                      # safe mode: no phone loop, no ingress
     threading.Thread(target=_loop, name="phone-service", daemon=True).start()
     try:
         apply_enabled_state()

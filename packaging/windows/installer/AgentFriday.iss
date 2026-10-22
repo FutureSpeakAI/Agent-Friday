@@ -191,6 +191,7 @@ var
   PrevVersion: String;
   PrevSequence: Int64;
   RemoveEverything: Boolean;
+  BundleWasMade: Boolean;
   ShortcutNote: String;
   ChosenCloud, ChosenConsent, ChosenDeepComp: Boolean;
   ChosenFast, ChosenFastPack, ChosenDeep, ChosenDeepPack, ChosenDeepPick, ChosenTier: String;
@@ -1121,13 +1122,49 @@ begin
     Result := Pos('Agent Friday local address', String(Text)) > 0;
 end;
 
+// Export first (north star 27.10): a Friday Bundle, made and verified by
+// Friday's own command line, before anything is removed. If it cannot be
+// made, the uninstall stops and nothing is removed.
+function MakeBundleFirst(Dest: String; Visible: Boolean): Boolean;
+var
+  Py, Params: String;
+  Code, Show: Integer;
+begin
+  Result := False;
+  BundleWasMade := False;
+  Py := ExpandConstant('{app}\python\python.exe');
+  if not FileExists(Py) then Exit;
+  Params := '-m agent_friday.cli bundle create --out "' + Dest + '"';
+  if Visible then Show := SW_SHOW else Show := SW_HIDE;
+  if Exec(Py, Params, ExpandConstant('{app}\app'), Show, ewWaitUntilTerminated, Code) then
+    Result := (Code = 0);
+  BundleWasMade := Result;
+  Log('bundle create exited ' + IntToStr(Code));
+end;
+
 function InitializeUninstall(): Boolean;
+var
+  BundleTo: String;
 begin
   Result := True;
   RemoveEverything := False;
   if UninstallSilent then
   begin
     RemoveEverything := ExpandConstant('{param:REMOVEDATA|0}') = '1';
+    // /BUNDLETO=<folder> with FRIDAY_BUNDLE_PASSPHRASE set: bundle first.
+    BundleTo := ExpandConstant('{param:BUNDLETO|}');
+    if BundleTo <> '' then
+    begin
+      // Silent: the passphrase must come from the environment, or the
+      // command line would wait for typing that never comes.
+      if GetEnv('FRIDAY_BUNDLE_PASSPHRASE') = '' then
+      begin
+        Log('/BUNDLETO without FRIDAY_BUNDLE_PASSPHRASE: nothing removed');
+        Result := False;
+      end
+      else
+        Result := MakeBundleFirst(BundleTo, False);
+    end;
     Exit;
   end;
   // Default button is Yes = keep.
@@ -1141,6 +1178,22 @@ begin
               'This cannot be undone.', mbError, MB_YESNO or MB_DEFBUTTON2) = IDYES then
       RemoveEverything := True;
   end;
+  if RemoveEverything then
+  begin
+    if MsgBox('Before anything is removed, save everything in one encrypted file (a Friday Bundle) ' +
+              'that you can restore on another PC? A window opens and asks you for a passphrase.' + #13#10#13#10 +
+              'Choose Yes to make the bundle first (recommended).',
+              mbConfirmation, MB_YESNO or MB_DEFBUTTON1) = IDYES then
+    begin
+      BundleTo := ExpandConstant('{userdocs}\Friday Bundles');
+      if not MakeBundleFirst(BundleTo, True) then
+      begin
+        MsgBox('The Friday Bundle could not be made, so nothing was removed. ' +
+               'Run the uninstaller again when you want to try once more.', mbError, MB_OK);
+        Result := False;
+      end;
+    end;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -1153,6 +1206,7 @@ begin
   if not FileExists(Script) then Exit;
   Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -InstallRoot "' + ExpandConstant('{app}') + '" -Unattended -InnoManaged';
   if RemoveEverything then Params := Params + ' -RemoveEverything';
+  if BundleWasMade then Params := Params + ' -BundleMade';
   if (not UninstallSilent) and HostsHasFridayBlock() then
   begin
     if MsgBox('Agent Friday added a local address to this computer''s hosts file. Remove it now? Windows will ask for permission.',

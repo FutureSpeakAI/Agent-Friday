@@ -58,8 +58,7 @@ def test_a_raised_card_is_never_recorded_as_ok(tmp_path, monkeypatch):
         "user's decision on an approval card.",
         824, None, None)
 
-    rows = [json.loads(l) for l in
-            io.open(tmp_path / "ledger.jsonl", encoding="utf-8") if l.strip()]
+    rows = list(reversed(al.read(limit=1000)))
     assert rows, "nothing was recorded"
     r = rows[-1]
     assert r["ok"] is False, "a call that never ran was recorded as a success"
@@ -82,8 +81,7 @@ def test_every_non_ok_call_records_a_reason(result, tmp_path, monkeypatch):
     from agent_friday.services import agent as ag
     monkeypatch.setattr(al, "LEDGER_FILE", tmp_path / "ledger.jsonl")
     ag._ledger_tool_call("some_tool", result, 5, None, None)
-    rows = [json.loads(l) for l in
-            io.open(tmp_path / "ledger.jsonl", encoding="utf-8") if l.strip()]
+    rows = list(reversed(al.read(limit=1000)))
     r = rows[-1]
     assert r["ok"] is False, result
     assert r.get("reason"), "ok=false with no reason: %r" % (r,)
@@ -94,8 +92,7 @@ def test_a_successful_call_needs_no_reason(tmp_path, monkeypatch):
     from agent_friday.services import agent as ag
     monkeypatch.setattr(al, "LEDGER_FILE", tmp_path / "ledger.jsonl")
     ag._ledger_tool_call("some_tool", "created: ok", 5, None, None)
-    rows = [json.loads(l) for l in
-            io.open(tmp_path / "ledger.jsonl", encoding="utf-8") if l.strip()]
+    rows = list(reversed(al.read(limit=1000)))
     r = rows[-1]
     assert r["ok"] is True
     assert r.get("status") in (None, "ok")
@@ -114,11 +111,12 @@ def test_the_reason_never_quotes_the_result_body(tmp_path, monkeypatch):
         "create_calendar_event",
         "[VAULT-ZT DENY] refused: the location %s is TIER_2" % secret,
         7, None, None)
-    text = io.open(tmp_path / "ledger.jsonl", encoding="utf-8").read()
+    from agent_friday.services import action_ledger
+    text = action_ledger.live_path().read_text(encoding="utf-8")
     assert secret not in text, (
         "the tool result's content reached the plaintext ledger")
     assert "Nonexistent" not in text
-    rows = [json.loads(l) for l in text.splitlines() if l.strip()]
+    rows = [json.loads(l)["rec"] for l in text.splitlines() if l.strip()]
     assert rows[-1].get("reason"), "a reason is still required"
 
 

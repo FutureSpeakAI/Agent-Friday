@@ -150,5 +150,6 @@ def test_direct_sends_leave_a_signed_receipt(phone_home, fake_twilio, monkeypatc
     verify_owner(monkeypatch)
     monkeypatch.setattr(service, "_gate_text", lambda t: t)
     service.text_owner("hi")
-    rows = [_json.loads(x) for x in (phone_home / "decision-bom.jsonl").read_text().splitlines()]
+    from agent_friday.governance import action_gate as _ag
+    rows = _ag.receipts()                      # the action ledger's decisions
     assert any(r.get("tool") == "phone:sms" and r.get("hmac") for r in rows)

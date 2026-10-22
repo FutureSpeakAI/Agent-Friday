@@ -254,7 +254,8 @@ def test_the_real_ledger_keeps_counts_and_drops_everything_else(tmp_path, monkey
     monkeypatch.setattr(al, "LEDGER_FILE", tmp_path / "ledger.jsonl")
     assert al.record("meeting_deletion", scope="audio", reason="owner", audio_files=3,
                      meetings=0, title="Planning", path="C:/x", text="we agreed")
-    line = (tmp_path / "ledger.jsonl").read_text(encoding="utf-8")
+    from tests import ledger_support               # rows live in the action ledger
+    line = ledger_support.text("activity")
     assert '"audio_files": 3' in line
     assert "Planning" not in line and "C:/x" not in line and "we agreed" not in line
 

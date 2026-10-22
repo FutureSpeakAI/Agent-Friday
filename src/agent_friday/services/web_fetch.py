@@ -200,6 +200,10 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
     import requests
 
     url = (url or "").strip()
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("web")
+    if _why:
+        return _fail(url, _why, "safe_mode")
     key = _url_key(url)
     root = _store_root()
     meta_path = root / f"{key}.json"
