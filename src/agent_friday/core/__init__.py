@@ -4957,7 +4957,9 @@ def _idempotency_begin():
     # Who is asking, so one caller's key never answers another: the principal, where the request
     # comes from (this PC or not, and its address), whether it carries the page's valid session
     # token (its validity, not its value, so a rotation does not split one page's retries), and
-    # its session cookie.
+    # whether its session is signed in (read after check_auth, which may sign a first request in:
+    # the session cookie's own bytes change when it does, which would split a request from its
+    # retry).
     try:
         _local = bool(_is_local_request())
     except Exception:  # noqa: BLE001
@@ -4968,7 +4970,7 @@ def _idempotency_begin():
         _tok_ok = False
     caller = "%s|%s|%s|%s|%s" % (getattr(g, "friday_principal", "user") or "user", _local,
                                  request.remote_addr or "", _tok_ok,
-                                 request.cookies.get(app.config.get("SESSION_COOKIE_NAME") or "session") or "")
+                                 bool(session.get("authenticated")))
     decision, got = _idem.begin(key, caller, "",
                                 _idem.fingerprint(request.method, request.path, request.get_data(cache=True)))
     if decision == "run":
