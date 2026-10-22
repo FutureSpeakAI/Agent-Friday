@@ -341,3 +341,23 @@ def test_the_archive_is_always_read_strictly_on_a_cold_start(monkeypatch, tmp_pa
     authority._SEEN.update(through=10 ** 6, stats=None)   # as if the ledger went back
     authority.revoked()
     assert True in seen
+
+
+def test_an_old_restore_in_a_rolled_back_file_does_not_stand(monkeypatch, tmp_path):
+    """Re-review (1): on a cold start a quick-read "restored" is checked
+    strictly; a strict read that refuses (a rolled-back file fails the anchor)
+    holds, it never lifts the hold."""
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import action_ledger, authority
+    monkeypatch.setattr(authority.time, "sleep", lambda s: None)
+    monkeypatch.setattr(action_ledger, "newest_since",
+                        lambda kinds, since, where=None: ({"seq": 3, "rec": {"event": "restored"}}, 3))
+    real = action_ledger.entries
+
+    def refuse(*a, **k):
+        if k.get("strict"):
+            raise action_ledger.LedgerError("entries are missing: the ledger is behind its anchor")
+        return real(*a, **k)
+    monkeypatch.setattr(action_ledger, "entries", refuse)
+    authority._SEEN.clear()
+    assert (authority.revoked() or {}).get("unreadable") is True
