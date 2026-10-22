@@ -280,7 +280,10 @@ def _c_connectors():
 def _c_authority():
     """Whether the owner revoked all action authority (services/authority.py)."""
     from agent_friday.services import authority
-    return ("blocked_by_policy", "authority_revoked") if authority.revoked() else ("healthy", "in_force")
+    r = authority.revoked()
+    if r and r.get("unreadable"):
+        return ("unverified", "authority_unreadable")
+    return ("blocked_by_policy", "authority_revoked") if r else ("healthy", "in_force")
 
 
 def _c_receipt_completeness():

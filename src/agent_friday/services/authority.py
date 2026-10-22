@@ -96,8 +96,9 @@ def revoked() -> Optional[dict]:
     try:
         e = _newest_receipt()
     except Exception:
-        # the record cannot be read: held (fails closed)
-        return {"at": None, "by": "unknown (the record could not be read)"}
+        # the record cannot be read: held (fails closed), and said as such:
+        # the owner is never told they revoked something they did not
+        return {"at": None, "by": None, "unreadable": True}
     rec = (e or {}).get("rec") or {}
     if rec.get("event") == "revoked":
         return {"at": e.get("ts"), "by": rec.get("by")}
@@ -122,6 +123,9 @@ def hold_reason() -> Optional[str]:
     r = revoked()
     if not r:
         return None
+    if r.get("unreadable"):
+        return ("whether you revoked action authority could not be checked: the action ledger "
+                "could not be read; the Ledger page shows why")
     return ("you revoked all action authority (%s); restore it on the Doctor page, on this PC"
             % (r.get("at") or "earlier"))
 
@@ -235,8 +239,12 @@ def revoke_all(by: str = "owner:ui") -> dict:
 def restore(by: str = "owner:ui") -> dict:
     """Lift the hold. Nothing revoked comes back by itself."""
     from agent_friday.services import action_ledger
-    if not revoked():
+    r = revoked()
+    if not r:
         return {"restored": False, "why": "action authority is not revoked"}
+    if r.get("unreadable"):
+        raise AuthorityError("The action ledger cannot be read, so whether authority was revoked "
+                             "cannot be checked; look at the Ledger page first.")
     try:
         _SEEN["rec"] = action_ledger.append("authority", {"event": "restored", "by": str(by or "owner")[:40]},
                                             durable=True)
@@ -261,4 +269,5 @@ def status() -> dict:
         detail = (rows[0].get("rec") if rows else None) if r else None
     except Exception:
         detail = None
-    return {"revoked": bool(r), "at": (r or {}).get("at"), "detail": detail}
+    return {"revoked": bool(r), "at": (r or {}).get("at"), "detail": detail,
+            "unreadable": bool((r or {}).get("unreadable"))}

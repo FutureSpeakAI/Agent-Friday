@@ -251,3 +251,22 @@ def test_a_connector_tool_in_capitals_is_held_too(home):
     authority.revoke_all("owner:test")
     v = action_gate._decide("MCP_bank_get_balance", action_gate.INTERNAL, "", {}, False, {}, True)
     assert v.action == "deny" and "revoked" in v.reason
+
+
+def test_a_ledger_break_is_named_not_called_a_revocation(monkeypatch, tmp_path):
+    """CI on #308: with a broken ledger the hold must say the ledger, never
+    that the owner revoked authority they did not revoke; restore refuses."""
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.governance import action_gate
+    from agent_friday.services import action_ledger, authority
+
+    def broken(*a, **k):
+        raise RuntimeError("break")
+    monkeypatch.setattr(authority, "_newest_receipt", broken)
+    why = authority.hold_reason()
+    assert why and "ledger" in why and not why.startswith("you revoked")
+    assert authority.status()["unreadable"] is True
+    with pytest.raises(authority.AuthorityError):
+        authority.restore()
+    monkeypatch.setattr(action_ledger, "hold_reason", lambda: "the action ledger has a break")
+    assert action_gate.outward_hold() == "the action ledger has a break"
