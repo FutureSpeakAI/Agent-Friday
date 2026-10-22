@@ -881,8 +881,9 @@ def require(provider, purpose: str, model: str = "", *, base_url=None) -> CloudT
     if route_unpicked():
         # A16a: no route picked yet, so nothing reaches the cloud: not a pinned
         # job, not an intent, not a confirmed one-turn ask.
-        _log.warning("refused a cloud call before a route was chosen: %s -> %s (%s)",
-                     purpose, name, model)
+        # Fixed text only: the caller's arguments can carry key-check
+        # material, and this line must never log it.
+        _log.warning("refused a cloud call before a route was chosen (A16a)")
         raise NoCloudIntent(name, purpose, model, ROUTE_NOT_CHOSEN)
     mode = routing_mode()
     cur = current()
