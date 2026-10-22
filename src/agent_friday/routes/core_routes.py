@@ -2143,8 +2143,9 @@ def api_mcp_hosts_remove():
         return jsonify({"status": "error", "message": "Say which host to remove."}), 400
     try:
         removed = mcp_hosts.remove(key, made_by="owner:ui")
-    except mcp_hosts.HostRefused as e:
-        return jsonify({"status": "error", "message": str(e)}), 409
+    except mcp_hosts.HostRefused:
+        return jsonify({"status": "error", "message": "Nothing was changed: the add-on server host "
+                        "list could not be read."}), 409
     return jsonify({"status": "ok", "removed": bool(removed),
                     "message": ("Friday will not reach %s any more." % mcp_hosts.display(key))
                     if removed else "That host was not on the list."})
