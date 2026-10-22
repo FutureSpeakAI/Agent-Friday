@@ -61,7 +61,11 @@ def _newest_receipt() -> Optional[dict]:
     d = str(action_ledger.ledger_dir())
     if _SEEN.get("dir") != d:
         _SEEN.clear()
-        _SEEN.update(dir=d, through=0, rec=None)
+        _SEEN.update(dir=d, through=0, rec=None, stats=None)
+    stats = action_ledger.stats_token()
+    if _SEEN.get("stats") == stats and _SEEN.get("through"):
+        return _SEEN["rec"]                          # nothing on disk changed since the last look
+    cold = not _SEEN.get("through")
     hit, tip = action_ledger.newest_since(
         ["authority"], int(_SEEN["through"]),
         where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"))
@@ -71,7 +75,14 @@ def _newest_receipt() -> Optional[dict]:
             ["authority"], 0, where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"))
     if hit is not None:
         _SEEN["rec"] = hit
+    elif cold and _SEEN.get("rec") is None:
+        # a fresh process: the receipt may have moved into the archive (A22)
+        rows = action_ledger.entries(["authority"], newest_first=True, verified=True, archive=True,
+                                     where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"),
+                                     limit=1)
+        _SEEN["rec"] = rows[0] if rows else None
     _SEEN["through"] = tip
+    _SEEN["stats"] = stats
     return _SEEN["rec"]
 
 
@@ -82,16 +93,25 @@ def revoked() -> Optional[dict]:
     try:
         e = _newest_receipt()
     except Exception:
-        e = None
+        # the record cannot be read: held (fails closed)
+        return {"at": None, "by": "unknown (the record could not be read)"}
     rec = (e or {}).get("rec") or {}
     if rec.get("event") == "revoked":
         return {"at": e.get("ts"), "by": rec.get("by")}
-    if _marker().exists() and rec.get("event") != "restored":
+    m = _marker()
+    if m.exists():
+        # a marker newer than the last restore is a revocation (its receipt
+        # may not have been read yet); one older than the restore is stale
         try:
-            d = json.loads(_marker().read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            d = {}
-        return {"at": d.get("at"), "by": d.get("by")}
+            newer = rec.get("event") != "restored" or m.stat().st_mtime > float(e.get("t") or 0) + 1
+        except OSError:
+            newer = True
+        if newer:
+            try:
+                d = json.loads(m.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                d = {}
+            return {"at": d.get("at"), "by": d.get("by")}
     return None
 
 
@@ -116,15 +136,20 @@ def revoke_all(by: str = "owner:ui") -> dict:
     by = str(by or "owner")[:40]
     # 1. the receipt first, durable: without it nothing changes
     try:
-        action_ledger.append("authority", {"event": "revoked", "by": by}, durable=True)
+        entry = action_ledger.append("authority", {"event": "revoked", "by": by}, durable=True)
     except Exception as e:
         raise AuthorityError("The record of this could not be written (%s); nothing was changed."
                              % type(e).__name__)
-    p = _marker()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "by": by}),
-                 encoding="utf-8")
+    _SEEN["rec"] = entry                             # this process holds at once
     out: dict = {}
+
+    def _write_marker():
+        p = _marker()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "by": by}),
+                     encoding="utf-8")
+        return True
+    _try(_write_marker, out, "marker")
 
     def _approvals():
         from agent_friday.services import approvals
@@ -132,46 +157,48 @@ def revoke_all(by: str = "owner:ui") -> dict:
 
     def _gate_grants():
         from agent_friday.governance import action_gate
-        n = 0
+        ids = []
         for g in action_gate.list_grants():
-            if action_gate.revoke_grant(str(g.get("grant_id") or "")):
-                n += 1
-        return n
+            gid = str(g.get("grant_id") or "")
+            if action_gate.revoke_grant(gid):
+                ids.append(gid)
+        return ids
 
     def _send_grants():
         from agent_friday.governance import send_grants
-        n = 0
+        ids = []
         for g in send_grants.list_grants():
             gid = str(g.get("grant_id") or "")
             if gid and send_grants.revoke(gid, by=by):
-                n += 1
-        return n
+                ids.append(gid)
+        return ids
 
     def _file_grants():
         from agent_friday.services import file_grants
-        n = 0
+        ids = []
         for g in file_grants.list_grants():
             gid = g.get("id") or g.get("grant_id")
             if gid:
                 file_grants.revoke(str(gid))
-                n += 1
-        return n
+                ids.append(str(gid))
+        return ids
 
     def _desktop():
         from agent_friday.services import desktop_grants
         apps = list(desktop_grants.grants())
         for a in apps:
             desktop_grants.remove_grant(a)
-        return len(apps)
+        return apps
 
     def _sites():
         from agent_friday.governance import web_sites
-        n = 0
-        for row in web_sites.all_sites():
+        narrowed = []
+        rows = web_sites.all_sites()
+        for name, row in (rows.items() if isinstance(rows, dict) else ((r.get("site"), r) for r in rows)):
             if (row or {}).get("level") != "may_read":
-                web_sites.narrow(row.get("site"), made_by="owner:ui")
-                n += 1
-        return n
+                web_sites.narrow(name, made_by="owner:ui")      # the owner's own act, whatever surface
+                narrowed.append(name)
+        return narrowed
 
     def _jobs():
         from agent_friday.services import scheduler
@@ -196,10 +223,9 @@ def revoke_all(by: str = "owner:ui") -> dict:
                     ("desktop_grants_removed", _desktop), ("sites_narrowed", _sites),
                     ("jobs_paused", _jobs), ("channels_stopped", _channels)):
         _try(fn, out, key)
+    # what was taken back, by name, so the owner can give back what they want
     action_ledger.try_append("authority", {"event": "revoked_detail", "by": by,
-                                           **{k: (len(v) if isinstance(v, list) else v)
-                                              for k, v in out.items() if k != "errors"},
-                                           "jobs": out.get("jobs_paused") or [],
+                                           **{k: v for k, v in out.items() if k != "errors"},
                                            "errors": out.get("errors") or []})
     return out
 
@@ -210,8 +236,8 @@ def restore(by: str = "owner:ui") -> dict:
     if not revoked():
         return {"restored": False, "why": "action authority is not revoked"}
     try:
-        action_ledger.append("authority", {"event": "restored", "by": str(by or "owner")[:40]},
-                             durable=True)
+        _SEEN["rec"] = action_ledger.append("authority", {"event": "restored", "by": str(by or "owner")[:40]},
+                                            durable=True)
     except Exception as e:
         raise AuthorityError("The record of this could not be written (%s); authority stays revoked."
                              % type(e).__name__)

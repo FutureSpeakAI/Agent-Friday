@@ -1371,6 +1371,12 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         if _why:
             return Verdict("deny", klass, f"held: {_why}")
     if klass == INTERNAL:
+        if str(tool_name).startswith("mcp_"):
+            # a connector tool judged internal (a clean read under the card
+            # setting) still reaches a connected service
+            _why = _authority_hold()
+            if _why:
+                return Verdict("deny", klass, f"held: {_why}")
         if tainted and _own_mailbox_draft(tool_name, args):
             # A recipient read in an email is the normal case for a reply. The
             # draft reaches nobody; the send that could is asked separately.
@@ -1552,6 +1558,12 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
         ok, integrity = verify_claws()
         if not ok:
             return Verdict("deny", OUTWARD, f"held: {integrity}")
+        # the same hold every outward action takes (safe mode, a restore, the
+        # owner's revocation of authority, a ledger break): before any card
+        # is looked up or raised, so an approved card cannot slip past it
+        hold = outward_hold()
+        if hold:
+            return Verdict("deny", OUTWARD, f"held: {hold}")
         subject = external_subject(action, detail)
         rec = None
         if approval_id:

@@ -991,10 +991,12 @@ def newest_since(kinds: Iterable[str], since_seq: int,
                 e = _safe_json(raw)
                 if not isinstance(e, dict) or not isinstance(e.get("seq"), int):
                     continue
+                if not entry_ok(e, key):
+                    continue              # an unsigned line moves neither the tip nor the stop
                 tip = max(tip, e["seq"])
                 if e["seq"] <= since_seq:
                     return None, tip
-                if e.get("kind") in want and entry_ok(e, key):
+                if e.get("kind") in want:
                     try:
                         if where is None or where(e):
                             return e, tip
