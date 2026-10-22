@@ -32,8 +32,9 @@ CARD_BODY = ("Friday keeps your AI provider keys and account sign-ins encrypted 
              "The key that unlocks them is protected only by this Windows account's file "
              "permissions. A passphrase (your vault passphrase) can lock it too, so the file alone "
              "is useless to anyone who copies it. Start-up stays automatic. If you ever lose the "
-             "passphrase, you would enter those keys and sign-ins again; nothing else is lost. "
-             "This is optional, and you can do it any time in Settings > Privacy & Data.")
+             "passphrase, you would enter those keys and sign-ins again; locking them loses nothing "
+             "else. This is optional, and you can do it any time in Settings > Privacy & Data (set a "
+             "vault passphrase there first if you have not).")
 CARD_ACTIONS = [{"label": "Lock my saved keys", "workspace": "settings", "tab": "privacy"}]
 
 
@@ -65,11 +66,29 @@ def record(decided: str, via: str) -> dict:
     return _write(decided=decided, via=via, card=state().get("card") or "not_needed")
 
 
+def passphrase_is_kept(passphrase: str) -> bool:
+    """The passphrase is in a home the next start reads by itself (the OS keychain or Friday's
+    DPAPI file), not only in this process's environment."""
+    try:
+        import hmac
+        from agent_friday.services import vault_passphrase as vp
+        kept = vp.durable_value()[0] or ""
+        return bool(kept) and hmac.compare_digest(kept.encode("utf-8"), str(passphrase or "").encode("utf-8"))
+    except Exception:
+        return False
+
+
 def protect_keystore(passphrase: str) -> tuple:
     """Wrap the key store's root key with `passphrase` and prove the next start can unwrap it.
     (True, "") on success; (False, reason in plain words) otherwise, with the key store left as
     it was (protected by file permissions). Never logs the passphrase."""
     from agent_friday.services import keystore as ks
+    if not passphrase_is_kept(passphrase):
+        # Locking with a passphrase that lives only in this process would lock the owner out at
+        # the next start: every saved key unreadable. Never.
+        return False, ("the passphrase could not be saved on this computer (credential manager or "
+                       "Friday's protected file), so the saved keys were not locked with it; they "
+                       "stay protected by this account's file permissions")
     try:
         ks.root_key()                           # a fresh install has no key store file yet
         if (ks.describe() or {}).get("wrap") == "passphrase":
@@ -90,7 +109,7 @@ def protect_keystore(passphrase: str) -> tuple:
 def _setup_finished() -> bool:
     from agent_friday import core
     try:
-        return bool(core._SETUP_MARKER.exists())
+        return bool(core._is_existing_install())
     except Exception:
         return False
 
@@ -105,20 +124,24 @@ def push_card_if_pending() -> str:
         return "setup_pending"                  # setup will ask
     try:
         from agent_friday.services import keystore as ks
-        if (ks.describe() or {}).get("wrap") == "passphrase":
+        d = ks.describe() or {}
+        if d.get("wrap") == "passphrase":
             record("already", "boot")
             return "already"
+        if not d.get("exists"):
+            return "setup_pending"               # no saved keys yet: nothing to offer
     except Exception:
         pass
     try:
         import agent_friday.notifications_engine as _ne
         notice = _ne.push(title=CARD_TITLE, body=CARD_BODY, priority="high", source="security",
                           kind="keystore_offer", emitter="KS1", dedupe_key="keystore-passphrase-offer",
-                          actions=list(CARD_ACTIONS), target={"workspace": "settings", "tab": "privacy"})
+                          tier="needs_you", actions=list(CARD_ACTIONS),
+                          target={"workspace": "settings", "tab": "privacy"})
     except Exception as e:
         _log.info("key store offer card not shown: %s", type(e).__name__)
         return "failed"
-    if not notice:
-        return "failed"                          # tried again at the next start
+    if not notice or not notice.get("id") or notice.get("logged") or notice.get("pull_only"):
+        return "failed"                          # not on screen: tried again at the next start
     _write(card="shown")
     return "shown"

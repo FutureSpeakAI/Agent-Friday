@@ -1461,10 +1461,12 @@ def api_onboarding_acks():
         if k in data:
             state[k] = bool(data[k])
     if data.get("vault_skipped") is True or data.get("keys_unprotected") is True:
-        # A21: setup asked and the owner chose not to lock the saved keys: no card later.
+        # A21: setup asked and the owner chose not to lock the saved keys: no card later. Only
+        # during setup, and never over a decision already made.
         try:
             from agent_friday.services import keystore_offer as _ko
-            _ko.record("skipped", "setup")
+            if not _ko._setup_finished() and not _ko.state().get("decided"):
+                _ko.record("skipped", "setup")
         except Exception:
             pass
     if data.get("updates_choice") in ("on", "off"):
