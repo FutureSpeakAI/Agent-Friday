@@ -87,7 +87,10 @@ def collect(folder: Path, sha: str, installer_sha256: str = "") -> dict:
             problems.append("LEG.json names %r" % leg.get("leg"))
         if want["variant"] != "image" and result.get("variant") != want["variant"]:
             problems.append("ran variant %r, not %r" % (result.get("variant"), want["variant"]))
-        if want["image"] and leg.get("image") != want["image"]:
+        # GitHub names image variants by suffix (win25-vs2026 is Windows
+        # Server 2025 with a newer Visual Studio); the base must match exactly.
+        img = str(leg.get("image") or "")
+        if want["image"] and img.split("-", 1)[0] != want["image"]:
             problems.append("ran on image %r, not %r" % (leg.get("image"), want["image"]))
         missing = [c for c in want["checks"] if c not in checks]
         if missing:

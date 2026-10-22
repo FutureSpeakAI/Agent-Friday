@@ -173,7 +173,7 @@ def test_the_standard_user_is_not_an_administrator_and_has_a_non_ascii_profile()
     name = text.split('[string] $UserName = "', 1)[1].split('"', 1)[0]
     assert any(ord(c) > 127 for c in name), name
     verify = VERIFY.read_text(encoding="utf-8-sig")
-    assert "if ($Variant -eq 'standard-user') { (-not $isAdmin) -and (-not $asciiProfile) }" in verify
+    assert "if ($Variant -eq 'standard-user') { (-not $isAdmin) -and (-not $asciiProfile) -and $inOwnProfile }" in verify
     assert "$null -eq $exit" in text, "a leg whose exit code is unknown is not a pass"
 
 
@@ -244,6 +244,17 @@ def test_a_leg_that_ran_another_variant_or_image_is_not_a_pass(tmp_path):
     _leg_result(tmp_path, "windows-2022", image="win25", flat=True)
     rec = mod.collect(tmp_path, "abc")
     assert rec["legs"]["standard-user"]["ok"] is False and rec["legs"]["windows-2022"]["ok"] is False
+
+
+def test_an_image_variant_suffix_counts_as_its_base_image(tmp_path):
+    """GitHub reports windows-2025 as win25-vs2026: still Windows Server 2025.
+    win22 posing as win25-anything is still refused."""
+    mod = _all_pass(tmp_path, skip=("windows-2025", "windows-2022"))
+    _leg_result(tmp_path, "windows-2025", image="win25-vs2026", flat=True)
+    _leg_result(tmp_path, "windows-2022", image="win25-vs2026", flat=True)
+    rec = mod.collect(tmp_path, "abc")
+    assert rec["legs"]["windows-2025"]["ok"] is True
+    assert rec["legs"]["windows-2022"]["ok"] is False
 
 
 def test_every_leg_must_have_installed_the_release_build(tmp_path):
