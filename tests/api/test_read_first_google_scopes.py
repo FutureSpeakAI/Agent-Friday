@@ -83,6 +83,7 @@ def test_allowing_changes_asks_for_exactly_that_on_googles_screen(client, flag, 
     assert wanted in asked and not_wanted not in asked
     assert "https://www.googleapis.com/auth/gmail.send" not in asked
     assert ra._PENDING[d["state"]][flag] is True, "the callback leg must rebuild the same request"
+    assert wanted in [x["scope"] for x in d["requested_scopes"]], "the owner is shown what is asked first"
 
 
 class _Exec:
@@ -154,6 +155,31 @@ def test_an_account_that_allowed_changes_keeps_them(monkeypatch):
     _write([CAL_READ, TASKS_READ, CAL_RW, TASKS_RW])
     assert cw.write_ready()[0] is True
     public = ga._public_record(ga.get_account("a1") or {})
+    assert "changes" in public, "an account says what it may change"
     assert public["changes"] == {"calendar": True, "tasks": True}
     _write([CAL_READ, TASKS_READ])
     assert ga._public_record(ga.get_account("a1") or {})["changes"] == {"calendar": False, "tasks": False}
+
+
+def _two_accounts():
+    ga.ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
+    recs = [{"id": "w1", "email": "work@example.test", "label": "Work", "status": "connected",
+             "services": {"calendar": True}, "scopes": [CAL_READ, CAL_RW], "enc_method": "vault"},
+            {"id": "r1", "email": "home@example.test", "label": "Home", "status": "connected",
+             "services": {"calendar": True}, "scopes": [CAL_READ], "enc_method": "vault"}]
+    ga.ACCOUNTS_INDEX.write_text(json.dumps({"version": 1, "accounts": recs}), encoding="utf-8")
+    ga._MIGRATION_DONE = True
+
+
+def test_with_one_account_that_may_change_and_one_that_may_only_read(monkeypatch):
+    _two_accounts()
+    svc = _Svc()
+    monkeypatch.setattr(cw, "_service", lambda account_id=None: (svc, None))
+    monkeypatch.setattr(cw, "_drop_calendar_cache", lambda: None)
+    assert cw.get_event("ev1")["account_id"] == "w1", "an unnamed read uses the account a change would"
+    assert cw.get_event("ev1", account_id="Home")["account_id"] == "r1", "the read-only account still reads"
+    out = cw.delete_event("ev1", account_id="Home")
+    assert "Allow calendar changes" in out["error"] and svc.ev.deleted == []
+    plan = cw.get_event("ev1", account_id="Home", for_write=True)
+    assert not plan.get("ok") and "Allow calendar changes" in plan["error"], \
+        "a change is never planned on an account that may not make it"
