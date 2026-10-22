@@ -233,6 +233,98 @@ def risk_reasons(goal: Dict[str, Any], now: Optional[float] = None) -> List[str]
     return out
 
 
+HEALTH_WORDS = {"good": "on track", "watch": "worth a look", "poor": "needs attention"}
+#: Health levels: good / watch / poor while a goal is open; "ended" once it
+#: is met, ended, failed or archived (its words are then its state).
+STALL_DAYS = 7
+
+
+def _checked(m: Dict[str, Any]) -> bool:
+    """For health: the step's result passed its check, the automatic one
+    (ran and scored) or, on a goal the owner verifies by hand, the owner's
+    own confirmation. A skipped check or an override is not a check."""
+    v = m.get("verification") or {}
+    if not v.get("passed") or v.get("human_override"):
+        return False
+    return (v.get("status") == "ok" and v.get("score") is not None) or v.get("status") == "manual"
+
+
+def health(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
+    """How a goal is doing (§17.15), in words, from what is on record:
+    progress and its pace, the deadline, what waits on the owner, what waits
+    on something else, the budget, steps stuck behind other steps, and steps
+    accepted without their check. Descriptive, not a score: no percentage is
+    made up for work that cannot be measured (§17.15-2)."""
+    now = now or time.time()
+    ms = [m for m in goal.get("milestones") or [] if isinstance(m, dict)]
+    done = [m for m in ms if m.get("status") == "done"]
+    open_ms = [m for m in ms if m.get("status") != "done"]
+    signals: List[Dict[str, str]] = []
+    level = "good"
+    state = normalize(goal)
+    if state not in LIVE and state not in ("proposed", "approved", "paused"):
+        # Met, ended, failed or archived: nothing is "at risk" any more.
+        return {"level": "ended", "words": STATE_WORDS.get(state, state),
+                "signals": [{"key": "progress", "words": f"{len(done)} of {len(ms)} steps done.",
+                             "level": "good"}] if ms else []}
+
+    def add(key: str, words: str, lvl: str) -> None:
+        nonlocal level
+        signals.append({"key": key, "words": words, "level": lvl})
+        if lvl == "poor" or (lvl == "watch" and level == "good"):
+            level = lvl
+
+    if ms:
+        add("progress", f"{len(done)} of {len(ms)} steps done.", "good")
+    recent = [m for m in done if (_ts(m.get("done_at")) or 0) >= now - STALL_DAYS * 86400]
+    created = _ts(goal.get("created_at")) or now
+    if open_ms and normalize(goal) in LIVE:
+        if recent:
+            add("pace", f"{len(recent)} finished in the last week.", "good")
+        elif now - created > STALL_DAYS * 86400:
+            add("pace", "Nothing has finished in the last week.", "watch")
+    dl = _ts(goal.get("deadline"))
+    if open_ms and dl is not None:
+        if dl < now:
+            add("deadline", "Its deadline has passed with work still open.", "poor")
+        else:
+            if recent:
+                weeks_needed = len(open_ms) / max(len(recent), 1)
+                if now + weeks_needed * 7 * 86400 > dl:
+                    add("deadline", "At this pace it would finish after its deadline.", "poor")
+            if dl - now < AT_RISK_HOURS * 3600:
+                add("deadline", "Its deadline is less than two days away.", "watch")
+    cats = [(m, category_of(m, include_hold=False)) for m in open_ms]
+    owner = [m for m, c in cats if c in _NEEDS_OWNER]
+    waiting = [m for m, c in cats if c == "external_wait"]
+    if owner:
+        add("attention", f"{len(owner)} step{'s' if len(owner) != 1 else ''} wait{'' if len(owner) != 1 else 's'} for you.", "poor")
+    if waiting:
+        add("waiting", f"{len(waiting)} step{'s' if len(waiting) != 1 else ''} wait{'' if len(waiting) != 1 else 's'} on an answer or another service.", "watch")
+    stuck_ids = {m.get("milestone_id") for m in owner}
+    behind = [m for m in open_ms if any(d in stuck_ids for d in m.get("depends_on") or [])]
+    if behind:
+        add("dependencies", f"{len(behind)} step{'s' if len(behind) != 1 else ''} can't start until a stuck step is sorted out.", "watch")
+    cap = int(goal.get("budget_cap_mψ") or 0)
+    spent = int(goal.get("spent_mψ") or 0)
+    if cap:
+        lvl = "poor" if spent >= cap else ("watch" if spent >= AT_RISK_BUDGET * cap else "good")
+        add("budget", f"Used {spent} of {cap} mψ.", lvl)
+    b = goal.get("budget") if isinstance(goal.get("budget"), dict) else {}
+    try:
+        minutes = int(float(b.get("runtime_minutes") or 0))
+    except (TypeError, ValueError):
+        minutes = 0
+    if minutes:
+        used = round(float(goal.get("spent_runtime_s") or 0) / 60)
+        add("runtime", f"Used {used} of {minutes} minutes of work.",
+            "poor" if used >= minutes else ("watch" if used >= AT_RISK_BUDGET * minutes else "good"))
+    unchecked = [m for m in done if not _checked(m)]
+    if unchecked:
+        add("verification", f"{len(unchecked)} finished step{'s were' if len(unchecked) != 1 else ' was'} accepted without its check passing.", "watch")
+    return {"level": level, "words": HEALTH_WORDS[level], "signals": signals}
+
+
 def live_state(goal: Dict[str, Any], now: Optional[float] = None) -> str:
     # Holds (recomputed every tick: "waits for the step before it", "no
     # expected result yet") are shown on the milestone but don't move the
@@ -297,12 +389,29 @@ def continuation_hold(goal: Dict[str, Any], milestone: Dict[str, Any], *,
     est = int(milestone.get("cost_estimate_mψ") or 0)
     if cap and int(goal.get("spent_mψ") or 0) + est > cap:
         return blocker("budget_exhausted", f"Starting “{name}” would go over the goal's budget.")
+    used_up = runtime_hold(goal)
+    if used_up:
+        return used_up
     criteria = (milestone.get("success_criteria") or goal.get("success_criteria") or "").strip()
     if not criteria:
         return blocker("needs_user_input",
                        f"I don't know what would prove “{name}” done, so I won't start it on my "
                        "own. Say what result you expect.", type="no_expected_evidence")
     return route_hold(goal)
+
+
+def runtime_hold(goal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The runtime-budget blocker once a goal has used its minutes of work
+    (§17.2). Checked on the tick and before every dispatch."""
+    b = goal.get("budget") if isinstance(goal.get("budget"), dict) else {}
+    try:
+        minutes = int(b.get("runtime_minutes") or 0)
+    except (TypeError, ValueError):
+        minutes = 0
+    if minutes and float(goal.get("spent_runtime_s") or 0) >= minutes * 60:
+        return blocker("budget_exhausted", f"This goal has used its {minutes} minutes of work.",
+                       type="runtime")
+    return None
 
 
 ROUTE_MODES = ("local_only", "local_preferred", "cloud_preferred", "cloud_only")

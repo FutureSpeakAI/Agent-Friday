@@ -192,6 +192,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agent_friday.paths import contained, friday_home, safe_name
 from agent_friday.services import approvals
+from agent_friday.services import goal_definition
 from agent_friday.services import goal_state
 from agent_friday.services import qa_gates
 from agent_friday.user_errors import ExceptionText, UserFacingValueError, exception_text
@@ -453,6 +454,15 @@ def _normalize_milestone(m: Optional[dict]) -> Dict[str, Any]:
         "approval_id": m.get("approval_id"),
         # §17.5 / §17.9: the milestones this one waits for (ids in the goal).
         "depends_on": [str(d)[:40] for d in (m.get("depends_on") or []) if d][:20],
+        # §17.5 (schema 2, services/goal_definition): what it should produce,
+        # what proves it, where the owner decides, how risky it is, and the
+        # kinds of action it takes (checked against the goal's autonomy).
+        "outcome": str(m.get("outcome") or "")[:500],
+        "evidence": list(m.get("evidence") or [])[:10],
+        "decision_points": list(m.get("decision_points") or [])[:10],
+        "risk": m.get("risk") if m.get("risk") in ("low", "medium", "high") else "low",
+        "planned_actions": [a for a in (m.get("planned_actions") or [])
+                            if a in goal_definition.AUTONOMY_CATEGORIES][:7],
     }
 
 
@@ -464,6 +474,9 @@ _MUTABLE_GOAL_FIELDS = {
     # §17.9 "the model route is still permitted": the routing modes this goal
     # may run under (cloud_mode_policy names); empty means any.
     "allowed_routes",
+    # §17.2 schema 2: what Friday may do on her own, per kind of action;
+    # validated in update_goal.
+    "autonomy", "constraints", "stop_conditions", "people", "notification_policy",
 }
 
 
@@ -472,10 +485,12 @@ def create_goal(*, title: str, description: str = "", owner: str = "owner",
                 success_criteria: str = "", linked_schedules: Optional[List[str]] = None,
                 linked_chains: Optional[List[str]] = None, budget_cap_mψ: int = 0,
                 approval_required: bool = False, verification_mode: str = "auto",
-                status: str = "proposed") -> Dict[str, Any]:
+                status: str = "proposed", definition: Optional[Dict[str, Any]] = None,
+                created_reason: str = "created") -> Dict[str, Any]:
     """Create a new Goal. Defaults to status='proposed' (V6 P5's own state
     machine start) — pass status='active' for a goal that's already been
-    blessed (e.g. tests, or a caller that does its own proposal flow)."""
+    blessed (e.g. tests, or a caller that does its own proposal flow).
+    `definition` carries the schema-2 fields from goal_definition."""
     now = _now_iso()
     gid = f"goal_{uuid.uuid4().hex[:10]}"
     st = goal_state.LEGACY.get(status, status)
@@ -501,12 +516,30 @@ def create_goal(*, title: str, description: str = "", owner: str = "owner",
         "dissent_constraints": [],
         "receipts": [],
         "rollovers": 0,
-        "history": [{"at": now, "from": None, "to": st, "reason": "created"}],
+        "history": [{"at": now, "from": None, "to": st, "reason": created_reason}],
         "created_at": now,
         "updated_at": now,
     }
+    if definition:
+        goal.update({k: v for k, v in definition.items() if k not in goal or k == "owner"})
     _write_goal_file(goal)
     return goal
+
+
+def define_goal(spec: Dict[str, Any], seen_summary_id: Optional[str]) -> Dict[str, Any]:
+    """Create a goal from the owner's confirmed definition (§17.4): only when
+    every needed question is answered and the summary the owner confirmed is
+    this goal's. It starts approved (the owner said yes to it) with the full
+    schema, and its first receipt holds the summary that was confirmed.
+    Raises goal_definition.DefinitionRefused otherwise."""
+    g = goal_definition.check_confirm(spec, seen_summary_id)
+    args, extra = goal_definition.to_create_args(g)
+    goal = create_goal(status="approved", definition=extra,
+                       created_reason="defined with you; you confirmed its summary", **args)
+    _append_receipt(goal["goal_id"], _make_receipt(
+        goal, {"milestone_id": None, "name": "the goal's definition"}, kind="goal_defined", verdict=None, cost_mψ=0,
+        note="summary confirmed by the owner: " + goal_definition.summary(g)[:1500]))
+    return get_goal(goal["goal_id"]) or goal
 
 
 _MILESTONE_ID = re.compile(r"[A-Za-z0-9_]{1,64}")
@@ -528,9 +561,53 @@ def update_goal(goal_id: str, patch: dict) -> Optional[Dict[str, Any]]:
         if clean is None:
             raise ValueError("allowed_routes must be a list of: " + ", ".join(goal_state.ROUTE_MODES))
         patch["allowed_routes"] = clean
+    auto_change = None
+    if "autonomy" in patch:
+        a = patch.pop("autonomy")
+        if not isinstance(a, dict) or any(k not in goal_definition.AUTONOMY_CATEGORIES
+                                          or v not in goal_definition.AUTONOMY_LEVELS for k, v in a.items()):
+            raise ValueError("autonomy maps " + ", ".join(goal_definition.AUTONOMY_CATEGORIES)
+                             + " to one of " + ", ".join(goal_definition.AUTONOMY_LEVELS))
+        auto_change = dict(a)             # merged over the goal's own map below
+    budget_change = None
+    if "budget" in patch:
+        b = patch.pop("budget")
+        if not isinstance(b, dict):
+            raise ValueError("budget is {mψ, money_cents, runtime_minutes}")
+        budget_change = b
+    for key in ("constraints", "stop_conditions", "people"):
+        if key in patch:
+            patch[key] = goal_definition.texts(patch[key])
+    if "notification_policy" in patch:
+        patch["notification_policy"] = goal_definition.normalize(
+            {"notification_policy": patch["notification_policy"]})["notification_policy"]
 
     def _fn(goal):
         changed = False
+        if auto_change is not None:
+            before = goal_definition.autonomy(goal.get("autonomy") or {})
+            after = goal_definition.autonomy(dict(before, **auto_change))
+            if after != before:
+                goal["autonomy"] = after
+                goal.setdefault("history", []).append({
+                    "at": _now_iso(), "from": goal.get("status"), "to": goal.get("status"),
+                    "reason": "what Friday may do changed: " + ", ".join(
+                        f"{c} {before[c]}→{after[c]}" for c in goal_definition.AUTONOMY_CATEGORIES
+                        if before[c] != after[c])})
+                # A step stopped because its kind of action was not allowed
+                # may be tried again (it is checked again when it runs).
+                for m in goal.get("milestones") or []:
+                    if m.get("status") == "blocked" and (m.get("blocker") or {}).get("type") == "not_allowed":
+                        m.update(status="pending", blocker=None)
+        if budget_change is not None:
+            cur = goal.get("budget") if isinstance(goal.get("budget"), dict) else {}
+            nb = goal_definition.normalize({"budget": dict(cur, **budget_change)})["budget"]
+            if nb != cur:
+                goal["budget"] = nb
+                goal["budget_cap_mψ"] = nb["mψ"] or int(goal.get("budget_cap_mψ") or 0)
+                for m in goal.get("milestones") or []:
+                    if m.get("status") == "blocked" and (m.get("blocker") or {}).get("type") == "runtime":
+                        m.update(status="pending", blocker=None)
         for k, v in (patch or {}).items():
             if k in _MUTABLE_GOAL_FIELDS:
                 if k in _PLAN_FIELDS and goal.get(k) != v:
@@ -558,6 +635,16 @@ def _update_milestone(goal_id: str, milestone_id: str, **fields) -> Optional[Dic
     def _fn(goal):
         m = _find_milestone(goal, milestone_id)
         if m is not None:
+            last = fields.get("last_run")
+            run = m.get("run")
+            if last and run and run.get("started_at") == last.get("started_at"):
+                # §17.2 runtime budget: counted once, in the same write that
+                # closes the run (a second closer finds no run and adds nothing).
+                try:
+                    took = max(0.0, float(last.get("ended_at")) - float(run.get("started_at")))
+                except (TypeError, ValueError):
+                    took = 0.0
+                goal["spent_runtime_s"] = round(float(goal.get("spent_runtime_s") or 0) + took, 1)
             m.update(fields)
         return goal
     return _mutate_goal(goal_id, _fn)
@@ -1022,6 +1109,15 @@ def _default_executor(goal: Dict[str, Any], milestone: Dict[str, Any], *,
             orb_icon="🎯",
             scope=None if hard_gate_approved else "goal-milestone",
             task_id=milestone.get("_task_id"),
+            # §17.6: whose task, which goal, what it should produce and how
+            # it is checked; the record carries these, not a parsed description.
+            principal=str(goal.get("principal") or goal.get("owner") or "owner"),
+            goal_ancestry={"goal_id": goal.get("goal_id"), "milestone_id": milestone.get("milestone_id")},
+            expected_outputs=(milestone.get("outcome") or milestone.get("success_criteria")
+                              or goal.get("success_criteria") or None),
+            verification_plan=("the owner confirms it" if (goal.get("verification_mode") or "auto") == "manual"
+                               else "Friday checks the result against: "
+                               + str(milestone.get("success_criteria") or goal.get("success_criteria") or "")[:300]),
         )
     except Exception as e:
         # _spawn_task fails CLOSED when a required scope can't be applied —
@@ -1237,6 +1333,33 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
     if _route:
         _update_milestone(goal_id, milestone_id, hold=_route)
         return {"ok": False, "status": "held", "blocker": _route, "error": _route.get("text")}
+    # §17.2 autonomy per kind of action (schema-2 goals): a step whose planned
+    # actions include one the owner said "never" to does not run; one the
+    # owner said "ask me" to always asks on its card.
+    _inferred: tuple = ()
+    if isinstance(goal.get("autonomy"), dict):
+        # What the gate itself reads in the step's real instruction counts
+        # too, so a step that declares "read" but sends is held as a send.
+        _crit = (milestone.get("success_criteria") or goal.get("success_criteria") or "").strip()
+        _instr = (f"{milestone.get('name')} — {goal.get('description') or goal.get('title')}"
+                  + (f" — success criteria: {_crit}" if _crit else ""))
+        try:
+            _cls = approvals.classify(_instr).get("policy_class")
+        except Exception:
+            _cls = "outward"                  # fail closed, as the gate does
+        _cat = goal_definition.Q3_CATEGORY.get(_cls)
+        _inferred = (_cat,) if _cat else ()
+    _ask_cats, _never_cats = goal_definition.autonomy_for(goal, milestone, _inferred)
+    if _never_cats:
+        words = ", ".join(goal_definition.CATEGORY_WORDS[c] for c in _never_cats)
+        _update_milestone(goal_id, milestone_id, status="blocked", hold=None, blocker=goal_state.blocker(
+            "policy_blocked", f"“{milestone.get('name')}” would {words}, which you said this goal must never do.",
+            type="not_allowed", needs_confirmation=True))
+        return {"ok": False, "status": "not_allowed", "error": f"this goal may never {words}"}
+    _used_up = goal_state.runtime_hold(goal)
+    if _used_up:
+        _update_milestone(goal_id, milestone_id, status="blocked", hold=None, blocker=_used_up)
+        return {"ok": False, "status": "budget_exceeded", "error": _used_up["text"]}
 
     # The Q3/dissent gate MUST see the REAL instruction the executor will
     # run, not just the milestone's cosmetic name + the goal's cosmetic
@@ -1267,7 +1390,7 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
                    + (f":r{_round}" if _round else ""),
         title=f"{goal.get('title')} — {milestone.get('name')}",
         description=goal.get("description", ""), action_description=action_description,
-        force_gate=bool(goal.get("approval_required")),
+        force_gate=bool(goal.get("approval_required") or _ask_cats),
         cost_estimate_mψ=int(milestone.get("cost_estimate_mψ") or DEFAULT_MILESTONE_COST_MΨ),
         interest_model=_safe_interest_model(),
     )
@@ -1705,6 +1828,8 @@ def _closed_run(goal_id: str, milestone_id: str) -> Dict[str, Any]:
     run = m.get("run")
     out: Dict[str, Any] = {"run": None}
     if run:
+        # The runtime it took is added by _update_milestone, in the write
+        # that clears the run.
         out["last_run"] = dict(run, ended_at=time.time())
     return out
 
@@ -2231,6 +2356,8 @@ def summary(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]
         "approval_required": bool(goal.get("approval_required")),
         "allowed_routes": list(goal.get("allowed_routes") or []),
         "moves": goal_state.owner_moves(status),
+        # §17.15: how it is doing, in words (no made-up percentage).
+        "health": goal_state.health(goal, now),
         "milestones": rows,
     }
 

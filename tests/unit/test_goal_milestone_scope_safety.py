@@ -140,9 +140,10 @@ class TestMilestoneDispatchIsScopedUnlessExplicitlyApproved:
         recorded = {}
 
         def _fake_spawn_task(name, prompt, description='', on_complete=None,
-                             chain=None, chain_step=0, orb_icon='🛰', scope=None, task_id=None):
+                             chain=None, chain_step=0, orb_icon='🛰', scope=None, task_id=None, **kw):
             recorded["scope"] = scope
             recorded["prompt"] = prompt
+            recorded.update(kw)
             return "fake-task-id"
 
         def _fake_snapshot(tid):
