@@ -58,7 +58,7 @@
 
 <section aria-labelledby="sched-h">
   <h2 id="sched-h">Scheduled bundles</h2>
-  <p>Friday can make a bundle every day or every week into a folder you choose (this PC or a network share), check each one after it is written, keep the newest few, and now and then rehearse a restore from the newest one without changing anything. The passphrase for scheduled bundles is kept in this Windows account's credential store so they can be made while you are away: anyone who can open this account can open them.</p>
+  <p>Friday can make a bundle every day or every week into a folder you choose (this PC or a network share), check each one after it is written, keep the newest few, and now and then rehearse a restore from the newest one without changing anything. The passphrase for scheduled bundles, with the folder and how many to keep, is kept in this account's credential store (Windows Credential Manager) so they can be made while you are away: anyone who can open this account can open them. On a system without a credential store, scheduled bundles cannot be turned on.</p>
   <p id="sched-state" role="status">Off.</p>
   <label>Folder <input id="sf" size="48" placeholder="D:\Backups\Friday or \\server\share\Friday"></label><br>
   <label>How often <select id="se"><option value="daily">every day</option><option value="weekly" selected>every week</option></select></label>

@@ -22,21 +22,23 @@ owner is away, so its passphrase is kept, and with it the folder, how often
 and how many: one record in this account's keychain (service "agent-friday",
 one account per data folder), written only by the owner's press (or the
 command line, which is this account). Nothing in the data folder can turn a
-schedule on, point it at another folder or change how many are kept: a
-record planted there is never read while a keychain exists. Only on a system
-with no keychain at all is the record kept in the vault folder, sealed by the
-credential store (a plain file is refused); that is weaker, like the ledger's
-anchor there, and the Doctor page says so. The passphrase must pass
+schedule on, point it at another folder or change how many are kept. On a
+system with no keychain the schedule cannot be turned on at all: nothing in
+the data folder is trusted to stand in for it. The passphrase must pass
 services/passphrase_strength, is never shown again and never written to the
 state file, the ledger or a log; anyone who can read this account's keychain
 can open these bundles.
 
 `<home>/backups/schedule.json` holds only what happened (the bundles made,
-when, whether they worked); every name in it is checked before it is used.
+when, whether they worked). Every name in it is checked before it is used, a
+time in the future counts as never, and a bundle is removed by rotation only
+when its entry carries a tag made with a key kept in the sealed record (so a
+planted list cannot make Friday delete the owner's bundles).
 """
 from __future__ import annotations
 
 import hashlib
+import hmac as _hmac
 import json
 import os
 import re
@@ -52,7 +54,7 @@ MAX_KEEP = 60
 DEFAULT_REHEARSE_DAYS = 30
 SERVICE = "agent-friday"
 PREFIX = "friday-scheduled-"
-_NAME = re.compile(r"^friday-scheduled-\d{8}-\d{6}\.fridaybundle$")
+_NAME = re.compile(r"friday-scheduled-\d{8}-\d{6}Z(-\d{1,2})?\.fridaybundle")
 MAX_BACKOFF_S = 86400.0
 
 _LOCK = threading.Lock()
@@ -95,74 +97,70 @@ def _keyring():
         return None, (), ()
 
 
+class NoKeychain(RuntimeError):
+    """This system has no credential store outside Friday's data folder."""
+
+
+def keychain_available() -> bool:
+    if _testing() and os.environ.get("FRIDAY_SCHEDULE_SECRET") != "keyring":
+        return True
+    keyring, NoKeyringError, _ = _keyring()
+    if keyring is None:
+        return False
+    try:
+        keyring.get_password(SERVICE, "bundle-schedule:probe")
+        return True
+    except NoKeyringError:
+        return False
+    except Exception:
+        return True
+
+
 def _store(record: Optional[dict], home: Optional[Path] = None) -> None:
-    """Keep the sealed schedule record (None: remove it from every store)."""
+    """Keep the sealed schedule record in the keychain (None: remove it, and
+    any file an older build left in the vault folder)."""
     acct = _account(home)
     raw = None if record is None else json.dumps(record, sort_keys=True)
+    try:
+        _secret_file(home).unlink()          # never read; an older build's leftover
+    except OSError:
+        pass
     if _testing() and os.environ.get("FRIDAY_SCHEDULE_SECRET") != "keyring":
         if raw is None:
             _TEST_SECRETS.pop(acct, None)
-            try:
-                _secret_file(home).unlink()
-            except OSError:
-                pass
         else:
             _TEST_SECRETS[acct] = raw
         return
     keyring, NoKeyringError, PasswordDeleteError = _keyring()
-    f = _secret_file(home)
     if raw is None:
-        # off: removed from both places, whichever held it
         if keyring is not None:
             try:
                 keyring.delete_password(SERVICE, acct)
-            except (PasswordDeleteError, NoKeyringError):
-                pass
             except Exception:
                 pass
-        try:
-            f.unlink()
-        except OSError:
-            pass
         return
-    if keyring is not None:
-        try:
-            keyring.set_password(SERVICE, acct, raw)
-            try:
-                f.unlink()                       # never two copies
-            except OSError:
-                pass
-            return
-        except NoKeyringError:
-            pass
-    from agent_friday.services import credential_store
-    f.parent.mkdir(parents=True, exist_ok=True)
-    credential_store.write_secret(f, raw.encode("utf-8"))
+    if keyring is None:
+        raise NoKeychain("this system has no credential store outside Friday's folder")
+    try:
+        keyring.set_password(SERVICE, acct, raw)
+    except NoKeyringError:
+        raise NoKeychain("this system has no credential store outside Friday's folder")
 
 
 def _load(home: Optional[Path] = None) -> Optional[dict]:
-    """The sealed record, or None. The file in the vault folder is read only
-    when this system has no keychain, and only when it is sealed."""
+    """The sealed record from the keychain, or None. Nothing in the data
+    folder ever stands in for it."""
     acct = _account(home)
     if _testing() and os.environ.get("FRIDAY_SCHEDULE_SECRET") != "keyring":
         raw = _TEST_SECRETS.get(acct)
     else:
         keyring, NoKeyringError, _ = _keyring()
         raw = None
-        no_keychain = keyring is None
         if keyring is not None:
             try:
                 raw = keyring.get_password(SERVICE, acct)
             except NoKeyringError:
-                no_keychain = True
-        if raw is None and no_keychain:
-            f = _secret_file(home)
-            if f.exists():
-                from agent_friday.services import credential_store
-                blob = f.read_bytes()
-                if not credential_store.looks_protected(blob):
-                    return None                  # a plain file is never a schedule
-                raw = credential_store.unprotect(blob).decode("utf-8")
+                raw = None
     if not raw:
         return None
     try:
@@ -186,16 +184,23 @@ def _default_state() -> dict:
 
 
 def _num(v) -> Optional[float]:
+    """A time, or None: anything later than a few minutes from now is a time
+    that never happened (a planted future time would stop the schedule)."""
     try:
         f = float(v)
     except (TypeError, ValueError):
         return None
-    return f if f == f and 0 < f < 1e11 else None
+    return f if f == f and 0 < f <= time.time() + 600 else None
 
 
 def _made_ok(m) -> bool:
-    return (isinstance(m, dict) and isinstance(m.get("file"), str) and _NAME.match(m["file"])
-            and isinstance(m.get("bundle_id"), str))
+    return (isinstance(m, dict) and isinstance(m.get("file"), str) and bool(_NAME.fullmatch(m["file"]))
+            and isinstance(m.get("bundle_id"), str) and _num(m.get("at")) is not None)
+
+
+def _tag(key: str, m: dict) -> str:
+    msg = "%s|%s|%.3f" % (m.get("file"), m.get("bundle_id"), float(m.get("at") or 0))
+    return _hmac.new(bytes.fromhex(key), msg.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def state(home: Optional[Path] = None) -> dict:
@@ -321,9 +326,15 @@ def set_schedule(*, enabled: bool, every: str = "weekly", folder: Optional[str] 
             rehearse_days = max(1, min(int(rehearse_days), 365))
         except (TypeError, ValueError):
             raise ScheduleError("Keep and rehearsal must be whole numbers.")
-        _store({"passphrase": passphrase or old["passphrase"], "folder": str(dest),
-                "every": every, "keep": keep, "rehearse_days": rehearse_days,
-                "set_at": time.time()}, home)
+        try:
+            _store({"passphrase": passphrase or old["passphrase"], "folder": str(dest),
+                    "every": every, "keep": keep, "rehearse_days": rehearse_days,
+                    "made_key": old.get("made_key") or os.urandom(16).hex(),
+                    "set_at": time.time()}, home)
+        except NoKeychain:
+            raise ScheduleError("Scheduled bundles need a credential store outside Friday's folder "
+                                "(Windows Credential Manager, macOS Keychain or a Secret Service), "
+                                "and this system has none. Make bundles by hand instead.")
         _receipt("schedule_on", every=every, keep=keep, rehearse_days=rehearse_days,
                  new_passphrase=bool(passphrase))
         return public_state(home)
@@ -374,8 +385,14 @@ def run_now(home: Optional[Path] = None, *, kdf_profile=None) -> dict:
             raise ScheduleError("The scheduled bundles' passphrase is not kept on this PC; "
                                 "set it again on the Doctor page.")
         dest_dir = Path(st["folder"])
-        stamp = time.strftime("%Y%m%d-%H%M%S")
+        stamp = time.strftime("%Y%m%d-%H%M%SZ", time.gmtime())
         out = dest_dir / (PREFIX + stamp + fb.SUFFIX)
+        for n in range(1, 100):
+            if not out.exists():
+                break
+            out = dest_dir / ("%s%s-%d%s" % (PREFIX, stamp, n, fb.SUFFIX))
+        else:
+            raise ScheduleError("Too many bundles with the same name in the folder.")
         st["last_run"] = time.time()
         _save(st, home)
         try:
@@ -398,25 +415,35 @@ def run_now(home: Optional[Path] = None, *, kdf_profile=None) -> dict:
             raise
         fb._remember(home, out, m["bundle_id"], verified=True)
         st = state(home)
-        st["made"].append({"file": out.name, "bundle_id": m["bundle_id"], "at": time.time(),
-                           "verified": True})
+        entry = {"file": out.name, "bundle_id": m["bundle_id"], "at": round(time.time(), 3),
+                 "verified": True}
+        rec = _load_safe(home) or {}
+        if rec.get("made_key"):
+            entry["tag"] = _tag(rec["made_key"], entry)
+        st["made"].append(entry)
         st["last_ok"] = st["last_run"]
         st["last_error"] = None
         st["failures"] = 0
-        removed = _rotate(st, dest_dir)
+        removed = _rotate(st, dest_dir, (rec or {}).get("made_key"))
         _save(st, home)
         _receipt("scheduled_bundle", bundle_id=m["bundle_id"], file=out.name,
                  files=len(m.get("files") or []), removed=removed)
         return {"bundle_id": m["bundle_id"], "file": out.name, "removed": removed}
 
 
-def _rotate(st: dict, dest_dir: Path) -> list:
+def _rotate(st: dict, dest_dir: Path, made_key: Optional[str]) -> list:
     """Keep the newest `keep` bundles this schedule made. A file is removed
-    only when its header still names the bundle recorded for it."""
-    made = st["made"]
+    only when its entry carries this schedule's tag and its header still
+    names the bundle recorded for it; entries are ordered by their (tagged)
+    time, so a reordered list cannot make the newest go first."""
+    if not made_key:
+        return []
+    good = [m for m in st["made"] if _made_ok(m)
+            and _hmac.compare_digest(str(m.get("tag") or ""), _tag(made_key, m))]
+    good.sort(key=lambda m: float(m["at"]))
     keep = st["keep"]
     removed = []
-    old, st["made"] = made[:-keep] if len(made) > keep else [], made[-keep:]
+    old, st["made"] = (good[:-keep] if len(good) > keep else []), good[-keep:]
     for m in old:
         if not _made_ok(m):
             continue
@@ -429,6 +456,8 @@ def _rotate(st: dict, dest_dir: Path) -> list:
                 removed.append(p.name)
             except OSError:
                 st["made"].insert(0, m)          # try again next time
+        elif p.exists():
+            st["made"].insert(0, m)              # not ours any more, or not now: keep the entry
     return removed
 
 
@@ -500,6 +529,12 @@ def doctor_view(home: Optional[Path] = None) -> dict:
     """For the Doctor's backup check: on or off, when, whether it worked. No
     folder, no file name."""
     st = state(home)
-    return {"scheduled": bool(st.get("enabled")), "every": st.get("every") if st.get("enabled") else None,
+    overdue = False
+    if st.get("enabled"):
+        last = st.get("last_ok")
+        span = EVERY.get(st.get("every"), EVERY["weekly"])
+        overdue = (not last and bool(st.get("last_run"))) or bool(last and time.time() - last > 2 * span + 3600)
+    return {"scheduled": bool(st.get("enabled")), "overdue": overdue,
+            "every": st.get("every") if st.get("enabled") else None,
             "last_ok_at": st.get("last_ok"), "failing": bool(st.get("last_error")),
             "rehearsed_at": st.get("last_rehearsal"), "rehearsal_ok": st.get("last_rehearsal_ok")}

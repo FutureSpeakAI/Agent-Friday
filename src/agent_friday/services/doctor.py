@@ -287,6 +287,8 @@ def _c_backup():
         return "degraded", "scheduled_bundle_failing"
     if sched.get("scheduled") and sched.get("rehearsal_ok") is False:
         return "degraded", "restore_rehearsal_failed"
+    if sched.get("scheduled") and sched.get("overdue"):
+        return "degraded", "scheduled_bundle_overdue"
     p = _home() / "backups" / "last_bundle.json"
     if not p.exists():
         return "unavailable_by_configuration", "no_bundle_made"

@@ -54,7 +54,11 @@ _COMMON_WORDS = {
 }
 
 _RUNS = ("abcdefghijklmnopqrstuvwxyz", "qwertyuiop", "asdfghjkl", "zxcvbnm",
-         "`1234567890-=", "~!@#$%^&*()_+", "1qaz2wsx3edc4rfv5tgb", "qazwsxedcrfvtgbyhnujm")
+         "`1234567890-=", "~!@#$%^&*()_+", "1qaz2wsx3edc4rfv5tgb", "qazwsxedcrfvtgbyhnujm",
+         "1234567890", "0123456789", "02468", "13579", "97531", "86420")
+#: A shifted number-row key and the digit under it.
+_UNSHIFT = str.maketrans({"!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7",
+                          "*": "8", "(": "9", ")": "0"})
 #: Adjacent pairs that belong to a run, either way round (built once).
 _PAIRS = {(r[i], r[i + 1]) for r in _RUNS for i in range(len(r) - 1)}
 _PAIRS |= {(b, a) for a, b in _PAIRS}
@@ -94,7 +98,8 @@ def _run_length(s: str) -> int:
 
 def _interleaved_runs(s: str) -> bool:
     """Letters and digits that each make a run when taken apart (a1b2c3,
-    1q2w3e): a walk, not a choice."""
+    1q2w3e, and !Q@W#E with the shift key held): a walk, not a choice."""
+    s = s.translate(_UNSHIFT)
     letters = "".join(c for c in s.lower() if c.isalpha())
     digits = "".join(c for c in s if c.isdigit())
     if len(letters) < 3 or len(digits) < 3 or len(letters) + len(digits) < 0.8 * len(s):
@@ -149,7 +154,7 @@ def _mixed_bits(s: str) -> float:
     seen = set()
     for chunk in re.findall(r"[A-Za-z]+|[^A-Za-z]+", s):
         key = chunk.lower()
-        if key in seen and len(chunk) >= 3:
+        if key in seen:
             bits += 1.0
             continue
         seen.add(key)
@@ -178,6 +183,24 @@ def _words_bits(words: list[str], seps: int, extras: str) -> float:
     return bits
 
 
+def _period(s: str) -> Optional[tuple[str, int]]:
+    """(unit, times) when `s` (less a trailing symbol or two) is one short
+    unit said again and again, else None."""
+    for core in (s, re.sub(r"[\W_]{1,3}$", "", s)):
+        n = len(core)
+        for p in range(1, n // 2 + 1):
+            if all(core[i] == core[i % p] for i in range(p, n)):
+                return core[:p], max(2, n // p)
+    return None
+
+
+def _common(s: str) -> bool:
+    sq = re.sub(r"[\s\-_.]+", "", s).lower()
+    cands = {sq, re.sub(r"\d+$", "", sq), re.sub(r"[\d\W_]+$", "", sq).translate(_LEET),
+             sq.translate(_LEET)}
+    return any(c in _COMMON for c in cands if c)
+
+
 def assess(passphrase: str) -> dict:
     """{score 0-4, ok, bits, length, feedback [plain sentences]}."""
     pw = passphrase if isinstance(passphrase, str) else ""
@@ -186,7 +209,6 @@ def assess(passphrase: str) -> dict:
         return {"score": 0, "ok": False, "bits": 0.0, "length": len(pw),
                 "feedback": ["Use at most %d characters." % MAX_LENGTH], "label": "too long"}
     squashed = re.sub(r"[\s\-_.]+", "", pw).lower()
-    plain = re.sub(r"[\d\W_]+$", "", squashed).translate(_LEET)
     tokens = re.findall(r"[A-Za-z]+|[^A-Za-z\s\-_.]+", pw)
     words = [t for t in tokens if t.isalpha() and len(t) >= 2]
     extras = "".join(t for t in tokens if not t.isalpha())
@@ -195,8 +217,12 @@ def assess(passphrase: str) -> dict:
         bits = _words_bits(words, seps, extras)
     else:
         bits = _mixed_bits(pw)
-    if (squashed in _COMMON or re.sub(r"\d+$", "", squashed) in _COMMON
-            or plain in _COMMON or re.sub(r"[\d\W_]+$", "", plain) in _COMMON):
+    per = _period(re.sub(r"\s+", "", pw))
+    if per:
+        unit, times = per
+        bits = min(bits, _mixed_bits(unit) + math.log2(times) + 1.0)
+        feedback.append("Saying the same thing again adds almost nothing.")
+    if _common(pw) or (per and _common(per[0])):
         bits = min(bits, 10.0)
         feedback.append("This is one of the first passphrases a guesser tries.")
     if pw and len(set(pw)) <= 2:
