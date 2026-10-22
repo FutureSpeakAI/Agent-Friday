@@ -610,3 +610,56 @@ def test_an_acknowledgement_that_cannot_keep_its_anchor_says_so(monkeypatch):
     monkeypatch.setattr(L, "_anchor_set", lambda *a, **k: (_ for _ in ()).throw(OSError("keychain")))
     with pytest.raises(L.LedgerError):
         L.acknowledge("owner:test", reviewed=[q for q in rep["problems"] if not q["acknowledged"]])
+
+
+def test_the_owner_can_still_list_send_approvals_while_the_ledger_shows_a_break():
+    """Review round 7 (A): the Settings list answered 500 during a break."""
+    from agent_friday.governance import send_grants
+    L.append("activity", {"kind": "x"})
+    p = L.live_path()
+    p.write_text(p.read_text(encoding="utf-8").replace('"x"', '"X"'), encoding="utf-8")
+    L.reset_caches()
+    rows = send_grants.list_grants()            # must not raise
+    assert all(r.get("in_force") is False for r in rows)
+
+
+def test_the_workspace_reads_the_archive_during_a_break():
+    """Review round 7 (B): the workspace dropped the archive while a break was open."""
+    _old_and_new()
+    L.archive_old(now=_later(), days=730)
+    L.append("activity", {"kind": "x"})
+    p = L.live_path()
+    p.write_text(p.read_text(encoding="utf-8").replace('"x"', '"X"'), encoding="utf-8")
+    L.reset_caches()
+    rows = L.entries(["decision"], archive=True, strict=True, gate=False)
+    assert len(rows) == 4
+
+
+def test_a_strict_read_refuses_a_line_whose_signature_does_not_hold(monkeypatch):
+    """Review round 7 (F): within the cache window a strict read checks each line."""
+    L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
+    assert L.entries(["send_grant"], strict=True)
+    monkeypatch.setattr(L, "verify", lambda **k: {"ok": True})   # as within the 10-minute window
+    p = L.live_path()
+    p.write_text(p.read_text(encoding="utf-8").replace('"g1"', '"g9"'), encoding="utf-8")
+    with pytest.raises(L.LedgerError):
+        L.entries(["send_grant"], strict=True)
+
+
+def test_a_junction_for_the_ledger_folder_is_a_break(tmp_path):
+    """Review round 7 (D): the Windows junction path, where links need no privilege."""
+    import os
+    import subprocess
+    if os.name != "nt":
+        pytest.skip("junctions are a Windows thing")
+    L.append("decision", {"tool": "x"}, durable=True)
+    d = L.ledger_dir()
+    old = tmp_path / "older-copy"
+    shutil.copytree(d, old)
+    shutil.move(str(d), str(tmp_path / "moved-away"))
+    r = subprocess.run(["cmd", "/c", "mklink", "/J", str(d), str(old)], capture_output=True)
+    if r.returncode != 0:
+        pytest.skip("mklink /J failed: %s" % r.stderr)
+    L.reset_caches()
+    rep = L.verify()
+    assert not rep["ok"] and any("link" in p["reason"] for p in rep["problems"])
