@@ -266,7 +266,36 @@ def test_a_ledger_break_is_named_not_called_a_revocation(monkeypatch, tmp_path):
     why = authority.hold_reason()
     assert why and "ledger" in why and not why.startswith("you revoked")
     assert authority.status()["unreadable"] is True
+    monkeypatch.setattr(action_ledger, "hold_reason", lambda: "the action ledger has a break")
     with pytest.raises(authority.AuthorityError):
         authority.restore()
-    monkeypatch.setattr(action_ledger, "hold_reason", lambda: "the action ledger has a break")
     assert action_gate.outward_hold() == "the action ledger has a break"
+
+
+def test_an_unreadable_archive_never_locks_the_owner_out(monkeypatch, tmp_path):
+    """Review of the CI fix (1): with no open break, the owner's restore is
+    written even though an archived part stays unreadable, and clears the hold."""
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import action_ledger, authority
+    real = authority._newest_receipt
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] <= 2:                 # hold_reason, then restore's own check
+            raise RuntimeError("archive segment unreadable")
+        return real(*a, **k)
+    monkeypatch.setattr(authority, "_newest_receipt", flaky)
+    monkeypatch.setattr(action_ledger, "hold_reason", lambda: None)
+    assert "archive segment unreadable" in authority.hold_reason()
+    assert authority.restore()["restored"] is True
+    assert authority.revoked() is None
+
+
+def test_an_open_break_still_refuses_restore(monkeypatch, tmp_path):
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import action_ledger, authority
+    monkeypatch.setattr(authority, "_newest_receipt", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(action_ledger, "hold_reason", lambda: "the action ledger has a break")
+    with pytest.raises(authority.AuthorityError):
+        authority.restore()
