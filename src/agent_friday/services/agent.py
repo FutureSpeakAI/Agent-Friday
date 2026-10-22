@@ -15768,15 +15768,26 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
         _presence.tool_finished(name, ok=(_tool_call_status(result) != "error"))
     except Exception:
         pass
+    # Whether the call went through, decided once from its result (a card
+    # raised, a refusal, an unknown tool or bad arguments is not "ok"): the
+    # journal and the ledger record this, and goal checks rely on it (§17.12).
+    try:
+        from agent_friday.services import completion_receipts as _cr
+        _refused = isinstance(result, str) and result.lstrip().startswith(_cr.FAILURE_SENTINELS)
+    except Exception:
+        _refused = True                   # can't tell: not counted as through
+    _ok = _tool_call_status(result) == "ok" and not _refused
     try:
         from agent_friday.services import task_ledger as _tl
-        _tl.note_tool(_journal().current_task(), name, args, result)
+        # A file counts as written only by a write tool that went through.
+        _tl.note_tool(_journal().current_task(), name, args, result,
+                      wrote=bool(_ok and name in _tl.WRITTEN_PATH_ARGS))
     except Exception:
         pass
     try:
         _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
                              result=_tier_safe_summary(result, limit=400, kind="result"),
-                             duration_ms=int(duration_ms or 0))
+                             ok=_ok, duration_ms=int(duration_ms or 0))
     except Exception:
         pass
     if not orb_id:

@@ -276,25 +276,39 @@ def append(task_id: str, kind: str, **fields) -> Optional[int]:
             return None
 
 
-def read(task_id: str, since: int = 0, limit: Optional[int] = None) -> List[dict]:
-    """Events with seq > since, oldest first."""
+def read(task_id: str, since: int = 0, limit: Optional[int] = None, *,
+         strict: bool = False, kind: Optional[str] = None) -> List[dict]:
+    """Events with seq > since, oldest first. `kind` keeps only that kind of
+    event. `strict` raises OSError/ValueError when the journal cannot be read
+    or a line cannot be decoded (a check that relies on the record must not
+    take an unreadable record for an empty one)."""
     try:
         p = task_dir(task_id) / "journal.jsonl"
     except ValueError:
+        if strict:
+            raise
         return []
     if not p.exists():
         return []
     out: List[dict] = []
     try:
-        with open(p, encoding="utf-8", errors="replace") as fh:
+        with open(p, encoding="utf-8", errors="strict" if strict else "replace") as fh:
             for line in fh:
+                if not line.strip():
+                    continue
                 ev = _decode_line(line)
-                if ev is None or int(ev.get("seq") or 0) <= since:
+                if ev is None:
+                    if strict:
+                        raise ValueError("a journal line could not be decoded")
+                    continue
+                if int(ev.get("seq") or 0) <= since or (kind and ev.get("kind") != kind):
                     continue
                 out.append(ev)
                 if limit and len(out) >= limit:
                     break
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        if strict:
+            raise
         return out
     return out
 
