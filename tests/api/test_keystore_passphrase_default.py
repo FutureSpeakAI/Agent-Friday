@@ -114,6 +114,8 @@ def test_a_lock_that_did_not_work_is_offered_again_with_the_reason(home, monkeyp
 def test_a_wrap_that_cannot_be_reopened_is_undone(home, monkeypatch):
     """The proof step (the next start's unwrap) fails: the key store goes back to how it was,
     every saved secret still opens, and the answer says so."""
+    from agent_friday.services import vault_passphrase as vp
+    vp.store(PASS)                                  # saved where the next start reads it
     blob = ks.encrypt(b"stored credential")
     real = ks.root_key
 
