@@ -171,7 +171,7 @@ def run_pending_trials() -> dict:
     hot, why = thermal.too_hot()
     if hot:
         out["skipped"] = why
-        return out
+        return out           # (thermal stays imported for the per-candidate checks below)
     if trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS:
         out["skipped"] = "tonight's testing time is used up"
         return out
@@ -192,9 +192,17 @@ def run_pending_trials() -> dict:
                 continue          # cloud trials run only when the owner starts them (HD2)
             if w.tripped.is_set() or trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS:
                 break
+            hot, why = thermal.too_hot()
+            if hot:
+                out["stopped"] = why          # resumes at the next run; said where the run is shown
+                break
             res = trials.run_trial(cand["id"], run_one=run_one, endpoint=seat["endpoint"],
                                    model=seat["model"], should_yield=lambda: _stop_now(w))
             out["ran"].append({"id": cand["id"], "status": res.get("status")})
+            hot, why = thermal.too_hot()
+            if hot:
+                out["stopped"] = why
+                break
         if r0_due and not _stop_now(w):
             out["r0"] = r0_nightly.run_tonight(seat, w, run_one)
     return out
