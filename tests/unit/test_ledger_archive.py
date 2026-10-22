@@ -358,3 +358,74 @@ def test_strict_reads_of_a_large_archive_open_each_file_once(monkeypatch):
         L.append("activity", {"kind": "x"})
         assert len(L.entries(["send_grant"], strict=True)) == 30
     assert len(calls) == 30, len(calls)
+
+
+@pytest.mark.parametrize("how", ["archive_deleted", "list_garbled"])
+def test_old_receipt_files_stay_shut_when_the_archive_is_removed_or_garbled(how):
+    """Review round 3: deleting the archive, or garbling its list, made the
+    switch from the old files look unfinished, and a planted file was read."""
+    from agent_friday.paths import friday_home
+    L.migrate_legacy()                          # as every start does
+    _old_and_new()
+    L.archive_old(now=_later(), days=730)
+    if how == "archive_deleted":
+        shutil.rmtree(L.archive_dir())
+    else:
+        _manifest().write_text("{not json", encoding="utf-8")
+    planted = friday_home() / "actions" / "receipts.jsonl"
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text(json.dumps({"receipt_id": "rcpt_evil", "status": "complete"}) + "\n",
+                       encoding="utf-8")
+    L.reset_caches()
+    L.migrate_legacy()
+    L.append("activity", {"kind": "tool_call", "tool": "next_start"})
+    assert not [e for e in L.entries(["action"]) if e["rec"].get("receipt_id") == "rcpt_evil"]
+    assert any(e["kind"] == "legacy_reappeared" for e in L.entries())
+
+
+def test_an_empty_anchored_ledger_never_reads_a_planted_old_file():
+    from agent_friday.paths import friday_home
+    L.migrate_legacy()
+    L.append("decision", {"tool": "x"}, durable=True)
+    shutil.rmtree(L.ledger_dir())
+    planted = friday_home() / "actions" / "receipts.jsonl"
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text(json.dumps({"receipt_id": "rcpt_evil", "status": "complete"}) + "\n",
+                       encoding="utf-8")
+    L.reset_caches()
+    L.migrate_legacy()
+    assert not [e for e in L.entries(["action"]) if e["rec"].get("receipt_id") == "rcpt_evil"]
+    assert not L.verify()["ok"]
+
+
+def test_strict_readers_refuse_an_archive_list_put_back_from_an_earlier_copy():
+    for i in range(3):
+        L.append("send_grant", {"event": "revoked", "grant_id": "g%d" % i}, durable=True)
+        _seal()
+    L.append("activity", {"kind": "x"})
+    L.archive_old(now=_later(), days=730)
+    m = json.loads(_manifest().read_text(encoding="utf-8"))
+    assert len(m["ranges"]) == 3
+    # an earlier, genuinely signed list with one range
+    body = {"v": 1, "ranges": m["ranges"][:1], "kid": m["kid"]}
+    body["sig"] = L._manifest_sig(L._key(), {k: v for k, v in body.items()})
+    _manifest().write_text(json.dumps(body), encoding="utf-8")
+    L.reset_caches()
+    with pytest.raises(L.LedgerError):
+        L.entries(["send_grant"], strict=True)
+    assert L.hold_reason()
+
+
+def test_an_acknowledged_flag_does_not_stop_archiving_for_good():
+    L.append("decision", {"tool": "x"}, durable=True)
+    with open(L.live_path(), "ab") as f:
+        f.write(b'{"half a line')               # a power cut mid-write
+    L.reset_caches()
+    L.append("decision", {"tool": "y"}, durable=True)   # sets the torn line aside, flags it
+    rep = L.verify()
+    assert not rep["ok"]
+    L.acknowledge("owner:test", reviewed=[p for p in rep["problems"] if not p["acknowledged"]])
+    _seal()
+    L.append("activity", {"kind": "x"})
+    assert L.archive_old(now=_later(), days=730)["archived"] == 1
+    assert L.verify()["ok"]
