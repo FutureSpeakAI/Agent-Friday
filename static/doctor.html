@@ -261,6 +261,7 @@
       const words = { weekly: 'You said: ask me weekly.', not_now: 'You said: not now.', never: 'You said: never ask again.' };
       text($('weekly-state'), (words[d.answer] || 'Friday has not asked yet.') +
         (d.off_record ? ' Off the record: nothing is prepared.' : '') +
+        (d.ledger_unreadable ? ' Waiting: the action ledger has a break to review in Activity, so nothing is offered.' : '') +
         (d.answer === 'weekly' && d.decided_this_week ? ' Done for this week.' : ''));
       $('weekly-card').hidden = true;
       if (d.item === 'weekly') {

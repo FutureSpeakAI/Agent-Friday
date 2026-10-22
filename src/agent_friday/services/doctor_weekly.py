@@ -78,6 +78,8 @@ SUBJECT = "Agent Friday diagnostic report"
 _LOCK = threading.Lock()
 #: This week's prepared text, in memory only: {"week", "report_id", "text", "sha256"}.
 _PREPARED: dict = {}
+#: When off the record was last seen in this process (the file can be edited).
+_OFF_RECORD_SEEN: list = []
 #: How far back an off-the-record session keeps counts and speed out of the report
 #: (the error counts read the log's tail and speed covers the process's lifetime).
 OFF_RECORD_SHADOW_S = 30 * 86400.0
@@ -103,7 +105,7 @@ def week_key(t: Optional[float] = None) -> str:
 
 def _state() -> dict:
     st = {"offered_week": None, "asked_at": None, "decided_week": None,
-          "off_record_weeks": [], "last_off_record_at": None}
+          "off_record_weeks": [], "last_off_record_at": None, "ledger_unreadable": False}
     try:
         d = json.loads(_path().read_text(encoding="utf-8"))
         if isinstance(d, dict):
@@ -117,6 +119,8 @@ def _state() -> dict:
     for k in ("asked_at", "last_off_record_at"):
         if not isinstance(st[k], (int, float)) or st[k] > time.time() + 600:
             st[k] = None
+    if _OFF_RECORD_SEEN and (not st["last_off_record_at"] or st["last_off_record_at"] < _OFF_RECORD_SEEN[-1]):
+        st["last_off_record_at"] = _OFF_RECORD_SEEN[-1]       # the file may have been cleared
     st.update(_answer_on_record())
     return st
 
@@ -124,14 +128,16 @@ def _state() -> dict:
 def _answer_on_record() -> dict:
     """The owner's newest answer, from its signed receipt in the action ledger
     (only entries whose signature holds count)."""
-    out = {"answer": None, "answered_at": None, "local_only_ok": False}
+    out = {"answer": None, "answered_at": None, "local_only_ok": False, "ledger_unreadable": False}
     try:
         from agent_friday.services import action_ledger
-        rows = action_ledger.entries(["doctor_weekly"], newest_first=True, verified=True,
-                                     where=lambda e: (e.get("rec") or {}).get("event") == "answer",
-                                     limit=1)
+        # strict: the archive too (a "never" two years old still holds), and a
+        # ledger that cannot be read in full, or has a break, answers "never"
+        rows = [e for e in action_ledger.entries(["doctor_weekly"], newest_first=True, strict=True)
+                if (e.get("rec") or {}).get("event") == "answer"][:1]
     except Exception:
-        rows = []
+        out.update(answer="never", ledger_unreadable=True)
+        return out
     if rows:
         rec = rows[0].get("rec") or {}
         if rec.get("answer") in ANSWERS:
@@ -143,13 +149,17 @@ def _answer_on_record() -> dict:
 def _note_off_record() -> None:
     """Off the record was on (its end, or a tick while on): counts and speed
     stay out of the report for OFF_RECORD_SHADOW_S."""
-    with _LOCK:
-        st = _state()
-        st["last_off_record_at"] = time.time()
-        if week_key() not in st["off_record_weeks"]:
-            st["off_record_weeks"] = (st["off_record_weeks"] + [week_key()])[-8:]
-        _save(st)
-    _PREPARED.clear()
+    now = time.time()
+    _OFF_RECORD_SEEN[:] = [now]
+    try:
+        with _LOCK:
+            st = _state()
+            st["last_off_record_at"] = now
+            if week_key() not in st["off_record_weeks"]:
+                st["off_record_weeks"] = (st["off_record_weeks"] + [week_key()])[-8:]
+            _save(st)
+    finally:
+        _PREPARED.clear()
 
 
 def install_hooks() -> None:
@@ -195,7 +205,8 @@ def _receipt(event: str, **fields) -> None:
 def status() -> dict:
     """What the Doctor page and Settings show (no report text)."""
     st = _state()
-    return {"answer": st["answer"], "local_only": _local_only(), "local_only_ok": st["local_only_ok"],
+    return {"answer": st["answer"], "ledger_unreadable": st.get("ledger_unreadable", False),
+            "local_only": _local_only(), "local_only_ok": st["local_only_ok"],
             "off_record": _off_record(), "address": FUTURESPEAK_DOCTOR_ADDRESS, "promise": PROMISE,
             "week": week_key(), "decided_this_week": st["decided_week"] == week_key(),
             "item": next_item(st)}
@@ -415,6 +426,3 @@ def tick() -> Optional[dict]:
             st["asked_at"] = time.time()
         _save(st)
     return {"offered": item}
-
-
-install_hooks()
