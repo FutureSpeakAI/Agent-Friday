@@ -36,6 +36,8 @@ def home(tmp_path, monkeypatch):
         kept["pw"] = pw
         return ["test-home"]
     monkeypatch.setattr(vp, "store", store)
+    # A refusal another test's real store() left behind would stop setup before it locks anything.
+    monkeypatch.setattr(vp, "LAST_STORE_REFUSAL", "", raising=False)
     monkeypatch.setattr(vp, "durable_value", lambda: (kept["pw"], "test home"))
     monkeypatch.setattr(vp, "_from_start_bat", lambda: "")
     monkeypatch.setattr(vp, "_from_dpapi_file", lambda: "")
