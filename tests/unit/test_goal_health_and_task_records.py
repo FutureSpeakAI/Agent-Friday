@@ -87,8 +87,10 @@ def test_scopes_that_do_not_allow_subagents_cannot_start_more_work():
 
 def test_a_nested_spawn_is_no_broader_than_its_parent():
     subagents.register_scope_for_task("parent-plain", "researcher")
-    # The same work going on (a chain step) keeps the parent's scope.
-    assert subagents.nested_spawn_check("parent-plain", None) == (True, "", "researcher")
+    # The same work going on (a chain step) keeps the parent's scope; new work
+    # it starts is a subagent, which researcher does not allow.
+    assert subagents.nested_spawn_check("parent-plain", None, continuation=True) == (True, "", "researcher")
+    assert subagents.nested_spawn_check("parent-plain", None)[0] is False
     ok, why, _ = subagents.nested_spawn_check("parent-plain", "readonly")
     assert not ok and "does not allow subagents" in why
     subagents.save_custom_scope({"name": "lead", "max_ring": 1, "max_steps": 20, "time_budget_s": 600,
