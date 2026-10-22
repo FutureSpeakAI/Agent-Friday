@@ -50964,7 +50964,8 @@ function SetupConnectionItem({
       const d = await post(c.endpoint, {
         label: label.trim(),
         include_send: !!opts.include_send,
-        include_modify: !!opts.include_modify
+        include_modify: !!opts.include_modify,
+        include_contacts_write: !!opts.include_contacts_write
       });
       openUrl(d.auth_url);
       setMsg({
