@@ -68,8 +68,9 @@ _ID = r"[0-9a-f]{16}"
 _HEADER_RE = re.compile(re.escape(_HEADER_FMT).replace("%s", _ID))
 _CLOSE_RE = re.compile(re.escape(_CLOSE_FMT).replace("%s", _ID))
 
-#: Every line break a model may honour.
-_BREAKS = ("\r\n", "\r", "\n", " ", " ", "\x85")
+#: Every line break a model may honour: the ones str.splitlines() honours (vertical tab, form
+#: feed, the file/group/record separators, NEL, the Unicode line and paragraph separators).
+_BREAKS = ("\r\n", "\r", "\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
 _BREAK_RE = re.compile("(" + "|".join(re.escape(b) for b in _BREAKS) + ")")
 
 # Letters from other scripts that look like the Latin ones in the envelope's words.
@@ -165,6 +166,37 @@ def split(text):
 
 def is_wrapped(text) -> bool:
     return split(text)[1]
+
+
+#: How far past an opening "[Tool output " its header can reach (the header is a fixed sentence).
+_HEADER_SPAN = len(_HEADER_FMT % ("0" * 16, "0" * 16)) + 2
+
+
+def unwrap_all(text):
+    """(inner, depth): `text` with every envelope around it peeled off, outermost first.
+
+    Text that arrives wrapped inside a wrapping (a tool that returned an envelope, or a
+    hostile one nested thousands deep) is peeled by index in one pass, in linear time and
+    with no recursion; depth 0 means `text` was not enveloped. Like ``split``, it does not
+    re-hash: ``wrap`` rebuilds the one envelope a caller puts back."""
+    if not isinstance(text, str):
+        return text, 0
+    start, end, depth = 0, len(text), 0
+    while text.startswith(_HEADER_START, start, end):
+        nn = text.find("\n\n", start, min(end, start + _HEADER_SPAN))
+        if nn < 0:
+            break
+        head = text[start:nn]
+        if not _HEADER_RE.fullmatch(head):
+            break
+        eid = head[len(_HEADER_START):len(_HEADER_START) + 16]
+        if head != _HEADER_FMT % (eid, eid):
+            break
+        close = "\n\n" + (_CLOSE_FMT % eid)
+        if end - len(close) < nn + 2 or not text.endswith(close, start, end):
+            break
+        start, end, depth = nn + 2, end - len(close), depth + 1
+    return (text[start:end] if depth else text), depth
 
 
 def wrap(text) -> str:

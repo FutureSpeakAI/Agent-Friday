@@ -244,6 +244,19 @@ def test_a_field_gated_on_its_own_is_recorded_as_a_send(ledger):
     assert [c["via"] for c in _calls(ledger["log"])] == ["field:query"]
 
 
+def test_a_tool_result_in_the_data_envelope_is_one_recorded_send(ledger):
+    """A tool result reaches a model wrapped as data (services/untrusted_input). Gated
+    on its own it is still a send with its own call row: the envelope's contents,
+    judged and recorded, then wrapped again."""
+    from agent_friday.services import untrusted_input as ui
+    wrapped = ui.wrap(ui.wrap("boiling point of water"))
+    out = eg._gate_text(wrapped, "brave", "tool_result")
+    assert [c["via"] for c in _calls(ledger["log"])] == ["field:tool_result"]
+    inner, depth = ui.unwrap_all(out)
+    assert depth == 1 and inner == "boiling point of water"
+    assert _calls(ledger["log"])[-1]["payload_fingerprint"] == eg._fingerprint(inner)[0]
+
+
 def test_a_worker_payload_is_one_send_not_two(ledger, monkeypatch):
     monkeypatch.setattr(eg, "gate_operational", lambda: True)
     eg.gate_worker_payload({"model": "remote-model", "prompt": "boiling point of water",

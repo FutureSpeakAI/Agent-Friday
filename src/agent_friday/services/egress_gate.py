@@ -1134,21 +1134,23 @@ def _gate_text(text: str, provider: str, field: str,
     what is inside it, exactly as an unwrapped one is (so a JSON result still
     gets its field-wise rescue), and leaves wrapped again. Withheld whole, it
     is "" as before, and the caller puts its own withheld notice in its place.
-    The envelope's contents are the send: its ledger row is the inner call's."""
+    The envelope's contents are the send: its ledger row is the inner call's.
+    Envelopes nested inside one another are peeled in one linear pass
+    (untrusted_input.unwrap_all) and the output leaves inside exactly one."""
     from agent_friday.services import untrusted_input as _ui
-    inner, wrapped = _ui.split(text)
-    if wrapped:
-        gated = _gate_text(inner, provider, field, log_path)
-        return _ui.wrap(gated) if gated else ""
+    inner, depth = _ui.unwrap_all(text)
+    body = inner if depth else text
     standalone = _CALL.get() is None
     call_tok = _open_call(provider, "", "field:" + str(field)[:40]) if standalone else None
     try:
         with _held_scope(provider):
-            out = _gate_text_held(text, provider, field, log_path)
+            out = _gate_text_held(body, provider, field, log_path)
     except BaseException:
         _close_call(call_tok, None, result="blocked", log_path=log_path)
         raise
     _close_call(call_tok, out, result=_result_of(out), log_path=log_path)
+    if depth:
+        return _ui.wrap(out) if out else ""
     return out
 
 
