@@ -87,6 +87,59 @@ def test_when_the_store_cannot_write_the_file_is_left_alone(tmp_path, anthropic_
     assert VALUE not in repr(r)
 
 
+def test_a_saved_key_that_does_not_decrypt_this_boot_is_never_overwritten(
+        tmp_path, anthropic_env, clean, monkeypatch):
+    app = _app(tmp_path)
+    f = app / ".env"
+    f.write_text(f"{anthropic_env}={VALUE}\n", encoding="utf-8")
+    monkeypatch.setattr(cs, "provider_key_status", lambda p: "present_but_unreadable")
+    wrote = []
+    monkeypatch.setattr(cs, "set_provider_key", lambda *a, **k: wrote.append(a))
+    (r,) = lk.migrate(app)
+    assert r["moved"] is False and wrote == [] and f.exists()
+
+
+@pytest.mark.parametrize("why", ["no_registry", "unreadable_line", "utf16", "bom"])
+def test_nothing_is_deleted_unless_every_key_line_was_understood(tmp_path, anthropic_env, clean,
+                                                                 monkeypatch, why):
+    app = _app(tmp_path)
+    f = app / ".env"
+    if why == "no_registry":
+        f.write_text(f"{anthropic_env}={VALUE}\n", encoding="utf-8")
+        monkeypatch.setattr(lk, "_provider_env_names", lambda: {})
+    elif why == "unreadable_line":
+        f.write_text(f"{anthropic_env}=\n", encoding="utf-8")          # names the key, no value
+    elif why == "utf16":
+        f.write_bytes(f"{anthropic_env}={VALUE}\r\n".encode("utf-16"))
+    else:
+        f.write_bytes(b"\xef\xbb\xbf" + f"{anthropic_env}={VALUE}\n".encode())
+    (r,) = lk.migrate(app)
+    if why in ("utf16", "bom"):
+        assert r["moved"] is True and r["imported"] == ["anthropic"]
+        assert cs.get_provider_key("anthropic") == VALUE
+    else:
+        assert r["moved"] is False and f.exists()
+
+
+def test_a_retry_adds_no_second_archive(tmp_path, anthropic_env, clean):
+    app = _app(tmp_path)
+    for _ in range(2):
+        (app / "secrets.yaml").write_text(f"{anthropic_env}: {VALUE}\n", encoding="utf-8")
+        cs.delete_provider_key("anthropic")
+        lk.migrate(app)
+    assert len(list(lk._legacy_dir().glob("secrets.yaml.*.enc"))) == 1
+
+
+def test_the_installers_holding_folder_is_cleared_too(tmp_path, anthropic_env, clean):
+    app = _app(tmp_path)
+    keep = app.parent / ".upgrade-keep"
+    keep.mkdir()
+    (keep / ".env").write_text(f"{anthropic_env}={VALUE}\n", encoding="utf-8")
+    lk.migrate(app)
+    assert not (keep / ".env").exists()
+    assert cs.get_provider_key("anthropic") == VALUE
+
+
 def test_a_source_checkout_is_never_touched(tmp_path, monkeypatch):
     app = tmp_path / "checkout"
     app.mkdir()
@@ -99,9 +152,11 @@ def test_a_source_checkout_is_never_touched(tmp_path, monkeypatch):
 
 def test_parse_reads_dotenv_and_flat_yaml_shapes():
     got = lk.parse('export A_KEY="x1"\nset B_KEY=x2\nC_KEY: \'x3\'\n# D_KEY=no\nE_KEY=x5 # note\n'
+                   'G_KEY="x7" # quoted then a note\n'
                    "nested:\n  F_KEY: x6\n")
     assert got["A_KEY"] == "x1" and got["B_KEY"] == "x2" and got["C_KEY"] == "x3"
-    assert "D_KEY" not in got and got["E_KEY"] == "x5"
+    assert "D_KEY" not in got and got["E_KEY"] == "x5" and got["G_KEY"] == "x7"
+    assert "F_KEY" not in got
 
 
 def test_boot_runs_it_before_the_stored_keys_load():
