@@ -208,7 +208,7 @@ def test_every_leg_passing_is_a_passing_record(tmp_path):
     mod = _all_pass(tmp_path)
     rec = mod.collect(tmp_path, "abc123")
     assert rec["ok"] is True and rec["commit"] == "abc123"
-    assert set(rec["rows"]) == {"NS-34.3-1", "NS-34.3-2", "NS-34.3-4", "NS-34.3-5"}
+    assert set(rec["rows"]) == {"NS-34.3-1", "NS-34.3-2", "NS-34.3-4", "NS-34.3-5", "NS-34.2-8"}
     assert rec["rows"]["NS-34.3-1"]["legs"] == ["windows-2022", "windows-2025"]
 
 
@@ -285,3 +285,42 @@ def test_an_unreadable_result_is_missing_not_passed(tmp_path, bad):
     d.mkdir()
     (d / "RESULT.json").write_text(bad, encoding="utf-8")
     assert mod.collect(tmp_path, "s")["legs"]["locale"]["missing"] is True
+
+
+# ── §34.2-8: rollback on the installed build ───────────────────────────────
+
+ROLLBACK = REPO / "packaging" / "windows" / "tests" / "rollback" / "verify-boot-rollback.ps1"
+
+
+def test_the_rollback_leg_runs_on_the_installed_build():
+    legs = _legs(_workflow())
+    assert legs["rollback"]["variant"] == "rollback"
+    run = " ".join(s.get("run", "") for s in _workflow()["jobs"]["leg"]["steps"])
+    assert "tests\\rollback\\verify-boot-rollback.ps1" in run
+    on = _triggers(_workflow())
+    assert "packaging/windows/tests/rollback/**" in on["pull_request"]["paths"]
+
+
+def test_the_rollback_leg_proves_the_whole_story():
+    src = ROLLBACK.read_text(encoding="utf-8-sig")
+    # Real interrupted starts: stopped after the guard marked them started and
+    # before they served, three of them (the counter counts the previous one).
+    assert "for ($i = 1; $i -le 3; $i++)" in src and "last_start_completed" in src
+    for check in ("known-good", "bad-change", "failed-starts", "rollback", "page-restored",
+                  "kept-for-inspection", "note", "serves-again", "data-intact", "uninstall"):
+        assert "Check '%s'" % check in src, check
+    assert "'did not run'" in src and "finally {" in src
+    assert "GITHUB_ACTIONS" in src and "github-hosted" in src
+    mod = _evidence_module()
+    assert mod.LEGS["rollback"]["row"] == "NS-34.2-8"
+    assert set(mod.LEGS["rollback"]["checks"]) >= {"rollback", "page-restored", "serves-again", "data-intact"}
+
+
+def test_the_rollback_matches_what_the_server_prints():
+    """The leg looks for the boot guard's own words; if the server stops saying
+    them the leg must fail here first, not on a runner."""
+    import re
+    server = (REPO / "src" / "agent_friday" / "server.py").read_text(encoding="utf-8")
+    server = re.sub(r'"\s*\n\s*"', "", server)            # join implicitly concatenated strings
+    assert "rolled back to the last proven-bootable state" in server
+    assert "rolled back to the last proven-bootable state" in ROLLBACK.read_text(encoding="utf-8-sig")
