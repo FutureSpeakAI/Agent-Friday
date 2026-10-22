@@ -57,14 +57,30 @@ def _legacy_dir() -> Path:
     return Path(core.FRIDAY_DIR) / "providers" / "legacy"
 
 
+#: Only an API key variable of a built-in provider is ever moved or restored. A custom
+#: provider descriptor can name any variable (FRIDAY_PASSWORD, FRIDAY_SECRET_KEY): those
+#: are never touched here.
+_KEY_NAME = re.compile(r"^[A-Z0-9_]+_API_KEY$")
+
+
 def _provider_env_names() -> Dict[str, str]:
     names: Dict[str, str] = {}
     try:
         from agent_friday.services.provider_registry import get_provider_registry
-        for p in get_provider_registry().list_providers():
+        reg = get_provider_registry()
+        for p in reg.list_providers():
             auth = (p or {}).get("auth") or {}
-            if auth.get("type") == "env_var" and auth.get("key") and p.get("name"):
-                names.setdefault(str(auth["key"]).upper(), str(p["name"]))
+            if not (auth.get("type") == "env_var" and auth.get("key") and p.get("name")):
+                continue
+            env = str(auth["key"]).upper()
+            if not _KEY_NAME.match(env) or env.startswith("FRIDAY_"):
+                continue
+            try:
+                if reg.provider_origin(p["name"]) != "builtin":
+                    continue
+            except Exception:
+                continue
+            names.setdefault(env, str(p["name"]))
     except Exception:
         pass
     return names
@@ -96,8 +112,28 @@ def _remember_moved(pairs: Dict[str, str]) -> None:
     import json
     cur = moved_names()
     cur.update(pairs)
-    _moved_path().parent.mkdir(parents=True, exist_ok=True)
-    _moved_path().write_text(json.dumps({"names": cur}, indent=1), encoding="utf-8")
+    path = _moved_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"names": cur}, indent=1), encoding="utf-8")
+    os.replace(tmp, path)                  # a crash never leaves half a file
+
+
+def _trusted_moved() -> Dict[str, str]:
+    """moved_names(), keeping only pairs the registry itself confirms (the variable is
+    that built-in provider's API key variable). The file is a record, never an
+    instruction: a name written into it by anything else is ignored."""
+    current = _provider_env_names()
+    return {n: p for n, p in moved_names().items() if current.get(n) == p}
+
+
+def _keystore_needs_passphrase() -> bool:
+    try:
+        from agent_friday.services import keystore as _ks
+        doc = _ks._read_file()
+        return bool(doc) and (doc.get("wrap") or "none") == "passphrase"
+    except Exception:
+        return True                        # unknown: do not risk a prompt or a slow unwrap
 
 
 def restore_moved_keys(already_loaded=(), force_names=()) -> List[str]:
@@ -105,9 +141,14 @@ def restore_moved_keys(already_loaded=(), force_names=()) -> List[str]:
     moved out of a script is put back into the environment FROM THE STORE, with the same
     precedence the script line had (a force name beats a stale Windows variable; any other
     name fills only an empty one). Returns the names set. Never raises; never logs a value."""
-    names = moved_names()
-    if not names:
+    if not moved_names():
         return []
+    # A passphrase-wrapped keystore is unlocked by the server, not at every import
+    # (that would mean a key derivation, or a keychain prompt, per CLI command); the
+    # server's own bootstrap then loads these keys (refresh_core_constants).
+    if _keystore_needs_passphrase():
+        return []
+    names = _trusted_moved()
     done = []
     try:
         from agent_friday.services import credential_store as cs
@@ -125,6 +166,17 @@ def restore_moved_keys(already_loaded=(), force_names=()) -> List[str]:
         if value:
             os.environ[env_name] = value
             done.append(env_name)
+    # Reading the store may have resolved the vault passphrase before core finished
+    # loading its launch-script variables; nothing resolved here is kept.
+    try:
+        from agent_friday.services import vault_passphrase as _vp
+        _vp.reset_cache()
+    except Exception:
+        pass
+    try:
+        cs._VAULT_KEY, cs._VAULT_KEY_READY = None, False
+    except Exception:
+        pass
     return done
 
 
@@ -133,7 +185,7 @@ def refresh_core_constants() -> None:
     core.GEMINI_API_KEY) take the environment value when they are empty."""
     try:
         import agent_friday.core as core
-        for env_name in moved_names():
+        for env_name in _trusted_moved():
             if hasattr(core, env_name) and not getattr(core, env_name) and os.environ.get(env_name):
                 setattr(core, env_name, os.environ[env_name])
     except Exception:
@@ -181,6 +233,7 @@ def _scan(text: str, env_names: Dict[str, str]):
         if _UNSAFE_VALUE.search(value) or value.endswith("^"):
             if name not in left:
                 left.append(name)
+            hits.append((i, name, None))       # None: an unsafe line for this name
             continue
         hits.append((i, name, value))
     return hits, left
@@ -231,14 +284,21 @@ def migrate(app_dir: Optional[Path] = None) -> List[dict]:
     # anywhere, because which one the owner means is not ours to guess.
     values: Dict[str, set] = {}
     scans = {}
+    unreadable = any(data is None for _p, data, _t in found)
     for p, data, text in found:
         if data is None or not env_names:
             continue
         hits, left = _scan(text, env_names)
-        scans[p] = (hits, left)
+        scans[p] = ([h for h in hits if h[2] is not None], left)
         for _i, n, v in hits:
             values.setdefault(n, set()).add(v)
-    conflicting = {n for n, vs in values.items() if len(vs) > 1}
+    # Two values, or a line for the same name this cannot move (None), make the name
+    # conflicting: blanking the plain line would hand the process the other one.
+    conflicting = {n for n, vs in values.items() if len(vs) > 1 or None in vs}
+    if unreadable:
+        # A script this cannot read may set any of these names; moving them from the
+        # others could change which key the process ends up with.
+        conflicting |= set(env_names)
     results: List[dict] = []
     moved_pairs: Dict[str, str] = {}
     from agent_friday.services import credential_store as cs
