@@ -40,7 +40,8 @@ def test_all_82_census_emitters_are_registered_with_a_place():
 def test_the_emitters_live_gained_since_the_census_are_registered():
     """Visible jobs, the Local AI queue, the cloud-spill offer and the in-call voice
     frames are emitters too: each has a place, and none is a safety-critical notice."""
-    assert len(reg.LIVE_IDS) == 6
+    assert len(reg.LIVE_IDS) == 7
+    assert reg.get("L07").place == reg.NEEDS_YOU            # the weekly Doctor ask (A3): a card, asked
     for eid in reg.LIVE_IDS:
         em = reg.get(eid)
         assert em is not None, eid
