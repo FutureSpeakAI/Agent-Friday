@@ -499,8 +499,11 @@ def _record_egress(payload: dict, raw: str, result: str) -> None:
         n = 0
         for key in ("to", "cc", "bcc"):
             v = payload.get(key) or []
-            items = [str(x) for x in v] if isinstance(v, list) else [str(v)]
-            n += len([a for _name, a in getaddresses(items) if a.strip()])
+            if isinstance(v, list):
+                # One recipient per item (a display name may hold a comma).
+                n += len([x for x in v if str(x).strip()])
+            else:
+                n += len([a for _name, a in getaddresses([str(v)]) if "@" in a])
         _eg.record_service_send("mail", "gmail", destination="gmail.googleapis.com", content=raw,
                                 result=result, recipients=n, part="message")
     except Exception:

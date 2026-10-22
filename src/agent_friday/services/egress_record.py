@@ -86,6 +86,13 @@ class recorded:
     def __init__(self, svc: Any, channel: str, provider: str, destination: str):
         self._svc, self._channel, self._provider, self._destination = svc, channel, provider, destination
 
+    # It stands for the client it wraps: equal to it, hashed like it.
+    def __eq__(self, other):
+        return self._svc == (other._svc if isinstance(other, recorded) else other)
+
+    def __hash__(self):
+        return hash(self._svc)
+
     def _record(self, method: str, kwargs: dict, result: str) -> None:
         try:
             from agent_friday.services import egress_gate as _eg
