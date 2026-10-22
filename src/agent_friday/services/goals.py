@@ -1617,6 +1617,10 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         # Stop with a blocker that says so; never a generic failure, never
         # another identical attempt.
         _release_goal_budget(goal_id, max(0, reserved_total - total_cost))
+        if last_verdict:
+            # The last check stays on record (§17.12): the card says what the
+            # proof was missing, not only that nothing changed.
+            _update_milestone(goal_id, milestone_id, verification=last_verdict)
         _block(goal_id, milestone_id, goal_state.blocker(
             "no_progress", goal_state.no_progress_words(milestone.get("name") or "this milestone",
                                                         base_attempts + attempt, no_progress_why),
