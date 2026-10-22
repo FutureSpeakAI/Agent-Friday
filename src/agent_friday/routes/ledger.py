@@ -60,6 +60,7 @@ KIND_LABELS = {
     "legacy_reappeared": "An old receipt file appeared again",
     "migration_complete": "Old receipts all brought in",
     "setting_changed": "You changed a ledger setting",
+    "backup": "Scheduled backup",
 }
 
 _LAST_FULL = [0.0]

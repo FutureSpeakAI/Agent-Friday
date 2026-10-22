@@ -1482,8 +1482,12 @@ examples:
 
     # Friday Bundle (services/friday_bundle.py): encrypted backup and restore
     p_bundle = sub.add_parser("bundle", help="Make or check a Friday Bundle (encrypted backup)")
-    p_bundle.add_argument("bundle_cmd", choices=["create", "verify"])
-    p_bundle.add_argument("file", nargs="?", help="The bundle (verify) or where to write it (create)")
+    p_bundle.add_argument("bundle_cmd", choices=["create", "verify", "schedule"])
+    p_bundle.add_argument("file", nargs="?", help="The bundle (verify), where to write it (create), "
+                          "or for schedule: on, off, status, run, rehearse")
+    p_bundle.add_argument("--every", choices=["daily", "weekly"], default="weekly",
+                          help="schedule on: how often")
+    p_bundle.add_argument("--keep", type=int, default=7, help="schedule on: how many to keep")
     p_bundle.add_argument("--out", metavar="PATH", help="Folder or file to write (create)")
     p_bundle.add_argument("--only", metavar="CATS",
                           help="Comma-separated categories to include (default: all)")
@@ -2014,16 +2018,34 @@ def cmd_doctor_report(out=None):
 
 
 def _bundle_passphrase(confirm: bool) -> str:
-    """The bundle passphrase: FRIDAY_BUNDLE_PASSPHRASE (unattended runs) or typed."""
+    """The bundle passphrase: FRIDAY_BUNDLE_PASSPHRASE (unattended runs) or typed.
+    A new one (`confirm`) must be strong enough (services/passphrase_strength):
+    typed, it is asked again with the reason; from the environment, refused."""
     import getpass
+
+    from agent_friday.services import passphrase_strength as ps
     env = os.environ.get("FRIDAY_BUNDLE_PASSPHRASE", "")
     if env:
+        if confirm:
+            why = ps.refusal(env)
+            if why:
+                print("No bundle was made. %s" % why)
+                return ""
         return env
-    pw = getpass.getpass("Bundle passphrase (12 characters or more): ")
-    if confirm and getpass.getpass("Type it again: ") != pw:
-        print("The two passphrases differ. Nothing was written.")
-        return ""
-    return pw
+    for _ in range(3):
+        pw = getpass.getpass("Bundle passphrase (four or five unrelated words work well): ")
+        if confirm:
+            a = ps.assess(pw)
+            print("Strength: %s." % a["label"])
+            if not a["ok"]:
+                print(" ".join(a["feedback"]) or "It is too easy to guess.")
+                continue
+            if getpass.getpass("Type it again: ") != pw:
+                print("The two passphrases differ. Nothing was written.")
+                return ""
+        return pw
+    print("No bundle was made.")
+    return ""
 
 
 def _cats(raw):
@@ -2037,8 +2059,48 @@ def _cats(raw):
     return got
 
 
+def _cmd_bundle_schedule(args):
+    from agent_friday.services import backup_schedule as bs
+    what = (args.file or "status").lower()
+    try:
+        if what == "status":
+            st = bs.public_state()
+        elif what == "off":
+            st = bs.set_schedule(enabled=False)
+        elif what == "on":
+            folder = args.out or str(__import__("agent_friday.services.friday_bundle",
+                                                fromlist=["x"]).documents_dir() / "Friday Bundles")
+            pw = None if bs.public_state().get("passphrase_kept") and \
+                not os.environ.get("FRIDAY_BUNDLE_PASSPHRASE") else _bundle_passphrase(True)
+            if pw == "":
+                return 1
+            st = bs.set_schedule(enabled=True, every=args.every, folder=folder, keep=args.keep,
+                                 passphrase=pw)
+        elif what == "run":
+            r = bs.run_now()
+            print("Made and verified %s (%s)." % (r["bundle_id"], r["file"]))
+            st = bs.public_state()
+        elif what == "rehearse":
+            r = bs.rehearse()
+            print("Restore rehearsal: %s." % ("passed" if r["ok"] else "FAILED: %s" % r["why"]))
+            if not r["ok"]:
+                return 1
+            st = bs.public_state()
+        else:
+            print("Say on, off, status, run or rehearse.")
+            return 2
+    except bs.ScheduleError as e:
+        print("Not done: %s" % e)
+        return 1
+    print("Scheduled bundles: %s" % ("on, %s, into %s, keeping %d" % (st["every"], st["folder"], st["keep"])
+                                     if st["enabled"] else "off"))
+    return 0
+
+
 def cmd_bundle(args):
     from agent_friday.services import friday_bundle as fb
+    if args.bundle_cmd == "schedule":
+        return _cmd_bundle_schedule(args)
     if args.bundle_cmd == "verify":
         if not args.file:
             print("Name the bundle to check.")

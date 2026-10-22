@@ -19,6 +19,9 @@
   pre { white-space:pre-wrap; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; font:12px/1.4 'JetBrains Mono', monospace; max-height:420px; overflow:auto; }
   a { color:#00d4ff; }
   .safe { border-color:rgba(251,191,36,0.5); }
+  .meter { margin-left:8px; font-size:12px; } .meter.s0, .meter.s1 { color:#f87171 } .meter.s2 { color:#fbbf24 } .meter.s3, .meter.s4 { color:#3effa1 }
+  .muted { color:#9aa8b8; font-size:12px; }
+  input, select { background:#0b1220; color:#dfe7ef; border:1px solid rgba(0,212,255,0.3); border-radius:5px; padding:3px 6px; font:inherit; }
 </style>
 </head>
 <body>
@@ -45,11 +48,31 @@
 <section aria-labelledby="bundle-h">
   <h2 id="bundle-h">Backup: Friday Bundle</h2>
   <p>One encrypted file with your memory, vault, settings, skills, workspaces, receipts and conversations. Service sign-ins are not included; you reconnect them after a restore. It is saved in Documents, Friday Bundles. Without the passphrase it cannot be opened, by anyone.</p>
-  <label>Passphrase (12 characters or more) <input id="bp1" type="password" autocomplete="new-password"></label><br>
+  <label>Passphrase (four or five unrelated words work well) <input id="bp1" type="password" autocomplete="new-password"></label>
+  <span class="meter" id="bp1-meter" role="status" aria-live="polite"></span><br>
   <label>Type it again <input id="bp2" type="password" autocomplete="new-password"></label><br>
   <button id="make" type="button">Make a bundle</button>
   <p id="bundle-note" role="status"></p>
   <p>To restore on another PC: install Friday, do not set it up, then run <code>friday restore &lt;file&gt;</code>.</p>
+</section>
+
+<section aria-labelledby="sched-h">
+  <h2 id="sched-h">Scheduled bundles</h2>
+  <p>Friday can make a bundle every day or every week into a folder you choose (this PC or a network share), check each one after it is written, keep the newest few, and now and then rehearse a restore from the newest one without changing anything. The passphrase for scheduled bundles is kept in this Windows account's credential store so they can be made while you are away: anyone who can open this account can open them.</p>
+  <p id="sched-state" role="status">Off.</p>
+  <label>Folder <input id="sf" size="48" placeholder="D:\Backups\Friday or \\server\share\Friday"></label><br>
+  <label>How often <select id="se"><option value="daily">every day</option><option value="weekly" selected>every week</option></select></label>
+  <label>Keep the newest <input id="sk" type="number" min="1" max="60" value="7" size="3"></label>
+  <label>Rehearse a restore every <input id="sr" type="number" min="1" max="365" value="30" size="3"> days</label><br>
+  <label>Passphrase for scheduled bundles <input id="sp1" type="password" autocomplete="new-password"></label>
+  <span class="meter" id="sp1-meter" role="status" aria-live="polite"></span><br>
+  <label>Type it again <input id="sp2" type="password" autocomplete="new-password"></label>
+  <span class="muted">(leave both empty to keep the one already set)</span><br>
+  <button id="sched-on" type="button">Turn on or save</button>
+  <button id="sched-off" type="button">Turn off</button>
+  <button id="sched-run" type="button">Make one now</button>
+  <button id="sched-rehearse" type="button">Rehearse a restore now</button>
+  <p id="sched-note" role="status"></p>
 </section>
 
 <section aria-labelledby="rep-h">
@@ -161,6 +184,51 @@
       bundlePoll();
     });
   });
+  // the strength meter: one implementation, on the server (services/passphrase_strength)
+  function meter(inputId) {
+    const out = $(inputId + '-meter');
+    let t = null;
+    $(inputId).addEventListener('input', () => {
+      clearTimeout(t);
+      const v = $(inputId).value;
+      if (!v) { out.textContent = ''; out.className = 'meter'; return; }
+      t = setTimeout(() => api('/api/bundle/strength', { method: 'POST', body: JSON.stringify({ passphrase: v }) }).then(({ d }) => {
+        out.className = 'meter s' + (d.score || 0);
+        out.textContent = 'Strength: ' + (d.label || '') + (d.ok ? '' : '. ' + ((d.feedback || [])[0] || 'Too easy to guess.'));
+      }), 250);
+    });
+  }
+  meter('bp1'); meter('sp1');
+  const when = t => t ? new Date(t * 1000).toLocaleString() : 'never';
+  function schedState() {
+    api('/api/bundle/schedule').then(({ d }) => {
+      const s = d.schedule || {};
+      if (s.folder) $('sf').value = s.folder;
+      $('se').value = s.every || 'weekly'; $('sk').value = s.keep || 7; $('sr').value = s.rehearse_days || 30;
+      text($('sched-state'), s.enabled
+        ? 'On: ' + (s.every === 'daily' ? 'every day' : 'every week') + ', keeping ' + s.keep + '. Last bundle: ' + when(s.last_ok) +
+          (s.last_error ? '. The last try failed: ' + s.last_error : '') + '. Last rehearsal: ' + when(s.last_rehearsal) +
+          (s.last_rehearsal_ok === false ? ' (FAILED: ' + (s.last_rehearsal_error || '') + ')' : (s.last_rehearsal ? ' (passed)' : '')) + '.'
+        : 'Off.');
+    });
+  }
+  $('sched-on').addEventListener('click', () => {
+    const a = $('sp1').value, b = $('sp2').value;
+    if (a !== b) { text($('sched-note'), 'The two passphrases differ.'); return; }
+    api('/api/bundle/schedule', { method: 'POST', body: JSON.stringify({ enabled: true, folder: $('sf').value,
+      every: $('se').value, keep: Number($('sk').value), rehearse_days: Number($('sr').value), passphrase: a || null }) })
+      .then(({ ok, d }) => { $('sp1').value = ''; $('sp2').value = ''; $('sp1-meter').textContent = '';
+        text($('sched-note'), ok ? 'Saved.' : (d.error || 'Not saved.')); schedState(); });
+  });
+  $('sched-off').addEventListener('click', () => api('/api/bundle/schedule', { method: 'POST', body: JSON.stringify({ enabled: false }) })
+    .then(({ ok, d }) => { text($('sched-note'), ok ? 'Turned off; the kept passphrase was removed.' : (d.error || 'Not changed.')); schedState(); }));
+  const act = what => api('/api/bundle/schedule/' + what, { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+    text($('sched-note'), ok ? (what === 'run' ? 'Making a bundle...' : 'Rehearsing a restore...') : (d.error || 'Not started.'));
+    if (ok) setTimeout(schedState, 5000);
+  });
+  $('sched-run').addEventListener('click', () => act('run'));
+  $('sched-rehearse').addEventListener('click', () => act('rehearse'));
+  schedState();
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));

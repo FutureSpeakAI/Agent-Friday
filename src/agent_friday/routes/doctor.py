@@ -179,6 +179,10 @@ def bundle_create():
     if not isinstance(pw, str) or len(pw) < fb.MIN_PASSPHRASE:
         return jsonify({"status": "error", "error": "The passphrase must be at least %d characters."
                         % fb.MIN_PASSPHRASE}), 400
+    from agent_friday.services import passphrase_strength
+    weak = passphrase_strength.refusal(pw)
+    if weak:
+        return jsonify({"status": "error", "code": "weak_passphrase", "error": weak}), 400
     cats = body.get("categories") or list(fb.CATEGORIES)
     if not isinstance(cats, list) or not all(c in fb.CATEGORIES for c in cats):
         return jsonify({"status": "error", "error": "Unknown category."}), 400
@@ -212,3 +216,76 @@ def bundle_create():
 @login_required
 def bundle_status():
     return jsonify({"status": "ok", **{k: v for k, v in _BUNDLE_JOB.items()}})
+
+
+# ── Scheduled bundles and the strength meter (services/backup_schedule.py) ──
+
+@doctor_bp.route("/api/bundle/strength", methods=["POST"])
+@login_required
+def bundle_strength():
+    """How hard a bundle passphrase is to guess. This PC only; nothing kept."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "On this PC only."}), 403
+    from agent_friday.services import passphrase_strength
+    body = request.get_json(silent=True) or {}
+    pw = body.get("passphrase")
+    a = passphrase_strength.assess(pw if isinstance(pw, str) else "")
+    return jsonify({"status": "ok", **a})
+
+
+@doctor_bp.route("/api/bundle/schedule", methods=["GET"])
+@login_required
+def bundle_schedule_get():
+    from agent_friday.services import backup_schedule
+    try:
+        return jsonify({"status": "ok", "schedule": backup_schedule.public_state()})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The backup schedule could not be read.")
+
+
+@doctor_bp.route("/api/bundle/schedule", methods=["POST"])
+@login_required
+def bundle_schedule_set():
+    """{"enabled", "every", "folder", "keep", "rehearse_days", "passphrase"}.
+    A press on Friday's own page, on this PC."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Change the backup schedule on Friday's own page, on this PC."}), 403
+    from agent_friday.services import backup_schedule
+    body = request.get_json(silent=True) or {}
+    try:
+        st = backup_schedule.set_schedule(
+            enabled=bool(body.get("enabled")), every=str(body.get("every") or "weekly"),
+            folder=body.get("folder"), keep=body.get("keep", backup_schedule.DEFAULT_KEEP),
+            rehearse_days=body.get("rehearse_days", backup_schedule.DEFAULT_REHEARSE_DAYS),
+            passphrase=(body.get("passphrase") or None) if isinstance(body.get("passphrase"), str) else None)
+        return jsonify({"status": "ok", "schedule": st})
+    except backup_schedule.ScheduleError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The backup schedule could not be changed.")
+
+
+@doctor_bp.route("/api/bundle/schedule/<what>", methods=["POST"])
+@login_required
+def bundle_schedule_act(what):
+    """run: make a scheduled bundle now; rehearse: the restore rehearsal now.
+    A press on Friday's own page, on this PC. Runs in the background."""
+    if what not in ("run", "rehearse"):
+        return jsonify({"status": "error", "error": "Unknown action."}), 404
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Do this on Friday's own page, on this PC."}), 403
+    from agent_friday.services import backup_schedule
+
+    def _go():
+        try:
+            if what == "run":
+                backup_schedule.run_now()
+            else:
+                backup_schedule.rehearse()
+        except Exception:  # noqa: BLE001 - the state says what happened
+            pass
+    _threading.Thread(target=_go, name="bundle-schedule-" + what, daemon=True).start()
+    return jsonify({"status": "ok", "started": what})

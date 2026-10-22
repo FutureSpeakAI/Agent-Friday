@@ -544,6 +544,20 @@ if not _TESTING:
             __import__("time").sleep(86400)
     threading.Thread(target=_ledger_boot, daemon=True, name="action-ledger-boot").start()
 
+    # Scheduled Friday Bundles and the restore rehearsal (services/backup_schedule.py,
+    # §27.4): off until the owner turns them on; checked every 15 minutes. Kept in
+    # safe mode (a backup is part of repairing Friday).
+    def _backup_schedule_loop():
+        from agent_friday.services import backup_schedule as _bs
+        __import__("time").sleep(120)
+        while True:
+            try:
+                _bs.tick()
+            except Exception as _bs_err:
+                print(f"  Scheduled bundles: skipped ({_bs_err})")
+            __import__("time").sleep(900)
+    threading.Thread(target=_backup_schedule_loop, daemon=True, name="backup-schedule").start()
+
     # Adopt whatever was running when the previous process died.
     #
     # Storage survived a restart; execution never did — a research commission

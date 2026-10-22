@@ -278,6 +278,15 @@ def _c_connectors():
 
 
 def _c_backup():
+    try:
+        from agent_friday.services import backup_schedule
+        sched = backup_schedule.doctor_view(_home())
+    except Exception:
+        sched = {}
+    if sched.get("scheduled") and sched.get("failing"):
+        return "degraded", "scheduled_bundle_failing"
+    if sched.get("scheduled") and sched.get("rehearsal_ok") is False:
+        return "degraded", "restore_rehearsal_failed"
     p = _home() / "backups" / "last_bundle.json"
     if not p.exists():
         return "unavailable_by_configuration", "no_bundle_made"
@@ -285,7 +294,9 @@ def _c_backup():
     age_days = (time.time() - float(d.get("made_at") or 0)) / 86400
     if not d.get("verified"):
         return "degraded", "last_bundle_not_verified"
-    return ("degraded", "last_bundle_older_than_30_days") if age_days > 30 else ("healthy", "verified")
+    if age_days > 30:
+        return "degraded", "last_bundle_older_than_30_days"
+    return "healthy", ("verified_scheduled" if sched.get("scheduled") else "verified")
 
 
 def _c_disk():

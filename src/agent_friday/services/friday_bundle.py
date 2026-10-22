@@ -583,6 +583,11 @@ def create(out: Path, passphrase: str, *, home: Optional[Path] = None,
     home = Path(home or friday_home())
     if len(passphrase or "") < MIN_PASSPHRASE:
         raise BundleError("The bundle passphrase must be at least %d characters." % MIN_PASSPHRASE)
+    from agent_friday.services import passphrase_strength
+    weak = passphrase_strength.refusal(passphrase)
+    if weak:
+        # the bundle carries the vault passphrase and the governance key
+        raise BundleError(weak)
     cats = [c for c in categories if c in CATEGORIES]
     if not cats:
         raise BundleError("Choose at least one category.")
