@@ -674,6 +674,28 @@ class ModelRouter:
         }, vault_access=True, warning=warning)
 
     def route(self, messages, task_context=None):
+        """Decide which provider/model to use, and record why (north star 12.3).
+
+        The decision is `_decide`'s; this adds `record` (services/route_record:
+        seat, reason, alternatives not chosen and why, expected cost, context,
+        fallback policy) and hands it to the turn's attribution, so the reply
+        can show where it was answered and why. Building the record never
+        touches the network and never changes the decision.
+        """
+        result = self._decide(messages, task_context)
+        try:
+            from agent_friday.services import route_record as _rr
+            from agent_friday.services import attribution as _attr
+            rec = _rr.build(result, messages=messages, routing_cfg=self.config,
+                            source="router")
+            if isinstance(result, dict):
+                result["record"] = rec
+            _attr.note_route(rec)
+        except Exception:
+            pass
+        return result
+
+    def _decide(self, messages, task_context=None):
         """Decide which provider/model to use.
 
         Returns a dict with provider/model/task_type/reason plus the control

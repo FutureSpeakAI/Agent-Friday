@@ -2199,6 +2199,17 @@ def chat():
             _route_info['overridden_local_model'] = _route_info.get('model')
             _route_info['model'] = settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT
 
+        # The route record for this turn, after the per-turn overrides above (the
+        # router's own record predates them). services/route_record.
+        try:
+            from agent_friday.services import route_record as _route_rec
+            if _attr is not None:
+                _route_info['record'] = _route_rec.build(
+                    _route_info, messages=messages, routing_cfg=_routing_cfg, source="chat")
+                _attr.note_route(_route_info['record'])
+        except Exception:
+            pass
+
         # ── SAY WHEN THE SEAT THAT ANSWERS IS NOT THE SEAT THAT WAS CHOSEN ──
         #
         # Failure shape: the picker holds a model that is not installed; the
@@ -3165,11 +3176,22 @@ def chat():
         # primitive recorded (it always records on success). ──
         _gen = None
         _fallback_chain = []
+        _route_rec_out = None
         try:
             if _attr is not None:
                 _gen = _attr.last_generation()
                 _fallback_chain = public_result(_attr.fallback_chain(),
                                                 "A model in the fallback chain failed")
+                # Rebuilt from the FINAL decision: _route_info can change after the
+                # first record (the one-key OpenRouter swap, "use OpenRouter for
+                # this", the no-key and cloud-outage local fallbacks).
+                try:
+                    from agent_friday.services import route_record as _route_rec2
+                    _attr.note_route(_route_rec2.build(
+                        _route_info, messages=messages, routing_cfg=_routing_cfg, source="chat"))
+                except Exception:
+                    pass
+                _route_rec_out = _attr.route_record()
         except Exception:
             pass
         if _gen and _gen.get('model'):
@@ -3200,6 +3222,8 @@ def chat():
             friday_msg['seat_notice'] = _seat_notice
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
+        if _route_rec_out:
+            friday_msg['route'] = _route_rec_out
         try:
             from agent_friday.services import unfinished_requests as _unfinished
             _note_saved = _unfinished.wrote_note(tool_trace)
@@ -3379,6 +3403,8 @@ def chat():
             # fires constantly is wallpaper (KNOWN_ISSUES.md §1).
             "vision_events": _vision_events,
             "fallback_chain": _fallback_chain,
+            # Why this reply was answered where it was (services/route_record).
+            "route": _route_rec_out,
             # Present only when the user's chosen local seat could not answer and the
             # cloud did instead. The client renders it as a system line so the
             # substitution is visible in the transcript, not just in a log.
@@ -3932,11 +3958,13 @@ def chat_send():
         # Badge truth: prefer the ACTUAL generator over the configured seat.
         _fallback_chain = []
         _gen = None
+        _route_rec_out = None
         try:
             if _attr2 is not None:
                 _gen = _attr2.last_generation()
                 _fallback_chain = public_result(_attr2.fallback_chain(),
                                                 "A model in the fallback chain failed")
+                _route_rec_out = _attr2.route_record()
                 if _gen and _gen.get('model'):
                     _seat_model = _gen['model']
                     _seat_class = _gen.get('seat') or _seat_class
@@ -3993,6 +4021,8 @@ def chat_send():
             _library_cite.remember_library_reply(reply)
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
+        if _route_rec_out:
+            friday_msg['route'] = _route_rec_out
         if _send_seat_notice:
             friday_msg['seat_notice'] = _send_seat_notice
         try:
@@ -4032,7 +4062,8 @@ def chat_send():
                         "model": _seat_model, "seat": _seat_class,
                         "seat_events": _seat_events,
                         "seat_notice": _send_seat_notice,
-                        "fallback_chain": _fallback_chain}, "Couldn't send the message"))
+                        "fallback_chain": _fallback_chain,
+                        "route": _route_rec_out}, "Couldn't send the message"))
     except Exception as e:
         _pilot_error = True
         from agent_friday.services import provider_fallback as _pf_send
