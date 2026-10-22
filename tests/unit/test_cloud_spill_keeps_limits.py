@@ -55,13 +55,21 @@ def agent(monkeypatch):
         ag._PENDING_TASK_THREADS.pop("t-9", None)
 
 
+def _park(agent, worker=None):
+    with agent._PENDING_TASK_THREADS_LOCK:
+        agent._PENDING_TASK_THREADS["t-9"] = worker if worker is not None else object()
+
+
 def test_a_spilled_goal_task_keeps_its_scope_tools_and_owner(agent, monkeypatch):
     spawned = {}
     monkeypatch.setattr(agent, "_spawn_task",
                         lambda name, prompt, **kw: spawned.update(name=name, prompt=prompt, **kw) or "new-9")
     with agent.TASKS_LOCK:
         agent.TASKS["t-9"] = _queued()
+    _park(agent)
     cs.on_decision(_card())
+    with agent.TASKS_LOCK:
+        assert agent.TASKS["t-9"]["superseded_by"] == "new-9"
     assert spawned["model"] == "claude-sonnet-5"
     assert spawned["scope"] == "goal-milestone", "the spilled goal task ran unscoped"
     assert spawned["tools"] == ["read_file", "write_file"]
@@ -74,9 +82,80 @@ def test_a_spilled_goal_task_keeps_its_scope_tools_and_owner(agent, monkeypatch)
     assert spawned["pin_to_seat"] is False and "task_id" not in spawned
 
 
+def test_a_scope_registered_after_spawn_is_carried_too(agent, monkeypatch):
+    from agent_friday.services import subagents
+    spawned = {}
+    monkeypatch.setattr(agent, "_spawn_task",
+                        lambda name, prompt, **kw: spawned.update(**kw) or "new-9")
+    with agent.TASKS_LOCK:
+        agent.TASKS["t-9"] = _queued(scope=None)
+    subagents.register_scope_for_task("t-9", "researcher")
+    _park(agent)
+    try:
+        cs.on_decision(_card())
+        assert spawned["scope"] == "researcher"
+    finally:
+        with subagents._LOCK:
+            subagents._SCOPED_TASKS.pop("t-9", None)
+
+
+def test_the_seat_taking_it_first_means_no_cloud_copy(agent, monkeypatch):
+    """No parked worker: the local seat already started it. Nothing is spilled and
+    the running task is not marked superseded."""
+    monkeypatch.setattr(agent, "_spawn_task", lambda *a, **k: pytest.fail("ran twice"))
+    with agent.TASKS_LOCK:
+        agent.TASKS["t-9"] = _queued()
+    cs.on_decision(_card())
+    with agent.TASKS_LOCK:
+        assert agent.TASKS["t-9"]["status"] == "queued-for-seat"
+
+
+def test_a_stopped_task_is_not_reported_as_moved(agent, monkeypatch):
+    monkeypatch.setattr(agent, "_spawn_task", lambda *a, **k: None)
+    with agent.TASKS_LOCK:
+        agent.TASKS["t-9"] = _queued()
+    _park(agent)
+    cs.on_decision(_card())
+    with agent.TASKS_LOCK:
+        assert agent.TASKS["t-9"]["status"] == "queued-for-seat"
+        assert "superseded_by" not in agent.TASKS["t-9"]
+
+
+def test_a_goal_waiting_on_the_original_follows_the_move(agent):
+    with agent.TASKS_LOCK:
+        agent.TASKS["t-9"] = _queued(status="superseded", superseded_by="t-10")
+        agent.TASKS["t-10"] = {"task_id": "t-10", "status": "completed", "result": "done"}
+    try:
+        assert agent._task_snapshot("t-9")["status"] == "superseded"
+        assert agent._task_snapshot("t-9", follow=True)["status"] == "completed"
+    finally:
+        with agent.TASKS_LOCK:
+            agent.TASKS.pop("t-10", None)
+
+
+def test_spawn_scoped_subagent_scopes_at_spawn(monkeypatch):
+    import agent_friday.services.agent as ag
+    from agent_friday.services import subagents
+    seen = {}
+    monkeypatch.setattr(ag, "_spawn_task", lambda name, prompt, description="", **kw: seen.update(kw) or "tid-s")
+    subagents.spawn_scoped_subagent("t", "p", scope="researcher")
+    assert seen.get("scope") == "researcher"
+    with subagents._LOCK:
+        subagents._SCOPED_TASKS.pop("tid-s", None)
+
+
+def test_a_rerun_keeps_the_original_limits():
+    src = (__import__("pathlib").Path(__file__).resolve().parents[2]
+           / "src" / "agent_friday" / "routes" / "tasks.py").read_text(encoding="utf-8")
+    body = src[src.index("Re-run an interrupted or finished task"):]
+    body = body[:body.index("return jsonify({\"ok\": True")]
+    assert "_descendant_options(t" in body and "tools=t.get('tools')" in body
+
+
 @pytest.mark.parametrize("limit", [
     {"pin_to_seat": True}, {"local_only": True}, {"local_only_result": True},
     {"off_record": True}, {"crew_context": {"agent_id": "a"}},
+    {"job_kind": "runner"}, {"cloud_pin": {"model": "claude-opus-5-5"}},
 ])
 def test_limits_a_cloud_run_cannot_honour_keep_it_waiting(agent, monkeypatch, limit):
     monkeypatch.setattr(agent, "_spawn_task", lambda *a, **k: pytest.fail("moved to the cloud"))
@@ -112,6 +191,7 @@ def test_the_real_spawn_applies_the_scope_to_the_new_task(agent, monkeypatch):
     monkeypatch.setattr(agent.threading.Thread, "start", lambda self: started.append(self))
     with agent.TASKS_LOCK:
         agent.TASKS["t-9"] = _queued(tools=None, on_complete=None, schedule_id=None)
+    _park(agent)
     cs.on_decision(_card())
     with agent.TASKS_LOCK:
         new = [t for t, r in agent.TASKS.items() if r.get("parent_task_id") == "t-9"]
