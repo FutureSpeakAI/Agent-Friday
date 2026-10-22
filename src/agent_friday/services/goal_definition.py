@@ -68,7 +68,20 @@ class DefinitionRefused(ValueError):
 
 
 def _text(v: Any, limit: int = 2000) -> str:
-    return " ".join(str(v or "").split())[:limit]
+    """One line of plain text: control and format characters (bidi overrides,
+    zero-width marks) removed, so nothing reads differently than it is."""
+    import unicodedata
+    s = "".join(ch for ch in str(v or "") if unicodedata.category(ch) not in ("Cc", "Cf") or ch in "\n\t ")
+    return " ".join(s.split())[:limit]
+
+
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?")
+
+
+def _date(v: Any) -> Optional[str]:
+    """A date (or date and time) the summary shows in full, or None."""
+    s = str(v or "").strip()
+    return s if s and _DATE.fullmatch(s) else None
 
 
 def texts(v: Any, limit: int = 20) -> List[str]:
@@ -131,7 +144,7 @@ def _milestone(m: Any, i: int) -> Dict[str, Any]:
         "risk": m.get("risk") if m.get("risk") in RISK_LEVELS else "low",
         "planned_actions": [a for a in (m.get("planned_actions") or []) if a in AUTONOMY_CATEGORIES][:7] or ["read", "draft"],
         "cost_estimate_mψ": _int(m.get("cost_estimate_mψ")),
-        "due": m.get("due") or None,
+        "due": _date(m.get("due")),
         "success_criteria": _text(m.get("success_criteria") or m.get("outcome"), 1000),
     }
 
@@ -155,7 +168,7 @@ def normalize(spec: Dict[str, Any]) -> Dict[str, Any]:
         "evaluator": spec.get("evaluator") if spec.get("evaluator") in EVALUATORS else "friday_checks",
         "evidence_required": _evidence(spec.get("evidence_required")),
         "constraints": texts(spec.get("constraints")),
-        "deadline": spec.get("deadline") or None,
+        "deadline": _date(spec.get("deadline")),
         "budget": {"mψ": _int(budget.get("mψ")), "money_cents": _int(budget.get("money_cents")),
                    "runtime_minutes": _int(budget.get("runtime_minutes"))},
         "autonomy": autonomy(spec.get("autonomy")),
@@ -247,7 +260,9 @@ def summary(goal: Dict[str, Any]) -> str:
     if goal["milestones"]:
         lines.append("Steps: " + "; ".join(
             f"{i + 1}. {m['name']} ({', '.join(CATEGORY_WORDS[c] for c in m['planned_actions'])}"
-            + (f", due {str(m['due'])[:10]}" if m.get("due") else "") + ")"
+            + (f", due {m['due']}" if m.get("due") else "") + ")"
+            + (f", done when: {m['success_criteria']}" if m.get("success_criteria") else "")
+            + (f", proof: {'; '.join(e['what'] for e in m['evidence'])}" if m.get("evidence") else "")
             for i, m in enumerate(goal["milestones"])) + ".")
     lines.append("On my own I may " + (", ".join(by["on_its_own"]) or "do nothing") + ".")
     if by["ask_me"]:
@@ -259,7 +274,7 @@ def summary(goal: Dict[str, Any]) -> str:
               f"{b['runtime_minutes']} minutes of work" if b["runtime_minutes"] else ""]
     limits = [x for x in limits if x]
     lines.append("Limits: " + (", ".join(limits) if limits else "no budget set") + "."
-                 + (" Deadline: " + str(goal["deadline"])[:10] + "." if goal["deadline"] else " No deadline."))
+                 + (" Deadline: " + str(goal["deadline"]) + "." if goal["deadline"] else " No deadline."))
     if b["money_cents"] or _uses(goal, "spend"):
         lines.append("I can't count money yet, so every spend asks you first"
                      + (f" (you said at most {_money(b['money_cents'])})." if b["money_cents"] else "."))

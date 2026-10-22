@@ -29,6 +29,9 @@ from typing import Any, Dict, List, Optional
 
 WORKSPACE = "on_demand"
 MAX_DRAFTS = 20
+#: The most one draft_goal call may carry (serialised): drafts hold what the
+#: owner said, not documents.
+MAX_INPUT_BYTES = 32 * 1024
 _LOCK = threading.Lock()
 
 
@@ -109,17 +112,36 @@ def handle_draft_goal(inp=None) -> str:
     still to ask and the plain summary; creates nothing."""
     from agent_friday.services import goal_definition as gd
     inp = inp if isinstance(inp, dict) else {}
+    try:
+        too_big = len(json.dumps(inp, default=str)) > MAX_INPUT_BYTES
+    except Exception:
+        too_big = True
+    if too_big:
+        return json.dumps({"status": "refused", "message": "That is too long for a goal draft; keep it to what "
+                                                           "the owner said."})
     spec = {k: inp.get(k) for k in ("title", "intent", "completion_condition", "evaluator",
                                      "evidence_required", "stop_conditions", "constraints", "people",
-                                     "deadline", "budget", "autonomy", "milestones") if inp.get(k) is not None}
+                                     "deadline", "budget", "autonomy") if inp.get(k) is not None}
+    if isinstance(inp.get("milestones"), list):
+        # Each step keeps only what the summary shows the owner: its name,
+        # what it should produce (shown as "done when") and its kinds of
+        # action. Nothing a step would be told to do stays out of sight.
+        spec["milestones"] = [{k: m.get(k) for k in ("name", "outcome", "planned_actions") if m.get(k) is not None}
+                              for m in inp["milestones"][:20] if isinstance(m, dict)]
     # A draft from conversation never carries a principal or permitted tools
     # a model chose: the owner's own definition form sets those.
+    draft_id = inp.get("draft_id") if isinstance(inp.get("draft_id"), str) else None
+    if draft_id and not _off_record():
+        # Answers add to the draft made earlier; they never wipe it.
+        prior = next((d for d in _read() if d.get("draft_id") == draft_id), None)
+        if prior is not None:
+            spec = dict(prior.get("spec") or {}, **spec)
     goal = gd.normalize(spec)
     questions = gd.questions(goal)
-    draft_id = None
     kept = False
-    if not _off_record():
-        draft_id = inp.get("draft_id") if isinstance(inp.get("draft_id"), str) else None
+    if _off_record():
+        draft_id = None
+    else:
         with _LOCK:
             items = _read()
             if draft_id and any(d.get("draft_id") == draft_id for d in items):
