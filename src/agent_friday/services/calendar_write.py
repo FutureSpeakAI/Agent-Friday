@@ -256,7 +256,10 @@ def resolve_write_account(account_id=None) -> tuple:
         if any(want in {str(a.get(k) or "").strip().lower() for k in ("id", "email", "label")}
                for a in readable_accounts()):
             return None, ("the account %r may read its calendar but has not been allowed to change "
-                          "it: %s. Nothing was changed." % (str(account_id), "press \"Allow calendar changes\" for that account in Settings > Connections > Google (Google then asks to confirm)"))
+                          "it: press \"Allow calendar changes\" for that account in Settings > "
+                          "Connections > Google (Google then asks to confirm). Nothing was changed. "
+                          "Accounts that can change a calendar now: %s"
+                          % (str(account_id), describe_accounts(accts) or "none"))
         return None, ("no connected account named %r can write to a calendar. "
                       "Nothing was changed. Accounts that can: %s"
                       % (str(account_id), describe_accounts(accts) or "none"))
