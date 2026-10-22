@@ -128,9 +128,9 @@ def _sweep_stale_scratch(max_age_s: float = 86400.0) -> int:
 
 def _stop_now(watcher) -> bool:
     """Checked before every episode: an interactive turn, the PC leaving AC
-    power, or tonight's testing time used up all stop the run (resumable)."""
-    from agent_friday.services import trials
-    return (watcher.tripped.is_set() or not trials.on_ac_power()
+    power, a GPU too hot, or tonight's testing time used up all stop the run (resumable)."""
+    from agent_friday.services import thermal, trials
+    return (watcher.tripped.is_set() or not trials.on_ac_power() or thermal.too_hot()[0]
             or trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS)
 
 
@@ -166,6 +166,11 @@ def run_pending_trials() -> dict:
         return out
     if not trials.on_ac_power():
         out["skipped"] = "on battery"
+        return out
+    from agent_friday.services import thermal
+    hot, why = thermal.too_hot()
+    if hot:
+        out["skipped"] = why
         return out
     if trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS:
         out["skipped"] = "tonight's testing time is used up"
