@@ -288,8 +288,14 @@ def test_an_unreadable_archive_never_locks_the_owner_out(monkeypatch, tmp_path):
     monkeypatch.setattr(authority, "_newest_receipt", flaky)
     monkeypatch.setattr(action_ledger, "hold_reason", lambda: None)
     assert "archive segment unreadable" in authority.hold_reason()
-    assert authority.restore()["restored"] is True
-    assert authority.revoked() is None
+    out = authority.restore()
+    assert out["restored"] is True and "restart" in out["note"]
+    monkeypatch.setattr(authority, "_newest_receipt", real)
+    monkeypatch.setattr(authority, "_strict_look",
+                        lambda L: (_ for _ in ()).throw(RuntimeError("archive segment unreadable")))
+    assert authority.revoked() is None          # the owner's press stands in this process
+    authority._SEEN.clear()                     # a restart
+    assert (authority.revoked() or {}).get("unreadable") is True
 
 
 def test_an_open_break_still_refuses_restore(monkeypatch, tmp_path):
@@ -361,3 +367,17 @@ def test_an_old_restore_in_a_rolled_back_file_does_not_stand(monkeypatch, tmp_pa
     monkeypatch.setattr(action_ledger, "entries", refuse)
     authority._SEEN.clear()
     assert (authority.revoked() or {}).get("unreadable") is True
+
+
+def test_a_segment_that_cannot_be_read_is_not_skipped(monkeypatch, tmp_path):
+    """Confirmation review (1): newest_since skipped an unreadable segment and
+    the look was cached; now the caller reads strictly (and holds if it cannot)."""
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
+    from agent_friday.services import action_ledger, authority
+    monkeypatch.setattr(authority.time, "sleep", lambda s: None)
+    authority.revoke_all("owner:test")
+    authority._SEEN.clear()
+    assert authority.revoked()
+    monkeypatch.setattr(action_ledger, "_reverse_lines",
+                        lambda p: (_ for _ in ()).throw(PermissionError(13, "in use")))
+    assert action_ledger.newest_since(["authority"], 0)[1] == -1

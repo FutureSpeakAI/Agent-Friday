@@ -2229,7 +2229,8 @@ def main():
                                   for k, v in out.items() if k != "errors"))
             elif args.authority_cmd == "restore":
                 out = _auth.restore("owner:cli")
-                print("Restored." if out.get("restored") else "Action authority was not revoked.")
+                print(("Restored." + (" " + out["note"] if out.get("note") else ""))
+                      if out.get("restored") else "Action authority was not revoked.")
             else:
                 st = _auth.status()
                 if st.get("unreadable"):

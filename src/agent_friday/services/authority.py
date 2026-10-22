@@ -103,8 +103,8 @@ def _newest_receipt() -> Optional[dict]:
         _SEEN["rec"] = rows[0] if rows else None
     elif hit is not None:
         _SEEN["rec"] = hit
-    _SEEN["through"] = tip
-    _SEEN["stats"] = stats
+    _SEEN["through"] = max(tip, 0)
+    _SEEN["stats"] = stats if tip >= 0 else None     # a segment that could not be read: look again
     return _SEEN["rec"]
 
 
@@ -273,22 +273,30 @@ def restore(by: str = "owner:ui") -> dict:
     if not r:
         return {"restored": False, "why": "action authority is not revoked"}
     if r.get("unreadable") and _open_break():
-        # a break the owner has not looked at: the Ledger first. Once it is
-        # acknowledged, the owner's press here writes the restore receipt
-        # (a part of the record that stays unreadable can never lock them out)
+        # a break the owner has not looked at: the Ledger first
         raise AuthorityError("The action ledger has a break you have not looked at yet; "
                              "look at the Ledger page first, then restore.")
     try:
-        _SEEN["rec"] = action_ledger.append("authority", {"event": "restored", "by": str(by or "owner")[:40]},
-                                            durable=True)
+        entry = action_ledger.append("authority", {"event": "restored", "by": str(by or "owner")[:40]},
+                                     durable=True)
     except Exception as e:
         raise AuthorityError("The record of this could not be written (%s); authority stays revoked."
                              % type(e).__name__)
+    # The owner's own press on this PC stands in this process: an archived part
+    # that stays unreadable cannot keep them out. After a restart the record is
+    # read strictly again, and while that part stays unreadable it holds again.
+    _SEEN.update(dir=str(action_ledger.ledger_dir()), rec=entry,
+                 through=int((entry or {}).get("seq") or 0), stats=action_ledger.stats_token())
     try:
         _marker().unlink()
     except OSError:
         pass
-    return {"restored": True}
+    out = {"restored": True}
+    if r.get("unreadable"):
+        out["note"] = ("Restored until Friday restarts: part of the action ledger still cannot be "
+                       "read (%s), and after a restart authority is held again until it can."
+                       % r.get("error"))
+    return out
 
 
 def status() -> dict:

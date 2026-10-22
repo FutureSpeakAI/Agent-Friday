@@ -977,7 +977,8 @@ def newest_since(kinds: Iterable[str], since_seq: int,
     """(the newest signed entry of `kinds` after `since_seq` that `where`
     picks, or None; the newest seq on disk). Reads from the end and stops at
     `since_seq`, so a caller that remembers the seq reads only what is new.
-    A tip below `since_seq` means the ledger went back (cut or rolled back)."""
+    A tip below `since_seq` means the ledger went back (cut or rolled back);
+    -1 means a segment could not be read."""
     want = set(kinds)
     try:
         key = _key()
@@ -1004,7 +1005,7 @@ def newest_since(kinds: Iterable[str], since_seq: int,
                     except Exception:
                         continue
         except OSError:
-            continue
+            return None, -1      # a segment could not be read: the caller reads strictly
     return None, tip
 
 

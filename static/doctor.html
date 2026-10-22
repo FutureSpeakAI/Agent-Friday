@@ -310,7 +310,7 @@
     });
   });
   $('auth-restore').addEventListener('click', () => api('/api/authority/restore', { method: 'POST', body: '{}' })
-    .then(({ ok, d }) => { text($('auth-note'), ok ? 'Restored. Give back the permissions you want, one by one.' : (d.error || 'Not done.')); authState(); }));
+    .then(({ ok, d }) => { text($('auth-note'), ok ? 'Restored. Give back the permissions you want, one by one.' + (d.note ? ' ' + d.note : '') : (d.error || 'Not done.')); authState(); }));
   authState();
   weekly();
   schedState();
