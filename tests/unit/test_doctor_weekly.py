@@ -62,6 +62,8 @@ def test_the_card_shows_exactly_what_would_be_sent_and_send_sends_only_that(week
     assert mail.sent == []
     out = weekly.send(p["sha256"])
     assert out["how"] == "approval_card" and out["approval_id"] == "ap-1"
+    with pytest.raises(weekly.WeeklyError):
+        weekly.send(p["sha256"])                                     # once a week (review round 1, low 1)
     assert len(mail.sent) == 1
     s = mail.sent[0]
     assert s["to"] == weekly.FUTURESPEAK_DOCTOR_ADDRESS and s["account_id"] == "acct-1"
@@ -142,3 +144,76 @@ def test_nothing_is_ever_sent_by_the_daily_tick(weekly, monkeypatch):
     for _ in range(3):
         weekly.tick()
     assert mail.sent == [] and mail.saved == []
+
+
+
+def test_a_standing_send_pre_approval_never_covers_the_weekly_email(weekly, monkeypatch):
+    """Review round 1 (1): the send is made outside any tool decision."""
+    from agent_friday.governance import action_gate
+    from agent_friday.services import gmail_send
+    seen = []
+    monkeypatch.setattr(gmail_send, "sendable_accounts", lambda: [{"id": "acct-1"}])
+    monkeypatch.setattr(gmail_send, "request_send",
+                        lambda **k: seen.append(action_gate.DECIDED.get()) or {"approval": {"approval_id": "a"}})
+    weekly.answer("weekly")
+    p = weekly.prepare()
+    tok = action_gate.DECIDED.set({"decision": "allow", "tool": "send_email"})
+    try:
+        weekly.send(p["sha256"])
+    finally:
+        action_gate.DECIDED.reset(tok)
+    assert seen == [None]
+
+
+def test_an_unanswered_question_is_asked_once_then_again_in_four_weeks(weekly, monkeypatch):
+    """Review round 1 (3)."""
+    from agent_friday import notifications_engine as ne
+    monkeypatch.setattr(ne, "push", lambda **k: {})
+    assert weekly.tick() == {"offered": "ask"}
+    assert weekly.next_item() is None
+    assert weekly.next_item(now=time.time() + 8 * 86400) is None
+    assert weekly.next_item(now=time.time() + 29 * 86400) == "ask"
+
+
+def test_the_emailed_report_says_it_was_chosen_and_a_partly_off_record_week_leaves_out_counts(weekly, monkeypatch):
+    """Review round 1 (4, 5)."""
+    from agent_friday.services import off_record
+    weekly.answer("weekly")
+    p = weekly.prepare()
+    assert "by hand only" not in p["text"] and weekly.SHARING in p["text"]
+    st = json.loads(weekly._path().read_text(encoding="utf-8"))
+    st["prepared"] = None
+    weekly._path().write_text(json.dumps(st), encoding="utf-8")
+    monkeypatch.setattr(off_record, "active", lambda *a, **k: True)
+    weekly.tick()                                                    # notes the week
+    monkeypatch.setattr(off_record, "active", lambda *a, **k: False)
+    p = weekly.prepare()
+    assert "left out this week" in p["text"]
+
+
+def test_the_page_reuses_this_weeks_text_and_a_changed_saved_text_is_refused(weekly, monkeypatch):
+    """Review round 1 (low 3, 4)."""
+    _Mail().install(monkeypatch)
+    weekly.answer("weekly")
+    a, b = weekly.prepare(), weekly.prepare()
+    assert a["sha256"] == b["sha256"]
+    st = json.loads(weekly._path().read_text(encoding="utf-8"))
+    st["prepared"]["text"] += "\nplanted line"
+    weekly._path().write_text(json.dumps(st), encoding="utf-8")
+    with pytest.raises(weekly.WeeklyError):
+        weekly.send(a["sha256"])
+
+
+def test_nothing_is_prepared_when_no_weekly_report_is_due(weekly):
+    with pytest.raises(weekly.WeeklyError):
+        weekly.prepare()                                             # not answered yet
+
+
+def test_the_weekly_text_passes_the_privacy_gate_whole(weekly):
+    """The gate read "Doctor report" as health information and a full report
+    id as an ID number, and withheld the header: the email says diagnostic
+    report and carries a short reference instead."""
+    from agent_friday.services import doctor, egress_gate
+    text = weekly._render(doctor.build(), False)
+    assert egress_gate.gate_text(text, provider="futurespeak-mail", field="doctor_report") == text
+    assert "Doctor report" not in text.splitlines()[0]

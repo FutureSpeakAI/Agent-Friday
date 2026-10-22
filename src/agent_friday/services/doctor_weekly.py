@@ -6,9 +6,11 @@ owner's words: "maybe Friday should ask if it's ok to email those to
 futurespeak once a week". The person decides every single time:
 
 * **An ask, never a background send.** Friday asks once and remembers one of
-  three answers: "Yes, ask me weekly", "Not now" (asked again in four weeks)
-  or "Never ask again" (only Settings turns it back on). A yes never becomes a
-  send: each week is its own decision.
+  three answers: "Yes, ask me weekly", "Not now" (asked again in four weeks;
+  a question left unanswered counts the same) or "Never ask again" (only the
+  owner turns it back on, on the Doctor page). A yes never becomes a send:
+  each week is its own decision, and a standing send pre-approval never covers
+  it (the send is made outside any tool decision, so no grant applies).
 * **Each week, a card** with the exact text that would leave, and Send, Skip
   this week, Stop asking. It sits in Needs you (never interrupting: tier FYI)
   and on the Doctor page, and is never raised twice in one week.
@@ -21,14 +23,18 @@ futurespeak once a week". The person decides every single time:
 * **From the owner's own mail.** Send raises the normal approval card for an
   email from the owner's own Gmail (services/gmail_send.request_send), so it
   lands in their Sent folder and leaves a receipt; nothing goes until they
-  approve it there. Without send permission Friday saves a draft (Gmail's
-  compose scope) for them to send, and without either it offers the file to
-  save and attach by hand. It never asks for a wider mail permission for this.
+  approve it there. Without send permission Friday saves a draft (accounts
+  connected with Gmail's modify permission) for them to send, and without
+  either it shows the text to save and attach by hand. It never asks for a
+  wider mail permission for this.
 * **To one FutureSpeak address** (FUTURESPEAK_DOCTOR_ADDRESS), with a short
   plain promise of what FutureSpeak does with it (PROMISE).
 * **Local-only mode and off the record.** In local-only mode the weekly card is
   not raised unless the owner said yes there too (a separate yes, asked in
-  that mode). Off the record, no card is raised and nothing is prepared.
+  that mode). Off the record, no card is raised and nothing is prepared; and
+  in a week that was partly off the record (seen by the quarter-hourly tick),
+  error counts and speed figures are left out of the report, since they may
+  come from that time.
 
 State is `<home>/doctor/weekly.json`. A data-folder writer can make the card
 appear; it can never make anything send (every send is the owner's press on
@@ -52,13 +58,18 @@ FUTURESPEAK_DOCTOR_ADDRESS = "doctor@futurespeak.ai"
 PROMISE = ("FutureSpeak reads these reports only to find and fix problems in Agent Friday. "
            "A report holds version numbers, which checks passed, counts of error types, "
            "which settings differ from the defaults and speed figures; never your "
-           "conversations, files, contacts or vault. We keep it no longer than a year, "
-           "never sell or share it, never link it to anything else about you, and delete "
-           "it when you ask (reply to the email).")
+           "conversations, files, contacts or vault. Your email address is used only to "
+           "reply to you. We keep a report no longer than a year, never sell or share it, "
+           "and delete it when you ask (reply to the email).")
+
+#: The report's "Sharing" line when the owner chose to email it.
+SHARING = "you chose to email this report to FutureSpeak from your own account"
 
 ANSWERS = ("weekly", "not_now", "never")
 ASK_AGAIN_S = 28 * 86400.0
-SUBJECT = "Agent Friday Doctor report"
+#: The privacy gate reads "doctor report" as health information (it is not: it
+#: is Friday's own self-check), so the email calls it a diagnostic report.
+SUBJECT = "Agent Friday diagnostic report"
 
 _LOCK = threading.Lock()
 
@@ -83,7 +94,7 @@ def week_key(t: Optional[float] = None) -> str:
 
 def _state() -> dict:
     st = {"answer": None, "answered_at": None, "local_only_ok": False, "offered_week": None,
-          "decided_week": None, "prepared": None}
+          "asked_at": None, "decided_week": None, "prepared": None, "off_record_weeks": []}
     try:
         d = json.loads(_path().read_text(encoding="utf-8"))
         if isinstance(d, dict):
@@ -97,6 +108,10 @@ def _state() -> dict:
     if not isinstance(st["prepared"], dict):
         st["prepared"] = None
     st["local_only_ok"] = st["local_only_ok"] is True
+    if not isinstance(st["off_record_weeks"], list):
+        st["off_record_weeks"] = []
+    if not isinstance(st["asked_at"], (int, float)) or st["asked_at"] > time.time() + 600:
+        st["asked_at"] = None
     return st
 
 
@@ -145,7 +160,9 @@ def next_item(st: Optional[dict] = None, now: Optional[float] = None) -> Optiona
     if _off_record():
         return None
     if st["answer"] is None:
-        return "ask"
+        # asked once: a question left unanswered is asked again in four weeks
+        at = st.get("asked_at")
+        return "ask" if not at or now - at >= ASK_AGAIN_S else None
     if st["answer"] == "not_now":
         at = st.get("answered_at")
         return "ask" if not isinstance(at, (int, float)) or now - at >= ASK_AGAIN_S else None
@@ -173,45 +190,67 @@ def answer(choice: str, *, local_only_too: bool = False) -> dict:
     return status()
 
 
+def _ref(report_id) -> str:
+    """The report's short reference (its random part): a full id reads to the
+    privacy gate like a date of birth or an ID number."""
+    return str(report_id or "").rsplit("-", 1)[-1][:12]
+
+
+def _render(rep: dict, partly_off_record: bool) -> str:
+    from agent_friday.services import doctor
+    r = dict(rep, sharing=SHARING)
+    if partly_off_record:
+        r["errors"] = {}
+        perf = dict(r.get("performance") or {})
+        perf.pop("providers", None)
+        r["performance"] = perf
+    text = doctor.render_text(r)
+    first, _, rest = text.partition("\n")
+    text = "Agent Friday diagnostic report (reference %s)\n%s" % (_ref(rep.get("id")), rest)
+    if partly_off_record:
+        text += ("\nError counts and speed figures are left out this week: part of it was "
+                 "off the record.\n")
+    return text
+
+
 def prepare() -> dict:
     """This week's report text, exactly as it would leave: the Doctor report
-    rendered, then the egress PII gate. Kept with its SHA-256 so Send sends
-    this text and no other."""
+    rendered (with its Sharing line saying the owner chose to email it), then
+    the egress PII gate. The text is kept with its SHA-256, and Send sends that
+    text and no other. Made once a week (the page asks again for the same)."""
     if _off_record():
         raise WeeklyError("Off the record, no report is prepared.")
-    from agent_friday.services import doctor, egress_gate
-    rep = doctor.save()
-    text = doctor.render_text(rep)
-    gated = egress_gate.gate_text(text, provider="futurespeak-mail", field="doctor_report")
-    if not gated:
-        raise WeeklyError("The privacy check held the whole report back; nothing can be sent.")
-    sha = hashlib.sha256(gated.encode("utf-8")).hexdigest()
-    with _LOCK:
-        st = _state()
-        st["prepared"] = {"report_id": rep.get("id"), "sha256": sha, "week": week_key(),
-                          "at": time.time()}
-        _save(st)
-    return {"report_id": rep.get("id"), "text": gated, "sha256": sha,
-            "changed_by_gate": gated != text, "to": FUTURESPEAK_DOCTOR_ADDRESS,
-            "subject": "%s %s" % (SUBJECT, rep.get("id")), "promise": PROMISE}
+    st = _state()
+    if next_item(st) != "weekly":
+        raise WeeklyError("There is no weekly report to look at now.")
+    p = st.get("prepared") or {}
+    if p.get("week") == week_key() and isinstance(p.get("text"), str) and \
+            hashlib.sha256(p["text"].encode("utf-8")).hexdigest() == p.get("sha256"):
+        text, sha, rid = p["text"], p["sha256"], p.get("report_id")
+    else:
+        from agent_friday.services import doctor, egress_gate
+        rep = doctor.build()
+        text = egress_gate.gate_text(_render(rep, week_key() in st["off_record_weeks"]),
+                                     provider="futurespeak-mail", field="doctor_report")
+        if not text:
+            raise WeeklyError("The privacy check held the whole report back; nothing can be sent.")
+        sha, rid = hashlib.sha256(text.encode("utf-8")).hexdigest(), rep.get("id")
+        with _LOCK:
+            st = _state()
+            st["prepared"] = {"report_id": rid, "sha256": sha, "week": week_key(),
+                              "at": time.time(), "text": text}
+            _save(st)
+    return {"report_id": rid, "text": text, "sha256": sha, "to": FUTURESPEAK_DOCTOR_ADDRESS,
+            "subject": "%s (reference %s)" % (SUBJECT, _ref(rid)),
+            "promise": PROMISE}
 
 
 def _prepared_text(st: dict, sha256: str) -> tuple[str, dict]:
+    """The text the owner saw (its SHA-256 is what the page sent back)."""
     p = st.get("prepared") or {}
-    if not p or p.get("sha256") != sha256 or p.get("week") != week_key():
-        raise WeeklyError("The report changed since you looked at it. Look at it again, then send.")
-    from agent_friday.services import doctor, egress_gate
-    rid = str(p.get("report_id") or "")
-    f = doctor.saved(rid, "json")
-    try:
-        rep = json.loads(f.read_text(encoding="utf-8")) if f else None
-    except (OSError, ValueError):
-        rep = None
-    if not isinstance(rep, dict):
-        raise WeeklyError("This week's report is no longer on this PC. Prepare it again.")
-    text = egress_gate.gate_text(doctor.render_text(rep), provider="futurespeak-mail",
-                                 field="doctor_report")
-    if hashlib.sha256(text.encode("utf-8")).hexdigest() != sha256:
+    text = p.get("text")
+    if (not p or p.get("week") != week_key() or not isinstance(text, str)
+            or hashlib.sha256(text.encode("utf-8")).hexdigest() != sha256 or p.get("sha256") != sha256):
         raise WeeklyError("The report changed since you looked at it. Look at it again, then send.")
     return text, p
 
@@ -223,12 +262,14 @@ def send(sha256: str, *, account_id: Optional[str] = None) -> dict:
     st = _state()
     if st["answer"] != "weekly":
         raise WeeklyError("The weekly ask is off.")
+    if st["decided_week"] == week_key():
+        raise WeeklyError("This week's report is already decided.")
     if _off_record():
         raise WeeklyError("Off the record, nothing is sent.")
     if _local_only() and not st["local_only_ok"]:
         raise WeeklyError("Friday is in local-only mode; say yes to the weekly ask in this mode first.")
     text, p = _prepared_text(st, sha256)
-    subject = "%s %s" % (SUBJECT, p.get("report_id"))
+    subject = "%s (reference %s)" % (SUBJECT, _ref(p.get("report_id")))
     body = text + "\n\n" + PROMISE + "\n"
     from agent_friday.services import gmail_send
     out: dict = {"to": FUTURESPEAK_DOCTOR_ADDRESS}
@@ -239,8 +280,15 @@ def send(sha256: str, *, account_id: Optional[str] = None) -> dict:
     acct = account_id if account_id in senders else (senders[0] if senders else None)
     done = False
     if acct:
-        r = gmail_send.request_send(to=FUTURESPEAK_DOCTOR_ADDRESS, subject=subject, body=body,
-                                    account_id=acct, requested_by="doctor_weekly")
+        # outside any tool decision, so no standing send pre-approval can cover
+        # it: the owner approves this week's email on its own card
+        from agent_friday.governance import action_gate
+        tok = action_gate.DECIDED.set(None)
+        try:
+            r = gmail_send.request_send(to=FUTURESPEAK_DOCTOR_ADDRESS, subject=subject, body=body,
+                                        account_id=acct, requested_by="doctor_weekly")
+        finally:
+            action_gate.DECIDED.reset(tok)
         appr = (r or {}).get("approval") or {}
         out.update(how="approval_card", approval_id=appr.get("approval_id") or appr.get("id"),
                    status=(r or {}).get("status"),
@@ -258,8 +306,8 @@ def send(sha256: str, *, account_id: Optional[str] = None) -> dict:
             done = True
             break
     if not done:
-        out.update(how="by_hand", report_id=p.get("report_id"),
-                   detail="No mail account Friday can use. Save the report and attach it yourself.")
+        out.update(how="by_hand", report_id=p.get("report_id"), text=body,
+                   detail="No mail account Friday can use. Save the text above and attach it yourself.")
     with _LOCK:
         st = _state()
         st["decided_week"] = week_key()
@@ -290,8 +338,16 @@ def skip() -> dict:
 
 
 def tick() -> Optional[dict]:
-    """Once a day: raise this week's quiet card in Needs you when one is due
-    (never twice in a week; never interrupting)."""
+    """Every quarter hour (the server's backup loop): note a week that was
+    partly off the record, then raise this week's quiet card in Needs you when
+    one is due (never twice in a week; never interrupting). Sends nothing."""
+    if _off_record():
+        with _LOCK:
+            st = _state()
+            if week_key() not in st["off_record_weeks"]:
+                st["off_record_weeks"] = (st["off_record_weeks"] + [week_key()])[-8:]
+                _save(st)
+        return None
     st = _state()
     item = next_item(st)
     if item is None or st.get("offered_week") == week_key():
@@ -311,5 +367,7 @@ def tick() -> Optional[dict]:
     with _LOCK:
         st = _state()
         st["offered_week"] = week_key()
+        if item == "ask":
+            st["asked_at"] = time.time()
         _save(st)
     return {"offered": item}

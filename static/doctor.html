@@ -255,7 +255,8 @@
     api('/api/doctor/weekly').then(({ d }) => {
       text($('weekly-promise'), d.promise || '');
       $('w-to').textContent = d.address || '';
-      $('weekly-ask').hidden = d.answer === 'weekly';
+      // the three answers, and in local-only mode the separate yes for that mode
+      $('weekly-ask').hidden = d.answer === 'weekly' && !(d.local_only && !d.local_only_ok);
       $('w-local-wrap').hidden = !d.local_only;
       const words = { weekly: 'You said: ask me weekly.', not_now: 'You said: not now.', never: 'You said: never ask again.' };
       text($('weekly-state'), (words[d.answer] || 'Friday has not asked yet.') +
@@ -271,7 +272,11 @@
     });
   }
   const wpost = (what, body) => api('/api/doctor/weekly/' + what, { method: 'POST', body: JSON.stringify(body || {}) })
-    .then(({ ok, d }) => { text($('weekly-note'), ok ? (d.detail || 'Saved.') : (d.error || 'Not done.')); weekly(); });
+    .then(({ ok, d }) => {
+      text($('weekly-note'), ok ? (d.detail || 'Saved.') : (d.error || 'Not done.'));
+      if (ok && d.how === 'by_hand' && d.text) { $('w-text').textContent = d.text; $('weekly-card').hidden = false; return; }
+      weekly();
+    });
   $('w-yes').addEventListener('click', () => wpost('answer', { choice: 'weekly', local_only_too: $('w-local').checked }));
   $('w-notnow').addEventListener('click', () => wpost('answer', { choice: 'not_now' }));
   $('w-never').addEventListener('click', () => wpost('answer', { choice: 'never' }));
