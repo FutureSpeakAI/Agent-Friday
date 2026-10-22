@@ -619,7 +619,8 @@ class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         from agent_friday.governance import mcp_hosts
-        if mcp_hosts.host_key(newurl) != mcp_hosts.host_key(req.full_url):
+        same_scheme = newurl.split(":", 1)[0].lower() == req.full_url.split(":", 1)[0].lower()
+        if not same_scheme or mcp_hosts.host_key(newurl) != mcp_hosts.host_key(req.full_url):
             raise RuntimeError(
                 "the server redirected to %s, a different host; Friday did not follow it"
                 % (mcp_hosts.display(mcp_hosts.host_key(newurl)) or "another address"))

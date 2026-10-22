@@ -15437,6 +15437,10 @@ def _mcp_boot() -> None:
     global _MCP_MANAGER
     if _MCPManager is None:
         return
+    # The host carry-over may run only at the first boot, so the flag is set before any work:
+    # a reload after a failed first boot never adopts a server added since (governance/mcp_hosts).
+    first_boot = not _MCP_BOOTED_ONCE["done"]
+    _MCP_BOOTED_ONCE["done"] = True
     try:
         cfg = _load_mcp_servers()
         # Extension security: scan every configured server before launch and
@@ -15448,18 +15452,20 @@ def _mcp_boot() -> None:
             cfg = gate_mcp_config(cfg)
         except Exception as _sec_err:
             print(f"  [mcp] extension security scan skipped: {_sec_err}")
+        if first_boot:
+            try:
+                # Once ever, at the first start with the host list: hosts of remote servers
+                # configured now stay reachable (governance/mcp_hosts.carry_over_at_boot).
+                from agent_friday.governance import mcp_hosts as _mh
+                _mh.carry_over_at_boot(cfg)
+            except Exception as _mh_err:
+                _log.warning("MCP host carry-over failed: %s", type(_mh_err).__name__)
         try:
             # A host card approved after a restart is still applied (governance/mcp_hosts).
             from agent_friday.services import mcp_host_cards as _mhc
             _mhc.ensure_hook()
-            # Once ever, at the first start with the host list: hosts of remote servers
-            # configured now stay reachable (governance/mcp_hosts.carry_over_at_boot).
-            if not _MCP_BOOTED_ONCE["done"]:
-                from agent_friday.governance import mcp_hosts as _mh
-                _mh.carry_over_at_boot(cfg)
         except Exception as _mh_err:
-            _log.warning("MCP host list start-up step failed: %s", type(_mh_err).__name__)
-        _MCP_BOOTED_ONCE["done"] = True
+            _log.warning("MCP host card hook not registered: %s", type(_mh_err).__name__)
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr

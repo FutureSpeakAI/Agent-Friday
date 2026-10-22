@@ -36,6 +36,8 @@ def _shown_url(url: str) -> str:
     try:
         p = urlsplit(str(url or ""))
         netloc = p.hostname or ""
+        if ":" in netloc:
+            netloc = "[%s]" % netloc
         if p.port:
             netloc += ":%d" % p.port
         return urlunsplit((p.scheme, netloc, "", "", ""))[:300]
@@ -140,7 +142,8 @@ def _on_decision(record: dict) -> None:
 def ensure_hook() -> None:
     """Register the decision hook once per process (also called at MCP start-up, so a card
     raised before a restart is still applied when it is approved after it)."""
-    if _HOOKED["done"]:
+    hooks = getattr(_ap(), "_HOOKS", {})
+    if _HOOKED["done"] and _on_decision in hooks.get(KIND, []):
         return
     _ap().register_decision_hook(KIND, _on_decision)
     _HOOKED["done"] = True

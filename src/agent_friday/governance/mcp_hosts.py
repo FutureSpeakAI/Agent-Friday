@@ -254,9 +254,13 @@ def check(url: str) -> str:
         return ""
     with _LOCK:
         raw = _read_raw()
-    if raw is None or (raw and not _marked(raw)):
-        return ("the list of add-on server hosts could not be read or was changed outside "
-                "Friday, so Friday reaches none of them until it is set up again")
+        lost = raw is not None and not _marked(raw) and (bool(raw) or _history_path().exists())
+    if raw is None:
+        return ("the list of add-on server hosts could not be read, so Friday reaches none of "
+                "them until it can be read again")
+    if lost:
+        return ("the list of add-on server hosts was lost or changed outside Friday, so each "
+                "host needs your approval again (%s)" % display(key))
     if _verified(raw.get(key), key):
         return ""
     return "you have not allowed Friday to reach %s" % display(key)
@@ -279,10 +283,14 @@ def approve(url_or_key: str, *, made_by: str, server: str = "", note: str = "",
         if raw is None:
             raise HostRefused("The host list could not be read, so nothing was changed.")
         if not _marked(raw):
-            if raw or _history_path().exists():
-                raise HostRefused("The host list was changed outside Friday, so nothing was "
-                                  "changed; it is set up again at the next start.")
-            raw[_MARKER] = _row(_MARKER, made_by, "", "list made by the owner", "")
+            # A new list, or one lost or edited outside Friday: the owner's press starts it again
+            # with this host. Only signed rows are kept; nothing is carried over from the config.
+            lost = bool(raw) or _history_path().exists()
+            raw = {k: v for k, v in raw.items() if not k.startswith("__") and _verified(v, k)}
+            raw[_MARKER] = _row(_MARKER, made_by, "", "list started again by the owner" if lost
+                                else "list made by the owner", "")
+            if lost:
+                _history({"event": "list_restarted", "by": made_by})
         old = raw.get(key)
         raw[key] = _row(key, made_by, server, note, approval_id)
         _write_raw(raw)
