@@ -33,8 +33,8 @@ def test_the_owners_press_removes_a_host(home, client):
     from agent_friday import core
     from agent_friday.governance import mcp_hosts
     mcp_hosts.approve(REMOTE, made_by="owner:ui")
-    press = {"X-Friday-Token": core._current_api_token(), "Sec-Fetch-Site": "same-origin",
-             "Origin": "http://localhost"}
+    from tests.desk_press_support import desk_headers    # a press on this PC's screen (#173)
+    press = desk_headers()
     r = client.post("/api/mcp/hosts/remove", json={"host": "mcp.example.com:443"}, headers=press)
     assert r.status_code == 200 and r.get_json()["removed"] is True
     assert r.get_json()["message"] == "Friday will not reach mcp.example.com any more."

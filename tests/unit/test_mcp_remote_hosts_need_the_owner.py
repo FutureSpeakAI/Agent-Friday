@@ -117,7 +117,9 @@ def test_only_a_press_on_screen_approves_it(home, no_network):
     card = approvals.list_approvals(kind="mcp_host", status="pending")[0]
     approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="friday")
     assert not mcp_hosts.allowed(REMOTE), "Friday approved her own card"
-    approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
+    from tests.desk_press_support import pressed     # a press on this PC's screen (#173)
+    with pressed():
+        approvals.decide_with_outcome(card["approval_id"], "approve", decided_by="owner:ui")
     assert mcp_hosts.allowed(REMOTE)
     assert mcp_hosts.all_hosts()["mcp.example.com:443"]["made_by"] == "owner:ui"
     assert not mcp_hosts.allowed("https://evil.example.com/mcp"), "one host never covers another"
