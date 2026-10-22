@@ -31,13 +31,14 @@ def _ap():
 
 
 def _shown_url(url: str) -> str:
-    """The address without its query or fragment (which can carry keys)."""
+    """Scheme and host only: a path or query can carry a key (some services put the
+    secret in the path), so neither is shown or stored on the card."""
     try:
         p = urlsplit(str(url or ""))
         netloc = p.hostname or ""
         if p.port:
             netloc += ":%d" % p.port
-        return urlunsplit((p.scheme, netloc, p.path, "", ""))[:300]
+        return urlunsplit((p.scheme, netloc, "", "", ""))[:300]
     except Exception:
         return ""
 
@@ -62,8 +63,11 @@ def ask(url: str, server: str, *, again: bool = False) -> dict:
         status = (last or {}).get("status")
         if last and status == "pending":
             return {"state": "pending", "approval_id": last["approval_id"]}
-        if last and status in ("denied", "declined", "expired", "blocked") and not again:
+        if last and status in ("denied", "declined") and not again:
             return {"state": "declined", "approval_id": last["approval_id"]}
+        if last and status == "blocked" and not again:
+            return {"state": "blocked", "approval_id": last["approval_id"]}
+        # An expired card was never answered: the next start asks again.
         where = mcp_hosts.display(key)
         name = str(server or "an add-on")[:80]
         card = _ap().create_approval(
@@ -73,9 +77,10 @@ def ask(url: str, server: str, *, again: bool = False) -> dict:
             description=(
                 "The add-on \"%s\" lives at %s. If you approve, Friday may connect to %s, "
                 "list the tools it offers, and send it what each call made with those tools "
-                "contains, such as text you ask Friday to work on. Each call still follows "
-                "your approval rules. Friday reaches no add-on server at a host you have not "
-                "allowed, and you can take this one off the list again at any time."
+                "contains, such as text you ask Friday to work on, along with the add-on's "
+                "saved headers and its sign-in token. Each call still follows your approval "
+                "rules. Friday reaches no add-on server at a host you have not allowed. "
+                "Removing the add-on stops Friday reaching it."
                 % (name, _shown_url(url) or where, where)),
             action_description="Allow Friday to reach add-on server host %s" % where,
             payload={"host": key, "server": str(server or "")[:200], "url": _shown_url(url)},
@@ -84,18 +89,23 @@ def ask(url: str, server: str, *, again: bool = False) -> dict:
                 "approval_id": card.get("approval_id", "")}
 
 
-def _restart_server(name: str) -> None:
-    """Start the server now that its host is allowed (only if Friday's agent is loaded)."""
+def _restart_servers(key: str) -> None:
+    """Start every configured server at this host now that it is allowed (only if Friday's
+    agent is loaded)."""
+    from agent_friday.governance import mcp_hosts
     agent = sys.modules.get("agent_friday.services.agent")
     mgr = getattr(agent, "_MCP_MANAGER", None) if agent else None
-    if mgr is None or name not in getattr(mgr, "servers", {}):
+    if mgr is None:
         return
-    try:
-        threading.Thread(target=mgr.restart, args=(name,),
-                         kwargs={"on_ready": getattr(agent, "_mcp_register_server_tools", None)},
-                         name="mcp-%s-allowed" % name, daemon=True).start()
-    except Exception as e:
-        _log.info("add-on server restart after approval failed: %s", type(e).__name__)
+    for name, sp in list(getattr(mgr, "servers", {}).items()):
+        if mcp_hosts.host_key(getattr(sp, "url", "") or "") != key:
+            continue
+        try:
+            threading.Thread(target=mgr.restart, args=(name,),
+                             kwargs={"on_ready": getattr(agent, "_mcp_register_server_tools", None)},
+                             name="mcp-%s-allowed" % name, daemon=True).start()
+        except Exception as e:
+            _log.info("add-on server restart after approval failed: %s", type(e).__name__)
 
 
 def apply_approved(record: dict) -> dict:
@@ -118,7 +128,7 @@ def apply_approved(record: dict) -> dict:
         ap.mark_used(record["approval_id"], "mcp_hosts", {"ok": False, "error": str(e)[:200]})
         return {"ok": False, "error": str(e)}
     ap.mark_used(record["approval_id"], "mcp_hosts", {"ok": True, "host": row.get("host")})
-    _restart_server(str(payload.get("server") or ""))
+    _restart_servers(str(row.get("host") or ""))
     return {"ok": True, "host": row.get("host")}
 
 

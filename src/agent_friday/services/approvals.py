@@ -839,6 +839,10 @@ def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
             and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
         return ("A search card is sent only with its own Send button in the app, where you see the exact "
                 "text that would go out. It cannot be approved from here.")
+    if (rec.get("status") == "pending" and rec.get("kind") == "mcp_host"
+            and decided_by not in SCREEN_ONLY_KINDS["mcp_host"]):
+        return ("A new add-on server host is allowed only with a press on its card's Approve button "
+                "in Friday's window. It cannot be approved from here.")
     if rec.get("status") == "pending" and _is_cloud_release_card(rec) and not _cloud_release_send(approval_id):
         return ("Private text goes to the cloud only with its card's own Send button in the app, where you "
                 "see exactly the words and where they would go. It cannot be approved from here.")

@@ -697,6 +697,8 @@ class MCPServerHTTP:
             tail = "; approve the card to connect it"
         elif state == "declined":
             tail = "; you declined it. Restart the server in Settings to be asked again"
+        elif state == "blocked":
+            tail = "; the card was stopped by Friday's safety rules"
         else:
             tail = ""
         self.status = "needs_approval"
@@ -740,6 +742,11 @@ class MCPServerHTTP:
         """POST one JSON-RPC message. Returns the matching response dict, or
         None for accepted notifications. Raises _AuthRequired / _SessionExpired
         for the two recoverable HTTP conditions."""
+        why = _host_refusal(self.url)
+        if why:                                    # checked at every request, not only at start,
+            self.status = "needs_approval"         # and before a sign-in token is fetched
+            self.error = f"not connected: {why}"
+            raise RuntimeError(f"not sent to {self.name}: {why}")
         body = json.dumps(payload, default=str).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -755,9 +762,6 @@ class MCPServerHTTP:
             headers["Authorization"] = f"Bearer {bearer}"
         headers.update(self.headers)
 
-        why = _host_refusal(self.url)
-        if why:                                    # checked at every request, not only at start
-            raise RuntimeError(f"not sent to {self.name}: {why}")
         req = urllib.request.Request(self.url, data=body, headers=headers,
                                      method="POST")
         deadline = time.time() + timeout           # the whole reply, not one socket operation
@@ -1045,7 +1049,9 @@ class MCPManager:
             except Exception as e:  # noqa: BLE001
                 self._log(f"[mcp:{name}] on_ready callback failed: {e}")
 
-    def restart(self, name: str, on_ready=None) -> bool:
+    def restart(self, name: str, on_ready=None, *, ask_again: bool = False) -> bool:
+        """Stop and start one server. ``ask_again`` (only the owner's press on screen, from the
+        restart route) raises a fresh host card after a declined one."""
         sp = self.servers.get(name)
         if sp is None:
             return False
@@ -1058,7 +1064,7 @@ class MCPManager:
             return False
         sp.stop()
         if isinstance(sp, MCPServerHTTP):
-            sp.ask_again = True        # restarting is how the owner asks for a declined host again
+            sp.ask_again = bool(ask_again)
         ok = sp.start()
         if ok and on_ready:
             try:

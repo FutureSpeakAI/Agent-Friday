@@ -14996,6 +14996,7 @@ except Exception as _mcp_imp_err:  # noqa: BLE001 — degrade gracefully if abse
 MCP_SERVERS_FILE = FRIDAY_DIR / "mcp_servers.json"
 
 _MCP_MANAGER = None                       # set by _mcp_boot()
+_MCP_BOOTED_ONCE = {"done": False}        # the host carry-over runs at the first boot, never at a reload
 _MCP_TOOL_MAP: dict[str, tuple] = {}      # registered tool name -> (server, raw tool)
 _MCP_SERVER_TOOLS: dict[str, list] = {}   # server name -> [registered tool names]
 _MCP_REG_LOCK = threading.Lock()
@@ -15451,8 +15452,14 @@ def _mcp_boot() -> None:
             # A host card approved after a restart is still applied (governance/mcp_hosts).
             from agent_friday.services import mcp_host_cards as _mhc
             _mhc.ensure_hook()
-        except Exception:
-            pass
+            # Once ever, at the first start with the host list: hosts of remote servers
+            # configured now stay reachable (governance/mcp_hosts.carry_over_at_boot).
+            if not _MCP_BOOTED_ONCE["done"]:
+                from agent_friday.governance import mcp_hosts as _mh
+                _mh.carry_over_at_boot(cfg)
+        except Exception as _mh_err:
+            _log.warning("MCP host list start-up step failed: %s", type(_mh_err).__name__)
+        _MCP_BOOTED_ONCE["done"] = True
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr
