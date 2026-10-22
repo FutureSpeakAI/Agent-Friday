@@ -24,6 +24,7 @@ document it is.
 | [Locks](user-guide/locks.md) | The Locks page: how your things are locked on this PC, raw records (mail archives and statements) held from the cloud, and the honest limit. |
 | [Chat Hub](user-guide/chat-hub.md) | Conversations, projects and the model chip. |
 | [See & Touch](user-guide/see-and-touch.md) | Friday sees what your workspace shows, points at rows, and acts on what you tick. |
+| [Camera mode](user-guide/camera-mode.md) | Showing Friday your screen or webcam: the camera button, what is sent and when, who describes the picture in each privacy mode, and turning it off. |
 | [Library](user-guide/library.md) | Documents you add, read on your PC and answered with footnotes. |
 | [Media](user-guide/media.md) | The media workspace: search, previews, transcripts, tidy-up. |
 | [Podcasts](user-guide/podcasts.md) | Episodes written by your local model and spoken on your PC. |
@@ -52,7 +53,7 @@ document it is.
 | [Keyboard shortcuts](user-guide/keyboard-shortcuts.md) | Every desktop shortcut and what it does. |
 | [Customize a workspace](user-guide/customize-workspaces.md) | Reshaping a workspace by talking to Friday: the Studio, quick actions, snapshots, version history and undo. |
 | [Friday in your browser](user-guide/browser-tabs.md) | Workspaces and chats in their own tabs, links straight to an item, asking Friday to open something, several tabs, and Friday's own browser. |
-| [Posting to your accounts](user-guide/posting.md) | Which accounts connect today, the post composer, scheduling, approvals, held posts, retries and the publishing pause. |
+| [Posting to your accounts](user-guide/posting.md) | Which accounts connect and how, Check connection, the post composer, scheduling, approvals, held posts and Publish anyway, the Content publisher job, retries and the publishing pause. |
 | [News](user-guide/news.md) | How stories are chosen, source trust, Discuss a story, and your media diet. |
 | [How Friday checks her own answers](user-guide/self-review.md) | The per-reply scores, the Weekly Self-Improvement card, and what the scores do and do not change. |
 | [Knowledge, Trust and deep research](user-guide/knowledge-and-trust.md) | The Knowledge workspace, the Trust workspace, and deep research with checked quotes. |

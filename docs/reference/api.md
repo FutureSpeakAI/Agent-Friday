@@ -716,14 +716,16 @@ Skips `CONFIRMED` targets; `regenerate: true` rebuilds `PENDING`/`HELD` ones.
 ### `POST /api/content/posts/<id>/schedule`
 Set/replace the post's `ScheduleConfig`. Resolves `optimal_time` (seed tables → learned best-times histogram) and returns same-platform conflict warnings.
 
+This route, `publish-now` and `release` also return `approval` (`{targets: [{target_id, platform, state, approval_id?}]}`) and `publisher` (`{on, auto_enabled, notice, action}`). `state` is `approved`, `covered by a grant`, `waiting for your approval`, `declined`, `unavailable`, or `will ask you again (more than a day late)` for a target more than a day past its due time whose decision was made before then. `notice` is set whenever something will stop the post going out (the Content publisher switched off or not saved on, the schedule list unreadable, publishing off or paused, no connected account), with `action` the place to fix it; the screens then show only the notice.
+
 ### `POST /api/content/posts/<id>/publish-now`
-Immediate dispatch. Still fully gated: moderation harm scan (H1–H4) and egress-gate sensitivity classification run before any adapter is called.
+Immediate dispatch. Still fully gated: moderation harm scan (H1–H4) and egress-gate sensitivity classification run before any adapter is called. A target more than a day late still needs a decision made within the last day.
 
 ### `POST /api/content/posts/<id>/cancel`
 Cancel the whole post, or one target with `{ "target_id": "tgt_..." }`.
 
 ### `POST /api/content/posts/<id>/release`
-Release a `HELD` target after human review.
+Release a `HELD` target after human review. The release is bound to the fingerprint of the words and media held at that moment; if they change afterwards, the moderation and privacy holds apply again.
 
 **Request:**
 ```json
@@ -774,7 +776,7 @@ Current insight cards from the weekly `content_insights` job (attribute lift, le
 Adapter registry + per-platform `status()` envelope (`{ connected, account, scopes, expires_at, tier, last_error }`). Never contains token material.
 
 ### `POST /api/content/platforms/<name>/connect`
-Begin auth. Returns a `connect_url` (OAuth platforms), a token-paste descriptor (Bluesky app password, Mastodon token), or a manual-mode descriptor (Substack/Medium handoff).
+Begin auth. Returns a `connect_url` (OAuth platforms), a token-paste descriptor (Bluesky app password, Mastodon token), or a manual-mode descriptor (Substack/Medium handoff). An OAuth platform with no developer app yet (LinkedIn, X, Instagram, Reddit, TikTok) answers `{ok: false, needs: "client", fields, redirect_uri, message}`; post `client_id` (TikTok: `client_key`) and `client_secret` to the same route to save them and get the `connect_url`. A token (`secret`) is checked with the platform's own account lookup where it has one (Medium: `GET /v1/me`). YouTube answers `ok: false` with a message that it can't be connected yet.
 
 ### `GET /api/content/platforms/<name>/callback`
 OAuth loopback redirect target (`http://localhost:3000/...`, PKCE where supported, `state` bound + single-use). Tokens are encrypted into the credential store; never written to disk in plaintext.
@@ -783,7 +785,7 @@ OAuth loopback redirect target (`http://localhost:3000/...`, PKCE where supporte
 Disconnect: platform-side token revoke where the API supports it + local credential purge. `?purge_analytics=1` also removes that platform's snapshots and targets.
 
 ### `POST /api/content/platforms/<name>/test`
-Connection test (private/self post where the platform allows it).
+Check connection. Posts nothing: refreshes the saved credential and, where the platform has one, runs its account lookup. Returns `{ok, connected, checked, posted: false, message, status}`; `message` says what was checked.
 
 ### Voice cards & export
 
