@@ -19,8 +19,8 @@ name: installer
 #                    shortcuts landed
 #                    (packaging/windows/tests/rehearsal/upgrade-vault-test.ps1)
 #   tests-green      on a version tag only: scripts/release_gate.py waits for
-#                    the tests and codeql workflows on the tag's exact commit
-#                    and fails unless both are green there
+#                    the tests, codeql and restore workflows on the tag's exact
+#                    commit and fails unless all three are green there
 #   release          on a version tag only: a PUBLISHED pre-release carrying the
 #                    exe, its SHA-256 and RELEASE_NOTES.md.
 #
@@ -312,7 +312,7 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           python3 scripts/release_gate.py --repo "${{ github.repository }}" --sha "${{ github.sha }}" \
-            --workflow tests.yml --workflow codeql.yml --alerts-ref "$TAG_REF" --wait-minutes 0
+            --workflow tests.yml --workflow codeql.yml --workflow restore.yml --alerts-ref "$TAG_REF" --wait-minutes 0
           tagged=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)
           test "$tagged" = "$GITHUB_SHA" || { echo "the tag now names $tagged, not the gated $GITHUB_SHA"; exit 1; }
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \

@@ -56,7 +56,7 @@ def _gate_jobs(jobs: dict) -> set[str]:
         for step in job.get("steps") or []:
             run = _run_script_lines(step)
             if "scripts/release_gate.py" in run and "github.sha" in run \
-                    and "tests.yml" in run and "codeql.yml" in run:
+                    and "tests.yml" in run and "codeql.yml" in run and "restore.yml" in run:
                 out.add(name)
     return out
 
@@ -69,7 +69,7 @@ def test_the_release_job_needs_a_job_that_checks_the_tests_on_this_commit():
     gates = _gate_jobs(jobs)
     assert gates & set(needs), (
         f"the release job needs only {needs}; none of them asks scripts/release_gate.py "
-        "whether tests.yml and codeql.yml are green on github.sha")
+        "whether tests.yml, codeql.yml and restore.yml are green on github.sha")
     # The gate job runs on every tag, like the release job.
     for g in gates & set(needs):
         assert "refs/tags/v" in str(jobs[g].get("if", "")), jobs[g].get("if")
@@ -101,7 +101,7 @@ def test_nothing_else_publishes_a_release():
                     assert (path.name, jname) == ("installer.yml", "release"), (path.name, jname)
 
 
-@pytest.mark.parametrize("name", ["tests.yml", "codeql.yml"])
+@pytest.mark.parametrize("name", ["tests.yml", "codeql.yml", "restore.yml"])
 def test_the_required_workflows_run_on_the_tag_itself(name):
     """So the tag's exact commit always gets a run for the gate to wait for."""
     push = _on(_wf(name)).get("push") or {}
@@ -267,3 +267,15 @@ def test_runs_without_a_head_repository_still_count_by_sha_and_event():
     run = _run(1)
     run.pop("head_repository")
     assert g.verdict({"tests.yml": [run], "codeql.yml": [_run(2)]}, SHA, REPO_NAME)[0] == "green"
+
+
+def test_the_publish_step_asks_for_the_same_workflows_as_the_gate_job():
+    """Both calls of the gate name restore.yml: a backup that cannot be restored on a
+    clean machine blocks a release like a red test does."""
+    text = (WF / "installer.yml").read_text(encoding="utf-8")
+    calls = [line for line in text.splitlines() if "--workflow tests.yml" in line]
+    assert len(calls) == 2 and all("--workflow restore.yml" in c for c in calls), calls
+
+
+def test_restore_is_a_default_required_workflow():
+    assert "restore.yml" in _gate().DEFAULT_WORKFLOWS

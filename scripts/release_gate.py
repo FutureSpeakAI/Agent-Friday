@@ -3,8 +3,8 @@
 
 The installer workflow calls this twice on a version tag: once as its own job before the
 release job may start, and again inside the release job immediately before ``gh release
-create``. It asks GitHub for the runs of each required workflow (``tests.yml`` and
-``codeql.yml``) whose ``head_sha`` is the commit being released and decides:
+create``. It asks GitHub for the runs of each required workflow (``tests.yml``,
+``codeql.yml`` and ``restore.yml``) whose ``head_sha`` is the commit being released and decides:
 
   green    every required workflow has at least one finished run on that commit whose
            conclusion is ``success``, and no finished run of it on that commit ended in
@@ -34,7 +34,7 @@ import time
 COUNTED_EVENTS = frozenset({"push", "workflow_dispatch"})
 FAILED = frozenset({"failure", "timed_out", "startup_failure", "action_required", "stale"})
 NEUTRAL = frozenset({"cancelled", "skipped", "neutral"})
-DEFAULT_WORKFLOWS = ("tests.yml", "codeql.yml")
+DEFAULT_WORKFLOWS = ("tests.yml", "codeql.yml", "restore.yml")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", required=True, help="owner/name")
     ap.add_argument("--sha", required=True, help="the exact commit being released (40 hex)")
     ap.add_argument("--workflow", action="append", default=None,
-                    help="a required workflow file name; repeatable (default: tests.yml, codeql.yml)")
+                    help="a required workflow file name; repeatable (default: tests.yml, codeql.yml, restore.yml)")
     ap.add_argument("--wait-minutes", type=float, default=0.0,
                     help="keep polling while the verdict is pending, up to this long")
     ap.add_argument("--poll-seconds", type=float, default=60.0)
