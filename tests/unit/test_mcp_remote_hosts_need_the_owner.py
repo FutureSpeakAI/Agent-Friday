@@ -38,14 +38,24 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def no_network(monkeypatch):
-    """Record every attempt to reach a server; none may happen for a host not allowed."""
+    """Record every attempt to reach the test's add-on hosts; none may happen for a host not
+    allowed. Other code in the same worker (a background thread) still reaches its own
+    addresses as before: only the add-on hosts are recorded and refused."""
     tried = []
+    real_urlopen = mc.urllib.request.urlopen
+    real_open = getattr(mc, "_open", None)
 
-    def refuse(req, *a, **k):
-        tried.append(getattr(req, "full_url", str(req)))
-        raise OSError("network reached in a test zq3")
-    monkeypatch.setattr(mc.urllib.request, "urlopen", refuse)
-    monkeypatch.setattr(mc, "_open", refuse, raising=False)
+    def guard(real):
+        def refuse(req, *a, **k):
+            url = getattr(req, "full_url", str(req))
+            if ".example.com" in url:
+                tried.append(url)
+                raise OSError("network reached in a test zq3")
+            return real(req, *a, **k)
+        return refuse
+    monkeypatch.setattr(mc.urllib.request, "urlopen", guard(real_urlopen))
+    if real_open is not None:
+        monkeypatch.setattr(mc, "_open", guard(real_open))
     return tried
 
 
