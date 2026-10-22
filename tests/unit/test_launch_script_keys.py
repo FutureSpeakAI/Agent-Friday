@@ -156,6 +156,56 @@ def test_core_constants_take_the_moved_key(tmp_path, anthropic_env, clean, monke
     assert getattr(core, anthropic_env) == VALUE
 
 
+def test_only_built_in_api_key_variables_are_ever_moved(monkeypatch):
+    class Reg:
+        def list_providers(self):
+            return [{"name": "anthropic", "auth": {"type": "env_var", "key": "ANTHROPIC_API_KEY"}},
+                    {"name": "mine", "auth": {"type": "env_var", "key": "FRIDAY_PASSWORD"}},
+                    {"name": "mine2", "auth": {"type": "env_var", "key": "OTHER_API_KEY"}}]
+
+        def provider_origin(self, name):
+            return "builtin" if name == "anthropic" else "custom"
+    import agent_friday.services.provider_registry as pr
+    monkeypatch.setattr(pr, "get_provider_registry", lambda: Reg())
+    assert lk._provider_env_names() == {"ANTHROPIC_API_KEY": "anthropic"}
+
+
+def test_the_moved_names_file_is_a_record_not_an_instruction(tmp_path, anthropic_env, clean, monkeypatch):
+    import json
+    import os
+    cs.set_provider_key("anthropic", VALUE)
+    lk._moved_path().parent.mkdir(parents=True, exist_ok=True)
+    lk._moved_path().write_text(json.dumps({"names": {"OPENAI_API_KEY": "anthropic",
+                                                      "FRIDAY_PASSWORD": "anthropic"}}), encoding="utf-8")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("FRIDAY_PASSWORD", raising=False)
+    try:
+        assert lk.restore_moved_keys(force_names={"OPENAI_API_KEY"}) == []
+        assert not os.environ.get("OPENAI_API_KEY") and not os.environ.get("FRIDAY_PASSWORD")
+    finally:
+        lk._moved_path().unlink()
+
+
+def test_an_unsafe_line_for_the_same_name_keeps_the_plain_one_too(tmp_path, anthropic_env, clean):
+    app = tmp_path / "app"
+    app.mkdir()
+    data = f"set {anthropic_env}={VALUE}\r\nset {anthropic_env}=other && echo x\r\n".encode()
+    (app / "start.bat").write_bytes(data)
+    (r,) = lk.migrate(app)
+    assert r["changed"] is False and (app / "start.bat").read_bytes() == data
+
+
+def test_an_unreadable_script_stops_every_move(tmp_path, anthropic_env, clean):
+    app = tmp_path / "app"
+    app.mkdir()
+    good = f"set {anthropic_env}={VALUE}\r\n".encode()
+    (app / "start.bat").write_bytes(good)
+    (app / "launch_now.bat").write_bytes(b"rem caf\xe9\r\n")
+    res = lk.migrate(app)
+    assert all(not r["changed"] for r in res)
+    assert (app / "start.bat").read_bytes() == good
+
+
 def test_a_leftover_temp_file_is_removed(tmp_path):
     app = tmp_path / "app"
     app.mkdir()
