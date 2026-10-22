@@ -23,11 +23,18 @@ def home(tmp_path, monkeypatch):
     h.mkdir()
     monkeypatch.setattr(core, "FRIDAY_DIR", h)
     monkeypatch.setattr(core, "_SETUP_MARKER", h / ".setup_complete", raising=False)
+    monkeypatch.setattr(core, "SETTINGS_FILE", h / "settings.json", raising=False)
     monkeypatch.setattr(ks, "KEYSTORE_PATH", h / "security" / "keystore.json")
     for var in ("FRIDAY_VAULT_PASSPHRASE", "FRIDAY_PASSWORD"):
         monkeypatch.delenv(var, raising=False)
     from agent_friday.services import vault_passphrase as vp
-    monkeypatch.setattr(vp, "store", lambda pw: ["test-home"])
+    kept = {"pw": ""}
+
+    def store(pw):                                  # a durable home took it
+        kept["pw"] = pw
+        return ["test-home"]
+    monkeypatch.setattr(vp, "store", store)
+    monkeypatch.setattr(vp, "durable_value", lambda: (kept["pw"], "test home"))
     monkeypatch.setattr(vp, "_from_start_bat", lambda: "")
     monkeypatch.setattr(vp, "_from_dpapi_file", lambda: "")
     import sys
@@ -65,6 +72,18 @@ def test_a_fresh_install_without_a_key_store_yet_is_locked_too(home):
     ks._reset_cache_for_tests()
     assert sc.store_vault_passphrase(PASS) is True
     assert ks.describe()["wrap"] == "passphrase"
+
+
+def test_a_passphrase_kept_only_in_this_process_never_locks_the_keys(home, monkeypatch):
+    """No durable home took the passphrase: locking with it would lock the owner out at the next
+    start. The keys stay as they were and the record says it failed."""
+    from agent_friday.services import setup_complete as sc
+    from agent_friday.services import vault_passphrase as vp
+    monkeypatch.setattr(vp, "store", lambda pw: [])
+    monkeypatch.setattr(vp, "durable_value", lambda: ("", ""))
+    sc.store_vault_passphrase(PASS)
+    assert ks.describe()["wrap"] == "none"
+    assert ko.state()["decided"] == "failed"
 
 
 def test_unticking_it_on_the_setup_screen_leaves_the_keys_as_they_were(home, monkeypatch):

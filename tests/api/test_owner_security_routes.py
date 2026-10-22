@@ -99,6 +99,10 @@ def keystore(tmp_path, monkeypatch):
     monkeypatch.setattr(ks, "_derive", lambda pw, salt: vc.derive_key(pw, salt, vc.FAST_PROFILE))
     monkeypatch.setattr(ks, "_passphrase", lambda: PASS)
     monkeypatch.setattr(osr, "_vault_passphrase", lambda: (PASS, "test"))
+    # The passphrase is saved where the next start reads it (A21 review: never lock with one
+    # that lives only in this process).
+    from agent_friday.services import keystore_offer as ko
+    monkeypatch.setattr(ko, "passphrase_is_kept", lambda pw: pw == PASS)
     ks._reset_cache_for_tests()
     ks.create(wrap="none")
     blob = ks.encrypt(b"stored credential")
@@ -128,6 +132,15 @@ def test_wrap_needs_the_passphrase_friday_uses(client, keystore):
                     json={"wrap": "passphrase", "passphrase": "something else"},
                     headers=_token())
     assert r.status_code == 400
+    assert _doc()["wrap"] == "none"
+
+
+def test_wrap_is_refused_when_the_passphrase_is_not_saved_on_this_computer(client, keystore, monkeypatch):
+    from agent_friday.services import keystore_offer as ko
+    monkeypatch.setattr(ko, "passphrase_is_kept", lambda pw: False)
+    r = client.post("/api/security/keystore/wrap",
+                    json={"wrap": "passphrase", "passphrase": PASS}, headers=_token())
+    assert r.status_code == 400 and "next start" in r.get_json()["message"]
     assert _doc()["wrap"] == "none"
 
 
