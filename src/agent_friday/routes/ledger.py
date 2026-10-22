@@ -62,6 +62,7 @@ KIND_LABELS = {
     "setting_changed": "You changed a ledger setting",
     "backup": "Scheduled backup",
     "doctor_weekly": "Weekly Doctor report",
+    "outcome": "What an action did",
 }
 
 _LAST_FULL = [0.0]
@@ -164,6 +165,10 @@ def plain_line(e: dict) -> str:
         return "%s: %s%s%s." % (label, str(what).replace("_", " "),
                                 (" " + str(tool)) if tool else "",
                                 (" (" + str(status) + ")") if status else "")
+    if k == "outcome":
+        return "%s: %s (decision #%s)." % (rec.get("tool") or "an action", rec.get("status") or "done",
+                                           rec.get("decision_seq") if rec.get("decision_seq") is not None
+                                           else "none")
     if k == "archived":
         return "%s records up to %s moved to the encrypted archive (kept, not deleted)." % (
             rec.get("records"), rec.get("through"))

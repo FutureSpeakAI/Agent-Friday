@@ -13457,6 +13457,31 @@ def _web_task_scope(fn):
     return dispatch
 
 
+def _outcome_recorder(name, decision, ctx):
+    """The outcome receipt for one call: written once, only for a call whose
+    checkpoint decided an outward or reading action (or that runs on the
+    owner's approved card), linked to that decision. Internal calls get none."""
+    from agent_friday.governance import action_gate as _g
+    approved = ctx.meta.get("owner_decided")
+    approval = None
+    if isinstance(approved, dict):
+        approval = approved.get("approval_id") or approved.get("id")
+    elif isinstance(approved, str):
+        approval = approved
+    klass = (decision or {}).get("class")
+    wanted = klass in (_g.OUTWARD, _g.OBSERVE) or (decision is None and approval)
+    done = []
+
+    def _write(status, detail=""):
+        if done or not wanted:
+            return
+        done.append(status)
+        t0 = ctx.meta.get("t_start")
+        _g.record_outcome(name, decision, status, approval=approval,
+                          duration_ms=((_time.time() - t0) * 1000.0) if t0 else None, detail=detail)
+    return _write
+
+
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
@@ -13575,7 +13600,16 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
 
     # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
     # A DENY short-circuits; the deny message is what the model sees as the result.
-    verdict = _hooks.run_pre_hooks(ctx)
+    # The decision receipt the checkpoint writes is caught here, so the call's
+    # outcome receipt names it (governance/action_gate.record_outcome).
+    from agent_friday.governance import action_gate as _gate_rcpt
+    _lr_tok = _gate_rcpt.LAST_RECEIPT.set(None)
+    try:
+        verdict = _hooks.run_pre_hooks(ctx)
+        _decision = _gate_rcpt.LAST_RECEIPT.get()
+    finally:
+        _gate_rcpt.LAST_RECEIPT.reset(_lr_tok)
+    _outcome = _outcome_recorder(name, _decision, ctx)
     # Trusted hooks can restore a deferred Crew task's identity. Handlers and
     # subsequent checks use that scope, while the original host origin stays fixed.
     if _host_scoped:
@@ -13586,6 +13620,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         return _crew_denial
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
+        _outcome("held", verdict.reason)          # a later check held what the checkpoint allowed
         return verdict.reason
 
     # Say what is about to happen BEFORE it happens, and only once it will
@@ -13684,15 +13719,18 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _CURRENT_CONVERSATION.reset(_tok)
         _crew_denial = _host_action_denial(name, session_ctx)
         if _crew_denial:
+            _outcome("ok", "ran; the crew host withheld the result")
             return _crew_denial
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
     except Exception as e:
         _crew_denial = _host_action_denial(name, session_ctx)
         if _crew_denial:
+            _outcome("error", type(e).__name__)
             return _crew_denial
         traceback.print_exc()
         _receipts.record(name, ok=False, detail=str(e))
+        _outcome("error", type(e).__name__)
         return ExceptionText(f"Tool error ({name}): {e}")
 
     # Receipt written only after the handler actually returned. This is the
@@ -13702,8 +13740,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     if _refused:
         _receipt_credential_refusal(name, ctx.input, "refused by the handler")
         _receipts.record(name, ok=False, denied=True, detail=result)
+        _outcome("refused", "credential refusal")
     else:
         _receipts.record(name, ok=True)
+        _outcome("ok", "")
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh

@@ -1128,7 +1128,40 @@ def _receipt(entry: dict) -> None:
     # the action runs. The entry keeps its own HMAC as well, so a decision can
     # still be checked on its own (verify_receipt).
     from agent_friday.services import action_ledger
-    action_ledger.append("decision", entry, durable=True)
+    out = action_ledger.append("decision", entry, durable=True)
+    try:
+        LAST_RECEIPT.set({"seq": out.get("seq"), "hash": out.get("hash"), "tool": entry.get("tool"),
+                          "class": entry.get("class"), "decision": entry.get("decision"),
+                          "approval": entry.get("approval")})
+    except Exception:
+        pass
+
+
+#: The decision receipt written last in this context: _execute_tool clears it
+#: before the checkpoint runs and reads it after, so the outcome of the call
+#: names the exact decision it carried out (north star §18.9, NS-34.17-7).
+LAST_RECEIPT: ContextVar = ContextVar("friday_last_decision_receipt", default=None)
+
+#: Outcome statuses an outcome entry may carry.
+OUTCOMES = ("ok", "error", "refused", "held")
+
+
+def record_outcome(tool: str, decision: Optional[dict], status: str, *,
+                   approval: Optional[str] = None, duration_ms: Optional[float] = None,
+                   detail: str = "") -> None:
+    """The terminal receipt of an outward or reading action: what happened
+    after the decision (it ran: ok or error; the handler refused; a later
+    check held it), linked to the decision's seq and hash. Never raises."""
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("outcome", {
+            "tool": tool, "status": status if status in OUTCOMES else "error",
+            "decision_seq": (decision or {}).get("seq"), "decision_hash": (decision or {}).get("hash"),
+            "approval": approval or (decision or {}).get("approval"),
+            "duration_ms": round(float(duration_ms), 1) if duration_ms is not None else None,
+            "detail": str(detail or "")[:120]})
+    except Exception:
+        pass
 
 
 def receipts_path() -> Path:

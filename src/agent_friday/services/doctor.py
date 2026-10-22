@@ -277,6 +277,12 @@ def _c_connectors():
     return ("healthy", "google_accounts:%d" % n) if n else ("unavailable_by_configuration", "none")
 
 
+def _c_receipt_completeness():
+    """Every outward action has its decision and its outcome (services/receipt_audit)."""
+    from agent_friday.services import receipt_audit
+    return receipt_audit.doctor_check()
+
+
 def _c_backup():
     try:
         from agent_friday.services import backup_schedule
@@ -339,6 +345,7 @@ CHECKS = (
     ("vault", "vault accessibility", _c_vault),
     ("governance_key", "key and credential availability", _c_governance_key),
     ("receipt_chain", "receipt chains", _c_ledger),
+    ("receipt_completeness", "receipt chains", _c_receipt_completeness),
     ("rules", "action gate", _c_claws),
     ("egress_gate", "egress gate", _c_egress),
     ("action_gate", "action gate", _c_action_gate),
