@@ -1255,8 +1255,15 @@ def chat_stream():
     except Exception:
         _pilot_off_record = True
 
+    # The turn runs on its own thread; it carries this request's correlation id with it, so
+    # its log lines and decision receipts name the request (services/correlation).
+    from agent_friday.services import correlation as _correlation
+    _corr_id = _correlation.current()
+
     @copy_current_request_context
     def _run_turn():
+        _corr_cm = _correlation.bind(_corr_id)
+        _corr_cm.__enter__()
         _PRESET_TRACE_ID.set(_tid)
         _pilot_privacy_token = _PILOT_OFF_RECORD.set(_pilot_off_record)
         token = _mr.DELTA_SINK.set(lambda piece: q.put(("delta", piece)))
@@ -1293,18 +1300,13 @@ def chat_stream():
                     _mr.TOOL_SINK.reset(tool_token)
                 except Exception:
                     pass
+            try:
+                _corr_cm.__exit__(None, None, None)
+            except Exception:
+                pass
             q.put(("done", None))
 
-    # The turn runs on its own thread; it carries this request's correlation id with it, so
-    # its log lines and decision receipts name the request (services/correlation).
-    from agent_friday.services import correlation as _correlation
-    _corr_id = _correlation.current()
-
-    def _run_turn_bound():
-        with _correlation.bind(_corr_id):
-            _run_turn()
-
-    threading.Thread(target=_run_turn_bound, daemon=True).start()
+    threading.Thread(target=_run_turn, daemon=True).start()
 
     def _events():
         # Open the stream immediately so a proxy that buffers until the first

@@ -45,8 +45,9 @@ def store(tmp_path, monkeypatch):
     cs._VAULT_KEY_READY = False
 
 
-@pytest.mark.parametrize("error", [RuntimeError("malformed key"), OSError("disk"), PermissionError("denied"),
-                                   ValueError("unknown wrap")], ids=["malformed", "io", "permission", "wrap"])
+@pytest.mark.parametrize("error", [RuntimeError("malformed key zq1"), OSError("device fault zq2"),
+                                   PermissionError("denied zq3"), ValueError("unknown wrap zq4")],
+                         ids=["malformed", "io", "permission", "wrap"])
 def test_any_keystore_failure_refuses_and_never_drops_a_tier(store, monkeypatch, tmp_path, error):
     def _broken(data):
         raise error
