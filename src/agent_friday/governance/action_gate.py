@@ -652,37 +652,50 @@ _AUTORUN_NAMES = (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile",
                   ".gitconfig", ".gitattributes", ".inputrc", ".wgetrc", ".curlrc")
 #: Friday's own output folders inside her state folder (core.DAILY_CREATIONS_DIR,
 #: office_engine.DOCUMENTS_DIR).
-_STATE_OUTPUT_SUBDIRS = ("creations", "documents")
+_STATE_OUTPUT_SUBDIRS = ("creations", "documents", "friday-creations")
+#: Spellings of the home folder that may come right before a sign-in or start-up name.
+_HOME_MARKERS = ("~", "$home", "$env:userprofile", "${env:userprofile}", "%userprofile%",
+                 "$env:home", "${env:home}", "%homepath%")
 
 
-def _named_zone(cmd: str, state_name: str, op: str) -> str:
+def _named_zone(cmd: str, state_name: str, op: str, home_name: str = "") -> str:
     import fnmatch as _fn
     import re as _re
     segs = _re.findall(r"[^\\/\s'\"`,;()|={}<>]+", (cmd or "").casefold())
     state = (state_name or ".friday").casefold()
+    homes = set(_HOME_MARKERS) | ({home_name.casefold()} if home_name else set())
 
-    def hit(seg: str, name: str) -> bool:
-        if seg == name:
+    def clean(seg: str) -> str:
+        return seg.split("::")[-1].split(":")[-1] if ":" in seg and not seg.startswith("$") else seg
+
+    def state_hit(seg: str) -> bool:
+        if seg == state:
             return True
-        # A wildcard counts when it is aimed at a dot-name ('.fri*', '.s?h'); a bare
-        # '*' or '.*' is ordinary listing, carded or fenced elsewhere.
+        # A wildcard aimed at the state folder's own name ('.fri*', '.f?iday'): at
+        # least three literal characters, all of them a prefix-compatible pattern.
         literal = sum(1 for ch in seg if ch not in "*?[]")
-        return (seg.startswith(".") and literal >= 2 and any(ch in seg for ch in "*?[")
-                and _fn.fnmatchcase(name, seg))
+        return (state.startswith(".") and seg.startswith(".") and literal >= 3
+                and any(ch in seg for ch in "*?[") and _fn.fnmatchcase(state, seg))
 
-    for i, seg in enumerate(segs):
-        seg = seg.split("::")[-1].split(":")[-1] if ":" in seg else seg
+    for i, raw in enumerate(segs):
+        seg = clean(raw)
         if not seg:
             continue
-        if hit(seg, state):
+        # Friday's state folder by name, in any spelling (only a dot-named one: a
+        # bare word like 'friday' is too common to refuse on).
+        if state.startswith(".") and state_hit(seg):
             nxt = segs[i + 1] if i + 1 < len(segs) else ""
             if nxt in _STATE_OUTPUT_SUBDIRS:
                 continue
             return "it reaches Friday's own state folder"
-        if any(hit(seg, n) for n in _SIGN_IN_NAMES):
-            return "it reaches a store of sign-ins or history"
-        if op == "write" and any(hit(seg, n) for n in _AUTORUN_NAMES):
-            return "it reaches a file run or obeyed at start-up"
+        # Sign-in stores and start-up files only where they ARE those: right under
+        # the home folder (a project's own .claude/ or .gitattributes is not).
+        prev = clean(segs[i - 1]) if i else ""
+        if prev in homes or raw in homes:
+            if seg in _SIGN_IN_NAMES:
+                return "it reaches a store of sign-ins or history"
+            if op == "write" and seg in _AUTORUN_NAMES:
+                return "it reaches a file run or obeyed at start-up"
     return ""
 
 
@@ -713,7 +726,7 @@ def _command_forbidden_reason(cmd: str) -> str:
     # parsing alone misses -Path:x, ${env:..}, FileSystem::, a relative 'cd ~; gc
     # .friday\x', Join-Path pieces. Matching too much only refuses more; Friday's
     # own output folders inside the state folder stay allowed.
-    named = _named_zone(cmd, state.name, op)
+    named = _named_zone(cmd, state.name, op, _P(_core.HOME).name)
     if named:
         return named
     for _tok, expanded in _command_path_tokens(cmd):

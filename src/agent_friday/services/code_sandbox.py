@@ -936,18 +936,69 @@ def _set_label(api, path, sddl: str, protected: bool) -> None:
         api.k.LocalFree(psd)
 
 
+#: Written in the state folder once the walk has labelled what was there; files made
+#: later inherit the label, so the (slow, ~150k items) walk is not repeated each boot.
+_FENCE_MARK = ".low-fence-v1"
+
+
 def fence_from_low(state_dir, open_subdirs=()) -> bool:
     """Windows: keep Low-integrity processes out of `state_dir` (read and write), leaving
-    `open_subdirs` readable. True when the labels are in place; False elsewhere or on
-    failure (logged by the caller; the text rules in action_gate still apply)."""
+    `open_subdirs` readable. True when the labels are in place; False elsewhere, when
+    switched off (FRIDAY_FENCE_STATE=0, which also removes the labels), or when
+    Python itself lives inside the folder (the sandbox could not start). Raises on a
+    Windows failure; the caller logs it, and the text rules in action_gate still apply."""
     if sys.platform != "win32":
         return False
+    state = Path(state_dir)
+    mark = state / _FENCE_MARK
+    if os.environ.get("FRIDAY_FENCE_STATE", "1").strip() == "0":
+        if mark.exists():
+            unfence_from_low(state, open_subdirs)
+        return False
+    try:
+        rs = state.resolve(strict=False)
+        inside = [p for p in [_python_exe(), *_package_paths()]
+                  if p and str(Path(p).resolve(strict=False)).casefold().startswith(str(rs).casefold())]
+    except Exception:
+        inside = []
+    if inside:
+        return False
+    if mark.exists():
+        return True
     api = _win_api()
-    _set_label(api, state_dir, _FENCE_SDDL, protected=False)
+    # The open folders first (an explicit label beats the inherited one), so there is
+    # no moment when they are closed. PROTECTED_SACL needs SeSecurityPrivilege, so a
+    # plain explicit label is used.
     for d in open_subdirs:
         if Path(d).exists():
-            _set_label(api, d, _OPEN_SDDL, protected=True)
+            try:
+                _set_label(api, d, _OPEN_SDDL, protected=False)
+            except SandboxError:
+                pass
+    _set_label(api, state, _FENCE_SDDL, protected=False)
+    try:
+        mark.write_text("labelled\n", encoding="ascii")
+    except OSError:
+        pass
     return True
+
+
+def unfence_from_low(state_dir, open_subdirs=()) -> None:
+    """Remove the labels fence_from_low set (an empty label on the folder and the open
+    folders). The off switch and the way back."""
+    if sys.platform != "win32":
+        return
+    api = _win_api()
+    for d in list(open_subdirs) + [state_dir]:
+        if Path(d).exists():
+            try:
+                _set_label(api, d, "S:", protected=False)
+            except SandboxError:
+                pass
+    try:
+        (Path(state_dir) / _FENCE_MARK).unlink()
+    except OSError:
+        pass
 
 
 # ── Long-running helpers (MCP stdio servers) ────────────────────────────────
