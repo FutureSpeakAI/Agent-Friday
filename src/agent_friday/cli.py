@@ -1485,9 +1485,10 @@ examples:
     p_bundle.add_argument("bundle_cmd", choices=["create", "verify", "schedule"])
     p_bundle.add_argument("file", nargs="?", help="The bundle (verify), where to write it (create), "
                           "or for schedule: on, off, status, run, rehearse")
-    p_bundle.add_argument("--every", choices=["daily", "weekly"], default="weekly",
-                          help="schedule on: how often")
-    p_bundle.add_argument("--keep", type=int, default=7, help="schedule on: how many to keep")
+    p_bundle.add_argument("--every", choices=["daily", "weekly"], default=None,
+                          help="schedule on: how often (default: as now, else weekly)")
+    p_bundle.add_argument("--keep", type=int, default=None,
+                          help="schedule on: how many to keep (default: as now, else 7)")
     p_bundle.add_argument("--out", metavar="PATH", help="Folder or file to write (create)")
     p_bundle.add_argument("--only", metavar="CATS",
                           help="Comma-separated categories to include (default: all)")
@@ -2068,8 +2069,11 @@ def _cmd_bundle_schedule(args):
         elif what == "off":
             st = bs.set_schedule(enabled=False)
         elif what == "on":
-            folder = args.out or str(__import__("agent_friday.services.friday_bundle",
-                                                fromlist=["x"]).documents_dir() / "Friday Bundles")
+            now_st = bs.state()
+            folder = args.out or now_st.get("folder") or str(__import__(
+                "agent_friday.services.friday_bundle", fromlist=["x"]).documents_dir() / "Friday Bundles")
+            args.every = args.every or (now_st.get("every") if now_st.get("enabled") else None) or "weekly"
+            args.keep = args.keep or (now_st.get("keep") if now_st.get("enabled") else None) or bs.DEFAULT_KEEP
             pw = None if bs.public_state().get("passphrase_kept") and \
                 not os.environ.get("FRIDAY_BUNDLE_PASSPHRASE") else _bundle_passphrase(True)
             if pw == "":

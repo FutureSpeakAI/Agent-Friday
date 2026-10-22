@@ -305,3 +305,69 @@ def test_without_a_keychain_a_schedule_cannot_be_turned_on(home, tmp_path, monke
     assert "credential store" in str(e.value)
     assert not (home / "vault" / ".bundle-schedule-passphrase").exists()
     assert bs.state()["enabled"] is False
+
+
+
+def test_a_real_entry_said_again_cannot_push_other_bundles_out(home, tmp_path, monkeypatch):
+    """Review round 3 (B1): duplicated tagged entries made rotation delete real bundles."""
+    from agent_friday.services import backup_schedule as bs
+    _with_fast(monkeypatch)
+    dest = tmp_path / "out"
+    _on(bs, dest, keep=3)
+    made = []
+    for _ in range(3):
+        made.append(bs.run_now()["file"])
+        time.sleep(1.1)
+    d = json.loads(bs.schedule_path().read_text(encoding="utf-8"))
+    d["made"] = [d["made"][0]] * 10 + d["made"][1:]
+    bs.schedule_path().write_text(json.dumps(d), encoding="utf-8")
+    bs.run_now()
+    left = {p.name for p in dest.glob("*.fridaybundle")}
+    assert made[1] in left and made[2] in left
+
+
+def test_a_record_from_before_tags_gets_a_key_and_rotates(home, tmp_path, monkeypatch):
+    """Review round 3 (SF3)."""
+    from agent_friday.services import backup_schedule as bs
+    _with_fast(monkeypatch)
+    dest = tmp_path / "out"
+    _on(bs, dest, keep=1)
+    rec = bs._load()
+    rec.pop("made_key")
+    bs._store(rec)
+    first = bs.run_now()["file"]
+    time.sleep(1.1)
+    bs.run_now()
+    assert not (dest / first).exists()
+
+
+def test_a_record_too_big_for_the_credential_store_is_refused_plainly(home, tmp_path):
+    """Review round 3 (SF2)."""
+    from agent_friday.services import backup_schedule as bs
+    deep = tmp_path / ("x" * 200) / ("y" * 200) / ("z" * 200) / ("w" * 200) / ("v" * 200)
+    try:
+        deep.mkdir(parents=True)
+    except OSError:
+        pytest.skip("this file system will not hold the path")
+    with pytest.raises(bs.ScheduleError) as e:
+        bs.set_schedule(enabled=True, every="daily", folder=str(deep),
+                        passphrase="orbit lantern pepper tundra violet 42 " + "ж" * 200)
+    assert "too long" in str(e.value)
+
+
+def test_the_rehearsal_checks_the_newest_bundle_this_schedule_made(home, tmp_path, monkeypatch):
+    """Review round 3 (L1): a reordered list pointed the rehearsal at an older bundle."""
+    from agent_friday.services import backup_schedule as bs
+    _with_fast(monkeypatch)
+    dest = tmp_path / "out"
+    _on(bs, dest, keep=3)
+    bs.run_now()
+    time.sleep(1.1)
+    newest = bs.run_now()["file"]
+    b = bytearray((dest / newest).read_bytes())
+    b[-10] ^= 1
+    (dest / newest).write_bytes(bytes(b))
+    d = json.loads(bs.schedule_path().read_text(encoding="utf-8"))
+    d["made"] = list(reversed(d["made"]))
+    bs.schedule_path().write_text(json.dumps(d), encoding="utf-8")
+    assert bs.rehearse()["ok"] is False

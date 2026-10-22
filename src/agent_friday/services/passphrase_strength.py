@@ -51,6 +51,13 @@ _COMMON_WORDS = {
     "you", "your", "we", "our", "for", "on", "at", "by", "be", "this", "that",
     "with", "from", "love", "password", "secret", "friday", "agent", "backup",
     "bundle", "pass", "phrase", "key", "home", "name", "day", "one", "two",
+    # the words password lists are made of
+    "monkey", "dragon", "shadow", "master", "sunshine", "princess", "football", "baseball",
+    "welcome", "letmein", "charlie", "jennifer", "michael", "jordan", "liverpool", "arsenal",
+    "chelsea", "security", "kitty", "cat", "dog", "hello", "summer", "winter", "spring",
+    "autumn", "flower", "angel", "baby", "banana", "cookie", "cheese", "freedom", "ninja",
+    "killer", "hunter", "tiger", "lover", "power", "slayer", "batman", "superman", "starwars",
+    "pokemon", "trustno", "admin", "user", "login", "qwerty", "money", "john", "smith",
 }
 
 _RUNS = ("abcdefghijklmnopqrstuvwxyz", "qwertyuiop", "asdfghjkl", "zxcvbnm",
@@ -183,6 +190,25 @@ def _words_bits(words: list[str], seps: int, extras: str) -> float:
     return bits
 
 
+def _leet_bits(pw: str) -> float:
+    """Bits once look-alike digits and symbols are read as letters: each
+    letter run of three or more then counts as a word."""
+    plain = pw.translate(_LEET)
+    bits = 0.0
+    seen = set()
+    for chunk in re.findall(r"[A-Za-z]+|[^A-Za-z]+", plain):
+        key = chunk.lower()
+        if key in seen:
+            bits += 1.0
+            continue
+        seen.add(key)
+        if chunk.isalpha() and len(chunk) >= 3:
+            bits += min(_chars_bits(chunk, pw), _word_bits(chunk)) + 1.0   # +1: which swaps
+        else:
+            bits += _chars_bits(chunk, pw)
+    return bits
+
+
 def _period(s: str) -> Optional[tuple[str, int]]:
     """(unit, times) when `s` (less a trailing symbol or two) is one short
     unit said again and again, else None."""
@@ -217,6 +243,10 @@ def assess(passphrase: str) -> dict:
         bits = _words_bits(words, seps, extras)
     else:
         bits = _mixed_bits(pw)
+    # a second reading with the usual letter swaps undone (Dr4g0n is dragon):
+    # the lower of the two counts
+    if re.search(r"[A-Za-z]", pw) and pw.translate(_LEET) != pw:
+        bits = min(bits, _leet_bits(pw))
     per = _period(re.sub(r"\s+", "", pw))
     if per:
         unit, times = per

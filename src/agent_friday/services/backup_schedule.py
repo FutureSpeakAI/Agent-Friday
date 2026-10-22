@@ -56,6 +56,8 @@ SERVICE = "agent-friday"
 PREFIX = "friday-scheduled-"
 _NAME = re.compile(r"friday-scheduled-\d{8}-\d{6}Z(-\d{1,2})?\.fridaybundle")
 MAX_BACKOFF_S = 86400.0
+#: Windows Credential Manager keeps at most 2,560 bytes per entry (UTF-16).
+MAX_RECORD_BYTES = 2400
 
 _LOCK = threading.Lock()
 _TEST_SECRETS: dict[str, str] = {}
@@ -120,7 +122,10 @@ def _store(record: Optional[dict], home: Optional[Path] = None) -> None:
     """Keep the sealed schedule record in the keychain (None: remove it, and
     any file an older build left in the vault folder)."""
     acct = _account(home)
-    raw = None if record is None else json.dumps(record, sort_keys=True)
+    raw = None if record is None else json.dumps(record, sort_keys=True, ensure_ascii=False)
+    if raw is not None and len(raw.encode("utf-16-le")) > MAX_RECORD_BYTES:
+        raise ScheduleError("The folder path and passphrase together are too long for this "
+                            "account's credential store; use a shorter path or passphrase.")
     try:
         _secret_file(home).unlink()          # never read; an older build's leftover
     except OSError:
@@ -145,6 +150,9 @@ def _store(record: Optional[dict], home: Optional[Path] = None) -> None:
         keyring.set_password(SERVICE, acct, raw)
     except NoKeyringError:
         raise NoKeychain("this system has no credential store outside Friday's folder")
+    except Exception as e:  # noqa: BLE001 - said plainly, never a traceback
+        raise ScheduleError("This account's credential store refused the schedule (%s)."
+                            % type(e).__name__)
 
 
 def _load(home: Optional[Path] = None) -> Optional[dict]:
@@ -418,6 +426,13 @@ def run_now(home: Optional[Path] = None, *, kdf_profile=None) -> dict:
         entry = {"file": out.name, "bundle_id": m["bundle_id"], "at": round(time.time(), 3),
                  "verified": True}
         rec = _load_safe(home) or {}
+        if rec and not rec.get("made_key"):
+            # a record from before tags: give it a key, so these bundles rotate
+            rec["made_key"] = os.urandom(16).hex()
+            try:
+                _store(rec, home)
+            except Exception:  # noqa: BLE001
+                rec.pop("made_key", None)
         if rec.get("made_key"):
             entry["tag"] = _tag(rec["made_key"], entry)
         st["made"].append(entry)
@@ -440,12 +455,15 @@ def _rotate(st: dict, dest_dir: Path, made_key: Optional[str]) -> list:
         return []
     good = [m for m in st["made"] if _made_ok(m)
             and _hmac.compare_digest(str(m.get("tag") or ""), _tag(made_key, m))]
+    # one entry per file: a real entry said again must not push others out
+    good = list({m["file"]: m for m in sorted(good, key=lambda m: float(m["at"]))}.values())
     good.sort(key=lambda m: float(m["at"]))
     keep = st["keep"]
     removed = []
     old, st["made"] = (good[:-keep] if len(good) > keep else []), good[-keep:]
+    kept = {m["file"] for m in st["made"]}
     for m in old:
-        if not _made_ok(m):
+        if not _made_ok(m) or m["file"] in kept:
             continue
         p = dest_dir / m["file"]
         if p.parent != dest_dir:
@@ -480,9 +498,15 @@ def rehearse(home: Optional[Path] = None) -> dict:
         st = state(home)
         if not st["made"]:
             raise ScheduleError("No scheduled bundle has been made yet.")
-        newest = st["made"][-1]
         if not st.get("folder"):
             raise ScheduleError("Scheduled bundles are off.")
+        rec = _load_safe(home) or {}
+        key = rec.get("made_key")
+        tagged = [m for m in st["made"] if key and _hmac.compare_digest(
+            str(m.get("tag") or ""), _tag(key, m))]
+        if not tagged:
+            raise ScheduleError("No scheduled bundle this schedule made is on record.")
+        newest = max(tagged, key=lambda m: float(m["at"]))
         path = Path(st["folder"]) / newest["file"]
         pw = _get_secret(home)
         ok, why, summary = False, None, {}
