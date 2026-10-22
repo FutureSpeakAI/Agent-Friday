@@ -63,10 +63,19 @@ def test_a_misnamed_internal_tool_may_still_resolve(probes):
 
 
 def test_a_real_outward_tool_is_not_run_under_a_guessed_name(monkeypatch):
-    assert agent._resolve_tool_name("create-calendar-event")[0] == "create_calendar_event"
-    out = agent._execute_tool("create-calendar-event", {"title": "Lunch", "start": "2026-11-02T12:00"},
+    assert agent._resolve_tool_name("calendar.create.event")[0] == "create_calendar_event"
+    out = agent._execute_tool("calendar.create.event", {"title": "Lunch", "start": "2026-11-02T12:00"},
                               session_ctx={"authenticated": True, "is_background_task": True})
     assert out.startswith("TOOL CALL FAILED") and "'create_calendar_event'" in out
+
+
+def test_the_same_name_spelled_with_other_separators_is_not_a_guess():
+    """`site-action` is site_action itself (only separators and case differ): it runs as itself,
+    through every gate, as the Sites and Crew boundaries expect."""
+    assert agent._same_name_spelled_differently("site-action", "site_action")
+    assert agent._same_name_spelled_differently("Create.Calendar.Event", "create_calendar_event")
+    assert not agent._same_name_spelled_differently("calendar.create.event", "create_calendar_event")
+    assert not agent._same_name_spelled_differently("zz.get.sender", "zz_sender")
 
 
 def test_a_classification_that_cannot_run_is_not_a_yes(monkeypatch):

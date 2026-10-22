@@ -13261,6 +13261,13 @@ def _resolve_tool_name(name):
     return None, sorted(near)[:6]
 
 
+def _same_name_spelled_differently(name, resolved) -> bool:
+    """`site-action`, `Site.Action` and `site action` are the name `site_action`, not a guess at
+    another tool: only separators and case differ, so it is the tool the model named."""
+    norm = re.sub(r"[\s.\-]+", "_", str(name or "").strip().lower())
+    return norm == str(resolved or "")
+
+
 def _resolution_may_run(resolved, tool_input, session_ctx=None) -> bool:
     """A misnamed call may run under the resolved name only when that tool is internal for the
     arguments it would really run with (governance/action_gate.classify, after the job's own
@@ -13508,7 +13515,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
-        if resolved and not _resolution_may_run(resolved, tool_input, session_ctx):
+        if (resolved and not _same_name_spelled_differently(name, resolved)
+                and not _resolution_may_run(resolved, tool_input, session_ctx)):
             # BD-11a / NS-32.21-1: a misnamed call is never resolved to a tool that acts
             # outside (sends, buys, writes where it is not internal, reaches someone). The model
             # is told the exact name; that call then passes every gate as itself.
