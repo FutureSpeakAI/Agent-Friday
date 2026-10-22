@@ -122,6 +122,35 @@ def _caller_may_schedule():
                                         "agent_id", "schedule_id"))
 
 
+_PUBLISHER_SCHEDULE_ID = "sch_content_publisher"
+
+
+def _caller_is_owner_chat():
+    """True only for the owner's own chat or voice turn. Fails closed: when
+    the caller cannot be told apart, it is not the owner's."""
+    try:
+        from agent_friday.services import agent as _agent
+        ctx = _agent._workflow_caller_context()
+    except Exception:
+        return False
+    return not any(ctx.get(k) for k in ("nested_execution", "is_background_task", "task_id",
+                                        "agent_id", "schedule_id"))
+
+
+def _announce_publisher_paused():
+    """Say that the Content publisher was paused from a chat, and what that
+    means for scheduled posts. Best-effort."""
+    try:
+        from agent_friday.services import publisher as _pub
+        _pub._notify("The Content publisher was paused from a chat",
+                     "Scheduled posts won't go out while it is paused. Scheduling a post "
+                     "switches it back on; to keep it off, switch it off in Workflows.",
+                     priority="high", actions=_pub._workflows_action(),
+                     dedupe="content-publisher-paused-by-tool")
+    except Exception:
+        pass
+
+
 def _create(data) -> dict:
     from agent_friday.services import scheduler as _sched
     from agent_friday.services import workflow_operations as _ops
@@ -205,7 +234,18 @@ def schedule_job(inp):
             raise ValueError("Friday's built-in routines can be paused, not deleted.")
         return json.dumps({"deleted": True, "schedule_id": sid,
                            "still_exists": _sched.get_schedule(sid) is not None})
-    _sched.update_schedule(sid, {"enabled": action == "resume"})
+    publisher = sid == _PUBLISHER_SCHEDULE_ID
+    if action == "pause" and publisher and not _caller_is_owner_chat():
+        # Pausing the job that sends scheduled posts hides from the owner that
+        # their posts stopped going out: a visibility-reducing action, so only
+        # the owner's own conversation may ask for it.
+        raise ValueError("A scheduled or background job cannot pause the Content publisher; "
+                         "the owner switches it in Workflows.")
+    # A model's tool call, even in the owner's chat: not the owner's own off
+    # (scheduler.builtin_switched_off_by_owner).
+    _sched.update_schedule(sid, {"enabled": action == "resume"}, by="tool")
+    if action == "pause" and publisher:
+        _announce_publisher_paused()
     return json.dumps(dict(_row(_listed(sid) or {}), **{"paused" if action == "pause" else "resumed": True}),
                       ensure_ascii=False, default=str)
 
