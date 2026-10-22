@@ -75,6 +75,15 @@
   <p id="sched-note" role="status"></p>
 </section>
 
+<section id="authority" aria-labelledby="auth-h">
+  <h2 id="auth-h">Revoke all action authority</h2>
+  <p>Take back everything Friday may do on your behalf, at once: every waiting approval is withdrawn, every standing permission (pre-approved sends, file and folder grants, desktop control, websites she may act on) is taken back, scheduled jobs are paused and remote channels stopped. Until you restore it, nothing leaves this PC and nothing is read at your connected services. Restoring lifts the hold only; you give permissions back one by one.</p>
+  <p id="auth-state" role="status"></p>
+  <button id="auth-revoke" type="button">Revoke all action authority</button>
+  <button id="auth-restore" type="button" hidden>Restore action authority</button>
+  <p id="auth-note" role="status"></p>
+</section>
+
 <section id="weekly" aria-labelledby="weekly-h">
   <h2 id="weekly-h">Weekly report to FutureSpeak</h2>
   <p>Nothing about Friday leaves this PC by itself. If you like, Friday asks once a week whether to email this report to FutureSpeak from your own account. You see exactly what would be sent, and you decide each time.</p>
@@ -284,6 +293,22 @@
   $('w-send').addEventListener('click', () => wpost('send', { sha256: wSha }));
   $('w-skip').addEventListener('click', () => wpost('skip'));
   $('w-stop').addEventListener('click', () => wpost('answer', { choice: 'never' }));
+  function authState() {
+    api('/api/authority').then(({ d }) => {
+      text($('auth-state'), d.revoked ? 'Revoked since ' + (d.at || '') + '. Outward actions and connected-service reads are held.' : 'In force.');
+      $('auth-revoke').hidden = !!d.revoked; $('auth-restore').hidden = !d.revoked;
+    });
+  }
+  $('auth-revoke').addEventListener('click', () => {
+    if (!confirm('Revoke all action authority now?')) return;
+    api('/api/authority/revoke-all', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+      text($('auth-note'), ok ? 'Revoked. Waiting approvals withdrawn: ' + (d.approvals_expired || 0) + '; jobs paused: ' + ((d.jobs_paused || []).length) + '.' : (d.error || 'Not done.'));
+      authState();
+    });
+  });
+  $('auth-restore').addEventListener('click', () => api('/api/authority/restore', { method: 'POST', body: '{}' })
+    .then(({ ok, d }) => { text($('auth-note'), ok ? 'Restored. Give back the permissions you want, one by one.' : (d.error || 'Not done.')); authState(); }));
+  authState();
   weekly();
   schedState();
   restoreState();

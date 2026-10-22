@@ -336,3 +336,41 @@ def doctor_weekly_act(what):
         return jsonify({"status": "error", "error": str(e)}), 400
     except Exception as e:  # noqa: BLE001
         return api_error(e, "That could not be done.")
+
+
+# ── Revoke all action authority (north star §18.12; services/authority.py) ──
+
+@doctor_bp.route("/api/authority", methods=["GET"])
+@login_required
+def authority_status():
+    from agent_friday.services import authority
+    return jsonify({"status": "ok", **authority.status()})
+
+
+@doctor_bp.route("/api/authority/revoke-all", methods=["POST"])
+@login_required
+def authority_revoke_all():
+    """Take back all action authority. The owner's own session (the page's
+    token), from this PC or the owner's remote session: taking authority away
+    is never made harder than giving it. Restoring is on this PC only."""
+    from agent_friday import core
+    from agent_friday.services import authority
+    if not core._api_token_valid(request.headers.get("X-Friday-Token")):
+        return jsonify({"status": "error", "error": "Do this from Friday's own page."}), 403
+    try:
+        return jsonify({"status": "ok", **authority.revoke_all("owner:ui")})
+    except authority.AuthorityError as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@doctor_bp.route("/api/authority/restore", methods=["POST"])
+@login_required
+def authority_restore():
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Restore action authority on Friday's own page, on this PC."}), 403
+    from agent_friday.services import authority
+    try:
+        return jsonify({"status": "ok", **authority.restore("owner:ui")})
+    except authority.AuthorityError as e:
+        return jsonify({"status": "error", "error": str(e)}), 500

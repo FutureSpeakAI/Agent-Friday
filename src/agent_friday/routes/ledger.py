@@ -63,6 +63,7 @@ KIND_LABELS = {
     "backup": "Scheduled backup",
     "doctor_weekly": "Weekly Doctor report",
     "outcome": "What an action did",
+    "authority": "Action authority revoked or restored",
 }
 
 _LAST_FULL = [0.0]

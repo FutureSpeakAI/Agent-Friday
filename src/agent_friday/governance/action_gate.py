@@ -1365,7 +1365,7 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
     if tool_name in SAFE_MODE_HELD_TOOLS:
         try:
             from agent_friday.services import safe_mode as _sm
-            _why = _sm.refusal("connectors") if _sm.active() else None
+            _why = _sm.refusal("connectors") if _sm.active() else _authority_hold()
         except Exception:
             _why = None
         if _why:
@@ -1381,7 +1381,7 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         # a connected service is held too.
         try:
             from agent_friday.services import safe_mode as _sm
-            _why = _sm.refusal("connector_reads")
+            _why = _sm.refusal("connector_reads") or _authority_hold()
         except Exception:
             _why = None
         if _why:
@@ -1447,6 +1447,8 @@ def outward_hold() -> Optional[str]:
     * Friday was restored from a Friday Bundle and the owner has not yet
       resumed outward actions on this device (services/friday_bundle.py,
       north star §27.6);
+    * the owner revoked all action authority (services/authority.py) and
+      has not restored it;
     * the action ledger has a break the owner has not looked at
       (services/action_ledger.hold_reason): a receipt changed, removed or
       reordered on disk.
@@ -1465,12 +1467,24 @@ def outward_hold() -> Optional[str]:
             return why
     except Exception as e:  # noqa: BLE001 - fail closed
         return "the restore state could not be checked (%s)" % type(e).__name__
+    why = _authority_hold()
+    if why:
+        return why
     try:
         from agent_friday.services import action_ledger
         why = action_ledger.hold_reason()
     except Exception as e:  # noqa: BLE001 - fail closed
         why = "the action ledger could not be checked (%s)" % type(e).__name__
     return why or None
+
+
+def _authority_hold() -> Optional[str]:
+    """The owner revoked all action authority (services/authority.py)."""
+    try:
+        from agent_friday.services import authority
+        return authority.hold_reason()
+    except Exception as e:  # noqa: BLE001 - fail closed
+        return "the owner's revocation of authority could not be checked (%s)" % type(e).__name__
 
 
 class Held(RuntimeError):

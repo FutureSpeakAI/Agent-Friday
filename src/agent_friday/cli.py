@@ -1480,6 +1480,10 @@ examples:
     p_doc.add_argument("--out", metavar="PATH",
                        help="Also copy the report (.txt) to this file, to attach by hand")
 
+    # Revoke all action authority (services/authority.py, north star §18.12)
+    p_auth = sub.add_parser("authority", help="Revoke all action authority, or restore it")
+    p_auth.add_argument("authority_cmd", choices=["revoke-all", "restore", "status"])
+
     # Friday Bundle (services/friday_bundle.py): encrypted backup and restore
     p_bundle = sub.add_parser("bundle", help="Make or check a Friday Bundle (encrypted backup)")
     p_bundle.add_argument("bundle_cmd", choices=["create", "verify", "schedule"])
@@ -2215,6 +2219,24 @@ def main():
         rv = cmd_start()
     elif cmd == "safe-mode":
         rv = cmd_safe_mode(args.state)
+    elif cmd == "authority":
+        from agent_friday.services import authority as _auth
+        try:
+            if args.authority_cmd == "revoke-all":
+                out = _auth.revoke_all("owner:cli")
+                print("All action authority revoked. Outward actions are held until you restore it. %s"
+                      % ", ".join("%s: %s" % (k, len(v) if isinstance(v, list) else v)
+                                  for k, v in out.items() if k != "errors"))
+            elif args.authority_cmd == "restore":
+                out = _auth.restore("owner:cli")
+                print("Restored." if out.get("restored") else "Action authority was not revoked.")
+            else:
+                st = _auth.status()
+                print("Action authority: %s" % ("REVOKED since %s" % st["at"] if st["revoked"] else "in force"))
+            rv = 0
+        except _auth.AuthorityError as e:
+            print(str(e))
+            rv = 1
     elif cmd == "bundle":
         rv = cmd_bundle(args)
     elif cmd == "restore":

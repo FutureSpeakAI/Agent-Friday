@@ -972,6 +972,39 @@ def _drop_unfinished(it, newest_first: bool):
             prev = x
 
 
+def newest_since(kinds: Iterable[str], since_seq: int,
+                 where: Optional[Callable[[dict], bool]] = None) -> tuple[Optional[dict], int]:
+    """(the newest signed entry of `kinds` after `since_seq` that `where`
+    picks, or None; the newest seq on disk). Reads from the end and stops at
+    `since_seq`, so a caller that remembers the seq reads only what is new."""
+    want = set(kinds)
+    try:
+        key = _key()
+    except Exception:
+        return None, since_seq
+    with _TLOCK:
+        _check_dir()
+    tip = since_seq
+    for p in reversed(_reader_segments()):
+        try:
+            for raw in _reverse_lines(p):
+                e = _safe_json(raw)
+                if not isinstance(e, dict) or not isinstance(e.get("seq"), int):
+                    continue
+                tip = max(tip, e["seq"])
+                if e["seq"] <= since_seq:
+                    return None, tip
+                if e.get("kind") in want and entry_ok(e, key):
+                    try:
+                        if where is None or where(e):
+                            return e, tip
+                    except Exception:
+                        continue
+        except OSError:
+            continue
+    return None, tip
+
+
 def records(kind: str, *, newest_first: bool = False, limit: Optional[int] = None) -> list[dict]:
     """The `rec` of every entry of one kind, each with `_seq` and `_ts` added."""
     out = []

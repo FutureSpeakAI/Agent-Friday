@@ -277,6 +277,12 @@ def _c_connectors():
     return ("healthy", "google_accounts:%d" % n) if n else ("unavailable_by_configuration", "none")
 
 
+def _c_authority():
+    """Whether the owner revoked all action authority (services/authority.py)."""
+    from agent_friday.services import authority
+    return ("blocked_by_policy", "authority_revoked") if authority.revoked() else ("healthy", "in_force")
+
+
 def _c_receipt_completeness():
     """Every outward action has its decision and its outcome (services/receipt_audit)."""
     from agent_friday.services import receipt_audit
@@ -346,6 +352,7 @@ CHECKS = (
     ("governance_key", "key and credential availability", _c_governance_key),
     ("receipt_chain", "receipt chains", _c_ledger),
     ("receipt_completeness", "receipt chains", _c_receipt_completeness),
+    ("authority", "action gate", _c_authority),
     ("rules", "action gate", _c_claws),
     ("egress_gate", "egress gate", _c_egress),
     ("action_gate", "action gate", _c_action_gate),

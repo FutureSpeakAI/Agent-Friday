@@ -1,0 +1,236 @@
+"""Revoke all action authority (north star §18.12, NS-18.12-1).
+
+The owner can take back everything Friday was allowed to do on their behalf,
+in one press, and get it back only by their own press later:
+
+* a signed, durable `authority_revoked` receipt is written first (if it cannot
+  be written, nothing changes and the owner is told);
+* from then on every outward action and every read at a connected service is
+  held (governance/action_gate.outward_hold and the connected-read check),
+  with the reason, until the owner restores authority on this PC;
+* every pending approval card is expired (never approved);
+* every standing grant is revoked: the action checkpoint's scoped grants,
+  pre-approved sends (their held mail is cancelled), file and folder grants,
+  desktop-app control grants; every website Friday could act on is narrowed
+  to reading;
+* every enabled scheduled job is paused (listed, so the owner can turn each
+  back on);
+* every running remote channel is stopped.
+
+Not here: stopping work that is running right now (the STOP control, BD-13);
+connector sign-ins are kept (the hold covers acting through them, and signing
+out of a service is the owner's own act on the Connect page).
+
+Restoring lifts the hold only. Nothing revoked comes back by itself: grants
+are granted again, jobs turned on again, one by one, by the owner.
+
+The hold is `<home>/governance/authority_revoked.json` plus its receipt. A
+file deleted without the receipt of a restore is a hold still: the hold
+reads the newest of the two receipts (revoked / restored) from the ledger.
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+from typing import Optional
+
+
+class AuthorityError(RuntimeError):
+    """Said plainly to the owner."""
+
+
+def _home() -> Path:
+    from agent_friday.paths import friday_home
+    return Path(friday_home())
+
+
+def _marker() -> Path:
+    return _home() / "governance" / "authority_revoked.json"
+
+
+_SEEN: dict = {}
+
+
+def _newest_receipt() -> Optional[dict]:
+    """The newest revoke/restore receipt in the ledger (signed entries only).
+    Read on every outward decision, so only entries new since the last look
+    are read (action_ledger.newest_since)."""
+    from agent_friday.services import action_ledger
+    d = str(action_ledger.ledger_dir())
+    if _SEEN.get("dir") != d:
+        _SEEN.clear()
+        _SEEN.update(dir=d, through=0, rec=None)
+    hit, tip = action_ledger.newest_since(
+        ["authority"], int(_SEEN["through"]),
+        where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"))
+    if tip < int(_SEEN["through"]):
+        _SEEN.update(through=0, rec=None)            # the ledger went back: read it all again
+        hit, tip = action_ledger.newest_since(
+            ["authority"], 0, where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"))
+    if hit is not None:
+        _SEEN["rec"] = hit
+    _SEEN["through"] = tip
+    return _SEEN["rec"]
+
+
+def revoked() -> Optional[dict]:
+    """{at, by} while action authority is revoked, else None. The ledger is
+    the record: a marker file removed without a restore receipt holds still,
+    and a marker planted without a revoke receipt holds too (fails closed)."""
+    try:
+        e = _newest_receipt()
+    except Exception:
+        e = None
+    rec = (e or {}).get("rec") or {}
+    if rec.get("event") == "revoked":
+        return {"at": e.get("ts"), "by": rec.get("by")}
+    if _marker().exists() and rec.get("event") != "restored":
+        try:
+            d = json.loads(_marker().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = {}
+        return {"at": d.get("at"), "by": d.get("by")}
+    return None
+
+
+def hold_reason() -> Optional[str]:
+    r = revoked()
+    if not r:
+        return None
+    return ("you revoked all action authority (%s); restore it on the Doctor page, on this PC"
+            % (r.get("at") or "earlier"))
+
+
+def _try(fn, out: dict, key: str) -> None:
+    try:
+        out[key] = fn()
+    except Exception as e:  # noqa: BLE001 - one part failing never stops the rest
+        out.setdefault("errors", []).append("%s: %s" % (key, type(e).__name__))
+
+
+def revoke_all(by: str = "owner:ui") -> dict:
+    """Take back all action authority now. Returns what was revoked."""
+    from agent_friday.services import action_ledger
+    by = str(by or "owner")[:40]
+    # 1. the receipt first, durable: without it nothing changes
+    try:
+        action_ledger.append("authority", {"event": "revoked", "by": by}, durable=True)
+    except Exception as e:
+        raise AuthorityError("The record of this could not be written (%s); nothing was changed."
+                             % type(e).__name__)
+    p = _marker()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "by": by}),
+                 encoding="utf-8")
+    out: dict = {}
+
+    def _approvals():
+        from agent_friday.services import approvals
+        return approvals.expire_matching(lambda r: True, by=by, note="all action authority revoked")
+
+    def _gate_grants():
+        from agent_friday.governance import action_gate
+        n = 0
+        for g in action_gate.list_grants():
+            if action_gate.revoke_grant(str(g.get("grant_id") or "")):
+                n += 1
+        return n
+
+    def _send_grants():
+        from agent_friday.governance import send_grants
+        n = 0
+        for g in send_grants.list_grants():
+            gid = str(g.get("grant_id") or "")
+            if gid and send_grants.revoke(gid, by=by):
+                n += 1
+        return n
+
+    def _file_grants():
+        from agent_friday.services import file_grants
+        n = 0
+        for g in file_grants.list_grants():
+            gid = g.get("id") or g.get("grant_id")
+            if gid:
+                file_grants.revoke(str(gid))
+                n += 1
+        return n
+
+    def _desktop():
+        from agent_friday.services import desktop_grants
+        apps = list(desktop_grants.grants())
+        for a in apps:
+            desktop_grants.remove_grant(a)
+        return len(apps)
+
+    def _sites():
+        from agent_friday.governance import web_sites
+        n = 0
+        for row in web_sites.all_sites():
+            if (row or {}).get("level") != "may_read":
+                web_sites.narrow(row.get("site"), made_by="owner:ui")
+                n += 1
+        return n
+
+    def _jobs():
+        from agent_friday.services import scheduler
+        paused = []
+        for r in scheduler.list_schedules():
+            if r.get("enabled", True) and r.get("id"):
+                scheduler.update_schedule(r["id"], {"enabled": False})
+                paused.append(r["id"])
+        return paused
+
+    def _channels():
+        from agent_friday.services.channels import manager
+        stopped = []
+        for name, a in list(getattr(manager, "_ADAPTERS", {}).items()):
+            if getattr(a, "_running", False):
+                manager.stop_channel(name)
+                stopped.append(name)
+        return stopped
+
+    for key, fn in (("approvals_expired", _approvals), ("grants_revoked", _gate_grants),
+                    ("send_grants_revoked", _send_grants), ("file_grants_revoked", _file_grants),
+                    ("desktop_grants_removed", _desktop), ("sites_narrowed", _sites),
+                    ("jobs_paused", _jobs), ("channels_stopped", _channels)):
+        _try(fn, out, key)
+    action_ledger.try_append("authority", {"event": "revoked_detail", "by": by,
+                                           **{k: (len(v) if isinstance(v, list) else v)
+                                              for k, v in out.items() if k != "errors"},
+                                           "jobs": out.get("jobs_paused") or [],
+                                           "errors": out.get("errors") or []})
+    return out
+
+
+def restore(by: str = "owner:ui") -> dict:
+    """Lift the hold. Nothing revoked comes back by itself."""
+    from agent_friday.services import action_ledger
+    if not revoked():
+        return {"restored": False, "why": "action authority is not revoked"}
+    try:
+        action_ledger.append("authority", {"event": "restored", "by": str(by or "owner")[:40]},
+                             durable=True)
+    except Exception as e:
+        raise AuthorityError("The record of this could not be written (%s); authority stays revoked."
+                             % type(e).__name__)
+    try:
+        _marker().unlink()
+    except OSError:
+        pass
+    return {"restored": True}
+
+
+def status() -> dict:
+    r = revoked()
+    detail = None
+    try:
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries(["authority"], newest_first=True, verified=True,
+                                     where=lambda e: (e.get("rec") or {}).get("event") == "revoked_detail",
+                                     limit=1)
+        detail = (rows[0].get("rec") if rows else None) if r else None
+    except Exception:
+        detail = None
+    return {"revoked": bool(r), "at": (r or {}).get("at"), "detail": detail}
