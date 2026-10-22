@@ -48,7 +48,8 @@ ERROR_MESSAGES = {
     "bad_calendar": "that is not a calendar id; nothing was changed",
     "needs_reconnect": ("Friday cannot change this calendar yet: press \"Allow calendar changes\" "
                         "(or reconnect Google) in Settings > Connections > Google. Nothing was changed."),
-    "needs_account": "that Google account cannot write to this calendar right now; nothing was changed",
+    "needs_account": ("that Google account may not change this calendar yet: press \"Allow calendar "
+                      "changes\" for it in Settings > Connections > Google. Nothing was changed."),
     "no_service": "Google Calendar could not be reached; nothing was changed",
     "missing_fields": "a title and a start time are required",
     "title_refused": "could not create the event: the privacy gate kept the title on this device",
@@ -252,6 +253,10 @@ def resolve_write_account(account_id=None) -> tuple:
                     for k in ("id", "email", "label")}
             if want in keys:
                 return a.get("id"), None
+        if any(want in {str(a.get(k) or "").strip().lower() for k in ("id", "email", "label")}
+               for a in readable_accounts()):
+            return None, ("the account %r may read its calendar but has not been allowed to change "
+                          "it: %s. Nothing was changed." % (str(account_id), "press \"Allow calendar changes\" for that account in Settings > Connections > Google (Google then asks to confirm)"))
         return None, ("no connected account named %r can write to a calendar. "
                       "Nothing was changed. Accounts that can: %s"
                       % (str(account_id), describe_accounts(accts) or "none"))
@@ -567,16 +572,19 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
             "start": start, "end": end}
 
 
-def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary") -> dict:
+def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary",
+              for_write: bool = False) -> dict:
     """One event as the planner needs it: its title, when it starts and ends, its time zone, whether it is an
     all-day entry, how many guests it has, and whether this calendar's copy may change its time
     (`organizer_self`: the calendar it is read from organises it; `guests_can_modify`). Reads only."""
     if not _cal(calendar_id):
         return {"error": "that is not a calendar id; nothing was changed"}
-    ready, why = read_ready()
+    # `for_write`: the read that plans a change (a move) needs an account that may make it,
+    # so a plan is never offered for a change that would then be refused.
+    ready, why = write_ready() if for_write else read_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
-    aid, acct_err = resolve_read_account(account_id)
+    aid, acct_err = resolve_write_account(account_id) if for_write else resolve_read_account(account_id)
     if acct_err:
         return {"error": acct_err, "needs_account": True}
     svc, err = _service(aid)

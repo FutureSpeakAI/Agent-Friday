@@ -1842,7 +1842,7 @@ def plan_calendar(action: str, events=None, days=0, minutes=0, account: str = ""
         raise Refused("that is %d events; move at most %d at a time" % (len(ids), MAX_CAL_EVENTS))
     cw, ops = _cw(), []
     for eid in ids:
-        ev = cw.get_event(eid, account_id=account or None)
+        ev = cw.get_event(eid, account_id=account or None, for_write=True)
         if not ev.get("ok"):
             raise Refused(ev.get("error") or "that event could not be read")
         if ev.get("all_day") or not ev.get("start") or not ev.get("end"):
@@ -2037,7 +2037,8 @@ def move_event_by_owner(event_id: str, *, start: str, end: str, calendar_id: str
         raise Refused("the event would end before it starts")
     if ne - ns > timedelta(days=14):
         raise Refused("that is longer than an event can be moved by dragging")
-    ev = _cw().get_event(_event_id(event_id), account_id=account or None, calendar_id=calendar_id or "primary")
+    ev = _cw().get_event(_event_id(event_id), account_id=account or None, calendar_id=calendar_id or "primary",
+                         for_write=True)
     if not ev.get("ok"):
         raise Refused(ev.get("error") or "that event could not be read")
     if ev.get("all_day") or not ev.get("start") or not ev.get("end"):

@@ -2051,8 +2051,10 @@ def _calendar_event_words(inp):
     eid = str(inp.get("event_id") or "").strip()
     try:
         from agent_friday.services import calendar_write as cw
+        # for_write: the card names the event only when the delete could then happen (read first,
+        # BD-06: a read-only account says how to allow changes instead of showing a card in vain).
         got = cw.read_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
-                            account_id=(inp.get("account_id") or "").strip() or None)
+                            account_id=(inp.get("account_id") or "").strip() or None, for_write=True)
     except Exception:
         got = {}
     b = got.get("before") if got.get("ok") else None

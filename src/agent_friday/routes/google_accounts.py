@@ -219,7 +219,10 @@ def connect_google_account():
                 "requested_scopes": [x for x in ga.mailbox_scopes(
                                         (existing or {}).get("scopes") if existing else None)
                                      if (x["scope"] != ga.GMAIL_SEND or include_send)
-                                     and (x["scope"] != ga.GMAIL_MODIFY or include_modify)],
+                                     and (x["scope"] != ga.GMAIL_MODIFY or include_modify)]
+                                    + [{"scope": sc, "what": ga._SCOPE_PLAIN.get(sc, sc), "new": True}
+                                       for sc, on in ((ga.CALENDAR_RW, include_calendar_write),
+                                                      (ga.TASKS_RW, include_tasks_write)) if on],
                 "prebrief": _goc.consent_prebrief(_kind)}
         if client_type == "web":
             resp["warning"] = (

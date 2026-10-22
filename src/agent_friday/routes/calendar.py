@@ -391,10 +391,11 @@ def api_calendar_event_delete(event_id):
         if res.get("gone") or res.get("not_found"):
             why = "that event was already deleted or cannot be found."
         elif res.get("needs_account"):
-            why = "no connected Google account can change that calendar."
+            why = ("that Google account may not change this calendar yet: press \"Allow calendar "
+                   "changes\" for it in Settings -> Connections -> Google.")
         elif res.get("needs_reconnect"):
-            why = ("Google Calendar is not connected with event editing. Reconnect it from "
-                   "Settings -> Connections.")
+            why = ("Friday may read this calendar but has not been allowed to change it: press "
+                   "\"Allow calendar changes\" (or reconnect Google) in Settings -> Connections -> Google.")
         else:
             _eid = uuid.uuid4().hex[:8]
             print(f"  [calendar] delete of {eid} failed (error id {_eid}): {res.get('error')}")
