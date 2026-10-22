@@ -146,6 +146,12 @@ _AUTORUN = (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zsh
 def _off_limits(op: str) -> List[Tuple[Path, str]]:
     import agent_friday.core as core
     homes = {_home(), _profile()}
+    # The same folders as spelled (not resolved): a resolved home is the long name,
+    # a command's path is judged by its text, which may carry the 8.3 short name
+    # (C:\Users\RUNNER~1). Matching too much only refuses more.
+    for raw in (os.path.expanduser("~"), str(core.HOME), os.environ.get("FRIDAY_SANDBOX_ROOT", "")):
+        if raw:
+            homes.add(Path(os.path.normpath(os.path.abspath(raw))))
     out: List[Tuple[Path, str]] = [(Path(core.FRIDAY_DIR).resolve(strict=False), "Friday's own state folder")]
     for var in ("APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
         v = os.environ.get(var)
