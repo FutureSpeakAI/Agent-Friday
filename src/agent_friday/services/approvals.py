@@ -174,6 +174,9 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # the consent, as it is for a file grant.
     "library_add_request": frozenset({"owner:ui"}),
     "library_remove_request": frozenset({"owner:ui"}),
+    # A remote add-on (MCP) server host Friday may reach (services/mcp_host_cards): the
+    # server is sent what each call with its tools contains, so a press on screen only.
+    "mcp_host": frozenset({"owner:ui"}),
     "library_forget_request": frozenset({"owner:ui"}),
     # Loosening one of Laya's learned thresholds (services/laya_personal_fit, swot spec
     # decision 15): only the owner, per head, by a click on the report card. A spoken "yes"

@@ -2119,6 +2119,34 @@ def api_mcp_servers():
         return api_error(e, "Couldn't update the MCP servers")
 
 
+@core_bp.route('/api/mcp/hosts', methods=['GET'])
+def api_mcp_hosts():
+    """The remote add-on server hosts Friday may reach (governance/mcp_hosts), without
+    addresses' paths or any keys: host, who allowed it, when, for which server."""
+    from agent_friday.governance import mcp_hosts
+    rows = [{"host": mcp_hosts.display(k), "key": k, "made_by": v.get("made_by"),
+             "made_at": v.get("made_at"), "server": v.get("server"), "verified": v.get("verified")}
+            for k, v in sorted(mcp_hosts.all_hosts().items())]
+    return jsonify({"status": "ok", "hosts": rows})
+
+
+@core_bp.route('/api/mcp/hosts/remove', methods=['POST'])
+def api_mcp_hosts_remove():
+    """Take a host off the list: the owner's press on Friday's page only."""
+    from agent_friday.governance import mcp_hosts
+    from agent_friday.services import screen_click as _sc
+    if not _sc.screen_session(request):
+        return jsonify({"status": "error", "message": "Nothing was changed: only your press "
+                        "on Friday's own page can change the add-on server host list."}), 403
+    key = str((request.get_json(silent=True) or {}).get("host") or "").strip()
+    if not key:
+        return jsonify({"status": "error", "message": "Say which host to remove."}), 400
+    removed = mcp_hosts.remove(key, made_by="owner:ui")
+    return jsonify({"status": "ok", "removed": bool(removed),
+                    "message": ("Friday will not reach %s any more." % mcp_hosts.display(key))
+                    if removed else "That host was not on the list."})
+
+
 @core_bp.route('/api/mcp/restart', methods=['POST'])
 def api_mcp_restart():
     """Restart a single MCP server and re-register its tools."""

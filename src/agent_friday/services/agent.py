@@ -15447,6 +15447,12 @@ def _mcp_boot() -> None:
             cfg = gate_mcp_config(cfg)
         except Exception as _sec_err:
             print(f"  [mcp] extension security scan skipped: {_sec_err}")
+        try:
+            # A host card approved after a restart is still applied (governance/mcp_hosts).
+            from agent_friday.services import mcp_host_cards as _mhc
+            _mhc.ensure_hook()
+        except Exception:
+            pass
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr
