@@ -475,6 +475,16 @@ def _residency_boot():
 
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────
 if not _TESTING:
+    # Plaintext .env / secrets.yaml an older release left beside the app: their
+    # keys go into the credential store, the file is kept encrypted, the
+    # plaintext is removed (services/legacy_key_files). Before the load below, so
+    # an imported key is live on this boot. Never raises.
+    try:
+        from agent_friday.services.legacy_key_files import migrate as _migrate_legacy_keys
+        _migrate_legacy_keys()
+    except Exception:
+        pass
+
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
