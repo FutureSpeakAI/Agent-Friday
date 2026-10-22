@@ -37,5 +37,5 @@ def test_the_owners_press_removes_a_host(home, client):
              "Origin": "http://localhost"}
     r = client.post("/api/mcp/hosts/remove", json={"host": "mcp.example.com:443"}, headers=press)
     assert r.status_code == 200 and r.get_json()["removed"] is True
-    assert "will not reach mcp.example.com" in r.get_json()["message"]
+    assert r.get_json()["message"] == "Friday will not reach mcp.example.com any more."
     assert not mcp_hosts.allowed(REMOTE)

@@ -11,14 +11,21 @@ on the old code by assertion (it simply connected), not by a missing import.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 
 import pytest
 
 from agent_friday import mcp_client as mc
 
 REMOTE = "https://mcp.example.com/mcp?api_key=zq-not-a-real-key"  # pragma: allowlist secret
+
+
+def _says(text, words) -> bool:
+    """The words appear in a message shown to the owner (a plain text search, not a URL check)."""
+    return re.search(re.escape(words), str(text or "")) is not None
 
 
 @pytest.fixture
@@ -48,7 +55,7 @@ def no_network(monkeypatch):
     def guard(real):
         def refuse(req, *a, **k):
             url = getattr(req, "full_url", str(req))
-            if ".example.com" in url:
+            if (urlsplit(url).hostname or "").endswith(".example.com"):
                 tried.append(url)
                 raise OSError("network reached in a test zq3")
             return real(req, *a, **k)
@@ -64,7 +71,7 @@ def test_a_host_the_owner_never_allowed_is_never_contacted(home, no_network):
     assert srv.start() is False
     assert no_network == [], "a request was sent to a host the owner never allowed"
     assert srv.status == "needs_approval"
-    assert "you have not allowed Friday to reach mcp.example.com" in srv.error
+    assert _says(srv.error, "you have not allowed Friday to reach mcp.example.com")
     assert "approve the card" in srv.error
 
 
@@ -72,13 +79,13 @@ def test_a_tool_call_to_it_is_refused_with_the_reason(home, no_network):
     srv = mc.MCPServerHTTP("probe", REMOTE)
     out = srv.call_tool("search", {"q": "my notes"})
     assert no_network == []
-    assert "not allowed Friday to reach mcp.example.com" in out
+    assert _says(out, "not allowed Friday to reach mcp.example.com")
 
 
 def test_signing_in_to_it_is_refused_too(home, no_network):
     srv = mc.MCPServerHTTP("probe", REMOTE)
     out = srv.begin_auth(open_browser=False)
-    assert out.get("ok") is False and "mcp.example.com" in out.get("error", "")
+    assert out.get("ok") is False and _says(out.get("error", ""), "mcp.example.com")
     assert no_network == []
 
 
@@ -88,8 +95,8 @@ def test_the_card_says_what_the_server_is_where_it_lives_and_shows_no_key(home, 
     cards = approvals.list_approvals(kind="mcp_host", status="pending")
     assert len(cards) == 1
     card = cards[0]
-    assert "mcp.example.com" in card["title"]
-    assert "Notes search" in card["description"] and "https://mcp.example.com" in card["description"]
+    assert _says(card["title"], "mcp.example.com")
+    assert "Notes search" in card["description"] and _says(card["description"], "https://mcp.example.com")
     assert "sign-in token" in card["description"], "the card says the token goes there too"
     assert "zq-not-a-real-key" not in json.dumps(card), "the address's query can carry a key"
     mc.MCPServerHTTP("Notes search", REMOTE).start()
