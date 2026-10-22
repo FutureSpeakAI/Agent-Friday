@@ -643,7 +643,12 @@ class FridayTray:
         """Ask the server to get ready to stop (BD-16): flush, stop add-ons and browser sessions,
         and record a clean exit, so the next start can say the owner closed Friday rather than
         that she crashed. Asked FIRST for the same reason as the seats below: `stop_server`
-        terminates it, and on Windows that runs no exit handler. Short and best-effort."""
+        terminates it, and on Windows that runs no exit handler. Short and best-effort.
+        Only for a server this tray started and still runs: an adopted server keeps running
+        when the tray stops, so it is not told it is about to stop."""
+        proc = getattr(self, "server_proc", None)
+        if proc is None or proc.poll() is not None:
+            return
         try:
             req = urllib.request.Request(
                 self.server_url + "/api/server/prepare-for-exit",
@@ -679,8 +684,11 @@ class FridayTray:
     def _quit(self, _icon, _item) -> None:
         # A quit gives the machine its memory back. A restart does not: see
         # `restart_server`, which is a planned restart and keeps the seats.
-        self._prepare_for_exit("tray_quit")
+        # Seats first (that can take a while), then the clean-exit record, then the stop: the
+        # record is written right before the stop, so nothing the server does in between
+        # makes the next start doubt it.
         self._release_seats("tray_quit")
+        self._prepare_for_exit("tray_quit")
         self.stop_server()
         if self.icon:
             self.icon.stop()
@@ -1067,8 +1075,8 @@ def main(argv: list[str] | None = None) -> None:
     def _on_signal(_sig, _frm):
         # Being told to stop is a quit, not a restart: hand the memory back.
         try:
-            tray._prepare_for_exit("tray_signal")
             tray._release_seats("tray_signal")
+            tray._prepare_for_exit("tray_signal")
             tray.stop_server()
         except Exception:
             pass

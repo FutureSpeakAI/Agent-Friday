@@ -366,6 +366,10 @@ def roles():
                   for r in rp.ROLES],
         "aliases": rp.ROLE_ALIASES,
     })
+#: The whole of prepare-for-exit, its steps run side by side; the tray waits 15 s.
+PREPARE_FOR_EXIT_S = 8.0
+
+
 @residency_bp.route("/api/server/prepare-for-exit", methods=["POST"])
 @login_required
 def server_prepare_for_exit():
@@ -376,32 +380,42 @@ def server_prepare_for_exit():
     Each step is best-effort and short; the marker is written whatever the others did. Model
     seats are released separately (release-for-quit), only on a quit."""
     import sys as _sys
+    import threading as _threading
     body = request.get_json(silent=True) or {}
     planned = str(body.get("planned") or "").lower() in ("1", "true", "yes")
     reason = str(body.get("reason") or "user_quit")[:64]
-    steps = {}
+    # The marker first: the tray waits only so long, and the record of a deliberate stop must
+    # not depend on an add-on that takes its time to go.
+    from agent_friday.services import task_journal as tj
+    steps = {"marked": tj.mark_clean_exit(reason, planned=planned)}
+    jobs = {}
     try:
         from agent_friday.services import laya as _laya
-        steps["laya_flushed"] = bool(_laya.flush(2.0))
-    except Exception as e:  # noqa: BLE001
-        steps["laya_flushed"] = "failed: %s" % type(e).__name__
+        jobs["laya_flushed"] = lambda: bool(_laya.flush(2.0))
+    except Exception:  # noqa: BLE001
+        pass
     agent = _sys.modules.get("agent_friday.services.agent")
     mgr = getattr(agent, "_MCP_MANAGER", None) if agent else None
     if mgr is not None:
-        try:
-            mgr.stop_all()
-            steps["addons_stopped"] = True
-        except Exception as e:  # noqa: BLE001
-            steps["addons_stopped"] = "failed: %s" % type(e).__name__
+        jobs["addons_stopped"] = lambda: (mgr.stop_all(), True)[1]
     bs = _sys.modules.get("agent_friday.services.browser_session")
     if bs is not None:
+        jobs["browser_sessions_stopped"] = lambda: (bs.stop_all_owned_sessions(), True)[1]
+    results = {k: "did not finish in time" for k in jobs}
+
+    def _run(key, fn):
         try:
-            bs.stop_all_owned_sessions()
-            steps["browser_sessions_stopped"] = True
+            results[key] = fn()
         except Exception as e:  # noqa: BLE001
-            steps["browser_sessions_stopped"] = "failed: %s" % type(e).__name__
-    from agent_friday.services import task_journal as tj
-    steps["marked"] = tj.mark_clean_exit(reason, planned=planned)
+            results[key] = "failed: %s" % type(e).__name__
+    threads = [_threading.Thread(target=_run, args=(k, f), name="prepare-exit-" + k, daemon=True)
+               for k, f in jobs.items()]
+    for t in threads:
+        t.start()
+    deadline = __import__("time").monotonic() + PREPARE_FOR_EXIT_S
+    for t in threads:
+        t.join(timeout=max(0.0, deadline - __import__("time").monotonic()))
+    steps.update(results)
     return jsonify({"status": "ok", "planned": planned, "reason": reason, "steps": steps})
 
 

@@ -250,6 +250,20 @@ def _next_seq(task_id: str) -> int:
     return _SEQ[task_id]
 
 
+def _append_line(path: Path, line: str) -> None:
+    """Append one line. A process stopped mid-write can leave a last line without its newline;
+    the reader drops that torn line, and a line appended straight onto it would be dropped with
+    it, so a new line always starts on a fresh one."""
+    with open(path, "a+b") as fh:
+        lead = b""
+        if fh.tell() > 0:
+            fh.seek(-1, os.SEEK_END)
+            if fh.read(1) != b"\n":
+                lead = b"\n"
+            fh.seek(0, os.SEEK_END)
+        fh.write(lead + (line + "\n").encode("utf-8"))
+
+
 def append(task_id: str, kind: str, **fields) -> Optional[int]:
     """Append one event. Returns its seq, or None if the write failed (in
     which case the caller's task is marked unrecorded — see mark_unrecorded)."""
@@ -267,17 +281,7 @@ def append(task_id: str, kind: str, **fields) -> Optional[int]:
                     ev[k] = v
             p = task_dir(task_id) / "journal.jsonl"
             p.parent.mkdir(parents=True, exist_ok=True)
-            with open(p, "a+b") as fh:
-                # A process stopped mid-write can leave a last line without its newline; the
-                # reader drops that torn line, and a new event appended straight onto it would
-                # be dropped with it. Start on a fresh line.
-                lead = b""
-                if fh.tell() > 0:
-                    fh.seek(-1, os.SEEK_END)
-                    if fh.read(1) != b"\n":
-                        lead = b"\n"
-                    fh.seek(0, os.SEEK_END)
-                fh.write(lead + (_encode_line(ev) + "\n").encode("utf-8"))
+            _append_line(p, _encode_line(ev))
             return seq
         except Exception as e:
             _SEQ.pop(task_id, None)
@@ -431,8 +435,7 @@ def index_put(task_id: str, name: str, status: str, created: Optional[float],
             p.parent.mkdir(parents=True, exist_ok=True)
             row = {"task_id": task_id, "name": (name or "")[:200], "status": status,
                    "created": created, "ended": ended, "ts": time.time()}
-            with open(p, "a", encoding="utf-8") as fh:
-                fh.write(_encode_line(row) + "\n")
+            _append_line(p, _encode_line(row))
         except Exception as e:
             _on_write_failure(task_id, f"index: {e}")
 
@@ -656,7 +659,11 @@ def announce_interrupted(interrupted: Iterable[dict], previous_exit: Optional[di
     more = f" and {len(items) - 5} more" if len(items) > 5 else ""
     closed = (previous_exit or {}).get("kind") == "closed"
     n = f"{len(items)} task{'s were' if len(items) != 1 else ' was'}"
-    title = (f"{n} stopped when Friday was closed" if closed else f"{n} interrupted by a restart")
+    if closed:
+        title = (f"{n} stopped when Friday was restarted" if (previous_exit or {}).get("planned")
+                 else f"{n} stopped when Friday was closed")
+    else:
+        title = f"{n} interrupted by a restart"
     why = "" if closed else (_exit_words(previous_exit or {}) + ". ")
     try:
         import agent_friday.notifications_engine as ne
