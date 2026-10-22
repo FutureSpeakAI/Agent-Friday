@@ -1121,6 +1121,14 @@ def _receipt(entry: dict) -> None:
     except ImportError:
         pass
     entry = dict(entry, timestamp=datetime.utcnow().isoformat() + "Z")
+    try:
+        # The request this decision belongs to (services/correlation): one id across friday.log
+        # and these receipts. Signed with the rest; absent outside a request.
+        from agent_friday.services import correlation as _corr
+        if _corr.current() and "correlation_id" not in entry and not entry.get("off_record"):
+            entry["correlation_id"] = _corr.current()
+    except ImportError:
+        pass
     canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
     entry["hmac"] = _hmac.new(_governance_key(), canonical, hashlib.sha256).hexdigest()
     path = receipts_path()

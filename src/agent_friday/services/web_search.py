@@ -251,7 +251,7 @@ def key_status() -> dict:
     }
     try:
         from agent_friday.services import credential_store
-        sources["encrypted_store"] = bool(credential_store.get_provider_key("brave"))
+        sources["encrypted_store"] = bool(credential_store.get_provider_key("brave", use=False))  # a status check
     except Exception:
         pass
     try:

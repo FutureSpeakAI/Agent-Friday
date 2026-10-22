@@ -748,9 +748,14 @@ def _connect_mcp_remote(defn: dict, server_name: str, tmpl: dict, agent_svc) -> 
         except Exception:
             live = {}
         status = (live.get("status") or "").lower()
-        if status in ("ready", "needs_auth", "error"):
+        if status in ("ready", "needs_auth", "error", "needs_approval"):
             break
         _time.sleep(0.25)
+
+    if status == "needs_approval":
+        # The host is not on the owner's list yet (governance/mcp_hosts): say so, and where.
+        return {"ok": False, "status": "needs_approval",
+                "message": live.get("error") or f"{defn['name']} waits for your approval card."}
 
     if status == "ready":
         return {"ok": True, "status": "connected",

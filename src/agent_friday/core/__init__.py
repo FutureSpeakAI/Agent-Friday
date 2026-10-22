@@ -1101,6 +1101,7 @@ def _setup_friday_logging() -> None:
             datefmt="%Y-%m-%dT%H:%M:%S",
         ))
         root.addHandler(sh)
+        _install_log_redaction()
         return
 
     try:
@@ -1124,6 +1125,22 @@ def _setup_friday_logging() -> None:
     sh.setLevel(logging.WARNING)
     sh.setFormatter(logging.Formatter("[FRIDAY] %(levelname)s %(message)s"))
     root.addHandler(sh)
+    _install_log_redaction()
+
+
+def _install_log_redaction() -> None:
+    """Every handler of the "friday" logger passes the one redaction filter (secrets out,
+    the request's correlation id in: services/log_redaction). A filter that cannot be
+    installed is said once on stderr; logging itself keeps working."""
+    try:
+        from agent_friday.services import log_redaction
+        log_redaction.install(logging.getLogger("friday"))
+    except Exception as e:  # noqa: BLE001
+        try:
+            sys.stderr.write("[FRIDAY] the log redaction filter could not be installed (%s)\n"
+                             % type(e).__name__)
+        except Exception:
+            pass
 
 
 if not _TESTING:
@@ -4722,6 +4739,40 @@ def _frame_gate_reason():
 
 
 @app.before_request
+def _begin_correlation():
+    """One correlation id for this request, before anything else runs (services/correlation):
+    the caller's X-Request-Id when it is a plain token, else a new one. Every friday.log line
+    and decision receipt this request writes carries it, and the answer names it."""
+    try:
+        from agent_friday.services import correlation as _corr
+        _corr.begin(request.headers.get(_corr.REQUEST_HEADER))
+    except Exception:  # noqa: BLE001 - an id is a label; its absence blocks nothing
+        pass
+    return None
+
+
+@app.after_request
+def _answer_correlation(resp):
+    try:
+        from agent_friday.services import correlation as _corr
+        cid = _corr.current()
+        if cid:
+            resp.headers[_corr.RESPONSE_HEADER] = cid
+    except Exception:  # noqa: BLE001
+        pass
+    return resp
+
+
+@app.teardown_request
+def _end_correlation(_exc=None):
+    try:
+        from agent_friday.services import correlation as _corr
+        _corr.clear()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.before_request
 def check_auth():
     # Observer credential (services/observer_access; task-visibility.md §4.5):
     # a request presenting X-Friday-Observer is READ-ONLY for the whole
@@ -4859,6 +4910,19 @@ OWN_PAGE_CSP = "; ".join((
 ))
 
 
+def _own_page_csp():
+    """OWN_PAGE_CSP, plus the loopback address the page may also fetch from: the desk-key
+    door (services/desk_press.connect_source), when it is open."""
+    try:
+        from agent_friday.services import desk_press as _dp
+        extra = _dp.connect_source()
+    except Exception:
+        extra = ""
+    if not extra:
+        return OWN_PAGE_CSP
+    return OWN_PAGE_CSP.replace("connect-src 'self'", "connect-src 'self' " + extra, 1)
+
+
 def _split_csp(value):
     return [p.strip() for p in (value or "").split(";") if p.strip()]
 
@@ -4912,7 +4976,7 @@ def _isolation_headers(resp):
         ctype = (resp.mimetype or "").lower()
         if request.endpoint in OWN_PAGE_ENDPOINTS and ctype in _MARKUP_TYPES:
             if not resp.headers.get("Content-Security-Policy"):
-                resp.headers["Content-Security-Policy"] = OWN_PAGE_CSP
+                resp.headers["Content-Security-Policy"] = _own_page_csp()
             resp.headers["Cache-Control"] = "no-store"
             resp.headers.setdefault("X-Content-Type-Options", "nosniff")
             resp.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -4932,7 +4996,98 @@ def _isolation_headers(resp):
 
 @app.after_request
 def _apply_isolation_headers(resp):
+    # A page that sent a desk key from an earlier launch (Friday restarted under an
+    # open tab) is told so, and fetches this launch's key (and token) for its next press.
+    try:
+        from agent_friday.services import desk_press as _dp
+        if _dp.stale(request):
+            resp.headers["X-Friday-Desk-Stale"] = "1"
+    except Exception:
+        pass
     return _isolation_headers(resp)
+
+
+# ── Idempotency keys (services/idempotency; BD-11a) ─────────────
+# Registered after check_auth, so only a request that passed the front door is
+# kept or replayed. The same key twice runs once.
+
+@app.before_request
+def _idempotency_begin():
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        return None
+    try:
+        from agent_friday.services import idempotency as _idem
+    except Exception:  # noqa: BLE001 - without the module the request runs as before
+        return None
+    if not _idem.applies(request.method, request.path):
+        return None
+    if not _idem.valid_key(key):
+        return jsonify({"status": "error", "code": "bad_idempotency_key",
+                        "message": "Idempotency-Key must be 8 to 128 letters, digits, '.', '_', ':' or '-'. "
+                                   "Nothing was run."}), 400
+    # Who is asking, so one caller's key never answers another: the principal, where the request
+    # comes from (this PC or not, and its address), whether it carries the page's valid session
+    # token (its validity, not its value, so a rotation does not split one page's retries), and
+    # whether its session is signed in (read after check_auth, which may sign a first request in:
+    # the session cookie's own bytes change when it does, which would split a request from its
+    # retry).
+    try:
+        _local = bool(_is_local_request())
+    except Exception:  # noqa: BLE001
+        _local = False
+    try:
+        _tok_ok = bool(_api_token_valid(request.headers.get("X-Friday-Token")))
+    except Exception:  # noqa: BLE001
+        _tok_ok = False
+    caller = "%s|%s|%s|%s|%s" % (getattr(g, "friday_principal", "user") or "user", _local,
+                                 request.remote_addr or "", _tok_ok,
+                                 bool(session.get("authenticated")))
+    decision, got = _idem.begin(key, caller, "",
+                                _idem.fingerprint(request.method, request.path, request.get_data(cache=True)))
+    if decision == "run":
+        g._idempotency_scope = got
+        return None
+    if decision == "replay":
+        resp = Response(got["body"], status=got["status"], mimetype=got["mimetype"])
+        resp.headers[_idem.REPLAYED] = "true"
+        return resp
+    words = {
+        "running": ("idempotency_in_progress", 409,
+                    "A request with this Idempotency-Key is still running; it was not run again."),
+        "stream": ("idempotency_used", 409,
+                   "A request with this Idempotency-Key was already handled, and its answer was a stream "
+                   "that cannot be sent again. It was not run again."),
+        "mismatch": ("idempotency_key_reused", 422,
+                     "This Idempotency-Key was already used for a different request. Nothing was run."),
+    }[decision]
+    return jsonify({"status": "error", "code": words[0], "message": words[2]}), words[1]
+
+
+@app.after_request
+def _idempotency_finish(resp):
+    scope = getattr(g, "_idempotency_scope", None)
+    if scope:
+        try:
+            from agent_friday.services import idempotency as _idem
+            streamed = bool(resp.is_streamed or resp.direct_passthrough)
+            body = None if streamed else resp.get_data()
+            _idem.finish(scope, resp.status_code, body, resp.mimetype, streamed)
+            g._idempotency_scope = None
+        except Exception:  # noqa: BLE001
+            pass
+    return resp
+
+
+@app.teardown_request
+def _idempotency_forget(_exc=None):
+    scope = getattr(g, "_idempotency_scope", None)
+    if scope:
+        try:
+            from agent_friday.services import idempotency as _idem
+            _idem.forget(scope)          # the request failed before an answer: a retry runs
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @app.route('/api/session/token')

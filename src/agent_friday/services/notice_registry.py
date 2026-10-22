@@ -159,6 +159,10 @@ _ALL = [
        "spend_halt:{scope}", source="spend-guard", safety=True),
     _e("E38", "services/credential_sweep.py:_push", "credential_problem", NEEDS_YOU,
        "credential:{provider}:{state}", source="credentials", safety=True),
+    # A21: an install that finished setup before the key store passphrase became the default is
+    # offered it once (services/keystore_offer).
+    _e("KS1", "services/keystore_offer.py:push_card_if_pending", "keystore_offer", NEEDS_YOU,
+       "keystore-passphrase-offer", source="security"),
     _e("E39", "services/connectors.py:_notif_push", "connector_down", NEEDS_YOU,
        "connector_down:{connector}:{status}"),
     _e("E40", "services/embedder_cache.py:_notify", "model_download", ACTIVITY,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from agent_friday.governance import action_gate
+from tests.desk_press_support import desk_headers      # an approve is a press on this PC's screen
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +21,7 @@ def _grants_home(tmp_path, monkeypatch):
 def test_create_list_and_revoke(client):
     r = client.post("/api/governance/grants", json={
         "scope": "sch_weekly_digest", "tools": ["create_calendar_event"],
-        "expires_in_seconds": 86400, "max_uses": 3})
+        "expires_in_seconds": 86400, "max_uses": 3}, headers=desk_headers())
     assert r.status_code == 201, r.get_data(as_text=True)
     g = r.get_json()["grant"]
     assert g["scope"] == "sch_weekly_digest" and g["uses_left"] == 3
@@ -39,7 +40,7 @@ def test_create_list_and_revoke(client):
     {"scope": "sch_x", "tools": ["run_command"], "expires_in_seconds": 60, "max_uses": 0},
 ])
 def test_a_grant_must_be_scoped_named_and_expiring(client, body):
-    assert client.post("/api/governance/grants", json=body).status_code == 400
+    assert client.post("/api/governance/grants", json=body, headers=desk_headers()).status_code == 400
 
 
 def test_outward_tools_are_what_the_gate_would_hold(client):

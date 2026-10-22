@@ -99,6 +99,10 @@ def keystore(tmp_path, monkeypatch):
     monkeypatch.setattr(ks, "_derive", lambda pw, salt: vc.derive_key(pw, salt, vc.FAST_PROFILE))
     monkeypatch.setattr(ks, "_passphrase", lambda: PASS)
     monkeypatch.setattr(osr, "_vault_passphrase", lambda: (PASS, "test"))
+    # The passphrase is saved where the next start reads it (A21 review: never lock with one
+    # that lives only in this process).
+    from agent_friday.services import vault_passphrase as vp
+    monkeypatch.setattr(vp, "durable_value", lambda: (PASS, "test home"))
     ks._reset_cache_for_tests()
     ks.create(wrap="none")
     blob = ks.encrypt(b"stored credential")
@@ -128,6 +132,15 @@ def test_wrap_needs_the_passphrase_friday_uses(client, keystore):
                     json={"wrap": "passphrase", "passphrase": "something else"},
                     headers=_token())
     assert r.status_code == 400
+    assert _doc()["wrap"] == "none"
+
+
+def test_wrap_is_refused_when_the_passphrase_is_not_saved_on_this_computer(client, keystore, monkeypatch):
+    from agent_friday.services import vault_passphrase as vp
+    monkeypatch.setattr(vp, "durable_value", lambda: ("", ""))
+    r = client.post("/api/security/keystore/wrap",
+                    json={"wrap": "passphrase", "passphrase": PASS}, headers=_token())
+    assert r.status_code == 400 and "next start" in r.get_json()["message"]
     assert _doc()["wrap"] == "none"
 
 
@@ -169,3 +182,14 @@ def test_changing_the_vault_passphrase_rewraps_the_keystore(keystore, monkeypatc
     monkeypatch.setattr(ks, "_passphrase", lambda: "a brand new passphrase")
     ks._reset_cache_for_tests()
     assert ks.decrypt(keystore) == b"stored credential"
+
+
+def test_locking_in_settings_settles_the_one_time_offer(client, keystore, monkeypatch, tmp_path):
+    """A21: deciding in Settings is the owner's answer; the one-time card is not shown after it."""
+    from agent_friday.services import keystore_offer as ko
+    monkeypatch.setattr(ko, "_path", lambda: tmp_path / "keystore_offer.json")
+    r = client.post("/api/security/keystore/wrap",
+                    json={"wrap": "passphrase", "passphrase": PASS}, headers=_token())
+    assert r.status_code == 200
+    assert ko.state()["decided"] == "protected" and ko.state()["via"] == "settings"
+    assert ko.push_card_if_pending() == "decided"

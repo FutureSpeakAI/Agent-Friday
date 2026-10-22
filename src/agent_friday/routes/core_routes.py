@@ -1457,9 +1457,17 @@ def api_onboarding_acks():
 
     data = request.get_json(silent=True) or {}
     from datetime import datetime, timezone
-    for k in ("collects_ack", "cloud_ack", "third_party_ack", "vault_skipped"):
+    for k in ("collects_ack", "cloud_ack", "third_party_ack", "vault_skipped", "keys_unprotected"):
         if k in data:
             state[k] = bool(data[k])
+    if data.get("vault_skipped") is True or data.get("keys_unprotected") is True:
+        # A21: setup asked and the owner chose not to lock the saved keys: no card later. Only
+        # during setup, and never over a decision already made.
+        try:
+            from agent_friday.services import keystore_offer as _ko
+            _ko.record_skip_during_setup("setup")
+        except Exception:
+            pass
     if data.get("updates_choice") in ("on", "off"):
         state["updates_choice"] = data["updates_choice"]
     if data.get("call_mode_choice") in ("automatic", "ask", "off"):
@@ -1894,6 +1902,16 @@ def api_settings():
             # question and its answer (services/local_voice_readiness), never by a settings write.
             new_settings = {k: v for k, v in new_settings.items()
                             if k not in ('voice_engine_choice', 'voice_switch_back')}
+        if isinstance(new_settings, dict) and (bool(new_settings.get('computer_control_enabled'))
+                                               or 'approvals_policy' in new_settings):
+            # Turning Computer Control on (Friday could then press a card on this PC's screen) and
+            # changing which kinds of action wait for approval are approvals in their own right:
+            # a press on this PC's own screen (services/desk_press), never a write from elsewhere.
+            from agent_friday.services import screen_click as _screen_click_ap
+            _refused_ap = _screen_click_ap.press_refusal(
+                request, "Change this with a press in Settings, on the computer Friday runs on.")
+            if _refused_ap is not None:
+                return _refused_ap
 
         # Laya's safe writes widen only on the owner's own click on this server's page: a
         # same-origin browser request that carries the page's rotating token (the check the
@@ -2103,6 +2121,13 @@ def api_mcp_servers():
     POST: replace it ({"servers": {...}}) and hot-reload the manager."""
     if request.method == 'GET':
         return jsonify({"status": "ok", "config": _load_mcp_servers()})
+    # A server entry is a command this PC runs as the owner (it could even open Friday's own
+    # page in a browser here and press a card): a press on this PC's own screen.
+    from agent_friday.services import screen_click as _screen_click_mcp
+    _refused_mcp = _screen_click_mcp.press_refusal(
+        request, "Change Friday's connectors with a press in Settings, on the computer Friday runs on.")
+    if _refused_mcp is not None:
+        return _refused_mcp
     try:
         data = request.get_json(silent=True) or {}
         cfg = data.get("config") or data
@@ -2119,6 +2144,38 @@ def api_mcp_servers():
         return api_error(e, "Couldn't update the MCP servers")
 
 
+@core_bp.route('/api/mcp/hosts', methods=['GET'])
+def api_mcp_hosts():
+    """The remote add-on server hosts Friday may reach (governance/mcp_hosts), without
+    addresses' paths or any keys: host, who allowed it, when, for which server."""
+    from agent_friday.governance import mcp_hosts
+    rows = [{"host": mcp_hosts.display(k), "key": k, "made_by": v.get("made_by"),
+             "made_at": v.get("made_at"), "server": v.get("server"), "verified": v.get("verified")}
+            for k, v in sorted(mcp_hosts.all_hosts().items())]
+    return jsonify({"status": "ok", "hosts": rows})
+
+
+@core_bp.route('/api/mcp/hosts/remove', methods=['POST'])
+def api_mcp_hosts_remove():
+    """Take a host off the list: the owner's press on Friday's page only."""
+    from agent_friday.governance import mcp_hosts
+    from agent_friday.services import screen_click as _sc
+    if not _sc.screen_session(request):
+        return jsonify({"status": "error", "message": "Nothing was changed: only your press "
+                        "on Friday's own page can change the add-on server host list."}), 403
+    key = str((request.get_json(silent=True) or {}).get("host") or "").strip()
+    if not key:
+        return jsonify({"status": "error", "message": "Say which host to remove."}), 400
+    try:
+        removed = mcp_hosts.remove(key, made_by="owner:ui")
+    except mcp_hosts.HostRefused:
+        return jsonify({"status": "error", "message": "Nothing was changed: the add-on server host "
+                        "list could not be read."}), 409
+    return jsonify({"status": "ok", "removed": bool(removed),
+                    "message": ("Friday will not reach %s any more." % mcp_hosts.display(key))
+                    if removed else "That host was not on the list."})
+
+
 @core_bp.route('/api/mcp/restart', methods=['POST'])
 def api_mcp_restart():
     """Restart a single MCP server and re-register its tools."""
@@ -2132,7 +2189,10 @@ def api_mcp_restart():
         if not name:
             return jsonify({"status": "error", "message": "name required"}), 400
         _mcp_unregister_server_tools(name)
-        ok = _MCP_MANAGER.restart(name, on_ready=_mcp_register_server_tools)
+        from agent_friday.services import screen_click as _sc
+        # Asking again about a host the owner declined takes the owner's press on screen.
+        ok = _MCP_MANAGER.restart(name, on_ready=_mcp_register_server_tools,
+                                  ask_again=_sc.screen_session(request))
         return jsonify({"status": "ok", "restarted": ok,
                         "agent_friday.server": _MCP_MANAGER.status().get(name, {})})
     except Exception as e:
@@ -2190,6 +2250,12 @@ def api_mcp_authorize_status():
 @core_bp.route('/api/mcp/reload', methods=['POST'])
 def api_mcp_reload():
     """Reload the whole MCP config from disk and restart all servers."""
+    # Starting every command on disk as the owner is a press on this PC's own screen.
+    from agent_friday.services import screen_click as _screen_click_rl
+    _refused_rl = _screen_click_rl.press_refusal(
+        request, "Reload connectors with a press in Settings, on the computer Friday runs on.")
+    if _refused_rl is not None:
+        return _refused_rl
     try:
         result = _mcp_reload()
         return jsonify({"status": "ok", "reload": result})

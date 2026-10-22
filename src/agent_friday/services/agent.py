@@ -8388,16 +8388,16 @@ def _tool_spawn_task(inp):
         'tier': _tier or None,
         'model': _model,
         'message': (f"Spawned background task '{name}'." + _tier_note
-                    + " The user can watch progress in the Task Tray "
-                      "(bottom-right) and you can tell them you've started "
-                      "working on it."),
+                    + " The user can watch progress on its task card in "
+                      "System (Activity lists it) and you can tell them you've "
+                      "started working on it."),
     })
 
 
 # Register the spawn_task tool
 CLAUDE_TOOLS.append({
     "name": "spawn_task",
-    "description": "Start a background research or analysis task that runs while the user does other work. Use it for anything that takes a while (deep research, multi-step analysis, a long brief); it runs autonomously and the result appears in the Task Tray.",
+    "description": "Start a background research or analysis task that runs while the user does other work. Use it for anything that takes a while (deep research, multi-step analysis, a long brief); it runs autonomously and the result appears on its task card in System.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -8624,7 +8624,7 @@ def _tool_deep_research(inp):
                     f"{c.budget.get('fetches_total')} pages on local models, keeps a "
                     f"sealed copy of every page it cites, and reports into this "
                     f"conversation when it is done. It survives a restart. Progress "
-                    f"is in the Task Tray."),
+                    f"is on its task card in System."),
     })
 
 
@@ -9569,7 +9569,29 @@ def _cc_rate_ok():
         if len(_CC_ACTION_TS) >= _CC_MAX_PER_SEC:
             return False
         _CC_ACTION_TS.append(now)
+    try:
+        # A click or key Friday makes on this PC's screen must never count as the owner's
+        # press on an approval card (services/desk_press refuses presses for a few seconds).
+        from agent_friday.services import desk_press as _dp_cc
+        _dp_cc.note_machine_input()
+    except Exception:
+        return False        # cannot mark it: do not act
     return True
+
+
+class _DeskMarkUnavailable(Exception):
+    """services/desk_press could not be told that Friday is about to drive the mouse or keyboard."""
+
+
+def _desk_machine_input():
+    """While Friday's own mouse or keyboard action runs, and for a few seconds after it ends, no
+    press on an approval card counts (services/desk_press.machine_input). Raises
+    _DeskMarkUnavailable when the mark cannot be made, so the caller does not act."""
+    try:
+        from agent_friday.services import desk_press as _dp_cc
+        return _dp_cc.machine_input()
+    except Exception as e:
+        raise _DeskMarkUnavailable(str(e))
 
 
 def _tool_move_mouse(inp):
@@ -9586,7 +9608,8 @@ def _tool_move_mouse(inp):
     x = int(round(int((inp or {}).get('x', 0)) * _CC_LAST_SHOT["scale_x"]))
     y = int(round(int((inp or {}).get('y', 0)) * _CC_LAST_SHOT["scale_y"]))
     try:
-        _pag.moveTo(x, y, duration=0.25)
+        with _desk_machine_input():
+            _pag.moveTo(x, y, duration=0.25)
         _log_context("cc_action", {"action": "move_mouse", "x": x, "y": y})
         return f"Mouse moved to ({x}, {y})."
     except Exception as e:
@@ -9609,7 +9632,8 @@ def _tool_click(inp):
     if button not in ('left', 'right', 'middle'):
         button = 'left'
     try:
-        _pag.click(x, y, button=button)
+        with _desk_machine_input():
+            _pag.click(x, y, button=button)
         _log_context("cc_action", {"action": "click", "x": x, "y": y, "button": button})
         return f"Clicked {button} at ({x}, {y})."
     except Exception as e:
@@ -9631,7 +9655,8 @@ def _tool_type_text(inp):
     if not _cc_rate_ok():
         return "Rate limited."
     try:
-        _pag.write(text, interval=0.03)
+        with _desk_machine_input():
+            _pag.write(text, interval=0.03)
         _log_context("cc_action", {"action": "type_text", "chars": len(text)})
         return f"Typed {len(text)} characters."
     except Exception as e:
@@ -9651,7 +9676,8 @@ def _tool_press_key(inp):
     if not _cc_rate_ok():
         return "Rate limited."
     try:
-        _pag.press(key)
+        with _desk_machine_input():
+            _pag.press(key)
         _log_context("cc_action", {"action": "press_key", "key": key})
         return f"Pressed key: {key}."
     except Exception as e:
@@ -9712,7 +9738,8 @@ def _tool_scroll(inp):
     amount = max(1, min(20, int((inp or {}).get('amount', 3))))
     clicks = -amount if direction == 'down' else amount
     try:
-        _pag.scroll(clicks)
+        with _desk_machine_input():
+            _pag.scroll(clicks)
         _log_context("cc_action", {"action": "scroll", "direction": direction, "amount": amount})
         return f"Scrolled {direction} {amount} step(s)."
     except Exception as e:
@@ -10656,6 +10683,19 @@ def _content_deeplink(tab: str, post_id=None) -> str:
     return f"{link}&post={post_id}" if post_id else link
 
 
+def _content_post_link(post_id=None) -> str:
+    """Where a post is shown now, as a link: the same place the publisher's
+    notices open (publisher._post_card_target), its card in Media, or Media's
+    "Needs you" list without a post. The Content workspace's old Queue tab
+    redirects to Media's board, so a link there lost the post. A workspace
+    tab (/w/media) turns its query into the workspace's nav target."""
+    from urllib.parse import urlencode
+    from agent_friday.services import publisher as _pub
+    target = _pub._post_card_target(post_id)
+    params = {k: v for k, v in target.items() if k != "workspace"}
+    return f"/w/{target['workspace']}" + (f"?{urlencode(params)}" if params else "")
+
+
 _WHEN_HOUR_WORDS = {"morning": 9, "noon": 12, "midday": 12, "afternoon": 15,
                     "evening": 18, "tonight": 20, "night": 20}
 _WHEN_WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
@@ -10772,6 +10812,9 @@ def _content_apply_schedule(post_id, when_text, optimal, tz_name):
         # behind this call) decides each target.
         from agent_friday.services import publisher as _pub
         res["approval"] = _pub.request_publish_approval(post_id)
+        # The job that sends armed posts: switched on when it is still in its
+        # seeded-off state, or a plain notice when something stops the post.
+        res["publisher"] = _pub.ensure_publisher_running(post_id)
         return res
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -10837,7 +10880,7 @@ def _tool_content_create_post(inp):
     optimal = bool(inp.get("optimal_time"))
     out = {"status": "ok", "post_id": post["id"], "post_status": "DRAFT",
            "platforms": platforms,
-           "queue_link": _content_deeplink("queue", post["id"])}
+           "queue_link": _content_post_link(post["id"])}
     if when or optimal:
         sched = _content_apply_schedule(post["id"], when, optimal,
                                         inp.get("timezone"))
@@ -10853,8 +10896,12 @@ def _tool_content_create_post(inp):
             out["approval"] = _content_approval_note(sched.get("approval"))
             out["message"] = (f"Scheduled for {sched.get('publish_at')} "
                               f"({out['time_source']}). {out['approval']} "
-                              f"Review or reschedule in the Queue: "
+                              f"Review or reschedule it on its card in Media: "
                               f"{out['queue_link']}")
+            notice = (sched.get("publisher") or {}).get("notice")
+            if notice:
+                out["publisher_notice"] = notice
+                out["message"] += " " + notice
         else:
             warnings.append(f"schedule failed: {sched.get('error')}")
             out["message"] = ("Draft created and composed, but not scheduled — "
@@ -10906,10 +10953,14 @@ def _tool_content_schedule_post(inp):
            "timezone": res.get("timezone"),
            "time_source": res.get("resolved"),
            "approval": approval,
-           "queue_link": _content_deeplink("queue", post_id),
+           "queue_link": _content_post_link(post_id),
            "message": (f"Scheduled for {res.get('publish_at')} "
-                       f"({res.get('resolved')}). {approval} Queue: "
-                       + _content_deeplink("queue", post_id))}
+                       f"({res.get('resolved')}). {approval} Its card in Media: "
+                       + _content_post_link(post_id))}
+    notice = (res.get("publisher") or {}).get("notice")
+    if notice:
+        out["publisher_notice"] = notice
+        out["message"] += " " + notice
     if warnings:
         out["warnings"] = warnings
     return json.dumps(out, default=str)
@@ -10936,12 +10987,13 @@ def _tool_content_post_status(inp):
                "publish_at": (p.get("schedule") or {}).get("publish_at"),
                "timezone": (p.get("schedule") or {}).get("timezone"),
                "targets": targets,
-               "queue_link": _content_deeplink("queue", post_id)}
+               "queue_link": _content_post_link(post_id)}
         held = sum(1 for t in targets if t["status"] == "HELD")
         if held:
             out["held_note"] = (f"{held} target(s) HELD — the egress gate "
                                 "flagged possibly-private content; the user "
-                                "must review and release them in the Queue.")
+                                "must review and release them on the post's "
+                                "card in Media (Publish anyway…).")
         return json.dumps(out, default=str)
     upcoming, held = [], []
     for st in ("SCHEDULED", "PUBLISHING", "HELD"):
@@ -10958,7 +11010,7 @@ def _tool_content_post_status(inp):
     recent = _cp.read_publish_log(limit=10).get("entries") or []
     return json.dumps({"status": "ok", "upcoming": upcoming[:15], "held": held,
                        "recent_history": recent,
-                       "queue_link": _content_deeplink("queue")}, default=str)
+                       "queue_link": _content_post_link()}, default=str)
 
 
 def _tool_content_repurpose(inp):
@@ -13139,7 +13191,7 @@ def _deny_awaiting_card(session_id):
         return None
     try:
         from agent_friday.services import approvals as _appr
-        _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat")
+        _appr.decide(aid, "deny", decided_by="owner", note="answered no in chat", source="typed")
     except Exception as e:
         _log.warning("could not deny confirmation card %s: %s", aid, e)
         return None
@@ -13484,6 +13536,30 @@ def _resolve_tool_name(name):
     return None, sorted(near)[:6]
 
 
+def _same_name_spelled_differently(name, resolved) -> bool:
+    """`site-action`, `Site.Action` and `site action` are the name `site_action`, not a guess at
+    another tool: only separators and case differ, so it is the tool the model named."""
+    norm = re.sub(r"[\s.\-]+", "_", str(name or "").strip().lower())
+    return norm == str(resolved or "")
+
+
+def _resolution_may_run(resolved, tool_input, session_ctx=None) -> bool:
+    """A misnamed call may run under the resolved name only when that tool is internal for the
+    arguments it would really run with (governance/action_gate.classify, after the job's own
+    send setting is applied). A connector (mcp_) tool never runs under a guessed name, and a
+    classification that cannot run is not a yes."""
+    if str(resolved or "").lower().startswith("mcp_"):
+        return False
+    try:
+        from agent_friday.governance import action_gate as _ag
+        args = dict(tool_input) if isinstance(tool_input, dict) else {}
+        args = _job_send_args(resolved, args, session_ctx)
+        cls, _why = _ag.classify(resolved, args, session_ctx)
+        return cls == _ag.INTERNAL
+    except Exception:
+        return False
+
+
 def _restore_placeholders(value, pii_lookup):
     """`value` with every [PII:kind:hash] tag from this turn put back.
 
@@ -13714,9 +13790,19 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
+        if (resolved and not _same_name_spelled_differently(name, resolved)
+                and not _resolution_may_run(resolved, tool_input, session_ctx)):
+            # BD-11a / NS-32.21-1: a misnamed call is never resolved to a tool that acts
+            # outside (sends, buys, writes where it is not internal, reaches someone). The model
+            # is told the exact name; that call then passes every gate as itself.
+            print(f"  [tools] '{name}' is not registered; '{resolved}' matches it but is not "
+                  f"internal, so it was not run under a guessed name")
+            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so nothing ran. The "
+                    f"closest tool is '{resolved}', which is never run under a guessed name. If "
+                    f"'{resolved}' is what you meant, call it by that exact name.")
         if resolved:
             print(f"  [tools] '{name}' is not registered; resolved to "
-                  f"'{resolved}' (unambiguous match)")
+                  f"'{resolved}' (unambiguous match, internal)")
             name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
         else:
             # A bare "Unknown tool: x" is a dead end: it says the call failed
@@ -15219,6 +15305,7 @@ except Exception as _mcp_imp_err:  # noqa: BLE001 — degrade gracefully if abse
 MCP_SERVERS_FILE = FRIDAY_DIR / "mcp_servers.json"
 
 _MCP_MANAGER = None                       # set by _mcp_boot()
+_MCP_BOOTED_ONCE = {"done": False}        # the host carry-over runs at the first boot, never at a reload
 _MCP_TOOL_MAP: dict[str, tuple] = {}      # registered tool name -> (server, raw tool)
 _MCP_SERVER_TOOLS: dict[str, list] = {}   # server name -> [registered tool names]
 _MCP_REG_LOCK = threading.Lock()
@@ -15477,9 +15564,11 @@ def _make_mcp_handler(server_name: str, tool_name: str):
         payload = _mcp_fit_envelope(server_name, tool_name, inp or {})
         # A desktop tool acts on whatever app is under the pointer or in
         # front NOW; the checkpoint looked a moment ago. Look again.
+        desktop = False
         try:
             from agent_friday.services import desktop_grants as _dg
-            if _dg.is_desktop_server(server_name):
+            desktop = bool(_dg.is_desktop_server(server_name))
+            if desktop:
                 ok, why = _dg.recheck(
                     f"mcp_{_mcp_sanitize(server_name)}_{_mcp_sanitize(tool_name)}",
                     payload)
@@ -15491,6 +15580,14 @@ def _make_mcp_handler(server_name: str, tool_name: str):
             ok, explanation = _mcp_gate_args(server_name, tool_name, payload)
             if not ok:
                 return explanation
+        if desktop:
+            # A desktop connector clicks and types on this PC's screen like Computer Control:
+            # while it acts, and for a few seconds after, no press on an approval card counts.
+            try:
+                with _desk_machine_input():
+                    return _MCP_MANAGER.call(server_name, tool_name, payload)
+            except _DeskMarkUnavailable:
+                return "Not done: Friday could not mark its own desktop action, so it did not act."
         return _MCP_MANAGER.call(server_name, tool_name, payload)
     return _handler
 
@@ -15659,6 +15756,10 @@ def _mcp_boot() -> None:
     global _MCP_MANAGER
     if _MCPManager is None:
         return
+    # The host carry-over may run only at the first boot, so the flag is set before any work:
+    # a reload after a failed first boot never adopts a server added since (governance/mcp_hosts).
+    first_boot = not _MCP_BOOTED_ONCE["done"]
+    _MCP_BOOTED_ONCE["done"] = True
     try:
         cfg = _load_mcp_servers()
         # Extension security: scan every configured server before launch and
@@ -15670,6 +15771,20 @@ def _mcp_boot() -> None:
             cfg = gate_mcp_config(cfg)
         except Exception as _sec_err:
             print(f"  [mcp] extension security scan skipped: {_sec_err}")
+        if first_boot:
+            try:
+                # Once ever, at the first start with the host list: hosts of remote servers
+                # configured now stay reachable (governance/mcp_hosts.carry_over_at_boot).
+                from agent_friday.governance import mcp_hosts as _mh
+                _mh.carry_over_at_boot(cfg)
+            except Exception as _mh_err:
+                _log.warning("MCP host carry-over failed: %s", type(_mh_err).__name__)
+        try:
+            # A host card approved after a restart is still applied (governance/mcp_hosts).
+            from agent_friday.services import mcp_host_cards as _mhc
+            _mhc.ensure_hook()
+        except Exception as _mh_err:
+            _log.warning("MCP host card hook not registered: %s", type(_mh_err).__name__)
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr
@@ -16784,7 +16899,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _tools_grew = True
 
                 # The tool the call will actually run (_execute_tool resolves a near-miss
-                # name the same way): the vault check and the search card judge that tool.
+                # name the same way, and only to an internal tool): the vault check and the search card judge that tool.
                 _pq_name = (tu.name if tu.name in CLAUDE_TOOL_HANDLERS
                             else (_resolve_tool_name(tu.name)[0] or tu.name))
                 # ── Zero-trust continuous vault authorization ──────────
@@ -17640,7 +17755,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 continue
 
             # The tool the call will actually run (_execute_tool resolves a near-miss
-            # name the same way): the vault check and the search card judge that tool.
+            # name the same way, and only to an internal tool): the vault check and the search card judge that tool.
             _pq_name = (tname if tname in CLAUDE_TOOL_HANDLERS
                         else (_resolve_tool_name(tname)[0] or tname))
             # ── Zero-trust continuous vault authorization. ──

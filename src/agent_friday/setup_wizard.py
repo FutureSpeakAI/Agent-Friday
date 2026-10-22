@@ -588,6 +588,13 @@ def _record_onboarding(**kv) -> None:
         os.replace(tmp, ONBOARDING_FILE)
     except Exception:
         pass
+    if kv.get("vault_skipped") is True:
+        # A21: setup asked; with no passphrase the saved keys stay unlocked, by the owner's choice.
+        try:
+            from agent_friday.services import keystore_offer as _ko
+            _ko.record_skip_during_setup("setup")
+        except Exception:
+            pass
 
 
 def _unanswered(existing: dict) -> list:
@@ -1184,6 +1191,36 @@ def _vault_keep_existing(total: int, existing: str, source: str,
     return existing
 
 
+def _offer_to_lock_saved_keys(pw: str) -> None:
+    """A21: the same passphrase locks the saved keys, by default; the owner can say no.
+    Never stops the wizard: the passphrase is already stored when this runs."""
+    try:
+        _ask_to_lock_saved_keys(pw)
+    except (KeyboardInterrupt, EOFError):
+        raise
+    except Exception as e:
+        console.print(f"  [yellow]Your saved keys were not locked ({type(e).__name__}). You can "
+                      "lock them later in Settings > Privacy & Data.[/yellow]\n")
+
+
+def _ask_to_lock_saved_keys(pw: str) -> None:
+    from agent_friday.services import keystore_offer as _ko
+    from agent_friday.services.onboarding_copy import VAULT_KEYS
+    console.print("  " + VAULT_KEYS.replace("\n", "\n  ") + "\n")
+    answer = Prompt.ask("  [cyan]Also lock my saved keys with this passphrase?[/cyan]",
+                        choices=["y", "n"], default="y")
+    if answer == "n":
+        _record_onboarding(keys_unprotected=True)
+        _ko.record("skipped", "setup")
+        console.print("  [dim]Your saved keys stay protected by this account's file permissions.\n"
+                      "  You can lock them later in Settings > Privacy & Data.[/dim]\n")
+        return
+    ok, why = _ko.protect_keystore(pw)
+    _ko.record("protected" if ok else "failed", "setup", why)
+    console.print("  [green]Saved keys locked with your passphrase.[/green]\n" if ok
+                  else "  [yellow]Not locked: " + why + ".[/yellow]\n")
+
+
 def _store_passphrase_and_say(pw: str) -> list:
     """Store the vault passphrase in its durable homes and say which took."""
     try:
@@ -1362,6 +1399,7 @@ def step_vault_password(total: int, existing: str, step: int = 2) -> str:
         console.print("  [green]Vault encryption enabled.[/green]  "
                       f"[dim]Passphrase stored in: {', '.join(written)}.[/dim]\n")
         _record_onboarding(vault_skipped=False)
+        _offer_to_lock_saved_keys(pw)
     elif getattr(_vp, "LAST_STORE_REFUSAL", ""):
         console.print("  [red]Not stored:[/red] [dim]" + _vp.LAST_STORE_REFUSAL + ".[/dim]\n")
     else:

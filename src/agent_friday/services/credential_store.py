@@ -1,28 +1,27 @@
-﻿"""
+"""
 credential_store — encryption-at-rest for OAuth tokens and other secrets.
 
 Multi-account Google support stores live access/refresh tokens on disk. Plaintext
 JSON (the way the legacy single-account `google_token.json` is written) is the
 exact thing an attacker who gets read access to the home directory would harvest
 first. This module makes that impossible by protecting every credential blob with
-the strongest mechanism available on the host, picked automatically:
+Friday's own keystore (services/keystore.py), and nothing else:
 
-  1. **Vault key** — FRIDAY_PASSWORD → Argon2id → AES-256-GCM. This is the *same*
-     key the Sovereign Vault derives (vault_crypto.py), so credentials are treated
-     as TIER_3 sensitive material. Preferred whenever FRIDAY_PASSWORD is set.
-  2. **Windows DPAPI** — CryptProtectData (per-user) via ctypes when no password
-     is set. No extra dependency; the blob is bound to the OS login account and is
-     unreadable by other users or if copied to another machine.
-  3. **Nothing.** There is no plaintext tier. When none of the above can encrypt
-     a secret, `protect()` raises `CredentialProtectionUnavailable`, an error
-     written for the person that says what happened and how to fix it, and
-     nothing is written to disk (a warning on stderr that nobody reads is not a
-     safeguard). Under FRIDAY_OS_MODE (the sealed kiosk image) the same refusal
-     carries the kiosk's own wording.
-
-Reading is unchanged: `unprotect()` still accepts a blob with no envelope (a
-credential an earlier version wrote in plain text) so the keystore migration can
-read it and rewrite it encrypted.
+  * **Writes: the keystore or nothing.** Every new secret is encrypted with the
+    keystore's root key (AES-256-GCM). When the keystore cannot be used, for any
+    reason (locked, its file unreadable or malformed, the cipher library
+    missing), `protect()` fails closed: nothing is written, and the error says
+    what happened and what to do. It never drops to another key. The older
+    mechanisms (a key derived from the vault passphrase, Windows DPAPI) wrote
+    each secret under a key that depended on how the process started, which is
+    the defect the keystore exists to remove, and a write that quietly changes
+    key is a secret the next process cannot read. There is no plaintext tier on
+    any host; under FRIDAY_OS_MODE (the sealed kiosk image) the refusal carries
+    the kiosk's own wording.
+  * **Reads: every generation.** `unprotect()` still opens blobs the older
+    mechanisms wrote (vault key, DPAPI) and a blob with no envelope (a credential
+    an earlier version wrote in plain text), so the keystore migration can read
+    them and rewrite them under the keystore.
 
 Every blob is self-describing, so `unprotect()` always knows how it was written:
     FRIDAYVAULT\\x01 ...   -> vault AES-256-GCM   (vault_crypto magic)
@@ -67,11 +66,33 @@ _WARNED_PLAINTEXT = False   # kept for callers and tests that reset it; nothing 
 
 _PLAIN_REFUSAL = (
     "Friday could not lock this secret away, so it did not save it. Nothing was written to disk. "
-    "Why: nothing on this computer is available to encrypt it right now (Friday's own key store "
-    "could not be opened, no vault passphrase is set, and the system has no built-in protection "
-    "to use). To fix it, set a vault passphrase (run `friday vault-setup`, or set FRIDAY_PASSWORD) "
-    "and make sure Friday's data folder can be written to, then try again."
+    "Why: Friday's own key store (security/keystore.json in Friday's data folder) could not be "
+    "used: {why}. Friday does not save a secret under any other key instead. To fix it, make sure "
+    "Friday's data folder can be read and written, and if you protected the key store with a "
+    "passphrase, unlock it (Settings > Privacy & Data > Security); then try again. "
+    "`friday doctor` checks the key store."
 )
+
+#: Why the keystore could not be used, in words for the person (never its exception text).
+_KEYSTORE_WHY = {
+    "OSError": "its file could not be read or written",
+    "PermissionError": "Friday is not allowed to read or write its file",
+    "FileNotFoundError": "its folder is missing",
+}
+
+
+def _refusal(e: BaseException) -> "CredentialProtectionUnavailable":
+    """The fail-closed refusal for a keystore that could not be used (anything but locked)."""
+    why = _KEYSTORE_WHY.get(type(e).__name__, "its file is not one Friday can use")
+    detail = ("keystore unavailable (%s); the credential was refused, not written under "
+              "another key" % type(e).__name__)
+    if is_os_mode():
+        return CredentialProtectionUnavailable(
+            _PLAIN_REFUSAL.format(why=why), detail=(
+                "refusing to write a credential under FRIDAY_OS_MODE=1: Friday's key store could "
+                "not be used (%s); nothing was written as PLAINTEXT or under any other key."
+                % type(e).__name__))
+    return CredentialProtectionUnavailable(_PLAIN_REFUSAL.format(why=why), detail=detail)
 
 
 class CredentialProtectionUnavailable(UserFacingRuntimeError):
@@ -133,7 +154,8 @@ def _vault_key() -> bytes | None:
             tmp.replace(_VAULT_CONFIG_FILE)
         _VAULT_KEY = _vc.derive_key(pw, bytes.fromhex(salt_hex))
     except Exception as e:  # pragma: no cover - defensive
-        print(f"[credstore] vault key derivation failed ({e}); trying DPAPI/plaintext.")
+        print(f"[credstore] vault key derivation failed ({type(e).__name__}); blobs written "
+              f"under the vault key cannot be read until it is.")
         _VAULT_KEY = None
     return _VAULT_KEY
 
@@ -151,18 +173,18 @@ from agent_friday.services.vault_passphrase import (  # noqa: E402
 
 
 def protection_method() -> str:
-    """The mechanism that will be used right now."""
+    """What a write would do right now: "keystore" (encrypted with Friday's own key store),
+    "locked" (the key store is wrapped and no passphrase opens it: writes are refused until it
+    is unlocked) or "unavailable" (the key store cannot be used: writes are refused). Never an
+    older tier: `protect` no longer writes with one."""
+    from agent_friday.services import keystore as _ks
     try:
-        from agent_friday.services import keystore as _ks
         _ks.root_key()
         return "keystore"
+    except _ks.KeystoreLocked:
+        return "locked"
     except Exception:
-        pass
-    if _vault_key() is not None:
-        return "vault"
-    if _dpapi_available():
-        return "dpapi"
-    return "plaintext"
+        return "unavailable"
 
 
 def protect(data: bytes) -> tuple[bytes, str]:
@@ -179,11 +201,13 @@ def protect(data: bytes) -> tuple[bytes, str]:
     a store that picked a different key depending on how the process started
     and then reported the result as the user's Google account being revoked.
 
-    The keystore raising is not a reason to drop a tier. If it is locked, the
-    honest outcome is a failure the user can act on, not a credential written
-    under a weaker scheme they never chose.
+    The keystore raising is not a reason to drop a tier, whatever the reason
+    (BD-08: fail closed on keystore errors). Locked, the honest outcome is a
+    failure the user can act on; unreadable or malformed, the same: nothing is
+    written, and the refusal says why in words. Writing under the vault key or
+    DPAPI instead would put the secret under a key the next process may not
+    derive, which is the original defect.
     """
-    global _WARNED_PLAINTEXT
     from agent_friday.services import keystore as _ks
     try:
         return _ks.encrypt(data), "keystore"
@@ -193,29 +217,9 @@ def protect(data: bytes) -> tuple[bytes, str]:
         # the original bug with the sign flipped.
         raise
     except Exception as e:
-        print("[credstore] keystore unavailable (%s: %s); falling back to the "
-              "legacy mechanism for this write." % (type(e).__name__, e),
-              file=sys.stderr)
-    key = _vault_key()
-    if key is not None:
-        return _vc.encrypt(data, key), "vault"
-    dp = _dpapi(data, encrypt=True)
-    if dp is not None:
-        return _DPAPI_MAGIC + dp, "dpapi"
-    if is_os_mode():
-        # The sealed kiosk image has no interactive operator and no DPAPI: say so in its own words.
-        raise CredentialProtectionUnavailable(
-            _PLAIN_REFUSAL, detail=(
-                "refusing to write a credential as PLAINTEXT under FRIDAY_OS_MODE=1: "
-                "no FRIDAY_PASSWORD (vault key) is set and DPAPI is unavailable on "
-                "this host (DPAPI is Windows-only; there is no equivalent on the "
-                "Friday Linux kiosk image). Set FRIDAY_PASSWORD or "
-                "FRIDAY_VAULT_PASSPHRASE so this credential can be encrypted before "
-                "it touches disk. Nothing was written."))
-    # No plaintext tier on any host: refuse, visibly, and offer the fix.
-    print("[credstore] REFUSED: no way to encrypt a credential on this host; nothing was written. "
-          "Set a vault passphrase (`friday vault-setup`).", file=sys.stderr)
-    raise CredentialProtectionUnavailable(_PLAIN_REFUSAL)
+        refusal = _refusal(e)
+        print("[credstore] REFUSED: %s; nothing was written." % refusal, file=sys.stderr)
+        raise refusal from None
 
 
 def looks_protected(blob: bytes) -> str | None:
@@ -295,9 +299,123 @@ def write_secret(path: Path, data: bytes, *, harden: bool = True) -> str:
     return method
 
 
-def read_secret(path: Path) -> bytes:
-    """Read and decrypt a secret written by write_secret()."""
-    return unprotect(Path(path).read_bytes())
+def read_secret(path: Path, *, use: bool = True) -> bytes:
+    """Read and decrypt a secret written by write_secret(). A successful read is noted as
+    the credential's last use (its name and the time, never its value: `note_use`); a read
+    that is not a use (a status check, the boot-time load, a re-encryption) passes use=False."""
+    out = unprotect(Path(path).read_bytes())
+    if use:
+        note_use(path)
+    return out
+
+
+# ── when each credential was last used (BD-08, NS-26.5-4) ────────────────────
+# Names and times only. Kept in security/credential_use.json, written at most once every
+# _USE_FLUSH_S per credential, so a key read on every model call costs one disk write per
+# ten minutes, not one per call.
+_USE_FILE_NAME = "credential_use.json"
+_USE_FLUSH_S = 600
+_USE: dict = {}
+_USE_FLUSHED: dict = {}
+
+
+def _credential_name(path) -> str:
+    """A credential's name: its path under Friday's data folder, with forward slashes."""
+    # String work only (no filesystem lookup): the name is a label, never opened.
+    here = os.path.abspath(os.fspath(path))
+    home = os.fspath(core.FRIDAY_DIR)
+    # the folder as written and as resolved (a path a caller resolved, e.g. Windows short names)
+    for base in (os.path.abspath(home), os.path.realpath(home)):
+        try:
+            rel = os.path.relpath(here, base)
+        except Exception:
+            continue
+        if not (rel.startswith("..") or os.path.isabs(rel)):
+            return rel.replace(os.sep, "/")
+    return os.path.basename(here)
+
+
+def _use_file() -> Path:
+    return _SECURITY_DIR / _USE_FILE_NAME
+
+
+def _read_use() -> dict:
+    try:
+        doc = json.loads(_use_file().read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in (doc.get("last_used") or {}).items()}
+    except Exception:
+        return {}
+
+
+_USE_LOCK = __import__("threading").Lock()
+
+
+def note_use(path) -> None:
+    """Record that the credential at `path` was just used. Never raises; never the value.
+    Only files that are credentials count (not a health-check canary or other sealed data)."""
+    try:
+        import time as _t
+        name = _credential_name(path)
+        if _credential_kind(name) == "credential":
+            return
+        _USE[name] = _now_iso()
+        now = _t.monotonic()
+        with _USE_LOCK:
+            if now - _USE_FLUSHED.get(name, -1e9) < _USE_FLUSH_S:
+                return
+            doc = {"last_used": {**_read_use(), **_USE}}
+            _SECURITY_DIR.mkdir(parents=True, exist_ok=True)
+            # one writer at a time in this process, and a name of its own across processes
+            tmp = _use_file().with_name("%s.%d.tmp" % (_USE_FILE_NAME, os.getpid()))
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True), encoding="utf-8")
+            tmp.replace(_use_file())
+            _USE_FLUSHED[name] = now
+    except Exception:
+        pass
+
+
+def _credential_kind(name: str) -> str:
+    if name.startswith("providers/keys/"):
+        return "AI provider key"
+    if name.startswith("google_accounts/"):
+        return "Google account sign-in"
+    if name.startswith("mcp_oauth/"):
+        return "tool server sign-in"
+    if name.startswith("platforms/"):
+        return "publishing platform sign-in"
+    if name == "google_token.json":
+        return "Google sign-in (older format)"
+    return "credential"
+
+
+def inventory() -> list:
+    """Every credential Friday holds, without a single value: what it is, whose it is, how it
+    is protected, when it was last set or changed, and when it was last used. For Settings >
+    Privacy & Data > Security (GET /api/security/credentials)."""
+    used = {**_read_use(), **_USE}
+    sets = {}
+    for e in read_audit(category="provider_key", limit=5000):
+        if e.get("event") == "set" and e.get("provider"):
+            sets["providers/keys/%s.key" % e["provider"]] = e.get("ts")
+    out = []
+    for p in _credential_files():
+        name = _credential_name(p)
+        try:
+            with open(p, "rb") as fh:
+                blob = fh.read(64)                 # the envelope's mark is all that is needed
+            st = p.stat()
+        except OSError:
+            continue
+        changed = datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()
+        out.append({
+            "name": name,
+            "kind": _credential_kind(name),
+            "owner": "you",
+            "protection": looks_protected(blob) or "not encrypted (written by an older version)",
+            "last_changed": sets.get(name) or changed,
+            "last_used": used.get(name),
+        })
+    return out
 
 
 def harden_permissions(path: Path) -> None:
@@ -601,7 +719,10 @@ _PROVIDER_KEYS_DIR = core.FRIDAY_DIR / "providers" / "keys"
 
 def _provider_key_path(provider: str) -> Path:
     safe = "".join(c for c in str(provider) if c.isalnum() or c in "-_") or "provider"
-    return _PROVIDER_KEYS_DIR / f"{safe}.key"
+    # contained() proves the joined path stays inside the keys folder (and is the check the code
+    # scanner recognises): the name filter above already makes escaping impossible.
+    from agent_friday.paths import contained as _contained
+    return _contained(_PROVIDER_KEYS_DIR, f"{safe}.key")
 
 
 def set_provider_key(provider: str, key: str) -> str:
@@ -612,13 +733,14 @@ def set_provider_key(provider: str, key: str) -> str:
     return method
 
 
-def get_provider_key(provider: str) -> str | None:
-    """Decrypt and return a stored provider key, or None if absent/unreadable."""
+def get_provider_key(provider: str, *, use: bool = True) -> str | None:
+    """Decrypt and return a stored provider key, or None if absent/unreadable. `use=False` for a
+    read that is not a use of the key (the boot-time load, a re-encryption)."""
     path = _provider_key_path(provider)
     if not path.exists():
         return None
     try:
-        return read_secret(path).decode("utf-8")
+        return read_secret(path, use=use).decode("utf-8")
     except Exception:
         return None
 
@@ -640,7 +762,7 @@ def provider_key_status(provider: str) -> str:
     if not path.exists():
         return "missing"
     try:
-        read_secret(path)
+        unprotect(path.read_bytes())       # a status check is not a use (read_secret notes use)
         return "connected"
     except Exception:
         return "present_but_unreadable"
@@ -749,7 +871,7 @@ def _verify_reencrypted_blob(path: Path, expected_sha256: str) -> bool:
         f"sys.path.insert(0, {src_dir!r})\n"
         "from agent_friday.services.credential_store import read_secret\n"
         "try:\n"
-        "    val = read_secret(sys.argv[1])\n"
+        "    val = read_secret(sys.argv[1], use=False)\n"
         "    print(hashlib.sha256(val).hexdigest())\n"
         "except Exception:\n"
         "    print('VERIFY_FAILED')\n"
@@ -830,9 +952,20 @@ def reencrypt_stale_provider_keys(names: list[str] | None = None) -> dict:
 
     for name in targets:
         real_path = _provider_key_path(name)
+        try:
+            # A key already under Friday's own keystore is where it should be: rewriting it
+            # under the vault key would move it back to the key-per-process scheme the keystore
+            # replaced (BD-08: the keystore is the only write tier).
+            from agent_friday.paths import contained as _contained
+            held = _contained(_PROVIDER_KEYS_DIR, real_path.name)     # only inside the keys folder
+            if held.exists() and looks_protected(held.read_bytes()) == "keystore":
+                result["unchanged"].append(name)
+                continue
+        except (OSError, ValueError):
+            pass
         old_plain = None
         try:
-            old_plain = get_provider_key(name)
+            old_plain = get_provider_key(name, use=False)
         except Exception:
             pass
         if old_plain is None:
@@ -975,7 +1108,7 @@ def bootstrap_provider_env_detail() -> dict:
         candidates += 1
         if os.environ.get(env_key) and not _came_from_a_launch_script(env_key):
             continue
-        val = get_provider_key(provider)
+        val = get_provider_key(provider, use=False)
         if val:
             os.environ[env_key] = val
             loaded += 1
