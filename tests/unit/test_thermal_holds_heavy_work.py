@@ -59,7 +59,7 @@ def test_library_indexing_waits_while_the_gpu_is_too_hot(gpu, monkeypatch):
     monkeypatch.setattr(runtime, "_on_battery", lambda: False)
     gpu(90)
     ok, why = runtime.machine_is_free()
-    assert ok is False and "GPU too hot" in why and "90" in why
+    assert ok is False and "GPU is too hot" in why and "90" in why
     gpu(60)
     assert runtime.machine_is_free() == (True, "")
 
@@ -80,6 +80,8 @@ def test_it_stays_hot_until_it_is_well_under_the_line(gpu, monkeypatch):
     assert runtime.machine_is_free()[0] is False
     gpu(82)
     assert runtime.machine_is_free()[0] is False, "cooling but not cool: still waits"
+    gpu(80)
+    assert runtime.machine_is_free()[0] is False, "it waits until it is UNDER 80"
     gpu(79)
     assert runtime.machine_is_free()[0] is True
 
@@ -90,11 +92,36 @@ def test_the_practice_night_run_waits_and_says_why(gpu, monkeypatch):
     monkeypatch.setattr(trials, "night_seconds_used", lambda: 0.0)
     monkeypatch.setattr(trial_job, "_gate_blocks", lambda: "")
     gpu(95)
-    assert "GPU too hot" in skillopt_evaluator.night_gate()
+    assert "GPU is too hot" in skillopt_evaluator.night_gate()
 
     class _Watcher:
-        tripped = threading.Event()
+        def __init__(self):
+            self.tripped = threading.Event()
     assert trial_job._stop_now(_Watcher()) is True, "a running trial stops before its next episode"
     gpu(50)
     assert skillopt_evaluator.night_gate() == ""
     assert trial_job._stop_now(_Watcher()) is False
+
+
+def test_the_trial_run_is_skipped_with_the_reason(gpu, monkeypatch):
+    from agent_friday.services import r0_nightly, trial_job, trials
+    monkeypatch.setattr(trials, "candidates", lambda status: [{"id": "c1"}] if status == "queued" else [])
+    monkeypatch.setattr(r0_nightly, "ensure_scheduled", lambda: None)
+    monkeypatch.setattr(r0_nightly, "due", lambda: False)
+    monkeypatch.setattr(trials, "on_ac_power", lambda: True)
+    monkeypatch.setattr(trials, "night_seconds_used", lambda: 0.0)
+    monkeypatch.setattr(trials, "weekly_digest", lambda: None)
+    gpu(92)
+    out = trial_job.run_pending_trials()
+    assert "GPU is too hot" in out.get("skipped", ""), out
+    assert out["ran"] == []
+
+
+def test_lays_refit_waits_and_says_why(gpu, monkeypatch):
+    from agent_friday.services import laya_personal_fit as fit
+    monkeypatch.setattr(fit.lp, "learning_state", lambda profile=None: {"on": True, "why": ""})
+    monkeypatch.setattr(fit.store, "vault_open", lambda: True)
+    monkeypatch.setattr(fit, "on_ac_override", lambda: True)
+    monkeypatch.setattr(fit, "presence_override", lambda: True)
+    gpu(90)
+    assert "GPU is too hot" in fit.blocked_reason("default")
