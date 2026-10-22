@@ -121,8 +121,9 @@ def test_channels_the_log_does_not_see_yet_are_named(home):
     sends since BD-15 P4; what is still outside the list is named."""
     pm = _map()
     keys = {n["key"] for n in pm.view()["left"]["not_recorded"]}
-    assert {"messaging", "browser", "connector_reads"} <= keys
-    assert not {"mail", "mcp", "connectors", "publishing", "fetches"} & keys
+    assert {"browser", "fetch_hops", "connector_reads"} <= keys
+    assert not {"mail", "mcp", "connectors", "publishing", "fetches", "messaging", "mailbox", "feeds",
+                "other_sends"} & keys
 
 
 def test_every_store_says_where_it_lives_how_long_and_how_to_remove_it(home):
