@@ -1128,6 +1128,12 @@ def _archived_entries(key: bytes, kinds: Optional[Iterable[str]] = None) -> list
             break
     if first is not None and tail and (first.get("seq") != tail[0] + 1 or first.get("prev") != tail[1]):
         raise LedgerError("the live record does not continue from the archive")
+    try:
+        anchor = anchor_get()[0]
+    except Exception:
+        raise LedgerError("the ledger's anchor could not be read")
+    if anchor and anchor[0] > max(_read_tip_locked()[0], tail[0] if tail else 0):
+        raise LedgerError("entries are missing: the ledger is behind the record kept outside the data folder")
     want = frozenset(kinds) if kinds else None
     rows_cache = _STATE.setdefault("arch_rows", {})
     out = []
@@ -1313,8 +1319,7 @@ def archive_old(*, now: Optional[float] = None, days: Optional[int] = None) -> d
 
 
 def _acked_flags(report: dict) -> set:
-    return {tuple(_ack_key(p)) for p in report.get("problems", [])
-            if p.get("acknowledged") and p.get("segment") == "entry"}
+    return set(_STATE.get("acked_flag_keys") or ())
 
 
 def _next_first(after: Path) -> Optional[dict]:
@@ -1688,6 +1693,8 @@ def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
              if isinstance(a, dict) and isinstance(a.get("key"), list)}
     for pr in problems:
         pr["acknowledged"] = list(_ack_key(pr)) in [list(k) for k in acked]
+    _STATE["acked_flag_keys"] = {tuple(_ack_key(pr)) for pr in problems
+                                 if pr["acknowledged"] and pr.get("segment") == "entry"}
     open_problems = [pr for pr in problems if not pr["acknowledged"]]
     return {
         "records": total, "last_seq": last_seq, "tip": last_hash,
@@ -1766,8 +1773,8 @@ def verify(*, force: bool = True, migrate: bool = True) -> dict:
             return dict(cached[1])
         # a forced or periodic full check re-reads sealed segments too: an
         # edit that put back a segment's size and mtime is caught here
-        _STATE["seg_cache"] = {}
         if force or not fresh:
+            _STATE["seg_cache"] = {}
             _STATE["arch_cache"] = {}
             _STATE["arch_rows"] = {}
     try:
@@ -1950,7 +1957,7 @@ def _migration_state_locked() -> dict:
     done: set = set()
     complete = False
     sources: list = []
-    if _archive_trace() or _chain_start_missing():
+    if _archive_trace() or _chain_start_missing() or not _chain_is_genuine():
         # an archive exists only once old files were dealt with (archive_old
         # waits for them), and a chain whose start is gone was not started by
         # this switch: either way the switch is over, and an old file that
@@ -1999,6 +2006,32 @@ def _first_on_disk() -> Optional[dict]:
         except OSError:
             continue
     return None
+
+
+def _chain_is_genuine() -> bool:
+    """The chain on disk is this device's own, whole and anchored: its first
+    entry is signed, seq 1 from the genesis link, and a full check finds no
+    open break but an unfinished last write. Only then may an import that
+    stopped halfway continue; anything else ends the switch (quarantine)."""
+    try:
+        key = _key()
+    except Exception:
+        return False
+    first = _first_on_disk()
+    if first is None:
+        return True
+    if not (entry_ok(first, key) and first.get("seq") == 1 and first.get("prev") == GENESIS):
+        return False
+    rep = _verify_files(key)
+    for p in rep.get("problems", []):
+        if p.get("acknowledged"):
+            continue
+        if p.get("reason") == "an unfinished write" and p.get("segment") == LIVE_NAME:
+            continue
+        if p.get("segment") == "entry" and "unfinished write was set aside" in str(p.get("reason")):
+            continue
+        return False
+    return True
 
 
 def _chain_start_missing() -> bool:

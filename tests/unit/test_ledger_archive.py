@@ -429,3 +429,106 @@ def test_an_acknowledged_flag_does_not_stop_archiving_for_good():
     L.append("activity", {"kind": "x"})
     assert L.archive_old(now=_later(), days=730)["archived"] == 1
     assert L.verify()["ok"]
+
+
+def _plant_old_receipt():
+    from agent_friday.paths import friday_home
+    planted = friday_home() / "actions" / "receipts.jsonl"
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text(json.dumps({"receipt_id": "rcpt_evil", "status": "complete"}) + "\n",
+                       encoding="utf-8")
+
+
+def _evil_read():
+    L.reset_caches()
+    try:
+        L.migrate_legacy()
+    except Exception:
+        pass
+    return [e for e in L.entries(["action"]) if (e.get("rec") or {}).get("receipt_id") == "rcpt_evil"]
+
+
+def test_a_forged_first_line_does_not_reopen_the_switch_after_the_archive_is_removed():
+    """Review round 4 (A): delete the archive and plant a seq-1 line."""
+    L.migrate_legacy()
+    _old_and_new()
+    L.archive_old(now=_later(), days=730)
+    shutil.rmtree(L.archive_dir())
+    seg = L.ledger_dir() / L.SEGMENTS_DIR / "actions-000000.jsonl"
+    seg.write_text(json.dumps({"seq": 1, "prev": "0" * 64, "kind": "x", "rec": {}}) + "\n", encoding="utf-8")
+    _plant_old_receipt()
+    assert not _evil_read()
+
+
+def test_a_forged_line_in_an_emptied_anchored_ledger_does_not_reopen_the_switch():
+    """Review round 4 (A2)."""
+    L.migrate_legacy()
+    L.append("decision", {"tool": "x"}, durable=True)
+    shutil.rmtree(L.ledger_dir())
+    L.ledger_dir().mkdir(parents=True)
+    L.live_path().write_text(json.dumps({"seq": 1, "prev": "0" * 64, "kind": "x", "rec": {}}) + "\n",
+                             encoding="utf-8")
+    _plant_old_receipt()
+    assert not _evil_read()
+
+
+def test_cutting_the_record_back_before_the_switch_ended_does_not_reopen_it():
+    """Review round 4 (B): no archive needed; cut the live file back to the
+    rows imported before migration_complete."""
+    from agent_friday.paths import friday_home
+    old = friday_home() / "actions" / "receipts.jsonl"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_text("".join(json.dumps({"receipt_id": "r%d" % i, "status": "complete"}) + "\n"
+                           for i in range(2)), encoding="utf-8")
+    L.migrate_legacy()
+    L.append("decision", {"tool": "x"}, durable=True)
+    lines = L.live_path().read_text(encoding="utf-8").splitlines()
+    assert any(json.loads(ln)["kind"] == "migration_complete" for ln in lines)
+    keep = [ln for ln in lines if json.loads(ln)["kind"] == "action"]
+    assert len(keep) == 2
+    L.live_path().write_text("\n".join(keep) + ("\n" if keep else ""), encoding="utf-8")
+    _plant_old_receipt()
+    assert not _evil_read()
+
+
+def test_a_genuine_import_that_stopped_halfway_still_continues():
+    from agent_friday.paths import friday_home
+    rows = [{"receipt_id": "r%d" % i, "status": "complete"} for i in range(5)]
+    old = friday_home() / "actions" / "receipts.jsonl"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    real = L._set_aside
+    def stop(*a, **k):
+        raise OSError("power cut before the file was set aside")
+    L._set_aside = stop
+    try:
+        with pytest.raises(OSError):
+            L.migrate_legacy()
+    finally:
+        L._set_aside = real
+    L.reset_caches()
+    L.migrate_legacy()
+    got = sorted((e["rec"] or {}).get("receipt_id") for e in L.entries(["action"]))
+    assert got == ["r0", "r1", "r2", "r3", "r4"]
+    assert not any(e["kind"] == "legacy_reappeared" for e in L.entries())
+
+
+def test_strict_readers_refuse_a_rolled_back_list_with_no_live_record_left():
+    """Review round 4 (C)."""
+    for i in range(3):
+        L.append("send_grant", {"event": "revoked", "grant_id": "g%d" % i}, durable=True)
+        _seal()
+    L.append("activity", {"kind": "x"}, durable=True)
+    L.archive_old(now=_later(), days=730)
+    m = json.loads(_manifest().read_text(encoding="utf-8"))
+    body = {"v": 1, "ranges": m["ranges"][:1], "kid": m["kid"]}
+    body["sig"] = L._manifest_sig(L._key(), dict(body))
+    _manifest().write_text(json.dumps(body), encoding="utf-8")
+    for r in m["ranges"][1:]:
+        (L.archive_dir() / (r["name"] + ".enc")).unlink()
+    for p in list((L.ledger_dir() / L.SEGMENTS_DIR).glob("*.jsonl")) + [L.live_path(), L.head_path()]:
+        if p.exists():
+            p.unlink()
+    L.reset_caches()
+    with pytest.raises(L.LedgerError):
+        L.entries(["send_grant"], strict=True)

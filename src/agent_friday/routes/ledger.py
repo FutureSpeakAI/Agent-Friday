@@ -62,6 +62,8 @@ KIND_LABELS = {
     "setting_changed": "You changed a ledger setting",
 }
 
+_LAST_FULL = [0.0]
+
 #: The most entries one export carries (narrow it with the filters).
 EXPORT_MAX = 200000
 
@@ -275,9 +277,13 @@ def api_ledger():
 def api_ledger_verify():
     try:
         from agent_friday.core import _is_local_request
-        # a full check opens every archived file: on this PC at once, from
-        # elsewhere the last result (at most FULL_RECHECK_S old)
-        return jsonify({"status": "ok", "report": action_ledger.verify(force=_is_local_request())})
+        # a full check opens every archived file: on this PC at most every
+        # 30 seconds, from elsewhere the last result (at most FULL_RECHECK_S old)
+        now = time.time()
+        force = _is_local_request() and now - _LAST_FULL[0] >= 30.0
+        if force:
+            _LAST_FULL[0] = now
+        return jsonify({"status": "ok", "report": action_ledger.verify(force=force)})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The action ledger could not be checked.")
 
