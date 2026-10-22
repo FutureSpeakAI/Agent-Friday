@@ -62,11 +62,34 @@ def test_a_misnamed_internal_tool_may_still_resolve(probes):
     assert agent._resolution_may_run("zz_sender", {}) is False
 
 
+def _a_real_outward_tool_and_a_guess_at_its_name():
+    """A registered tool that acts outside, and a name that resolves to it only by guessing
+    (an invented verb in front, dots for underscores). Found from the live registry, so the test
+    does not depend on which other tools happen to share a name."""
+    for name in sorted(agent.CLAUDE_TOOL_HANDLERS):
+        if name.startswith("mcp_") or "_" not in name:
+            continue
+        try:
+            cls, _why = ag.classify(name, {}, None)
+        except Exception:
+            continue
+        if cls == ag.INTERNAL:
+            continue
+        guess = "get." + name.replace("_", ".")
+        if (agent._resolve_tool_name(guess)[0] == name
+                and not agent._same_name_spelled_differently(guess, name)):
+            return name, guess
+    return None, None
+
+
 def test_a_real_outward_tool_is_not_run_under_a_guessed_name(monkeypatch):
-    assert agent._resolve_tool_name("calendar.create.event")[0] == "create_calendar_event"
-    out = agent._execute_tool("calendar.create.event", {"title": "Lunch", "start": "2026-11-02T12:00"},
-                              session_ctx={"authenticated": True, "is_background_task": True})
-    assert out.startswith("TOOL CALL FAILED") and "'create_calendar_event'" in out
+    name, guess = _a_real_outward_tool_and_a_guess_at_its_name()
+    assert name, "no outward tool can be reached by a guessed name in this registry"
+    ran = []
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, name, lambda inp: ran.append(inp) or "done")
+    out = agent._execute_tool(guess, {}, session_ctx={"authenticated": True, "is_background_task": True})
+    assert ran == [], "%s ran under the guessed name %s" % (name, guess)
+    assert out.startswith("TOOL CALL FAILED") and ("'%s'" % name) in out
 
 
 def test_the_same_name_spelled_with_other_separators_is_not_a_guess():
