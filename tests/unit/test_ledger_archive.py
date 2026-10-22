@@ -663,3 +663,32 @@ def test_a_junction_for_the_ledger_folder_is_a_break(tmp_path):
     L.reset_caches()
     rep = L.verify()
     assert not rep["ok"] and any("link" in p["reason"] for p in rep["problems"])
+
+
+def test_an_acknowledged_bad_line_does_not_hold_strict_readers_for_good():
+    """Review round 8 (1)."""
+    L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
+    L.append("send_grant", {"event": "revoked", "grant_id": "g2"}, durable=True)
+    p = L.live_path()
+    p.write_text(p.read_text(encoding="utf-8").replace('"g1"', '"g9"'), encoding="utf-8")
+    L.reset_caches()
+    rep = L.verify()
+    L.acknowledge("owner:test", reviewed=[q for q in rep["problems"] if not q["acknowledged"]])
+    got = {e["rec"]["grant_id"] for e in L.entries(["send_grant"], strict=True)}
+    assert {"g2", "g9"} <= got
+
+
+def test_a_line_garbled_or_renamed_within_the_cache_window_is_refused(monkeypatch):
+    """Review round 8 (2): the check runs before the kind filter, on every line."""
+    L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
+    L.append("activity", {"kind": "x"})
+    monkeypatch.setattr(L, "verify", lambda **k: {"ok": True})
+    p = L.live_path()
+    p.write_text(p.read_text(encoding="utf-8").replace('"kind":"send_grant"', '"kind":"send_grent"'),
+                 encoding="utf-8")
+    with pytest.raises(L.LedgerError):
+        L.entries(["send_grant"], strict=True)
+    lines = p.read_text(encoding="utf-8").splitlines()
+    p.write_text("\n".join(["not json"] + lines[1:]) + "\n", encoding="utf-8")
+    with pytest.raises(L.LedgerError):
+        L.entries(["send_grant"], strict=True)

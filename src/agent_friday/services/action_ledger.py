@@ -861,21 +861,32 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
                     arch = []
                 sources = list(arch) + sources
             order = list(reversed(sources)) if newest_first else sources
+            check = strict and gate and not verified
+            acked_raw = set(_STATE.get("acked_raw") or ()) if check else set()
             for p in order:
                 if isinstance(p, list):
-                    it = iter(reversed(p) if newest_first else p)
+                    it = ((e, None) for e in (reversed(p) if newest_first else p))
                 else:
-                    it = ((_safe_json(raw) for raw in _reverse_lines(p)) if newest_first
-                          else (e for e, _r, _n, _t in _iter_lines(p)))
-                for e in it:
+                    it = (((_safe_json(raw), raw) for raw in _reverse_lines(p)) if newest_first
+                          else ((e, r) for e, r, _n, _t in _iter_lines(p)))
+                    if check and p.name == LIVE_NAME and not _ends_cleanly(p):
+                        # a write another process has not finished: not a line yet
+                        it = _drop_unfinished(it, newest_first)
+                for e, raw in it:
+                    if check and (not isinstance(e, dict) or not entry_ok(e, key)):
+                        # every line, of every kind, before any filter: a line
+                        # changed or garbled within the cache window is refused,
+                        # unless the owner reviewed exactly this line
+                        if raw is None or hashlib.sha256(raw).hexdigest() not in acked_raw:
+                            raise LedgerError("a line of the action ledger does not hold its signature")
+                        if not isinstance(e, dict):
+                            continue
                     if not isinstance(e, dict):
                         continue
                     if want is not None and e.get("kind") not in want:
                         continue
                     if verified and not entry_ok(e, key):
                         continue
-                    if strict and gate and not verified and not entry_ok(e, key):
-                        raise LedgerError("a line of the action ledger does not hold its signature")
                     if where is not None:
                         try:
                             if not where(e):
@@ -897,6 +908,23 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
                 raise LedgerError("the ledger could not be read (%s)" % type(e).__name__)
             return out
     return []
+
+
+def _drop_unfinished(it, newest_first: bool):
+    """Leave out the live file's unterminated last line."""
+    if newest_first:
+        first = True
+        for x in it:
+            if first:
+                first = False
+                continue
+            yield x
+    else:
+        prev = None
+        for x in it:
+            if prev is not None:
+                yield prev
+            prev = x
 
 
 def records(kind: str, *, newest_first: bool = False, limit: Optional[int] = None) -> list[dict]:
@@ -1763,6 +1791,8 @@ def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
         pr["acknowledged"] = list(_ack_key(pr)) in [list(k) for k in acked]
     _STATE["acked_flag_keys"] = {tuple(_ack_key(pr)) for pr in problems
                                  if pr["acknowledged"] and pr.get("segment") == "entry"}
+    _STATE["acked_raw"] = {pr.get("raw_sha256") for pr in problems
+                           if pr["acknowledged"] and pr.get("raw_sha256")}
     open_problems = [pr for pr in problems if not pr["acknowledged"]]
     return {
         "records": total, "last_seq": last_seq, "tip": last_hash,
