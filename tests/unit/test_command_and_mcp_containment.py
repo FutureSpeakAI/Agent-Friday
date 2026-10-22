@@ -75,7 +75,7 @@ def test_run_command_refuses_before_the_sandbox(monkeypatch):
     from agent_friday.services import agent, code_sandbox
     ran = []
     monkeypatch.setattr(code_sandbox, "run_shell", lambda *a, **k: ran.append(a) or {"ok": True})
-    out = agent._tool_run_command({"command": "Remove-Item ~/.friday/schedules.json -Force"})
+    out = agent._tool_run_command({"command": "Copy-Item ~/.friday/settings.json ~/Documents/s.json"})
     assert out.startswith("[SANDBOX DENY]") and ran == []
     assert "Folder grants" in out
 
