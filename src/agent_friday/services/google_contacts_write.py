@@ -67,7 +67,8 @@ def _service(account_id: str):
     if not creds:
         return None, "The account needs reconnecting before Friday can save to it."
     from googleapiclient.discovery import build
-    return build("people", "v1", credentials=creds, cache_discovery=False), ""
+    from agent_friday.services import egress_record as _er
+    return _er.contacts(build("people", "v1", credentials=creds, cache_discovery=False)), ""
 
 
 def build_person(*, name="", email="", phone="", company="", job_title="") -> tuple:

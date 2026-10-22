@@ -60,20 +60,28 @@ DESTINATION_WORDS = {
 }
 
 #: Sends that do not pass the egress gate yet, and where each keeps its own record.
+#: What leaves this PC and is NOT in the list above. Email, tool-server (MCP)
+#: calls, Calendar/Tasks/Contacts changes, posts, published pages, web pages
+#: Friday opens and web/news searches are now each a send in that list (P4).
 NOT_RECORDED = (
-    {"key": "mail", "what": "Email Friday sends for you",
-     "record": ("Each send is recorded with its To and Cc recipients and subject in sent_mail.jsonl, and "
-                "counted under Mail below. Bcc recipients are not recorded.")},
-    {"key": "mcp", "what": "Calls to tool servers you added (MCP)",
-     "record": "Not recorded as a send yet. Each call that changes something is an action with its own card."},
-    {"key": "connectors", "what": "Calls to connected services' own APIs (for example Calendar or Tasks writes not made through Friday's tools)",
-     "record": "Actions are recorded in Friday's action receipts (System > Friday's changes)."},
-    {"key": "publishing", "what": "Posts to social and publishing accounts",
-     "record": "Each post has an approval card and a publishing record."},
-    {"key": "fetches", "what": "Web pages Friday opens to read",
-     "record": ("The address, which Friday chose, goes to that website. When a cloud model reads the "
-                "page, the page text goes to that model as part of the conversation, and that send is "
-                "in this list under the model's name.")},
+    {"key": "messaging", "what": "Texts, chat messages and phone calls (SMS, Telegram, Discord, calls)",
+     "record": "Each message is checked by the privacy gate first; none is yet a line in this list."},
+    {"key": "browser", "what": "Pages opened in a real browser window for you",
+     "record": "The browser's own history keeps them; they are not yet a line in this list."},
+    {"key": "mailbox", "what": "Changes to your own mailbox (labels, read or unread, archive, trash) and drafts",
+     "record": "Each is an action with its own receipt and undo (System > Friday's changes), not a line here."},
+    {"key": "feeds", "what": "News feeds Friday reads (Google News may be asked about your area)",
+     "record": "The feed addresses go to those sites; they are not yet a line in this list."},
+    {"key": "other_sends", "what": ("One-click unsubscribes, sends to linked Friday devices (federation), "
+                                    "and pages read for job searches"),
+     "record": "Each goes to that site or device; none is yet a line in this list."},
+    {"key": "fetch_hops", "what": "The steps of a page fetch that did not finish",
+     "record": ("A page Friday opens is listed under its first address. When the fetch fails after a "
+                "redirect, or Firecrawl is tried before a direct fetch, those other addresses are not "
+                "listed separately.")},
+    {"key": "connector_reads", "what": "Reading your own mail, calendar, tasks and contacts",
+     "record": ("Friday asks your own accounts for your own data; those requests are not listed here. "
+                "Calendar, Tasks and Contacts changes she makes are.")},
 )
 
 HONEST_LIMIT = (
@@ -296,6 +304,32 @@ def _enc(state: str, words: str):
 _PLAIN = _enc("no", "Readable on this disk (not encrypted yet).")
 
 
+def _enc_sent_text() -> tuple:
+    from agent_friday.services import sent_text_store as sts
+    sealed = sts.sealed_with()
+    if sts.mode() == sts.FINGERPRINT:
+        return "yes", "Nothing new is kept. Anything left from before is still encrypted; delete it below."
+    if sealed == "vault":
+        return "yes", "Encrypted with your vault passphrase. Nothing is written if it can't be encrypted."
+    if sealed == "keystore":
+        state, _ = _enc_keys()
+        return ("partly" if state == "partly" else "yes"), (
+            "Encrypted with Friday's key store, not the vault: no vault passphrase is set. "
+            "Set one in Privacy & Data > Vault. Nothing is written if it can't be encrypted.")
+    return "no", "Nothing can encrypt it right now, so nothing is kept."
+
+
+def _ret_sent_text() -> str:
+    try:
+        from agent_friday.services import sent_text_store as sts
+        if sts.mode() == sts.FINGERPRINT:
+            return "Fingerprints only: the words of each send are not kept."
+        return ("Kept with its receipt until you delete it; past 1 GB the oldest goes first. "
+                "Switching to fingerprints only deletes it all.")
+    except Exception:
+        return "I couldn't tell how long it is kept."
+
+
 # ── the stores ────────────────────────────────────────────────────────────────
 
 _PRIVACY_TAB = {"workspace": "settings", "tab": "privacy"}
@@ -409,12 +443,21 @@ def _stores() -> List[dict]:
         {"key": "receipts", "name": "Receipts and audit logs",
          "holds": "Signed records of approvals, actions, sends and what left this PC.",
          "paths": ["actions", "decision-bom.jsonl", "governance", "sent_mail.jsonl", "mail_outbox",
-                   "activity_ledger.jsonl", "vault/egress-log.jsonl", "vault/access-log.jsonl",
+                   "activity_ledger.jsonl", "vault/egress-log.jsonl", "vault/context-manifests.jsonl",
+                   "vault/access-log.jsonl",
                    "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl"],
          "enc": _enc("no", "Readable on this disk; each is signed or chained so a change shows."),
-         "ret": lambda: "Kept until you delete them, so the record stays whole. The activity record rotates at about 20 MB.",
+         "ret": lambda: ("Kept until you delete them, so the record stays whole. The activity record rotates at "
+                         "about 20 MB; the list of what went into each send keeps its newest 40 MB or so."),
          "controls": [_ctl("settings", "Friday's changes", "Every action with its receipt and undo.",
                            nav={"workspace": "system"}), _EXPORT_ALL]},
+        {"key": "sent_text", "name": "The full text of what was sent",
+         "holds": ("The content of each send to the cloud, kept with its receipt so you can open exactly "
+                   "what left. Kept by default; you can switch to fingerprints only."),
+         "paths": ["vault/sent-text"], "enc": _enc_sent_text, "ret": _ret_sent_text,
+         "controls": [_ctl("delete", "Delete it, or keep fingerprints only",
+                           "Delete the kept text now, or switch to fingerprints only.",
+                           nav=dict(_PRIVACY_TAB, section="Privacy map")), _EXPORT_ALL]},
         {"key": "credentials", "name": "Keys and sign-ins",
          "holds": "Provider keys and account sign-ins Friday uses for you.",
          "paths": ["security", "providers", "google_accounts", "mcp_oauth", "platforms",
@@ -651,7 +694,18 @@ def _ts(row: dict) -> Optional[float]:
 
 def destination_words(provider: str) -> str:
     p = str(provider or "").strip()
-    return DESTINATION_WORDS.get(p.lower(), p or "an unnamed destination")
+    hit = DESTINATION_WORDS.get(p.lower())
+    if hit:
+        return hit
+    # The service channels (P4): named for what they are.
+    for prefix, words in (("mcp:", "Tool server “{}” (MCP)"), ("web:", "The website {}"),
+                          ("search:", "Web search ({})"), ("publish:", "Posts to {}"),
+                          ("publish-web:", "Web pages published via {}")):
+        if p.lower().startswith(prefix):
+            return words.format(p[len(prefix):])
+    return {"gmail": "Gmail (email you sent)", "google-calendar": "Google Calendar (changes)",
+            "google-tasks": "Google Tasks (changes)", "google-contacts": "Google Contacts (changes)"}.get(
+        p.lower(), p or "an unnamed destination")
 
 
 #: Most destinations listed one by one; the rest are counted together.
@@ -683,13 +737,37 @@ def left() -> dict:
     """Every destination that has received something from Friday, from the
     egress log, as counts. Rebuilt whenever the log changes."""
     path = _egress_log()
-    return _cached("left", _stamp(path), lambda: _left(path))
+    # Also rebuilt when kept text is deleted (switch, delete, prune): the
+    # counts say what is still kept, not what once was.
+    return _cached("left", (_stamp(path), _kept_stamp()), lambda: _left(path))
+
+
+def _kept_dir() -> Path:
+    from agent_friday.paths import friday_home
+    return friday_home() / "vault" / "sent-text"
+
+
+def _kept_stamp() -> Any:
+    try:
+        st = _kept_dir().stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _kept_fps() -> set:
+    d = _kept_dir()
+    try:
+        return {f.stem for f in d.glob("*.bin")} if d.is_dir() else set()
+    except OSError:
+        return set()
 
 
 def _left(path: Path) -> dict:
     by: Dict[str, dict] = {}
     total = 0
     info: Dict[str, Any] = {}
+    kept = _kept_fps()
     try:
         for row in _rows(path, tail=True, info=info):
             total += 1
@@ -697,8 +775,25 @@ def _left(path: Path) -> dict:
             d = by.setdefault(provider, {"to": provider, "label": destination_words(provider),
                                          "sent": 0, "sent_with_parts_withheld": 0, "stopped": 0,
                                          "files_or_images": 0, "background": 0, "off_record": 0,
-                                         "unrestricted_calls": 0,
+                                         "unrestricted_calls": 0, "calls": 0, "calls_blocked": 0,
+                                         "texts_kept": 0, "models": [], "hosts": [],
                                          "first": None, "last": None, "fields": {}})
+            ts = _ts(row)
+            if row.get("kind") == "call":
+                # One row per send (§29.6): counted as a send, never as a field.
+                d["calls"] += 1
+                if row.get("result") == "blocked":
+                    d["calls_blocked"] += 1
+                if row.get("text_kept") and str(row.get("payload_fingerprint") or "") in kept:
+                    d["texts_kept"] += 1
+                for key, val in (("models", row.get("model")), ("hosts", row.get("destination"))):
+                    v = str(val or "")[:80]
+                    if v and v not in d[key] and len(d[key]) < 6:
+                        d[key].append(v)
+                if ts is not None:
+                    d["first"] = ts if d["first"] is None else min(d["first"], ts)
+                    d["last"] = ts if d["last"] is None else max(d["last"], ts)
+                continue
             action = row.get("action")
             if row.get("field") == "*":
                 # One summary row per call under "Cloud for everything" (A14):
@@ -717,7 +812,6 @@ def _left(path: Path) -> dict:
                 d["background"] += 1
             if row.get("reason") == "off the record":
                 d["off_record"] += 1
-            ts = _ts(row)
             if ts is not None:
                 d["first"] = ts if d["first"] is None else min(d["first"], ts)
                 d["last"] = ts if d["last"] is None else max(d["last"], ts)
@@ -753,10 +847,18 @@ def left_rows(to: str, limit: int = 200) -> dict:
     keep: deque = deque(maxlen=limit)
     for row in _rows(_egress_log(), tail=True):
         if str(row.get("provider") or "")[:80] == to:
-            keep.append({k: row.get(k) for k in ("ts", "provider", "field", "tier", "action",
-                                                 "reason", "turn_id", "bytes") if k in row})
+            keep.append({k: row.get(k) for k in ("ts", "kind", "provider", "field", "tier", "action",
+                                                 "reason", "turn_id", "bytes", "call_id", "model",
+                                                 "destination", "purpose", "manifest_id", "fields",
+                                                 "withheld", "grants", "payload_fingerprint", "result",
+                                                 "text_kept", "note") if k in row})
     rows = list(reversed(keep))
+    kept = _kept_fps()
     for r in rows:
+        if r.get("kind") == "call":
+            # Kept when sent, and still here now (a switch, delete or prune
+            # removes the text; the receipt keeps its fingerprint).
+            r["still_kept"] = bool(r.get("text_kept") and str(r.get("payload_fingerprint") or "") in kept)
         if r.get("turn_id"):
             r["turn_receipt"] = "/api/turns/" + _quote(str(r["turn_id"])) + "/receipt"
     return {"to": to, "label": destination_words(to), "rows": rows}
@@ -896,6 +998,18 @@ def off_record() -> dict:
 
 # ── the whole map ─────────────────────────────────────────────────────────────
 
+def _sent_text_status() -> dict:
+    from agent_friday.services import sent_text_store as sts
+    st = sts.status()
+    return {k: st[k] for k in ("mode", "keep", "sealed_with", "words", "kept", "bytes", "explanation")}
+
+
+def sent_text(sha: str) -> Optional[dict]:
+    """The kept content of one send, by its fingerprint (kept by default, A20)."""
+    from agent_friday.services import sent_text_store as sts
+    return sts.read(sha)
+
+
 def view(now: Optional[float] = None) -> dict:
     now = now or time.time()
 
@@ -916,6 +1030,8 @@ def view(now: Optional[float] = None) -> dict:
         "services": safe(services, {"readable": False, "connected": [], "remote": []}),
         "vault_access": safe(lambda: vault_access(now), {"allowed_7_days": None, "refused_7_days": None}),
         "off_record": safe(off_record, {"on": None, "words": OFF_RECORD_WORDS}),
+        "sent_text": safe(_sent_text_status, {"mode": None, "keep": None,
+                                              "words": "I couldn't tell whether the full text is kept."}),
         "export": _EXPORT_ALL, "erase": _ERASE_ALL,
         "honest_limit": HONEST_LIMIT,
     }

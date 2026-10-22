@@ -231,8 +231,10 @@ def _service(account_id=None):
         _logged("importing google-api-python-client", e)
         return None, "google-api-python-client is not installed"
     try:
-        return build("calendar", "v3", credentials=creds,
-                     cache_discovery=False), None
+        # Writes recorded in the egress ledger (services/egress_record, §26.7).
+        from agent_friday.services import egress_record as _er
+        return _er.calendar(build("calendar", "v3", credentials=creds,
+                                  cache_discovery=False)), None
     except Exception as e:
         _logged("building the Calendar client", e)
         return None, "could not build the Calendar client"

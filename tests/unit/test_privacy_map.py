@@ -117,9 +117,12 @@ def test_a_torn_or_oversized_log_line_is_skipped_not_fatal(home):
 
 
 def test_channels_the_log_does_not_see_yet_are_named(home):
+    """Mail, tool servers, connector changes, posts and fetches are recorded
+    sends since BD-15 P4; what is still outside the list is named."""
     pm = _map()
     keys = {n["key"] for n in pm.view()["left"]["not_recorded"]}
-    assert {"mail", "mcp", "connectors"} <= keys
+    assert {"messaging", "browser", "connector_reads"} <= keys
+    assert not {"mail", "mcp", "connectors", "publishing", "fetches"} & keys
 
 
 def test_every_store_says_where_it_lives_how_long_and_how_to_remove_it(home):
