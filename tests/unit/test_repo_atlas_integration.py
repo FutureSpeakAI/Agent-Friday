@@ -10,6 +10,7 @@ from agent_friday.routes.codebases import codebases_bp
 from agent_friday.services import agent as ag
 from agent_friday.services import codebases as cb
 from agent_friday.services import repo_atlas, repo_atlas_context
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 
 @pytest.fixture
@@ -97,7 +98,7 @@ def test_study_route_uses_copy_intake(monkeypatch, tmp_path):
     def forbidden(*args, **kwargs):
         pytest.fail("study mode must not use the branch-switching existing-folder path")
     monkeypatch.setattr(cb, "create", forbidden)
-    result = app.test_client().post("/api/codebases", json={"title": "Sample", "study_path": str(tmp_path), "conversation_id": "conv-one"})
+    result = app.test_client().post("/api/codebases", json={"title": "Sample", "study_path": str(tmp_path), "conversation_id": "conv-one"}, headers=desk_headers())
     assert result.status_code == 200 and result.json["codebase"]["source_snapshot"]
     assert seen == [("Sample", str(tmp_path), "conv-one")]
 
@@ -114,7 +115,7 @@ def test_refused_study_folder_does_not_create_an_empty_chat(monkeypatch):
     def no_chat(*args, **kwargs):
         pytest.fail("A refused study should leave no empty chat")
     monkeypatch.setattr(conversations, "create", no_chat)
-    result = app.test_client().post("/api/codebases", json={"study_path": "missing"})
+    result = app.test_client().post("/api/codebases", json={"study_path": "missing"}, headers=desk_headers())
     assert result.status_code == 400
 
 
