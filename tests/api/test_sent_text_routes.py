@@ -25,7 +25,8 @@ def _iso(tmp_path, monkeypatch):
 def _screen():
     import agent_friday.core as core
     return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-            "X-Friday-Token": core._current_api_token()}
+            "X-Friday-Token": core._current_api_token(),
+            "X-Friday-Desk": __import__("agent_friday.services.desk_press", fromlist=["x"])._KEY}
 
 
 def test_the_switch_needs_a_click_in_fridays_window(client, tmp_path, monkeypatch):

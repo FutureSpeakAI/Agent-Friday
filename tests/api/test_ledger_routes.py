@@ -14,7 +14,8 @@ from agent_friday.services import observer_access as obs
 
 def _press(client):
     return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-            "X-Friday-Token": __import__("agent_friday.core", fromlist=["x"])._current_api_token()}
+            "X-Friday-Token": __import__("agent_friday.core", fromlist=["x"])._current_api_token(),
+            "X-Friday-Desk": __import__("agent_friday.services.desk_press", fromlist=["x"])._KEY}
 
 
 def _outward():

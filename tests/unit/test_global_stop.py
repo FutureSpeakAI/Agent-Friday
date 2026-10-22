@@ -33,10 +33,9 @@ def gs(tmp_path, monkeypatch):
 
 
 def _bom(friday_dir):
-    p = friday_dir / "decision-bom.jsonl"
-    if not p.exists():
-        return []
-    return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    """The signed decision receipts, oldest first (they live in the action ledger)."""
+    from tests import ledger_support
+    return ledger_support.decisions()
 
 
 # ── the state ────────────────────────────────────────────────────────────────
