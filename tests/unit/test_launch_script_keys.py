@@ -76,13 +76,100 @@ def test_a_key_moves_and_the_line_is_blanked_in_place(tmp_path, anthropic_env, c
     assert VALUE not in repr(r)
 
 
-def test_a_saved_key_wins_and_the_stale_line_still_goes(tmp_path, anthropic_env, clean):
-    cs.set_provider_key("anthropic", "saved-in-settings")
+def test_a_line_equal_to_the_saved_key_goes(tmp_path, anthropic_env, clean):
+    cs.set_provider_key("anthropic", VALUE)
     app, _ = _script(tmp_path, anthropic_env, name="launch_now.bat", eol="\n")
     (r,) = lk.migrate(app)
     assert r["kept_saved"] == ["anthropic"] and r["imported"] == []
-    assert cs.get_provider_key("anthropic") == "saved-in-settings"
     assert VALUE not in (app / "launch_now.bat").read_text()
+
+
+def test_a_line_that_differs_from_the_saved_key_stays(tmp_path, anthropic_env, clean):
+    """Which one is newer is not knowable: nothing is lost either way."""
+    cs.set_provider_key("anthropic", "saved-in-settings")
+    app, before = _script(tmp_path, anthropic_env)
+    (r,) = lk.migrate(app)
+    assert r["changed"] is False
+    assert any("differs from the saved key" in x for x in r["left"])
+    assert (app / "start.bat").read_bytes() == before.encode()
+    assert cs.get_provider_key("anthropic") == "saved-in-settings"
+
+
+def test_two_different_values_for_one_key_are_left_alone(tmp_path, anthropic_env, clean):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "start.bat").write_bytes(f"set {anthropic_env}={VALUE}\r\npython server.py\r\n".encode())
+    (app / "launch_now.bat").write_bytes(f"set {anthropic_env}=a-newer-value-0002\r\n".encode())
+    res = lk.migrate(app)
+    assert all(not r["changed"] for r in res)
+    assert cs.provider_key_status("anthropic") == "missing"
+
+
+@pytest.mark.parametrize("line", [
+    "set {k}=%s && python server.py",
+    "if 1==1 (set {k}=%s)",
+    "set {k}=%s^",
+    "set {k}=%%OTHER%%",
+])
+def test_a_line_that_is_more_than_an_assignment_is_left(tmp_path, anthropic_env, clean, line):
+    app = tmp_path / "app"
+    app.mkdir()
+    text = (line.format(k=anthropic_env) % VALUE if "%s" in line else line.format(k=anthropic_env) % ())
+    data = ("@echo off\r\n" + text + "\r\npause\r\n").encode()
+    (app / "start.bat").write_bytes(data)
+    (r,) = lk.migrate(app)
+    assert r["changed"] is False
+    assert (app / "start.bat").read_bytes() == data
+
+
+def test_an_ansi_script_is_left_as_it_is(tmp_path, anthropic_env, clean):
+    app = tmp_path / "app"
+    app.mkdir()
+    data = f"rem caf\xe9\r\nset {anthropic_env}={VALUE}\r\n".encode("latin-1")
+    (app / "start.bat").write_bytes(data)
+    (r,) = lk.migrate(app)
+    assert r["changed"] is False and "UTF-8" in r["error"]
+    assert (app / "start.bat").read_bytes() == data
+    assert cs.provider_key_status("anthropic") == "missing"
+
+
+def test_every_later_import_gets_the_moved_key_back_from_the_store(tmp_path, anthropic_env, clean, monkeypatch):
+    app, _ = _script(tmp_path, anthropic_env)
+    lk.migrate(app)
+    monkeypatch.setenv(anthropic_env, "a-stale-windows-variable")
+    got = lk.restore_moved_keys(already_loaded=set(), force_names={anthropic_env})
+    assert anthropic_env in got
+    import os
+    assert os.environ[anthropic_env] == VALUE          # the store beats a stale variable, as the line did
+    # A script line that still sets it wins, as before.
+    monkeypatch.setenv(anthropic_env, "from-a-script")
+    assert lk.restore_moved_keys(already_loaded={anthropic_env}, force_names={anthropic_env}) == []
+
+
+def test_core_constants_take_the_moved_key(tmp_path, anthropic_env, clean, monkeypatch):
+    import agent_friday.core as core
+    app, _ = _script(tmp_path, anthropic_env)
+    lk.migrate(app)
+    monkeypatch.setattr(core, anthropic_env, "", raising=False)
+    monkeypatch.setenv(anthropic_env, VALUE)
+    lk.refresh_core_constants()
+    assert getattr(core, anthropic_env) == VALUE
+
+
+def test_a_leftover_temp_file_is_removed(tmp_path):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "start.bat.friday-tmp").write_text("set FRIDAY_PASSWORD=x", encoding="utf-8")
+    (app / "start.bat").write_text("@echo off\r\n", encoding="utf-8")
+    lk.migrate(app)
+    assert not (app / "start.bat.friday-tmp").exists()
+
+
+def test_core_restores_moved_keys_at_import():
+    src = (Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "core" / "__init__.py").read_text(encoding="utf-8")
+    body = src[src.index("def _bootstrap_env_from_launch_scripts"):]
+    body = body[:body.index("_bootstrap_env_from_launch_scripts()")]
+    assert "restore_moved_keys(already_loaded=loaded, force_names=_FORCE_OVERRIDE)" in body
 
 
 def test_nothing_changes_when_the_store_cannot_write(tmp_path, anthropic_env, clean, monkeypatch):
