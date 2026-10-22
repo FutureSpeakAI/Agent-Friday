@@ -316,6 +316,19 @@ def test_the_rollback_leg_proves_the_whole_story():
     assert set(mod.LEGS["rollback"]["checks"]) >= {"rollback", "page-restored", "serves-again", "data-intact"}
 
 
+def test_no_two_variables_in_the_leg_scripts_differ_only_by_case():
+    """PowerShell variable names ignore case: `$page = <web reply>` silently
+    replaced `$Page` (the page's path) in the first run of the rollback leg."""
+    import re
+    for script in (ROLLBACK, LEG_DIR / "verify-clean-machine.ps1", AS_USER):
+        names = set(re.findall(r"\$([A-Za-z_]\w*)", script.read_text(encoding="utf-8-sig")))
+        by_lower: dict = {}
+        for n in names:
+            by_lower.setdefault(n.lower(), set()).add(n)
+        clashes = sorted(v for v in by_lower.values() if len(v) > 1)
+        assert not clashes, (script.name, clashes)
+
+
 def test_the_rollback_matches_what_the_server_prints():
     """The leg looks for the boot guard's own words; if the server stops saying
     them the leg must fail here first, not on a runner."""
