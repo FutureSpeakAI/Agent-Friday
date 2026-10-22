@@ -196,7 +196,9 @@ def _annotate_state(rows):
             continue
         tid = t.get('task_id')
         try:
-            t['state'] = _ts.derive(t, stop_requested=bool(tid and _tj.stop_requested(tid)))
+            # A finished task needs no stop check (that reads its record from disk).
+            stop = bool(tid and not _tj.is_terminal(t.get('status')) and _tj.stop_requested(tid))
+            t['state'] = _ts.derive(t, stop_requested=stop)
         except Exception:
             pass
     return rows

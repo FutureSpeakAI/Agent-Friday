@@ -17,8 +17,9 @@ North Star's states a task is in, from its status and the facts recorded beside 
     failed                      ended with an error or a timeout
     completed_unverified        finished, but without evidence the work was done
     completed_verified          finished with evidence
-    recovered_after_crash       Friday stopped while it was running; its record was recovered
-                                at the next start (task_journal.reconcile_on_boot)
+    recovered_after_crash       Friday stopped while it was running (closed or crashed: the
+                                record's `exit` says which); its record was recovered at the next
+                                start (task_journal.reconcile_on_boot)
 
 `derive` never raises and never guesses a finished state for unfinished work.
 """
@@ -40,16 +41,24 @@ def derive(rec: Optional[Dict[str, Any]], *, stop_requested: bool = False) -> st
     """The North Star state of one task record (a TASKS entry or its state.json)."""
     rec = rec or {}
     status = str(rec.get("status") or "").strip().lower()
-    if status in ("complete", "completed"):
-        return "completed_verified"
+    if status in ("complete", "completed", "done"):
+        # Verified only with evidence on the record: some paths write "complete" without a check.
+        verified = rec.get("verified") is True or bool((rec.get("verification") or {}).get("verified"))
+        return "completed_verified" if verified else "completed_unverified"
     if status == "completed_unverified":
         return "completed_unverified"
     if status.startswith("failed") or status in ("timeout", "error", "killed"):
         return "failed"
-    if status in ("cancelled", "canceled", "superseded", "stopped"):
+    if status in ("cancelled", "canceled", "superseded", "stopped", "skipped", "deleted"):
         return "cancelled"
     if status == "interrupted":
         return "recovered_after_crash"
+    try:
+        from agent_friday.services import task_journal as _tj
+        if _tj.is_terminal(status):
+            return "completed_unverified"      # finished, in a way this list has no word for
+    except Exception:
+        pass
     # Not finished.
     if stop_requested or rec.get("stop_requested"):
         return "cancel_requested"

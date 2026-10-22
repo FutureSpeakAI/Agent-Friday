@@ -626,6 +626,11 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
                 restored.append(st)
         how = _exit_words(previous)
         for tid, st, last_cp, last_hb in pending:
+            # NS-17.7-1: the record was recovered after Friday stopped; `exit` says how.
+            append(tid, "state", state="recovered_after_crash", was=st.get("state"),
+                   exit=previous.get("kind"))
+            st["state"] = "recovered_after_crash"
+            st["exit"] = previous.get("kind")
             st["status"] = "interrupted"
             st["ended"] = st.get("ended") or (last_hb or last_cp or {}).get("ts") or st.get("state_written") or now
             st["result"] = st.get("result") or (
@@ -1061,14 +1066,16 @@ STALLED_AFTER_S = 30.0   # a running task whose heartbeat is older than this ren
 def request_stop(task_id: str) -> None:
     with _LOCK:
         _STOP_REQUESTED.add(str(task_id))
-    st = read_state(task_id)
-    if st is not None:
-        st["stop_requested"] = time.time()
-        if not is_terminal(st.get("status")):
-            # NS-17.7-1: asked to stop, stops at its next step.
-            st["state"] = "cancel_requested"
-            append(task_id, "state", state="cancel_requested", was=st.get("state"))
-        write_state(task_id, st)
+    with _LOCK:
+        st = read_state(task_id)
+        if st is not None and not is_terminal(st.get("status")):
+            # A finished task is not rewritten (it could be put back to running by a stale read).
+            st["stop_requested"] = time.time()
+            if st.get("state") != "cancel_requested":
+                # NS-17.7-1: asked to stop, it stops at its next step.
+                append(task_id, "state", state="cancel_requested", was=st.get("state"))
+                st["state"] = "cancel_requested"
+            write_state(task_id, st)
 
 
 def stop_requested(task_id: Optional[str]) -> bool:

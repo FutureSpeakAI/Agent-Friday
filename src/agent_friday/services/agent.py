@@ -5360,8 +5360,13 @@ def _task_set(task_id, **fields):
     # change is journaled, beside the status transitions below.
     try:
         from agent_friday.services import task_states as _ts
-        _stop = _journal().stop_requested(task_id)
-        prev_state = prev_snap.get('state') or _ts.derive(prev_snap, stop_requested=_stop)
+        _tjs = _journal()
+        _stop = _tjs.stop_requested(task_id)
+        prev_state = prev_snap.get('state')
+        if _stop:
+            # request_stop records cancel_requested on disk only; read it so it is not journaled twice.
+            prev_state = (_tjs.read_state(task_id) or {}).get('state') or prev_state
+        prev_state = prev_state or _ts.derive(prev_snap, stop_requested=_stop)
         new_state = _ts.derive(snap, stop_requested=_stop)
     except Exception:
         prev_state = new_state = None
@@ -5411,6 +5416,14 @@ def _task_set(task_id, **fields):
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+
+
+def _task_state_sync(task_id):
+    """Record the task's state after something changed its record in place (the seat queue)."""
+    try:
+        _task_set(task_id)
+    except Exception:
+        pass
 
 
 def _planning_over(session_ctx):
@@ -6611,6 +6624,7 @@ def _admit_task_thread(task_id, record, th):
     except Exception as _sup_err:
         _task_log(task_id, 'seat supervisor unavailable (%s); dispatching directly' % _sup_err)
         admission = 'running'
+    _task_state_sync(task_id)          # queued, or waiting for the seat (NS-17.7-1)
     if admission != 'queued-for-seat':
         # Admitted at once: the supervisor's thread factory normally started
         # it already; start it here only if nothing did.

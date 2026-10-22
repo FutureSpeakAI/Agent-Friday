@@ -152,6 +152,19 @@ def _wants_now(assess: Callable) -> bool:
     return "now" in sig.parameters
 
 
+
+def _sync_task_state(task_id, **fields):
+    """Tell the task's record (services/agent) that the queue changed it, so its North Star
+    state is recorded and journaled (NS-17.7-1). Never called under the supervisor's lock."""
+    import sys as _sys
+    _ag = _sys.modules.get("agent_friday.services.agent")
+    if _ag is None:
+        return
+    try:
+        _ag._task_set(task_id, **fields)
+    except Exception:
+        pass
+
 class SeatSupervisor:
     """Glue between _spawn_task, seat_queue, and task_watchdog.
 
@@ -415,6 +428,7 @@ class SeatSupervisor:
                 record = self._records.get(task_id)
                 if record is None:
                     return
+                _before = (record.get("status"), bool(record.get("paused_reason")))
                 if record.get("cancel_requested"):
                     raise JobCancelled()
                 waiting_again = bool(record.get("yielded"))
@@ -460,6 +474,9 @@ class SeatSupervisor:
                         record.pop("paused_reason", None)
                         record.pop("paused_at", None)
                         yielded_now = True
+                _changed = _before != (record.get("status"), bool(record.get("paused_reason")))
+            if _changed:
+                _sync_task_state(task_id)       # outside the lock (NS-17.7-1)
             if yielded_now or waiting_again:
                 self.pump()
             self._sleep(self.poll_seconds)
@@ -519,13 +536,7 @@ class SeatSupervisor:
                 else:
                     rec.pop("user_paused", None)
         # The task's own record says it is paused too (NS-17.7-1), journaled as a state change.
-        import sys as _sys
-        _ag = _sys.modules.get("agent_friday.services.agent")
-        if _ag is not None:
-            try:
-                _ag._task_set(task_id, user_paused=bool(paused))
-            except Exception:
-                pass
+        _sync_task_state(task_id, user_paused=bool(paused))
         self.pump()
         return True
 
