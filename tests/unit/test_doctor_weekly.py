@@ -20,6 +20,10 @@ def weekly(tmp_path, monkeypatch):
     from agent_friday.services import cloud_intent, doctor_weekly, off_record
     monkeypatch.setattr(cloud_intent, "routing_mode", lambda *a, **k: "cloud_only")
     monkeypatch.setattr(off_record, "active", lambda *a, **k: False)
+    # install_hooks() registers process-wide: undone after the test, so no
+    # later test's off_record.end() writes through this one's hook.
+    monkeypatch.setattr(off_record, "_END_HOOKS", list(off_record._END_HOOKS))
+    monkeypatch.setattr(doctor_weekly, "_OFF_RECORD_SEEN", [])
     doctor_weekly._PREPARED.clear()
     return doctor_weekly
 
