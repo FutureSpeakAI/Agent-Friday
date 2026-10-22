@@ -144,11 +144,11 @@ def test_attribution_returns_the_record_that_matches_who_answered():
     assert a.route_record() is None
     a.note_route({"model": "gemma4:e4b", "seat": "local"})
     a.note_route({"model": "claude-sonnet-5", "seat": "cloud"})
-    time.sleep(0.01)
+    time.sleep(0.06)        # Windows' monotonic clock ticks in ~16 ms
     a.record_generation("gemma4:e4b", provider="ollama", seat="local")
     rec = a.route_record()
     assert rec["model"] == "gemma4:e4b" and "substituted" not in rec
-    assert isinstance(rec["latency_ms"], int) and rec["latency_ms"] >= 10
+    assert isinstance(rec["latency_ms"], int) and rec["latency_ms"] >= 30
     a.record_generation("other-model", provider="x", seat="cloud")
     rec = a.route_record()
     assert rec["model"] == "claude-sonnet-5"            # the last decision
