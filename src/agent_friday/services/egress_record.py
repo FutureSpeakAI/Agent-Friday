@@ -25,20 +25,44 @@ WRITE_METHODS = frozenset({
 })
 
 
+def _maybe_acted_on(e: BaseException) -> bool:
+    """A timeout, a dropped connection or a server error (5xx) may have been
+    acted on by the service; a refusal (4xx) or a local error was not."""
+    if isinstance(e, (TimeoutError, OSError)) or "timed out" in str(e).lower():
+        return True
+    try:
+        return int(getattr(getattr(e, "resp", None), "status", None)) >= 500
+    except (TypeError, ValueError):
+        return False
+
+
 class _Request:
     def __init__(self, req: Any, rec: "recorded", method: str, kwargs: dict):
         self._req, self._rec, self._method, self._kwargs = req, rec, method, kwargs
+        # A caller that retries (services/gmail_api.execute) sets this, so a
+        # failed attempt followed by a retry is one send, not a failure and a
+        # send: it reports the final failure itself (final_failure).
+        self.defer_failure = False
+        self._last_error: Any = None
+        # Unsure if ANY attempt may have been acted on, not just the last: a
+        # timeout followed by a refusal on the retry is still unconfirmed.
+        self._unsure = False
 
     def execute(self, *a, **k):
         try:
             out = self._req.execute(*a, **k)
         except Exception as e:
-            # A timeout may have been acted on by the service; a refusal was not.
-            unsure = isinstance(e, (TimeoutError, OSError)) or "timed out" in str(e).lower()
-            self._rec._record(self._method, self._kwargs, "sent_unconfirmed" if unsure else "failed")
+            self._last_error = e
+            self._unsure = self._unsure or _maybe_acted_on(e)
+            if not self.defer_failure:
+                self.final_failure()
             raise
         self._rec._record(self._method, self._kwargs, "sent")
         return out
+
+    def final_failure(self) -> None:
+        # A timeout may have been acted on by the service; a refusal was not.
+        self._rec._record(self._method, self._kwargs, "sent_unconfirmed" if self._unsure else "failed")
 
     def __getattr__(self, name):
         return getattr(self._req, name)

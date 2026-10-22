@@ -565,6 +565,19 @@ def _normalize_entry(entry):
     return {"title": title, "snippet": snippet, "url": link, "source": domain, "ts": ts}
 
 
+def _record_feed(url, result):
+    """A feed request in the egress ledger and on the privacy map (§26.7): the
+    address (which can carry your area, for Google News) went to that site."""
+    try:
+        from urllib.parse import urlparse
+        from agent_friday.services import egress_gate as _eg
+        host = urlparse(str(url or "")).hostname or "a news site"
+        _eg.record_service_send("news_feed", ("feed:" + host)[:80], destination=host,
+                                content={"url": url}, result=result, part="address")
+    except Exception:
+        pass
+
+
 def _parse_feed(url, limit=12, timeout=None):
     """Fetch+parse one RSS feed into normalized entries, with TTL caching.
 
@@ -584,6 +597,7 @@ def _parse_feed(url, limit=12, timeout=None):
         hit = _RSS_CACHE.get(url)
         if hit and (now - hit[0]) < _RSS_CACHE_TTL:
             return hit[1][:limit]
+    recorded = False
     try:
         import urllib.request
         import feedparser
@@ -604,12 +618,16 @@ def _parse_feed(url, limit=12, timeout=None):
                 etag = resp.headers.get("ETag") or ""
                 modified = resp.headers.get("Last-Modified") or ""
         except urllib.error.HTTPError as e:
+            _record_feed(url, "sent")         # the address reached the site either way
+            recorded = True
             if e.code != 304 or before is None:
                 raise
             # Not modified since the last full answer: the same entries.
             with _RSS_CACHE_LOCK:
                 _RSS_CACHE[url] = (now, before)
             return before[:limit]
+        _record_feed(url, "sent")
+        recorded = True
         d = feedparser.parse(raw)
         out = []
         for e in d.entries[: max(limit * 2, limit)]:
@@ -623,7 +641,11 @@ def _parse_feed(url, limit=12, timeout=None):
             else:
                 _FEED_VALIDATORS.pop(url, None)
         return out[:limit]
+    except urllib.error.HTTPError:
+        return []
     except Exception:
+        if not recorded:                     # once per request, however it ends
+            _record_feed(url, "sent_unconfirmed")
         return []
 
 
@@ -1586,9 +1608,12 @@ def _fetch_brutalist_links(limit=200):
     try:
         resp = requests.get(_BRUTALIST_URL, timeout=15,
                              headers={"User-Agent": "Mozilla/5.0 (FridayNewsBot)"})
+        _record_feed(_BRUTALIST_URL, "sent")
         resp.raise_for_status()
     except Exception as e:
         print(f"  [brutalist] fetch failed: {e}")
+        if "resp" not in locals():
+            _record_feed(_BRUTALIST_URL, "sent_unconfirmed")
         return []
     try:
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -3584,7 +3609,13 @@ def _extract_article_text(url):
     that points at this machine or its network: the URL comes from a feed,
     the page, or the voice model, none of which may steer a fetch inward."""
     from agent_friday.services import page_reader
-    page = page_reader.fetch(url, timeout=15)
+    try:
+        page = page_reader.fetch(url, timeout=15)
+    except Exception as e:
+        if type(e).__name__ != "UnsafeURLError":     # refused before anything was sent
+            _record_feed(url, "sent_unconfirmed")
+        raise
+    _record_feed(url, "sent")
     return page.title, page.text
 
 

@@ -64,24 +64,15 @@ DESTINATION_WORDS = {
 #: calls, Calendar/Tasks/Contacts changes, posts, published pages, web pages
 #: Friday opens and web/news searches are now each a send in that list (P4).
 NOT_RECORDED = (
-    {"key": "messaging", "what": "Texts, chat messages and phone calls (SMS, Telegram, Discord, calls)",
-     "record": "Each message is checked by the privacy gate first; none is yet a line in this list."},
     {"key": "browser", "what": "Pages opened in a real browser window for you",
      "record": "The browser's own history keeps them; they are not yet a line in this list."},
-    {"key": "mailbox", "what": "Changes to your own mailbox (labels, read or unread, archive, trash) and drafts",
-     "record": "Each is an action with its own receipt and undo (System > Friday's changes), not a line here."},
-    {"key": "feeds", "what": "News feeds Friday reads (Google News may be asked about your area)",
-     "record": "The feed addresses go to those sites; they are not yet a line in this list."},
-    {"key": "other_sends", "what": ("One-click unsubscribes, sends to linked Friday devices (federation), "
-                                    "and pages read for job searches"),
-     "record": "Each goes to that site or device; none is yet a line in this list."},
     {"key": "fetch_hops", "what": "The steps of a page fetch that did not finish",
      "record": ("A page Friday opens is listed under its first address. When the fetch fails after a "
                 "redirect, or Firecrawl is tried before a direct fetch, those other addresses are not "
                 "listed separately.")},
     {"key": "connector_reads", "what": "Reading your own mail, calendar, tasks and contacts",
      "record": ("Friday asks your own accounts for your own data; those requests are not listed here. "
-                "Calendar, Tasks and Contacts changes she makes are.")},
+                "Every change she makes to them, and every draft, is.")},
 )
 
 HONEST_LIMIT = (
@@ -700,11 +691,16 @@ def destination_words(provider: str) -> str:
     # The service channels (P4): named for what they are.
     for prefix, words in (("mcp:", "Tool server “{}” (MCP)"), ("web:", "The website {}"),
                           ("search:", "Web search ({})"), ("publish:", "Posts to {}"),
-                          ("publish-web:", "Web pages published via {}")):
+                          ("publish-web:", "Web pages published via {}"), ("channel:", "Messages on {}"),
+                          ("feed:", "News feed from {}"), ("news:", "News pages from {}"),
+                          ("unsubscribe:", "Unsubscribe request to {}"), ("federation:", "Linked Friday at {}"),
+                          ("jobs:", "Job listings from {}")):
         if p.lower().startswith(prefix):
             return words.format(p[len(prefix):])
     return {"gmail": "Gmail (email you sent)", "google-calendar": "Google Calendar (changes)",
-            "google-tasks": "Google Tasks (changes)", "google-contacts": "Google Contacts (changes)"}.get(
+            "google-tasks": "Google Tasks (changes)", "google-contacts": "Google Contacts (changes)",
+            "gmail-mailbox": "Gmail (changes to your mailbox)", "gmail-drafts": "Gmail (drafts saved)",
+            "twilio": "Texts and calls from Friday's number (Twilio)"}.get(
         p.lower(), p or "an unnamed destination")
 
 

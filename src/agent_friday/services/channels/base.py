@@ -35,6 +35,36 @@ def _gate_channel_text(text: str, channel: str) -> str:
         return _CHANNEL_SEND_WITHHELD
 
 
+_CHANNEL_HOSTS = {"telegram": "api.telegram.org", "discord": "discord.com"}
+
+
+def record_channel_send(channel: str, chat_id: str, text: str, ok: bool, unsure: bool = False) -> None:
+    """A message to a chat channel in the egress ledger and on the privacy map
+    (§26.7): which platform, the gated words fingerprinted and, by default
+    (A20), kept encrypted. A send that may have arrived (a timeout) is
+    sent_unconfirmed and keeps its words. Never raises."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_service_send("chat_channel", f"channel:{channel}"[:80],
+                                destination=_CHANNEL_HOSTS.get(channel, channel),
+                                content={"chat": str(chat_id)[:80], "text": text},
+                                result="sent" if ok else ("sent_unconfirmed" if unsure else "failed"),
+                                recipients=1, part="message")
+    except Exception:
+        pass
+
+
+def send_unsure(exc) -> bool:
+    """True when a send that raised may still have reached the platform (a
+    timeout, a dropped connection, a server error), so it is recorded as
+    sent_unconfirmed and its words kept. Never raises."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        return _eg.result_for_error(exc) == "sent_unconfirmed"
+    except Exception:
+        return True
+
+
 class ChannelAdapter:
     """Base class for a messaging-platform bridge.
 
@@ -44,6 +74,9 @@ class ChannelAdapter:
     """
 
     name: str = "channel"
+    #: The most characters the platform's send carries; the record keeps
+    #: what was sent, not words that were cut off (0: no limit).
+    max_chars: int = 0
 
     def __init__(self) -> None:
         self._config: Dict[str, Any] = {}
@@ -133,7 +166,12 @@ class ChannelAdapter:
     # only guarded door, and no future adapter can add a new one.
     def send(self, chat_id: str, text: str) -> Dict[str, Any]:
         gated = _gate_channel_text(text, self.name)
-        return self._send_raw(chat_id, gated)
+        res = self._send_raw(chat_id, gated)
+        ok = bool(isinstance(res, dict) and res.get("ok"))
+        unsure = bool(isinstance(res, dict) and res.get("unsure"))
+        record_channel_send(self.name, chat_id, gated[:self.max_chars] if self.max_chars else gated,
+                            ok, unsure)
+        return res
 
     # ── inbound dispatch (adapters call this per received message) ────────────
     def _dispatch(self, chat_id: str, text: str) -> None:

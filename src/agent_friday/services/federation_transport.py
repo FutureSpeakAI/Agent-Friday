@@ -447,8 +447,26 @@ def send_to_peer(
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
+        _record_peer_send(url, envelope_dict, "sent")
+        try:
             return json.loads(raw) if raw else {"ok": True}
+        except ValueError as e:                 # sent; only the answer was unreadable
+            return {"ok": False, "error": exception_text(e)}
     except urllib.error.HTTPError as e:
+        # The peer had the envelope: a 4xx refused it, a 5xx may have acted on it.
+        _record_peer_send(url, envelope_dict, e)
         return {"ok": False, "error": f"http_{e.code}", "status": e.code}
     except Exception as e:
+        _record_peer_send(url if "url" in locals() else peer_endpoint, envelope_dict, e)
         return {"ok": False, "error": exception_text(e)}
+
+
+def _record_peer_send(url: str, envelope: Dict[str, Any], result: Any) -> None:
+    """A federation envelope in the egress ledger and on the privacy map
+    (§26.7); the envelope is already encrypted for the peer."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_address("federation", url, result, content={"to": url, "envelope": envelope},
+                           prefix="federation")
+    except Exception:
+        pass

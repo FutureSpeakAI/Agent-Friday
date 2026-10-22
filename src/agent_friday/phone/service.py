@@ -233,6 +233,33 @@ def _gate_text(text: str) -> str:
         return "[withheld: the text could not be safety-checked]"
 
 
+def _record_egress(channel: str, to: str, content, result: str) -> None:
+    """The text or call in the egress ledger and on the privacy map (§26.7):
+    to Twilio, for one recipient, the words fingerprinted and, by default
+    (A20), kept encrypted. A verification code is never kept: the caller
+    passes its words withheld."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_service_send(channel, "twilio", destination="api.twilio.com", content=content,
+                                result=result, recipients=1, part="text" if channel == "sms" else "call")
+    except Exception:
+        pass
+
+
+def _error_result(exc) -> str:
+    """failed only when Twilio answered with a refusal; a timeout or dropped
+    connection may have sent the text or placed the call (egress_gate)."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        return _eg.result_for_error(exc)
+    except Exception:
+        return "sent_unconfirmed"
+
+
+def _sms_kept(to: str, body: str, detail: str) -> dict:
+    return {"to": to, "body": "(a verification code, not kept)" if detail == "verification code" else body}
+
+
 def _send_sms_now(to: str, body: str, *, detail: str) -> dict:
     """The one function that sends a text. Callers have passed checkpoint()."""
     cfg = config.load()
@@ -247,10 +274,12 @@ def _send_sms_now(to: str, body: str, *, detail: str) -> dict:
         # The log row is shown in the phone panel: it carries the error id,
         # and the provider's own text stays in the local log.
         error_id = log_failure(e, "Twilio send failed")
+        _record_egress("sms", to, _sms_kept(to, body, detail), _error_result(e))
         spool.ledger_add(channel="sms", direction="out", party=to, status="failed",
                          detail="%s — not sent (error %s)" % (detail, error_id))
         raise PhoneRefused("Twilio did not take the text (error %s)." % error_id,
                            detail="Twilio did not take the text: %s" % str(e)[:200])
+    _record_egress("sms", to, _sms_kept(to, body, detail), "sent")
     spool.ledger_add(channel="sms", direction="out", party=to, sid=res.get("sid") or "",
                      status=res.get("status") or "queued", detail=detail,
                      units=int(res.get("num_segments") or 1))
@@ -303,8 +332,14 @@ def start_owner_verification(method: str = "sms") -> dict:
         spoken = ", ".join(code)
         twiml = ("<Response><Say>This is Friday, an AI assistant, with your verification "
                  "code. %s. Again: %s. Goodbye.</Say></Response>" % (spoken, spoken))
-        res = _client().create_call(to=number, from_=cfg["phone_number"], twiml=twiml,
-                                    status_callback=_status_url("/twilio/call-status"))
+        try:
+            res = _client().create_call(to=number, from_=cfg["phone_number"], twiml=twiml,
+                                        status_callback=_status_url("/twilio/call-status"))
+        except Exception as e:
+            _record_egress("phone_call", number, {"to": number, "said": "(a verification code, not kept)"},
+                           _error_result(e))
+            raise
+        _record_egress("phone_call", number, {"to": number, "said": "(a verification code, not kept)"}, "sent")
         spool.ledger_add(channel="voice", direction="out", party=number,
                          sid=res.get("sid") or "", status=res.get("status") or "queued",
                          detail="verification code call")
@@ -519,8 +554,15 @@ def place_approved_call(approval_id: str) -> dict:
         twiml = ("<Response><Say>%s</Say><Pause length=\"1\"/><Say>%s</Say>"
                  "<Say>Goodbye.</Say></Response>"
                  % (escape(opening + (p.get("message") or "")), escape(p.get("message") or "")))
-    res = _client().create_call(to=p["to"], from_=cfg["phone_number"], twiml=twiml,
-                                status_callback=_status_url("/twilio/call-status"))
+    try:
+        res = _client().create_call(to=p["to"], from_=cfg["phone_number"], twiml=twiml,
+                                    status_callback=_status_url("/twilio/call-status"))
+    except Exception as e:
+        _record_egress("phone_call", p["to"], {"to": p["to"], "said": opening + (p.get("message") or ""),
+                                               "live": bool(p.get("live"))}, _error_result(e))
+        raise
+    _record_egress("phone_call", p["to"], {"to": p["to"], "said": opening + (p.get("message") or ""),
+                                           "live": bool(p.get("live"))}, "sent")
     spool.ledger_add(channel="voice", direction="out", party=p["to"], sid=res.get("sid") or "",
                      status=res.get("status") or "queued",
                      detail="approved %s call" % ("live" if p.get("live") else "one-way"))

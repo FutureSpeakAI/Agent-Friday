@@ -776,7 +776,11 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
         raise SendRefused("that account's credentials could not be read, so nothing was saved")
     from googleapiclient.discovery import build
     from agent_friday.services import gmail_api
-    svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    from agent_friday.services import egress_record as _er
+    # A draft saved into the owner's Gmail is a write to Google: recorded, with
+    # the message (A20), in the egress ledger and on the privacy map.
+    svc = _er.recorded(build("gmail", "v1", credentials=creds, cache_discovery=False),
+                       "mail_draft", "gmail-drafts", "gmail.googleapis.com")
     try:
         d = gmail_api.execute(svc.users().drafts().create(userId="me", body={"message": msg}))
     except gmail_api.GmailError as e:

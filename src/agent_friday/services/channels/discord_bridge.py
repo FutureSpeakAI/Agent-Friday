@@ -27,6 +27,7 @@ def _discord_available() -> bool:
 
 class DiscordBridge(ChannelAdapter):
     name = "discord"
+    max_chars = 2000
 
     def __init__(self) -> None:
         super().__init__()
@@ -79,7 +80,17 @@ class DiscordBridge(ChannelAdapter):
             reply = self._handler(self.name, chat_id, message.content or "") \
                 if self._handler else None
             if reply:
-                await message.channel.send(reply[:2000])
+                # The gateway reply goes through the same gate and record as
+                # every other channel send (base.send); it used to go out raw.
+                from agent_friday.services.channels.base import (_gate_channel_text, record_channel_send,
+                                                                 send_unsure)
+                gated = _gate_channel_text(reply, self.name)[:2000]
+                try:
+                    await message.channel.send(gated)
+                except Exception as e:
+                    record_channel_send(self.name, chat_id, gated, False, send_unsure(e))
+                    raise
+                record_channel_send(self.name, chat_id, gated, True)
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -110,8 +121,10 @@ class DiscordBridge(ChannelAdapter):
             req = urllib.request.Request(url, data=data, method="POST")
             req.add_header("Authorization", f"Bot {token}")
             req.add_header("Content-Type", "application/json")
+            # egress: recorded by ChannelAdapter.send, the only caller
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return {"ok": resp.status in (200, 201)}
         except Exception as e:
             self._last_error = exception_text(e)
-            return {"ok": False, "error": exception_text(e)}
+            from agent_friday.services.channels.base import send_unsure
+            return {"ok": False, "error": exception_text(e), "unsure": send_unsure(e)}

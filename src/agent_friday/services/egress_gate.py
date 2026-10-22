@@ -836,7 +836,46 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
 #: The sends that leave through a service rather than a model (§26.7: no
 #: unannounced egress). Each has its own name in the ledger and on the map.
 SERVICE_CHANNELS = ("mail", "mcp", "calendar", "tasks", "contacts", "publishing", "web_publish",
-                    "web_fetch", "web_search", "news_search")
+                    "web_fetch", "web_search", "news_search",
+                    # P5: the channels the map used to list as not recorded.
+                    "sms", "phone_call", "chat_channel", "mail_changes", "mail_draft", "news_feed",
+                    "unsubscribe", "federation", "career_fetch")
+
+
+def result_for_error(exc: BaseException) -> str:
+    """How a send that raised is recorded. "failed" only when the far end
+    answered with a refusal (an HTTP 4xx), so nothing was acted on; a timeout,
+    a dropped connection or a server error may have been acted on, so it is
+    "sent_unconfirmed" and the words are kept like a send."""
+    for obj, attr in ((exc, "code"), (exc, "status"), (exc, "status_code"),
+                      (getattr(exc, "resp", None), "status"),
+                      (getattr(exc, "response", None), "status_code")):
+        if obj is None:
+            continue
+        try:
+            v = int(getattr(obj, attr, None))
+        except (TypeError, ValueError):
+            continue
+        if 100 <= v <= 599:
+            return "failed" if 400 <= v < 500 else "sent_unconfirmed"
+    return "sent_unconfirmed"
+
+
+def record_address(channel: str, url: str, result: Any = "sent", *, content: Any = None,
+                   prefix: str = "web") -> dict | None:
+    """A request whose address is what leaves (a feed, a page, an unsubscribe
+    link, a peer's card), recorded like any service send. `result` may be the
+    exception the send raised (see result_for_error). Never raises."""
+    try:
+        if isinstance(result, BaseException):
+            result = result_for_error(result)
+        from urllib.parse import urlparse
+        host = urlparse(str(url or "")).hostname or "a website"
+        return record_service_send(channel, f"{prefix}:{host}"[:80], destination=host,
+                                   content=content if content is not None else {"url": url},
+                                   result=result, part="address")
+    except Exception:
+        return None
 
 
 def record_service_send(channel: str, provider: str, *, destination: str = "", content: Any = None,
