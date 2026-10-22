@@ -768,9 +768,18 @@ def rerun_task(task_id):
     prompt = t.get('prompt') or ''
     if not prompt.strip():
         return jsonify({"error": "no prompt recorded for this task; it cannot be re-run"}), 409
+    # The same limits the original had (scope, tools, follow-up, owner, schedule
+    # scope, workflow context, cloud/local policy, and through the parent the
+    # outside-content flag): a re-run is the same work, not a wider one.
+    from agent_friday.services.agent import _descendant_options
+    if t.get('crew_context') or t.get('job_kind') == 'runner':
+        return jsonify({"error": "this task runs on its own engine; start it again from where it came from"}), 409
+    _opts = _descendant_options(t, retry=int(t.get('chain_retry') or 0))
+    _opts.pop('task_id', None)
     new_id = _spawn_task(t.get('name') or 'Task', prompt, description=t.get('description') or '',
                          chain=t.get('chain'), chain_step=int(t.get('chain_step') or 0),
-                         model=t.get('model'))
+                         model=t.get('model'), tools=t.get('tools'),
+                         on_complete=t.get('on_complete'), **_opts)
     _tj.decision("rerun", new_id, reason=f"re-run by the user from task {task_id}",
                  task_id=task_id, alternatives=["leave as is"])
     _tj.append(new_id, "decision", point="rerun_of", chosen=task_id,

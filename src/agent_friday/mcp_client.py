@@ -912,6 +912,32 @@ class MCPServerHTTP:
         }
 
 
+import re as _re
+
+#: Argument names whose values are credentials, whatever their format.
+_SECRET_KEY = _re.compile(r"(pass(word|wd|phrase)?|secret|token|api[_-]?key|apikey|auth|authorization|"
+                          r"credential|private[_-]?key|cookie|session|bearer)", _re.I)
+_URL_USERINFO = _re.compile(r"(?<=://)[^/@\s:]+:[^/@\s]+@")
+
+
+def _scrubbed_for_keeping(obj):
+    """What a tool call sent, safe to keep with its receipt (A20 keeps the
+    content): values under credential-like names withheld, user:password@ in
+    addresses withheld, then vendor-format keys withheld by the shared filter."""
+    def walk(v, key=""):
+        if key and _SECRET_KEY.search(str(key)):
+            return "[withheld: credential]"
+        if isinstance(v, dict):
+            return {k: walk(x, k) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [walk(x) for x in v]
+        if isinstance(v, str):
+            return _URL_USERINFO.sub("[withheld]@", v)
+        return v
+    from agent_friday.services.credential_paths import redact_secrets
+    return redact_secrets(json.dumps(walk(obj), default=str))
+
+
 class MCPManager:
     """Owns the set of configured MCP servers and routes calls to them."""
 
@@ -1044,7 +1070,32 @@ class MCPManager:
             return f"[mcp error] no such server: {server}"
         if sp.status == "disabled":
             return f"[mcp error] server '{server}' is disabled"
-        return sp.call_tool(tool, arguments, timeout=timeout)
+        out = sp.call_tool(tool, arguments, timeout=timeout)
+        # §26.7: every call to a tool server is in the egress ledger and on the
+        # privacy map, whichever path made it: where it went, and the
+        # arguments that left (fingerprinted; kept encrypted by default, A20).
+        try:
+            from urllib.parse import urlparse
+            from agent_friday.services import egress_gate as _eg
+            url = getattr(sp, "url", None)
+            dest = (urlparse(str(url)).hostname or str(url)) if url else f"a program on this PC ({server})"
+            # "unavailable" never reached the server; an error after the call
+            # went out (a timeout, a server error) may have been acted on.
+            if isinstance(out, str) and out.startswith("[mcp") and "unavailable" in out[:80]:
+                result = "failed"
+            elif isinstance(out, str) and out.startswith("[mcp"):
+                result = "sent_unconfirmed"
+            else:
+                result = "sent"
+            try:
+                kept = _scrubbed_for_keeping({"tool": tool, "arguments": arguments})
+            except Exception:
+                kept = {"tool": tool, "arguments": "(not kept: could not be checked for secrets)"}
+            _eg.record_service_send("mcp", f"mcp:{server}"[:80], destination=dest, content=kept,
+                                    result=result, part=f"tool {tool}"[:60])
+        except Exception:
+            pass
+        return out
 
     def all_tools(self) -> list[tuple[str, dict]]:
         out: list[tuple[str, dict]] = []

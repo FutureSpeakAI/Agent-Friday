@@ -196,7 +196,8 @@ def test_the_ledger_line_holds_counts_only_no_words():
     ne.push(title="Tidy the notes finished", body="Your private notes about Alice",
             source="system", kind="info", emitter="E02", dedupe_key="task-done:t9",
             meta={"task_id": "t9"})
-    raw = al.LEDGER_FILE.read_text(encoding="utf-8")
+    from tests import ledger_support               # rows live in the action ledger
+    raw = ledger_support.text("activity")
     for word in ("Tidy", "private", "Alice", "t9"):
         assert word not in raw, word
     rec = json.loads(raw.splitlines()[-1])

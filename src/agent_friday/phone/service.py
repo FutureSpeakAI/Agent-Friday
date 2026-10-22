@@ -174,7 +174,7 @@ def checkpoint(action: str, target: str, *, approval: Optional[dict] = None) -> 
         raise
     except Exception as e:
         if type(e).__name__ == "SpendCapReached":
-            refuse("the spending hard stop has tripped: %s" % getattr(e, "user_message", ""))
+            refuse(getattr(e, "user_message", "") or str(e))
     owner = config.verified_owner_cell()
 
     if action in ("verify_sms", "verify_call"):
@@ -1084,6 +1084,9 @@ def start() -> None:
     ingress.set_listener(lambda _k: _WAKE.set())
     if os.environ.get("FRIDAY_TESTING"):
         return
+    from agent_friday.services import safe_mode as _sm
+    if not _sm.allows("phone"):
+        return                      # safe mode: no phone loop, no ingress
     threading.Thread(target=_loop, name="phone-service", daemon=True).start()
     try:
         apply_enabled_state()

@@ -105,8 +105,8 @@ def _today_egress() -> dict:
                         e = json.loads(ln)
                     except ValueError:
                         continue
-                    if float(e.get("ts") or 0) < start:
-                        continue
+                    if float(e.get("ts") or 0) < start or e.get("kind") == "call":
+                        continue          # a call row summarises its field rows
                     row = by.setdefault(str(e.get("provider") or "?"), {"sent": 0, "stopped": 0})
                     row["sent" if e.get("action") == "allow" else "stopped"] += 1
         return by

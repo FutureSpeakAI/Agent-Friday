@@ -151,6 +151,10 @@ def get_adapter(name: str):
 
 
 def start_channel(name: str) -> Dict[str, Any]:
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("channels")
+    if _why:
+        return {"ok": False, "error": _why}
     cfg = load_config()
     if not cfg.get("enabled", False):
         return {"ok": False, "error": "channels disabled in settings"}

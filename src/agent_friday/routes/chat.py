@@ -509,6 +509,12 @@ def _conv_context(cid, limit=None, exclude_id=None):
                 _library_cite.remember_library_reply(text)
             if role == 'assistant':
                 text = _with_receipts(text, (m.get('meta') or {}).get('receipts'))
+            if role == 'assistant' and _posted_result(m.get('meta') or {}):
+                # Work that ran outside this chat (an approved card, a task, a workflow) posted
+                # its outcome here. It is stored as the owner saw it and replayed as data, never
+                # as something Friday or the owner said (services/untrusted_input).
+                from agent_friday.services.untrusted_input import wrap as _data_envelope
+                text = _data_envelope(text)
             if (m.get('meta') or {}).get('local_only'):
                 # A result the local model produced on this PC: replayed with
                 # the mark the egress gate withholds from every cloud model.
@@ -521,6 +527,15 @@ def _conv_context(cid, limit=None, exclude_id=None):
                     and (nxt is None or nxt.get('role') == 'user')):
                 out.append({"role": "assistant", "content": _NO_REPLY_NOTE})
     return out
+
+
+#: Transcript rows written by work that ran outside the chat turn (approval
+#: executors, background tasks, workflows), not by the turn's own model.
+_POSTED_RESULT_KINDS = frozenset({"approval_result", "task_result", "crew_result", "crew_dialogue"})
+
+
+def _posted_result(meta) -> bool:
+    return meta.get("kind") in _POSTED_RESULT_KINDS or bool(meta.get("workflow_run_id"))
 
 
 def _with_receipts(text, receipts):
@@ -1069,6 +1084,73 @@ def _privacy_hold_turn(fn):
 _PASTED_KEYS_ENV = "friday.pasted_key_kinds"
 
 
+def _stop_everything_gate(fn):
+    """Stop everything (services/global_stop) for typed chat.
+
+    "Stop everything" typed into chat stops everything at once, before any model
+    or Laya rule sees the words, so it works while a model call is wedged. While
+    everything is stopped no chat turn runs: the reply says so and names Resume.
+    """
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import global_stop as _gs
+        data = request.get_json(silent=True)
+        message = data.get("message") if isinstance(data, dict) else None
+        if _gs.is_stop_everything(message):
+            st = _gs.stop(by="owner", source="typed")
+            return jsonify({"status": "ok", "response": _gs.SPOKEN_STOPPED,
+                            "everything_stopped": True, "stop": public_result(
+                                {k: st.get(k) for k in ("since", "source", "halted", "receipt")},
+                                "Couldn't stop everything")})
+        if _gs.active():
+            text = ("Everything is stopped, so I did not read or answer that. "
+                    "Press Resume on the screen when you want me back.")
+            return jsonify({"status": "everything_stopped", "code": "everything_stopped",
+                            "response": text, "error": text, "everything_stopped": True}), 423
+        return fn(*args, **kwargs)
+    return _inner
+
+
+def _guest_turn(sess_ctx) -> bool:
+    """A codebase turn on a guest's key never moves to the owner's key (salon spec 4.7)."""
+    try:
+        from agent_friday.services import codebases as _cb
+        return bool(_cb.guest_key_for_turn(sess_ctx))
+    except Exception:
+        return False
+
+
+def _provider_offer_for(exc, provider, routed_local, sess_ctx=None):
+    """The offer for a turn whose Anthropic call failed, or None. Only for a provider
+    failure (not Friday's own bug), only when OpenRouter can serve, and never when the
+    owner already chose OpenRouter for this turn. Announced like a ladder's withheld move."""
+    try:
+        from agent_friday.services import provider_fallback as _pf, one_key as _ok
+        if routed_local or provider != 'cloud' or _pf.CHOSEN.get() or _guest_turn(sess_ctx):
+            return None
+        if not _pf.looks_like_provider_failure(exc) or not _ok.openrouter_ready():
+            return None
+        err = _pf.short_error(exc)
+        _pf.announce("withheld", "anthropic", "openai", err)
+        return _pf.ProviderSwitchWithheld("anthropic", "openai", err).offer()
+    except Exception:
+        return None
+
+
+def _cloud_fallback_choice(fn):
+    """A6: the owner's answer to a provider offer ("Use OpenRouter for this") rides the
+    resend as `cloud_fallback_choice` and allows that one move for this turn only
+    (services/provider_fallback.chosen). Anything but a known provider name is ignored."""
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import provider_fallback as _pf
+        data = request.get_json(silent=True)
+        choice = data.get("cloud_fallback_choice") if isinstance(data, dict) else None
+        with _pf.chosen(choice if isinstance(choice, str) else None):
+            return fn(*args, **kwargs)
+    return _inner
+
+
 def _withhold_pasted_keys(fn):
     """A key pasted into a chat message never enters the turn.
 
@@ -1389,6 +1471,8 @@ def _end_grant_turn(sess_ctx, session_id, conversation_id):
 
 
 @chat_bp.route('/api/chat', methods=['POST'])
+@_stop_everything_gate
+@_cloud_fallback_choice
 @_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
@@ -2515,6 +2599,19 @@ def chat():
             if _route_info.get('provider') == 'openai':
                 _provider = 'openai'
                 system_prompt, sources, pii_lookup = _prep_for('openai')
+        # A6: the owner pressed "Use OpenRouter for this" on a provider offer. This
+        # one turn goes there, named in the route; nothing else changes.
+        from agent_friday.services import provider_fallback as _pf_turn
+        if ((not _routed_local) and _provider == 'cloud' and _pf_turn.CHOSEN.get() == 'openai'
+                and not _guest_turn(_sess_ctx)):
+            from agent_friday.services import one_key as _ok_choice
+            if _ok_choice.openrouter_ready():
+                _route_info = dict(
+                    _route_info, provider='openai', provider_name=_ok_choice.OPENROUTER,
+                    model=_ok_choice.openrouter_id_for(str(_route_info.get('model') or '')),
+                    reason=(_route_info.get('reason') or '') + ' (you chose OpenRouter for this turn)')
+                _provider = 'openai'
+                system_prompt, sources, pii_lookup = _prep_for('openai')
         _outage_local = _outage_receipt = None
         if (not _routed_local) and _provider == 'cloud' and get_anthropic_client() is None:
             _mode = _cloud_intent.normalize_mode((_routing_cfg or {}).get('mode'))
@@ -3343,6 +3440,14 @@ def chat():
         _pilot_error = True
         traceback.print_exc()  # console launches; a no-op loss under pythonw
         _LOG.exception("chat turn failed")
+        # A6: Anthropic failed and OpenRouter is set up. Friday does not switch on her
+        # own: the reply says what failed and offers the other provider as a button.
+        _offer = _provider_offer_for(e, locals().get('_provider'), locals().get('_routed_local'),
+                                     locals().get('_sess_ctx'))
+        if _offer is not None:
+            return jsonify({"status": "ok", "response": _offer["text"], "local_fallback": _offer,
+                            "model": "", "seat": "cloud",
+                            "served_by": {"provider": "anthropic", "answered": False}})
         return jsonify({"response": "[Friday offline] " + error_text(e, "Couldn't answer that message")})
     finally:
         _settle_accepted_turn()
@@ -3482,6 +3587,8 @@ def _screen_block_for(provider_name, conversation_id):
 
 
 @chat_bp.route('/api/chat/send', methods=['POST'])
+@_stop_everything_gate
+@_cloud_fallback_choice
 @_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
@@ -3972,6 +4079,12 @@ def chat_send():
                         "fallback_chain": _fallback_chain}, "Couldn't send the message"))
     except Exception as e:
         _pilot_error = True
+        from agent_friday.services import provider_fallback as _pf_send
+        if isinstance(e, _pf_send.ProviderSwitchWithheld):
+            # A6: the cloud provider failed and Friday did not switch on her own.
+            # The reply is the offer: what failed, the alternative, two buttons.
+            return jsonify({"status": "provider_offer", "error": e.text(),
+                            "provider_offer": e.offer()}), 503
         traceback.print_exc()
         return api_error(e, "Couldn't send the message")
     finally:
