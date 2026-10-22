@@ -734,7 +734,9 @@ def _command_forbidden_reason(cmd: str) -> str:
         if why:
             continue                       # judged (and carded) by _command_reach_reason
         try:
-            p = _P(_os.path.expanduser(expanded)).resolve(strict=False)
+            # Text only (normalised, not resolved): no filesystem access for a
+            # model-supplied path; a link is caught by the Low fence, not here.
+            p = _P(_os.path.normpath(_os.path.abspath(_os.path.expanduser(expanded))))
         except Exception:
             continue
         if any(_pp._within(p, d) for d in outs):
