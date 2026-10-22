@@ -26,6 +26,10 @@ from agent_friday.services import doctor, safe_mode
 
 doctor_bp = Blueprint("doctor", __name__)
 
+# The refusal code Friday's pages answer by fetching this launch's desk key and
+# pressing once more (services/desk_press).
+_DESK_PROOF = "desk_proof_required"
+
 _PAGE = Path(__file__).resolve().parents[3] / "static" / "doctor.html"
 
 
@@ -108,7 +112,7 @@ def safe_mode_set():
     # this PC only: safe mode is never switched from a page reached through a
     # tunnel or the LAN
     if not (_is_local_request() and screen_click.screen_session(request)):
-        return jsonify({"status": "error", "code": "press_required",
+        return jsonify({"status": "error", "code": _DESK_PROOF,
                         "error": "Choose this on Friday's own page, on this PC."}), 403
     body = request.get_json(silent=True) or {}
     if not isinstance(body.get("next_start"), bool):
@@ -154,7 +158,7 @@ def restore_state():
 @login_required
 def restore_resume():
     if not _press_here():
-        return jsonify({"status": "error", "code": "press_required",
+        return jsonify({"status": "error", "code": _DESK_PROOF,
                         "error": "Resume on Friday's own page, on this PC."}), 403
     from agent_friday.services import friday_bundle
     try:
@@ -171,7 +175,7 @@ def bundle_create():
     the background; GET /api/bundle/status follows it. The passphrase is used
     in memory and never stored."""
     if not _press_here():
-        return jsonify({"status": "error", "code": "press_required",
+        return jsonify({"status": "error", "code": _DESK_PROOF,
                         "error": "Make a bundle from Friday's own page, on this PC."}), 403
     from agent_friday.services import friday_bundle as fb
     body = request.get_json(silent=True) or {}

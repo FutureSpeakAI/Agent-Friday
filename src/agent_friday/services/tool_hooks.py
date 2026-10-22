@@ -206,7 +206,7 @@ def run_pre_hooks(ctx: HookContext) -> PreVerdict:
         from agent_friday.services import safe_mode as _sm
         _extensions_off = not _sm.allows("tool_hooks")
     except Exception:
-        _extensions_off = False
+        _extensions_off = True     # a safe-mode check that cannot run keeps added hooks off
     for hook in list(_PRE_HOOKS):
         if not _applies(hook, ctx.tool_name):
             continue
@@ -251,7 +251,7 @@ def run_post_hooks(ctx: HookContext, result: str) -> str:
         from agent_friday.services import safe_mode as _sm
         _extensions_off = not _sm.allows("tool_hooks")
     except Exception:
-        _extensions_off = False
+        _extensions_off = True     # a safe-mode check that cannot run keeps added hooks off
     for hook in list(_POST_HOOKS):
         if not _applies(hook, ctx.tool_name):
             continue

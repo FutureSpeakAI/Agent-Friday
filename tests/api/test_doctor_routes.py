@@ -129,6 +129,31 @@ def test_the_report_changes_nothing_else_in_the_data_folder(client):
     assert not changed, changed
 
 
+def _desk():
+    """This launch's desk key, as Friday's page sends it on a press (services/desk_press)."""
+    from agent_friday.services import desk_press
+    return {"X-Friday-Desk": desk_press._KEY}
+
+
+def test_the_doctor_page_runs_as_one_of_fridays_own_pages(client):
+    """Not sandboxed like a creation: its own script may call the API and fetch the
+    desk key from the loopback door, or none of its buttons could work."""
+    r = client.get("/doctor")
+    csp = r.headers.get("Content-Security-Policy", "")
+    assert "sandbox" not in csp and "connect-src 'none'" not in csp, csp
+    assert "connect-src 'self'" in csp, csp
+
+
+def test_a_press_without_the_desk_key_is_refused_with_the_retry_code(client):
+    from agent_friday.core import _current_api_token
+    page = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
+            "X-Friday-Token": _current_api_token()}
+    for path, body in (("/api/safe-mode", {"next_start": False}), ("/api/restore/resume", {}),
+                       ("/api/bundle/create", {"passphrase": "x" * 16})):
+        r = client.post(path, json=body, headers=page)
+        assert r.status_code == 403 and r.get_json()["code"] == "desk_proof_required", path
+
+
 def test_the_doctor_page_is_served_locally(client):
     r = client.get("/doctor")
     assert r.status_code == 200 and b"Doctor" in r.data
@@ -142,7 +167,7 @@ def test_safe_mode_for_the_next_start_needs_the_owners_press(client, monkeypatch
     r = client.post("/api/safe-mode", json={"next_start": True})
     assert r.status_code == 403
     press = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-             "X-Friday-Token": _current_api_token()}
+             "X-Friday-Token": _current_api_token(), **_desk()}
     marker = friday_home() / "safe_mode" / "ON"
     try:
         r = client.post("/api/safe-mode", json={"next_start": True}, headers=press)
@@ -169,7 +194,7 @@ def test_nothing_here_answers_a_page_reached_from_another_machine(client):
     from agent_friday.core import _current_api_token
     remote = {"REMOTE_ADDR": "203.0.113.7"}
     press = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-             "X-Friday-Token": _current_api_token()}
+             "X-Friday-Token": _current_api_token(), **_desk()}
     r = client.post("/api/safe-mode", json={"next_start": False}, headers=press, environ_base=remote)
     assert r.status_code in (401, 403)
     r = client.post("/api/ledger/acknowledge", json={"reviewed": []}, headers=press, environ_base=remote)

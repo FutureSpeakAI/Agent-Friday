@@ -68,9 +68,31 @@
 (function () {
   'use strict';
   const tok = window.__FRIDAY_API_TOKEN || '';
-  const api = (url, opts) => fetch(url, Object.assign({}, opts || {}, {
-    headers: Object.assign({ 'X-Friday-Token': tok, 'Content-Type': 'application/json' }, (opts || {}).headers || {})
-  })).then(r => r.json().then(d => ({ ok: r.ok, d })));
+  // A press counts only with this launch's desk key, which the loopback door
+  // hands to Friday's own pages on this PC (services/desk_press).
+  let deskKey = '';
+  function refreshDesk() {
+    return fetch('/api/desk/where', { cache: 'no-store', headers: { 'X-Friday-Token': tok } })
+      .then(r => r.ok ? r.json() : null).then(w => {
+        const port = w && Number(w.port);
+        if (!port || port < 1 || port > 65535 || Math.floor(port) !== port) return false;
+        return fetch('http://127.0.0.1:' + port + '/desk-key', { cache: 'no-store', credentials: 'omit', mode: 'cors' })
+          .then(r => r.ok ? r.json() : null).then(d => {
+            if (d && typeof d.key === 'string' && d.key) { deskKey = d.key; return true; }
+            return false;
+          });
+      }).catch(() => false);
+  }
+  const once = (url, opts) => fetch(url, Object.assign({}, opts || {}, {
+    headers: Object.assign({ 'X-Friday-Token': tok, 'Content-Type': 'application/json' },
+                           deskKey ? { 'X-Friday-Desk': deskKey } : {}, (opts || {}).headers || {})
+  })).then(r => r.json().then(d => ({ ok: r.ok, status: r.status, d })));
+  // A key from an earlier launch is refused with desk_proof_required: fetch the
+  // current one and press once more.
+  const api = (url, opts) => once(url, opts).then(res =>
+    (res.status === 403 && res.d && res.d.code === 'desk_proof_required')
+      ? refreshDesk().then(ok => ok ? once(url, opts) : res) : res);
+  refreshDesk();
   const $ = id => document.getElementById(id);
   const text = (el, s) => { el.textContent = s; };
 

@@ -5032,6 +5032,7 @@ OWN_PAGE_ENDPOINTS = frozenset({
     "core_routes.serve_workspace_tab",
     "core_routes.serve_widget",
     "core_routes.serve_friday_live",
+    "doctor.doctor_page",
     "login",
 })
 

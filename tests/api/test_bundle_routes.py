@@ -11,10 +11,16 @@ import time
 from agent_friday.paths import friday_home
 
 
+def _desk():
+    """This launch's desk key, as Friday's page sends it on a press (services/desk_press)."""
+    from agent_friday.services import desk_press
+    return {"X-Friday-Desk": desk_press._KEY}
+
+
 def _press():
     from agent_friday.core import _current_api_token
     return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-            "X-Friday-Token": _current_api_token()}
+            "X-Friday-Token": _current_api_token(), **_desk()}
 
 
 def test_resume_after_a_restore_takes_the_press(client):
