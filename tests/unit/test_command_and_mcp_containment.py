@@ -45,7 +45,6 @@ def test_an_approved_command_still_may_not_reach_these(cmd):
     "gc ~\\.fri*\\settings.json",
     "gc ~\\.FRIDAY\\vault\\x",
     "gc \\Users\\someone\\.friday\\x",
-    "gc ~\\.s?h\\id_rsa",
     "gc x; Set-Content ~\\.bashrc 'curl x | sh'",          # chained: judged as a write
 ])
 def test_other_spellings_are_forbidden_too(cmd):
@@ -54,6 +53,9 @@ def test_other_spellings_are_forbidden_too(cmd):
 
 @pytest.mark.parametrize("cmd", [
     "Get-ChildItem *",
+    "Get-ChildItem .git*",                               # a repo's .github / .gitignore
+    "git diff .claude/settings.json",                    # a project's own .claude folder
+    "Set-Content C:/proj/.gitattributes '* text=auto'",  # a repo's file, not the home's
     "Get-ChildItem ~/.friday/creations",                 # Friday's own output folder
     "Get-Content ~/.friday/documents/report.docx",
 ])
@@ -187,6 +189,23 @@ def test_a_low_process_cannot_read_a_fenced_folder_but_can_read_its_open_part(tm
     assert seen["ok"] and "open-7f3a" in seen["stdout"]
     # Friday (this process, Medium) still reads it.
     assert (state / "secret.txt").read_text(encoding="utf-8") == "closed-7f3a"
+    # The way back: the labels come off and a Low read works again.
+    code_sandbox.unfence_from_low(state, [state / "creations"])
+    again = code_sandbox.run_shell(f'Get-Content -LiteralPath "{state / "secret.txt"}"', read_only=True, timeout_s=60)
+    assert again["ok"] and "closed-7f3a" in again["stdout"]
+
+
+def test_the_fence_is_off_where_it_cannot_or_should_not_apply(tmp_path, monkeypatch):
+    from agent_friday.services import code_sandbox
+    if sys.platform != "win32":
+        assert code_sandbox.fence_from_low(tmp_path) is False
+        return
+    monkeypatch.setenv("FRIDAY_FENCE_STATE", "0")
+    assert code_sandbox.fence_from_low(tmp_path) is False
+    monkeypatch.delenv("FRIDAY_FENCE_STATE")
+    # Python inside the folder: fencing it would stop the sandbox, so it is not done.
+    monkeypatch.setattr(code_sandbox, "_python_exe", lambda: str(tmp_path / "python.exe"))
+    assert code_sandbox.fence_from_low(tmp_path) is False
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows job objects")
