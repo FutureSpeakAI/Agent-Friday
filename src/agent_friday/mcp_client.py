@@ -54,6 +54,19 @@ _CREATE_FLAGS = 0
 if sys.platform == "win32":
     _CREATE_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+_REAL_POPEN = subprocess.Popen
+
+
+def _own_workdir(name: str):
+    """~/.friday/mcp/<server>/work: where a stdio server runs when its config names
+    no folder of its own."""
+    from pathlib import Path
+    import agent_friday.core as core
+    safe = "".join(ch for ch in str(name or "") if ch.isalnum() or ch in "-_.") or "server"
+    d = Path(core.FRIDAY_DIR) / "mcp" / (safe.strip(".") or "server") / "work"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 # MCP protocol revision we advertise in `initialize`. Servers negotiate down if
 # they only speak an older revision; this is just our preferred version.
 _PROTOCOL_VERSION = "2024-11-05"
@@ -171,6 +184,7 @@ class MCPServerProcess:
         self.trust_level = trust_level
 
         self.proc: subprocess.Popen | None = None
+        self._job = None                      # Windows job holding the server's tree
         self.tools: list[dict] = []           # raw MCP tool dicts (inputSchema form)
         self.status = "stopped"               # stopped|starting|ready|error|crashed
         self.error: str | None = None
@@ -226,19 +240,37 @@ class MCPServerProcess:
             raise
         full_env.update({k: str(v) for k, v in env.items()})
         cmd = [self._resolve_command(), *self.args]
+        # Its own working folder, never Friday's (the app folder holds Friday's code
+        # and an older release's key files). A configured cwd is kept.
+        cwd = self.cwd or str(_own_workdir(self.name))
+        # Held from its first instruction (services/code_sandbox.contain_helper): on
+        # Windows it starts suspended, goes into its own job (memory ceiling,
+        # process cap, the whole tree ends with the job), then runs. If the job
+        # cannot be made the server does not run.
+        contained = sys.platform == "win32"
+        from agent_friday.services import code_sandbox as _sbx
         self.proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=full_env,
-            cwd=self.cwd or None,
+            cwd=cwd,
             text=True,
             encoding="utf-8",
             errors="replace",
             bufsize=1,                       # line-buffered
-            creationflags=_CREATE_FLAGS,
+            creationflags=_CREATE_FLAGS | (_sbx.CREATE_SUSPENDED if contained else 0),
+            start_new_session=not contained,  # POSIX: stop() ends the whole group
         )
+        self._job = None
+        # (A stand-in Popen in a test is not a process to hold.)
+        if contained and isinstance(self.proc, _REAL_POPEN):
+            try:
+                self._job = _sbx.contain_helper(self.proc)
+            except Exception:
+                self.proc = None
+                raise
         self._reader = threading.Thread(
             target=self._read_loop, name=f"mcp-{self.name}-reader", daemon=True
         )
@@ -308,6 +340,14 @@ class MCPServerProcess:
             pass
         finally:
             self.proc = None
+            # Ends anything the server started that outlived it.
+            job, self._job = getattr(self, "_job", None), None
+            if job:
+                try:
+                    from agent_friday.services import code_sandbox as _sbx
+                    _sbx.release_helper(job)
+                except Exception:
+                    pass
             if self.status == "ready":
                 self.status = "stopped"
             # Fail any in-flight requests.

@@ -593,6 +593,12 @@ def classify_command(cmd: str) -> tuple:
     c = _literal_search_patterns(c)
     if _SELF_API.search(c):
         return "forbidden", "it addresses Friday's own local API"
+    # The file tools' policy, for commands too (services/path_policy, BD-26): no
+    # command, approved or not, reaches Friday's own state, a store of sign-ins,
+    # or a file a shell runs at start-up.
+    zone = _command_forbidden_reason(c)
+    if zone:
+        return "forbidden", zone
     if _DANGEROUS.search(c):
         return OUTWARD, "it chains, redirects, changes or reaches outside"
     for stage in c.split("|"):
@@ -608,6 +614,66 @@ def classify_command(cmd: str) -> tuple:
     if reach:
         return OUTWARD, reach
     return INTERNAL, "read-only"
+
+
+def _command_path_tokens(cmd: str):
+    """(token, expanded text) for every word of a command that names a path by
+    absolute, home-relative or environment spelling. '..' relatives are left to
+    _command_reach_reason."""
+    import os as _os
+    import re as _re
+    try:
+        from agent_friday.services.credential_paths import _expand_path_text
+    except Exception:
+        return
+    for raw in _re.split(r"[\s,;()]+", cmd or ""):
+        tok = raw.strip().strip("'\"`")
+        if not tok or tok.startswith("-"):
+            continue
+        low = tok.lower()
+        drive = bool(_re.match(r"^[a-z]:[\\/]", low))
+        posix_abs = tok.startswith("/") and not tok.startswith("//") and _os.name != "nt"
+        if not (drive or posix_abs or tok.startswith(("~", "\\\\", "//", "%"))
+                or low.startswith(("$env:", "$home", "$pshome", "$profile"))):
+            continue
+        if drive and _os.name != "nt":
+            continue
+        yield tok, _expand_path_text(tok)
+
+
+def _command_forbidden_reason(cmd: str) -> str:
+    """Why a command may not run even with the owner's approval, or "": it names a path
+    inside Friday's own state folder, a store of sign-ins or history, or a file a shell
+    runs at start-up (a folder grant for writing lifts the last two)."""
+    try:
+        from agent_friday.services import path_policy as _pp
+    except Exception:
+        return ""
+    import os as _os
+    from pathlib import Path as _P
+    import agent_friday.core as _core
+    state = _P(_core.FRIDAY_DIR).resolve(strict=False)
+    outs = _pp.output_dirs()
+    # Start-up files are refused to commands that may write; a read-only command
+    # (every stage on the read-only list) may still read .gitconfig.
+    heads = [s.strip().split()[0].lower() for s in (cmd or "").split("|") if s.strip()]
+    op = "read" if heads and all(h in READ_ONLY_COMMANDS for h in heads) else "write"
+    for _tok, expanded in _command_path_tokens(cmd):
+        why = _pp._text_reason(expanded)
+        if why:
+            continue                       # judged (and carded) by _command_reach_reason
+        try:
+            p = _P(_os.path.expanduser(expanded)).resolve(strict=False)
+        except Exception:
+            continue
+        if any(_pp._within(p, d) for d in outs):
+            continue
+        if _pp._within_folded(p, state):
+            return "it reaches Friday's own state folder"
+        zone = _pp.off_limits_reason(p, op) or ""
+        if ("sign-ins" in zone or "start-up" in zone) and _pp._grant_for(p, op) is None:
+            return zone.replace("it is inside", "it reaches", 1)
+    return ""
 
 
 def _command_reach_reason(cmd: str) -> str:

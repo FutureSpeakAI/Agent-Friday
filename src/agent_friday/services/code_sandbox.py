@@ -905,6 +905,66 @@ def _run_posix_shell(argv, workdir: Path, env: dict, timeout_s, memory_mb, cap, 
                                  "no OS isolation on this platform."}}
 
 
+# ── Long-running helpers (MCP stdio servers) ────────────────────────────────
+#
+# A connector's stdio server is a program Friday starts and keeps talking to. It
+# needs the network and its own caches, so it is not run at Low integrity; it is
+# put in a job object before its first instruction runs: a memory ceiling per
+# process, a cap on how many processes it may start, and everything it started
+# ends when Friday closes the job (stop, restart, or Friday exiting).
+
+HELPER_MEMORY_MB = 4096
+HELPER_PROCESSES = 32
+#: Popen creation flag: start suspended, so the job holds it before it runs.
+CREATE_SUSPENDED = 0x4
+
+
+def contain_helper(proc, *, memory_mb: int = HELPER_MEMORY_MB,
+                   max_processes: int = HELPER_PROCESSES):
+    """Put a process started with CREATE_SUSPENDED into its own job and let it run.
+    Returns the job handle (keep it; closing it ends the whole tree). Raises
+    SandboxError when the job cannot be made, after killing the process: a helper
+    is never left running unheld."""
+    api = _win_api()
+    c = api.ctypes
+    job = api.k.CreateJobObjectW(None, None)
+    if not job:
+        raise _err(api, "creating the job object")
+    try:
+        lim = api.EXTENDED_LIMIT()
+        b = lim.BasicLimitInformation
+        b.LimitFlags = 0x8 | 0x100 | 0x2000        # ACTIVE_PROCESS | PROCESS_MEMORY | KILL_ON_JOB_CLOSE
+        b.ActiveProcessLimit = int(max_processes)
+        lim.ProcessMemoryLimit = int(memory_mb) * 1024 * 1024
+        if not api.k.SetInformationJobObject(job, 9, c.byref(lim), c.sizeof(lim)):
+            raise _err(api, "setting the job limits")
+        handle = api.W.HANDLE(int(proc._handle))
+        if not api.k.AssignProcessToJobObject(job, handle):
+            raise _err(api, "placing the process in its job")
+        ntdll = c.WinDLL("ntdll")
+        ntdll.NtResumeProcess.argtypes = [api.W.HANDLE]
+        if ntdll.NtResumeProcess(handle) != 0:
+            raise SandboxError("the held process could not be resumed")
+        return job
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        api.k.CloseHandle(job)
+        raise
+
+
+def release_helper(job) -> None:
+    """Close a helper's job: everything in it ends."""
+    if not job:
+        return
+    try:
+        _win_api().k.CloseHandle(job)
+    except Exception:
+        pass
+
+
 def run_shell(command: str, *, read_only: bool, timeout_s=SHELL_DEFAULT_TIMEOUT_S, output_cap=SHELL_OUTPUT_CAP) -> dict:
     """Run one PowerShell command line held in as described above. Returns a dict (never raises
     for the command's own failures). `ok` is False when the sandbox itself could not be set up;
