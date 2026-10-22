@@ -6,16 +6,25 @@ Hugging Face; the downloader verifies against them, so a row here is a claim
 the install can check. Nothing is fetched to read it.
 
 The runtime section maps (OS family, backend) to the one release asset of
-the PrismML llama.cpp fork that serves Bonsai 2's ternary tensor types,
-which stock llama.cpp refuses. The asset's size and digest come from the
-GitHub release at download time, not from this file, so a new release needs
-no edit here.
+each llama.cpp build Friday installs: the PrismML fork that serves Bonsai 2's
+ternary tensor types (which stock llama.cpp refuses), and ``llama.cpp-flint``,
+the official release that first carried Flint's architecture. For the fork the
+asset's size and digest come from the GitHub release at download time. A
+runtime that carries ``pinned_sha256`` is stricter: every asset must be named
+there, and the pin, not the release page, is the digest the download must
+match (spec core_models_flint_laya_bonsai2 CT-E25).
+
+A model entry may carry ``revision``, a full commit id; its files are then
+fetched from that commit (``resolve/<commit>/``), so the bytes cannot move
+under the pinned sha256 (CT-E26). ``seat_hold`` keeps an installed model out
+of every seat until the role that serves it exists (CT-E24).
 """
 from __future__ import annotations
 
 import json
 import logging
 import platform
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -23,6 +32,10 @@ from pathlib import Path
 SHORTLIST_PATH = Path(__file__).resolve().parent.parent / "resources" / "model_shortlist.json"
 
 HF_RESOLVE = "https://huggingface.co/{repo}/resolve/main/{file}"
+HF_RESOLVE_AT = "https://huggingface.co/{repo}/resolve/{revision}/{file}"
+
+#: A pinned revision is a full git commit id; a branch or tag can move.
+_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
 
 @lru_cache(maxsize=1)
@@ -68,8 +81,58 @@ def file_entry(model_id: str, packing: str | None = None) -> dict | None:
 
 
 def file_url(model_id: str, entry: dict) -> str:
+    """Where a shortlist file is fetched from: the entry's pinned commit when it
+    names one, else ``main``. A ``revision`` that is not a full commit id is an
+    error in the shipped file, raised rather than fetched from a moving ref."""
     m = get(model_id) or {}
-    return HF_RESOLVE.format(repo=m.get("repo", ""), file=entry["file"])
+    rev = m.get("revision")
+    if rev is None:
+        return HF_RESOLVE.format(repo=m.get("repo", ""), file=entry["file"])
+    if not isinstance(rev, str) or not _COMMIT_RE.fullmatch(rev):
+        raise ValueError("%s: revision %r is not a full commit id" % (model_id, rev))
+    return HF_RESOLVE_AT.format(repo=m.get("repo", ""), revision=rev, file=entry["file"])
+
+
+def seat_hold(model_id: str) -> str | None:
+    """Why an installed copy of this model may not fill any seat yet, or None."""
+    hold = (get(model_id) or {}).get("seat_hold")
+    return str(hold) if hold else None
+
+
+def held_repos() -> dict:
+    """lower-cased Hugging Face repo -> hold reason, for every held model's
+    repo and the repo it was quantized from."""
+    out = {}
+    for m in _load().get("models") or []:
+        if m.get("seat_hold"):
+            for key in ("repo", "base_repo"):
+                if m.get(key):
+                    out[str(m[key]).lower()] = str(m["seat_hold"])
+    return out
+
+
+def held_reason(model_id: str, rec: dict | None = None) -> str | None:
+    """Why the installed model ``model_id`` may not fill any seat, or None.
+
+    Decided when the record is READ, from the record and from the shipped
+    shortlist together, so a write path that rebuilds the record (a rollback,
+    a re-registration, an override) can never lift a hold, and a copy of a
+    held model's files under another id (a pasted repo) is held too. A
+    shortlist that cannot be read leaves only the record's own field.
+    """
+    rec = rec if isinstance(rec, dict) else {}
+    if rec.get("held"):
+        return str(rec["held"])
+    try:
+        hold = seat_hold(model_id)
+        if hold:
+            return hold
+        repo = str((rec.get("origin") or {}).get("repo") or "").lower()
+        return held_repos().get(repo) if repo else None
+    except Exception as e:  # noqa: BLE001 - an unreadable list must not hold every model
+        logging.getLogger("friday.model_shortlist").warning(
+            "seat holds: the shortlist could not be read (%s); only recorded holds apply", e)
+        return None
 
 
 def companions(model_id: str) -> list[dict]:
@@ -78,6 +141,11 @@ def companions(model_id: str) -> list[dict]:
 
 def runtime_spec(name: str = "prism-fork") -> dict:
     return dict((_load().get("runtime") or {}).get(name) or {})
+
+
+def runtime_names() -> list[str]:
+    """Every runtime the shortlist knows how to install."""
+    return sorted((_load().get("runtime") or {}).keys())
 
 
 def os_family() -> str:
@@ -111,10 +179,11 @@ def backend_for(profile: dict | None) -> str:
     return "cpu"
 
 
-def runtime_asset_names(backend: str, fam: str | None = None) -> list[str]:
+def runtime_asset_names(backend: str, fam: str | None = None,
+                        name: str = "prism-fork") -> list[str]:
     """The asset name suffixes to fetch for (os, backend), main binary first."""
     fam = fam or os_family()
-    spec = runtime_spec()
+    spec = runtime_spec(name)
     assets = (spec.get("assets") or {}).get(fam) or {}
     main = assets.get(backend) or assets.get("cpu")
     out = [main] if main else []
@@ -155,7 +224,8 @@ def _is_cudart_pack(name: str, runtime_name: str) -> bool:
     return low.startswith(CUDART_PREFIX) and low.endswith(runtime_name.lower())
 
 
-def pick_release_assets(release: dict, backend: str, fam: str | None = None) -> list[dict]:
+def pick_release_assets(release: dict, backend: str, fam: str | None = None,
+                        name: str = "prism-fork") -> list[dict]:
     """From a GitHub release payload, the assets this machine needs:
     `{name, url, size, sha256, role}` each, the server archive first.
 
@@ -173,7 +243,7 @@ def pick_release_assets(release: dict, backend: str, fam: str | None = None) -> 
     """
     log = logging.getLogger("friday.model_shortlist")
     fam = fam or os_family()
-    wanted = runtime_asset_names(backend, fam)
+    wanted = runtime_asset_names(backend, fam, name=name)
     assets = [a for a in (release.get("assets") or []) if isinstance(a, dict)]
     if not wanted:
         log.warning("runtime assets: no build is listed for %s/%s", fam, backend)

@@ -614,7 +614,8 @@ def local_models_catalog(profile: dict, sizes: dict) -> dict:
     try:
         from agent_friday.services import model_shortlist as sl
         from agent_friday.services import model_store as ms
-        store_ids = set(ms.available().keys())
+        # Held models are installed too (verified, no seat yet): never offered twice.
+        store_ids = set(ms.available().keys()) | set(ms.held_installed().keys())
         for m in sl.entries():
             f = sl.file_entry(m["id"]) or {}
             r = row(m["id"], "text", m.get("label"), m["id"] in store_ids,
