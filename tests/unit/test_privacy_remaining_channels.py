@@ -138,7 +138,12 @@ def test_a_news_feed_request_is_a_send_but_a_cached_feed_is_not(ledger, monkeypa
 
         def __exit__(self, *a):
             return False
+    import sys
+    import types
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _Resp())
+    fake = types.ModuleType("feedparser")          # the test does not depend on it being installed
+    fake.parse = lambda raw: types.SimpleNamespace(entries=[])
+    monkeypatch.setitem(sys.modules, "feedparser", fake)
     url = "https://news.example.invalid/rss?q=synthetic+town"
     ne._RSS_CACHE.pop(url, None)
     ne._parse_feed(url)
@@ -223,6 +228,34 @@ def test_a_peer_that_errors_after_receiving_is_one_honest_row(ledger, monkeypatc
                          urllib.error.HTTPError("u", 503, "x", {}, None))
     rows = [r for r in _calls(ledger) if r["channel"] == "federation"]
     assert [r["result"] for r in rows] == ["sent_unconfirmed"]
+
+
+def test_a_local_error_before_anything_leaves_records_nothing(ledger, monkeypatch):
+    from agent_friday.services import federation_transport as ft
+    from agent_friday.services import web_safety
+    monkeypatch.setattr(web_safety, "check_peer_endpoint", lambda u: (True, ""))
+    out = ft.send_to_peer("https://peer.example.invalid", {"cannot": object()})   # will not serialise
+    assert out["ok"] is False
+    assert [r for r in _calls(ledger) if r["channel"] == "federation"] == []
+
+
+def test_a_verification_text_that_fails_still_keeps_no_code(ledger, monkeypatch):
+    from agent_friday.phone import config, service
+    from agent_friday.services import sent_text_store as sts
+
+    class _Client:
+        def send_sms(self, **kw):
+            raise TimeoutError("synthetic")
+    monkeypatch.setattr(service, "_client", lambda: _Client())
+    monkeypatch.setattr(config, "load", lambda: {"phone_number": "+15550000000"})
+    monkeypatch.setattr(service, "_status_url", lambda p: "")
+    monkeypatch.setattr(service.spool, "ledger_add", lambda **k: None)
+    monkeypatch.setattr(service, "log_failure", lambda *a, **k: "E1")
+    with pytest.raises(service.PhoneRefused):
+        service._send_sms_now("+15550000001", "Your code is 654321.", detail="code", secret=True)
+    row = _calls(ledger)[-1]
+    assert row["result"] == "sent_unconfirmed"
+    assert "654321" not in sts.read(row["payload_fingerprint"])["text"]
 
 
 def test_a_feed_that_will_not_parse_is_still_one_row(ledger, monkeypatch):
