@@ -167,6 +167,8 @@ def test_a_card_raised_or_an_unknown_tool_is_journaled_as_not_through(tmp_path, 
 def test_a_denied_or_forged_receipt_is_not_proof(tmp_path, graded):
     from agent_friday.governance import action_gate as ag
     from agent_friday.services import goal_evidence as ge
+    from agent_friday.services import task_journal as tj
+    tj.append("goal-synthetic-1", "tool_call", name="send_email", ok=True, result_summary="sent 1")
     _signed("goal-synthetic-1", "send_email", "deny")
     ev = ge.collect(["goal-synthetic-1"], None)
     assert ge.judge({"kind": "receipt", "what": "a receipt"}, ev, "")["met"] is False
@@ -198,10 +200,12 @@ def test_the_goals_card_shows_what_the_check_rested_on(tmp_path, graded):
     assert row["check"] and row["check"][0].startswith("Met: itinerary.md (on record:")
 
 
-def test_proof_only_the_owner_can_give_never_makes_the_goal_verified(tmp_path, graded):
+def test_proof_only_the_owner_can_give_asks_the_owner_and_never_verifies(tmp_path, graded):
     goals.set_executor(_Run(tmp_path, write="itinerary.md"))
     g = _goal([{"kind": "file", "what": "itinerary.md"}, {"kind": "owner_confirms", "what": "I like it"}])
-    assert _run(g)["status"] == "done"
+    out = _run(g)
+    assert out["status"] == "pending_manual_confirmation", "Friday ticked the owner's part herself"
+    goals.approvals.decide(out["approval_id"], "approve", decided_by="owner")
     assert goals.get_goal(g["goal_id"])["status"] == "met_unverified"
 
 
@@ -225,6 +229,28 @@ def test_a_check_that_cannot_read_its_record_says_so(tmp_path, graded, monkeypat
     monkeypatch.setattr(ge, "_journal_calls", broken)
     goals.set_executor(_Run(tmp_path))
     g = _goal([{"kind": "message_sent", "what": "the plan emailed"}])
-    _run(g)
+    out = _run(g)
+    assert out["status"] == "check_unavailable", "an unreadable record led to another attempt"
     v = _v(g)
     assert v["status"] == "skipped" and "could not read the run's journal" in v["critique"]
+    assert goals.get_goal(g["goal_id"])["milestones"][0]["blocker"]["type"] == "check_unavailable"
+
+
+def test_a_self_gated_send_that_only_queued_is_not_a_send(tmp_path, graded):
+    goals.set_executor(_Run(tmp_path, calls=[("draft_email", True, '{"sent": false, "queued": true}')],
+                            receipts=[("draft_email", "allow")]))
+    g = _goal([{"kind": "message_sent", "what": "the plan emailed"}])
+    assert _run(g)["status"] != "done"
+    goals.set_executor(_Run(tmp_path, calls=[("send_email", True, '{"sent": false, "queued": true}')],
+                            receipts=[("send_email", "allow")]))
+    g2 = _goal([{"kind": "message_sent", "what": "the plan emailed"}])
+    assert _run(g2)["status"] != "done"
+
+
+def test_only_write_file_adds_a_written_file(tmp_path):
+    from agent_friday.services import task_ledger as tl
+    tid = "goal-synthetic-written"
+    tl.ensure(tid, "x")
+    tl.note_tool(tid, "office_check", {"path": "C:/x/report.docx"}, "ok", wrote=True)
+    tl.note_tool(tid, "write_file", {"path": "C:/x/out.md", "src": "C:/x/in.md"}, "ok", wrote=True)
+    assert tl.load(tid)["files_written"] == ["C:/x/out.md"]
