@@ -163,7 +163,9 @@ def test_the_audit_finds_an_action_that_ran_without_its_decision():
 def test_an_allowed_action_that_never_reported_back_is_unverified():
     from agent_friday.services import receipt_audit
     L.append("decision", {"tool": "send_email", "class": "outward", "decision": "allow",
-                          "args_hash": "x"}, durable=True)
+                          "args_hash": "x", "via": "tool_call"}, durable=True)
+    L.append("decision", {"tool": "claude_code_action", "class": "outward", "decision": "allow",
+                          "args_hash": "x"}, durable=True)          # decided outside a tool call
     assert receipt_audit.audit()["open_count"] == 0                 # inside the grace period
     r = receipt_audit.audit(now=time.time() + 2 * receipt_audit.GRACE_S)
     assert r["open_count"] == 1 and r["ok"] is True
@@ -172,13 +174,22 @@ def test_an_allowed_action_that_never_reported_back_is_unverified():
 def test_an_approved_text_goes_through_the_hold_like_every_outward_executor(monkeypatch):
     """The phone checkpoint wrote its receipt directly and skipped the hold
     (safe mode, a ledger break, a restore). It now uses record_external."""
-    from agent_friday.phone import service as phone
+    from agent_friday.phone import config, service as phone
+    monkeypatch.setattr(config, "load", lambda: {"enabled": True, "phone_number": "+15550000000",
+                                                 "owner_sms_per_hour": 99, "owner_sms_per_day": 99})
+    monkeypatch.setattr(config, "api_credentials", lambda: ("sid", "tok"))
     monkeypatch.setattr(action_gate, "outward_hold", lambda: "held for the test")
-    called = []
-    monkeypatch.setattr(action_gate, "record_external",
-                        lambda *a, **k: (called.append(a), (_ for _ in ()).throw(action_gate.Held("held for the test")))[1])
+    try:
+        from agent_friday.services import spend_guard
+        monkeypatch.setattr(spend_guard, "check", lambda *a, **k: None)
+    except Exception:
+        pass
+    approval = {"approval_id": "ap-phone", "status": "approved"}
+    with pytest.raises(phone.PhoneRefused) as e:
+        phone.checkpoint("sms", "+15551234567", approval=approval)
+    assert "held for the test" in str(e.value) or "held" in str(e.value)
     src = open(phone.__file__, encoding="utf-8").read()
-    assert "_gate._receipt(" not in src and "record_external(" in src
+    assert "_gate._receipt(" not in src
 
 
 def test_every_channel_send_has_a_receipt_and_the_gateway_reply_is_gated(monkeypatch):
@@ -207,3 +218,42 @@ def test_every_channel_send_has_a_receipt_and_the_gateway_reply_is_gated(monkeyp
     src = open(__import__("agent_friday.services.channels.discord_bridge", fromlist=["x"]).__file__,
                encoding="utf-8").read()
     assert "prepare_outbound(" in src and "await message.channel.send(reply" not in src
+
+
+
+def test_a_chat_yes_and_a_card_are_not_flagged_and_a_later_receipt_does_not_steal_the_link(monkeypatch):
+    """Review round 1 (B1, S1): a call the owner confirmed in chat ran on a
+    "confirm" decision, and a later hook's receipt replaced the decision."""
+    from agent_friday.services import receipt_audit
+    tool = "send_email" if "send_email" in agent.CLAUDE_TOOL_HANDLERS else next(
+        n for n in sorted(agent.CLAUDE_TOOL_HANDLERS) if action_gate.classify(n, {})[0] == action_gate.OUTWARD)
+    monkeypatch.setattr(action_gate, "_decide",
+                        lambda t, klass, why, ctx, *a, **k: action_gate.Verdict("confirm", klass, "ask in chat"))
+    real = agent._hooks.run_pre_hooks
+
+    def yes_then_more(ctx):
+        v = real(ctx)
+        ctx.meta["owner_decided"] = "chat:fp-test"           # the owner said yes in chat
+        action_gate._receipt({"tool": "verifier_note", "class": "internal", "decision": "allow"})
+        return agent._hooks.ALLOW
+    monkeypatch.setattr(agent._hooks, "run_pre_hooks", yes_then_more)
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, tool, lambda inp: "ok")
+    agent._execute_tool(tool, _args_for(tool), session_ctx={"authenticated": True, "session_id": "s1"})
+    out, dec = _pairs()[tool][-1]
+    assert dec is not None and dec["rec"]["tool"] == tool and dec["rec"]["decision"] == "confirm"
+    assert out["rec"]["approval"] == "chat:fp-test"
+    r = receipt_audit.audit()
+    assert r["ok"], r["orphan_outcomes"]
+
+
+def test_the_audit_reads_only_signed_entries_and_the_last_thirty_days():
+    """Review round 1 (S3, L1)."""
+    from agent_friday.services import receipt_audit
+    with open(L.live_path(), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"v": 1, "seq": 10 ** 6, "kind": "outcome", "t": time.time(),
+                            "rec": {"tool": "send_email", "status": "ok"}}) + "\n")
+    L.reset_caches()
+    assert receipt_audit.audit()["orphan_count"] == 0              # an unsigned line is not read
+    old = L.append("outcome", {"tool": "send_email", "status": "ok"})
+    r = receipt_audit.audit(now=time.time() + 40 * 86400)
+    assert r["orphan_count"] == 0                                    # older than the look
