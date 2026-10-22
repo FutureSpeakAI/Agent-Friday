@@ -11,11 +11,19 @@ on:
 permissions:
   contents: read
 
+# A newer push to a PR replaces its older analysis. Runs on main and on the
+# schedule always finish: the release gate reads their results.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     # One name per matrix leg, so a ruleset can require "analyze (python)"
     # and "analyze (javascript)" by name.
     name: analyze (${{ matrix.language }})
+    # Red-evidence PRs add only tests on unchanged code: nothing new to analyse.
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

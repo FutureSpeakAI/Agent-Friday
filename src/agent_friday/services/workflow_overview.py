@@ -524,6 +524,22 @@ def _job_view(rec, slug=None):
             "held_retry_pending": bool(rec.get("held_retry_pending"))}
 
 
+def _auto_enabled_note(rec) -> str:
+    """A built-in that was switched on for the owner says so on its row, with
+    when and why, while it stays on (services/scheduler.enable_if_seeded_off)."""
+    mark = (rec or {}).get("auto_enabled")
+    if not isinstance(mark, dict) or not (rec or {}).get("enabled", True):
+        return ""
+    try:
+        when = _time.strftime("%d %b %Y, %H:%M", _time.localtime(float(mark.get("at") or 0)))
+    except (TypeError, ValueError, OverflowError):
+        when = "earlier"
+    reason = str(mark.get("reason") or "").strip()
+    return ("Switched on automatically on " + when
+            + (" because " + reason if reason else "")
+            + ". You can switch it off here.")
+
+
 def _pending_approvals():
     try:
         from agent_friday.services import approvals as _ap
@@ -592,6 +608,7 @@ def overview() -> dict:
                 "finish_notice": r.get("finish_notice", True) is not False,
                 "schedule_status": r.get("status"), "status_reason": r.get("status_reason") or "",
                 "model": r.get("model") or "",
+                "note": _auto_enabled_note(r),
             })
             continue
         prompt = task.get("prompt") or ""

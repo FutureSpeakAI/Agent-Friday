@@ -12,6 +12,7 @@ import pytest
 
 from agent_friday.services import approval_batches as ab
 from agent_friday.services import approvals
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 OK = frozenset({"internal", "outward"})
 
@@ -188,7 +189,7 @@ def test_approving_the_batch_approves_exactly_the_listed_actions_each_on_its_own
     cards = [_card(i) for i in range(3)]
     other = _card(9, by="other_service")
     b = ab.pending_plan()["batches"][0]
-    out = ab.decide_batch(b["batch_id"], b["approval_ids"], "approve", decided_by="owner:ui")
+    with pressed(): out = ab.decide_batch(b["batch_id"], b["approval_ids"], "approve", decided_by="owner:ui")
     assert out["ok"] and out["decided"] == 3 and out["refused"] == 0
     assert {_status(a) for a in _ids(*cards)} == {"approved"}
     assert _status(other["approval_id"]) == "pending", "a card outside the batch is untouched"

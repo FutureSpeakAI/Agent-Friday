@@ -11,6 +11,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from agent_friday.services import learning_loop as ll  # noqa: E402
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 
 @pytest.fixture(autouse=True)
@@ -82,7 +83,8 @@ def test_promote_proposes_and_owner_accept_activates():
     to_states = {c["to"] for c in changes}
     assert "proposed_add" in to_states
     assert not any(s["skill_id"] == sid for s in ll.active_skills())
-    assert ll.decide_proposal(sid, "accept", decided_by="owner:ui")["ok"] is True
+    with pressed(): _pressed_result = ll.decide_proposal(sid, "accept", decided_by="owner:ui")["ok"] is True
+    assert _pressed_result
     assert any(s["skill_id"] == sid for s in ll.active_skills())
 
 
@@ -133,7 +135,7 @@ def test_retire_low_scoring_active():
     changes = ll.promote()
     assert any(c["to"] == "proposed_remove" for c in changes)
     assert any(s["skill_id"] == sid for s in ll.active_skills())
-    ll.decide_proposal(sid, "accept", decided_by="owner:ui")
+    with pressed(): ll.decide_proposal(sid, "accept", decided_by="owner:ui")
     assert not any(s["skill_id"] == sid for s in ll.active_skills())
 
 
