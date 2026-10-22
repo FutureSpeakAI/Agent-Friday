@@ -59690,7 +59690,9 @@ function SettingsTabPrivacy({
   }, /*#__PURE__*/React.createElement(CalendarDeleteGuestsRow, {
     s: s,
     save: save
-  })), /*#__PURE__*/React.createElement(StSection, {
+  })), React.createElement(StSection, {
+    title: "Action record"
+  }, window.FridayLedgerRetentionRow && React.createElement(window.FridayLedgerRetentionRow, null)), /*#__PURE__*/React.createElement(StSection, {
     title: (fridayName() + "’s rules on this PC")
   }, /*#__PURE__*/React.createElement(ClawsRepinPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Stored keys"

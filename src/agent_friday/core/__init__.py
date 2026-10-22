@@ -3566,6 +3566,9 @@ DEFAULT_SETTINGS = {
     "dock_by_asking": "apply_with_undo",
     # Deleting a calendar event: whether "notify guests" starts ticked.
     "calendar_delete_notify_guests": False,
+    # A22: entries older than this leave the live action record for its encrypted
+    # archive (never deleted). 0 turns archiving off; at least 30 days.
+    "ledger_archive_after_days": 730,
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.

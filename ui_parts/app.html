@@ -20399,6 +20399,9 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Deleting calendar events">
       <CalendarDeleteGuestsRow s={s} save={save}/>
     </StSection>
+    <StSection title="Action record">
+      {window.FridayLedgerRetentionRow && <window.FridayLedgerRetentionRow/>}
+    </StSection>
     <StSection title={(fridayName() + "’s rules on this PC")}>
       <ClawsRepinPanel/>
     </StSection>

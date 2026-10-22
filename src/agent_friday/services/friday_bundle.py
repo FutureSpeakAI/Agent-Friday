@@ -698,6 +698,11 @@ def _add_ledger(tar, home: Path, ledger_files, manifest_files) -> Optional[dict]
     state = None
     lock = action_ledger._FileLock(home / "ledger" / action_ledger.LOCK_NAME)
     with lock:
+        if ledger_files:
+            # listed again under the lock: an archive step (A22) that ran since
+            # the plan moved a segment into ledger/archive/
+            ledger_files = [(r, c) for r, c in plan(home, {"receipts"})["files"]
+                            if r.parts[0].lower() == "ledger"]
         for rel, cat in ledger_files:
             got = _add_file(tar, "home/" + rel.as_posix(), home / Path(*rel.parts))
             if got is None:

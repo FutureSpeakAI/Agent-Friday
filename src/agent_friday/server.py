@@ -532,6 +532,16 @@ if not _TESTING:
                 print(f"  Action ledger: {rep.get('open_problem_count')} break(s) to review in Activity; outward actions held")
         except Exception as _al_err:
             print(f"  Action ledger: could not be checked at start ({_al_err})")
+        # A22: entries past the retention period (Settings, 2 years by
+        # default) move into the encrypted archive, never deleted; then once a day.
+        while True:
+            try:
+                _out = _al.archive_old()
+                if _out.get("archived"):
+                    print(f"  Action ledger: {_out.get('records')} older entries archived (through {_out.get('through')})")
+            except Exception as _ar_err:
+                print(f"  Action ledger: archive step skipped ({_ar_err})")
+            __import__("time").sleep(86400)
     threading.Thread(target=_ledger_boot, daemon=True, name="action-ledger-boot").start()
 
     # Adopt whatever was running when the previous process died.

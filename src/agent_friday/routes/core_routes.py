@@ -1887,6 +1887,10 @@ def api_settings():
             # Whether meetings are searchable is chosen only at /api/meetings/archive (on, from the
             # Friday window); the generic settings write is not a way to say yes for the owner.
             new_settings = {k: v for k, v in new_settings.items() if k != 'meeting_archive'}
+        if isinstance(new_settings, dict) and 'ledger_archive_after_days' in new_settings:
+            # How long the action record stays live (A22) is changed only at
+            # /api/ledger/retention, on this PC, by a press, with a receipt.
+            new_settings = {k: v for k, v in new_settings.items() if k != 'ledger_archive_after_days'}
         if isinstance(new_settings, dict) and ('voice_engine_choice' in new_settings
                                                or 'voice_switch_back' in new_settings):
             # The record of a cloud voice choice and its switch-back offer are written only by the
