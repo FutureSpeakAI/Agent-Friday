@@ -1761,6 +1761,10 @@ def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
     """Every line of every segment, the archive it continues from (A22), the
     head, the anchor and what this process wrote. The whole report. `deep`
     also opens every archived file and walks its chain."""
+    # What this process had written, taken before any file is read: an append
+    # by another thread while the files are read (no write lock here) is then
+    # never mistaken for records that went missing.
+    seen_before = _STATE.get("max_seen") or 0
     problems: list[dict] = []
     acks: list[dict] = []
     flagged: list[dict] = []
@@ -1857,7 +1861,7 @@ def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
             problems.append({"segment": "anchor", "line": 0, "seq": aseq,
                              "reason": "the record kept outside the data folder was replaced",
                              "raw_sha256": ahash})
-    seen = _STATE.get("max_seen") or 0
+    seen = seen_before
     if last_seq < seen:
         problems.append({"segment": "process", "line": 0, "seq": seen,
                          "reason": "%d record(s) this session wrote are gone" % (seen - last_seq),
