@@ -620,20 +620,35 @@ def _command_reach_reason(cmd: str) -> str:
         from agent_friday.services.credential_paths import _expand_path_text
     except Exception:
         return ""
+    import os as _os
+    from pathlib import Path as _P
     for raw in _re.split(r"[\s,;()]+", cmd):
         tok = raw.strip().strip("'\"`")
         if not tok or tok.startswith("-"):
             continue
         low = tok.lower()
-        looks = (_re.match(r"^[a-z]:[\\/]", low) or tok.startswith(("~", "\\\\", "//", "%"))
+        drive = bool(_re.match(r"^[a-z]:[\\/]", low))
+        # On Windows a leading "/" is a switch (dir /s), elsewhere an absolute path.
+        posix_abs = tok.startswith("/") and not tok.startswith("//") and _os.name != "nt"
+        looks = (drive or posix_abs or tok.startswith(("~", "\\\\", "//", "%"))
                  or low.startswith(("$env:", "$home", "$pshome", "$profile")) or ".." in tok)
         if not looks:
             continue
         if ".." in tok and not _re.match(r"^[a-z]:[\\/]|^[~\\/%$]", low):
             return "it walks up out of its working folder with '..'"
+        if drive and _os.name != "nt":
+            continue        # a drive path names nothing on this machine
         expanded = _expand_path_text(tok)
         p, why = _pp.judge(expanded, "read")
         if p is None:
+            # A folder ABOVE the home (C:\Users, C:\) shows names only to a
+            # listing; it holds no content of its own to read.
+            try:
+                q = _P(_os.path.expanduser(expanded)).resolve(strict=False)
+                if _pp._within_folded(_pp._home(), q):
+                    continue
+            except Exception:
+                pass
             return f"it reads a place Friday's file tools may not ({why})"
     return ""
 

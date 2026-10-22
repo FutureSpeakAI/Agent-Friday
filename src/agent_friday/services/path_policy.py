@@ -150,13 +150,23 @@ def _off_limits(op: str) -> List[Tuple[Path, str]]:
     for var in ("APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
         v = os.environ.get(var)
         if v:
-            out.append((Path(v).resolve(strict=False), "application data"))
+            zone = Path(v).resolve(strict=False)
+            # A zone is carved OUT of the home. One that contains the sandbox root
+            # (a root the owner set inside %TEMP%, which lives under LOCALAPPDATA)
+            # would refuse the whole root, so it does not apply there. On a normal
+            # install the root is the profile and LOCALAPPDATA sits inside it.
+            if _within_folded(_home(), zone):
+                continue
+            out.append((zone, "application data"))
     for h in homes:
         out += [(h / rel, "application data") for rel in _APP_DATA]
         out += [(h / rel, "a store of sign-ins or history") for rel in _SIGN_IN_STORES]
         if op == "write":
             out += [(h / rel, "a file run or obeyed at start-up") for rel in _AUTORUN]
-    return out
+    # The same rule for the profile's own zones (profile\AppData holding a sandbox
+    # root under %TEMP%). Friday's state folder always stays refused.
+    root = _home()
+    return [out[0]] + [(z, label) for z, label in out[1:] if not _within_folded(root, z)]
 
 
 def _search_roots() -> List[Path]:

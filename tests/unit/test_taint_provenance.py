@@ -45,6 +45,10 @@ EMAIL_RESULT = json.dumps({"source": "gmail", "count": 2, "messages": [
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
+    # The tests name documents by relative path; the file tools' folder confinement
+    # (services/path_policy) is pointed at the folder those resolve in.
+    import os
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", os.getcwd())
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(approvals, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)
