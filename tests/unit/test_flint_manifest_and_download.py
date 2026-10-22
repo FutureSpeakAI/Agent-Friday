@@ -189,8 +189,11 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(model_store, "registry_path", lambda: tmp_path / "models.json")
     monkeypatch.setattr(md, "runtime_dir", lambda: tmp_path / "runtime")
     monkeypatch.setattr(md, "_disk_refusal", lambda profile, total: None)
+    # A file whose name starts "flint" declares Flint's architecture; any other
+    # file is an ordinary model, so a record can be a positive control.
     monkeypatch.setattr(model_store, "describe", lambda p: {
-        "path": str(p), "size_bytes": Path(p).stat().st_size, "architecture": "flint",
+        "path": str(p), "size_bytes": Path(p).stat().st_size,
+        "architecture": "flint" if Path(p).name.startswith("flint") else "qwen35",
         "quantization": "Q2_K", "can_generate": True, "is_embedding": False})
     md._JOBS.clear()
     md._CTRL.clear()
@@ -300,11 +303,13 @@ def test_the_after_install_bench_does_not_take_the_gpu_for_a_held_model(store, m
     p = store / "gguf" / "flint-test.gguf"
     p.parent.mkdir(parents=True)
     p.write_bytes(_gguf_bytes())
-    model_store.register(FLINT, p, source=model_store.SOURCE_DOWNLOAD, held="waiting for CT2")
     ran = []
-    out = model_bench.bench(FLINT, profile={"gpus": [{"vendor": "nvidia"}]},
-                            runner=lambda *a: ran.append(a) or {}, through_lease=False)
-    assert out["status"] == "skipped" and out["error"].startswith("held")
+    # Held by its record, and held by the shipped list after a rebuild dropped the field.
+    for held in ("waiting for CT2", None):
+        model_store.register(FLINT, p, source=model_store.SOURCE_DOWNLOAD, held=held)
+        out = model_bench.bench(FLINT, profile={"gpus": [{"vendor": "nvidia"}]},
+                                runner=lambda *a: ran.append(a) or {}, through_lease=False)
+        assert out["status"] == "skipped" and out["error"].startswith("held"), held
     assert ran == []
 
 
@@ -371,12 +376,22 @@ def test_a_copy_of_flint_under_another_id_is_held_or_refused(store):
     out = md.start_pasted("RecursiveSI/flint", "flint.gguf", bytes_=10, sha256="a" * 64,
                           start_thread=False)
     assert out["status"] == "refused"
-    p = store / "gguf" / "elsewhere.gguf"
-    p.parent.mkdir(parents=True)
-    p.write_bytes(_gguf_bytes())
-    model_store.register("hf:flint-gguf", p, source=model_store.SOURCE_DOWNLOAD,
+    gguf = store / "gguf"
+    gguf.mkdir(parents=True)
+    for name in ("copy-a.gguf", "flint-other-quant.gguf", "plain.gguf"):
+        (gguf / name).write_bytes(_gguf_bytes())
+    # A record from a held repo, whatever its file declares.
+    model_store.register("hf:flint-gguf", gguf / "copy-a.gguf", source=model_store.SOURCE_DOWNLOAD,
                          origin={"repo": "unsloth/flint-GGUF"})
-    assert "hf:flint-gguf" not in model_store.available()
+    # Another quantizer's copy: held by the architecture its file declares.
+    model_store.register("hf:flint-other", gguf / "flint-other-quant.gguf",
+                         source=model_store.SOURCE_DOWNLOAD, origin={"repo": "someone/flint-GGUF"})
+    # The positive control: an ordinary pasted model stays available.
+    model_store.register("hf:plain", gguf / "plain.gguf", source=model_store.SOURCE_DOWNLOAD,
+                         origin={"repo": "someone/plain-GGUF"})
+    avail = model_store.available()
+    assert "hf:plain" in avail
+    assert "hf:flint-gguf" not in avail and "hf:flint-other" not in avail
 
 
 def test_a_held_flint_is_not_queued_again(store, windows_nvidia):
@@ -470,7 +485,10 @@ def test_first_run_can_never_seat_flint():
     from agent_friday.services import first_run_models as frm
     assert sl.get(FLINT), "the entry exists, so the refusal below is about its role"
     for seat in frm.SEATS:
-        assert frm.validate_choice(seat, FLINT) is not None, seat
+        why = frm.validate_choice(seat, FLINT)
+        assert why is not None, seat
+        if seat != "fast_responder":          # the voice front has its own list
+            assert "cannot fill" in why, why
 
 
 def test_the_licence_record_names_flint_and_its_runtime():
