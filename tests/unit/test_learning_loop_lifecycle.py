@@ -11,6 +11,7 @@ import uuid
 import pytest
 
 from agent_friday.services import learning_loop as ll
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 
 def _uniq(prefix):
@@ -109,7 +110,7 @@ class TestScoreAndPromote:
             ll.record_trial(sid, success=True, satisfaction=0.95)
         ll.promote(threshold=0.5, min_trials=3)
         assert sid not in [s["skill_id"] for s in ll.active_skills()]
-        ll.decide_proposal(sid, "accept", decided_by="owner:ui")
+        with pressed(): ll.decide_proposal(sid, "accept", decided_by="owner:ui")
         actives = [s["skill_id"] for s in ll.active_skills()]
         assert sid in actives
 
@@ -118,13 +119,13 @@ class TestScoreAndPromote:
         for _ in range(5):
             ll.record_trial(sid, success=True, satisfaction=0.95)
         ll.promote(threshold=0.5, min_trials=3)
-        ll.decide_proposal(sid, "accept", decided_by="owner:ui")
+        with pressed(): ll.decide_proposal(sid, "accept", decided_by="owner:ui")
         # Now feed a wall of failures so the Wilson bound craters.
         for _ in range(20):
             ll.record_trial(sid, success=False, satisfaction=0.05)
         ll.promote(threshold=0.5, retire=0.4)
         assert sid in [s["skill_id"] for s in ll.active_skills()]
-        ll.decide_proposal(sid, "accept", decided_by="owner:ui")
+        with pressed(): ll.decide_proposal(sid, "accept", decided_by="owner:ui")
         actives = [s["skill_id"] for s in ll.active_skills()]
         assert sid not in actives
 
