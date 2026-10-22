@@ -18,7 +18,11 @@ def _ps():
 
 WEAK = ["xxxxxxxxxxxxxxxxxxxx", "password1234", "qwertyuiop123456", "abcdefghijklmnop",
         "correct horse battery staple", "correct horse battery staple 42", "summer2024summer",
-        "my friday backup 2024", "iloveyou12345", "aaaaaaaaaaaaaaaa", "short"]
+        "my friday backup 2024", "iloveyou12345", "aaaaaaaaaaaaaaaa", "short",
+        # review round 1: words mode and mixed strings were fooled
+        "aaaa bbbb cccc dddd", "abcd efgh ijkl mnop", "qwer tyui asdf zxcv", "zzzz yyyy xxxx wwww",
+        "abc abd abe abf", "dog cat sun hat", "P@ssw0rd2024!!", "a1b2c3d4e5f6g7", "1q2w3e4r5t6y7u",
+        "!@#$%^&*()_+", "L3tm31n2023"]
 STRONG = ["orbit lantern pepper tundra violet 42", "violet anchor drizzle mammoth",
           "kL9#vQ2!mZ7@pX4$", "ci clean machine walnut harbour quartz"]
 
@@ -64,3 +68,14 @@ def test_the_command_line_refuses_a_weak_passphrase_from_the_environment(tmp_pat
         cli.main()
     assert e.value.code == 1
     assert not (tmp_path / "x.fridaybundle").exists()
+
+
+def test_a_very_long_input_is_refused_quickly():
+    """Review round 1: the run check was cubic; a long input took seconds."""
+    import time
+    t = time.time()
+    a = _ps().assess("ab" * 50000)
+    assert time.time() - t < 1.0 and not a["ok"]
+    t = time.time()
+    _ps()._run_length("ab" * 5000)
+    assert time.time() - t < 0.5
