@@ -66,6 +66,13 @@ def test_every_caller_asserts():
     assert build.count("-ExpectedSha256 $sources.get_pip.sha256") == 2
 
 
+def test_a_cached_get_pip_that_is_not_the_pin_is_discarded():
+    inst = _src("install.ps1")
+    i_cache = inst.index("A cached get-pip.py does not match the pin; discarding it.")
+    i_fetch = inst.index("Get-RemoteFile -Uri $script:Sources.get_pip.url")
+    assert i_cache < i_fetch
+
+
 def test_a_cached_ollama_installer_that_is_not_the_pin_is_discarded():
     oll = _fn(_src("lib/Ollama.ps1"), "Install-Ollama")
     i_cache = oll.index("does not match the pin; discarding it")
