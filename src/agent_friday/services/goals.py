@@ -1478,6 +1478,7 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         _note_run(goal_id, milestone_id, task_id=attempt_task_id, stage="dispatching",
                   attempt=attempt, attempt_started_at=time.time(), reserved_mψ=reserved_total)
         milestone["_task_id"] = attempt_task_id
+        _attempt_began = time.time()
         work = _execute_milestone_work(goal, milestone, critique_hint=critique_hint)
         total_cost += int(work.get("cost_mψ") or 0)
         if work.get("task_id") and work.get("task_id") != attempt_task_id:
@@ -1533,7 +1534,10 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
                     "approval_id": appr.get("approval_id")}
 
         criteria = milestone.get("success_criteria") or goal.get("success_criteria") or ""
-        verdict = qa_gates.evaluate_text(last_text, criteria, workspace=f"goal:{goal_id}")
+        # §17.12: the run's record first (its tool calls, signed receipts, the
+        # files it wrote), the words only for what only words can show.
+        verdict = _verify(goal, milestone, last_text, criteria,
+                          task_id=work.get("task_id") or attempt_task_id, since=_attempt_began)
         last_verdict = verdict
         # The attempt reached its check: whatever stopped it before is not
         # "the same stop again" (§17.10 counts runs of identical stops).
@@ -1769,6 +1773,29 @@ _OWNER_BLOCKERS = ("interrupted", "run_failed", "no_progress", "plan_changed",
                    "approval_denied", "approval_expired", "approval_stale", "result_refused")
 #: Of those, the ones stopped by a card: starting again asks on a new card.
 _CARD_BLOCKERS = ("approval_denied", "approval_expired", "approval_stale", "result_refused")
+
+
+def _check_words(v: Dict[str, Any]) -> List[str]:
+    """One line per condition a check judged: met or not, and on what."""
+    out = []
+    for c in (v.get("conditions") or [])[:10]:
+        cites = c.get("cites") or []
+        on = ", ".join(str(x.get("path") or x.get("tool") or x.get("url") or x.get("source")) for x in cites[:3])
+        out.append(("Met: " if c.get("met") else "Not met: ") + str(c.get("what") or "")
+                   + (f" (on record: {on})" if on else (f" ({c.get('why')})" if c.get("why") else "")))
+    if not out and v.get("basis") == "text":
+        out.append("Checked on the result's words only (this goal names no proof on record).")
+    return out
+
+
+def _verify(goal: Dict[str, Any], milestone: Dict[str, Any], text: str, criteria: str, *,
+            task_id: Optional[str], since: Optional[float]) -> Dict[str, Any]:
+    """A milestone's check, on its run's record before its words
+    (services/goal_evidence, §17.12)."""
+    from agent_friday.services import goal_evidence
+    gid = goal.get("goal_id")
+    return goal_evidence.verify(goal, milestone, text, criteria, task_id=task_id, since=since,
+                                grade=lambda t, c: qa_gates.evaluate_text(t, c, workspace=f"goal:{gid}"))
 
 
 def _card_subject(goal_id: str, milestone_id: str, suffix: str, milestone: Dict[str, Any]) -> str:
@@ -2130,7 +2157,7 @@ def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dic
                           **_closed_run(goal_id, milestone_id))
         return {"ok": False, "status": "pending_manual_confirmation",
                 "approval_id": appr.get("approval_id")}
-    verdict = qa_gates.evaluate_text(text, criteria_text, workspace=f"goal:{goal_id}")
+    verdict = _verify(goal, milestone, text, criteria_text, task_id=tid, since=None)
     if verdict.get("passed"):
         _update_milestone(goal_id, milestone_id, status="done", done_at=_now_iso(),
                           verification=verdict, artifacts=[text[:2000]],
@@ -2322,6 +2349,8 @@ def summary(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]
             "can_run": m.get("status") == "pending" and status in LIVE_STATUSES,
             "verified": bool((m.get("verification") or {}).get("status") == "ok"
                              and not (m.get("verification") or {}).get("human_override")),
+            # §17.12: what the check rested on, condition by condition.
+            "check": _check_words(m.get("verification") or {}),
         })
     return {
         "goal_id": goal.get("goal_id"), "title": goal.get("title"),
