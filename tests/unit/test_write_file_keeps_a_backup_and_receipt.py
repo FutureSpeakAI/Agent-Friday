@@ -64,8 +64,14 @@ def test_the_receipt_and_backup_exist_before_the_write_and_survive_a_failed_one(
     doc = store / "notes.txt"
     doc.write_text("keep me", encoding="utf-8")
     seen = {}
+    real_write_text = Path.write_text
 
     def failing_write(self, data, encoding=None, errors=None, newline=None):
+        # Only the owner's document fails; Friday's own files (the action
+        # ledger writes through Path.write_text, under the journal's lock) are
+        # written as usual.
+        if Path(self) != doc:
+            return real_write_text(self, data, encoding=encoding, errors=errors, newline=newline)
         # At the moment of the write the receipt and the backup already exist.
         recs = journal.recent(5)
         seen["receipt"] = recs[0] if recs else None
