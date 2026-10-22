@@ -11,6 +11,7 @@ and an append after a torn line starts on a fresh line. Synthetic tasks only.
 from __future__ import annotations
 
 import json
+import sys
 import time
 
 import pytest
@@ -88,7 +89,8 @@ def test_an_append_after_a_torn_line_is_kept(journal):
     assert ("checkpoint", "after the stop") in kinds, kinds
 
 
-def test_the_tray_asks_before_it_stops_the_server():
+@pytest.mark.skipif(sys.platform != "win32", reason="the tray (pystray) runs on Windows only")
+def test_the_tray_asks_before_it_stops_the_server(monkeypatch):
     from agent_friday import friday_tray as ft
     calls = []
 
@@ -109,12 +111,30 @@ def test_the_tray_asks_before_it_stops_the_server():
             calls.append(("start",))
 
     ft.FridayTray._quit(_Stub(), None, None)
-    assert calls[0] == ("prepare", "tray_quit", False) and calls[-1] == ("stop",)
+    assert calls == [("release", "tray_quit"), ("prepare", "tray_quit", False), ("stop",)], \
+        "the clean-exit record is written right before the stop"
     calls.clear()
-    orig_sleep = ft.time.sleep
-    ft.time.sleep = lambda s: None
-    try:
-        ft.FridayTray.restart_server(_Stub())
-    finally:
-        ft.time.sleep = orig_sleep
+    monkeypatch.setattr(ft.time, "sleep", lambda s: None)
+    ft.FridayTray.restart_server(_Stub())
     assert calls[:2] == [("prepare", "tray_restart", True), ("stop",)]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the tray (pystray) runs on Windows only")
+def test_a_server_the_tray_did_not_start_is_not_told_to_get_ready(monkeypatch):
+    from agent_friday import friday_tray as ft
+    sent = []
+    monkeypatch.setattr(ft.urllib.request, "urlopen", lambda *a, **k: sent.append(a) or None)
+
+    class _Adopted:
+        server_proc = None
+        server_url = "http://127.0.0.1:1"
+    ft.FridayTray._prepare_for_exit(_Adopted(), "tray_quit")
+    assert sent == [], "an adopted server keeps running; it is not told it is about to stop"
+
+
+def test_an_index_row_after_a_torn_line_is_kept(journal):
+    tj.index_put("a-task-0001", "First", "running", time.time())
+    with open(tj._index_path(), "ab") as fh:
+        fh.write(b'{"task_id": "torn-0002", "na')
+    tj.index_put("b-task-0003", "Second", "running", time.time())
+    assert "b-task-0003" in tj.index_read()
