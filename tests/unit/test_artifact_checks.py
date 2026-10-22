@@ -288,7 +288,9 @@ def test_a_page_that_loads_from_the_internet_or_skips_alt_text_says_so(tmp_path)
     res = qa.check(p)
     msgs = " | ".join(f["message"] for f in res["findings"])
     assert not res["ok"] and "no alt text" in msgs
-    assert "cdn.example.com" in msgs and "fonts.example.com" in msgs
+    loaded = sorted(f["message"].split("the page loads ", 1)[1].split(" from the internet", 1)[0]
+                    for f in res["findings"] if f["message"].startswith("the page loads "))
+    assert loaded == ["https://cdn.example.com/x.js", "https://fonts.example.com/css"]
     assert "language" in msgs and "no title" in msgs and "h1 to h3" in msgs and "Fancy Script" in msgs
 
 
