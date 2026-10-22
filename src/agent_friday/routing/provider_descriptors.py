@@ -69,6 +69,13 @@ ADAPTER_TYPES = (
 
 # Adapters whose transport CAN keep data on-device. Only these may earn
 # classification "local" (an anthropic/google SDK call is cloud by definition).
+#: Built-in providers that are services, not model APIs, so not one of
+#: ADAPTER_TYPES: kie.ai (an image and video job API) and Higgsfield (reached
+#: over its MCP connector). Each is valid only as the built-in of the same
+#: name, with the extra discovery modes it uses; before this the registry's
+#: own validation refused them, so neither could be switched on or edited.
+SERVICE_ADAPTERS = {"kie": (), "higgsfield": ("mcp",)}
+
 LOCAL_CAPABLE_ADAPTERS = {
     ADAPTER_OLLAMA, ADAPTER_LOCAL_VOICE, ADAPTER_NEMO, ADAPTER_OPENAI_COMPAT,
     ADAPTER_COMFYUI,
@@ -607,7 +614,8 @@ def validate_descriptor(data: dict) -> tuple:
                       "(lowercase letters, digits, hyphens)")
 
     adapter = adapter_of(data)
-    if adapter not in ADAPTER_TYPES:
+    service = SERVICE_ADAPTERS.get(adapter) if name == adapter else None
+    if adapter not in ADAPTER_TYPES and service is None:
         errors.append(
             f"unknown adapter {adapter!r} — must be one of: "
             + ", ".join(ADAPTER_TYPES))
@@ -666,7 +674,7 @@ def validate_descriptor(data: dict) -> tuple:
                             "as cloud (gated) until the URL is private")
 
     disc = data.get("discovery") or {}
-    if disc.get("mode") not in (None, "static", "api", "merge"):
+    if disc.get("mode") not in (None, "static", "api", "merge") + tuple(service or ()):
         errors.append("discovery.mode must be 'static', 'api', or 'merge'")
 
     prio = data.get("priority")
