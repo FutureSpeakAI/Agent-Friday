@@ -371,3 +371,25 @@ def test_the_rehearsal_checks_the_newest_bundle_this_schedule_made(home, tmp_pat
     d["made"] = list(reversed(d["made"]))
     bs.schedule_path().write_text(json.dumps(d), encoding="utf-8")
     assert bs.rehearse()["ok"] is False
+
+
+def test_off_says_so_when_the_credential_store_will_not_let_go(home, tmp_path, monkeypatch):
+    """Review round 4 (S3): off reported success while the record stayed."""
+    import types
+    from agent_friday.services import backup_schedule as bs
+    monkeypatch.setenv("FRIDAY_SCHEDULE_SECRET", "keyring")
+    kept = {}
+
+    class Locked(Exception):
+        pass
+
+    fake = types.SimpleNamespace(
+        get_password=lambda s, a: kept.get(a),
+        set_password=lambda s, a, v: kept.__setitem__(a, v),
+        delete_password=lambda s, a: (_ for _ in ()).throw(Locked("locked")))
+    monkeypatch.setattr(bs, "_keyring", lambda: (fake, type("NoKeyringError", (Exception,), {}),
+                                                 type("PasswordDeleteError", (Exception,), {})))
+    _on(bs, tmp_path / "out")
+    with pytest.raises(bs.ScheduleError):
+        bs.set_schedule(enabled=False)
+    assert bs.state()["enabled"] is True
