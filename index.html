@@ -61951,6 +61951,9 @@ function GoogleAccountsPanel() {
   // consent screen. Only this explicit button asks for them.
   const startConnect = async (account, opts) => {
     const mailbox = !!(opts && opts.mailbox);
+    // Read first (BD-06): changing the calendar or Tasks is asked for only by its own button.
+    const include_calendar_write = !!(opts && opts.calendarWrite);
+    const include_tasks_write = !!(opts && opts.tasksWrite);
     setLoading(true);
     try {
       const r = await apiFetch('/api/google/accounts/connect', {
@@ -61961,7 +61964,9 @@ function GoogleAccountsPanel() {
         body: JSON.stringify(account ? {
           account_id: account.id,
           email: account.email,
-          mailbox
+          mailbox,
+          include_calendar_write,
+          include_tasks_write
         } : {
           label,
           include_send: allowSend
@@ -62230,7 +62235,21 @@ function GoogleAccountsPanel() {
   }, reconnecting === acc.id ? 'Waiting...' : 'Reconnect with sending'), acc.mail && acc.mail.send && acc.mail.modify && /*#__PURE__*/React.createElement("span", {
     "data-testid": "ga-mail-full",
     style: { fontSize: 10, color: '#00ff80', whiteSpace: 'nowrap' }
-  }, '\u2713 can send + update mailbox'), /*#__PURE__*/React.createElement("button", {
+  }, '\u2713 can send + update mailbox'), !(acc.changes && acc.changes.calendar) && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    "data-testid": "ga-allow-calendar",
+    title: ('Sign in again and allow ' + fridayName() + ' to add, change and delete events on this account\'s calendar. Each change still follows your approval rules.'),
+    style: { fontSize: 11, padding: '4px 12px', whiteSpace: 'nowrap' },
+    onClick: () => startConnect(acc, { calendarWrite: true }),
+    disabled: loading
+  }, 'Allow calendar changes'), !(acc.changes && acc.changes.tasks) && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    "data-testid": "ga-allow-tasks",
+    title: ('Sign in again and allow ' + fridayName() + ' to add, change, complete and delete this account\'s Google Tasks.'),
+    style: { fontSize: 11, padding: '4px 12px', whiteSpace: 'nowrap' },
+    onClick: () => startConnect(acc, { tasksWrite: true }),
+    disabled: loading
+  }, 'Allow task changes'), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 11,

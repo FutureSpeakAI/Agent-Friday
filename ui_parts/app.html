@@ -22260,7 +22260,7 @@ function GoogleAccountsPanel(){
     const o=opts||{};
     setLoading(true);
     try{
-      const body=o.account?{account_id:o.account.id,email:o.account.email,mailbox:!!o.mailbox}:{label};
+      const body=o.account?{account_id:o.account.id,email:o.account.email,mailbox:!!o.mailbox,include_calendar_write:!!o.calendarWrite,include_tasks_write:!!o.tasksWrite}:{label};
       const r=await apiFetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       if(d.status==='ok'&&d.auth_url){
@@ -22336,6 +22336,9 @@ function GoogleAccountsPanel(){
             {!h.healthy&&<button className="settings-btn" style={{fontSize:11,padding:'4px 12px',color:'#ff8c42',borderColor:'#ff8c42',whiteSpace:'nowrap'}} onClick={()=>reconnectAccount(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect'}</button>}
             {!(acc.mail&&acc.mail.send&&acc.mail.modify)&&<button className="settings-btn" data-testid="ga-reconnect-sending" title={("Sign in again and allow " + fridayName() + " to send mail (each message waits for your approval) and to change this mailbox (labels, archive, star, read). One Google screen; it shows you the exact permissions first.")} style={{fontSize:11,padding:'4px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.5)',whiteSpace:'nowrap'}} onClick={()=>reconnectWithSending(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect with sending'}</button>}
             {acc.mail&&acc.mail.send&&acc.mail.modify&&<span data-testid="ga-mail-full" style={{fontSize:10,color:'#00ff80',whiteSpace:'nowrap'}}>✓ can send + update mailbox</span>}
+            {/* Read first (BD-06): a new connection may only read the calendar and Tasks; changing them is asked for here, per account, on Google's own screen. */}
+            {!(acc.changes&&acc.changes.calendar)&&<button className="settings-btn" data-testid="ga-allow-calendar" title={("Sign in again and allow " + fridayName() + " to add, change and delete events on this account's calendar. Each change still follows your approval rules.")} style={{fontSize:11,padding:'4px 12px',whiteSpace:'nowrap'}} onClick={()=>startConnect({account:acc,calendarWrite:true})} disabled={loading}>Allow calendar changes</button>}
+            {!(acc.changes&&acc.changes.tasks)&&<button className="settings-btn" data-testid="ga-allow-tasks" title={("Sign in again and allow " + fridayName() + " to add, change, complete and delete this account's Google Tasks.")} style={{fontSize:11,padding:'4px 12px',whiteSpace:'nowrap'}} onClick={()=>startConnect({account:acc,tasksWrite:true})} disabled={loading}>Allow task changes</button>}
             <button className="settings-btn" style={{fontSize:11,color:'#ff6060'}} onClick={()=>removeAccount(acc.id,acc.email||acc.label||'account')}>Remove</button>
           </div>
         </div>
