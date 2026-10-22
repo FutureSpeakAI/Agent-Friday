@@ -393,3 +393,22 @@ def test_off_says_so_when_the_credential_store_will_not_let_go(home, tmp_path, m
     with pytest.raises(bs.ScheduleError):
         bs.set_schedule(enabled=False)
     assert bs.state()["enabled"] is True
+
+
+
+def test_off_is_read_back_when_the_store_says_nothing_was_there(home, tmp_path, monkeypatch):
+    """Closing review (E2): some stores report a refused delete as "not found"."""
+    import types
+    from agent_friday.services import backup_schedule as bs
+    monkeypatch.setenv("FRIDAY_SCHEDULE_SECRET", "keyring")
+    kept = {}
+    NotFound = type("PasswordDeleteError", (Exception,), {})
+    fake = types.SimpleNamespace(
+        get_password=lambda s, a: kept.get(a),
+        set_password=lambda s, a, v: kept.__setitem__(a, v),
+        delete_password=lambda s, a: (_ for _ in ()).throw(NotFound("refused")))
+    monkeypatch.setattr(bs, "_keyring", lambda: (fake, type("NoKeyringError", (Exception,), {}), NotFound))
+    _on(bs, tmp_path / "out")
+    with pytest.raises(bs.ScheduleError):
+        bs.set_schedule(enabled=False)
+    assert bs.state()["enabled"] is True

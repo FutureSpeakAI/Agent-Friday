@@ -146,6 +146,14 @@ def _store(record: Optional[dict], home: Optional[Path] = None) -> None:
             except Exception as e:  # noqa: BLE001
                 raise ScheduleError("This account's credential store would not remove the "
                                     "schedule (%s); it is still on." % type(e).__name__)
+            # some stores report a refused delete as "nothing there": read it back
+            try:
+                still = keyring.get_password(SERVICE, acct)
+            except Exception:
+                still = None
+            if still:
+                raise ScheduleError("This account's credential store would not remove the "
+                                    "schedule; it is still on.")
         return
     if keyring is None:
         raise NoKeychain("this system has no credential store outside Friday's folder")

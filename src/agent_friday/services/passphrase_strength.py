@@ -161,18 +161,25 @@ def _wordlike(w: str) -> bool:
         return False
     lw = w.lower()
     vowels = sum(1 for c in lw if c in "aeiouy")
-    if not (0.2 <= vowels / max(len(lw), 1) <= 0.7):
+    if not (0.15 <= vowels / max(len(lw), 1) <= 0.75):
         return False
-    return not re.search(r"[^aeiouy]{4,}", lw)
+    return not re.search(r"[^aeiouy]{6,}", lw)
 
 
 def _letters_bits(chunk: str, classes: str) -> float:
     """A letter run: each word-like part (CamelCase is split) counts as a
     word when that is fewer bits; anything else character by character."""
-    parts = (re.findall(r"[A-Z]?[a-z]+", chunk) if re.fullmatch(r"(?:[A-Z]?[a-z]+)+", chunk)
-             else [chunk])
+    # split where the case changes (PASSWORDpassword, DragonSlayer, BUTTERfly)
+    parts = re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+", chunk) or [chunk]
+    if "".join(parts) != chunk:
+        parts = [chunk]
     bits = 0.0
+    seen = set()
     for part in parts:
+        if part.lower() in seen:
+            bits += 1.0                         # the same word again, in another case
+            continue
+        seen.add(part.lower())
         cb = _chars_bits(part, classes)
         bits += min(cb, _word_bits(part)) if len(part) >= 3 and _wordlike(part) else cb
     return bits
