@@ -5487,6 +5487,21 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 _tr2.announce(summary.get('resumable') or [], resumed=_picked)
             except Exception:
                 pass
+            # §34.16-1: what a crash interrupted mid outward action is told,
+            # never retried: a task whose first outward step was in flight, and
+            # an approved card whose action began and never recorded its end.
+            try:
+                from agent_friday.services import task_resume as _tr3
+                _acted = _tr3.may_have_acted_after_boot()
+                summary['may_have_acted'] = [r['task_id'] for r in _acted]
+                _tr3.announce_may_have_acted(_acted)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import card_recovery as _cards
+                summary['cards_outcome_unknown'] = _cards.reconcile_at_boot()
+            except Exception:
+                pass
         try:
             removed = tj.apply_retention()
             if removed:
