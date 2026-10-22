@@ -86,3 +86,18 @@ def test_a_very_long_input_is_refused_quickly():
     t = time.time()
     _ps()._run_length("ab" * 5000)
     assert time.time() - t < 0.5
+
+
+def test_random_strings_and_random_words_still_pass():
+    """Review round 4: reading look-alike digits as letters turned random
+    strings into "words"; random letters are not words."""
+    import random
+    import string
+    ps = _ps()
+    r = random.Random(20261022)
+    al = string.ascii_letters + string.digits
+    ok = sum(ps.assess("".join(r.choice(al) for _ in range(16)))["ok"] for _ in range(400))
+    assert ok >= 380, ok
+    words = ["orbit", "lantern", "pepper", "tundra", "violet", "anchor", "drizzle", "mammoth",
+             "quartz", "harbour", "walnut", "glacier", "saddle", "trumpet", "meadow"]
+    assert all(ps.assess(" ".join(r.sample(words, 4)))["ok"] for _ in range(100))

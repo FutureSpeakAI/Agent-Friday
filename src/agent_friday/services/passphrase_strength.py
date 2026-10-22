@@ -153,6 +153,31 @@ def _word_bits(w: str) -> float:
     return min(base, _chars_bits(w))
 
 
+def _wordlike(w: str) -> bool:
+    """A letter run a guesser's dictionary would hold: one case pattern
+    (lower, Capitalised or CAPS), vowels in a word's share, no long cluster
+    of consonants. Random letters are not words."""
+    if not (w.islower() or w.isupper() or (w[:1].isupper() and w[1:].islower())):
+        return False
+    lw = w.lower()
+    vowels = sum(1 for c in lw if c in "aeiouy")
+    if not (0.2 <= vowels / max(len(lw), 1) <= 0.7):
+        return False
+    return not re.search(r"[^aeiouy]{4,}", lw)
+
+
+def _letters_bits(chunk: str, classes: str) -> float:
+    """A letter run: each word-like part (CamelCase is split) counts as a
+    word when that is fewer bits; anything else character by character."""
+    parts = (re.findall(r"[A-Z]?[a-z]+", chunk) if re.fullmatch(r"(?:[A-Z]?[a-z]+)+", chunk)
+             else [chunk])
+    bits = 0.0
+    for part in parts:
+        cb = _chars_bits(part, classes)
+        bits += min(cb, _word_bits(part)) if len(part) >= 3 and _wordlike(part) else cb
+    return bits
+
+
 def _mixed_bits(s: str) -> float:
     """A string without word separators: letter runs of four or more are
     words, the rest goes character by character (classes of the whole
@@ -165,8 +190,8 @@ def _mixed_bits(s: str) -> float:
             bits += 1.0
             continue
         seen.add(key)
-        if chunk.isalpha() and len(chunk) >= 4:
-            bits += min(_chars_bits(chunk, s), _word_bits(chunk))
+        if chunk.isalpha() and len(chunk) >= 3:
+            bits += _letters_bits(chunk, s)
         else:
             bits += _chars_bits(chunk, s)
     return bits
@@ -203,7 +228,7 @@ def _leet_bits(pw: str) -> float:
             continue
         seen.add(key)
         if chunk.isalpha() and len(chunk) >= 3:
-            bits += min(_chars_bits(chunk, pw), _word_bits(chunk)) + 1.0   # +1: which swaps
+            bits += _letters_bits(chunk, pw) + 1.0   # +1: which swaps
         else:
             bits += _chars_bits(chunk, pw)
     return bits

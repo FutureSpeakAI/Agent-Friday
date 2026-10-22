@@ -141,8 +141,11 @@ def _store(record: Optional[dict], home: Optional[Path] = None) -> None:
         if keyring is not None:
             try:
                 keyring.delete_password(SERVICE, acct)
-            except Exception:
-                pass
+            except (PasswordDeleteError, NoKeyringError):
+                pass                             # nothing kept there
+            except Exception as e:  # noqa: BLE001
+                raise ScheduleError("This account's credential store would not remove the "
+                                    "schedule (%s); it is still on." % type(e).__name__)
         return
     if keyring is None:
         raise NoKeychain("this system has no credential store outside Friday's folder")
