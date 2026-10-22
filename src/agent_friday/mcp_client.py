@@ -58,12 +58,21 @@ _REAL_POPEN = subprocess.Popen
 
 
 def _own_workdir(name: str):
-    """~/.friday/mcp/<server>/work: where a stdio server runs when its config names
-    no folder of its own."""
+    """Where a stdio server runs when its config names no folder of its own: a folder
+    of its own OUTSIDE Friday's state folder (a relative '..\\..' from it must not reach
+    the vault), named from the server plus a hash so two names never share one.
+    Windows: %LOCALAPPDATA%\\AgentFriday\\mcp-work\\<name>-<hash>; elsewhere
+    ~/.cache/agent-friday/mcp-work/<name>-<hash>."""
+    import hashlib
     from pathlib import Path
     import agent_friday.core as core
-    safe = "".join(ch for ch in str(name or "") if ch.isalnum() or ch in "-_.") or "server"
-    d = Path(core.FRIDAY_DIR) / "mcp" / (safe.strip(".") or "server") / "work"
+    raw = str(name or "")
+    safe = ("".join(ch for ch in raw if ch.isalnum() or ch in "-_") or "server")[:40]
+    tag = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:8]
+    home = Path(core.HOME)
+    base = (home / "AppData" / "Local" / "AgentFriday" / "mcp-work" if sys.platform == "win32"
+            else home / ".cache" / "agent-friday" / "mcp-work")
+    d = base / f"{safe}-{tag}"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -240,8 +249,8 @@ class MCPServerProcess:
             raise
         full_env.update({k: str(v) for k, v in env.items()})
         cmd = [self._resolve_command(), *self.args]
-        # Its own working folder, never Friday's (the app folder holds Friday's code
-        # and an older release's key files). A configured cwd is kept.
+        # Its own working folder, never Friday's app folder (her code and an older
+        # release's key files) nor her state folder. A configured cwd is kept.
         cwd = self.cwd or str(_own_workdir(self.name))
         # Held from its first instruction (services/code_sandbox.contain_helper): on
         # Windows it starts suspended, goes into its own job (memory ceiling,
@@ -264,12 +273,26 @@ class MCPServerProcess:
             start_new_session=not contained,  # POSIX: stop() ends the whole group
         )
         self._job = None
-        # (A stand-in Popen in a test is not a process to hold.)
-        if contained and isinstance(self.proc, _REAL_POPEN):
+        if contained:
             try:
+                if not isinstance(self.proc, _REAL_POPEN):
+                    raise RuntimeError("not a process this can hold")
                 self._job = _sbx.contain_helper(self.proc)
             except Exception:
-                self.proc = None
+                # Killed and its pipes closed: never left suspended or running unheld.
+                _p, self.proc = self.proc, None
+                for _act in (lambda: _p.kill(), lambda: _p.wait(5)):
+                    try:
+                        _act()
+                    except Exception:
+                        pass
+                for _s in (getattr(_p, "stdin", None), getattr(_p, "stdout", None),
+                           getattr(_p, "stderr", None)):
+                    try:
+                        if _s:
+                            _s.close()
+                    except Exception:
+                        pass
                 raise
         self._reader = threading.Thread(
             target=self._read_loop, name=f"mcp-{self.name}-reader", daemon=True
@@ -340,6 +363,14 @@ class MCPServerProcess:
             pass
         finally:
             self.proc = None
+            # POSIX: the server runs in its own session; end the whole group so
+            # what it started does not outlive it.
+            if sys.platform != "win32" and getattr(proc, "pid", None):
+                try:
+                    import signal as _sig
+                    os.killpg(proc.pid, _sig.SIGKILL)
+                except Exception:
+                    pass
             # Ends anything the server started that outlived it.
             job, self._job = getattr(self, "_job", None), None
             if job:

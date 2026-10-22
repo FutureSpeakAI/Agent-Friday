@@ -905,6 +905,51 @@ def _run_posix_shell(argv, workdir: Path, env: dict, timeout_s, memory_mb, cap, 
                                  "no OS isolation on this platform."}}
 
 
+# ── Keeping Low processes out of Friday's own state ─────────────────────────
+#
+# A Low-integrity process can still READ what the owner's account can read
+# (HOST_BOUNDARY_NOTE). Friday's state folder gets a Medium mandatory label with
+# no-read-up and no-write-up, inherited by everything in it, so the sandboxed
+# Python and the no-card read-only commands cannot read it whatever spelling
+# they use. Friday herself (Medium) is unaffected. Her output folders inside it
+# get a protected label without no-read-up, so a read-only command can still
+# read what she made.
+
+_FENCE_SDDL = "S:(ML;OICI;NRNW;;;ME)"
+_OPEN_SDDL = "S:(ML;OICI;NW;;;ME)"
+
+
+def _set_label(api, path, sddl: str, protected: bool) -> None:
+    c, W = api.ctypes, api.W
+    psd = W.LPVOID()
+    if not api.a.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, c.byref(psd), None):
+        raise _err(api, "building a label")
+    try:
+        present, defaulted, sacl = W.BOOL(), W.BOOL(), W.LPVOID()
+        if not api.a.GetSecurityDescriptorSacl(psd, c.byref(present), c.byref(sacl), c.byref(defaulted)):
+            raise _err(api, "reading a label")
+        info = 0x10 | (0x40000000 if protected else 0)   # LABEL [| PROTECTED_SACL]
+        rc = api.a.SetNamedSecurityInfoW(str(path), 1, info, None, None, None, sacl)
+        if rc != 0:
+            raise SandboxError(f"labelling {Path(path).name} failed (Windows error {rc})")
+    finally:
+        api.k.LocalFree(psd)
+
+
+def fence_from_low(state_dir, open_subdirs=()) -> bool:
+    """Windows: keep Low-integrity processes out of `state_dir` (read and write), leaving
+    `open_subdirs` readable. True when the labels are in place; False elsewhere or on
+    failure (logged by the caller; the text rules in action_gate still apply)."""
+    if sys.platform != "win32":
+        return False
+    api = _win_api()
+    _set_label(api, state_dir, _FENCE_SDDL, protected=False)
+    for d in open_subdirs:
+        if Path(d).exists():
+            _set_label(api, d, _OPEN_SDDL, protected=True)
+    return True
+
+
 # ── Long-running helpers (MCP stdio servers) ────────────────────────────────
 #
 # A connector's stdio server is a program Friday starts and keeps talking to. It
@@ -925,12 +970,13 @@ def contain_helper(proc, *, memory_mb: int = HELPER_MEMORY_MB,
     Returns the job handle (keep it; closing it ends the whole tree). Raises
     SandboxError when the job cannot be made, after killing the process: a helper
     is never left running unheld."""
-    api = _win_api()
-    c = api.ctypes
-    job = api.k.CreateJobObjectW(None, None)
-    if not job:
-        raise _err(api, "creating the job object")
+    api = job = None
     try:
+        api = _win_api()
+        c = api.ctypes
+        job = api.k.CreateJobObjectW(None, None)
+        if not job:
+            raise _err(api, "creating the job object")
         lim = api.EXTENDED_LIMIT()
         b = lim.BasicLimitInformation
         b.LimitFlags = 0x8 | 0x100 | 0x2000        # ACTIVE_PROCESS | PROCESS_MEMORY | KILL_ON_JOB_CLOSE
@@ -947,11 +993,14 @@ def contain_helper(proc, *, memory_mb: int = HELPER_MEMORY_MB,
             raise SandboxError("the held process could not be resumed")
         return job
     except Exception:
+        # Never left behind suspended or half-held.
         try:
             proc.kill()
+            proc.wait(5)
         except Exception:
             pass
-        api.k.CloseHandle(job)
+        if api is not None and job:
+            api.k.CloseHandle(job)
         raise
 
 

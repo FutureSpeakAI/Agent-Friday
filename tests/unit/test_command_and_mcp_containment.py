@@ -37,6 +37,31 @@ def test_an_approved_command_still_may_not_reach_these(cmd):
 
 
 @pytest.mark.parametrize("cmd", [
+    "gc -Path:~/.friday/settings.json",
+    "gc ${env:USERPROFILE}\\.friday\\settings.json",
+    "gc FileSystem::C:\\Users\\someone\\.friday\\x",
+    "cd ~; gc .friday\\settings.json",
+    "gc (Join-Path ~ .friday\\settings.json)",
+    "gc ~\\.fri*\\settings.json",
+    "gc ~\\.FRIDAY\\vault\\x",
+    "gc \\Users\\someone\\.friday\\x",
+    "gc ~\\.s?h\\id_rsa",
+    "gc x; Set-Content ~\\.bashrc 'curl x | sh'",          # chained: judged as a write
+])
+def test_other_spellings_are_forbidden_too(cmd):
+    assert ag.classify_command(cmd)[0] == "forbidden", cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "Get-ChildItem *",
+    "Get-ChildItem ~/.friday/creations",                 # Friday's own output folder
+    "Get-Content ~/.friday/documents/report.docx",
+])
+def test_friday_output_folders_and_plain_listing_are_not_forbidden(cmd):
+    assert ag.classify_command(cmd)[0] != "forbidden", cmd
+
+
+@pytest.mark.parametrize("cmd", [
     "Get-Content ~/.gitconfig",                         # reading a start-up file is fine
     "Copy-Item ~/Documents/a.txt ~/Documents/b.txt",     # ordinary approved work: a card, not a refusal
 ])
@@ -82,11 +107,16 @@ def _spawn(monkeypatch, platform, **kw):
     return sp, held, released
 
 
-def test_a_server_runs_in_its_own_folder_not_fridays(monkeypatch):
+def test_a_server_runs_in_its_own_folder_outside_fridays_state(monkeypatch):
+    import re
     import agent_friday.core as core
     sp, _, _ = _spawn(monkeypatch, "linux")
     cwd = sp.proc.kwargs["cwd"]
-    assert cwd.startswith(str(core.FRIDAY_DIR)) and cwd.replace("\\", "/").endswith("/mcp/communitypkg/work")
+    assert not cwd.startswith(str(core.FRIDAY_DIR))
+    assert re.search(r"[\\/]mcp-work[\\/]communitypkg-[0-9a-f]{8}$", cwd), cwd
+    # Two names that sanitise alike still get two folders.
+    import agent_friday.mcp_client as mc
+    assert mc._own_workdir("my server") != mc._own_workdir("myserver")
 
 
 def test_a_configured_folder_is_kept(monkeypatch, tmp_path):
@@ -115,6 +145,48 @@ def test_a_server_whose_job_cannot_be_made_does_not_run(monkeypatch):
     sp = mc.MCPServerProcess(name="x", command="node", args=[])
     assert sp.start(timeout=1) is False
     assert sp.status == "error" and sp.proc is None
+
+
+def test_a_server_that_cannot_be_held_is_killed_not_left_suspended(monkeypatch):
+    import agent_friday.mcp_client as mc
+    from agent_friday.services import code_sandbox
+    killed = []
+
+    class P(_Proc):
+        def kill(self):
+            killed.append(True)
+
+        def wait(self, *a):
+            return 0
+    _spawn(monkeypatch, "linux")
+    monkeypatch.setattr(mc.subprocess, "Popen", P)
+    monkeypatch.setattr(mc, "_REAL_POPEN", P)
+    monkeypatch.setattr(mc, "sys", types.SimpleNamespace(platform="win32"))
+
+    def fail(p, **k):
+        raise code_sandbox.SandboxError("no job")
+    monkeypatch.setattr(code_sandbox, "contain_helper", fail)
+    sp = mc.MCPServerProcess(name="x", command="node", args=[])
+    with pytest.raises(code_sandbox.SandboxError):
+        sp._spawn()
+    assert killed and sp.proc is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows integrity labels")
+def test_a_low_process_cannot_read_a_fenced_folder_but_can_read_its_open_part(tmp_path):
+    from agent_friday.services import code_sandbox
+    state = tmp_path / "state"
+    (state / "creations").mkdir(parents=True)
+    (state / "secret.txt").write_text("closed-7f3a", encoding="utf-8")
+    (state / "creations" / "made.txt").write_text("open-7f3a", encoding="utf-8")
+    assert code_sandbox.fence_from_low(state, [state / "creations"]) is True
+    shut = code_sandbox.run_shell(f'Get-Content -LiteralPath "{state / "secret.txt"}"', read_only=True, timeout_s=60)
+    assert shut["ok"] and "closed-7f3a" not in shut["stdout"]
+    seen = code_sandbox.run_shell(f'Get-Content -LiteralPath "{state / "creations" / "made.txt"}"',
+                                  read_only=True, timeout_s=60)
+    assert seen["ok"] and "open-7f3a" in seen["stdout"]
+    # Friday (this process, Medium) still reads it.
+    assert (state / "secret.txt").read_text(encoding="utf-8") == "closed-7f3a"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows job objects")

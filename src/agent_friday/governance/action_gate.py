@@ -641,10 +641,58 @@ def _command_path_tokens(cmd: str):
         yield tok, _expand_path_text(tok)
 
 
+#: Segment names that are a store of sign-ins or history wherever they appear
+#: (services/path_policy._SIGN_IN_STORES, first segments).
+_SIGN_IN_NAMES = (".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", ".claude", ".codex",
+                  ".npmrc", ".pypirc", ".netrc", ".git-credentials", ".m2", ".terraform.d",
+                  ".bash_history", ".zsh_history", ".python_history", ".node_repl_history",
+                  ".psql_history", ".mysql_history", ".lesshst", ".viminfo")
+#: Start-up files a command that may write may not name (path_policy._AUTORUN dot-files).
+_AUTORUN_NAMES = (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv",
+                  ".gitconfig", ".gitattributes", ".inputrc", ".wgetrc", ".curlrc")
+#: Friday's own output folders inside her state folder (core.DAILY_CREATIONS_DIR,
+#: office_engine.DOCUMENTS_DIR).
+_STATE_OUTPUT_SUBDIRS = ("creations", "documents")
+
+
+def _named_zone(cmd: str, state_name: str, op: str) -> str:
+    import fnmatch as _fn
+    import re as _re
+    segs = _re.findall(r"[^\\/\s'\"`,;()|={}<>]+", (cmd or "").casefold())
+    state = (state_name or ".friday").casefold()
+
+    def hit(seg: str, name: str) -> bool:
+        if seg == name:
+            return True
+        # A wildcard counts when it is aimed at a dot-name ('.fri*', '.s?h'); a bare
+        # '*' or '.*' is ordinary listing, carded or fenced elsewhere.
+        literal = sum(1 for ch in seg if ch not in "*?[]")
+        return (seg.startswith(".") and literal >= 2 and any(ch in seg for ch in "*?[")
+                and _fn.fnmatchcase(name, seg))
+
+    for i, seg in enumerate(segs):
+        seg = seg.split("::")[-1].split(":")[-1] if ":" in seg else seg
+        if not seg:
+            continue
+        if hit(seg, state):
+            nxt = segs[i + 1] if i + 1 < len(segs) else ""
+            if nxt in _STATE_OUTPUT_SUBDIRS:
+                continue
+            return "it reaches Friday's own state folder"
+        if any(hit(seg, n) for n in _SIGN_IN_NAMES):
+            return "it reaches a store of sign-ins or history"
+        if op == "write" and any(hit(seg, n) for n in _AUTORUN_NAMES):
+            return "it reaches a file run or obeyed at start-up"
+    return ""
+
+
 def _command_forbidden_reason(cmd: str) -> str:
-    """Why a command may not run even with the owner's approval, or "": it names a path
-    inside Friday's own state folder, a store of sign-ins or history, or a file a shell
-    runs at start-up (a folder grant for writing lifts the last two)."""
+    """Why a command may not run even with the owner's approval, or "": it names (by
+    segment, in any spelling) Friday's own state folder, a store of sign-ins or history,
+    or, for a command that may write, a file a shell runs at start-up. Text matching:
+    for an APPROVED command (owner integrity) this is the protection; a read-only command
+    also runs at Low integrity, which Windows keeps out of Friday's state folder
+    (code_sandbox.fence_from_low)."""
     try:
         from agent_friday.services import path_policy as _pp
     except Exception:
@@ -655,9 +703,19 @@ def _command_forbidden_reason(cmd: str) -> str:
     state = _P(_core.FRIDAY_DIR).resolve(strict=False)
     outs = _pp.output_dirs()
     # Start-up files are refused to commands that may write; a read-only command
-    # (every stage on the read-only list) may still read .gitconfig.
+    # (every stage on the read-only list, nothing chained or redirected) may still
+    # read .gitconfig.
     heads = [s.strip().split()[0].lower() for s in (cmd or "").split("|") if s.strip()]
-    op = "read" if heads and all(h in READ_ONLY_COMMANDS for h in heads) else "write"
+    op = ("read" if heads and all(h in READ_ONLY_COMMANDS for h in heads)
+          and not _DANGEROUS.search(cmd or "") else "write")
+    # By NAME first, whatever the spelling around it: a path segment that is (or a
+    # wildcard that matches) Friday's state folder or a sign-in store refuses. Path
+    # parsing alone misses -Path:x, ${env:..}, FileSystem::, a relative 'cd ~; gc
+    # .friday\x', Join-Path pieces. Matching too much only refuses more; Friday's
+    # own output folders inside the state folder stay allowed.
+    named = _named_zone(cmd, state.name, op)
+    if named:
+        return named
     for _tok, expanded in _command_path_tokens(cmd):
         why = _pp._text_reason(expanded)
         if why:
