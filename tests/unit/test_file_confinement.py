@@ -287,7 +287,9 @@ def test_a_read_only_command_that_reads_outside_is_carded(outside, home):
 
 def test_a_listing_of_a_folder_above_home_is_names_only(home):
     from agent_friday.governance import action_gate as ag
-    above = Path(home).parent
+    # Resolved: a short (8.3) spelling of the same folder is judged by its text,
+    # which only cards it (fails safe); the long name is a folder above home.
+    above = Path(home).resolve().parent
     assert ag.classify_command(f'Get-ChildItem "{above}"')[0] == ag.INTERNAL
     if os.name == "nt":
         # a leading slash is a switch on Windows, not a path
