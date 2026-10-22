@@ -156,6 +156,9 @@ def test_approval_dispatches_the_task_on_the_named_model(monkeypatch):
         "S", (), {"on_task_end": staticmethod(lambda *a, **k: None)})())
     with ag.TASKS_LOCK:
         ag.TASKS["t-1"] = _queued()
+    # Its worker is parked in the queue, as a queued-for-seat task's is.
+    with ag._PENDING_TASK_THREADS_LOCK:
+        ag._PENDING_TASK_THREADS["t-1"] = object()
     try:
         cs.on_decision(_card())
         assert spawned["model"] == "claude-sonnet-5"
@@ -166,6 +169,8 @@ def test_approval_dispatches_the_task_on_the_named_model(monkeypatch):
     finally:
         with ag.TASKS_LOCK:
             ag.TASKS.pop("t-1", None)
+        with ag._PENDING_TASK_THREADS_LOCK:
+            ag._PENDING_TASK_THREADS.pop("t-1", None)
 
 
 def test_a_yes_that_arrives_too_late_does_not_run_the_task_twice(monkeypatch):

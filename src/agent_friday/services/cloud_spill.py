@@ -169,10 +169,44 @@ def _waits_by_rule(record: Dict[str, Any]) -> bool:
     return "idle" in why or "your chat" in why or "your call" in why
 
 
+def spill_blocked(record: Dict[str, Any], cloud_model: Optional[str] = None) -> Optional[str]:
+    """Why this task may not move to a cloud model at all, or None.
+
+    A task's limits travel with it (see on_decision); these are the limits a cloud
+    run cannot honour, so the task waits for its local seat instead:
+      * pinned to its seat (a private-voice handoff: a local mind was promised);
+      * local-only (a local-only schedule or run);
+      * its result was promised to stay on this PC (an approved seat handoff);
+      * started off the record (nothing of it is kept; a cloud run would be);
+      * crew work (bound to its agent profile and a runner the record does not hold).
+    """
+    r = record or {}
+    if r.get("pin_to_seat"):
+        return "it is pinned to its local seat"
+    if r.get("local_only"):
+        return "it is a local-only run"
+    if r.get("local_only_result"):
+        return "its result was promised to stay on this PC"
+    if r.get("off_record"):
+        return "it was started off the record"
+    if r.get("crew_context"):
+        return "it is crew work bound to its own agent and runner"
+    if (r.get("job_kind") or "") == "runner" or r.get("research_commission_id"):
+        return "its work is done by its own engine, not the agent loop"
+    pin = r.get("cloud_pin")
+    if pin and cloud_model:
+        import json as _json
+        if str(cloud_model) not in _json.dumps(pin, default=str):
+            return "it is pinned to a different cloud model"
+    return None
+
+
 def should_offer(record: Dict[str, Any], *, wait_s: float = 0.0) -> bool:
     """Is this a moment worth interrupting the user for?"""
     if not enabled():
         return False
+    if spill_blocked(record or {}, cloud_alternative(record or {})):
+        return False           # it cannot run on the cloud with its limits intact
     if (record or {}).get("status") != "queued-for-seat":
         return False
     if not record.get("seat_is_local", True):
@@ -302,25 +336,94 @@ def on_decision(card: Dict[str, Any]) -> None:
         _log.info("cloud spill: %s already left the queue (%s); not spilling",
                   task_id, rec.get("status"))
         return
+    # A limit a cloud run cannot honour keeps the task waiting for its seat,
+    # whatever the card said (the card should not have been offered).
+    blocked = spill_blocked(rec, cloud)
+    if blocked:
+        _log.warning("cloud spill: %s stays queued for its local seat: %s", task_id, blocked)
+        _report(rec, task_id, f"This stays queued for the local seat: {blocked}, so it "
+                              f"was not moved to {cloud}.")
+        return
+    # The SAME limits the queued task had: its subagent scope (a goal milestone
+    # runs under 'goal-milestone'), tool list, follow-up, conversation, schedule
+    # grant scope, workflow context, crew context, cloud/local policy, and the
+    # outside-content flag (parent_task_id carries it). The same construction
+    # requeue_task uses. Without these a spilled goal task ran unscoped.
+    try:
+        from agent_friday.services.agent import _descendant_options
+        opts = _descendant_options(rec, retry=int(rec.get("chain_retry") or 0))
+    except Exception as e:
+        _log.error("cloud spill: could not read %s's limits (%s); not spilling", task_id, e)
+        return
+    opts["pin_to_seat"] = False            # the model named is the cloud one
+    opts.pop("task_id", None)              # a new task, never the queued one's id
+    # A scope registered after spawn (subagents.spawn_scoped_subagent did this) is
+    # not on the record: read it from the scope registry itself. A scope that is
+    # registered but cannot be named is not moved at all.
+    if not opts.get("scope"):
+        try:
+            from agent_friday.services import subagents as _sub
+            with _sub._LOCK:
+                reg = dict(_sub._SCOPED_TASKS.get(task_id) or {})
+            if reg:
+                sc_name = getattr(reg.get("scope"), "name", None)
+                if not sc_name:
+                    _log.warning("cloud spill: %s has a scope that cannot be named; stays queued", task_id)
+                    _report(rec, task_id, "This stays queued for the local seat: its limits could "
+                                          f"not be carried to {cloud}.")
+                    return
+                opts["scope"] = sc_name
+        except Exception as e:
+            _log.error("cloud spill: could not read %s's scope (%s); not spilling", task_id, e)
+            return
     # Take the parked worker out of the queue FIRST. If the seat frees a
     # microsecond from now, the local promotion must not find a thread to
-    # start for a task that is about to run on the cloud.
+    # start for a task that is about to run on the cloud. No parked worker means
+    # the seat already took it (or it is gone): nothing is spilled.
     with _PENDING_TASK_THREADS_LOCK:
-        _PENDING_TASK_THREADS.pop(task_id, None)
+        parked = _PENDING_TASK_THREADS.pop(task_id, None)
+    if parked is None:
+        _log.info("cloud spill: %s has no parked worker (the seat took it); not spilling", task_id)
+        return
+    with TASKS_LOCK:
+        still_queued = (TASKS.get(task_id) or {}).get("status") == "queued-for-seat"
+    if not still_queued:
+        with _PENDING_TASK_THREADS_LOCK:
+            _PENDING_TASK_THREADS.setdefault(task_id, parked)
+        return
     try:
         new_id = _spawn_task(rec.get("name") or "Task", rec.get("prompt") or "",
                              description=rec.get("description") or "",
                              chain=rec.get("chain"),
                              chain_step=int(rec.get("chain_step") or 0),
-                             model=cloud)
+                             model=cloud,
+                             tools=rec.get("tools"),
+                             on_complete=rec.get("on_complete"),
+                             **opts)
     except Exception as e:
-        _log.error("cloud spill: could not dispatch %s to %s (%s)",
-                   task_id, cloud, e)
+        new_id, err = None, e
+    else:
+        err = None
+    if not new_id:
+        # _spawn_task fails closed when a scope cannot be applied, and returns
+        # nothing for a task stopped meanwhile: nothing ran. The worker goes back
+        # in its queue only if the task is still waiting there.
+        with TASKS_LOCK:
+            waiting = (TASKS.get(task_id) or {}).get("status") == "queued-for-seat"
+        if waiting:
+            with _PENDING_TASK_THREADS_LOCK:
+                _PENDING_TASK_THREADS.setdefault(task_id, parked)
+        _log.error("cloud spill: %s was not moved to %s (%s); %s", task_id, cloud,
+                   err or "nothing was started", "it stays queued" if waiting else "it is no longer queued")
+        _report(rec, task_id, f"This was not moved to {cloud}: its limits could not be carried "
+                              f"there. " + ("It stays queued for the local seat." if waiting
+                                            else "It is no longer queued; see the task list."))
         return
     with TASKS_LOCK:
         live = TASKS.get(task_id)
         if live is not None:
             live["status"] = "superseded"
+            live["superseded_by"] = new_id
             live["status_reason"] = (
                 f"You chose to run this on {cloud} rather than wait for the "
                 f"local seat. Running as {new_id}.")
@@ -340,6 +443,15 @@ def on_decision(card: Dict[str, Any]) -> None:
             f"Running this on **{cloud}** instead of waiting for the local "
             f"seat, as you asked. It is now task {new_id}.",
             task_id=task_id, kind="seat_change_notice")
+    except Exception:
+        pass
+
+
+def _report(rec: Dict[str, Any], task_id: str, text: str) -> None:
+    try:
+        from agent_friday.services import reconcile as _rc
+        _rc.report_task_result(rec.get("conversation_id"), rec.get("name") or task_id,
+                               text, task_id=task_id, kind="seat_change_notice")
     except Exception:
         pass
 

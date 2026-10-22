@@ -1175,10 +1175,15 @@ def _await_task(tid: str, milestone: Dict[str, Any], timeout: float) -> Dict[str
 
 def _task_status(tid: str) -> Tuple[Optional[str], str]:
     """(status, result) of a background task: the live registry first, then
-    its journal on disk. (None, "") when neither knows the task."""
+    its journal on disk. (None, "") when neither knows the task. A task the
+    owner moved to the cloud is followed to the task that replaced it
+    (services/cloud_spill), never read as its 'superseded' record."""
     try:
         from agent_friday.services.agent import _task_snapshot
-        snap = _task_snapshot(tid)
+        try:
+            snap = _task_snapshot(tid, follow=True)
+        except TypeError:             # a stand-in snapshot without `follow`
+            snap = _task_snapshot(tid)
         if isinstance(snap, dict) and snap.get("status"):
             return snap.get("status"), str(snap.get("result") or "")
     except Exception:
