@@ -372,6 +372,30 @@ def _unpicked_cloud_provider(name: str) -> bool:
         return True
 
 
+def _key_present(name: str) -> bool:
+    """Whether a key is saved for this provider (no network). Unknown counts
+    as present, so a check that cannot tell is held rather than sent."""
+    try:
+        if name == "brave":
+            from agent_friday.services import web_search
+            return bool(web_search.brave_key())
+        if name == "firecrawl":
+            from agent_friday.services import firecrawl
+            return bool(firecrawl.configured())
+        if name == "elevenlabs":
+            from agent_friday.services import cloud_voice
+            return bool(cloud_voice._api_key("elevenlabs"))  # pragma: allowlist secret
+        from agent_friday.services import credential_store as cs
+        if cs.provider_key_status(name) == "present_but_unreadable":
+            return False            # its own test says so, sending nothing
+        from agent_friday.services.provider_registry import get_provider_registry
+        from agent_friday.routing.provider_descriptors import provider_api_key
+        prov = get_provider_registry().get_provider(name)
+        return bool(prov and provider_api_key(prov))  # pragma: allowlist secret
+    except Exception:
+        return True
+
+
 def _not_checked_unpicked() -> dict:
     return _out(UNKNOWN, "Not checked yet: nothing goes to the cloud until you "
                          "choose where Friday thinks.",
@@ -395,9 +419,12 @@ def test(item_id: str) -> dict:
             return _test_openai_endpoint(name, name)
         # North-star A16a: before a route is picked a key check sends nothing
         # to the cloud. The key stays saved and is checked once a route is chosen.
-        if item_id == "google" and _route_unpicked():
-            return _not_checked_unpicked()
-        if item_id.startswith("provider:") and _unpicked_cloud_provider(item_id.split(":", 1)[1]):
+        # (Google's test reads only what is stored; it sends nothing.)
+        # A missing key still says "No key is saved yet": only a check that
+        # would send a saved key is held.
+        if (item_id.startswith("provider:")
+                and _unpicked_cloud_provider(item_id.split(":", 1)[1])
+                and _key_present(item_id.split(":", 1)[1])):
             return _not_checked_unpicked()
         if item_id == "provider:brave":
             return _test_brave()

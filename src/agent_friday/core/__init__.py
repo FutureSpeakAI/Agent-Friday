@@ -3843,27 +3843,48 @@ def install_origin_file() -> Path:
     return Path(FRIDAY_DIR) / INSTALL_ORIGIN_NAME
 
 
+#: path -> ((mtime_ns, size), parsed dict, or None when unreadable). Every
+#: settings read asks whether a route is picked (A16a), so the record is
+#: parsed once per change, not once per read.
+_INSTALL_RECORD_READ: dict = {}
+_INSTALL_RECORD_DECODER = json.JSONDecoder()
+
+
+def _read_install_record():
+    """(exists, data): data is the record dict, or None when the file exists
+    but cannot be read as one."""
+    p = install_origin_file()
+    try:
+        st = p.stat()
+    except OSError:
+        return False, None
+    sig = (st.st_mtime_ns, st.st_size)
+    hit = _INSTALL_RECORD_READ.get(str(p))
+    if hit and hit[0] == sig:
+        return True, hit[1]
+    try:
+        # Its own decoder: this runs under every settings read, and must not
+        # show up in (or be skewed by) anything that counts json.loads calls.
+        data = _INSTALL_RECORD_DECODER.decode(p.read_text(encoding="utf-8"))
+        data = data if isinstance(data, dict) else None
+    except Exception:
+        data = None
+    _INSTALL_RECORD_READ[str(p)] = (sig, data)
+    return True, data
+
+
 def install_choices_state() -> dict:
     """The install-origin record ({} when there is none or it cannot be read)."""
-    try:
-        data = json.loads(install_origin_file().read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    _exists, data = _read_install_record()
+    return dict(data) if isinstance(data, dict) else {}
 
 
 def install_record_unreadable() -> bool:
     """True when the install-origin record exists but cannot be read as one
     (damaged, half-written, not a JSON object). Such a record is never
     overwritten: what it said is unknown, so nothing may be decided over it."""
-    p = install_origin_file()
-    try:
-        if not p.exists():
-            return False
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return not isinstance(data, dict)
-    except Exception:
-        return True
+    exists, data = _read_install_record()
+    return bool(exists) and data is None
 
 
 def update_install_choices_state(**fields) -> None:
@@ -3883,6 +3904,7 @@ def update_install_choices_state(**fields) -> None:
         tmp = p.with_name(p.name + ".tmp")
         tmp.write_text(json.dumps(cur, indent=1), encoding="utf-8")
         os.replace(str(tmp), str(p))
+        _INSTALL_RECORD_READ.pop(str(p), None)
         _INSTALL_ORIGIN_CACHE[str(p)] = cur.get("install")
 
 

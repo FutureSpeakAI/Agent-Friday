@@ -64,8 +64,10 @@ def routing_delta(mode: str) -> dict:
         return {}
     # The STORED block: the overlay _load_settings applies (offline, or a route
     # not picked yet, A16a) must never be written back as the owner's settings.
-    from agent_friday.core import _load_settings_raw
-    block = dict((_load_settings_raw() or {}).get("model_routing") or {})
+    import agent_friday.core as _core
+    src = (_core._load_settings_raw() if _core.route_pick_pending()
+           else _core._load_settings())
+    block = dict((src or {}).get("model_routing") or {})
     block["mode"] = mode
     return {"model_routing": block}
 

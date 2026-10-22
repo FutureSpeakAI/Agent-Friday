@@ -688,7 +688,10 @@ def background_route(job, *, local_serving=None, mode=None) -> BackgroundRoute:
     if serving:
         return BackgroundRoute("local", "a local model is serving", m,
                                local_model=serving if isinstance(serving, str) else "")
-    if covered and cfg.get("allow") and not route_unpicked():
+    if covered and route_unpicked():
+        # A16a: no route chosen yet, so an allowed job is held, not sent.
+        covered = False
+    if covered and cfg.get("allow"):
         if not model:
             return BackgroundRoute(
                 "skip", "no local model is serving, and no cloud model is set for "
