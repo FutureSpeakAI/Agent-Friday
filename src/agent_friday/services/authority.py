@@ -94,14 +94,15 @@ def _newest_receipt() -> Optional[dict]:
         cold = True                                  # strictly (archive and anchor) if nothing is found
         hit, tip = action_ledger.newest_since(
             ["authority"], 0, where=lambda e: (e.get("rec") or {}).get("event") in ("revoked", "restored"))
-    if hit is not None:
-        _SEEN["rec"] = hit
-    elif cold and _SEEN.get("rec") is None:
-        # a fresh process: the receipt may have moved into the archive (A22).
-        # Read strictly: an archive that cannot be read raises, and revoked()
-        # then holds (and this look is tried again next time)
+    if cold and (hit is None or (hit.get("rec") or {}).get("event") != "revoked"):
+        # a fresh process or a ledger that went back: anything but a revocation
+        # found by the quick read is checked strictly (archive A22, anchor): an
+        # old "restored" in a rolled-back file never stands. A record that
+        # cannot be read raises, and revoked() then holds (tried again next time)
         rows = _strict_look(action_ledger)
         _SEEN["rec"] = rows[0] if rows else None
+    elif hit is not None:
+        _SEEN["rec"] = hit
     _SEEN["through"] = tip
     _SEEN["stats"] = stats
     return _SEEN["rec"]
