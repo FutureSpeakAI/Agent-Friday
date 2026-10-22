@@ -321,11 +321,14 @@ _USE_FLUSHED: dict = {}
 
 def _credential_name(path) -> str:
     """A credential's name: its path under Friday's data folder, with forward slashes."""
-    p = Path(path)
+    # String work only (no filesystem lookup): the name is a label, never opened.
     try:
-        return p.resolve().relative_to(Path(core.FRIDAY_DIR).resolve()).as_posix()
+        rel = os.path.relpath(os.path.abspath(os.fspath(path)), os.path.abspath(os.fspath(core.FRIDAY_DIR)))
     except Exception:
-        return p.name
+        return os.path.basename(os.fspath(path))
+    if rel.startswith("..") or os.path.isabs(rel):
+        return os.path.basename(os.fspath(path))
+    return rel.replace(os.sep, "/")
 
 
 def _use_file() -> Path:
@@ -712,7 +715,10 @@ _PROVIDER_KEYS_DIR = core.FRIDAY_DIR / "providers" / "keys"
 
 def _provider_key_path(provider: str) -> Path:
     safe = "".join(c for c in str(provider) if c.isalnum() or c in "-_") or "provider"
-    return _PROVIDER_KEYS_DIR / f"{safe}.key"
+    # contained() proves the joined path stays inside the keys folder (and is the check the code
+    # scanner recognises): the name filter above already makes escaping impossible.
+    from agent_friday.paths import contained as _contained
+    return _contained(_PROVIDER_KEYS_DIR, f"{safe}.key")
 
 
 def set_provider_key(provider: str, key: str) -> str:
