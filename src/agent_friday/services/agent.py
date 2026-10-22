@@ -5463,7 +5463,7 @@ def _restore_tasks_from_journal(announce=True, limit=200):
         except Exception:
             summary['resumable'] = []
         if announce:
-            tj.announce_interrupted(summary.get('interrupted') or [])
+            tj.announce_interrupted(summary.get('interrupted') or [], summary.get('previous_exit'))
             try:
                 from agent_friday.services import task_resume as _tr2
                 # AFTER A RESTART, KEEP GOING. reconcile.run_at_boot only sees

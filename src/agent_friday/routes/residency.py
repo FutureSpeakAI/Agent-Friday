@@ -366,6 +366,45 @@ def roles():
                   for r in rp.ROLES],
         "aliases": rp.ROLE_ALIASES,
     })
+@residency_bp.route("/api/server/prepare-for-exit", methods=["POST"])
+@login_required
+def server_prepare_for_exit():
+    """The tray is about to stop this server on purpose (a quit or a restart). On Windows a
+    terminated process runs no exit handler, so it asks first (BD-16, NS-11.3-8): Laya's queued
+    writes are flushed, add-on servers and the browser sessions Friday opened are stopped, and
+    a clean-exit marker is written, so the next start can tell the owner's close from a crash.
+    Each step is best-effort and short; the marker is written whatever the others did. Model
+    seats are released separately (release-for-quit), only on a quit."""
+    import sys as _sys
+    body = request.get_json(silent=True) or {}
+    planned = str(body.get("planned") or "").lower() in ("1", "true", "yes")
+    reason = str(body.get("reason") or "user_quit")[:64]
+    steps = {}
+    try:
+        from agent_friday.services import laya as _laya
+        steps["laya_flushed"] = bool(_laya.flush(2.0))
+    except Exception as e:  # noqa: BLE001
+        steps["laya_flushed"] = "failed: %s" % type(e).__name__
+    agent = _sys.modules.get("agent_friday.services.agent")
+    mgr = getattr(agent, "_MCP_MANAGER", None) if agent else None
+    if mgr is not None:
+        try:
+            mgr.stop_all()
+            steps["addons_stopped"] = True
+        except Exception as e:  # noqa: BLE001
+            steps["addons_stopped"] = "failed: %s" % type(e).__name__
+    bs = _sys.modules.get("agent_friday.services.browser_session")
+    if bs is not None:
+        try:
+            bs.stop_all_owned_sessions()
+            steps["browser_sessions_stopped"] = True
+        except Exception as e:  # noqa: BLE001
+            steps["browser_sessions_stopped"] = "failed: %s" % type(e).__name__
+    from agent_friday.services import task_journal as tj
+    steps["marked"] = tj.mark_clean_exit(reason, planned=planned)
+    return jsonify({"status": "ok", "planned": planned, "reason": reason, "steps": steps})
+
+
 @residency_bp.route("/api/residency/release-for-quit", methods=["POST"])
 @login_required
 def residency_release_for_quit():

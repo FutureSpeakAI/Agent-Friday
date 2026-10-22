@@ -267,8 +267,17 @@ def append(task_id: str, kind: str, **fields) -> Optional[int]:
                     ev[k] = v
             p = task_dir(task_id) / "journal.jsonl"
             p.parent.mkdir(parents=True, exist_ok=True)
-            with open(p, "a", encoding="utf-8") as fh:
-                fh.write(_encode_line(ev) + "\n")
+            with open(p, "a+b") as fh:
+                # A process stopped mid-write can leave a last line without its newline; the
+                # reader drops that torn line, and a new event appended straight onto it would
+                # be dropped with it. Start on a fresh line.
+                lead = b""
+                if fh.tell() > 0:
+                    fh.seek(-1, os.SEEK_END)
+                    if fh.read(1) != b"\n":
+                        lead = b"\n"
+                    fh.seek(0, os.SEEK_END)
+                fh.write(lead + (_encode_line(ev) + "\n").encode("utf-8"))
             return seq
         except Exception as e:
             _SEQ.pop(task_id, None)
@@ -528,6 +537,51 @@ def apply_retention(now: Optional[float] = None) -> List[str]:
     return gone
 
 
+# ── how the previous process ended (BD-16, NS-11.3-8 / NS-32.11-1) ──────────────
+# A clean quit or restart asks the server to get ready first (POST
+# /api/server/prepare-for-exit, called by the tray before it stops the server:
+# on Windows a terminated process runs no exit handler). That writes this marker.
+# The next start reads it once: with it, the interrupted tasks were stopped by
+# the owner closing (or restarting) Friday; without it, Friday stopped without
+# being closed (a crash, a forced stop, a power loss).
+EXIT_MARKER = "last_exit.json"
+#: A marker older than the last sign of life of a task by more than this was
+#: written by a process that kept running afterwards: it does not describe the end.
+_MARKER_SLACK_S = 15.0
+
+
+def mark_clean_exit(reason: str, planned: bool = False) -> bool:
+    """Record that this process is about to be stopped on purpose. Never raises."""
+    try:
+        _write_atomic(tasks_dir() / EXIT_MARKER, json.dumps({
+            "clean": True, "reason": str(reason or "quit")[:64], "planned": bool(planned),
+            "ts": time.time(), "pid": os.getpid()}).encode("utf-8"))
+        return True
+    except Exception as e:
+        _log.warning("could not record a clean exit: %s", type(e).__name__)
+        return False
+
+
+def _take_exit_marker() -> Optional[dict]:
+    """The previous process's clean-exit marker, read once and removed."""
+    p = tasks_dir() / EXIT_MARKER
+    try:
+        m = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        m = None
+    try:
+        p.unlink()
+    except Exception:
+        pass
+    return m if isinstance(m, dict) and m.get("clean") is True else None
+
+
+def _exit_words(previous: dict) -> str:
+    if previous.get("kind") == "closed":
+        return ("Friday was restarted" if previous.get("planned") else "Friday was closed")
+    return "Friday stopped without being closed (a crash, a forced stop or a power loss)"
+
+
 # ── boot reconciliation (TV8) ────────────────────────────────────────────────
 
 def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
@@ -538,7 +592,12 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
     now = now or time.time()
     interrupted: List[dict] = []
     restored: List[dict] = []
+    marker = _take_exit_marker()
+    previous: Dict[str, Any] = ({"kind": "closed", "reason": marker.get("reason"),
+                                 "planned": bool(marker.get("planned")), "at": marker.get("ts")}
+                                if marker else {"kind": "unexpected"})
     try:
+        pending = []
         for tid, row in index_read().items():
             if row.get("status") == "deleted":
                 continue
@@ -550,28 +609,37 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
                 last_cp = next((e for e in reversed(events)
                                 if e.get("kind") in ("checkpoint", "started", "created")), None)
                 last_hb = next((e for e in reversed(events) if e.get("kind") == "heartbeat"), None)
-                st["status"] = "interrupted"
-                st["ended"] = st.get("ended") or (last_hb or last_cp or {}).get("ts") or st.get("state_written") or now
-                st["result"] = st.get("result") or (
-                    "[Interrupted] The process stopped before this task finished. "
-                    "Its record is complete up to the last checkpoint; it was not resumed.")
-                append(tid, "halt", cause="interrupted",
-                       detail="process restarted while the task was running",
-                       last_checkpoint=(last_cp or {}).get("summary") or (last_cp or {}).get("kind"),
-                       last_seen=(last_hb or last_cp or {}).get("ts"),
-                       resume_hint="Re-run the task from its prompt; nothing resumes automatically.")
-                write_state(tid, st)
-                index_put(tid, st.get("name", ""), "interrupted", st.get("created"), st["ended"])
-                interrupted.append(st)
+                seen = (last_hb or last_cp or {}).get("ts")
+                if marker and seen and float(seen) > float(marker.get("ts") or 0) + _MARKER_SLACK_S:
+                    # The task kept working after the marker was written: it did not describe
+                    # how this process ended.
+                    previous = {"kind": "unexpected"}
+                pending.append((tid, st, last_cp, last_hb))
             else:
                 if not is_terminal(row.get("status")) and is_terminal(st.get("status")):
                     # The record ended but its index row was never told.
                     index_put(tid, st.get("name", ""), st["status"], st.get("created"),
                               st.get("ended") or st.get("state_written") or now)
                 restored.append(st)
+        how = _exit_words(previous)
+        for tid, st, last_cp, last_hb in pending:
+            st["status"] = "interrupted"
+            st["ended"] = st.get("ended") or (last_hb or last_cp or {}).get("ts") or st.get("state_written") or now
+            st["result"] = st.get("result") or (
+                "[Interrupted] The process stopped before this task finished. "
+                "Its record is complete up to the last checkpoint; it was not resumed.")
+            append(tid, "halt", cause="interrupted",
+                   detail="%s while the task was running" % how,
+                   exit=previous.get("kind"),
+                   last_checkpoint=(last_cp or {}).get("summary") or (last_cp or {}).get("kind"),
+                   last_seen=(last_hb or last_cp or {}).get("ts"),
+                   resume_hint="Re-run the task from its prompt; nothing resumes automatically.")
+            write_state(tid, st)
+            index_put(tid, st.get("name", ""), "interrupted", st.get("created"), st["ended"])
+            interrupted.append(st)
     except Exception as e:
         _log.error("task journal reconciliation failed: %s", e)
-    return {"interrupted": interrupted, "restored": restored}
+    return {"interrupted": interrupted, "restored": restored, "previous_exit": previous}
 
 
 def _incident(task_ids) -> str:
@@ -580,17 +648,21 @@ def _incident(task_ids) -> str:
     return hashlib.sha1(",".join(sorted(str(i) for i in task_ids)).encode("utf-8")).hexdigest()[:12]
 
 
-def announce_interrupted(interrupted: Iterable[dict]) -> None:
+def announce_interrupted(interrupted: Iterable[dict], previous_exit: Optional[dict] = None) -> None:
     items = list(interrupted)
     if not items:
         return
     names = ", ".join((t.get("name") or t.get("task_id", "?"))[:40] for t in items[:5])
     more = f" and {len(items) - 5} more" if len(items) > 5 else ""
+    closed = (previous_exit or {}).get("kind") == "closed"
+    n = f"{len(items)} task{'s were' if len(items) != 1 else ' was'}"
+    title = (f"{n} stopped when Friday was closed" if closed else f"{n} interrupted by a restart")
+    why = "" if closed else (_exit_words(previous_exit or {}) + ". ")
     try:
         import agent_friday.notifications_engine as ne
         ne.push(
-            title=f"{len(items)} task{'s were' if len(items) != 1 else ' was'} interrupted by a restart",
-            body=(f"{names}{more}. Each record is complete up to its last checkpoint. "
+            title=title,
+            body=(f"{why}{names}{more}. Each record is complete up to its last checkpoint. "
                   "Nothing was resumed: re-run any of them from their task cards in System."),
             priority="high", source="task-journal", kind="tasks_interrupted",
             emitter="E28", dedupe_key="tasks_interrupted:" + _incident([t.get("task_id") for t in items]),

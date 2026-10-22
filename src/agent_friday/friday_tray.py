@@ -599,6 +599,7 @@ class FridayTray:
             # stop→sleep→start sequence concurrently with it.
             return
         try:
+            self._prepare_for_exit("tray_restart", planned=True)
             self.stop_server()
             # Give the OS a moment to release the port.
             time.sleep(0.5)
@@ -638,6 +639,21 @@ class FridayTray:
         else:
             os.startfile(str(VOICE_LOG.parent))  # type: ignore[attr-defined]
 
+    def _prepare_for_exit(self, reason: str, planned: bool = False) -> None:
+        """Ask the server to get ready to stop (BD-16): flush, stop add-ons and browser sessions,
+        and record a clean exit, so the next start can say the owner closed Friday rather than
+        that she crashed. Asked FIRST for the same reason as the seats below: `stop_server`
+        terminates it, and on Windows that runs no exit handler. Short and best-effort."""
+        try:
+            req = urllib.request.Request(
+                self.server_url + "/api/server/prepare-for-exit",
+                data=json.dumps({"reason": reason, "planned": planned}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=15) as r:
+                r.read()
+        except Exception as e:
+            log.warning("could not prepare the server for exit: %s: %s", type(e).__name__, e)
+
     def _release_seats(self, reason: str) -> None:
         """Ask the server to evict its model seats before we stop it.
 
@@ -663,6 +679,7 @@ class FridayTray:
     def _quit(self, _icon, _item) -> None:
         # A quit gives the machine its memory back. A restart does not: see
         # `restart_server`, which is a planned restart and keeps the seats.
+        self._prepare_for_exit("tray_quit")
         self._release_seats("tray_quit")
         self.stop_server()
         if self.icon:
@@ -1050,6 +1067,7 @@ def main(argv: list[str] | None = None) -> None:
     def _on_signal(_sig, _frm):
         # Being told to stop is a quit, not a restart: hand the memory back.
         try:
+            tray._prepare_for_exit("tray_signal")
             tray._release_seats("tray_signal")
             tray.stop_server()
         except Exception:
