@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, g, jsonify, request
 
+from agent_friday.core import login_required
 from agent_friday.services import import_staging
 
 import_staging_bp = Blueprint("import_staging", __name__)
@@ -39,6 +40,7 @@ def _gate():
 
 
 @import_staging_bp.route("/api/import-staging", methods=["GET"])
+@login_required
 def import_staging_list():
     source = (request.args.get("source") or "").strip() or None
     status = (request.args.get("status") or "open").strip()
@@ -50,6 +52,7 @@ def import_staging_list():
 
 
 @import_staging_bp.route("/api/import-staging/review", methods=["POST"])
+@login_required
 def import_staging_review():
     from agent_friday.services import screen_click
     if not screen_click.screen_session(request):

@@ -151,7 +151,7 @@ def stage(source: str, kind: str, rows: List[dict], *, source_ref: str = "") -> 
     staged = decided = forgotten = 0
     now = time.time()
     with _lock:
-        for row in rows[:MAX_ITEMS_PER_STAGE]:
+        for seq, row in enumerate(rows[:MAX_ITEMS_PER_STAGE]):
             key = _clean(row.get("key"), 400)
             if not key:
                 continue
@@ -179,6 +179,9 @@ def stage(source: str, kind: str, rows: List[dict], *, source_ref: str = "") -> 
                 "authority": "import", "sensitivity": _clean(row.get("sensitivity"), 20) or "personal",
                 "status": (old or {}).get("status") if (old or {}).get("status") in OPEN_STATUSES else "proposed",
                 "staged_ts": (old or {}).get("staged_ts") or now, "updated_ts": now,
+                # The row's place in its file: answers for a whole list follow the file's order,
+                # so which of two rows for one person is saved first is the file's, not a hash's.
+                "seq": (old or {}).get("seq", seq),
             }
             _write_atomic(path, item)
             staged += 1
@@ -204,7 +207,8 @@ def list_items(source: Optional[str] = None, status: Optional[str] = None,
         if want is not None and it.get("status") not in want:
             continue
         out.append(it)
-    out.sort(key=lambda it: (it.get("staged_ts") or 0, it.get("id")))
+    out.sort(key=lambda it: (it.get("staged_ts") or 0, it.get("seq") if isinstance(it.get("seq"), int) else 0,
+                             it.get("id")))
     return out
 
 
@@ -256,7 +260,9 @@ def review(item_id: str, answer: str, *, edits: Optional[dict] = None, by: str =
                 if k in spec["fields"]:
                     payload[k] = _clean(v)
         f_names, f_emails = _forgotten()
-        if set(it.get("names") or []) & f_names or set(it.get("emails") or []) & f_emails:
+        names = set(it.get("names") or []) | ({_norm_name(payload["name"])} if payload.get("name") else set())
+        emails = set(it.get("emails") or []) | ({str(payload["email"]).lower()} if payload.get("email") else set())
+        if names & f_names or emails & f_emails:
             path.unlink(missing_ok=True)
             _note_answer(it, answer, by, "forgotten")
             return {"ok": False, "error": "that person is on your forget list, so nothing was saved"}
@@ -267,9 +273,9 @@ def review(item_id: str, answer: str, *, edits: Optional[dict] = None, by: str =
             _write_atomic(path, it)
             _note_answer(it, answer, by, "failed")
             return {"ok": False, "error": "it could not be saved; it is still waiting"}
-        it.update(status="accepted", payload=payload, reviewed_ts=time.time())
-        it.pop("error", None)
-        _write_atomic(path, it)
+        _write_atomic(path, {"schema": 1, "id": it["id"], "kind": it.get("kind"),
+                             "source": it.get("source"), "status": "accepted",
+                             "reviewed_ts": time.time()})
         _note_answer(it, answer, by, "accepted")
         return {"ok": True, "status": "accepted", "result": result}
 

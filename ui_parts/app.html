@@ -13664,7 +13664,7 @@ function StagedImportReview({ source, refresh, onDone }) {
       answer: 'accept',
       all: true
     }, x => 'Saved ' + x.done + (x.failed ? '; ' + x.failed + ' could not be saved and still wait' : '') + '.')
-  }, 'Accept all'), E('button', {
+  }, 'Accept all ' + ((d.counts || {}).proposed + (d.counts || {}).deferred || items.length)), E('button', {
     className: 'btn',
     style: {
       fontSize: 11
