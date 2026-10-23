@@ -20784,6 +20784,8 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="When a cloud provider fails" desc={"If a cloud provider fails, " + fridayName() + " says so and offers the other one; she never switches on her own. An order set here lets her move along it, and she still tells you each time."}>
       {window.FridayCloudFallbackOrder?React.createElement(window.FridayCloudFallbackOrder):null}
+    <StSection title="Folder grants" desc="Her file tools read and write only inside your home folder (not app data or her own state folder), her output folders, and the folders you add here. Adding one is a press on this screen; removing one is always allowed.">
+      {window.FridayFolderGrants?React.createElement(window.FridayFolderGrants):null}
     </StSection>
     <StSection title="Library" desc="Documents you add to the Library are read and indexed on this PC. Nothing is sent anywhere unless you turn on cloud answers below. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key.">
       <LibraryTrackedToggle/>

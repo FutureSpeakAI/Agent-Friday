@@ -1312,6 +1312,15 @@ def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
     if not raw:
         return "read_file error: 'path' is required."
+    # Where file tools may reach (services/path_policy, BD-26), judged on the resolved
+    # path here as well as in the sandbox hook, which settings can switch off. Key
+    # material keeps its own refusal (and its signed receipt) first.
+    from agent_friday.services import path_policy as _pp
+    # The text first: a network share or a device path is refused before anything
+    # resolves it (resolving a share contacts it).
+    _why = _pp._text_reason(str(raw))
+    if _why:
+        return _pp.refusal(raw, _why, "read")
     try:
         p = Path(raw).expanduser().resolve()
     except Exception as e:
@@ -1320,6 +1329,9 @@ def _tool_read_file(inp):
     from agent_friday.services import credential_paths as _cred
     if _cred.check(p):
         return _cred.refusal(p)
+    p, _why = _pp.judge(raw, "read")
+    if p is None:
+        return _pp.refusal(raw, _why, "read")
     if not p.exists():
         return f"File not found: {p}.{_suggest_near_miss(p)}"
     if not p.is_file():
@@ -1456,11 +1468,17 @@ def _tool_write_file(inp):
         return "write_file error: 'path' is required."
     if mode not in ('write', 'append'):
         mode = 'write'
+    from agent_friday.services import path_policy as _pp
+    _p_ok, _why = _pp.judge(raw, "write")
+    if _p_ok is None:
+        return _pp.refusal(raw, _why, "write")
+    # Key material is not written over either (services/credential_paths).
+    from agent_friday.services import credential_paths as _cred_w
+    if _cred_w.check(_p_ok, sniff=False):
+        return _cred_w.refusal(_p_ok)
     from agent_friday.services import file_write_receipts as _fwr
-    try:
-        p = Path(raw).expanduser().resolve()
-    except Exception as e:
-        return f"Write error: {e}"
+    # The path the policy judged (resolved) is the one written.
+    p = _p_ok
     if p.is_dir():
         return f"Write error: {p} is a folder, not a file. Nothing was written."
     # The backup and the receipt come first: an existing file is copied (and

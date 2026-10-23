@@ -45,6 +45,10 @@ EMAIL_RESULT = json.dumps({"source": "gmail", "count": 2, "messages": [
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
+    # The tests name documents by relative path; the file tools' folder confinement
+    # (services/path_policy) is pointed at the folder those resolve in.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(approvals, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)
@@ -71,6 +75,12 @@ def _isolate(tmp_path, monkeypatch):
     yield calls
     taint.reset()
     agent._PENDING_CONFIRMATIONS.clear()
+
+
+def _bill():
+    # The file tools take a full path (services/path_policy refuses a relative one).
+    import os
+    return os.path.join(os.getcwd(), "bill-december.txt")
 
 
 def _turn(message, extra=None):
@@ -234,7 +244,7 @@ class TestLinksAndAccounts:
 
     def test_an_account_number_from_a_document_asks_even_with_its_spaces_gone(self, _isolate):
         ctx = _turn("Pay the bill in bill-december.txt")
-        _run("read_file", {"path": "bill-december.txt"}, ctx)
+        _run("read_file", {"path": _bill()}, ctx)
         out = _run("mcp_bank_send_money", {"recipient": "UK12345678901234567890",
                                            "amount": 98.7}, ctx)
         assert not _ran(_isolate, "mcp_bank_send_money"), out
@@ -244,7 +254,7 @@ class TestLinksAndAccounts:
 
     def test_an_account_number_the_user_typed_runs(self, _isolate):
         ctx = _turn("send 50 to UK12 3456 7890 1234 5678 90 for the bill")
-        _run("read_file", {"path": "bill-december.txt"}, ctx)
+        _run("read_file", {"path": _bill()}, ctx)
         inp = {"recipient": "UK12345678901234567890", "amount": 50}
         out = _run("mcp_bank_send_money", inp, ctx)
         assert not _pending()

@@ -616,7 +616,54 @@ def classify_command(cmd: str) -> tuple:
             return OUTWARD, f"'{words[0]}' is not on the read-only list"
         if head == "git" and (len(words) < 2 or words[1].lower() not in _GIT_READ):
             return OUTWARD, "a git command that is not read-only"
+    reach = _command_reach_reason(c)
+    if reach:
+        return OUTWARD, reach
     return INTERNAL, "read-only"
+
+
+def _command_reach_reason(cmd: str) -> str:
+    """A read-only command still READS: every path it names is judged by the same
+    policy as read_file (services/path_policy, BD-26). A path outside the folders
+    Friday may use, or a walk up with '..', makes the command outward (a card)."""
+    import re as _re
+    try:
+        from agent_friday.services import path_policy as _pp
+        from agent_friday.services.credential_paths import _expand_path_text
+    except Exception:
+        return ""
+    import os as _os
+    from pathlib import Path as _P
+    for raw in _re.split(r"[\s,;()]+", cmd):
+        tok = raw.strip().strip("'\"`")
+        if not tok or tok.startswith("-"):
+            continue
+        low = tok.lower()
+        drive = bool(_re.match(r"^[a-z]:[\\/]", low))
+        # On Windows a leading "/" is a switch (dir /s), elsewhere an absolute path.
+        posix_abs = tok.startswith("/") and not tok.startswith("//") and _os.name != "nt"
+        looks = (drive or posix_abs or tok.startswith(("~", "\\\\", "//", "%"))
+                 or low.startswith(("$env:", "$home", "$pshome", "$profile")) or ".." in tok)
+        if not looks:
+            continue
+        if ".." in tok and not _re.match(r"^[a-z]:[\\/]|^[~\\/%$]", low):
+            return "it walks up out of its working folder with '..'"
+        if drive and _os.name != "nt":
+            continue        # a drive path names nothing on this machine
+        expanded = _expand_path_text(tok)
+        p, why = _pp.judge(expanded, "read")
+        if p is None:
+            # A folder ABOVE the home (C:\Users, C:\) shows names only to a
+            # listing; it holds no content of its own to read.
+            try:
+                # Text only (no filesystem access): normalised, not resolved.
+                q = _P(_os.path.normpath(_os.path.abspath(_os.path.expanduser(expanded))))
+                if _pp._within_folded(_pp._home(), q):
+                    continue
+            except Exception:
+                pass
+            return f"it reads a place Friday's file tools may not ({why})"
+    return ""
 
 
 def _resolve(path) -> Optional[Path]:
