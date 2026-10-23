@@ -270,12 +270,13 @@ def _build_quietly() -> None:
 # ── a damaged index (North Star 32.6) ─────────────────────────────────────────
 #: "The human-readable wiki and source documents remain available. Derived graphs and indexes are
 #: rebuilt. Corruption does not result in deletion of source data." This index is derived from the
-#: transcripts: a damaged one is moved aside (kept once, for a look) and rebuilt from them; the
-#: transcripts are never touched.
+#: transcripts: a damaged one is discarded and rebuilt from them; the transcripts are only read.
+#: No copy of the old index is kept: it holds message text, and a copy would keep text the owner
+#: later deletes or forgets (and travel in backups).
 #: At most one automatic rebuild in this many seconds (a disk that keeps damaging it must not loop).
 AUTO_REPAIR_EVERY_S = 600.0
 _LAST_AUTO: Dict[str, float] = {}
-_DAMAGED_TAG = ".damaged"
+_REPAIRING = threading.Event()
 
 
 def _damaged(exc: BaseException) -> bool:
@@ -286,49 +287,54 @@ def _damaged(exc: BaseException) -> bool:
         return False
 
 
-def _set_aside() -> Optional[str]:
-    """Move the index file (and its WAL/SHM) aside; keep only the newest damaged copy. Caller
-    holds _LOCK. Returns the kept copy's name, or None if there was no file."""
+def _discard() -> bool:
+    """Remove the index file and its WAL/SHM. Caller holds _LOCK. Any part that cannot be removed
+    raises: a stale WAL beside a fresh file could be applied to it and damage it again."""
     p = _path()
-    if not p.exists():
-        return None
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    kept = p.with_name(p.name + _DAMAGED_TAG + "-" + stamp)
-    for old in p.parent.glob(p.name + _DAMAGED_TAG + "-*"):
+    found = False
+    for suffix in ("-wal", "-shm", ""):
+        f = Path(str(p) + suffix)
+        if f.exists():
+            found = True
+            f.unlink()
+    # Copies an earlier build of this module kept (index.sqlite.damaged-*): the same text, gone too.
+    for old in p.parent.glob(p.name + ".damaged-*"):
         try:
-            old.unlink()                     # an older damaged copy of a derived index
+            old.unlink()
         except OSError:
             pass
-    for suffix in ("", "-wal", "-shm"):
-        src = Path(str(p) + suffix)
-        if src.exists():
-            try:
-                src.replace(Path(str(kept) + suffix))
-            except OSError:
-                if suffix == "":
-                    raise
     _BUILT.pop(str(p), None)
-    return kept.name
+    return found
+
+
+def repair_running() -> bool:
+    return _REPAIRING.is_set()
 
 
 def repair(reason: str = "owner") -> Dict[str, Any]:
-    """Rebuild the index from the transcripts: the current file is moved aside first, so a
-    damaged one cannot block the rebuild. The transcripts are only read."""
-    with _LOCK:
-        try:
-            kept = _set_aside()
-        except OSError as e:
-            return {"ok": False, "error": "the damaged index could not be moved aside: %s" % type(e).__name__}
-        out = build(force=True)
-        _BUILT[str(_path())] = True
-    _log.warning("conversation search: index rebuilt from the transcripts (%s); damaged copy: %s",
-                 reason, kept or "none")
+    """Rebuild the index from the transcripts: the current file is discarded first, so a damaged
+    one cannot block the rebuild. The transcripts are only read. One rebuild at a time."""
+    if _REPAIRING.is_set():
+        return {"ok": False, "busy": True, "error": "the search index is already being rebuilt"}
+    _REPAIRING.set()
+    try:
+        with _LOCK:
+            try:
+                had = _discard()
+            except OSError as e:
+                return {"ok": False, "error": "the old index could not be removed: %s" % type(e).__name__}
+            out = build(force=True)
+            _BUILT[str(_path())] = True
+    finally:
+        _REPAIRING.clear()
+    _log.warning("conversation search: index rebuilt from the transcripts (%s; old index %s)",
+                 reason, "discarded" if had else "absent")
     try:
         from agent_friday.services import recall_health
         recall_health.note_ok("conversation_search")
     except Exception:
         pass
-    return dict(out, set_aside=kept, reason=reason)
+    return dict(out, reason=reason)
 
 
 def _auto_repair(exc: BaseException) -> None:
@@ -361,13 +367,16 @@ def health() -> Dict[str, Any]:
     p = _path()
     if not p.exists():
         return {"state": "missing"}
+    if _REPAIRING.is_set():
+        return {"state": "repairing"}
     try:
-        with _LOCK:
-            conn = sqlite3.connect(str(p), timeout=5)
-            try:
-                row = conn.execute("PRAGMA quick_check").fetchone()
-            finally:
-                conn.close()
+        # Read-only and outside _LOCK: the check never holds up a chat turn's index write, and it
+        # creates no WAL/SHM files of its own.
+        conn = sqlite3.connect(p.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        try:
+            row = conn.execute("PRAGMA quick_check").fetchone()
+        finally:
+            conn.close()
         return {"state": "ok" if row and str(row[0]).lower() == "ok" else "damaged"}
     except sqlite3.DatabaseError as e:
         return {"state": "damaged" if _damaged(e) else "unreadable"}
@@ -393,13 +402,20 @@ def delete_message(cid: str, mid: str) -> Dict[str, Any]:
     changed = cv.delete_lines(cid, lambda m: str(m.get("id")) == mid, on_match=_drop)
     if not changed:
         return {"ok": False, "error": "that message is not in this conversation"}
-    with _LOCK:
-        conn = _connect()
-        try:
-            _delete_mid(conn, mid)
-            conn.commit()
-        finally:
-            conn.close()
+    try:
+        with _LOCK:
+            conn = _connect()
+            try:
+                _delete_mid(conn, mid)
+                conn.commit()
+            finally:
+                conn.close()
+    except sqlite3.DatabaseError as e:
+        # A damaged index: rebuilt from the transcripts, where the message is already gone; the
+        # other copies below are still removed now.
+        if not _damaged(e):
+            raise
+        _auto_repair(e)
     removed_vec = 0
     try:
         from agent_friday.services.model_router import _get_conversation_memory

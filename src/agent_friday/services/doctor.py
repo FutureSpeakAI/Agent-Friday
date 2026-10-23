@@ -368,6 +368,8 @@ def _c_search_index():
         return "healthy", "ok"
     if state == "missing":
         return "healthy", "not_built_yet"
+    if state == "repairing":
+        return "repairing", "conversation_search_index_rebuilding"
     return "degraded", "conversation_search_index_" + state
 
 

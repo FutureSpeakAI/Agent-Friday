@@ -56,8 +56,38 @@ def test_a_damaged_index_is_found_rebuilt_and_searchable_again(iso):
     hits = fts.search("depot")
     assert hits and "council" in hits[0]["text"]
     assert _transcripts(iso) == before, "a transcript was changed by the rebuild"
-    kept = list(iso.glob("index.sqlite.damaged-*"))
-    assert len(kept) == 1                         # the damaged copy is kept once, for a look
+    # No copy of the old index is kept: it held message text the owner may later delete.
+    assert list(iso.glob("index.sqlite.damaged*")) == []
+
+
+def test_a_message_deleted_after_a_rebuild_leaves_no_text_in_any_index_file(iso):
+    c = cv.create("x")["id"]
+    m = _say(c, "the secret harbour code is tangerine")
+    fts.ensure_built()
+    assert fts.repair("owner:test")["ok"]
+    assert fts.delete_message(c, m["id"])["ok"]
+    raw = b"".join(p.read_bytes() for p in iso.glob("index.sqlite*"))
+    assert b"tangerine" not in raw
+
+
+def test_deleting_on_a_damaged_index_still_removes_the_message_everywhere(iso, monkeypatch):
+    c = cv.create("x")["id"]
+    m = _say(c, "please forget the tangerine plan")
+    fts.ensure_built()
+    removed = []
+
+    class Vec:
+        def delete(self, ids=None, exact_text=None):
+            removed.append(ids or exact_text)
+            return 1
+    from agent_friday.services import model_router
+    monkeypatch.setattr(model_router, "_get_conversation_memory", lambda: Vec())
+    _damage(iso)
+    out = fts.delete_message(c, m["id"])
+    assert out["ok"] and removed == [[m["id"]]]
+    assert all("tangerine" not in (x.get("text") or "") for x in cv._stored_messages(c))
+    assert fts.health()["state"] == "ok"           # rebuilt from the transcripts
+    assert fts.search("tangerine") == []
 
 
 def test_the_doctor_names_a_damaged_index(iso):
@@ -76,17 +106,26 @@ def test_an_index_not_built_yet_is_not_damaged(iso):
     assert doctor._c_search_index() == ("healthy", "not_built_yet")
 
 
-def test_the_owners_rebuild_keeps_only_the_newest_damaged_copy(iso):
+def test_the_owners_rebuild_keeps_no_old_copy(iso):
     c = cv.create("x")["id"]
     _say(c, "a message about the harbour")
     fts.ensure_built()
     old = iso / "index.sqlite.damaged-20200101-000000"
-    old.write_bytes(b"old junk")
+    old.write_bytes(b"old junk with text")
     out = fts.repair("owner:test")
     assert out["ok"] and out["indexed"] == 1
-    kept = sorted(p.name for p in iso.glob("index.sqlite.damaged-*"))
-    assert len(kept) == 1 and kept[0] != old.name
+    assert list(iso.glob("index.sqlite.damaged-*")) == []
     assert fts.search("harbour")
+
+
+def test_one_rebuild_at_a_time(iso, monkeypatch):
+    fts._REPAIRING.set()
+    try:
+        out = fts.repair("owner:test")
+        assert out["ok"] is False and out.get("busy") is True
+        assert fts.health()["state"] in ("repairing", "missing")
+    finally:
+        fts._REPAIRING.clear()
 
 
 def test_automatic_rebuilds_are_limited(iso, monkeypatch):

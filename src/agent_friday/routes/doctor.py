@@ -155,6 +155,8 @@ def repair_search_index():
         return jsonify({"status": "error", "code": _DESK_PROOF,
                         "error": "Rebuild the search index on Friday's own page, on this PC."}), 403
     from agent_friday.services import conversation_fts
+    if conversation_fts.repair_running():
+        return jsonify({"status": "error", "error": "The search index is already being rebuilt."}), 409
 
     def _run():
         try:

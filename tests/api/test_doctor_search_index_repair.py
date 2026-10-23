@@ -19,6 +19,18 @@ def test_the_rebuild_needs_the_press_on_this_pc(client, monkeypatch):
     assert ok.get_json()["started"] is True
 
 
+def test_a_second_press_while_one_rebuild_runs_is_refused(client):
+    from agent_friday.services import conversation_fts as fts
+    ev = getattr(fts, "_REPAIRING", None)
+    assert ev is not None, "there is no rebuild to run"
+    ev.set()
+    try:
+        r = client.post("/api/doctor/repair/search-index", json={}, headers=desk_headers())
+        assert r.status_code == 409
+    finally:
+        ev.clear()
+
+
 def test_the_doctor_page_offers_the_rebuild_only_for_a_damaged_index():
     from pathlib import Path
     page = (Path(__file__).resolve().parents[2] / "static" / "doctor.html").read_text(encoding="utf-8")
