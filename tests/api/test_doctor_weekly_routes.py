@@ -33,7 +33,7 @@ def test_the_steps_take_the_press_on_this_pc(client, monkeypatch):
 def test_the_doctor_page_has_the_weekly_card():
     html = (ROOT / "static" / "doctor.html").read_text(encoding="utf-8")
     for needle in ('id="weekly"', 'id="w-yes"', 'id="w-notnow"', 'id="w-never"', 'id="w-send"',
-                   'id="w-skip"', 'id="w-stop"', "/api/doctor/weekly/prepare", "Also while Friday is in local-only mode"):
+                   'id="w-skip"', 'id="w-stop"', 'id="weekly-terms"', "/api/doctor/weekly/prepare", "Also while Friday is in local-only mode"):
         assert needle in html, needle
 
 

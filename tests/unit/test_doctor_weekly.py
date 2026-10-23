@@ -293,4 +293,19 @@ def test_the_report_goes_to_the_owners_address_with_the_owners_promise(weekly, m
     weekly.send(p["sha256"])
     s = mail.sent[0]
     assert s["to"] == "bugs@futurespeak.ai"
-    assert s["body"].rstrip().endswith(weekly.PROMISE)
+    assert s["body"].rstrip().endswith(weekly.PROMISE + "\n" + weekly.TERMS)
+
+
+def test_the_email_keeps_the_three_terms_after_the_promise(weekly, monkeypatch):
+    """Amendment A23: after the owner's line, kept at most a year, deleted on
+    request, the sender's address used only to reply; on the card too."""
+    t = weekly.TERMS
+    assert "at most a year" in t and "deleted" in t and "only to reply" in t
+    mail = _Mail().install(monkeypatch)
+    weekly.answer("weekly")
+    assert weekly.status()["terms"] == t
+    p = weekly.prepare()
+    assert p["terms"] == t
+    weekly.send(p["sha256"])
+    body = mail.sent[0]["body"]
+    assert body.index(weekly.PROMISE) < body.index(t)
