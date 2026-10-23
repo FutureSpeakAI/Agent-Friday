@@ -70,6 +70,12 @@ def _ensure_kinds() -> None:
             _rm._register_import_kind()
         except Exception:
             pass
+    if "ai_conversation" not in _KINDS:
+        try:
+            from agent_friday.services import ai_history_import as _ai
+            _ai.register()
+        except Exception:
+            pass
 
 
 def staging_dir() -> Path:
