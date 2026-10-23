@@ -368,6 +368,12 @@ def _content_words(text: str) -> set:
     return out
 
 
+#: The reasons a card correction gives the messages it retires; only those
+#: can be put back from the card (restore_superseded).
+CARD_CORRECTED = "the owner corrected this on the memory card"
+CARD_WRONG = "the owner marked this wrong and deleted it from the memory card"
+
+
 def _supersede_turns(old_line: str, why: str) -> list:
     """North star §34.9-3/-4: when the owner corrects or deletes a card line,
     the owner's own earlier messages that stated it stop being recalled as
@@ -398,7 +404,18 @@ def restore_superseded(ids) -> int:
     try:
         from agent_friday.services import model_router
         mem = model_router._get_conversation_memory()
-        return len(mem.unsupersede([str(i) for i in (ids or [])]).get("superseded") or [])
+        if not mem.available():
+            return 0
+        ids = [str(i) for i in (ids or [])]
+        with mem._lock:
+            got = mem._collection.get(ids=ids, include=["metadatas"])
+        # Only what a card correction retired: other corrections are not the
+        # card's to undo.
+        mine = [i for i, m in zip(got.get("ids") or [], got.get("metadatas") or [])
+                if (m or {}).get("superseded_reason") in (CARD_CORRECTED, CARD_WRONG)]
+        if not mine:
+            return 0
+        return len(mem.unsupersede(mine).get("superseded") or [])
     except Exception:
         return 0
 
@@ -474,7 +491,7 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
     # Only a correction retires what was said: a re-save, a typo fix or a line
     # that keeps every word and adds detail still states the old fact.
     if actor == "owner" and supersede and not (_content_words(before) <= _content_words(text)):
-        ids = _supersede_turns(before, "the owner corrected this on the memory card")
+        ids = _supersede_turns(before, CARD_CORRECTED)
         out["superseded_turns"], out["superseded_ids"] = len(ids), ids
     _changed(actor, "core memory line edited by the owner")
     return out
@@ -498,7 +515,7 @@ def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = Fa
     # A delete makes room or keeps something private; only a delete the owner
     # marks as wrong retires the messages that said it.
     if actor == "owner" and supersede:
-        ids = _supersede_turns(before, "the owner marked this wrong and deleted it from the memory card")
+        ids = _supersede_turns(before, CARD_WRONG)
         out["superseded_turns"], out["superseded_ids"] = len(ids), ids
     _changed(actor, "core memory line deleted by the owner")
     return out

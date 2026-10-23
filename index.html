@@ -61073,7 +61073,7 @@ function MemoryCardPanel({s, save}) {
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key, after) => {
-    setBusy(key || path); setMsg('');
+    setBusy(key || path); setMsg(''); setRetired(null);
     apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
       .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(d); load(); })
@@ -61137,7 +61137,9 @@ function MemoryCardPanel({s, save}) {
           : retired.n + ' earlier messages of yours that said this are no longer used as evidence.'),
       E('div', {style: dim}, 'They stay in your conversations; ' + fridayName() + ' just stops recalling them as true.'),
       E('div', {style:{display:'flex', gap:6, marginTop:4}},
-        btn('Use them again', () => post('restore-messages', {ids: retired.ids}, 'restore', () => setRetired(null)), 'restore'),
+        btn('Use them again', () => { const want = retired.ids.length;
+          post('restore-messages', {ids: retired.ids}, 'restore', d => {
+            if ((d.restored || 0) < want) setMsg('Some of those messages could not be put back just now. Try again in a moment.'); }); }, 'restore'),
         btn('OK', () => setRetired(null), 'ok-retired'))),
     !rep && !msg && E('div', {style: dim}, 'Loading…'),
     rep && E('div', null,
