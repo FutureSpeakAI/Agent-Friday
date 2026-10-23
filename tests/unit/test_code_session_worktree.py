@@ -169,7 +169,16 @@ def _worktree_session(env, tid="t8"):
     ("Write", {"file_path": "{wt}/.git", "content": "gitdir: {repo}/.git"}),
     ("Edit", {"file_path": ".git", "old_string": "a", "new_string": "b"}),
     ("Bash", {"command": "git checkout --ignore-other-worktrees main --"}),
-    ("Bash", {"command": "git checkout main -- ."}),
+    ("Bash", {"command": "git checkout main --"}),
+    ("Bash", {"command": "echo x >.git"}),
+    ("Bash", {"command": "cd .git && echo x > HEAD"}),
+    ("Bash", {"command": "bash -ec 'git push'"}),
+    ("PowerShell", {"command": "powershell -NoProfile 'git push'"}),
+    ("Bash", {"command": "eval git push"}),
+    ("Bash", {"command": "git fetch --refmap=+refs/heads/*:refs/heads/* origin"}),
+    ("Bash", {"command": "git branch -v newbr"}),
+    ("Bash", {"command": "echo x > $USERPROFILE/Projects/proj/src/a.py"}),
+    ("Bash", {"command": "echo x > $HOME/Projects/proj/src/a.py"}),
     ("Bash", {"command": "git co main"}),
     ("Bash", {"command": "git -c alias.p=push p"}),
     ("Bash", {"command": 'bash -c "git push origin HEAD"'}),
@@ -208,6 +217,53 @@ def test_the_gate_refuses_the_checkout_and_shared_git(env, tool, inp):
     assert out["decision"] == "deny", (tool, inp, out)
 
 
+def test_a_link_in_the_worktree_into_the_checkout_is_the_checkout(env, tmp_path):
+    import os
+    entry = _worktree_session(env, "t14")
+    link = Path(entry["worktree"]) / "link"
+    try:
+        if os.name == "nt":
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(env.repo)], check=True,
+                           capture_output=True)
+        else:
+            os.symlink(str(env.repo), str(link))
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("cannot make a link here")
+    out = env.cct.gate("t14", entry["token"], "Write", {"file_path": str(link / "src" / "a.py"), "content": "x"})
+    assert out["decision"] == "deny", out
+
+
+def test_git_bash_spelling_of_the_checkout_is_refused(env):
+    import os
+    if os.name != "nt":
+        pytest.skip("drive-letter paths only")
+    entry = _worktree_session(env, "t15")
+    p = str(env.repo).replace("\\", "/")
+    bash_form = "/" + p[0].lower() + p[2:]
+    out = env.cct.gate("t15", entry["token"], "Bash", {"command": "echo x > %s/src/a.py" % bash_form})
+    assert out["decision"] == "deny", out
+
+
+def test_ordinary_settings_changes_do_not_stop_the_session(env):
+    entry = _worktree_session(env, "t16")
+    _git(env.repo, "config", "branch.main.description", "the owner's own note")
+    _git(env.repo, "config", "remote.origin.url", "https://example.invalid/r.git")
+    (Path(entry["worktree"]) / "src" / "a.py").write_text("x = 3\n", encoding="utf-8")
+    _git(entry["worktree"], "commit", "-q", "-am", "session work")
+    assert env.cct.gate("t16", entry["token"], "Bash", {"command": "git status"})["decision"] == "allow"
+
+
+def test_a_risky_setting_or_leaving_the_branch_stops_the_session(env):
+    entry = _worktree_session(env, "t17")
+    _git(env.repo, "config", "core.hooksPath", "/tmp/elsewhere")
+    out = env.cct.gate("t17", entry["token"], "Bash", {"command": "git status"})
+    assert out["decision"] == "deny" and "settings" in out["reason"]
+    entry2 = _worktree_session(env, "t18")
+    _git(entry2["worktree"], "checkout", "-q", "-b", "escaped")
+    out2 = env.cct.gate("t18", entry2["token"], "Bash", {"command": "git status"})
+    assert out2["decision"] == "deny" and "branch" in out2["reason"]
+
+
 def test_a_changed_hook_stops_the_session(env):
     """A hook planted in the shared .git folder (however it got there) runs as the owner
     the next time they commit: every later call is refused and the status says why."""
@@ -217,7 +273,7 @@ def test_a_changed_hook_stops_the_session(env):
     hook.parent.mkdir(parents=True, exist_ok=True)
     hook.write_text("#!/bin/sh\necho planted\n", encoding="utf-8")
     out = env.cct.gate("t13", entry["token"], "Bash", {"command": "git status"})
-    assert out["decision"] == "deny" and "hooks or config" in out["reason"]
+    assert out["decision"] == "deny" and "hooks" in out["reason"]
 
 
 @pytest.mark.parametrize("tool,inp", [
@@ -229,6 +285,14 @@ def test_a_changed_hook_stops_the_session(env):
     ("Bash", {"command": "git restore src/a.py"}),
     ("Bash", {"command": "cat .gitignore && ls src/hooks"}),
     ("Bash", {"command": "npm test"}),
+    ("Bash", {"command": "git checkout main -- ."}),
+    ("Bash", {"command": "git checkout --theirs src/a.py"}),
+    ("Bash", {"command": "git commit -m 'stop tracking the .git mention'"}),
+    ("Bash", {"command": "grep -rn x . --exclude-dir=.git"}),
+    ("Bash", {"command": "git stash list"}),
+    ("Bash", {"command": "git -c color.ui=always log -3"}),
+    ("Bash", {"command": "git commit -F - <<'EOF'\nfix the parser\n\ngit push is for later\nEOF"}),
+    ("Bash", {"command": "git rebase -i HEAD~1"}),
     ("Edit", {"file_path": "src/a.py", "old_string": "1", "new_string": "2"}),
     ("Bash", {"command": "git status"}),
     ("Bash", {"command": "git commit -am 'session change'"}),

@@ -192,19 +192,54 @@ def _common_dir(repo: str) -> Optional[Path]:
     return None
 
 
+#: Config keys that run a program, redirect where git talks to, or pull in other
+#: config: a change to one of these acts as the owner later. Ordinary keys that git
+#: itself rewrites in normal work (branch.*, remote.*.fetch, submodule.*) are left out.
+_RISKY_EXACT = {"core.hookspath", "core.fsmonitor", "core.sshcommand", "core.editor", "core.pager",
+                "core.askpass", "core.gitproxy", "core.worktree", "core.bare", "core.sparsecheckout",
+                "gpg.program", "sequence.editor", "diff.external", "merge.tool", "diff.tool",
+                "extensions.worktreeconfig"}
+_RISKY_PREFIX = ("alias.", "filter.", "include.", "includeif.", "credential.", "url.", "gpg.",
+                 "mergetool.", "difftool.", "pager.", "protocol.")
+_RISKY_SUFFIX = (".sshcommand", ".command", ".cmd", ".program", ".helper", ".proxy", ".pushurl",
+                 ".receivepack", ".uploadpack", ".textconv", ".driver", ".clean", ".smudge", ".process")
+
+
+def _risky_config(path: Path) -> List[str]:
+    """The risky entries of a git config file, in order, as 'section.key=value'."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ["<unreadable>"]
+    out, section = [], ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line[0] in "#;":
+            continue
+        m = re.match(r'^\[\s*([^\s\]"]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]\s*(.*)$', line)
+        if m:
+            section = m.group(1).lower() + ("." + m.group(2) if m.group(2) is not None else "")
+            line = m.group(3).strip()
+            if not line:
+                continue
+        k, _, v = line.partition("=")
+        name = (section + "." + k.strip().lower()) if section else k.strip().lower()
+        low = name.lower()
+        last = "." + low.rsplit(".", 1)[-1]
+        if low in _RISKY_EXACT or low.startswith(_RISKY_PREFIX) or last in _RISKY_SUFFIX:
+            out.append("%s=%s" % (name, v.strip()))
+    return out
+
+
 def fingerprint(repo: str) -> str:
-    """A digest of the repository's hooks and config: what runs as the owner the
-    next time they use git, and how git behaves for them."""
+    """A digest of what in the repository acts as the owner later: its hooks and
+    the config entries that run programs or redirect git."""
     h = hashlib.sha256()
     common = _common_dir(repo)
     if common is None:
         return ""
-    for rel in ("config",):
-        f = common / rel
-        try:
-            h.update(rel.encode() + b"\0" + f.read_bytes() + b"\0")
-        except OSError:
-            h.update(rel.encode() + b"\0-\0")
+    for item in _risky_config(common / "config"):
+        h.update(item.encode("utf-8", "replace") + b"\0")
     hooks = common / "hooks"
     try:
         for f in sorted(hooks.rglob("*")):
@@ -213,6 +248,42 @@ def fingerprint(repo: str) -> str:
     except OSError:
         h.update(b"hooks-unreadable")
     return h.hexdigest()
+
+
+def _worktree_gitdir(wt: str) -> Optional[Path]:
+    try:
+        text = (Path(wt) / ".git").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    g = Path(text[7:].strip())
+    return g if g.is_absolute() else (Path(wt) / g)
+
+
+def worktree_state(wt: str) -> str:
+    """The worktree's .git file (which repository its commits go to) as it is now."""
+    try:
+        return (Path(wt) / ".git").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return "<missing>"
+
+
+def _head_ok(wt: str, branch: str) -> bool:
+    """The worktree is still on its own branch (or mid-rebase of it, which detaches
+    HEAD for a while)."""
+    g = _worktree_gitdir(wt)
+    if g is None:
+        return False
+    try:
+        head = (g / "HEAD").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+    if head == "ref: refs/heads/" + branch:
+        return True
+    if re.fullmatch(r"[0-9a-f]{40,64}", head) and any((g / d).exists() for d in ("rebase-merge", "rebase-apply")):
+        return True
+    return False
 
 
 def _aliases(repo: str) -> Dict[str, str]:
@@ -264,7 +335,14 @@ def prepare(task_id: str, cwd, entry: Optional[dict] = None) -> str:
             # This task's own worktree from an earlier start: carry on in it.
         else:
             wt.parent.mkdir(parents=True, exist_ok=True)
-            cp = _git(["worktree", "add", "-b", info["branch"], str(wt), "HEAD"], cwd=info["repo"])
+            have = _git(["rev-parse", "--verify", "--quiet", "refs/heads/" + info["branch"]],
+                        cwd=info["repo"], timeout=20).returncode == 0
+            if have:
+                # This task's branch from an earlier start whose folder is gone: check it
+                # out again (-f: its old, now missing, registration is replaced).
+                cp = _git(["worktree", "add", "-f", str(wt), info["branch"]], cwd=info["repo"])
+            else:
+                cp = _git(["worktree", "add", "-b", info["branch"], str(wt), "HEAD"], cwd=info["repo"])
             if cp.returncode != 0:
                 msg = (cp.stderr or cp.stdout or "").strip().splitlines()
                 raise WorktreeError("git could not make the worktree (%s); the session was not started"
@@ -282,6 +360,7 @@ def prepare(task_id: str, cwd, entry: Optional[dict] = None) -> str:
         entry.update({"repo": info["repo"], "worktree": str(wt), "branch": info["branch"],
                       "work_cwd": str(session_cwd), "in_place": False,
                       "repo_fingerprint": fingerprint(info["repo"]),
+                      "worktree_link": worktree_state(str(wt)),
                       "git_aliases": _aliases(info["repo"])})
     return str(session_cwd)
 
@@ -337,6 +416,10 @@ def _flag(a: str) -> str:
 def _one_git(sub: str, args: List[str]) -> Optional[str]:
     shared = ("'git %s' changes what your repository shares with your own checkout; "
               "this session works only on its branch, so it is not run" % sub)
+    if sub == "stash" and args[:1] in (["list"], ["show"]):
+        return None
+    if sub == "worktree" and args[:1] == ["list"]:
+        return None
     if sub in _ALWAYS_REFUSED:
         return shared
     if sub == "branch":
@@ -345,7 +428,9 @@ def _one_git(sub: str, args: List[str]) -> Optional[str]:
         if flags & _BRANCH_WRITE_FLAGS or any(f.startswith(("--set-upstream", "--delete", "--move",
                                                             "--copy", "--force")) for f in flags):
             return "changing branches other than its own is yours to do; 'git branch' with that option is not run"
-        if names and not (flags & _BRANCH_READ_FLAGS):
+        # Names are patterns only with a listing option; otherwise a name makes a branch.
+        if names and not (flags & {"-l", "--list", "--contains", "--no-contains", "--merged",
+                                   "--no-merged", "--points-at"}):
             return "this session works on its own branch; making other branches is yours to do"
     if sub == "tag" and args:
         flags = {_flag(a) for a in args if a.startswith("-")}
@@ -355,9 +440,20 @@ def _one_git(sub: str, args: List[str]) -> Optional[str]:
     if sub == "config" and not any(a in ("--get", "--get-all", "--get-regexp", "--list", "-l")
                                    for a in args):
         return "the repository's config is shared with your checkout; changing it is not run"
-    if sub == "checkout" and not (args[:1] == ["--"] or args == ["."]):
-        return ("this session stays on its own branch; 'git checkout' is run only for files, "
-                "written 'git checkout -- <files>' (or use 'git restore')")
+    if sub == "checkout":
+        # Files only: paths after '--' (from any commit), '.', or --ours/--theirs with paths.
+        # Anything that could move HEAD (a branch, -b, --detach, --orphan, a bare '--') is not run.
+        switching = {"-b", "-B", "--orphan", "--detach", "--ignore-other-worktrees", "-t", "--track",
+                     "-f", "--force", "-m", "--merge", "--guess"}
+        flags = {_flag(a) for a in args if a.startswith("-") and a != "--"}
+        after = args[args.index("--") + 1:] if "--" in args else []
+        files_only = (bool(after) or args == ["."]
+                      or (flags & {"--ours", "--theirs"} and [a for a in args if not a.startswith("-")]))
+        if flags & switching or not files_only:
+            return ("this session stays on its own branch; 'git checkout' is run only for files, "
+                    "written 'git checkout -- <files>' (or use 'git restore')")
+    if sub == "fetch" and any(_flag(a) == "--refmap" for a in args):
+        return "a fetch with its own refmap can write named branches; it is not run"
     if sub in ("fetch", "pull") and any(":" in a and not a.startswith("-") and "://" not in a
                                         for a in args):
         return "a fetch or pull that writes a named branch is not run; plain 'git %s' is fine" % sub
@@ -385,7 +481,9 @@ def _git_refusal(command: str, aliases: Optional[Dict[str, str]] = None, depth: 
                 "elsewhere; it is not run")
     if re.search(r"(powershell|pwsh)\S*\s.*(-encodedcommand|-enc\s|-ec\s|-e\s+[a-z0-9+/=]{16,})", low):
         return "an encoded command cannot be read, so it is not run"
-    for seg in _SEGMENT.split(command):
+    # A heredoc's body is text, not commands (a commit message may mention 'git push').
+    body_free = re.sub(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", "<<heredoc", command, flags=re.S)
+    for seg in _SEGMENT.split(body_free):
         try:
             tokens = shlex.split(seg, posix=True)
         except ValueError:
@@ -397,15 +495,29 @@ def _git_refusal(command: str, aliases: Optional[Dict[str, str]] = None, depth: 
         if not tokens:
             continue
         exe = os.path.basename(tokens[0].replace("\\", "/")).lower().strip("'\"")
+        if exe in ("eval", "iex", "invoke-expression", "source") and re.search(r"\bgit\b", seg, re.I):
+            return "git run through %s cannot be checked, so it is not run" % exe
         if exe in _SHELLS:
-            # bash -c "...", cmd /c ..., powershell -Command ...: read what it runs.
+            # bash -c "...", bash -ec "...", cmd /c ..., powershell [-Command] ...: read what it runs.
             rest = tokens[1:]
+            ps = exe.startswith(("powershell", "pwsh"))
+            payload = None
             for i, t in enumerate(rest):
-                if t.lower() in ("-c", "/c", "/k", "-command", "-commandwithargs", "-lc", "--command"):
-                    why = _git_refusal(" ".join(rest[i + 1:]), aliases, depth + 1)
-                    if why:
-                        return why
+                tl = t.lower()
+                if (tl in ("/c", "/k", "-command", "-commandwithargs", "--command", "-c")
+                        or (not ps and re.fullmatch(r"-[a-z]*c[a-z]*", tl))):
+                    payload = rest[i + 1:]
                     break
+                if ps and tl in ("-file", "-f"):
+                    payload = None
+                    break
+                if ps and not t.startswith("-"):
+                    payload = rest[i:]          # PowerShell runs a bare argument as the command
+                    break
+            if payload:
+                why = _git_refusal(" ".join(payload), aliases, depth + 1)
+                if why:
+                    return why
             continue
         if exe in ("xargs", "find", "parallel", "watch") and re.search(r"\bgit(\.exe|\.cmd|\.bat)?\b", seg, re.I):
             return "git run through %s cannot be checked, so it is not run" % exe
@@ -414,8 +526,14 @@ def _git_refusal(command: str, aliases: Optional[Dict[str, str]] = None, depth: 
         sub, args, opts = _git_subcommand(tokens[1:])
         if "-C" in opts:
             return "this session's git stays in its own worktree; 'git -C' is not run"
-        if any(o in ("-c", "--config-env") for o in opts):
-            return "'git -c' changes git's settings or aliases for this command; it is not run"
+        if "--config-env" in opts:
+            return "'git --config-env' changes git's settings for this command; it is not run"
+        for i, o in enumerate(opts):
+            if o == "-c":
+                key = (opts[i + 1] if i + 1 < len(opts) else "").split("=", 1)[0].lower()
+                if not key.startswith(("color.", "advice.", "column.", "i18n.")):
+                    return ("'git -c %s' changes git's settings or aliases for this command; "
+                            "it is not run" % key)
         if sub is None:
             continue
         if aliases and sub in aliases:
@@ -433,23 +551,70 @@ def _git_refusal(command: str, aliases: Optional[Dict[str, str]] = None, depth: 
     return None
 
 
+_WRITERS = {"cp", "mv", "rm", "rmdir", "del", "erase", "rd", "tee", "ln", "mklink", "copy", "move",
+            "xcopy", "robocopy", "set-content", "add-content", "out-file", "new-item", "remove-item",
+            "copy-item", "move-item", "rename-item", "ni", "ri", "sc", "ac", "chmod", "chown", "touch",
+            "sed", "perl", "truncate", "install", "rsync", "dd", "mkdir", "md", "unlink", "attrib",
+            "icacls", "takeown"}
+_CHDIR = {"cd", "pushd", "set-location", "sl", "chdir", "push-location"}
+_REDIRECT = re.compile(r"(?:\d?>{1,2}|>\|)\s*([\"']?)([^\s\"';&|<>]+)\1")
+
+
+def _writes_dot_git(cmd: str) -> bool:
+    """A command that writes into, or moves into, a .git file or folder. Mentions in
+    text (a commit message, grep --exclude-dir=.git, find -name .git) are fine."""
+    for m in _REDIRECT.finditer(cmd):
+        if _DOT_GIT.search("/" + m.group(2).replace("\\", "/") + " "):
+            return True
+    for seg in _SEGMENT.split(cmd):
+        try:
+            tokens = shlex.split(seg, posix=True)
+        except ValueError:
+            tokens = seg.split()
+        while tokens and ("=" in tokens[0] and not tokens[0].startswith("-")):
+            tokens = tokens[1:]
+        if not tokens:
+            continue
+        exe = os.path.basename(tokens[0].replace("\\", "/")).lower()
+        exe = exe[:-4] if exe.endswith(".exe") else exe
+        if exe in _WRITERS or exe in _CHDIR:
+            for t in tokens[1:]:
+                if not t.startswith("-") and _DOT_GIT.search("/" + t.replace("\\", "/") + " "):
+                    return True
+    return False
+
+
 def _home_spellings(text: str) -> str:
     """Command text with the usual ways of writing the home folder spelled out."""
     home = str(_home())
-    for token in ("$env:USERPROFILE", "%USERPROFILE%", "${HOME}", "$HOME", "$env:HOME"):
+    for token in ("$env:USERPROFILE", "%USERPROFILE%", "${USERPROFILE}", "$USERPROFILE",
+                  "%HOMEDRIVE%%HOMEPATH%", "$env:HOMEDRIVE$env:HOMEPATH", "$HOMEDRIVE$HOMEPATH",
+                  "${HOME}", "$HOME", "$env:HOME"):
         text = re.sub(re.escape(token), lambda _m: home, text, flags=re.I)
     text = re.sub(r"(^|[\s\"'=])~(?=[/\\]|$|\s)", lambda m: m.group(1) + home, text)
     return text
 
 
+def _posix_forms(p: str) -> set:
+    """'c:/users/x' also as Git Bash, WSL and Cygwin write it."""
+    m = re.match(r"^([a-z]):/(.*)$", p, re.I)
+    if not m:
+        return set()
+    d, rest = m.group(1).lower(), m.group(2)
+    return {"/%s/%s" % (d, rest), "/mnt/%s/%s" % (d, rest), "/cygdrive/%s/%s" % (d, rest)}
+
+
 def _names_checkout(cmd: str, repo: str, wt: str) -> bool:
     text = _fold(_home_spellings(cmd))
-    for spelling in {_norm(wt), _real(wt)}:
+    for spelling in sorted({_norm(wt), _real(wt)} | _posix_forms(_norm(wt)) | _posix_forms(_real(wt)),
+                           key=len, reverse=True):
         text = text.replace(spelling, "")
     forms = {_norm(repo), _real(repo)}
     short = _short_name(repo)
     if short:
         forms.add(_fold(short))
+    for f in list(forms):
+        forms |= _posix_forms(f)
     for f in forms:
         if f and re.search(re.escape(f.rstrip("/")) + r"(?=$|[/\s\"'`;&|)])", text):
             return True
@@ -472,10 +637,15 @@ def refusal(entry: dict, tool_name: str, tool_input: dict) -> Optional[str]:
         return None
     fp = e.get("repo_fingerprint")
     if fp and fingerprint(repo) != fp:
-        e["tripwire"] = True
+        e["tripwire"] = "your repository's hooks or git settings changed"
+    link = e.get("worktree_link")
+    if link and worktree_state(wt) != link:
+        e["tripwire"] = "the session's worktree no longer points at its own place in your repository"
+    if e.get("branch") and not _head_ok(wt, e["branch"]):
+        e["tripwire"] = "the session's worktree left its own branch %s" % e["branch"]
     if e.get("tripwire"):
-        return ("your repository's hooks or config changed while this session was running; "
-                "Friday has stopped running its actions until you look (%s)" % repo)
+        return ("%s while this session was running; Friday has stopped running its actions "
+                "until you look (%s)" % (e["tripwire"], repo))
     writes = tool_name not in _READ_TOOLS
     for key in _PATH_KEYS:
         val = str(tool_input.get(key) or "")
@@ -486,13 +656,20 @@ def refusal(entry: dict, tool_name: str, tool_input: dict) -> Optional[str]:
                     "session's to change")
         base = e.get("work_cwd") or wt
         target = val if os.path.isabs(os.path.expanduser(val)) else os.path.join(base, val)
-        if writes and _inside(target, repo) and not _inside(target, wt):
+        # Either spelling decides: as written, and with links, junctions and short names
+        # resolved (a link inside the worktree that leads into the checkout is the checkout).
+        as_written = _under(_norm(target), _norm(repo)) and not _under(_norm(target), _norm(wt))
+        resolved = _under(_real(target), _real(repo)) and not _under(_real(target), _real(wt))
+        if writes and (as_written or resolved):
             return ("this session works in its own worktree (%s); your checkout in %s is "
                     "changed only by you" % (wt, repo))
+        if writes and _DOT_GIT.search("/" + _real(target)):
+            return ("the worktree's .git file and the repository's .git folder are not the "
+                    "session's to change")
     if tool_name in ("Bash", "PowerShell"):
         cmd = str(tool_input.get("command") or "")
-        if _DOT_GIT.search(" " + cmd + " "):
-            return "a command reaching into a .git folder or file is not run for this session"
+        if _writes_dot_git(cmd):
+            return "a command writing into a .git folder or file is not run for this session"
         if _names_checkout(cmd, repo, wt):
             return ("this session works in its own worktree (%s); a command aimed at your "
                     "checkout in %s is not run" % (wt, repo))
