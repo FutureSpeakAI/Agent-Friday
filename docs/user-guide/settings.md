@@ -230,6 +230,10 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
 - **Start screen.** **Show my day**, and when your day shows over the scene.
 - **3D effects.** **3D dazzle** (full, subtle or off) controls glow, particles and
   motion in every 3D view. Off is the calmest and lightest on the graphics card.
+  **3D rendering** (on or off) turns every 3D view off entirely: the scene behind
+  the desktop, the knowledge galaxy and the 3D views of files, records and the
+  Library. Everything keeps working in its flat form and nothing is drawn on the
+  graphics card. It takes effect the next time Friday opens (**Reload now**).
 - **Knowledge graph** display options.
 - **Head and hand tracking**: parallax, viewing distance, depth, smoothing and
   the hand cursor's sensitivity, region and clicking. Both need the camera on.
