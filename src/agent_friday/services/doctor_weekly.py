@@ -55,16 +55,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-#: The one FutureSpeak address the weekly report goes to.
-FUTURESPEAK_DOCTOR_ADDRESS = "doctor@futurespeak.ai"
+#: The one FutureSpeak address the weekly report goes to (owner ruling,
+#: amendment A23).
+FUTURESPEAK_DOCTOR_ADDRESS = "bugs@futurespeak.ai"
 
-#: What FutureSpeak does with a report, in plain words (shown on every card).
-PROMISE = ("FutureSpeak reads these reports only to find and fix problems in Agent Friday. "
-           "A report holds version numbers, which checks passed, counts of error types, "
-           "which settings differ from the defaults and speed figures; never your "
-           "conversations, files, contacts or vault. Your email address is used only to "
-           "reply to you. We keep a report no longer than a year, never sell or share it, "
-           "and delete it when you ask (reply to the email).")
+#: What FutureSpeak does with a report, in the owner's words (amendment A23),
+#: shown on every card and closing every email.
+PROMISE = "FutureSpeak only uses these reports to fix bugs and never shares them."
 
 #: The report's "Sharing" line when the owner chose to email it.
 SHARING = "you chose to email this report to FutureSpeak from your own account"
