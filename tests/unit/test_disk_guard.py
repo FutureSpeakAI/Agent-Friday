@@ -17,7 +17,7 @@ def dg(tmp_path, monkeypatch):
         mod = importlib.import_module("agent_friday.services.disk_guard")
     except ImportError:
         pytest.fail("a full disk pauses nothing: services/disk_guard does not exist")
-    mod._state.update(low=False, checked=0.0, free_mib=None, since=None)
+    mod._state.update(low=False, checked=0.0, free_mib=None, since=None, carded=False)
     free = {"mib": 50_000.0}
     monkeypatch.setattr(mod, "_free_mib", lambda: free["mib"])
     from agent_friday import notifications_engine as ne
@@ -26,7 +26,7 @@ def dg(tmp_path, monkeypatch):
     monkeypatch.setattr(ne, "resolve", lambda key: closed.append(key) or 1)
     mod.free, mod.cards, mod.closed = free, cards, closed
     yield mod
-    mod._state.update(low=False, checked=0.0, free_mib=None, since=None)
+    mod._state.update(low=False, checked=0.0, free_mib=None, since=None, carded=False)
 
 
 def test_plenty_of_space_pauses_nothing(dg):
@@ -81,23 +81,74 @@ def test_the_drive_is_read_at_most_once_a_minute(dg, monkeypatch):
     assert len(reads) == 2
 
 
-def test_the_scheduler_leaves_a_held_job_unmarked_and_runs_the_essential_ones(dg, monkeypatch):
+def _seeded(sch, ref):
+    """The record a built-in really has (id 'sch_<ref>', task {kind: builtin, ref})."""
+    meta = sch.BUILTIN_TASKS.get(ref) or {"label": ref, "default_trigger": "daily",
+                                          "default_spec": {"hour": 3, "minute": 0}, "notify": "on_complete"}
+    return sch._seed_record(ref, meta)
+
+
+def test_built_in_jobs_are_matched_by_their_registered_name(dg):
     from agent_friday.services import scheduler as sch
-    recs = [{"id": "memory_dreaming"}, {"id": "calendar_reminders"}]
+    dg.free["mib"] = 300.0
+    dg.check(force=True)
+    for ref in ("approvals_expiry_sweep", "calendar_reminders", "context_log_retention"):
+        rec = _seeded(sch, ref)
+        assert rec["id"] == "sch_" + ref and dg.holds(rec) is False, ref
+    assert dg.holds(_seeded(sch, "memory_dreaming")) is True
+
+
+@pytest.fixture
+def quiet_tick(monkeypatch):
+    """_tick with its side calls stubbed: nothing real is released, leased, drained or kept."""
+    from agent_friday.services import scheduler as sch
+    from agent_friday.services import approvals, residency_arbiter
+    monkeypatch.setattr(approvals, "release_held", lambda *a, **k: None)
+    monkeypatch.setattr(residency_arbiter, "exclusive_lease", lambda *a, **k: None)
+    calls = {"drain": 0}
+    monkeypatch.setattr(sch, "_reclaim_expired_lease", lambda: None)
+    monkeypatch.setattr(sch, "_meeting_retention_tick", lambda: None)
+    monkeypatch.setattr(sch, "_away_drain_tick", lambda: calls.__setitem__("drain", calls["drain"] + 1))
+    sch._calls = calls
+    return sch
+
+
+def test_the_scheduler_leaves_a_held_job_unmarked_and_runs_the_essential_ones(dg, quiet_tick, monkeypatch):
+    sch = quiet_tick
+    recs = [_seeded(sch, "memory_dreaming"), _seeded(sch, "calendar_reminders")]
     monkeypatch.setattr(sch, "_read_store", lambda: [dict(r) for r in recs])
-    monkeypatch.setattr(sch, "_is_due", lambda rec, now: True)
+    judged = []
+    monkeypatch.setattr(sch, "_is_due", lambda rec, now: judged.append(rec["id"]) or True)
     ran = []
     monkeypatch.setattr(sch, "dispatch", lambda rec, **k: ran.append(rec["id"]))
-    for name in ("_reclaim_expired_lease", "_away_drain_tick", "_meeting_retention_tick"):
-        monkeypatch.setattr(sch, name, lambda: None)
     dg.free["mib"] = 300.0
     dg.check(force=True)
     sch._tick()
-    assert ran == ["calendar_reminders"]
+    assert ran == ["sch_calendar_reminders"]
+    assert judged == ["sch_calendar_reminders"]       # a held job is not even judged (no missed rows)
+    assert sch._calls["drain"] == 0                   # the away-time drain waits too
     dg.free["mib"] = 5000.0
     dg.check(force=True)
     sch._tick()
-    assert ran == ["calendar_reminders", "memory_dreaming", "calendar_reminders"]
+    assert ran == ["sch_calendar_reminders", "sch_memory_dreaming", "sch_calendar_reminders"]
+    assert sch._calls["drain"] == 1
+
+
+def test_a_card_that_could_not_be_written_is_tried_again(dg, monkeypatch):
+    from agent_friday import notifications_engine as ne
+    tries = []
+
+    def flaky(**k):
+        tries.append(1)
+        if len(tries) == 1:
+            raise OSError(28, "No space left on device")
+        return {"ok": True}
+    monkeypatch.setattr(ne, "push", flaky)
+    dg.free["mib"] = 300.0
+    dg.check(force=True)
+    dg.check(force=True)
+    dg.check(force=True)
+    assert len(tries) == 2
 
 
 def test_the_doctor_names_the_pause(dg):
