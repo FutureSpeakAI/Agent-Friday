@@ -206,6 +206,11 @@ def _worktree_session(env, tid="t8"):
     ("Bash", {"command": "git update-ref refs/heads/main HEAD"}),
     ("Bash", {"command": "git worktree remove ."}),
     ("Bash", {"command": "echo ok && git push"}),
+    # a heredoc hides only its body: what follows its marker, or its end, is read
+    ("Bash", {"command": "git commit -F - <<'EOF' && git push\nfix the parser\nEOF"}),
+    ("Bash", {"command": "git commit -F - <<EOF\nfix the parser\nEOF\ngit push"}),
+    ("PowerShell", {"command": "powershell -NoProfile -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA=="}),
+    ("PowerShell", {"command": "pwsh -e ZwBpAHQAIABwAHUAcwBoAA=="}),
 ])
 def test_the_gate_refuses_the_checkout_and_shared_git(env, tool, inp):
     entry = _worktree_session(env)

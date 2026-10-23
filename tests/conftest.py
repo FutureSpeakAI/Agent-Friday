@@ -216,6 +216,14 @@ from tests.exposure_guard import PublicExposureRefused, install as _install_expo
 
 _install_exposure_guard()
 
+# The pages UI tests load come from a small socketserver on loopback. Its
+# listen backlog defaults to 5; a browser opens several connections at once,
+# and under a loaded suite a refused one is a script that never loads (a page
+# error such as "THREE is not defined"). A deeper backlog keeps every request.
+import socketserver  # noqa: E402
+
+socketserver.TCPServer.request_queue_size = 64
+
 import pytest  # noqa: E402
 
 # The keystore's file and the vault config the credential store reads are paths
