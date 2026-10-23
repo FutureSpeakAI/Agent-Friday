@@ -35,7 +35,15 @@ import os
 import time
 from pathlib import Path
 from typing import Optional
-from agent_friday.user_errors import UserFacingRuntimeError
+from agent_friday.user_errors import UserFacingError, UserFacingRuntimeError
+
+
+def _said(e: BaseException) -> str:
+    """What the owner is told about a failed read: a user-worded error's own
+    words (the ledger's, which name no path), otherwise only its type."""
+    if isinstance(e, UserFacingError):
+        return e.user_message[:160]
+    return type(e).__name__
 
 
 class AuthorityError(UserFacingRuntimeError):
@@ -119,7 +127,7 @@ def revoked() -> Optional[dict]:
         # the record cannot be read: held (fails closed), and said as such:
         # the owner is never told they revoked something they did not
         return {"at": None, "by": None, "unreadable": True,
-                "error": type(e).__name__}
+                "error": _said(e)}
     rec = (e or {}).get("rec") or {}
     if rec.get("event") == "revoked":
         return {"at": e.get("ts"), "by": rec.get("by")}

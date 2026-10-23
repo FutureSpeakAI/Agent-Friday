@@ -271,7 +271,7 @@ def test_an_unreadable_archive_never_locks_the_owner_out(monkeypatch, tmp_path):
     def flaky(*a, **k):
         calls["n"] += 1
         if calls["n"] <= 2:                 # hold_reason, then restore's own check
-            raise RuntimeError("archive segment unreadable")
+            raise action_ledger.LedgerError("archive segment unreadable")
         return real(*a, **k)
     monkeypatch.setattr(authority, "_newest_receipt", flaky)
     monkeypatch.setattr(action_ledger, "hold_reason", lambda: None)
