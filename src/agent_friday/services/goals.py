@@ -1516,9 +1516,16 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
 
         if not work.get("ok"):
             last_text = ""
+            err = str(work.get("error") or "execution failed")
             last_verdict = {"status": "error", "passed": False, "score": None,
-                            "critique": work.get("error") or "execution failed",
-                            "suggestions": ""}
+                            "critique": err, "suggestions": ""}
+            # The same failure again brings no new evidence (§17.10): stop
+            # rather than spend the remaining attempts repeating it.
+            why = goal_state.repeated(marks, error=err)
+            marks.append({"output": None, "critique": None, "error": goal_state.fingerprint(err)})
+            if why:
+                no_progress_why = why
+                break
             critique_hint = (f"The previous attempt failed to even run: "
                             f"{work.get('error')}. Try a different, more robust approach.")
             continue
