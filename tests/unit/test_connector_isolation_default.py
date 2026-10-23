@@ -145,6 +145,24 @@ def test_an_unanswered_card_that_expires_is_offered_again(state, monkeypatch):
     assert len(cards) == 2 and cards[-1]["approval_id"] != first["approval_id"]
 
 
+def test_a_card_that_vanished_unanswered_is_offered_again_and_an_old_answer_is_ignored(state, monkeypatch):
+    from agent_friday.services import approvals as ap
+    monkeypatch.setattr(_ac(), "available", lambda: True)
+    cfg = {"servers": {"legacy": {"command": "node", "args": []}}}
+    _fake_agent(monkeypatch, cfg)
+    ci.offer_existing(cfg["servers"])
+    old = next(r for r in ap.list_approvals() if r.get("kind") == ci.KIND)
+    assert ci.offer_existing(cfg["servers"]) == [], "a pending card was offered twice"
+    # The card expired while Friday was not running: its hook never ran.
+    real_get = ap.get_approval
+    monkeypatch.setattr(ap, "get_approval",
+                        lambda aid: dict(old, status="expired") if aid == old["approval_id"] else real_get(aid))
+    assert ci.offer_existing(cfg["servers"]) == ["legacy"]
+    # A late answer on the OLD card changes nothing.
+    ci._on_decision(dict(old, status="approved"))
+    assert "isolation" not in cfg["servers"]["legacy"]
+
+
 def test_an_unclear_setting_counts_as_isolated_and_only_off_turns_it_off():
     for v in ("appcontainer", "on", "", None, "yes", "AppContainer"):
         assert ci.is_isolated({"command": "node", "isolation": v}), v
