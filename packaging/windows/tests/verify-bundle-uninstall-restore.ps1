@@ -9,6 +9,11 @@
       seed        a realistic data folder (tests/clean_machine/seed_home.py,
                   run by the INSTALLED Python): vault, memory, skills,
                   workspaces, receipts, and credentials that must not travel
+      first backup  setup done and nothing scheduled: the first backup is
+                  offered; scheduled bundles turned on with the installed CLI
+                  make one verified bundle, the offer ends, Doctor's backup
+                  check is healthy; turned off again (north star 34.4-9;
+                  tests/clean_machine/check_first_backup.py)
       uninstall   the setup program's own uninstaller, silent, /REMOVEDATA=1
                   /BUNDLETO=<folder>: it makes and verifies a Friday Bundle
                   first, then removes everything
@@ -83,6 +88,13 @@ try {
         -ArgumentList @((Join-Path $RepoRoot 'tests\clean_machine\seed_home.py'), '--expected', $Expected, '--over-fresh-install') `
         -RedirectStandardOutput (Join-Path $WorkDir 'seed.log') -RedirectStandardError (Join-Path $WorkDir 'seed.err')
     Check 'seed' ($seed.ExitCode -eq 0 -and (Test-Path $Expected)) "seed exited $($seed.ExitCode)"
+
+    # ── the first backup, on the fresh install ──────────────────────────────
+    $fb = Start-Process -FilePath $py -PassThru -Wait -NoNewWindow `
+        -WorkingDirectory (Join-Path $InstallRoot 'app') `
+        -ArgumentList @((Join-Path $RepoRoot 'tests\clean_machine\check_first_backup.py'), '--folder', (Join-Path $WorkDir 'scheduled')) `
+        -RedirectStandardOutput (Join-Path $WorkDir 'first-backup.json') -RedirectStandardError (Join-Path $WorkDir 'first-backup.err')
+    Check 'first_backup' ($fb.ExitCode -eq 0) (Get-Content -LiteralPath (Join-Path $WorkDir 'first-backup.json') -Raw)
     Remove-Item Env:\FRIDAY_HOME
     Check 'credentials_written' (@(Get-FridayTargets).Count -gt 0) ("agent-friday targets: " + (@(Get-FridayTargets) -join ', '))
 

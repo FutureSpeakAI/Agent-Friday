@@ -286,6 +286,10 @@ _ALL = [
     # never interrupting (tier FYI), nothing sent without the owner's approval card.
     _e("L07", "services/doctor_weekly.py:tick", "doctor_weekly", NEEDS_YOU,
        "doctor-weekly:{week}", source="doctor"),
+    # The first backup (§34.4-9): offered in Needs you once setup is done and no scheduled bundle
+    # is on, at most three times a week apart; it turns nothing on and sends nothing.
+    _e("L08", "services/first_backup.py:tick", "first_backup", NEEDS_YOU,
+       "first-backup:{n}", source="backup"),
     # Quiet turned on by the owner (voice, chat or the page): a visible line in Updates that never
     # merges with another, so every activation can be seen.
     _e("NQ1", "services/notification_tools.py:_quiet", "quiet_on", UPDATES, "quiet-on:{surface}:{seq}",
@@ -348,7 +352,7 @@ _ALL = [
 REGISTRY: dict = {e.id: e for e in _ALL}
 CENSUS_IDS = tuple("E%02d" % i for i in range(1, 83))
 #: Emitters live has gained since the 82-emitter census, registered by the same rule.
-LIVE_IDS = tuple("L%02d" % i for i in range(1, 8))
+LIVE_IDS = tuple("L%02d" % i for i in range(1, 9))
 
 _BY_KIND_SOURCE: dict = {}
 _BY_KIND: dict = {}

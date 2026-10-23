@@ -297,6 +297,32 @@ def bundle_schedule_act(what):
 
 # ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
 
+@doctor_bp.route("/api/bundle/first-run", methods=["GET"])
+@login_required
+def first_backup_status():
+    """Whether the first backup is still to be set up (§34.4-9)."""
+    from agent_friday.services import first_backup
+    return jsonify({"status": "ok", **first_backup.status()})
+
+
+@doctor_bp.route("/api/bundle/first-run/answer", methods=["POST"])
+@login_required
+def first_backup_answer():
+    """{choice: not_now | never}, a press on Friday's own page, on this PC.
+    Saying yes is turning scheduled bundles on."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Decide this on Friday's own page, on this PC."}), 403
+    from agent_friday.services import first_backup
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"status": "ok", **first_backup.answer(str(body.get("choice") or ""))})
+    except first_backup.FirstBackupError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "That could not be saved.")
+
+
 @doctor_bp.route("/api/doctor/weekly", methods=["GET"])
 @login_required
 def doctor_weekly_status():

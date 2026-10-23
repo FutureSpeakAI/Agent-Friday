@@ -563,6 +563,12 @@ if not _TESTING:
                 _dw.tick()
             except Exception:
                 pass
+            try:
+                # the first backup offer (§34.4-9): a quiet card until scheduled bundles are on
+                from agent_friday.services import first_backup as _fb
+                _fb.tick()
+            except Exception:
+                pass
             __import__("time").sleep(900)
     threading.Thread(target=_backup_schedule_loop, daemon=True, name="backup-schedule").start()
 

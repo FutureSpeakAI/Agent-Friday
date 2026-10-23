@@ -56,8 +56,13 @@
   <p>To restore on another PC: install Friday, do not set it up, then run <code>friday restore &lt;file&gt;</code>.</p>
 </section>
 
-<section aria-labelledby="sched-h">
+<section id="schedule" aria-labelledby="sched-h">
   <h2 id="sched-h">Scheduled bundles</h2>
+  <div id="first-backup" hidden>
+    <p id="first-backup-text"><strong>No backup is set up yet.</strong> Everything Friday knows is in one folder on this PC. Choose a folder below (another drive or a network share is best), a passphrase, and turn scheduled bundles on.</p>
+    <button id="fb-later" type="button">Not now</button>
+    <button id="fb-never" type="button">Don't ask again</button>
+  </div>
   <p>Friday can make a bundle every day or every week into a folder you choose (this PC or a network share), check each one after it is written, keep the newest few, and now and then rehearse a restore from the newest one without changing anything. The passphrase for scheduled bundles, with the folder and how many to keep, is kept in this account's credential store (Windows Credential Manager) so they can be made while you are away: anyone who can open this account can open them. On a system without a credential store, scheduled bundles cannot be turned on.</p>
   <p id="sched-state" role="status">Off.</p>
   <label>Folder <input id="sf" size="48" placeholder="D:\Backups\Friday or \\server\share\Friday"></label><br>
@@ -240,8 +245,18 @@
           (s.last_error ? '. The last try failed: ' + s.last_error : '') + '. Last rehearsal: ' + when(s.last_rehearsal) +
           (s.last_rehearsal_ok === false ? ' (FAILED: ' + (s.last_rehearsal_error || '') + ')' : (s.last_rehearsal ? ' (passed)' : '')) + '.'
         : 'Off.');
+      firstBackup();
     });
   }
+  function firstBackup() {
+    api('/api/bundle/first-run').then(({ ok, d }) => {
+      $('first-backup').hidden = !(ok && d.setup_done && !d.scheduled && d.answer !== 'never');
+    });
+  }
+  const fbAnswer = choice => api('/api/bundle/first-run/answer', { method: 'POST', body: JSON.stringify({ choice }) })
+    .then(({ ok, d }) => { text($('sched-note'), ok ? (choice === 'never' ? 'Friday will not ask again. Scheduled bundles stay here whenever you want them.' : 'Friday will ask again in a week.') : (d.error || 'Not saved.')); firstBackup(); });
+  $('fb-later').addEventListener('click', () => fbAnswer('not_now'));
+  $('fb-never').addEventListener('click', () => fbAnswer('never'));
   $('sched-on').addEventListener('click', () => {
     const a = $('sp1').value, b = $('sp2').value;
     if (a !== b) { text($('sched-note'), 'The two passphrases differ.'); return; }
