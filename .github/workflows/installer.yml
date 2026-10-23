@@ -289,6 +289,17 @@ jobs:
           sed -i "s|<SHA256 PLACEHOLDER[^>]*>|$hash|" "$RUNNER_TEMP/notes.md"
           if grep -q 'PLACEHOLDER' "$RUNNER_TEMP/notes.md"; then echo "a placeholder is left in the notes"; exit 1; fi
           grep -n "$hash" "$RUNNER_TEMP/notes.md"
+      # North star §34.4-1 is blocked on the owner's decision (no code-signing
+      # certificate yet): the notes must say the setup program is not
+      # code-signed and must never claim it is. Change this with the notes, on
+      # purpose, when a certificate exists.
+      - name: The notes never claim a signed installer
+        run: |
+          if grep -inE 'signed (setup|installer)|(setup program|installer) (is|was) (now )?(digitally |code-)?signed|digitally signed by|verified publisher' "$RUNNER_TEMP/notes.md" \
+               | grep -viE "not |never|unsigned|isn't"; then
+            echo "the release notes claim a signed installer"; exit 1
+          fi
+          grep -qiE 'not code-signed|unsigned' "$RUNNER_TEMP/notes.md" || { echo "the release notes must say the setup program is not code-signed"; exit 1; }
       # The manifest the update check verifies. CI writes it; it is signed on
       # an offline machine with minisign and its .minisig uploaded beside it
       # (docs/development/release-signing.md). Until then the update check

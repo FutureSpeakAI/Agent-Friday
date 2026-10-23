@@ -17311,7 +17311,7 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip, curated })
         if (r.ok && d.text) setMsg({ ok: !!d.can_think, text: 'Saved, encrypted on this computer. ' + d.text });
       }
     } else if (c.kind === 'google_oauth') {
-      const d = await post(c.endpoint, { label: label.trim(), include_send: !!opts.include_send, include_modify: !!opts.include_modify });
+      const d = await post(c.endpoint, { label: label.trim(), include_send: !!opts.include_send, include_modify: !!opts.include_modify, include_contacts_write: !!opts.include_contacts_write });
       openUrl(d.auth_url);
       setMsg({ ok: true, text: "Google's consent screen opened in your browser. It lists the same permissions; come back here once you've approved." });
     } else if (c.kind === 'oauth_connector') {

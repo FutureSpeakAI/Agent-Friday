@@ -99,9 +99,10 @@ GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
 
 # Creating and editing the owner's Google Contacts. Like send, it is asked for
-# only from an explicit "Allow saving to Google Contacts" in the Contacts
-# workspace, never on an ordinary connect or reconnect; every save still
-# waits for the owner's decision (services/google_contacts_write.py).
+# only when the owner opts in: "Allow saving to Google Contacts" in the
+# Contacts workspace, or the unticked-by-default tick on the Google card in
+# Settings > Connections; never on an ordinary connect or reconnect. Every save
+# still waits for the owner's decision (services/google_contacts_write.py).
 CONTACTS_RW = "https://www.googleapis.com/auth/contacts"
 
 # What the Reconnect-with-sending consent asks for, in plain words, shown in
@@ -110,7 +111,7 @@ _SCOPE_PLAIN = {
     GMAIL_READ: "Read your email",
     GMAIL_SEND: "Send email on your behalf. Each message still waits for your approval card.",
     GMAIL_MODIFY: "Change your mailbox: labels, archive, star, read/unread, and saving drafts. Never permanent delete.",
-    CALENDAR_RW: "See and edit your calendar",
+    CALENDAR_RW: "See, edit, share and delete your calendars and their events",
     DRIVE_READ: "Read Drive files",
     DOCS_READ: "Read Docs",
     SHEETS_READ: "Read Sheets",

@@ -764,7 +764,8 @@ FINISH_BUTTON = "Open my desktop"
 #: Google scopes in plain words. The checklist shows each one before connect.
 GOOGLE_SCOPE_WORDS = {
     "https://www.googleapis.com/auth/gmail.readonly": "Read your email",
-    "https://www.googleapis.com/auth/calendar": "See and edit your calendar events",
+    "https://www.googleapis.com/auth/calendar":
+        "See, edit, share and delete your calendars and their events",
     "https://www.googleapis.com/auth/drive.readonly": "Read your Drive files",
     "https://www.googleapis.com/auth/documents.readonly": "Read your Google Docs",
     "https://www.googleapis.com/auth/spreadsheets.readonly": "Read your Google Sheets",
@@ -773,6 +774,8 @@ GOOGLE_SCOPE_WORDS = {
     "https://www.googleapis.com/auth/userinfo.email": "See your email address",
     "https://www.googleapis.com/auth/gmail.send":
         "Send email as you. Every message still waits for your approval card.",
+    "https://www.googleapis.com/auth/contacts":
+        "Create and edit your contacts. Each save still waits for your approval card.",
     "https://www.googleapis.com/auth/gmail.modify":
         "Change your mailbox: labels, archive, star, read/unread and drafts. "
         "Never permanent delete.",
