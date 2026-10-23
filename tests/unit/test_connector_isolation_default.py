@@ -297,7 +297,7 @@ def _runtime_card(state, monkeypatch, program=r"C:\Program Files\nodejs\npx.cmd"
     monkeypatch.setenv("LOCALAPPDATA", str(state / "Local"))
     cfg = {"servers": {"slack": {"command": "npx", "args": ["-y", "x"], "isolation": "appcontainer"}}}
     reloads = _fake_agent(monkeypatch, cfg)
-    card = ci.offer_runtime_choice("slack", program)
+    card = ci.offer_runtime_choice("slack", program, copy.deepcopy(cfg["servers"]["slack"]))
     return ap, cfg, card, reloads
 
 
@@ -333,7 +333,7 @@ def test_a_press_on_a_stale_card_does_not_run_a_changed_add_on_unisolated(state,
     monkeypatch.setenv("LOCALAPPDATA", str(state / "Local"))
     cfg = {"servers": {"slack": {"command": "npx", "args": ["-y", "x"], "isolation": "appcontainer"}}}
     _fake_agent(monkeypatch, cfg)
-    card = ci.offer_runtime_choice("slack", r"C:\Program Files\nodejs\npx.cmd", "npx", ["-y", "x"])
+    card = ci.offer_runtime_choice("slack", r"C:\Program Files\nodejs\npx.cmd", copy.deepcopy(cfg["servers"]["slack"]))
     cfg["servers"]["slack"]["args"] = ["-y", "something-else"]       # the entry changed
     from tests.desk_press_support import pressed
     with pressed():
