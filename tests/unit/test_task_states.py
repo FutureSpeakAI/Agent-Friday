@@ -77,12 +77,13 @@ def test_a_stop_request_is_a_state_until_the_task_stops(task):
     ({"status": "complete", "verified": True}, False, "completed_verified"),
     ({"status": "complete"}, False, "completed_unverified"),
     ({"status": "skipped"}, False, "cancelled"),
+    ({"status": "declined"}, False, "cancelled"),
     ({"status": "complete", "user_paused": True, "waiting_on": {"kind": "input"},
       "phase": "planning"}, True, "completed_unverified"),
     ({"status": "interrupted"}, False, "recovered_after_crash"),
 ], ids=["queued", "planning", "running", "waiting-approval", "waiting-approval-card",
         "waiting-input", "waiting-seat", "paused", "cancel-requested", "cancelled",
-        "failed", "timeout", "unverified", "verified", "complete-without-evidence", "skipped",
+        "failed", "timeout", "unverified", "verified", "complete-without-evidence", "skipped", "declined",
         "finished-beats-stale-flags", "recovered"])
 def test_every_north_star_state_is_reachable(rec, stop, want):
     from agent_friday.services import task_states as ts
