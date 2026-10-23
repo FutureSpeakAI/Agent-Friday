@@ -1513,6 +1513,8 @@ examples:
                                              "(review your connections first)")
     p_resume.add_argument("--status", action="store_true",
                           help="Say whether outward actions wait on a restore; change nothing")
+    p_resume.add_argument("--home", metavar="PATH",
+                          help="The data folder a restore went into (default: Friday's own)")
     p_resume.add_argument("--yes", action="store_true",
                           help="Do not ask for confirmation (you have reviewed your connections)")
 
@@ -2185,6 +2187,8 @@ def cmd_resume(args) -> int:
     safe mode, a revocation of authority or a ledger break still hold, and are
     named. From inside Friday it cannot run: a command is an outward action,
     and outward actions are held while the restore hold stands."""
+    if getattr(args, "home", None):
+        os.environ["FRIDAY_HOME"] = str(Path(args.home).expanduser())
     from agent_friday.services import friday_bundle
     why = friday_bundle.restore_hold()
     if not why:
@@ -2207,6 +2211,9 @@ def cmd_resume(args) -> int:
             return 1
     try:
         done = friday_bundle.resume_after_restore("owner:cli")
+    except friday_bundle.BundleError as e:
+        print(str(e))
+        return 1
     except Exception as e:  # noqa: BLE001 - said plainly; the hold stays
         print("Not resumed: the record of this could not be written (%s)." % type(e).__name__)
         return 1

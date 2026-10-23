@@ -32,7 +32,8 @@ def held(tmp_path, monkeypatch):
 
 
 def _args(**kw):
-    return argparse.Namespace(status=kw.get("status", False), yes=kw.get("yes", False))
+    return argparse.Namespace(status=kw.get("status", False), yes=kw.get("yes", False),
+                              home=kw.get("home"))
 
 
 def _resumed_by():
@@ -100,3 +101,44 @@ def test_friday_cannot_run_the_command_itself_while_held(held):
                               {"is_background_task": True})
     assert v.action == "deny" and "restored" in v.reason, v
     assert held.exists()
+
+
+def test_a_hold_that_cannot_be_lifted_is_said_as_such(held, monkeypatch, capsys):
+    from pathlib import Path
+    real = Path.unlink
+
+    def locked(self, *a, **k):
+        if self == held:
+            raise PermissionError(13, "in use")
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "unlink", locked)
+    assert cli.cmd_resume(_args(yes=True)) == 1
+    out = capsys.readouterr().out
+    assert "could not be lifted" in out and "could not be written" not in out
+    assert held.exists()
+
+
+def test_home_names_the_data_folder_a_restore_went_into(held, monkeypatch, tmp_path):
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "elsewhere"))
+    assert cli.cmd_resume(_args(yes=True, home=str(held.parents[1]))) == 0
+    assert not held.exists()
+
+
+@pytest.mark.parametrize("command", [
+    "gci | sort {friday resume --yes}",
+    "get-date | where {python -m agent_friday.cli resume --yes}",
+    "gci (friday resume --yes)",
+    "gci @(friday resume --yes)",
+    "Get-ChildItem @{a=1}",
+])
+def test_a_bracketed_command_inside_a_read_only_one_is_outward(command):
+    assert action_gate.classify_command(command)[0] == action_gate.OUTWARD
+
+
+@pytest.mark.parametrize("command", [
+    'gci "C:\\Program Files (x86)"',
+    "gci 'C:\\Program Files (x86)'",
+    'Get-Content a.txt | Select-String -Pattern "(a|b)"',
+])
+def test_brackets_inside_quotes_stay_read_only(command):
+    assert action_gate.classify_command(command)[0] == action_gate.INTERNAL

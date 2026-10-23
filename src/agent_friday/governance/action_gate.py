@@ -501,6 +501,13 @@ _SELF_API = re.compile(r"\b(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[?::1\]?|
                        r"|/api/", re.I)
 
 
+#: Quoted text, which PowerShell does not run ("$(" inside double quotes is
+#: refused by _DANGEROUS before this is read), and the brackets that do run
+#: what they hold when they are not quoted.
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+_GROUPING = re.compile(r"[({]")
+
+
 def _literal_search_patterns(cmd: str) -> str:
     """Hide inert search patterns from checks of executable shell text.
 
@@ -595,6 +602,9 @@ def classify_command(cmd: str) -> tuple:
         return "forbidden", "it addresses Friday's own local API"
     if _DANGEROUS.search(c):
         return OUTWARD, "it chains, redirects, changes or reaches outside"
+    if _GROUPING.search(_QUOTED.sub("''", c)):
+        # (…), @(…) and {…} outside a quoted string run whatever they hold
+        return OUTWARD, "a bracketed expression or script block can run any command"
     for stage in c.split("|"):
         words = stage.strip().split()
         if not words:

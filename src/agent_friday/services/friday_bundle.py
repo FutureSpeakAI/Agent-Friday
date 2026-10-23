@@ -993,7 +993,14 @@ def resume_after_restore(by: str = "owner:ui") -> bool:
     from agent_friday.services import action_ledger
     action_ledger.append("restore_resumed", {"bundle_id": d.get("bundle_id"), "by": by},
                          durable=True)
-    p.unlink()
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        raise BundleError("The resume is recorded, but the hold could not be lifted (%s): "
+                          "close whatever has %s open and resume again."
+                          % (type(e).__name__, p)) from e
     return True
 
 
