@@ -190,6 +190,16 @@ def _decide(record: dict) -> None:
         return
     if not _ap.claim_for_execution(aid):
         return                                  # someone else already has it
+    # (the run's own call, agent._run_card_prior, mints the grant when it wins)
+
+    if payload.get("run_grant"):
+        # A24: this card also approved the rest of its run's Google Tasks changes. Minted only
+        # once this executor holds the card, so the card's own change runs once.
+        try:
+            from agent_friday.services import run_grants as _rg
+            _rg.mint_on_approval(record)
+        except Exception as _rg_err:
+            _log.warning("run grant not minted for %s: %s", aid, type(_rg_err).__name__)
 
     # The two steps every outward action gets, for an executor acting outside a
     # tool call: the cLaws are intact, and a signed receipt exists. If either

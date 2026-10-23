@@ -36,6 +36,10 @@ CONTACTS_READ = _G + "contacts.readonly"
 CONTACTS_RW = _G + "contacts"
 
 _CAL_WRITE = [CALENDAR_RW, CALENDAR_EVENTS]      # either one allows the change
+#: A24: asks first; in a run nobody watches one card approves the run's task changes
+#: (services/run_grants), each change with its own receipt. Needs Allow task changes.
+_RUN_GRANT_NOTE = ("asks first (A24); in a background or workflow run one card covers the run's "
+                   "task changes, each with its own receipt; needs Allow task changes")
 
 
 def _op(tool: str, service: str, access: str, scopes: List[str], action_class: str,
@@ -81,12 +85,9 @@ GOOGLE_OPERATIONS: List[Dict[str, Any]] = [
     _op("read_doc", "drive", "read", [DRIVE_READ, DOCS_READ, SHEETS_READ], "internal"),
     # Tasks
     _op("list_tasks", "tasks", "read", [TASKS_READ], "internal"),
-    _op("complete_task", "tasks", "write", [TASKS_RW], "internal",
-        "changes the owner's own task list; needs Allow task changes"),
-    _op("create_task", "tasks", "write", [TASKS_RW], "internal",
-        "changes the owner's own task list; needs Allow task changes"),
-    _op("update_task", "tasks", "write", [TASKS_RW], "internal",
-        "changes the owner's own task list; needs Allow task changes"),
+    _op("complete_task", "tasks", "write", [TASKS_RW], "outward", _RUN_GRANT_NOTE),
+    _op("create_task", "tasks", "write", [TASKS_RW], "outward", _RUN_GRANT_NOTE),
+    _op("update_task", "tasks", "write", [TASKS_RW], "outward", _RUN_GRANT_NOTE),
     _op("delete_task", "tasks", "write", [TASKS_RW], "outward"),
     # Contacts
     _op("search_contacts", "contacts", "read", [CONTACTS_READ], "internal"),
