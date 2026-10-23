@@ -163,6 +163,15 @@ def state() -> Dict[str, Any]:
 
 
 def is_stood_down() -> bool:
+    """Also True while everything is stopped (services/global_stop), so every reader
+    that already pauses for a stand-down (podcast rendering, routines, idle work) pauses
+    for a stop too. The stand-down's own state and banner are untouched."""
+    try:
+        import agent_friday.core as _core_gs
+        if _core_gs.GLOBAL_STOP.is_set():
+            return True
+    except Exception:
+        pass
     return bool(state().get("active"))
 
 
@@ -230,6 +239,12 @@ def reason() -> str:
     """One sentence for a skip note or a notification."""
     st = state()
     if not st.get("active"):
+        try:
+            import agent_friday.core as _core_gs
+            if _core_gs.GLOBAL_STOP.is_set():
+                return "Everything is stopped (you pressed Stop); press Resume to let work run."
+        except Exception:
+            pass
         return ""
     since = st.get("since") or 0
     mins = int(max(0, time.time() - float(since)) // 60)

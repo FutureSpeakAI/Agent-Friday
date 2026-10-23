@@ -208,6 +208,20 @@ def mid_call_request(call_sid: str, what: str, party: str) -> dict:
 
 # ── the bridge ───────────────────────────────────────────────────────────────
 
+def _record_spoken(party: str, text: str, error) -> None:
+    """What Friday says on a live call in the egress ledger and on the privacy
+    map (§26.7): Twilio carries the audio of these words to the caller. The
+    words are fingerprinted and, by default (A20), kept encrypted. Never raises."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_service_send("phone_call", "twilio", destination="api.twilio.com",
+                                content={"to": party, "said": text},
+                                result="sent" if error is None else _eg.result_for_error(error),
+                                recipients=1, part="spoken")
+    except Exception:
+        pass
+
+
 def _gate_spoken(text: str) -> str:
     """The egress gate on a spoken reply. If the gate cannot run, a fixed line
     is spoken instead of the reply."""
@@ -260,12 +274,17 @@ class CallBridge:
             return
         pcm24 = self.engine.synthesize(text)
         ulaw = pcm16_to_ulaw(_resample(pcm24, 24000, TWILIO_RATE))
-        for i in range(0, len(ulaw), FRAME_BYTES):
-            self._send({"event": "media", "streamSid": self.stream_sid,
-                        "media": {"payload": base64.b64encode(ulaw[i:i + FRAME_BYTES])
-                                  .decode("ascii")}})
-        self._send({"event": "mark", "streamSid": self.stream_sid,
-                    "mark": {"name": "said-%d" % len(self.history)}})
+        try:
+            for i in range(0, len(ulaw), FRAME_BYTES):
+                self._send({"event": "media", "streamSid": self.stream_sid,
+                            "media": {"payload": base64.b64encode(ulaw[i:i + FRAME_BYTES])
+                                      .decode("ascii")}})
+            self._send({"event": "mark", "streamSid": self.stream_sid,
+                        "mark": {"name": "said-%d" % len(self.history)}})
+        except Exception as e:
+            _record_spoken(self.party, text, e)
+            raise
+        _record_spoken(self.party, text, None)
         self.speaking_until = self._clock() + len(ulaw) / TWILIO_RATE
 
     def barge_in(self) -> None:
@@ -375,9 +394,25 @@ class CallBridge:
 
 def serve_media_stream(ws, cfg: dict) -> None:
     """The ingress hands a validated WebSocket here."""
+    from agent_friday.services import global_stop as _gs
+    if _gs.active():
+        try:
+            ws.close()
+        except Exception:
+            pass
+        return
     bridge = CallBridge(ws)
+
+    def _hang_up():   # Stop everything ends a live phone call too
+        try:
+            ws.close()
+        except Exception:
+            pass
+    _gs_off = _gs.on_stop(_hang_up)
     try:
         while True:
+            if _gs.active():
+                break
             raw = ws.receive(timeout=60)
             if raw is None:
                 break
@@ -390,6 +425,7 @@ def serve_media_stream(ws, cfg: dict) -> None:
     except Exception as e:
         _log.warning("live call ended with an error: %s", e)
     finally:
+        _gs_off()
         try:
             from agent_friday.phone import spool
             spool.ledger_update_by_sid(bridge.call_sid,

@@ -159,6 +159,10 @@ _ALL = [
        "spend_halt:{scope}", source="spend-guard", safety=True),
     _e("E38", "services/credential_sweep.py:_push", "credential_problem", NEEDS_YOU,
        "credential:{provider}:{state}", source="credentials", safety=True),
+    # A21: an install that finished setup before the key store passphrase became the default is
+    # offered it once (services/keystore_offer).
+    _e("KS1", "services/keystore_offer.py:push_card_if_pending", "keystore_offer", NEEDS_YOU,
+       "keystore-passphrase-offer", source="security"),
     _e("E39", "services/connectors.py:_notif_push", "connector_down", NEEDS_YOU,
        "connector_down:{connector}:{status}"),
     _e("E40", "services/embedder_cache.py:_notify", "model_download", ACTIVITY,
@@ -264,6 +268,10 @@ _ALL = [
        NEEDS_YOU, "cloud-voice-scope", source="local-voice"),
     _e("LV9", "services/local_voice_readiness.py:_revert_call_scope", "cloud_voice_call_ended",
        UPDATES, "cloud-voice-call-ended", source="local-voice"),
+    # North-star A17: once, on an install from before the daily spending cap shipped on, the
+    # card that explains the new cap and takes the owner to set it (or keep no cap).
+    _e("SC1", "services/spending_caps.py:push_daily_cap_card_if_pending", "spend_cap_intro",
+       NEEDS_YOU, "spend-cap-intro", source="spending-caps"),
     # Laya's personal learning (services/laya_personal.notify): the one-time "Laya learns from your
     # corrections" notice, and the confirmations of forget / reset / go back / wipe. Never carries the
     # owner's words.
@@ -282,6 +290,14 @@ _ALL = [
        route=STREAM, ledger=False),
     _e("L06", "routes/voice.py:_run_routed_front_turn", "router_receipt", RECEIPTS, "",
        route=STREAM, ledger=False),
+    # The weekly "send a Doctor report?" card (A3): in Needs you, raised once a week at most,
+    # never interrupting (tier FYI), nothing sent without the owner's approval card.
+    _e("L07", "services/doctor_weekly.py:tick", "doctor_weekly", NEEDS_YOU,
+       "doctor-weekly:{week}", source="doctor"),
+    # The first backup (§34.4-9): offered in Needs you once setup is done and no scheduled bundle
+    # is on, at most three times a week apart; it turns nothing on and sends nothing.
+    _e("L08", "services/first_backup.py:tick", "first_backup", NEEDS_YOU,
+       "first-backup:{n}", source="backup"),
     # Quiet turned on by the owner (voice, chat or the page): a visible line in Updates that never
     # merges with another, so every activation can be seen.
     _e("NQ1", "services/notification_tools.py:_quiet", "quiet_on", UPDATES, "quiet-on:{surface}:{seq}",
@@ -289,6 +305,9 @@ _ALL = [
     # An approval whose time ran out while quiet hours, the limit or Focus Assist held it back.
     _e("NQ3", "services/approvals.py:_notify_expired_while_held", "approval_expired_held", NEEDS_YOU,
        "approval-expired:{approval_id}", source="approvals"),
+    # The outcome of a skill import the owner approved on its card: installed, or why not.
+    _e("SK1", "services/skill_import_review.py:_tell", "skill_import", UPDATES,
+       "skill-import:{approval_id}", source="skills"),
     # A scheduled run that was due in quiet hours and waits for them to end.
     _e("NQ2", "services/scheduler.py:_defer_for_quiet", "scheduled_deferred", UPDATES,
        "sched-deferred:{schedule_id}:{day}", source="scheduler"),
@@ -344,7 +363,7 @@ _ALL = [
 REGISTRY: dict = {e.id: e for e in _ALL}
 CENSUS_IDS = tuple("E%02d" % i for i in range(1, 83))
 #: Emitters live has gained since the 82-emitter census, registered by the same rule.
-LIVE_IDS = tuple("L%02d" % i for i in range(1, 7))
+LIVE_IDS = tuple("L%02d" % i for i in range(1, 9))
 
 _BY_KIND_SOURCE: dict = {}
 _BY_KIND: dict = {}
