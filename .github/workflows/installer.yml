@@ -18,6 +18,11 @@ name: installer
 #                    the data survive, the data was backed up first, and the
 #                    shortcuts landed
 #                    (packaging/windows/tests/rehearsal/upgrade-vault-test.ps1)
+#   clean-machine    the clean-machine matrix (.github/workflows/clean-machine.yml)
+#                    on this build's setup program: two Windows images, a memory
+#                    cap, a non-English locale, a standard account, and one
+#                    evidence record (north star §34.3). On a beta tag it only
+#                    records (amendment A19: betas are exempt from §34).
 #   tests-green      on a version tag only: scripts/release_gate.py waits for
 #                    the tests, codeql and restore workflows on the tag's exact
 #                    commit and fails unless all three are green there
@@ -25,8 +30,9 @@ name: installer
 #                    exe, its SHA-256 and RELEASE_NOTES.md.
 #
 # Pushing a version tag is the release decision. The release job runs only
-# after tests-green, the fresh-install job and every leg of the upgrade matrix
-# have passed, and it asks the release gate once more immediately before it
+# after tests-green, the fresh-install job, every leg of the upgrade matrix,
+# the bundle uninstall/restore check and the clean-machine evidence have
+# passed, and it asks the release gate once more immediately before it
 # publishes. A tag on a commit whose tests are red, running or missing
 # publishes nothing.
 #
@@ -204,6 +210,15 @@ jobs:
             ${{ runner.temp }}/upgrade/setup-upgrade.log
           if-no-files-found: ignore
 
+  clean-machine:
+    needs: build
+    uses: ./.github/workflows/clean-machine.yml
+    with:
+      called: true
+      # A beta tag (v1.2.0-beta.3) records the evidence without failing (A19);
+      # a public tag (v1.0.0) must pass it.
+      report_only: ${{ !startsWith(github.ref, 'refs/tags/v') || contains(github.ref_name, '-') }}
+
   # The release gate. The tests and codeql workflows also run on the tag push
   # itself, so the tag's exact commit always gets a run to wait for. Pull
   # request runs do not count: they test a merge, not this commit.
@@ -259,7 +274,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [tests-green, fresh-install, upgrade, bundle-uninstall-restore]
+    needs: [tests-green, fresh-install, upgrade, bundle-uninstall-restore, clean-machine]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -270,6 +285,11 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: installer
+          path: artifact
+      # The clean-machine record (§34.3-8) ships with the release it proves.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: clean-machine-evidence
           path: artifact
       - name: The notes carry the build sequence
         run: |
@@ -316,6 +336,6 @@ jobs:
           tagged=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)
           test "$tagged" = "$GITHUB_SHA" || { echo "the tag now names $tagged, not the gated $GITHUB_SHA"; exit 1; }
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
-            artifact/release-manifest.json \
+            artifact/release-manifest.json artifact/clean-machine-evidence.json \
             --repo "${{ github.repository }}" --verify-tag --latest \
             --title "Agent Friday Beta 1.2 (update 2)" --notes-file "$RUNNER_TEMP/notes.md"
