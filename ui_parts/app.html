@@ -14264,7 +14264,7 @@ function ContentAnalyticsTab(){
   const openDrill=id=>{setDrill({id,loading:true});fetch('/api/content/analytics/post/'+id).then(r=>r.json()).then(d=>setDrill({id,data:d})).catch(()=>setDrill({id,data:{}}))};
   const s=sum||{};
   const rate=s.engagement_rate!=null?(Number(s.engagement_rate)*100).toFixed(1)+'%':null;
-  const cards=[['Impressions · 7d',s.impressions_7d],['Impressions · 30d',s.impressions_30d!=null?s.impressions_30d:s.impressions],['Engagement rate',rate],['ψ earned from content',s.psi_earned!=null?s.psi_earned:s.psi]];
+  const cards=[['Impressions · 7d',s.impressions_7d],['Impressions · 30d',s.impressions_30d!=null?s.impressions_30d:s.impressions],['Engagement rate',rate],].concat(fridayHeldOn('federation')?[['ψ earned from content',s.psi_earned_mpsi!=null?s.psi_earned_mpsi+' mψ':(s.psi_earned!=null?s.psi_earned:s.psi)]]:[]);
   const series=(s.series&&typeof s.series==='object')?s.series:{};
   const seriesKeys=Object.keys(series).filter(k=>Array.isArray(series[k])&&series[k].length>1);
   const top=s.top_posts||s.best_posts||[];
