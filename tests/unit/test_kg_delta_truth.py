@@ -33,6 +33,8 @@ class ReadingLLM:
             out.append(_tuple("HARWICH HARBOUR", "place", "The harbour master is Ana Ferreira"))
         if "Wren" in body:
             out.append(_tuple("WREN", "vessel", "Wren is a sailing boat"))
+        if "Wren" in body and ("Peter Smallwood" in body or "Ana Ferreira" in body):
+            out.append('("relationship"<|>WREN<|>HARWICH HARBOUR<|>Wren is moored at Harwich<|>7)')
         return "\n##\n".join(out) + "\n<|COMPLETE|>"
 
 
@@ -100,6 +102,36 @@ def test_a_node_another_page_still_supports_survives_an_edit(wiki, tmp_path):
     assert wren, "a node still supported by another page was dropped"
     pages = wren[0]["provenance"]["wiki_pages"]
     assert pages and all(not p.replace("\\", "/").endswith("/a.md") and p != "a.md" for p in pages), pages
+
+
+def test_an_edit_that_still_says_it_keeps_the_relationship(wiki, tmp_path):
+    store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
+    page = wiki / "harbour.md"
+    page.write_text("Wren is moored at Harwich; the harbour master is Peter Smallwood.\n", encoding="utf-8")
+    indexer.reindex_tier_b(store=store, mode="full", llm=ReadingLLM())
+    assert [r for r in store.load("relationships") if r.get("tier") == "B"]
+    page.write_text("Wren is moored at Harwich; the harbour master is Ana Ferreira.\n", encoding="utf-8")
+    indexer.reindex_tier_b(store=store, mode="delta", llm=ReadingLLM())
+    rels = [r for r in store.load("relationships") if r.get("tier") == "B"]
+    assert rels and rels[0]["provenance"]["wiki_pages"], "an edit deleted a relationship the page still states"
+
+
+def test_a_failed_extraction_keeps_the_old_nodes_and_tries_again(wiki, tmp_path):
+    store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
+    page = wiki / "boat.md"
+    page.write_text("My boat is called Wren.\n", encoding="utf-8")
+    indexer.reindex_tier_b(store=store, mode="full", llm=ReadingLLM())
+    page.write_text("My boat is called Wren and she is blue.\n", encoding="utf-8")
+
+    class Down(ReadingLLM):
+        def __call__(self, messages, *a, **k):
+            if "-Goal-" in messages[0]["content"]:
+                raise RuntimeError("synthetic: the model is down")
+            return super().__call__(messages, *a, **k)
+    indexer.reindex_tier_b(store=store, mode="delta", llm=Down())
+    assert _by_title(store, "Wren"), "a failed extraction deleted what the graph knew"
+    info = indexer.reindex_tier_b(store=store, mode="delta", llm=ReadingLLM())
+    assert info["extracted"] >= 1, "the failed page was not tried again"
 
 
 def test_a_full_rebuild_keeps_the_facts_the_owner_approved(wiki, tmp_path):
