@@ -1920,18 +1920,30 @@ def undo_calendar(receipt: dict) -> dict:
     from agent_friday.services import change_receipts as _cr
     cw = _cw()
     back, failed = 0, 0
-    for r in (receipt.get("undo") or {}).get("calendar") or []:
+    done = set(receipt.get("undone_rows") or [])
+    for i, r in enumerate((receipt.get("undo") or {}).get("calendar") or []):
+        if i in done:
+            continue                    # put back by an earlier Undo: never twice
         try:
             ok = _cr.undo_calendar_row(cw, r)
         except Exception:
             ok = False
         back += 1 if ok else 0
         failed += 0 if ok else 1
-    journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed)
+        if ok:
+            done.add(i)
+    journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed,
+                   undone_rows=sorted(done))
     said = "Put back %s%s." % (_plural(back, "event"), ("; %d could not be" % failed) if failed else "")
     return journal.record("undo_action", "undo", "calendar", items=[{"receipt_id": receipt["receipt_id"]}], summary=said,
                           status="complete" if not failed else ("partial" if back else "failed"),
                           conversation_id=(receipt.get("run") or {}).get("conversation_id"), extra={"said": said})
+
+
+def _undo_lines(rec: dict, domain: str) -> list:
+    from agent_friday.services import change_receipts as _cr
+    return _cr.undo_lines(rec, domain) if domain == "tasks" or any(
+        (r.get("op") or "move") != "move" for r in (rec.get("undo") or {}).get(domain) or []) else []
 
 
 def undo_tasks(receipt: dict) -> dict:
@@ -1939,14 +1951,20 @@ def undo_tasks(receipt: dict) -> dict:
     from agent_friday.services import change_receipts as _cr
     from agent_friday.services import google_accounts as ga
     back, failed = 0, 0
-    for r in (receipt.get("undo") or {}).get("tasks") or []:
+    done = set(receipt.get("undone_rows") or [])
+    for i, r in enumerate((receipt.get("undo") or {}).get("tasks") or []):
+        if i in done:
+            continue                    # put back by an earlier Undo: never twice
         try:
             ok = _cr.undo_task_row(ga, r)
         except Exception:
             ok = False
         back += 1 if ok else 0
         failed += 0 if ok else 1
-    journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed)
+        if ok:
+            done.add(i)
+    journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed,
+                   undone_rows=sorted(done))
     said = "Put back %s%s." % (_plural(back, "task"), ("; %d could not be" % failed) if failed else "")
     return journal.record("undo_action", "undo", "tasks", items=[{"receipt_id": receipt["receipt_id"]}], summary=said,
                           status="complete" if not failed else ("partial" if back else "failed"),
@@ -2142,25 +2160,28 @@ def undo(receipt_id: str = "", *, conversation_id: str | None = None, owner_word
         detail = {"handler": HANDLER, "domain": "calendar_undo", "action": "undo",
                   "receipt_id": rec["receipt_id"], "count": n,
                   "conversation_id": conversation_id or "", "asked_with": words_hash(owner_words)}
+        _lines = _undo_lines(rec, "calendar")
+        if _lines:
+            detail["lines"] = _lines
         moved = all((r.get("op") or "move") == "move" for r in (rec.get("undo") or {}).get("calendar") or [])
-        body = "Friday proposes to undo: %s\nThat puts %s back %s." % (
-            rec.get("summary") or "", _plural(n, "event"),
-            "at the times they had" if moved else "as they were")
+        body = ("Friday proposes to undo: %s\nThat puts %s back at the times they had." % (
+                    rec.get("summary") or "", _plural(n, "event")) if moved else
+                "Friday proposes to undo: %s\n%s" % (rec.get("summary") or "", " ".join(_lines)))
         card = _raise_card("calendar_undo", "undo", detail, requested_by=requested_by,
-                           title="Friday wants to put back %s" % _plural(n, "event"), body=body)
-        return {**card, "count": n, "readback": "Shall I put back the %s I %s?" % (
-            _plural(n, "event"), "moved" if moved else "changed")}
+                           title="Friday wants to put back %s" % _plural(n, "event") if moved
+                           else "Friday wants to undo %s" % _plural(n, "calendar change"), body=body)
+        return {**card, "count": n, "readback": ("Shall I put back the %s I moved?" % _plural(n, "event"))
+                if moved else "Shall I undo it? %s" % " ".join(_lines)}
     if dom == "tasks" and not by_owner:
         # Putting tasks back writes to Google Tasks (outward since A24): one card.
         n = len((rec.get("undo") or {}).get("tasks") or [])
         detail = {"handler": HANDLER, "domain": "tasks_undo", "action": "undo",
-                  "receipt_id": rec["receipt_id"], "count": n,
+                  "receipt_id": rec["receipt_id"], "count": n, "lines": _undo_lines(rec, "tasks"),
                   "conversation_id": conversation_id or "", "asked_with": words_hash(owner_words)}
-        body = "Friday proposes to undo: %s\nThat puts %s back as they were." % (
-            rec.get("summary") or "", _plural(n, "task"))
+        body = "Friday proposes to undo: %s\n%s" % (rec.get("summary") or "", " ".join(detail["lines"]))
         card = _raise_card("tasks_undo", "undo", detail, requested_by=requested_by,
-                           title="Friday wants to put back %s" % _plural(n, "task"), body=body)
-        return {**card, "count": n, "readback": "Shall I put back the %s I changed?" % _plural(n, "task")}
+                           title="Friday wants to undo %s" % _plural(n, "task change"), body=body)
+        return {**card, "count": n, "readback": "Shall I undo it? %s" % " ".join(detail["lines"])}
     if dom == "file_write":
         from agent_friday.services import file_write_receipts as _fwr
         out = _fwr.undo(rec)

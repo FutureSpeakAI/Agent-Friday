@@ -50,6 +50,20 @@ def _record(tool: str, action: str, domain: str, *, items: list, summary: str, s
         return None
 
 
+def _safe(fn):
+    """A recorder never turns a change that happened into an error: anything it raises is logged."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapped(*a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception as e:  # noqa: BLE001
+            _log.warning("receipt not recorded (%s): %s", fn.__name__, type(e).__name__)
+            return None
+    return wrapped
+
+
 def _title(s: Any, fallback: str) -> str:
     s = str(s or "").strip()
     return (s[:80] + "…") if len(s) > 80 else (s or fallback)
@@ -57,6 +71,7 @@ def _title(s: Any, fallback: str) -> str:
 
 # ── Calendar ────────────────────────────────────────────────────────────────
 
+@_safe
 def calendar_created(res: dict, *, conversation_id: Optional[str] = None) -> Optional[dict]:
     if not (isinstance(res, dict) and res.get("ok") and res.get("id")):
         return None
@@ -70,6 +85,7 @@ def calendar_created(res: dict, *, conversation_id: Optional[str] = None) -> Opt
                    conversation_id=conversation_id)
 
 
+@_safe
 def calendar_updated(res: dict, *, conversation_id: Optional[str] = None) -> Optional[dict]:
     if not (isinstance(res, dict) and res.get("ok") and res.get("id")) or res.get("unchanged"):
         return None
@@ -84,24 +100,29 @@ def calendar_updated(res: dict, *, conversation_id: Optional[str] = None) -> Opt
             if fields and len(fields) == len(changed) and timed else [])
     return _record("update_calendar_event", "update", "calendar",
                    items=[{"id": res["id"], "title": t, "changed": changed}],
-                   summary="Changed %s of “%s”%s." % (", ".join(changed) or "nothing", t,
-                                                             "" if rows else " (it cannot be undone: "
-                                                             "the event could not be read first)"),
+                   summary="Changed %s of “%s”%s." % (
+                       ", ".join(changed) or "nothing", t,
+                       "" if rows else " (it cannot be undone: an all-day event's dates cannot be set "
+                       "back by Undo)" if fields and not timed else
+                       " (it cannot be undone: the event could not be read first)"),
                    said="Changed an event.", undo_rows=rows, conversation_id=conversation_id)
 
 
+@_safe
 def calendar_deleted(res: dict, *, conversation_id: Optional[str] = None) -> Optional[dict]:
     if not (isinstance(res, dict) and res.get("ok") and res.get("id")) or res.get("already_gone"):
         return None
     b = res.get("undo_before") or res.get("before") or {}
     t = _title(b.get("summary") or b.get("title"), "an event")
-    can = bool(b.get("start")) and "T" in str(b.get("start")) and "T" in str(b.get("end") or "")
+    can = (bool(b.get("start")) and "T" in str(b.get("start")) and "T" in str(b.get("end") or "")
+           and not b.get("recurring"))
     guests = int((res.get("before") or {}).get("guests") or 0)
     rows = ([{"op": "recreate", "id": res["id"], "title": t,
               "fields": {k: b.get(k, "") for k in EVENT_FIELDS if k != "summary"} | {"summary": t},
               "guests": guests, "account": res.get("account_id") or "",
               "calendar": res.get("calendar_id") or "primary"}] if can else [])
-    note = ("" if can else " (an all-day event cannot be made again by Undo)") + (
+    note = ("" if can else " (a repeating event cannot be made again by Undo)" if b.get("recurring")
+            else " (an all-day event cannot be made again by Undo)") + (
         " Undo makes it again without its %d guest(s)." % guests if can and guests else "")
     return _record("delete_calendar_event", "delete", "calendar",
                    items=[{"id": res["id"], "title": t}],
@@ -117,8 +138,16 @@ def undo_calendar_row(cw, r: dict) -> bool:
         res = cw.update_event(r["id"], start=r["start"], end=r["end"], account_id=acct, calendar_id=cal)
         return not res.get("error")
     if op == "delete_created":
+        now = cw.read_event(r["id"], calendar_id=cal, account_id=acct, for_write=True)
+        if now.get("gone"):
+            return True                                   # already deleted by the owner: put back
+        if not now.get("ok"):
+            return False
+        if int((now.get("before") or {}).get("guests") or 0):
+            # guests were added since Friday made it: deleting it silently would cancel on them
+            return False
         res = cw.delete_event(r["id"], calendar_id=cal, account_id=acct, notify_guests=False)
-        return bool(res.get("ok") or res.get("gone"))     # already deleted by the owner: put back
+        return bool(res.get("ok"))
     if op == "restore_fields":
         f = r.get("fields") or {}
         res = cw.update_event(r["id"], title=f.get("summary"), location=f.get("location"),
@@ -138,6 +167,7 @@ def undo_calendar_row(cw, r: dict) -> bool:
 
 # ── Google Tasks ────────────────────────────────────────────────────────────
 
+@_safe
 def task_created(res: dict, *, tasklist_id: str, conversation_id: Optional[str] = None) -> Optional[dict]:
     if not (isinstance(res, dict) and res.get("id") and not res.get("error")):
         return None
@@ -150,6 +180,7 @@ def task_created(res: dict, *, tasklist_id: str, conversation_id: Optional[str] 
                    conversation_id=conversation_id)
 
 
+@_safe
 def task_changed(res: dict, before: Optional[dict], *, tool: str, changed: List[str], tasklist_id: str,
                  conversation_id: Optional[str] = None) -> Optional[dict]:
     if not (isinstance(res, dict) and res.get("id") and not res.get("error")):
@@ -168,6 +199,7 @@ def task_changed(res: dict, before: Optional[dict], *, tool: str, changed: List[
                    said="Changed a task.", undo_rows=rows, conversation_id=conversation_id)
 
 
+@_safe
 def task_deleted(res: dict, before: Optional[dict], *, tasklist_id: str,
                  conversation_id: Optional[str] = None) -> Optional[dict]:
     if not (isinstance(res, dict) and res.get("deleted")) or res.get("already_gone"):
@@ -188,12 +220,13 @@ def undo_task_row(ga, r: dict) -> bool:
     f = r.get("fields") or {}
     if op == "delete_created":
         res = ga.delete_task(account_id=acct, tasklist_id=tl, task_id=r["id"])
-        return bool(res.get("deleted"))
+        return bool(res.get("deleted") or res.get("not_found"))
     if op == "restore":
         res = ga.update_task(account_id=acct, tasklist_id=tl, task_id=r["id"],
                              title=f.get("title") if "title" in f else None,
                              notes=f.get("notes") if "notes" in f else None,
-                             due=f.get("due") if "due" in f else None,
+                             due=(f.get("due") or None) if "due" in f else None,
+                             clear_due="due" in f and not f.get("due"),
                              status=f.get("status") if "status" in f else None)
         return bool(res.get("id")) and not res.get("error")
     if op == "recreate":
@@ -202,10 +235,30 @@ def undo_task_row(ga, r: dict) -> bool:
         if res.get("error") or not res.get("id"):
             return False
         if f.get("status") == "completed":
+            # The task exists again whatever happens next: never made a second time by a later Undo.
             done = ga.complete_task(account_id=acct, tasklist_id=tl, task_id=res["id"])
-            return bool(done.get("id")) and not done.get("error")
+            if done.get("error"):
+                _log.info("task made again but not marked done: %s", done.get("error"))
         return True
     return False
+
+
+def undo_lines(receipt: dict, domain: str) -> List[str]:
+    """What Undo will do, one line per change, for its card: a delete is named as a delete."""
+    out = []
+    for r in undo_rows(receipt, domain):
+        t, op = r.get("title") or ("the event" if domain == "calendar" else "the task"), r.get("op") or "move"
+        if op == "delete_created":
+            out.append("Delete \u201c%s\u201d, which Friday created%s." % (
+                t, " (not if guests were added since)" if domain == "calendar" else ""))
+        elif op == "recreate":
+            g = int(r.get("guests") or 0)
+            out.append("Make \u201c%s\u201d again%s." % (t, (" without its %d guest(s)" % g) if g else ""))
+        elif op in ("restore_fields", "restore"):
+            out.append("Set %s of \u201c%s\u201d back as it was." % (", ".join(sorted(r.get("fields") or {})), t))
+        else:
+            out.append("Move \u201c%s\u201d back to %s." % (t, r.get("start") or "its old time"))
+    return out
 
 
 def undo_rows(receipt: dict, domain: str) -> List[dict]:

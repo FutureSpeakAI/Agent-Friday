@@ -1987,12 +1987,12 @@ def _with_receipt(res, receipt):
     and the whole before-values Undo keeps (services/change_receipts) left out."""
     if not isinstance(res, dict):
         return res
-    out = {k: v for k, v in res.items() if k != "undo_before"}
+    head = {}
     if receipt:
-        out["receipt_id"] = receipt.get("receipt_id")
+        head["receipt_id"] = receipt.get("receipt_id")
         if receipt.get("undo"):
-            out["undo"] = "Say \u201cundo that\u201d to put it back (it asks first)."
-    return out
+            head["undo"] = "Say \u201cundo that\u201d to put it back (it asks first)."
+    return dict(head, **{k: v for k, v in res.items() if k not in ("undo_before", "receipt_id", "undo")})
 
 
 def _calendar_write_summary(res, what, change=True):

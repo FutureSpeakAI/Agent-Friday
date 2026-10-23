@@ -682,7 +682,8 @@ def _undo_fields(ev: dict) -> dict:
     return {"summary": (ev or {}).get("summary") or "", "location": (ev or {}).get("location") or "",
             "description": (ev or {}).get("description") or "",
             "start": st.get("dateTime") or st.get("date") or "",
-            "end": en.get("dateTime") or en.get("date") or ""}
+            "end": en.get("dateTime") or en.get("date") or "",
+            "recurring": bool((ev or {}).get("recurrence") or (ev or {}).get("recurringEventId"))}
 
 
 def notify_guests_default() -> bool:

@@ -1615,8 +1615,11 @@ def complete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
 
 def update_task(account_id: str, tasklist_id: str, task_id: str, *,
                 title: str | None = None, notes: str | None = None,
-                due: str | None = None, status: str | None = None) -> dict:
-    """Patch one task's fields, in the one account/tasklist named."""
+                due: str | None = None, status: str | None = None,
+                clear_due: bool = False) -> dict:
+    """Patch one task's fields, in the one account/tasklist named. `clear_due` removes the due
+    date (Google wants null, not ""); reopening a task (status needsAction) clears its
+    completed time the same way."""
     if not task_id:
         return {"error": "task_id is required."}
     body = {}
@@ -1628,6 +1631,10 @@ def update_task(account_id: str, tasklist_id: str, task_id: str, *,
         body["due"] = due
     if status is not None:
         body["status"] = status
+        if status == "needsAction":
+            body["completed"] = None
+    if clear_due:
+        body["due"] = None
     if not body:
         return {"error": "No fields to update (title/notes/due/status all empty)."}
     return _one_task_write(account_id, tasklist_id, task_id, body)
