@@ -14,6 +14,8 @@ What never reaches the index:
   egress gate, the tool-output redactor and the conversation store share). If
   that module cannot be loaded, nothing is indexed: the index fails closed.
 * **Off-the-record turns**, and messages that are not conversation turns.
+* **Turns taken out by forget-person** (``forget_turns``): their ids are kept
+  in ``forgotten`` so a rebuild from the transcripts never brings them back.
 
 Deleting is total and immediate: ``delete_message`` removes the line from the
 transcript, this index, Friday's vector memory (ChromaDB) and the chat mirror
@@ -94,6 +96,7 @@ def _connect() -> sqlite3.Connection:
             role TEXT, via TEXT, sent_to TEXT);
         CREATE INDEX IF NOT EXISTS msgs_cid ON msgs(cid);
         CREATE TABLE IF NOT EXISTS superseded(mid TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS forgotten(mid TEXT PRIMARY KEY);
         CREATE VIRTUAL TABLE IF NOT EXISTS msgs_fts USING fts5(text, tokenize='porter unicode61');
         """)
     try:
@@ -119,6 +122,10 @@ def _indexable(m: dict) -> bool:
 
 def _insert(conn, cid: str, m: dict) -> bool:
     if not _indexable(m):
+        return False
+    # A turn taken out by forget-person stays out: a rebuild or a resync from
+    # the transcript (which keeps it) never indexes it again (forget_turns).
+    if conn.execute("SELECT 1 FROM forgotten WHERE mid=?", (str(m["id"]),)).fetchone():
         return False
     text = _clean(m["text"])
     if text is None or not text.strip():
@@ -404,6 +411,42 @@ def mark_superseded(mids, on: bool = True) -> int:
         finally:
             conn.close()
     return len(mids)
+
+
+def forget_turns(match, mids: Iterable[str] = (), apply: bool = True) -> Dict[str, Any]:
+    """Forget-person (services/forget_derived, NS-15.7-2): the indexed turns
+    whose text `match` accepts, and the transcript message ids `mids`, leave
+    this index and stay out of it (the `forgotten` table survives a rebuild,
+    like `superseded`). The transcript itself is not touched. With
+    `apply=False` only counts. Returns {"removed", "mids", "dates"}."""
+    extra = {str(m) for m in (mids or ()) if str(m or "").strip()}
+    if not _path().exists() and not extra:
+        return {"removed": 0, "mids": [], "dates": []}
+    with _LOCK:
+        conn = _connect()
+        try:
+            hits = []
+            for mid, ts, text in conn.execute(
+                    "SELECT m.mid, m.ts, f.text FROM msgs m JOIN msgs_fts f ON f.rowid = m.id"):
+                if text and match(text):
+                    hits.append((str(mid), ts))
+            indexed = {h[0] for h in hits}
+            for mid in extra:
+                row = conn.execute("SELECT ts FROM msgs WHERE mid=?", (mid,)).fetchone()
+                if row and mid not in indexed:
+                    hits.append((mid, row[0]))
+                    indexed.add(mid)
+            removed = len(indexed)
+            if apply:
+                for mid in indexed:
+                    _delete_mid(conn, mid)
+                conn.executemany("INSERT OR IGNORE INTO forgotten(mid) VALUES(?)",
+                                 [(m,) for m in sorted(indexed | extra)])
+                conn.commit()
+        finally:
+            conn.close()
+    dates = sorted({datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d") for _m, ts in hits if ts})
+    return {"removed": removed, "mids": sorted(indexed), "dates": dates}
 
 
 def _snippet(text: str, terms: Iterable[str]) -> str:

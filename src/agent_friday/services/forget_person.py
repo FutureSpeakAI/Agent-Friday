@@ -41,8 +41,16 @@ silently rewriting them would be a different and much worse product, and it
 would corrupt the record of the user's own life to satisfy a request about
 someone else's.
 
+What WAS derived from the conversations is removed (services/forget_derived,
+NS-15.7-2): the turns that name the person leave the recall indexes (vector
+memory and conversation search) so they are never recalled again, the day
+summaries made from them are written again without them, the graph drops
+what those turns supported, and memory-card lines and suggestions naming them
+go. The transcript stays, and the receipt lists it as retained.
+
 So ``find()`` reports which source documents still mention the person, the
-receipt from ``forget()`` carries that list, and the UI shows it. The user is
+receipt from ``forget()`` carries that list and a per-store row (``stores``:
+removed / not removable / retained for integrity), and the UI shows it. The user is
 told exactly what was removed and exactly what remains, and can decide about
 their own notes themselves. A receipt that implied more than that would make a
 liar of whoever showed it to the person who asked.
@@ -446,23 +454,67 @@ def forget(name: str) -> dict:
         # 6. Every other store that names a person registers with the forget
         #    registry (research notes, learned sender signals, the trust
         #    evidence log); a store missing from it is a bug, not a survivor.
+        #    Since NS-15.7-2 that includes what was derived from conversations
+        #    (services/forget_derived): the recall indexes, day summaries, the
+        #    graph's conversation-sourced nodes and the memory card.
+        registry_rows = []
         try:
             from agent_friday.services import forget_registry as _fr
-            for store, count in _fr.purge_all(names, emails).items():
+            registry_rows = _fr.purge_all_detailed(names, emails)
+            for store, count in _fr.counts(registry_rows).items():
                 removed[store] = count
         except Exception as e:
             removed["registry_error"] = ExceptionText(str(e)[:200])
 
+        remaining = _sources_mentioning(names)
         return {
             "name": name,
             "removed": removed,
             # Named plainly. The user is going to repeat this to the person who
             # asked, and it must not imply a completeness we do not have.
-            "remaining_sources": _sources_mentioning(names),
+            "remaining_sources": remaining,
+            # The deletion receipt (NS-15.7-3): every store, with what was
+            # removed, what could not be, and what is kept on purpose and why.
+            "stores": _receipt_rows(removed, registry_rows, remaining),
             "note": ("Your own wiki pages and conversation history were not "
-                     "changed. Those are your notes, in your words. Friday will "
-                     "not build records about this person again."),
+                     "changed. Those are your notes, in your words; the "
+                     "conversations no longer come back in recall, search or "
+                     "summaries. Friday will not build records about this "
+                     "person again."),
         }
+
+
+def _receipt_rows(removed: dict, registry_rows: list, remaining: list) -> list:
+    """One row per store: removed (count and kind), not removable (why),
+    retained for integrity (why). Counts only, never the content."""
+    def row(store, n, kind, not_removable=(), retained=()):
+        return {"store": store, "removed": int(n or 0), "kind": kind,
+                "not_removable": list(not_removable), "retained": list(retained)}
+    timeline_err = removed.get("timeline_error")
+    rows = [
+        row("people_graph", removed.get("people_graph"), "contact records"),
+        row("kg_entities", removed.get("kg_entities"), "knowledge-graph entities"),
+        row("kg_relationships", removed.get("kg_relationships"), "knowledge-graph links"),
+        row("kg_reports_scrubbed", removed.get("kg_reports_scrubbed"),
+            "community summaries with the name taken out"),
+        row("relationship_timeline",
+            int(removed.get("timeline_removed") or 0) + int(removed.get("timeline_edited") or 0)
+            + int(removed.get("follow_ups_removed") or 0),
+            "timeline entries and follow-ups",
+            [{"what": "relationship timeline", "reason": str(timeline_err)}] if timeline_err else ()),
+    ]
+    rows += [dict(r) for r in registry_rows]
+    if removed.get("registry_error"):
+        rows.append(row("other_stores", 0, "records",
+                        [{"what": "the stores registered for forgetting",
+                          "reason": str(removed["registry_error"])}]))
+    rows.append(row("wiki_notes", 0, "notes", (),
+                    [{"what": "your own wiki pages that mention them", "count": len(remaining),
+                      "reason": "your notes, in your words: Friday does not rewrite them"}]
+                    if remaining else ()))
+    for r in rows:
+        r.pop("error", None)
+    return rows
 
 
 def unforget(name: str) -> dict:

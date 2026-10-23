@@ -43098,6 +43098,19 @@ function ContactsWS() {
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: '#999', lineHeight: 1.5 }
       }, forgetReceipt.note),
+      Array.isArray(forgetReceipt.stores) && forgetReceipt.stores.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 11, color: '#bbb', marginTop: 6, lineHeight: 1.5 }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: { fontWeight: 600, color: '#ddd', marginBottom: 2 }
+      }, "Deletion receipt"),
+        forgetReceipt.stores.map((s, i) => /*#__PURE__*/React.createElement("div", { key: s.store || i },
+          (s.removed || 0) + " " + (s.kind || s.store) + " removed",
+          (s.not_removable || []).map((x, j) => /*#__PURE__*/React.createElement("div", {
+            key: 'n' + j, style: { color: '#ff6b6b', paddingLeft: 10 }
+          }, "Not removable: " + x.what + " (" + x.reason + ")")),
+          (s.retained || []).map((x, j) => /*#__PURE__*/React.createElement("div", {
+            key: 'r' + j, style: { color: '#f59e0b', paddingLeft: 10 }
+          }, "Kept: " + (x.count != null ? x.count + " " : "") + x.what + " (" + x.reason + ")"))))),
       forgetReceipt.remaining_sources && forgetReceipt.remaining_sources.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: '#f59e0b', marginTop: 6, lineHeight: 1.5 }
       }, "Still mentioned in your own notes: ",

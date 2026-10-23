@@ -599,6 +599,31 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
     return {**res, "ok": True, "decided": "approved" if approve else "discarded"}
 
 
+# ── forget-person (services/forget_derived, NS-15.7-2) ───────────────────────
+def forget_matching(match, apply: bool = True) -> Dict[str, int]:
+    """Lines on the card, queued suggestions and journal rows whose text
+    `match` accepts. Forgetting a person is the owner's own action, so the
+    lines go at once (no review card), as an owner delete does: no copy is
+    left in the journal or the queue. With `apply=False` only counts.
+    Returns {"lines", "pending", "journal"}."""
+    out = {"lines": 0, "pending": 0, "journal": 0}
+
+    def _names(r) -> bool:
+        return any(match(str(r.get(k) or "")) for k in ("text", "old", "before", "after", "reason"))
+    with _LOCK:
+        for key, p in (("pending", _pending_path()), ("journal", _journal_path())):
+            rows = _read_jsonl(p)
+            keep = [r for r in rows if not _names(r)]
+            out[key] = len(rows) - len(keep)
+            if apply and len(keep) != len(rows):
+                _write_jsonl(p, keep)
+        for t in TARGETS:
+            for line in [e for e in entries(t) if match(e)]:
+                if not apply or remove(t, line, actor="owner").get("ok"):
+                    out["lines"] += 1
+    return out
+
+
 # ── one-time move of the old fact list ────────────────────────────────────────
 _MIGRATION_CHECKED: Dict[str, bool] = {}
 

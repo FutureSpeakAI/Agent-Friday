@@ -679,6 +679,28 @@ class ConversationMemory:
             print(f"  [MEMORY] delete failed (non-fatal): {e}")
         return removed
 
+    def matching(self, predicate):
+        """Every stored turn whose text `predicate` accepts, as
+        [{id, text, date}]; None when the store cannot be read. For
+        forget-person (services/forget_derived), which then delete()s them."""
+        if not self._ensure():
+            return None
+        try:
+            with self._lock:
+                res = self._collection.get(include=["documents", "metadatas"])
+        except Exception as e:
+            print(f"  [MEMORY] matching failed (non-fatal): {e}")
+            return None
+        out = []
+        for did, doc, meta in zip(res.get("ids") or [], res.get("documents") or [],
+                                  res.get("metadatas") or []):
+            if doc and predicate(doc):
+                meta = meta or {}
+                out.append({"id": did, "text": doc,
+                            "date": meta.get("date") or str(meta.get("timestamp") or "")[:10]
+                            or meta.get("session_id")})
+        return out
+
     def get_session(self, session_id, limit=500):
         """Return every stored turn for one conversation, oldest-first.
 
