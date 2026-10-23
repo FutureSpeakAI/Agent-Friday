@@ -166,3 +166,12 @@ def test_undoing_friday_s_change_keeps_the_owner_s_messages(world):
     assert added["ok"]
     assert cm.undo(added["change_id"])["ok"]
     assert said in _recalled_ids(mem, "sailing boat wren harwich marina")
+
+
+def test_the_card_can_only_put_back_what_a_card_correction_retired(world):
+    mem = world
+    cid = cv.create("Berth")["id"]
+    other = _said(mem, cid, "The berth number is 12 on the east pontoon.")
+    mem.supersede([other], "corrected elsewhere")
+    assert cm.restore_superseded([other]) == 0
+    assert other not in _recalled_ids(mem, "berth number east pontoon")
