@@ -504,6 +504,8 @@ def fetch(url: str, *, timeout: float = 15) -> Page:
     """Fetch and read one page through the SSRF-guarded fetcher. Raises on a
     refused URL (web_safety.UnsafeURLError), a network error or an HTTP
     error status."""
+    from agent_friday.services.cloud_intent import hold_outbound
+    hold_outbound("web_fetch", "page_reader")       # A16a: raises RouteNotChosen
     from agent_friday.services.web_safety import safe_get
     resp = safe_get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0 FridayAgent/1.0"})
     resp.raise_for_status()

@@ -3207,6 +3207,14 @@ def _url_head_ok(url):
     except Exception:
         pass
     try:
+        from agent_friday.services.cloud_intent import outbound_held
+        if outbound_held("web_fetch", "open_url probe"):
+            # A16a: Friday does not reach the page itself before a route is
+            # chosen; the person's own browser opening it is their action.
+            return True, "route not chosen — reachability skipped"
+    except Exception:
+        pass
+    try:
         import requests as _req
         _hdrs = {'User-Agent': 'Mozilla/5.0 FridayAgent/1.0'}
         resp = _req.head(url, timeout=6, allow_redirects=True, headers=_hdrs)
@@ -15534,10 +15542,59 @@ def _hook_cost_attribution(ctx, result):
     return result
 
 
+#: Tools that reach the web or an add-on connector (north-star A16a). Before
+#: the owner chooses where Friday thinks they are refused with the "Choose
+#: where Friday thinks" sentence. Every MCP tool (`mcp_*`) is held too. The
+#: services they call hold as well; this gives the model a plain refusal.
+_ROUTE_HELD_KIND = {
+    # web search
+    "search_web": "web_search", "deep_research": "web_search", "search_news": "web_search",
+    # reading web pages
+    "browse_web": "web_fetch", "web_task_start": "web_fetch",
+    "browser_open": "web_fetch", "browser_read": "web_fetch", "browser_click": "web_fetch",
+    "browser_type": "web_fetch", "browser_select": "web_fetch", "browser_scroll": "web_fetch",
+    "career_scan": "web_fetch", "career_run_script": "web_fetch",
+    # add-on connectors: Google (mail, calendar, drive, contacts), social
+    # posting, website hosting and domains
+    "search_email": "connector", "organize_email": "connector", "draft_email": "connector",
+    "search_drive": "connector", "read_doc": "connector", "search_contacts": "connector",
+    "save_google_contact": "connector",
+    "query_calendar": "connector", "find_calendar_events": "connector",
+    "create_calendar_event": "connector", "update_calendar_event": "connector",
+    "delete_calendar_event": "connector", "annotate_calendar_events": "connector",
+    "organize_calendar": "connector", "find_free_slots": "connector",
+    "hold_slots": "connector", "book_slot": "connector", "release_holds": "connector",
+    "content_post_status": "connector", "publish_artifact": "connector",
+    "site_action": "connector", "domain_action": "connector",
+}
+ROUTE_HELD_TOOLS = frozenset(_ROUTE_HELD_KIND)
+
+
+def _route_held_tool(name: str) -> bool:
+    n = str(name or "")
+    return n in ROUTE_HELD_TOOLS or n.startswith("mcp_")
+
+
+def _hook_route_not_chosen(ctx):
+    """North-star A16a: no web search, web page or add-on connector before
+    the owner chooses where Friday thinks. Pre, priority 2, critical."""
+    if not _route_held_tool(ctx.tool_name):
+        return _hooks.ALLOW
+    from agent_friday.services.cloud_intent import outbound_held
+    kind = _ROUTE_HELD_KIND.get(str(ctx.tool_name), "connector")
+    held = outbound_held(kind, ctx.tool_name)
+    if held:
+        return _hooks.DENY(f"[NOT RUN] {held}")
+    return _hooks.ALLOW
+
+
 def _register_builtin_tool_hooks():
     """Register the built-in hooks once, at import time."""
     _hooks.register_pre_hook(_hook_governance, name="governance_rings",
                              priority=1, critical=True)
+    # Critical: the owner's ruling (A16a) cannot be switched off or fail open.
+    _hooks.register_pre_hook(_hook_route_not_chosen, name="route_not_chosen",
+                             priority=2, critical=True)
     _hooks.register_post_hook(_hook_taint_record, name="taint_record",
                               priority=85, critical=True)
     # Critical: the yes/no question for outward actions is part of the
@@ -16086,6 +16143,31 @@ def _mcp_boot() -> None:
                   len(mgr.servers), len(enabled))
     except Exception as e:  # noqa: BLE001
         _log.warning("MCP boot failed: %s", e)
+
+
+def _mcp_resume_after_route_pick() -> bool:
+    """North-star A16a: the owner just chose where Friday thinks. Start the
+    add-on connectors that were waiting for it. True when a start was kicked."""
+    mgr = _MCP_MANAGER
+    if mgr is None:
+        return False
+    try:
+        from agent_friday.mcp_client import WAITING_FOR_ROUTE
+        # Claimed under the manager's lock, so two quick picks (the consent
+        # screen, then Settings) cannot start the same server twice.
+        with mgr._lock:
+            waiting = [n for n, s in mgr.servers.items() if s.status == WAITING_FOR_ROUTE]
+            for n in waiting:
+                mgr.servers[n].status = "starting"
+    except Exception:
+        return False
+    if not waiting:
+        return False
+    for name in waiting:
+        threading.Thread(target=mgr._start_one, args=(name, _mcp_register_server_tools),
+                         name=f"mcp-{name}-start", daemon=True).start()
+    _log.info("MCP client: a route was chosen; starting %d waiting connector(s)", len(waiting))
+    return True
 
 
 def _mcp_reload() -> dict:

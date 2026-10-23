@@ -23,7 +23,10 @@ def _digest(root: Path) -> dict:
     out = {}
     for p in sorted(root.rglob("*")):
         # Media's own files and the credentials it writes are new files, never rewrites of an original.
-        if p.is_file() and p.name != "index.sqlite" and "media" not in p.parts and "provenance" not in p.parts and not p.name.endswith(("-shm", "-wal")):
+        # install_choices.json is Friday's own install record, not a person's file: the first
+        # settings read of an install records the daily-cap card's state there (north-star A17),
+        # and in this test that read can fall inside the indexing.
+        if p.is_file() and p.name not in ("index.sqlite", "install_choices.json") and "media" not in p.parts and "provenance" not in p.parts and not p.name.endswith(("-shm", "-wal")):
             out[str(p.relative_to(root))] = hashlib.sha1(p.read_bytes()).hexdigest()
     return out
 

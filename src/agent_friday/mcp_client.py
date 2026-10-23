@@ -64,6 +64,20 @@ _HTTP_PROTOCOL_VERSION = "2025-06-18"
 _DEFAULT_START_TIMEOUT = 30.0   # seconds to wait for initialize + tools/list
 _DEFAULT_CALL_TIMEOUT = 120.0   # seconds to wait for a single tools/call reply
 
+#: A server's status while it waits for the owner to choose where Friday
+#: thinks (north-star A16a): configured, not started.
+WAITING_FOR_ROUTE = "waiting_for_route"
+
+
+def _route_held(what: str) -> str:
+    """The A16a refusal sentence while no route is chosen, else "". This
+    module must import without the app, so a missing cloud_intent holds nothing."""
+    try:
+        from agent_friday.services.cloud_intent import outbound_held
+    except Exception:
+        return ""
+    return outbound_held("connector", what)
+
 # `for raw in proc.stdout:`/`for raw in proc.stderr:` has no per-line size
 # cap -- a malicious or buggy MCP server that never emits a newline (or
 # sends one enormous JSON-RPC line) gets read into a single, unboundedly
@@ -1055,7 +1069,17 @@ class MCPManager:
 
     def start_all(self, on_ready: Callable[[str, list[dict]], None] | None = None) -> None:
         """Start every enabled server in its own thread. on_ready(name, tools)
-        fires per-server as each handshake completes. Returns immediately."""
+        fires per-server as each handshake completes. Returns immediately.
+
+        North-star A16a: before the owner chooses where Friday thinks, no
+        add-on connector starts (a stdio server may download or reach the
+        internet; an HTTP one is remote). Each waits as "waiting_for_route"
+        and starts once a route is chosen (agent._mcp_resume_after_route_pick)."""
+        if _route_held("start"):
+            for name, sp in list(self.servers.items()):
+                if sp.status != "disabled":
+                    sp.status = WAITING_FOR_ROUTE
+            return
         for name, sp in list(self.servers.items()):
             if sp.status == "disabled":
                 continue
@@ -1069,6 +1093,9 @@ class MCPManager:
     def _start_one(self, name: str, on_ready) -> None:
         sp = self.servers.get(name)
         if sp is None:
+            return
+        if _route_held("start " + name):
+            sp.status = WAITING_FOR_ROUTE
             return
         if sp.start() and on_ready:
             try:
@@ -1088,6 +1115,8 @@ class MCPManager:
             # did not, so the single most natural remediation an operator
             # reaches for after seeing a blocked connector's status actually
             # started it for real.
+            return False
+        if _route_held("restart " + name):
             return False
         sp.stop()
         if isinstance(sp, MCPServerHTTP):
@@ -1113,6 +1142,9 @@ class MCPManager:
                                           "it does not use OAuth"}
         if sp.status == "disabled":
             return {"ok": False, "error": f"server '{name}' is disabled"}
+        _held = _route_held("authorize " + name)
+        if _held:
+            return {"ok": False, "error": _held, "route_not_chosen": True}
 
         def _done(server_name: str, success: bool) -> None:
             if not success:
@@ -1143,6 +1175,9 @@ class MCPManager:
             return f"[mcp error] no such server: {server}"
         if sp.status == "disabled":
             return f"[mcp error] server '{server}' is disabled"
+        _held = _route_held(f"call {server}.{tool}")
+        if _held:
+            return f"[NOT RUN] {_held}"
         out = sp.call_tool(tool, arguments, timeout=timeout)
         # §26.7: every call to a tool server is in the egress ledger and on the
         # privacy map, whichever path made it: where it went, and the

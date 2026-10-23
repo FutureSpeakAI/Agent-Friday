@@ -173,6 +173,8 @@ def _record(url: str, result, content=None) -> None:
 
 def _fetch(url: str, data: str | None = None) -> str:
     """GET through the SSRF guard; POST only to Google's fixed exchange endpoint."""
+    from agent_friday.services.cloud_intent import hold_outbound
+    hold_outbound("web_fetch", "news link")         # A16a: raises RouteNotChosen
     if data is None:
         from agent_friday.services.web_safety import safe_get
         try:
