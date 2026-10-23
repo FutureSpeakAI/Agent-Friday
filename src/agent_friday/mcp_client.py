@@ -168,6 +168,10 @@ class _Pending:
         self.error: dict | None = None
 
 
+class IsolationCannotRun(RuntimeError):
+    """An isolated connector's program cannot run in Windows' isolated mode on this PC."""
+
+
 class MCPServerProcess:
     """One MCP server subprocess and its stdio JSON-RPC channel."""
 
@@ -277,17 +281,62 @@ class MCPServerProcess:
         # cannot be made the server does not run.
         contained = sys.platform == "win32"
         from agent_friday.services import code_sandbox as _sbx
-        # "isolation": "appcontainer" (the server's own config): Windows' fully
-        # isolated mode, no network at all and only its own folder. It runs in its
-        # own job already; if isolation cannot be set up, the server does not run.
-        if str(self.network.get("isolation") or "").lower() == "appcontainer":
+        # "isolation": "appcontainer" (the server's own config; the default for a new
+        # connector, A25): Windows' fully isolated mode. Its own folder, the folders it
+        # declares, and the internet when it lists any site (allow_hosts): Windows
+        # opens the whole internet then, and the sites are NOT checked one by one,
+        # since this PC's loopback, so Friday's proxy, is closed to it. It runs in its
+        # own job already; if isolation cannot be set up, it does not run. Elsewhere
+        # than Windows the mode does not exist and the server runs as before.
+        from agent_friday.services import appcontainer as _ac_mod
+        if self.isolated and _ac_mod.available():
             from pathlib import Path
             from agent_friday.services import appcontainer as _ac
-            own = _own_workdir(self.name)
-            if self.cwd and Path(self.cwd).resolve() != own.resolve():
+            # A folder of its own INSIDE its work folder: what it writes while isolated
+            # (a project .npmrc, say) is never in the folder it runs in unisolated.
+            own = _own_workdir(self.name) / "isolated"
+            own.mkdir(parents=True, exist_ok=True)
+            if isinstance(self.network.get("allow_hosts"), list) and self.network.get("allow_hosts"):
+                self._log(f"[mcp:{self.name}] isolated with internet access: the sites it lists "
+                          f"are not checked one by one (Friday's proxy is closed to isolated apps)")
+            # The proxy's address is unreachable from inside: no proxy variables.
+            if self._proxy_token:
+                try:
+                    from agent_friday.services import egress_proxy as _ep2
+                    _ep2.close_session(self._proxy_token)
+                except Exception:
+                    pass
+                self._proxy_token = None
+            for k in [k for k in full_env if k.upper() in (
+                    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                    "NPM_CONFIG_PROXY", "NPM_CONFIG_HTTPS_PROXY")]:
+                del full_env[k]
+            # Package runners keep their caches and settings in its own folder, never
+            # the owner's (npx, uvx).
+            for k, sub in (("npm_config_cache", ".npm-cache"), ("npm_config_userconfig", ".npmrc"),
+                           ("UV_CACHE_DIR", ".uv-cache"), ("UV_TOOL_DIR", ".uv-tools"),
+                           ("UV_PYTHON_INSTALL_DIR", ".uv-python"), ("PIP_CACHE_DIR", ".pip-cache")):
+                if not any(x.upper() == k.upper() for x in env):
+                    full_env[k] = str(own / sub)
+            if self.cwd and Path(self.cwd).resolve() not in (own.resolve(), own.parent.resolve()):
                 # It works in the folder Friday made for it; other folders are declared.
                 raise RuntimeError("an isolated server runs in its own folder; remove its "
                                    "'cwd' and declare other folders under 'folders'")
+            # A Node.js installed for this account only (the safe fix A25 offers) is
+            # used for an isolated add-on even when an all-users Node.js comes first on
+            # PATH: the all-users one usually shuts isolated apps out.
+            from agent_friday.services import connector_isolation as _ci
+            # Only when the program found first cannot run isolated: a working one is
+            # never replaced by whatever sits in the per-user folder.
+            mine = (_ci.per_user_node_program(cmd[0])
+                    if _ac.readable_by_containers(cmd[0]) is False else None)
+            if mine is not None:
+                self._log(f"[mcp:{self.name}] isolated with the Node.js installed for this "
+                          f"account: {mine}")
+                cmd = [str(mine), *cmd[1:]]
+                full_env["PATH"] = str(mine.parent) + os.pathsep + full_env.get(
+                    "PATH", full_env.get("Path", ""))
+                full_env.pop("Path", None)
             # Its own folder, the folders it declares (judged like Friday's file
             # tools), and read on its own program. Anything refused: it does not run.
             from agent_friday.services import connector_folders as _cf
@@ -299,7 +348,43 @@ class MCPServerProcess:
             # Exactly these, to this server's identity alone; anything given before
             # and no longer declared is taken back first.
             _ac.set_server_access(profile, read=reads, write=[own, *writes])
-            self.proc = _ac.start(cmd, cwd=str(own), env=full_env, profile=profile)
+            # Its program must be one an isolated app may run. Some installers (Node.js
+            # under Program Files, for one) shut app containers out, and only an
+            # administrator can change that: said plainly instead of a cryptic failure.
+            try:
+                sid_text = _ac._sid_text(profile)
+            except Exception:
+                sid_text = None
+            if _ac.readable_by_containers(cmd[0], sid_text) is False:
+                # One clear card with the two ways on (A25): the safe fix, or running it
+                # un-isolated by a press on this PC (recorded in the action ledger).
+                if _ci.runtime_state(self.name, cmd[0]) == "declined":
+                    where = (str(_ci.per_user_node_dir()) if _ci.is_node_program(cmd[0])
+                             else "a folder under your own user folder")
+                    raise IsolationCannotRun(
+                        f"{self.name} is kept isolated, as you chose, and its program ({cmd[0]}) "
+                        f"cannot run isolated on this PC. It will start once the program is "
+                        f"installed for your account only (in {where}). If you change your "
+                        f"mind, remove {self.name} and add it again: Friday will show the "
+                        f"choice again.")
+                try:
+                    _ci.offer_runtime_choice(self.name, cmd[0],
+                                             {"command": self.command, "args": self.args,
+                                              "env": self.env, "cwd": self.cwd})
+                except Exception as _e:  # noqa: BLE001
+                    self._log(f"[mcp:{self.name}] could not raise the isolation card: {_e}")
+                fix = ("install Node.js for your account only (a card in Friday shows how)"
+                       if _ci.is_node_program(cmd[0]) else
+                       "install the program for your account only")
+                raise IsolationCannotRun(
+                    f"{self.name} could not start in isolated mode: Windows' isolated mode "
+                    f"cannot run its program ({cmd[0]}) on this PC, because it was installed "
+                    f"in a way that shuts isolated apps out, and only an administrator can "
+                    f"change that. A card in Friday offers two ways on: {fix}, which is the "
+                    f"safe fix, or run {self.name} un-isolated, with its risk spelled out.")
+            hosts = self.network.get("allow_hosts")
+            self.proc = _ac.start(cmd, cwd=str(own), env=full_env, profile=profile,
+                                  network=bool(isinstance(hosts, list) and hosts))
             self._job = None
             self._reader = threading.Thread(
                 target=self._read_loop, name=f"mcp-{self.name}-reader", daemon=True)
@@ -351,6 +436,35 @@ class MCPServerProcess:
             target=self._drain_stderr, name=f"mcp-{self.name}-stderr", daemon=True
         ).start()
 
+    def _isolation_applies(self) -> bool:
+        try:
+            from agent_friday.services import appcontainer as _a
+            return self.isolated and _a.available()
+        except Exception:
+            return False
+
+    @property
+    def isolated(self) -> bool:
+        """Configured for Windows' fully isolated mode (A25: the default for a new
+        connector; "off" or a missing key on an older one means not; an unclear
+        value means isolated, the safer mode)."""
+        if "isolation" not in self.network:
+            return False
+        return str(self.network.get("isolation")).strip().lower() not in ("off", "false", "no")
+
+    def _isolation_help(self, what: str) -> str:
+        """A failure under isolation in plain words, with how to give it what it needs."""
+        from pathlib import Path as _P
+        example = str(_P.home() / "Documents" / "Notes").replace("\\", "/")
+        return (f"{self.name} {what} while running in isolated mode (it can reach only its own "
+                f"folder and the folders it lists, and the internet only if it lists a site). "
+                f"If it needs your files, list them in its settings under \"folders\", "
+                f"for example \"folders\": [\"{example}\"], or "
+                f"{{\"path\": \"{example}\", \"write\": true}} to let it change them. If it needs "
+                f"the internet, list the sites it uses under \"allow_hosts\" (in isolated mode "
+                f"that opens the internet to it; the sites are not checked one by one). Or set "
+                f"\"isolation\": \"off\" for it to run as before.")
+
     def start(self, timeout: float = _DEFAULT_START_TIMEOUT) -> bool:
         """Launch the process and run the MCP handshake. Returns True when the
         server is ready (tools discovered). Safe to call repeatedly."""
@@ -365,7 +479,11 @@ class MCPServerProcess:
             except Exception as e:  # noqa: BLE001 — surface any spawn failure
                 self.status = "error"
                 self.error = f"spawn failed: {e}"
-                self._log(f"[mcp:{self.name}] spawn failed: {e}")
+                if isinstance(e, IsolationCannotRun):
+                    self.error = str(e)
+                elif self._isolation_applies():
+                    self.error = self._isolation_help("could not start") + f" (Details: {e})"
+                self._log(f"[mcp:{self.name}] spawn failed: {self.error}")
                 return False
 
             try:
@@ -393,6 +511,9 @@ class MCPServerProcess:
                 self.status = "error"
                 tail = " | ".join(list(self._stderr_tail)[-3:])
                 self.error = f"{e}" + (f" (stderr: {tail})" if tail else "")
+                if self._isolation_applies():
+                    self.error = (self._isolation_help("started but did not answer")
+                                  + f" (Details: {self.error})")
                 self._log(f"[mcp:{self.name}] handshake failed: {self.error}")
                 self.stop()
                 return False
@@ -1189,9 +1310,8 @@ class MCPManager:
                     # Keep a stopped placeholder so status() still lists it.
                     sp.status = "disabled"
                 self.servers[name] = sp
-            isolated = [n for n, s in (servers or {}).items()
-                        if isinstance(s, dict) and not s.get("url")
-                        and str(s.get("isolation") or "").lower() == "appcontainer"]
+            from agent_friday.services import connector_isolation as _ci
+            isolated = [n for n, s in (servers or {}).items() if _ci.is_isolated(s)]
         # A server removed from the config, or no longer isolated, keeps nothing it
         # was given: its folders are taken back and its identity deleted.
         try:
