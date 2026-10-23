@@ -82,7 +82,8 @@ def test_export_gives_whole_entries_and_the_verification_report(client):
 def _press():
     from agent_friday import core
     return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-            "X-Friday-Token": core._current_api_token()}
+            "X-Friday-Token": core._current_api_token(),
+            "X-Friday-Desk": __import__("agent_friday.services.desk_press", fromlist=["x"])._KEY}
 
 
 def test_retention_is_two_years_by_default_and_changed_on_this_pc_only(client):

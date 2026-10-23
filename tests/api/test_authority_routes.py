@@ -8,7 +8,8 @@ from __future__ import annotations
 def _press():
     from agent_friday.core import _current_api_token
     return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-            "X-Friday-Token": _current_api_token()}
+            "X-Friday-Token": _current_api_token(),
+            "X-Friday-Desk": __import__("agent_friday.services.desk_press", fromlist=["x"])._KEY}
 
 
 def test_revoke_needs_the_owners_page_and_restore_needs_this_pc(client):
