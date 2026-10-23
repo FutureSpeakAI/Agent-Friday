@@ -1,0 +1,186 @@
+name: clean-machine
+
+# The clean-machine matrix (north star §34.3): the setup program installed on
+# machines that have never seen Friday, in the situations a release must
+# survive beyond the fresh-install job. Every leg runs on a fresh
+# GitHub-hosted Windows VM and uninstalls what it installed.
+#
+#   windows-2022 / windows-2025   the full fresh-install check
+#                  (verify-clean-install.ps1) on two Windows images (§34.3-1).
+#                  Hosted runners are Windows Server; Windows 10 and 11 client
+#                  SKUs are not available, which the evidence record says.
+#   memory-cap     Friday's server and everything it starts capped at
+#                  MEMORY_CAP_MIB of commit by a Windows job object, memory tier
+#                  skipped; it must keep serving with 10% headroom (§34.3-2)
+#   locale         a Turkish user locale (dotless i, decimal comma) (§34.3-4)
+#   standard-user  a standard, non-administrator account whose name and
+#                  profile folder are not plain ASCII (§34.3-5)
+#   evidence       one record over every leg; every leg must have installed the
+#                  same setup program (scripts/clean_machine_evidence.py) (§34.3-8)
+#
+# On a version tag installer.yml calls this workflow with the setup program its
+# build job made, and its release job waits for the evidence; a beta tag is
+# exempt from §34 (amendment A19) and only records. By hand, or on a pull
+# request that touches this matrix, it builds its own setup program first.
+
+on:
+  workflow_call:
+    inputs:
+      called:
+        description: "Called by installer.yml with its build's setup program"
+        type: boolean
+        default: false
+      report_only:
+        description: "Record the evidence without failing (beta tags, A19)"
+        type: boolean
+        default: false
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packaging/windows/tests/clean-machine/**"
+      - "packaging/windows/tests/verify-clean-install.ps1"
+      - "packaging/windows/installer/**"
+      - "packaging/windows/install.ps1"
+      - ".github/workflows/clean-machine.yml"
+      - "scripts/clean_machine_evidence.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clean-machine-${{ github.ref }}-${{ inputs.called && 'release' || 'own' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The documents name 16 GB only for the local model and give no floor for
+  # cloud use; this leg measures the first boot (memory tier skipped) under a
+  # 4 GiB commit budget. Change it here when a floor is decided.
+  MEMORY_CAP_MIB: "4096"
+
+jobs:
+  build:
+    if: ${{ inputs.called != true }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Inno Setup is available
+        shell: pwsh
+        run: |
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'Inno Setup 6 is not installed and could not be installed' }
+      - name: Build the setup program
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\build-installer.ps1 -BuildPython python
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installer
+          path: |
+            packaging/windows/dist/AgentFriday-Setup-*.exe
+            packaging/windows/dist/AgentFriday-Setup-*.exe.sha256
+          if-no-files-found: error
+
+  leg:
+    needs: build
+    if: ${{ always() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    name: leg (${{ matrix.leg }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    # A beta (A19) only records: a failing leg is in the evidence, not a block.
+    # A public release tag never sets report_only (installer.yml).
+    continue-on-error: ${{ inputs.report_only == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { leg: windows-2022,  os: windows-2022,   variant: image }
+          - { leg: windows-2025,  os: windows-2025,   variant: image }
+          - { leg: memory-cap,    os: windows-latest, variant: memory-cap }
+          - { leg: locale,        os: windows-latest, variant: locale }
+          - { leg: standard-user, os: windows-latest, variant: standard-user }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installer
+          path: artifact
+      - name: A Turkish user locale (locale leg only)
+        if: matrix.variant == 'locale'
+        shell: powershell
+        run: |
+          Set-Culture tr-TR
+          Set-WinHomeLocation -GeoId 235
+          Set-WinUserLanguageList -LanguageList tr-TR -Force
+          # A new process reads the user locale; this one keeps its own.
+          powershell -NoProfile -Command "[Globalization.CultureInfo]::CurrentCulture.Name"
+      - name: Install, first boot, uninstall (${{ matrix.leg }})
+        shell: powershell
+        run: |
+          $exe = (Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1).FullName
+          $work = Join-Path $env:RUNNER_TEMP 'clean-machine'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          [ordered]@{ leg = '${{ matrix.leg }}'; image = [string]$env:ImageOS
+                      installer_sha256 = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower() } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $work 'LEG.json') -Encoding UTF8
+          switch ('${{ matrix.variant }}') {
+            'image' {
+              powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\verify-clean-install.ps1 -Setup $exe -WorkDir $work
+            }
+            'standard-user' {
+              powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\clean-machine\run-as-standard-user.ps1 -Setup $exe -WorkDir $work
+            }
+            default {
+              powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\clean-machine\verify-clean-machine.ps1 `
+                -Setup $exe -WorkDir $work -Variant '${{ matrix.variant }}' -MemoryCapMiB ([int]$env:MEMORY_CAP_MIB) -ExpectCulture 'tr-TR'
+            }
+          }
+          exit $LASTEXITCODE
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: clean-machine-${{ matrix.leg }}
+          path: |
+            ${{ runner.temp }}/clean-machine/RESULT.json
+            ${{ runner.temp }}/clean-machine/LEG.json
+            ${{ runner.temp }}/clean-machine/*.log
+            ${{ runner.temp }}/clean-machine/*.err
+          if-no-files-found: ignore
+
+  evidence:
+    needs: [build, leg]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: clean-machine-*
+          path: legs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installer
+          path: installer
+      - name: One evidence record over every leg
+        run: |
+          want=$(cut -d' ' -f1 installer/AgentFriday-Setup-*.exe.sha256 | tr -d '\r\n' | tr 'A-F' 'a-f')
+          # Without the build's own hash every leg could have installed anything.
+          if ! [[ "$want" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the build's setup program hash is missing or malformed"; exit 1
+          fi
+          python3 scripts/clean_machine_evidence.py --dir legs --sha "${{ github.sha }}" \
+            --installer-sha256 "$want" --out evidence/clean-machine-evidence.json \
+            ${{ inputs.report_only && '--report-only' || '' }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: clean-machine-evidence
+          path: evidence/clean-machine-evidence.json
+          if-no-files-found: error
