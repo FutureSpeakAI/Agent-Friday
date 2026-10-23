@@ -107,6 +107,10 @@ def test_a_write_folder_holding_git_or_editor_settings_is_refused(home):
     assert write == [] and refused and ".git" in refused[0] and ".vscode" in refused[0]
     read, _w, _k, refused = cf.plan([str(proj)], "", [])
     assert refused == [] and proj.resolve() in _paths(read)
+    # The write folder itself may not be (or sit inside) one of those folders either.
+    for inside in (proj / ".git", proj / ".git" / "hooks", proj / "web" / ".vscode"):
+        _r, write, _k, refused = cf.plan([{"path": str(inside), "write": True}], "", [])
+        assert write == [] and refused, inside
     deep = _folder(home / "Projects" / "mono" / "packages" / "a")
     _folder(deep / ".git")
     _r, write, _k, refused = cf.plan([{"path": str(home / "Projects" / "mono"), "write": True}], "", [])
