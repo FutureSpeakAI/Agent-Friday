@@ -193,7 +193,7 @@ def test_a_waiting_card_is_withdrawn_when_the_grant_carries_out_the_change(cards
     ctx = _call("t_test_a24_wait")
     key, rec = _raise_card(cards, ctx)
     verdict, waiting = agent._run_card_prior(ctx, key)
-    assert verdict is None and waiting["approval_id"] == rec["approval_id"]
+    assert verdict is None and [w["approval_id"] for w in waiting] == [rec["approval_id"]]
     assert agent._run_card_supersede(ctx, waiting, {"grant_id": "grant_test"}) is None
     after = cards.get_approval(rec["approval_id"])
     assert after["status"] == "denied" and after["decided_by"] == "friday:superseded"
@@ -233,6 +233,34 @@ def test_a_change_re_carded_after_its_first_card_expired_is_still_done_once(card
     cards.mark_used(second["approval_id"], "approval_executor")
     verdict, _ = agent._run_card_prior(_call("t_test_a24_exp"), key)
     assert verdict is not None and "[ALREADY DONE]" in verdict.reason
+
+
+def _re_raise(ap, first, tag):
+    return ap.create_approval(
+        kind="tainted_action", subject_type="tool_action", subject_id=first["subject_id"] + ":" + tag,
+        title="Create task", action_description="create_task", description="test", force_gate=True,
+        payload=dict(first["payload"]), action_class="outward", requested_by="taint_gate")
+
+
+def test_every_waiting_card_for_the_change_is_withdrawn_and_any_no_stands(cards):
+    from agent_friday.services import agent
+    ctx = _call("t_test_a24_many")
+    key, first = _raise_card(cards, ctx)
+    cards._patch(first["approval_id"], status="expired")
+    y2, y3 = _re_raise(cards, first, "aaaaaa"), _re_raise(cards, first, "bbbbbb")
+    verdict, waiting = agent._run_card_prior(ctx, key)
+    assert verdict is None and {w["approval_id"] for w in waiting} == {y2["approval_id"], y3["approval_id"]}
+    assert agent._run_card_supersede(ctx, waiting, {"grant_id": "grant_test"}) is None
+    for y in (y2, y3):
+        assert cards.get_approval(y["approval_id"])["decided_by"] == "friday:superseded"
+
+    other = _call("t_test_a24_many2")
+    key2, f2 = _raise_card(cards, other)
+    cards._patch(f2["approval_id"], status="expired")
+    z2, z3 = _re_raise(cards, f2, "cccccc"), _re_raise(cards, f2, "dddddd")
+    cards.decide_with_outcome(z2["approval_id"], "deny", decided_by="owner:chat")
+    verdict, _ = agent._run_card_prior(other, key2)
+    assert verdict is not None and "[DECLINED]" in verdict.reason, "a no on any card for it stands"
 
 
 def test_a_card_held_at_the_checkpoint_is_not_reported_as_done(cards):
