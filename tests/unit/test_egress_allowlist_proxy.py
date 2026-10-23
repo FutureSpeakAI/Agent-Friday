@@ -24,11 +24,15 @@ import urllib.request
 
 import pytest
 
-from agent_friday.services import egress_proxy as ep
+try:
+    from agent_friday.services import egress_proxy as ep
+except ImportError:          # the old tree: every test fails by assertion, not at collection
+    ep = None
 
 
 @pytest.fixture(autouse=True)
 def _fresh():
+    assert ep is not None, "no egress proxy on this tree (services/egress_proxy)"
     ep._shutdown_for_tests()
     yield
     ep._shutdown_for_tests()
@@ -193,7 +197,15 @@ def test_a_connector_server_is_sent_through_its_own_session(monkeypatch):
     monkeypatch.setattr(mc.subprocess, "Popen", P)
     monkeypatch.setattr(mc, "_REAL_POPEN", P)
     monkeypatch.setattr(mc, "sys", types.SimpleNamespace(platform="linux"))
-    monkeypatch.setattr(mc.threading, "Thread", lambda *a, **k: type("T", (), {"start": lambda self: None})())
+    # The server's reader threads are not started; only mcp_client's view of threading is
+    # replaced (patching threading.Thread itself would also stop the proxy's own thread).
+    import threading as _real_threading
+    fake_threading = types.SimpleNamespace(**{k: getattr(_real_threading, k) for k in dir(_real_threading)
+                                              if not k.startswith("__")})
+    fake_threading.Thread = lambda *a, **k: type("T", (), {"start": lambda self: None,
+                                                           "is_alive": lambda self: False,
+                                                           "join": lambda self, *x: None})()
+    monkeypatch.setattr(mc, "threading", fake_threading)
     monkeypatch.setattr(connector_secrets, "decrypt_env", lambda env: env)
     sp = mc.MCPServerProcess(name="srv", command="node", args=[],
                              env={"HTTPS_PROXY": "http://somewhere-else:8080"},
