@@ -374,6 +374,7 @@ precedence over both.
 | `workspace_layouts` | `{}` | Workspaces you set to fill the screen with the chat tray docked beside them. |
 | `held_features` | `federation` and `trust_agents` off | Features held back from this release. While a switch is off, nothing offers the feature. |
 | `studio_dazzle` | `"full"` | 3D intensity: `off`, `subtle` or `full`. |
+| `render_3d` | `true` | `false` turns every 3D view off: no WebGL at all, flat views only. |
 | `tracking` | parallax and depth 1.0; pinch to click; snap on | Camera head and hand tracking tuning, including the hand cursor's gain, region, dwell time and magnetic snap. |
 | `camera_interval_sec` | `3` | Camera capture interval: 1, 3 or 5 seconds. |
 | `audio_input_device_id`, `audio_output_device_id` | `""` | Preferred microphone and speaker. |

@@ -5195,7 +5195,7 @@ function KnowledgeGraphWS(props){
 
   useEffect(()=>{
     const mount=mountRef.current;
-    if(!mount||typeof THREE==='undefined')return;
+    if(!mount||typeof THREE==='undefined'||(window.fridayRender3dOff&&window.fridayRender3dOff()))return;
     const S=kgRef.current;
     let disposed=false;
 
@@ -7150,6 +7150,8 @@ function kwSlug(title) {
   return String(title || '').trim().toLowerCase().replace(/[^a-z0-9 _-]+/g, '').trim().split(/\s+/).join('-').slice(0, 80);
 }
 function kwLoadView() {
+  // 3D off (Settings > Appearance): the pages are the whole view.
+  if (window.fridayRender3dOff && window.fridayRender3dOff()) return 'pages';
   try {
     const v = localStorage.getItem('friday_kw_view');
     if (KW_VIEWS.some(x => x.id === v)) return v;
@@ -7214,6 +7216,7 @@ function KnowledgeWS() {
   const pageRef = useRef(page);
   pageRef.current = page;
   const setView = useCallback(v => {
+    if (window.fridayRender3dOff && window.fridayRender3dOff()) v = 'pages';   // 3D off: the pages are the view
     setViewRaw(v);
     kwSaveView(v);
   }, []);
@@ -7312,7 +7315,7 @@ function KnowledgeWS() {
   // What its own tab (↗) opens on: the keys useNavTarget below reads.
   useTabState('knowledge', () => ({ view, query: q, path: page || '', node: sel && sel.type !== 'page' && sel.type !== 'soul' ? sel.id : '' }));
   useNavTarget('knowledge', t => {
-    if (t.view && KW_VIEWS.some(x => x.id === t.view)) setView(t.view);
+    if (t.view && KW_VIEWS.some(x => x.id === t.view) && (t.view === 'pages' || !(window.fridayRender3dOff && window.fridayRender3dOff()))) setView(t.view);
     if (t.query) setQ(String(t.query));else if (t.path || t.page) setQ('');
     if (t.path) openPage(String(t.path), {
       view: t.view
@@ -7529,7 +7532,7 @@ function KnowledgeWS() {
     className: 'kw-views',
     role: 'tablist',
     'aria-label': 'View'
-  }, KW_VIEWS.map(v => h('button', {
+  }, KW_VIEWS.filter(v => v.id === 'pages' || !(window.fridayRender3dOff && window.fridayRender3dOff())).map(v => h('button', {
     key: v.id,
     role: 'tab',
     'aria-selected': view === v.id,
@@ -7587,7 +7590,7 @@ function KnowledgeWS() {
     className: 'kw-sp'
   }), !page && !sel && !section && h('span', {
     className: 'kw-dim kw-hint'
-  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && h('button', {
+  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && !(window.fridayRender3dOff && window.fridayRender3dOff()) && h('button', {
     className: 'kw-btn',
     onClick: showInGraph,
     title: 'Show this page in the galaxy'
@@ -25237,7 +25240,47 @@ function SettingsTabAppearance({
         detail: v
       }));
     }
-  }, v.charAt(0).toUpperCase() + v.slice(1)))))), /*#__PURE__*/React.createElement(StSection, {
+  }, v.charAt(0).toUpperCase() + v.slice(1))))), /*#__PURE__*/React.createElement(StRow, {
+    label: "3D rendering",
+    desc: "Off turns every 3D view off: the scene behind the desktop, the knowledge galaxy and the 3D views of files, records and the Library. Lists and pages stay; views that are only 3D (the Library's shelves, Files in 3D) and head and hand tracking are off with it. Nothing is drawn on the graphics card. Takes effect when " + fridayName() + " next opens."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "3D rendering",
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, ['on', 'off'].map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "data-render3d-choice": v,
+    "aria-checked": (s.render_3d === false ? 'off' : 'on') === v,
+    className: 'settings-btn' + ((s.render_3d === false ? 'off' : 'on') === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 16px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        render_3d: v === 'on'
+      });
+      window.fridaySyncRender3d && window.fridaySyncRender3d(v === 'on');
+    }
+  }, v === 'on' ? 'On' : 'Off'))), (s.render_3d === false) !== !!(window.fridayRender3dOff && window.fridayRender3dOff()) && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      padding: '6px 12px',
+      marginTop: 6,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => window.location.reload()
+  }, "Reload now"))), /*#__PURE__*/React.createElement(StSection, {
     title: "Knowledge graph"
   }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
     s: s,
@@ -29162,6 +29205,11 @@ function App(){
   // Held features first: the dock, the palette and every workspace below
   // read the switch through fridayHeldOn during this same render.
   fridaySetHeldFeatures(agentSettings.held_features);
+  // 3D rendering (Settings > Appearance): the saved choice is mirrored where the
+  // next page load reads it before anything draws.
+  React.useEffect(() => {
+    if (window.fridaySyncRender3d) window.fridaySyncRender3d(agentSettings.render_3d);
+  }, [agentSettings.render_3d]);
   const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces,agentSettings.held_features]);
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
