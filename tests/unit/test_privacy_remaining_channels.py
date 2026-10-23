@@ -30,6 +30,13 @@ def ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(eg, "_DEFAULT_LOG", log)
     monkeypatch.setattr(paths, "friday_home", lambda: tmp_path)
     monkeypatch.setattr(poi, "get_governance_key", lambda: KEY)
+    # The checkpoint pins the cLaws under this key; action_gate binds friday_home
+    # by name, so its pin folder is set here, or an earlier test's pin (another
+    # key) would hold every send.
+    from agent_friday.governance import action_gate
+    gov = tmp_path / "governance"
+    gov.mkdir()
+    monkeypatch.setattr(action_gate, "_gov_dir", lambda: gov)
     monkeypatch.setattr(cs, "protect", lambda data: (b"SEALED:" + data[::-1], "keystore"))
     monkeypatch.setattr(cs, "unprotect", lambda blob: blob[len(b"SEALED:"):][::-1])
     monkeypatch.setattr(cs, "looks_protected", lambda blob: "keystore" if blob.startswith(b"SEALED:") else None)
