@@ -69,6 +69,19 @@ def test_it_resumes_only_once_enough_is_free_again(dg):
     assert dg.holds({"id": "memory_dreaming"}) is False
 
 
+def test_the_local_ai_queue_gives_way_while_the_disk_is_full(dg):
+    from agent_friday.services import turn_queue
+    try:
+        dg.free["mib"] = 300.0
+        dg.check(force=True)
+        assert "almost full" in turn_queue.background_pause_reason()
+        dg.free["mib"] = 5000.0
+        dg.check(force=True)
+        assert "almost full" not in turn_queue.background_pause_reason()
+    finally:
+        turn_queue.clear_background_pause("disk-full")
+
+
 def test_a_reading_that_fails_pauses_nothing(dg):
     dg.free["mib"] = None
     s = dg.check(force=True)

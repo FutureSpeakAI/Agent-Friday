@@ -93,7 +93,18 @@ def _raise_card(free: float) -> None:
         threading.Thread(target=run, name="disk-guard-card", daemon=True).start()
 
 
+#: The holder name in the Local AI queue's background pause (services/turn_queue).
+QUEUE_HOLDER = "disk-full"
+
+
 def _enter(free: float) -> None:
+    try:
+        # The Local AI queue's background work gives way too: no background ticket is admitted
+        # and a running background job waits at its next checkpoint (services/turn_queue).
+        from agent_friday.services import turn_queue
+        turn_queue.request_background_pause(QUEUE_HOLDER, "the drive with Friday's data is almost full")
+    except Exception:
+        pass
     try:
         from agent_friday.services import activity_ledger
         activity_ledger.record("disk_full", free_mib=int(free), state="paused")
@@ -102,6 +113,11 @@ def _enter(free: float) -> None:
 
 
 def _leave(free: float) -> None:
+    try:
+        from agent_friday.services import turn_queue
+        turn_queue.clear_background_pause(QUEUE_HOLDER)
+    except Exception:
+        pass
     try:
         from agent_friday import notifications_engine as ne
         ne.resolve(CARD_KEY)
