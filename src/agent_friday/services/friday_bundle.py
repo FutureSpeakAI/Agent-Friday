@@ -50,7 +50,10 @@ manifest without writing anything: the "test-read" of §27.4. Restore
 (``restore``) does the same into a staging folder beside the target, then
 moves it into place, installs the keys, re-checks every file, holds outward
 actions until the owner resumes them (§27.6: re-established on this device),
-and writes a restore receipt into the action ledger.
+and writes a restore receipt into the action ledger. A restore cut off part
+way is finished or rolled back at the next start (recover_interrupted_restore),
+and a bundle write cut off part way leaves only a partial file, which the next
+bundle in that folder clears.
 """
 from __future__ import annotations
 
@@ -62,6 +65,7 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import struct
 import tarfile
 import tempfile
@@ -614,6 +618,7 @@ def create(out: Path, passphrase: str, *, home: Optional[Path] = None,
     p = plan(home, cats)
     tmp = out.with_name(out.name + ".partial-" + uuid.uuid4().hex[:6])
     out.parent.mkdir(parents=True, exist_ok=True)
+    clear_stale_partials(out.parent)
     manifest_files, vanished, reconnect_mcp = [], [], []
     ledger_state = None
     scratch = Path(tempfile.mkdtemp(prefix="fb-make-"))
@@ -694,6 +699,33 @@ def create(out: Path, passphrase: str, *, home: Optional[Path] = None,
         shutil.rmtree(scratch, ignore_errors=True)
     _remember(home, out, bundle_id, verified=False)
     return manifest
+
+
+#: A bundle being written touches its partial file every few seconds; one
+#: untouched this long was left by a writer that was stopped.
+STALE_PARTIAL_S = 15 * 60
+
+
+def clear_stale_partials(folder: Path) -> list:
+    """Remove the partial files that writers stopped mid-bundle left in
+    `folder` (a bundle is written as <name>.partial-<id> and renamed into
+    place only when complete). Returns the names removed."""
+    gone = []
+    try:
+        cands = list(Path(folder).glob("*" + SUFFIX + ".partial-*"))
+    except OSError:
+        return gone
+    now = time.time()
+    for q in cands[:200]:
+        try:
+            st = os.lstat(q)
+            if not stat.S_ISREG(st.st_mode) or now - st.st_mtime < STALE_PARTIAL_S:
+                continue
+            q.unlink()
+            gone.append(q.name)
+        except OSError:
+            continue                           # still open (a live writer on Windows), or gone
+    return gone
 
 
 def _add_ledger(tar, home: Path, ledger_files, manifest_files) -> Optional[dict]:
@@ -1008,12 +1040,19 @@ def restore(path: Path, passphrase: str, *, home: Optional[Path] = None,
     this device and outward actions are held until the owner resumes them,
     (11) services to reconnect are listed, (12) downloads are left to the next
     start, (13) every file is checked again in place and the action ledger is
-    verified, (14) a restore receipt is written."""
+    verified, (14) a restore receipt is written.
+
+    Each step from staging to the swap is recorded in a journal beside the
+    data folder (<folder>.restore-journal.json). A restore cut off there (a
+    crash, a power cut) is rolled back at the next start if the folders had
+    not been swapped, and finished if they had (recover_interrupted_restore):
+    the old Friday whole or the restored one whole, never neither."""
     from agent_friday.paths import friday_home
     home = Path(home or friday_home())
     chosen = set(only) if only else None
     if _server_running(home):
         raise BundleError("Friday is running on this data folder. Quit Friday first, then restore.")
+    recover_interrupted_restore(home)                                   # one cut off earlier
     first = _walk_bundle(path, passphrase)                              # steps 1-2
     summary = verify_summary(first)
     app = summary.get("app") or {}
@@ -1060,6 +1099,7 @@ def restore(path: Path, passphrase: str, *, home: Optional[Path] = None,
         written.append(rel)
         return open(dst, "xb")
 
+    jr: dict = {}
     try:
         opened = _walk_bundle(path, passphrase, sink=sink)             # step 8
         if opened.manifest.get("bundle_id") != first.manifest.get("bundle_id"):
@@ -1073,34 +1113,186 @@ def restore(path: Path, passphrase: str, *, home: Optional[Path] = None,
         (stage / "restore").mkdir(parents=True, exist_ok=True)
         (stage / "restore" / "hold.json").write_text(json.dumps({
             "bundle_id": opened.manifest["bundle_id"], "restored_at": time.time()}), encoding="utf-8")
-        moved_aside = None
-        if home.exists():
+        # what the steps after the swap need, inside the restored folder, so a
+        # restore cut off after the swap is finished at the next start
+        _write_whole(stage / "restore" / PENDING_NAME, json.dumps({
+            "bundle_id": opened.manifest["bundle_id"], "made_at": opened.manifest.get("created_at"),
+            "written": written, "sha256": {r: listed[r]["sha256"] for r in written},
+            "categories": sorted({listed[r]["category"] for r in written}),
+            "reconnect": _to_reconnect(opened.manifest)}).encode("utf-8"))
+        moved_aside = (home.parent / (home.name + ".pre-restore-" + time.strftime("%Y%m%d-%H%M%S"))
+                       if home.exists() else None)
+        jr = {"v": 1, "step": "staged", "home": str(home), "stage": str(stage),
+              "moved_aside": str(moved_aside) if moved_aside else None,
+              "bundle_id": opened.manifest["bundle_id"], "keys": {}}
+        _journal(home, jr)
+        # the governance key goes in before the swap (the restored chain is
+        # signed with it); a different key this account held is kept, and put
+        # back if the restore is rolled back
+        jr["keys"] = _install_governance_key(stage, home, opened.secrets, cats_restored)
+        jr["step"] = "keys"
+        _journal(home, jr)
+        if moved_aside is not None:
             # replace was chosen, or the folder holds only what a fresh install
             # left: either way it is moved aside whole, never deleted
-            moved_aside = home.parent / (home.name + ".pre-restore-" + time.strftime("%Y%m%d-%H%M%S"))
             os.replace(home, moved_aside)
+            jr["step"] = "aside"
+            _journal(home, jr)
         os.replace(stage, home)
+        jr["step"] = "swapped"
+        _journal(home, jr)
     except BaseException:
-        shutil.rmtree(stage, ignore_errors=True)
+        if not jr:
+            shutil.rmtree(stage, ignore_errors=True)
+        elif _step_on_disk(home) != "swapped":
+            # the same as the next start would do with this journal
+            _roll_back(jr)
         raise
-    keys = _install_keys(home, opened.secrets, moved_aside, cats_restored)   # step 10
+    keys = dict(jr["keys"])
+    keys.update(_install_keys(home, opened.secrets, moved_aside, cats_restored))   # step 10
+    return _finish(home, keys, moved_aside.name if moved_aside else None)
+
+
+#: Beside the data folder: where a restore in progress records its step.
+JOURNAL_SUFFIX = ".restore-journal.json"
+#: Inside the restored folder: what the steps after the swap need.
+PENDING_NAME = "pending.json"
+
+
+def _journal_path(home: Path) -> Path:
+    return home.parent / (home.name + JOURNAL_SUFFIX)
+
+
+def _write_whole(p: Path, data: bytes) -> None:
+    """Write `p` whole: a partial file is renamed into place once complete."""
+    tmp = p.with_name(p.name + ".partial")
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, p)
+
+
+def _journal(home: Path, jr: dict) -> None:
+    _write_whole(_journal_path(home), json.dumps(jr, sort_keys=True).encode("utf-8"))
+    _journal_step(jr["step"])
+
+
+def _step_on_disk(home: Path) -> Optional[str]:
+    try:
+        return json.loads(_journal_path(home).read_text(encoding="utf-8")).get("step")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _journal_step(step: str) -> None:
+    """Called after each step is recorded (the crash tests stop the process
+    here)."""
+
+
+def _finish(home: Path, keys: dict, moved_aside_name: Optional[str], *, at_start: bool = False) -> dict:
+    """The steps after the swap: mark indexes, re-anchor the chain, check every
+    file in place, write the receipt, then drop the journal."""
+    pending_p = home / "restore" / PENDING_NAME
+    pending = json.loads(pending_p.read_text(encoding="utf-8"))
     _mark_reindex(home)                                                 # step 9
     from agent_friday.services import action_ledger
     with _as_home(home):
         # a new device (or a replaced folder at the same path): the anchor kept
         # outside the data folder now names the restored chain
         action_ledger.reset_anchor_to_tip()
-    after = _verify_in_place(home, opened.manifest, written)             # step 13
-    reconnect = _to_reconnect(opened.manifest)                          # step 11
-    receipt = {"bundle_id": opened.manifest["bundle_id"], "made_at": opened.manifest.get("created_at"),
+    after = _verify_in_place(home, pending["sha256"], pending["written"])   # step 13
+    receipt = {"bundle_id": pending["bundle_id"], "made_at": pending.get("made_at"),
                "restored_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-               "files": len(written), "categories": sorted({listed[r]["category"] for r in written}),
-               "keys": keys, "checked_in_place": after, "reconnect": reconnect,
-               "moved_aside": moved_aside.name if moved_aside else None,
+               "files": len(pending["written"]), "categories": pending["categories"],
+               "keys": keys, "checked_in_place": after, "reconnect": pending["reconnect"],
+               "moved_aside": moved_aside_name,
                "downloads": "models and voice files are fetched again at the next start",
                "outward_actions": "held until you press Resume on the Doctor page"}
+    if at_start:
+        receipt["finished"] = "at the next start: the restore was cut off after the swap"
     _write_receipt(home, receipt)                                       # step 14
+    pending_p.unlink()
+    try:
+        _journal_path(home).unlink()
+    except FileNotFoundError:
+        pass
     return receipt
+
+
+def _roll_back(jr: dict) -> dict:
+    """Undo a restore cut off before its swap finished: the folder that was
+    there goes back, the staging copy goes, and a governance key it replaced
+    in this account's keychain is put back. Nothing the owner had is deleted:
+    a folder found in the way is moved aside, not removed."""
+    home, stage = Path(jr["home"]), Path(jr["stage"])
+    aside = Path(jr["moved_aside"]) if jr.get("moved_aside") else None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out = {"rolled": "back", "bundle_id": jr.get("bundle_id")}
+    if aside is not None and aside.exists():
+        if home.exists():
+            # a start since the cut-off made a fresh folder here, or the
+            # restored copy is already in place: either way kept aside
+            undone = home.parent / (home.name + ".restore-undone-" + stamp)
+            os.replace(home, undone)
+            out["kept_aside"] = undone.name
+        os.replace(aside, home)
+    if stage.exists() and ".friday-restore-" in stage.name:
+        shutil.rmtree(stage, ignore_errors=True)
+    keys = jr.get("keys") or {}
+    kr, _no = _keyring()
+    if kr is not None and keys.get("in_keychain"):
+        try:
+            if keys.get("kept_previous_key"):
+                old = kr.get_password("agent-friday", keys["kept_previous_key"])
+                if old:
+                    kr.set_password("agent-friday", "governance-key", old)
+                    out["governance_key"] = "the previous key is back"
+            elif not keys.get("had_previous_key"):
+                kr.delete_password("agent-friday", "governance-key")
+                out["governance_key"] = "the bundle's key is removed again"
+        except Exception as e:  # noqa: BLE001
+            out["governance_key"] = "could not be put back (%s)" % type(e).__name__
+    try:
+        _journal_path(home).unlink()
+    except FileNotFoundError:
+        pass
+    try:
+        if home.exists():
+            from agent_friday.services import action_ledger
+            with _as_home(home):
+                action_ledger.try_append("restore_rolled_back", out)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def recover_interrupted_restore(home: Optional[Path] = None) -> Optional[dict]:
+    """At start: a restore that was cut off is finished (it had swapped the
+    folders in) or rolled back (it had not). None when there was none.
+    Called before Friday uses its data folder."""
+    from agent_friday.paths import friday_home
+    home = Path(home or friday_home())
+    jp = _journal_path(home)
+    if not jp.exists():
+        return None
+    try:
+        jr = json.loads(jp.read_text(encoding="utf-8"))
+        if not isinstance(jr, dict) or jr.get("v") != 1 or Path(jr["home"]) != home:
+            raise ValueError("not this folder's journal")
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"rolled": "none", "why": "the restore journal beside the data folder could not be "
+                                          "read; nothing was changed. Restore the bundle again."}
+    if jr.get("step") == "swapped" and (home / "restore" / PENDING_NAME).exists():
+        keys = dict(jr.get("keys") or {})
+        keys.setdefault("vault_passphrase", "not stored on this device: Friday will ask for it")
+        aside = Path(jr["moved_aside"]).name if jr.get("moved_aside") else None
+        receipt = _finish(home, keys, aside, at_start=True)
+        return {"rolled": "forward", "bundle_id": receipt["bundle_id"]}
+    if jr.get("step") == "swapped":
+        jp.unlink()                         # finished, all but dropping the journal
+        return {"rolled": "none", "why": "already finished"}
+    return _roll_back(jr)
 
 
 def verify_summary(o: "_Opened") -> dict:
@@ -1166,50 +1358,58 @@ def _governance_key_conflict(secrets: dict, home: Path, cats: set) -> bool:
     return bool(cur) and cur != gk.decode("ascii").strip()
 
 
-def _install_keys(home: Path, secrets: dict, moved_aside: Optional[Path], cats: set) -> dict:
-    """Install the governance key and the vault passphrase for this device,
-    only for the categories restored. A different key this account already
-    held is never lost: it is kept under its own keychain account
-    (governance-key-kept-<time>) and, when a folder was moved aside, as a file
-    in it."""
-    out = {"governance_key": "not restored", "vault_passphrase": "not restored"}
+def _install_governance_key(target: Path, current_home: Path, secrets: dict, cats: set) -> dict:
+    """Install the bundle's governance key for this device, before the swap:
+    in this account's keychain, or (no keychain) in the staged folder's vault.
+    A different key this account already held is never lost: it is kept under
+    its own keychain account (governance-key-kept-<time>) and, when there is a
+    folder to move aside, as a file in it."""
+    out: dict = {"governance_key": "not restored"}
     gk = secrets.get("governance-key")
-    if gk and cats & {"receipts", "skills", "vault"}:
-        gk = gk.decode("ascii").strip()
-        bytes.fromhex(gk)                                               # validates
-        kr, no_kr = _keyring()
-        old = _current_governance_key(home)
-        if old and old not in ("unreadable", gk):
-            stamp = time.strftime("%Y%m%d-%H%M%S")
-            if kr is not None:
-                try:
-                    kr.set_password("agent-friday", "governance-key-kept-" + stamp, old)
-                except Exception:
-                    pass
-            if moved_aside is not None:
-                kept = moved_aside / "vault" / (".governance-key-kept-" + stamp)
-                kept.parent.mkdir(parents=True, exist_ok=True)
-                kept.write_bytes(bytes.fromhex(old))
-            out["kept_previous_key"] = "governance-key-kept-" + stamp
-        installed = False
+    if not gk or not (cats & {"receipts", "skills", "vault"}):
+        return out
+    gk = gk.decode("ascii").strip()
+    bytes.fromhex(gk)                                                   # validates
+    kr, no_kr = _keyring()
+    old = _current_governance_key(current_home)
+    out["had_previous_key"] = bool(old and old != "unreadable")
+    if old and old not in ("unreadable", gk):
+        stamp = time.strftime("%Y%m%d-%H%M%S")
         if kr is not None:
             try:
-                kr.set_password("agent-friday", "governance-key", gk)
-                out["governance_key"] = "installed in this device's keychain"
-                installed = True
-            except no_kr:
-                pass
+                kr.set_password("agent-friday", "governance-key-kept-" + stamp, old)
             except Exception:
                 pass
-        if not installed:
-            f = home / "vault" / ".governance-key"
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_bytes(bytes.fromhex(gk))
-            try:
-                f.chmod(0o600)
-            except OSError:
-                pass
-            out["governance_key"] = "installed in the vault folder (no keychain here)"
+        if current_home.exists():
+            kept = current_home / "vault" / (".governance-key-kept-" + stamp)
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            kept.write_bytes(bytes.fromhex(old))
+        out["kept_previous_key"] = "governance-key-kept-" + stamp
+    if kr is not None:
+        try:
+            kr.set_password("agent-friday", "governance-key", gk)
+            out["governance_key"] = "installed in this device's keychain"
+            out["in_keychain"] = True
+            return out
+        except no_kr:
+            pass
+        except Exception:
+            pass
+    f = target / "vault" / ".governance-key"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(bytes.fromhex(gk))
+    try:
+        f.chmod(0o600)
+    except OSError:
+        pass
+    out["governance_key"] = "installed in the vault folder (no keychain here)"
+    return out
+
+
+def _install_keys(home: Path, secrets: dict, moved_aside: Optional[Path], cats: set) -> dict:
+    """After the swap: the vault passphrase for this device, only when the
+    vault was restored (the governance key went in before the swap)."""
+    out = {"vault_passphrase": "not restored"}
     vp = secrets.get("vault-passphrase")
     if vp and "vault" in cats:
         try:
@@ -1260,10 +1460,9 @@ class _as_home:
         action_ledger.reset_caches()
 
 
-def _verify_in_place(home: Path, manifest: dict, written: list) -> dict:
-    listed = {f["path"]: f for f in manifest["files"]}
+def _verify_in_place(home: Path, sha256: dict, written: list) -> dict:
     bad = [r for r in written
-           if _sha256_file(home.joinpath(*PurePosixPath(r).parts)) != listed[r]["sha256"]]
+           if _sha256_file(home.joinpath(*PurePosixPath(r).parts)) != sha256[r]]
     out = {"files_match": not bad, "mismatched": len(bad)}
     try:
         from agent_friday.services import action_ledger
