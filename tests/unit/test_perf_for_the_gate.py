@@ -64,14 +64,14 @@ def test_restoring_tasks_at_start_grows_with_the_tasks_not_faster(tmp_path, monk
                                  "created": now - 100, "ended": now - 50})
         with ag.TASKS_LOCK:
             ag.TASKS.clear()
-        took, summary = _timed(ag._restore_tasks_from_journal, announce=False)
+        took, summary = _timed(ag._restore_tasks_from_journal, announce=False, limit=n)
         with ag.TASKS_LOCK:
             ag.TASKS.clear()
         return took, summary
 
     small, _ = restore(40, tmp_path / "a")
     large, summary = restore(400, tmp_path / "b")
-    assert summary.get("interrupted") == []
+    assert "error" not in summary and summary["loaded"] == 400 and summary.get("interrupted") == []
     _scales(small, large, "restore of journaled tasks", slack=0.5)
     assert large < 60
 
@@ -141,6 +141,13 @@ def test_the_windows_stay_right_when_read_a_piece_at_a_time(tmp_path):
     assert cp.gemini_windows(log) == [(1_700_000_001, 1_700_000_005)]
     log.write_text(_egress_line(9, "live voice session opened", "gemini"), encoding="utf-8")   # replaced
     assert cp.gemini_windows(log)[0][0] == 1_700_000_009
+    # Rewritten in place and longer than what was read: everything is read again.
+    with open(log, "w", encoding="utf-8") as f:
+        f.write(_egress_line(20, "live voice session opened", "gemini"))
+        f.write(_egress_line(30, "live voice session closed", "gemini"))
+        for i in range(50):
+            f.write(_egress_line(100 + i))
+    assert cp.gemini_windows(log) == [(1_700_000_020, 1_700_000_030)]
 
 
 # ── §34.15-2 large stores: approvals ─────────────────────────────────────────
