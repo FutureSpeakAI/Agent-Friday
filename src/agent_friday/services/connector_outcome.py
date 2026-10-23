@@ -179,6 +179,39 @@ def settle(result: Any) -> Any:
     return result
 
 
+def idem_key(tool: str, args: Any) -> Optional[str]:
+    """The idempotency key of a create (F3, NS-34.11-2): the same tool with the same arguments in
+    the same turn (or, with no turn, the same background task or run) is one create, however many
+    times the model sends it: a retry after an unconfirmed reply never makes a second item. A new
+    turn is a new request. None outside a turn or a task (an owner's own page)."""
+    import hashlib
+    import json
+    scope = None
+    try:
+        from agent_friday.services import turn_plan
+        scope = turn_plan.current_turn_id()
+    except Exception:
+        scope = None
+    if not scope:
+        try:
+            from agent_friday.services import agent as _ag
+            ctx = _ag._CURRENT_TOOL_CONTEXT.get() or {}
+            scope = ctx.get("run_id") or ctx.get("task_id")
+        except Exception:
+            scope = None
+    if not scope:
+        return None
+    blob = json.dumps({"t": tool, "s": str(scope), "a": args}, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def event_id(key: str, *parts: Any) -> str:
+    """A Google Calendar event id for one create (base32hex: 0-9 and a-v; 5 to 1024 characters).
+    Google refuses a second insert with the same id (409), so the copy is never made."""
+    import hashlib
+    return "fr" + hashlib.sha256(("%s|%s" % (key, "|".join(str(p) for p in parts))).encode("utf-8")).hexdigest()[:30]
+
+
 def confirmed(reply: Any, key: str = "id") -> bool:
     """Whether Google's reply to a create or update names the item it changed."""
     return isinstance(reply, dict) and bool(reply.get(key))

@@ -73,8 +73,8 @@ def _title(s: Any, fallback: str) -> str:
 
 @_safe
 def calendar_created(res: dict, *, conversation_id: Optional[str] = None) -> Optional[dict]:
-    if not (isinstance(res, dict) and res.get("ok") and res.get("id")):
-        return None
+    if not (isinstance(res, dict) and res.get("ok") and res.get("id")) or res.get("already_made"):
+        return None                     # a repeat of a create already receipted (F3)
     t = _title(res.get("title"), "an event")
     return _record("create_calendar_event", "create", "calendar",
                    items=[{"id": res["id"], "title": t, "start": res.get("start")}],
@@ -173,8 +173,8 @@ def undo_calendar_row(cw, r: dict) -> bool:
 
 @_safe
 def task_created(res: dict, *, tasklist_id: str, conversation_id: Optional[str] = None) -> Optional[dict]:
-    if not (isinstance(res, dict) and res.get("id") and not res.get("error")):
-        return None
+    if not (isinstance(res, dict) and res.get("id") and not res.get("error")) or res.get("already_made"):
+        return None                     # a repeat of a create already receipted (F3)
     t = _title(res.get("title"), "a task")
     return _record("create_task", "create", "tasks",
                    items=[{"id": res["id"], "title": t}],
