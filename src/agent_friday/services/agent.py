@@ -13536,6 +13536,30 @@ def _resolve_tool_name(name):
     return None, sorted(near)[:6]
 
 
+def _same_name_spelled_differently(name, resolved) -> bool:
+    """`site-action`, `Site.Action` and `site action` are the name `site_action`, not a guess at
+    another tool: only separators and case differ, so it is the tool the model named."""
+    norm = re.sub(r"[\s.\-]+", "_", str(name or "").strip().lower())
+    return norm == str(resolved or "")
+
+
+def _resolution_may_run(resolved, tool_input, session_ctx=None) -> bool:
+    """A misnamed call may run under the resolved name only when that tool is internal for the
+    arguments it would really run with (governance/action_gate.classify, after the job's own
+    send setting is applied). A connector (mcp_) tool never runs under a guessed name, and a
+    classification that cannot run is not a yes."""
+    if str(resolved or "").lower().startswith("mcp_"):
+        return False
+    try:
+        from agent_friday.governance import action_gate as _ag
+        args = dict(tool_input) if isinstance(tool_input, dict) else {}
+        args = _job_send_args(resolved, args, session_ctx)
+        cls, _why = _ag.classify(resolved, args, session_ctx)
+        return cls == _ag.INTERNAL
+    except Exception:
+        return False
+
+
 def _restore_placeholders(value, pii_lookup):
     """`value` with every [PII:kind:hash] tag from this turn put back.
 
@@ -13805,9 +13829,19 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
+        if (resolved and not _same_name_spelled_differently(name, resolved)
+                and not _resolution_may_run(resolved, tool_input, session_ctx)):
+            # BD-11a / NS-32.21-1: a misnamed call is never resolved to a tool that acts
+            # outside (sends, buys, writes where it is not internal, reaches someone). The model
+            # is told the exact name; that call then passes every gate as itself.
+            print(f"  [tools] '{name}' is not registered; '{resolved}' matches it but is not "
+                  f"internal, so it was not run under a guessed name")
+            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so nothing ran. The "
+                    f"closest tool is '{resolved}', which is never run under a guessed name. If "
+                    f"'{resolved}' is what you meant, call it by that exact name.")
         if resolved:
             print(f"  [tools] '{name}' is not registered; resolved to "
-                  f"'{resolved}' (unambiguous match)")
+                  f"'{resolved}' (unambiguous match, internal)")
             name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
         else:
             # A bare "Unknown tool: x" is a dead end: it says the call failed
@@ -16923,7 +16957,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _tools_grew = True
 
                 # The tool the call will actually run (_execute_tool resolves a near-miss
-                # name the same way): the vault check and the search card judge that tool.
+                # name the same way, and only to an internal tool): the vault check and the search card judge that tool.
                 _pq_name = (tu.name if tu.name in CLAUDE_TOOL_HANDLERS
                             else (_resolve_tool_name(tu.name)[0] or tu.name))
                 # ── Zero-trust continuous vault authorization ──────────
@@ -17781,7 +17815,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 continue
 
             # The tool the call will actually run (_execute_tool resolves a near-miss
-            # name the same way): the vault check and the search card judge that tool.
+            # name the same way, and only to an internal tool): the vault check and the search card judge that tool.
             _pq_name = (tname if tname in CLAUDE_TOOL_HANDLERS
                         else (_resolve_tool_name(tname)[0] or tname))
             # ── Zero-trust continuous vault authorization. ──
