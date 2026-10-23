@@ -323,7 +323,7 @@ def bundle_schedule_act(what):
     return jsonify({"status": "ok", "started": what})
 
 
-# ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
+# ── The support bundle (services/support_bundle.py; A3) ─────────────────────
 
 @doctor_bp.route("/api/doctor/support", methods=["POST"])
 @login_required
@@ -347,6 +347,8 @@ def doctor_support_bundle():
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The support bundle could not be made.")
 
+
+# ── The readable export (services/readable_export.py) ───────────────────────
 
 @doctor_bp.route("/api/export/readable", methods=["POST"])
 @login_required
@@ -377,6 +379,8 @@ def export_readable():
         return api_error(e, "The export could not be made.")
 
 
+# ── The first backup (services/first_backup.py) ─────────────────────────────
+
 @doctor_bp.route("/api/bundle/first-run", methods=["GET"])
 @login_required
 def first_backup_status():
@@ -402,6 +406,8 @@ def first_backup_answer():
     except Exception as e:  # noqa: BLE001
         return api_error(e, "That could not be saved.")
 
+
+# ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
 
 @doctor_bp.route("/api/doctor/weekly", methods=["GET"])
 @login_required

@@ -6,8 +6,9 @@ What is in it:
 * the Doctor report, as .json and .txt (services/doctor.py: no content, no
   file names, no addresses);
 * the store inventory (services/store_inventory.public);
-* log excerpts: the newest warning, error and crash lines of friday.log,
-  server_stderr.log and logs/crashes.log, redacted word by word (below);
+* log excerpts: the newest warning and error lines of friday.log, the traceback
+  lines of server_stderr.log and the crash lines of logs/crashes.log, redacted
+  word by word (below);
 * the start-up guard's newest notes, redacted the same way;
 * README.txt, and manifest.json with each file's SHA-256.
 
@@ -18,7 +19,7 @@ three digits) or a number with its unit, a code name (snake_case made of those
 words, a dotted Friday module, a built-in exception class), or an HTTP method;
 any other word becomes "~" (runs of them one "..."), and numbers written in
 groups become "#". Paths, web addresses, email addresses, keys, quoted text,
-this PC's user and host names and the owner's own names from settings are
+this PC's user and host names (and any owner name settings.json holds) are
 replaced before that. A traceback frame keeps its line number and function,
 and its file only when it is one of Friday's own (agent_friday/...).
 So a name, a sentence or a file name the owner wrote does not survive; what is
@@ -41,6 +42,7 @@ import io
 import json
 import os
 import re
+import sys
 import threading
 import time
 import zipfile
@@ -106,7 +108,7 @@ _QUOTED = re.compile(r"\"[^\"]{0,2000}\"|'[^']{0,2000}'")
 #: decimals) or carries a unit: a phone number, a code, a card or a date of
 #: birth never does.
 _SMALL = re.compile(r"^[-+]?\d{1,3}(\.\d{1,2})?%?$")
-_WITH_UNIT = re.compile(r"^[-+]?\d{1,9}(\.\d{1,3})?(ms|s|kb|mb|gb|b|%)$", re.I)
+_WITH_UNIT = re.compile(r"^[-+]?\d{1,9}(\.\d{1,3})?(ms|s|kb|mb|gb|%)$", re.I)
 _UNITS = {"ms", "s", "sec", "secs", "second", "seconds", "minute", "minutes", "hour", "hours",
           "byte", "bytes", "kb", "mb", "gb", "%"}
 #: key=value pairs whose (whole-number) value is kept.
@@ -121,7 +123,7 @@ _LINE = re.compile(r"^(?P<ts>\S{1,40}) (?P<level>DEBUG|INFO|WARNING|ERROR|CRITIC
                    r"(?P<logger>[A-Za-z_][A-Za-z0-9_.]{0,80}) — (?P<msg>.*)$")
 _FRAME = re.compile(r'^\s*File "(?P<file>[^"]{0,1000})", line (?P<line>\d{1,7})(?:,? in (?P<fn>\S{1,200}))?')
 _TS = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?$")
-_PLACEHOLDERS = ("<path>", "<url>", "<email>", "<text>", "<withheld>")
+_PLACEHOLDERS = ("<path>", "<url>", "<email>", "<text>", "<withheld>", "<time>")
 
 
 def _markers() -> list[str]:
@@ -155,14 +157,16 @@ def _word(tok: str, first: bool, nxt: str = "") -> str:
     low = core.lower()
     if low in WORDS and (core == low or first or core.isupper() and len(core) <= 8):
         return tok
-    if core in _METHODS or core in _LEVELS or _TS.match(core):
+    if core in _METHODS or core in _LEVELS:
         return tok
+    if _TS.match(core):
+        return "<time>"                      # a time in the words can be an appointment's
     if _is_number_word(core):
         return tok
     if _DIGITS.match(core) and nxt.strip(_STRIP).lower() in _UNITS:
         return tok
-    if _FRIDAY_MODULE.match(core):
-        return tok
+    if _FRIDAY_MODULE.match(core) and core in sys.modules:
+        return tok                           # a module Friday has loaded, not a made-up name
     if _SNAKE.match(core) and all(p in WORDS or p.isdigit() for p in core.split("_")):
         return tok                           # read_timeout, not_found: never a name
     if _EXC.match(core):
@@ -359,8 +363,16 @@ def _last_off_record() -> Optional[float]:
     try:
         from agent_friday.services import doctor_weekly
         last = doctor_weekly._state().get("last_off_record_at")
+        raw = None
+        p = doctor_weekly._path()
+        if p.exists():
+            d = json.loads(p.read_text(encoding="utf-8"))
+            raw = d.get("last_off_record_at") if isinstance(d, dict) else "unreadable"
     except Exception as e:  # noqa: BLE001
         raise _Unknown() from e
+    if last is None and raw is not None:
+        # recorded, but not usable (a time in the future after the clock moved)
+        raise _Unknown()
     return float(last) if isinstance(last, (int, float)) and not isinstance(last, bool) else None
 
 

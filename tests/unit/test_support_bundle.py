@@ -37,7 +37,7 @@ def home(tmp_path, monkeypatch):
         f"2026-10-23T09:00:00 ERROR    agent_friday.services.probe \u2014 ValueError: could not read "
         f"{folder}\\notes.txt for {EMAIL} ({PRIVATE_FACT})",
         f"2026-10-23T09:00:01 INFO     agent_friday.chat \u2014 {NAME} said {PLAN}",
-        f"2026-10-23T09:00:02 ERROR    {NAME.lower()}_plugin \u2014 {NAME}VaultError: {NAME} {PLAN}",
+        f"2026-10-23T09:00:02 ERROR    {NAME.lower()}_plugin \u2014 VaultError: {NAME} {PLAN}",
         f"2026-10-23T09:00:03 WARNING  agent_friday.services.mail \u2014 send failed for \"{PLAN}\" "
         f"to https://mail.example.test/u/{NAME} key {KEY} read_timeout after 30 seconds",
         "Traceback (most recent call last):",
