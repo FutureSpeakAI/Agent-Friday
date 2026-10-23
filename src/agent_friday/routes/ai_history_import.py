@@ -46,7 +46,12 @@ def _gate():
 @ai_history_import_bp.route("/api/import/ai-history", methods=["POST"])
 @login_required
 def ai_history_import():
-    f = request.files.get("file") if request.files else None
+    from werkzeug.exceptions import RequestEntityTooLarge
+    try:
+        f = request.files.get("file") if request.files else None
+    except RequestEntityTooLarge:
+        return jsonify({"ok": False, "error": "That file is larger than this computer accepts in one upload. "
+                        "Unzip the export and choose conversations.json on its own."}), 400
     if f is None:
         return jsonify({"ok": False, "error": "Choose the conversations.json (or the export .zip) to import."}), 400
     data = f.read(aih.MAX_FILE_BYTES + 1)

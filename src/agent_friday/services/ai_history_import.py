@@ -31,6 +31,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import threading
 import zipfile
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
@@ -45,6 +46,23 @@ MAX_MESSAGES = 2000
 MAX_CHARS = 20000
 TITLE_MAX = 120
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+#: One export at a time: a large one holds a few hundred MB while it is read.
+_ONE_AT_A_TIME = threading.Lock()
+BUSY = "Another export is being read; try again when it has finished."
+UNREADABLE = "The file could not be read as a ChatGPT or Claude export."
+
+
+def _parsed(data: bytes):
+    """(source, conversations) or raises ImportRefused. Any failure inside a hostile or
+    damaged file is a refusal in words, never an error page."""
+    try:
+        doc = read_export(data)
+        source = detect(doc)
+        return source, conversations(doc, source)
+    except ImportRefused:
+        raise
+    except Exception:
+        raise ImportRefused(UNREADABLE)
 
 
 class ImportRefused(ValueError):
@@ -72,7 +90,10 @@ def _when(value) -> Optional[float]:
 
 
 def _day(ts: Optional[float]) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d") if ts else ""
+    try:
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d") if ts and ts > 0 else ""
+    except (OverflowError, OSError, ValueError):
+        return ""
 
 
 # ── reading the file ─────────────────────────────────────────────────────────
@@ -217,12 +238,14 @@ def conversations(doc: list, source: str) -> List[dict]:
 
 def preview(data: bytes) -> dict:
     """Counts only. Nothing is written."""
+    if not _ONE_AT_A_TIME.acquire(blocking=False):
+        return {"ok": False, "error": BUSY}
     try:
-        doc = read_export(data)
-        source = detect(doc)
-        convs = conversations(doc, source)
+        source, convs = _parsed(data)
     except ImportRefused as e:
         return {"ok": False, "error": str(e)}
+    finally:
+        _ONE_AT_A_TIME.release()
     stamps = [c["created"] or c["updated"] for c in convs if c["created"] or c["updated"]]
     return {"ok": True, "preview": True, "source": source, "service": SOURCES[source],
             "conversations": len(convs), "messages": sum(len(c["messages"]) for c in convs),
@@ -232,13 +255,24 @@ def preview(data: bytes) -> dict:
 
 def stage(data: bytes) -> dict:
     """Every conversation of an export into import staging. Nothing becomes a conversation
-    in Friday until the owner accepts it."""
+    in Friday until the owner accepts it. Off the record nothing is staged; a key pasted
+    into any message or title is withheld before anything is written."""
+    from agent_friday.services import off_record
+    if off_record.active():
+        return {"ok": False, "error": "Off the record is on, so nothing is imported."}
+    if not _ONE_AT_A_TIME.acquire(blocking=False):
+        return {"ok": False, "error": BUSY}
     try:
-        doc = read_export(data)
-        source = detect(doc)
-        convs = conversations(doc, source)
+        source, convs = _parsed(data)
     except ImportRefused as e:
         return {"ok": False, "error": str(e)}
+    finally:
+        _ONE_AT_A_TIME.release()
+    from agent_friday.services.pasted_secrets import withhold
+    for c in convs:
+        c["title"] = _title(withhold(c["title"])[0])
+        for m in c["messages"]:
+            m["text"] = withhold(m["text"])[0]
     register()
     from agent_friday.services import import_staging
     rows = []
@@ -250,7 +284,9 @@ def stage(data: bytes) -> dict:
                 c["title"], SOURCES[source], (" · " + _day(when)) if when else "",
                 len(c["messages"]), "" if len(c["messages"]) == 1 else "s"),
             "payload": {"service": source, "conversation_id": c["id"][:120], "title": c["title"],
-                        "created": when, "messages": c["messages"], "cut": c["cut"]},
+                        "created": when, "cut": c["cut"]},
+            # The transcript lives beside the item and is read only when the owner accepts it.
+            "body": c["messages"],
             "observed_at": _day(when) or None,
             "sensitivity": "personal"})
     out = import_staging.stage(source, KIND, rows, source_ref="conversations.json")
@@ -267,31 +303,44 @@ def stage(data: bytes) -> dict:
 def _commit(payload: dict) -> dict:
     """An accepted conversation becomes a Friday conversation (services/import_staging calls
     this only on the owner's accept)."""
+    import shutil
     from agent_friday.services import conversations as cv
     from agent_friday.services import off_record
-    if off_record.active():
+    # One settings snapshot for the whole conversation: off the record cannot switch on halfway
+    # and leave a conversation with some of its messages.
+    snap = off_record._settings()
+    if off_record.stops_storage(snap):
         raise RuntimeError("off the record")
     source = payload.get("service")
     if source not in SOURCES:
         raise ValueError("unknown service")
-    msgs = payload.get("messages") if isinstance(payload.get("messages"), list) else []
-    title = "%s: %s" % (SOURCES[source], _title(payload.get("title")))
+    msgs = payload.get("body") if isinstance(payload.get("body"), list) else []
+    from agent_friday.services.pasted_secrets import withhold
+    title = "%s: %s" % (SOURCES[source], _title(withhold(payload.get("title"))[0]))
     conv = cv.create(title=title[:120])
-    conv["imported"] = {"source": source, "conversation_id": str(payload.get("conversation_id") or "")[:120],
-                        "created": payload.get("created"), "cut": bool(payload.get("cut"))}
-    cv.save(conv)
-    n = 0
-    for m in msgs[:MAX_MESSAGES]:
-        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
-            continue
-        text, _ = _text(m.get("text"), MAX_CHARS + 200)
-        msg = {"role": m["role"], "text": text, "imported_from": source}
-        if isinstance(m.get("ts"), (int, float)):
-            msg["ts"] = float(m["ts"])
-        cv.append(conv["id"], msg)
-        n += 1
-    # The first imported message must not rename it (conversations.append auto-titles a new chat).
-    cv.patch(conv["id"], title=title[:120])
+    try:
+        conv["imported"] = {"source": source,
+                            "conversation_id": str(payload.get("conversation_id") or "")[:120],
+                            "created": payload.get("created") if isinstance(payload.get("created"), (int, float)) else None,
+                            "cut": payload.get("cut") is True}
+        cv.save(conv)
+        # Another assistant's words are outside content to Friday: never her own turns, never
+        # instructions (governance/outside_content keeps the flag on the conversation).
+        cv.mark_outside_content(conv["id"], "imported AI history (%s)" % SOURCES[source])
+        n = 0
+        for m in msgs[:MAX_MESSAGES]:
+            if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+                continue
+            text, _ = _text(m.get("text"), MAX_CHARS + 200)
+            msg = {"role": m["role"], "text": text, "imported_from": source}
+            if isinstance(m.get("ts"), (int, float)):
+                msg["ts"] = float(m["ts"])
+            cv.append(conv["id"], msg, settings=snap)
+            n += 1
+    except Exception:
+        # Nothing half-saved: the conversation goes, and the item keeps waiting.
+        shutil.rmtree(cv._dir(conv["id"]), ignore_errors=True)
+        raise
     return {"conversation_id": conv["id"], "messages": n}
 
 

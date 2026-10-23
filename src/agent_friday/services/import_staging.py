@@ -112,6 +112,17 @@ def _path_for(item_id: str) -> Optional[Path]:
     return Path(full)
 
 
+def _body_path(path: Path) -> Path:
+    return path.with_name(path.stem + ".body")
+
+
+def _drop_body(path: Path) -> None:
+    try:
+        _body_path(path).unlink()
+    except OSError:
+        pass
+
+
 def _read(path: Path) -> Optional[dict]:
     try:
         it = json.loads(path.read_text(encoding="utf-8"))
@@ -176,8 +187,10 @@ def stage(source: str, kind: str, rows: List[dict], *, source_ref: str = "") -> 
             item = {
                 "schema": 1, "id": iid, "kind": kind, "source": source,
                 "source_ref": _clean(source_ref, 200), "label": _clean(row.get("label"), LABEL_MAX),
-                "payload": {str(k)[:40]: (_clean(v) if not isinstance(v, (list, dict)) else v)
+                "payload": {str(k)[:40]: (v if isinstance(v, (list, dict, bool, int, float)) or v is None
+                                          else _clean(v))
                             for k, v in payload.items()},
+                "has_body": isinstance(row.get("body"), (list, dict)),
                 "names": sorted(names), "emails": sorted(emails),
                 "observed_at": _clean(row.get("observed_at"), 40) or None,
                 "valid_from": None, "valid_until": None,
@@ -189,6 +202,8 @@ def stage(source: str, kind: str, rows: List[dict], *, source_ref: str = "") -> 
                 # so which of two rows for one person is saved first is the file's, not a hash's.
                 "seq": (old or {}).get("seq", seq),
             }
+            if item["has_body"]:
+                _write_atomic(_body_path(path), {"body": row["body"]})
             _write_atomic(path, item)
             staged += 1
     return {"ok": True, "staged": staged, "already_decided": decided, "forgotten": forgotten,
@@ -248,6 +263,7 @@ def review(item_id: str, answer: str, *, edits: Optional[dict] = None, by: str =
             _write_atomic(path, {"schema": 1, "id": it["id"], "kind": it.get("kind"),
                                  "source": it.get("source"), "status": "rejected",
                                  "reviewed_ts": time.time()})
+            _drop_body(path)
             _note_answer(it, answer, by, "rejected")
             return {"ok": True, "status": "rejected"}
         if status == "deferred":
@@ -261,6 +277,11 @@ def review(item_id: str, answer: str, *, edits: Optional[dict] = None, by: str =
         if spec is None:
             return {"ok": False, "error": "this kind of item cannot be saved yet"}
         payload = dict(it.get("payload") or {})
+        if it.get("has_body"):
+            body = _read(_body_path(path))
+            if not body or "body" not in body:
+                return {"ok": False, "error": "the imported content of that item is missing; import it again"}
+            payload["body"] = body["body"]
         if answer == "edit":
             for k, v in (edits or {}).items():
                 if k in spec["fields"]:
@@ -270,6 +291,7 @@ def review(item_id: str, answer: str, *, edits: Optional[dict] = None, by: str =
         emails = set(it.get("emails") or []) | ({str(payload["email"]).lower()} if payload.get("email") else set())
         if names & f_names or emails & f_emails:
             path.unlink(missing_ok=True)
+            _drop_body(path)
             _note_answer(it, answer, by, "forgotten")
             return {"ok": False, "error": "that person is on your forget list, so nothing was saved"}
         try:
@@ -282,6 +304,7 @@ def review(item_id: str, answer: str, *, edits: Optional[dict] = None, by: str =
         _write_atomic(path, {"schema": 1, "id": it["id"], "kind": it.get("kind"),
                              "source": it.get("source"), "status": "accepted",
                              "reviewed_ts": time.time()})
+        _drop_body(path)
         _note_answer(it, answer, by, "accepted")
         return {"ok": True, "status": "accepted", "result": result}
 
@@ -341,6 +364,7 @@ def forget_purge(names, emails) -> int:
         for p in _naming(names, emails):
             try:
                 p.unlink()
+                _drop_body(p)
                 n += 1
             except OSError:
                 pass
