@@ -76,7 +76,7 @@ def test_a_policy_check_that_cannot_run_is_said(monkeypatch):
         raise RuntimeError("x")
     monkeypatch.setattr(safe_mode, "refusal", boom)
     h, why = cs.health_of(_c(cs.WORKING))
-    assert h == "blocked_by_policy" and "could not run" in why
+    assert h == "unverified" and "could not be checked" in why   # not "off on purpose"
 
 
 def test_every_capability_carries_its_health_and_group(monkeypatch):
