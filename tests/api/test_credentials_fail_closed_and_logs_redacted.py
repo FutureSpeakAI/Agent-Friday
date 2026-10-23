@@ -14,7 +14,6 @@ Synthetic values only (none is a real credential).
 from __future__ import annotations
 
 import io
-import json
 import logging
 
 import pytest
@@ -208,11 +207,11 @@ def test_every_request_answers_with_one_correlation_id(client):
 def test_the_log_lines_and_receipts_of_a_request_carry_its_id(tmp_path, monkeypatch):
     from agent_friday.governance import action_gate as ag
     from agent_friday.services import correlation
-    monkeypatch.setattr(ag, "receipts_path", lambda: tmp_path / "decision-bom.jsonl")
     with correlation.bind("req-test-000000001"):
         out = _logged("doing the thing")
         ag._receipt({"tool": "example", "decision": "allow"})
     assert "[req-test-000000001] doing the thing" in out
-    row = json.loads((tmp_path / "decision-bom.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    from tests import ledger_support               # decisions live in the action ledger
+    row = ledger_support.decisions()[-1]
     assert row["correlation_id"] == "req-test-000000001"
     assert ag.verify_receipt(row), "the id is signed with the receipt"
