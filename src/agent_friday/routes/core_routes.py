@@ -1456,7 +1456,10 @@ def api_onboarding_acks():
 
     data = request.get_json(silent=True) or {}
     from datetime import datetime, timezone
-    for k in ("collects_ack", "cloud_ack", "third_party_ack", "vault_skipped", "keys_unprotected"):
+    for k in ("collects_ack", "cloud_ack", "third_party_ack", "vault_skipped", "keys_unprotected",
+              # Section 9.6 (services/onboarding_status): the owner saw where the first action
+              # ran, and chose to skip setting a goal.
+              "action_place_ack", "goal_skipped"):
         if k in data:
             state[k] = bool(data[k])
     if data.get("vault_skipped") is True or data.get("keys_unprotected") is True:
@@ -1486,6 +1489,14 @@ def api_onboarding_acks():
     except Exception as e:
         return api_error(e, "Couldn't save the onboarding state")
     return jsonify({"status": "ok", "acks": state})
+
+
+@core_bp.route('/api/onboarding/status')
+def api_onboarding_status():
+    """Section 9.6: onboarding is done only when all six checks are met (services/onboarding_status).
+    `setup_complete` (the setup steps ran) is reported beside it and is not the same thing."""
+    from agent_friday.services import onboarding_status
+    return jsonify(onboarding_status.status())
 
 
 @core_bp.route('/api/setup/status')

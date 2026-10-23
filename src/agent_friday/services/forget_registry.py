@@ -82,6 +82,9 @@ def _ensure_defaults() -> None:
     # Imported items waiting for the owner's answer (services/import_staging) name people too.
     from agent_friday.services import import_staging as _import_staging
     register_store("import_staging", _import_staging.forget_find, _import_staging.forget_purge)
+    # The last "What I see so far" shown (services/first_synthesis) can name a person.
+    from agent_friday.services import first_synthesis as _first_synthesis
+    register_store("first_synthesis", _first_synthesis.forget_find, _first_synthesis.forget_purge)
 
 
 def _norm(s: str) -> str:
