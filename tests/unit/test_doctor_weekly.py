@@ -278,3 +278,19 @@ def test_a_never_still_holds_after_its_receipt_is_archived(weekly, monkeypatch):
     L.append("activity", {"kind": "x"})
     assert L.archive_old(now=_t.time() + 800 * 86400, days=730)["archived"] == 1
     assert weekly.status()["answer"] == "never" and weekly.next_item() is None
+
+
+def test_the_report_goes_to_the_owners_address_with_the_owners_promise(weekly, monkeypatch):
+    """Amendment A23: bugs@futurespeak.ai, and the owner's one-line promise on
+    the card, in the prepared report and closing the email."""
+    assert weekly.FUTURESPEAK_DOCTOR_ADDRESS == "bugs@futurespeak.ai"
+    assert weekly.PROMISE == "FutureSpeak only uses these reports to fix bugs and never shares them."
+    mail = _Mail().install(monkeypatch)
+    weekly.answer("weekly")
+    assert weekly.status()["address"] == "bugs@futurespeak.ai"
+    assert weekly.status()["promise"] == weekly.PROMISE
+    p = weekly.prepare()
+    weekly.send(p["sha256"])
+    s = mail.sent[0]
+    assert s["to"] == "bugs@futurespeak.ai"
+    assert s["body"].rstrip().endswith(weekly.PROMISE)

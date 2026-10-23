@@ -75,6 +75,13 @@ def _run_claude_terminal(terminal_id, task, cwd):
         # Sanitize the task string: strip characters that could break out of the
         # nested cmd quoting and chain commands (command injection).
         safe_task = re.sub(r'["&|<>^%\r\n`]', ' ', str(task or ''))[:2000].strip()
+        # A folder inside a git repository: the session works in its own worktree
+        # on a new branch, never in the owner's checkout (NS-21.15-3). If the
+        # worktree cannot be made, nothing starts.
+        from agent_friday.services import code_worktree as _cwt
+        cwd_p = Path(_cwt.prepare(terminal_id, cwd_p, VIBE_TERMINALS.get(terminal_id)))
+        if not cwd_p.is_dir() or _safe_under_home(str(cwd_p)) is None:
+            raise ValueError(f"invalid or out-of-sandbox session folder: {str(cwd_p)!r}")
         settings_file = _cct.write_session_files(terminal_id)
         inner = (f'title Friday-Vibe-{terminal_id} && cd /d "{cwd_p}" && '
                  f'claude --settings "{settings_file}" "{safe_task}"')
