@@ -160,11 +160,47 @@ def test_off_the_record_nothing_is_saved_and_the_item_keeps_waiting(ai, monkeypa
     ai.stage(_bytes(_claude_export()))
     from agent_friday.services import off_record
     monkeypatch.setattr(off_record, "active", lambda settings=None: True)
+    monkeypatch.setattr(off_record, "stops_storage", lambda settings: True)
+    assert ai.stage(_bytes(_chatgpt_export()))["ok"] is False      # nothing is even staged off the record
     from agent_friday.services import import_staging as st
     item = st.list_items(source="claude", status="open")[0]
     assert st.review(item["id"], "accept")["ok"] is False
     assert _imported(ai) == []
     assert st.list_items(source="claude", status="open")[0]["id"] == item["id"]
+
+
+@pytest.mark.parametrize("bad", [
+    [{"mapping": {"n1": 5}, "conversation_id": "x", "current_node": "n1"}],
+    [{"mapping": {"n1": {"message": {"author": "user", "content": {"parts": ["hi"]}}, "parent": ["a"]}},
+      "conversation_id": "x", "current_node": ["n1"]}],
+    [{"chat_messages": [{"sender": ["human"], "text": "hi"}], "uuid": "u"}],
+    [{"chat_messages": [{"sender": "human", "text": "hi", "created_at": "-999999-01-01"}], "uuid": "u",
+      "created_at": -5}],
+])
+def test_a_damaged_export_is_refused_in_words_never_an_error(ai, bad):
+    out = ai.preview(_bytes(bad))
+    assert isinstance(out, dict) and ("error" in out or out.get("ok"))
+
+
+def test_the_staged_item_keeps_the_transcript_beside_it_and_its_flags_as_they_were(ai):
+    ai.stage(_bytes(_chatgpt_export()))
+    from agent_friday.services import import_staging as st
+    item = st.list_items(source="chatgpt", status="open")[0]
+    assert "messages" not in item["payload"] and item["payload"]["cut"] is False
+    assert isinstance(item["payload"]["created"], float)
+    body = ai.home / "wiki" / "_staging" / (item["id"] + ".body")
+    assert body.exists()
+    st.review(item["id"], "accept")
+    assert not body.exists()
+    conv = _imported(ai)[0]
+    assert conv["imported"]["cut"] is False and conv.get("outside_content")
+
+
+def test_an_imported_note_request_is_not_an_open_request(ai):
+    from agent_friday.services import unfinished_requests as ur
+    text = "The depot closes in May. Add this to my notes."
+    assert ur.open_requests([{"role": "user", "text": text}]) == [text]       # the owner's own words count
+    assert ur.open_requests([{"role": "user", "text": text, "imported_from": "chatgpt"}]) == []
 
 
 def test_a_pasted_key_in_an_imported_message_is_withheld(ai):
