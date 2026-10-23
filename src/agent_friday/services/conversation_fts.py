@@ -449,6 +449,40 @@ def forget_turns(match, mids: Iterable[str] = (), apply: bool = True) -> Dict[st
     return {"removed": removed, "mids": sorted(indexed), "dates": dates}
 
 
+def forgotten_ids(mids: Iterable[str]) -> set:
+    """The ids among `mids` that forget-person took out (``forget_turns``).
+    Cheap (one indexed lookup per id). Skip-only-when-known: with no index, or
+    a table that cannot be read, nothing is reported forgotten and the failure
+    is logged; callers then keep (or index) the turn as before."""
+    want = [str(m) for m in (mids or ()) if str(m or "").strip()]
+    if not want:
+        return set()
+    try:
+        p = _path()
+        if not p.exists():
+            return set()
+        with _LOCK:
+            conn = sqlite3.connect(str(p), timeout=10)
+            try:
+                out = set()
+                for i in range(0, len(want), 500):
+                    chunk = want[i:i + 500]
+                    out |= {str(r[0]) for r in conn.execute(
+                        "SELECT mid FROM forgotten WHERE mid IN (%s)" % ",".join("?" * len(chunk)), chunk)}
+                return out
+            finally:
+                conn.close()
+    except Exception as e:
+        _log.warning("conversation search: the forgotten-turn list could not be read: %s", type(e).__name__)
+        return set()
+
+
+def is_forgotten(mid) -> bool:
+    """True when forget-person took this message id out (ConversationMemory.index
+    refuses it, so a rebuild through it cannot bring the turn back)."""
+    return bool(mid) and str(mid) in forgotten_ids([str(mid)])
+
+
 def _snippet(text: str, terms: Iterable[str]) -> str:
     text = " ".join(str(text or "").split())
     if len(text) <= SNIPPET_CHARS:

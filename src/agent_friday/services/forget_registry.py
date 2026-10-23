@@ -25,22 +25,42 @@ fixed order, e.g. the recall indexes before the summaries made from them).
 NAME MATCHING IN FREE TEXT (``subject_matcher``)
 -----------------------------------------------
 Stores that hold sentences rather than records (conversation turns, day
-summaries, memory-card lines) match the person's name case-sensitively, as a
-whole word: the name as the owner gave it (the tombstone keeps it) or in
-title case. Forgetting "Will" removes "Will said..." and never "I will call".
-The case-insensitive whole-word rule the record stores use
-(``forget_person.redact_forgotten_names``, memory_proposals) would remove
-every ordinary "will", and a turn removed is a turn the owner cannot get back
-into recall. What this cannot tell apart: the same name used as a word at the
-start of a sentence ("Will you...?"), and a different person with the same
-name. Names shorter than three characters are not matched in free text at
-all and the receipt says so.
+summaries, memory-card lines, user-model facts, dream logs, proposals) match
+the person's name as a whole word, on NFC-normalised text:
+
+* A name of two or more words ("Dana Okafor") matches in any case
+  ("dana okafor"), with any run of spaces between the words.
+* A one-word name or alias matches case-sensitively, in the forms the owner
+  could mean: as typed (the tombstone keeps it), in title case, and with the
+  letter after an apostrophe capitalised ("o'brien" -> "O'Brien"); a straight
+  or curly apostrophe both match. Forgetting "Dana" removes "Dana said..." and
+  never "dana" inside a file name; a lowercase one-word name would remove
+  every ordinary word it collides with, and a turn removed is a turn the owner
+  cannot get back into recall.
+* An email matches case-insensitively and only whole: dana@x.com does not
+  match inside dana@x.com.au.
+
+``matcher.forms`` lists the forms matched (the receipt shows them: the owner
+typed them). What this cannot tell apart: the name used as a word at the start
+of a sentence, and a different person with the same name.
+
+REFUSED NAMES (``name_guard``)
+------------------------------
+Some names would take far more than the person with them, so they are refused
+(the receipt lists each as not removable, with the reason) while the full name
+and the other aliases are still forgotten: the owner's own name (and each word
+of it), Friday's name, and a one-word alias that is also a common word or
+month or day ("Will", "May", "Grace", "Friday"). Names shorter than three
+characters are not matched in free text either.
 """
 from __future__ import annotations
 
 import re
 import threading
+import unicodedata
 from typing import Any, Callable, Dict, List, Tuple
+
+from agent_friday.user_errors import clip, exception_text
 
 _LOCK = threading.Lock()
 _STORES: Dict[str, Tuple[Callable, Callable]] = {}
@@ -48,6 +68,28 @@ _DEFAULTS_LOADED = False
 
 #: Shortest name matched inside free text (see the module docstring).
 MIN_NAME = 3
+
+#: One-word aliases refused on their own (``name_guard``): ordinary words,
+#: months and days that are also given names. Lowercase.
+COMMON_WORDS = frozenset({
+    "may", "mark", "will", "june", "april", "august", "bill", "grace", "hope", "faith", "joy",
+    "rose", "summer", "autumn", "winter", "dawn", "eve", "ivy", "lily", "holly", "iris", "jade",
+    "ruby", "pearl", "amber", "crystal", "honey", "sky", "rain", "storm", "river", "brook",
+    "glen", "dale", "heath", "cliff", "rod", "pat", "sue", "don", "ray", "art", "bob", "rob",
+    "jack", "frank", "sterling", "chase", "hunter", "carter", "mason", "miles", "max", "bud",
+    "bunny", "chip", "buck", "earl", "duke", "king", "prince", "baron", "major", "sunny",
+    "angel", "harmony", "liberty", "victory", "patience", "prudence", "charity", "mercy",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "january", "february", "march", "july", "september", "october", "november", "december",
+    "christian", "page", "price", "young", "long", "white", "black", "brown", "green", "gray",
+    "grey", "rich", "noble", "golden", "cash", "penny", "sandy", "misty", "dusty", "rusty",
+})
+
+_REASON_OWNER = "your own name: matching it would remove what you said about yourself"
+_REASON_FRIDAY = "Friday's own name: matching it would remove her name from everything"
+_REASON_COMMON = ("an ordinary word on its own (a word, month or day as well as a name): matching it "
+                  "would remove unrelated text. Any fuller name and the other names were still matched")
+_REASON_SHORT = "shorter than %d characters: too likely to match ordinary words" % MIN_NAME
 
 #: What each store's count is a count of, for the receipt.
 KINDS = {
@@ -86,7 +128,7 @@ def find_all(names, emails) -> Dict[str, int]:
             out[name] = _count(find_fn(set(names), set(emails)))
         except Exception as e:
             out[name] = -1
-            out[name + "_error"] = str(e)[:120]
+            out[name + "_error"] = clip(exception_text(e), 120)
     return out
 
 
@@ -119,7 +161,10 @@ def purge_all_detailed(names, emails) -> List[Dict[str, Any]]:
         try:
             value = purge_fn(set(names), set(emails))
         except Exception as e:
-            rows.append(dict(_row(name, error=str(e)[:120]), error=str(e)[:120]))
+            # Marked as exception text: the model reads it, and the HTTP
+            # boundary (routes._errors.public_result) swaps it for an error id.
+            err = clip(exception_text(e), 120)
+            rows.append(dict(_row(name, error=err), error=err))
             continue
         rows.append(_row(name, value))
         if isinstance(value, dict):
@@ -165,47 +210,143 @@ def _given_forms(names) -> set:
     return out
 
 
+def _nfc(s) -> str:
+    return unicodedata.normalize("NFC", str(s or ""))
+
+
+def _lower(name) -> str:
+    """A name as compared: NFC, whitespace collapsed, lowercase."""
+    return " ".join(_nfc(name).split()).lower()
+
+
 def _title(name: str) -> str:
     return " ".join(w[:1].upper() + w[1:] for w in str(name).split())
 
 
+_INNER_CAP = re.compile(r"(['’-])(\w)")
+
+
+def _inner_capital(name: str) -> str:
+    """O'brien -> O'Brien, Mary-jane -> Mary-Jane."""
+    return _INNER_CAP.sub(lambda m: m.group(1) + m.group(2).upper(), name)
+
+
+def _pattern_text(form: str) -> str:
+    """Whole words, any run of spaces between them, either apostrophe."""
+    words = []
+    for w in form.split(" "):
+        if w:
+            words.append("".join("['’]" if ch in "'’" else re.escape(ch) for ch in w))
+    return r"\s+".join(words)
+
+
+def _owner_names() -> set:
+    """The owner's own name and each word of it (setup: services/setup_profile),
+    lowercased. Empty when none was given or it cannot be read."""
+    try:
+        from agent_friday.services import setup_profile
+        n = _lower((setup_profile.load_profile() or {}).get("name") or "")
+    except Exception:
+        n = ""
+    if not n:
+        return set()
+    return {n} | {w for w in n.split(" ") if len(w) >= MIN_NAME}
+
+
+def _friday_names() -> set:
+    """Friday's name as the owner set it (agent_name), and her default."""
+    out = {"friday", "agent friday"}
+    raw = []
+    try:
+        from agent_friday.services import agent_identity
+        raw.append(agent_identity.assistant_name())
+        raw.append(agent_identity._settings().get("agent_name") or "")
+    except Exception:
+        pass
+    for r in raw:
+        n = _lower(r)
+        if n:
+            out.add(n)
+            out |= {w for w in n.split(" ") if len(w) >= MIN_NAME and w != "agent"}
+    return out
+
+
+def name_guard(names) -> Dict[str, str]:
+    """{lowercased name: why it is refused} for the names that would take far
+    more than the person (see REFUSED NAMES in the module docstring)."""
+    lowered = {_lower(n) for n in names if _lower(n)}
+    if not lowered:
+        return {}
+    owner, her = _owner_names(), _friday_names()
+    out = {}
+    for n in lowered:
+        if n in owner:
+            out[n] = _REASON_OWNER
+        elif n in her:
+            out[n] = _REASON_FRIDAY
+        elif " " not in n and n in COMMON_WORDS:
+            out[n] = _REASON_COMMON
+    return out
+
+
 class _Matcher:
-    def __init__(self, patterns, skipped):
+    """`.forms` the name forms matched (for the receipt), `.names` the
+    lowercased names matched, `.skipped` names too short to match, `.refused`
+    [{"name", "reason"}] names refused by ``name_guard``."""
+
+    def __init__(self, patterns, skipped, refused=(), forms=(), names=()):
         self.patterns = patterns
-        self.skipped = skipped
+        self.skipped = list(skipped)
+        self.refused = list(refused)
+        self.forms = list(forms)
+        self.names = set(names)
 
     def __call__(self, text) -> bool:
         if not text or not isinstance(text, str):
             return False
+        text = _nfc(text)
         return any(p.search(text) for p in self.patterns)
 
     def __bool__(self) -> bool:
         return bool(self.patterns)
 
+    def notes(self) -> List[Dict[str, str]]:
+        """The not-removable receipt entries for the refused and short names."""
+        out = [{"what": "the name %r on its own" % r["name"], "reason": r["reason"]} for r in self.refused]
+        out += [{"what": "the name %r in free text" % n, "reason": _REASON_SHORT} for n in self.skipped]
+        return out
+
 
 def subject_matcher(names, emails=()) -> "_Matcher":
     """A predicate: does this free text name the person? See the module
-    docstring for the rule. `.skipped` lists names too short to match."""
-    forms, skipped = set(), []
-    lowered = {" ".join(str(n or "").split()).lower() for n in names if str(n or "").strip()}
-    for n in lowered:
+    docstring for the rule."""
+    lowered = {_lower(n) for n in names if _lower(n)}
+    guard = name_guard(lowered)
+    given = _given_forms(lowered)
+    pats, skipped, refused, forms, kept = [], [], [], set(), set()
+    for n in sorted(lowered, key=len, reverse=True):
+        if n in guard:
+            refused.append({"name": n, "reason": guard[n]})
+            continue
         if len(n) < MIN_NAME:
             skipped.append(n)
             continue
-        forms.add(_title(n))
-    for g in _given_forms(lowered):
-        if len(g) >= MIN_NAME:
-            forms.add(g)
-    pats = []
-    for form in sorted(forms, key=len, reverse=True):
-        words = [re.escape(w) for w in form.split(" ") if w]
-        if words:
-            pats.append(re.compile(r"(?<!\w)" + r"\s+".join(words) + r"(?!\w)"))
+        kept.add(n)
+        typed = sorted(_nfc(g) for g in given if _lower(g) == n)
+        if " " in n:
+            pats.append(re.compile(r"(?<!\w)" + _pattern_text(n) + r"(?!\w)", re.IGNORECASE))
+            forms.add(typed[0] if typed else _title(n))
+            continue
+        variants = set(typed) | {_title(n), _inner_capital(_title(n))} | {_inner_capital(t) for t in typed}
+        for v in sorted(variants):
+            pats.append(re.compile(r"(?<!\w)" + _pattern_text(v) + r"(?!\w)"))
+            forms.add(v)
     for e in emails or ():
-        e = str(e or "").strip()
+        e = _nfc(e).strip()
         if "@" in e:
-            pats.append(re.compile(r"(?<![\w.+-])" + re.escape(e) + r"(?![\w-])", re.IGNORECASE))
-    return _Matcher(pats, sorted(skipped))
+            # Whole address only: dana@x.com does not match inside dana@x.com.au.
+            pats.append(re.compile(r"(?<![\w.+-])" + re.escape(e) + r"(?![\w.-]*\w)", re.IGNORECASE))
+    return _Matcher(pats, sorted(skipped), sorted(refused, key=lambda r: r["name"]), sorted(forms), kept)
 
 
 # ── the stores that exist today ──────────────────────────────────────────────

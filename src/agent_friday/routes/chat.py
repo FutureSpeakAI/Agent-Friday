@@ -474,6 +474,22 @@ _NO_REPLY_NOTE = "[No reply was given to this message: the turn did not complete
 #: A user row whose turn has not (yet) produced a reply.
 _UNANSWERED_STATUSES = ("received", "unanswered")
 
+#: Stands in for a turn forget-person took out of Friday's memory
+#: (services/forget_derived): the owner's history still shows it, the model
+#: does not read it again, and the roles still alternate.
+_FORGOTTEN_NOTE = "[This message was removed from Friday's memory at the owner's request.]"
+
+
+def _forgotten_ids(rows):
+    """The ids among `rows` that forget-person took out (conversation_fts's
+    `forgotten` list). Empty when it cannot be read: the turn is replayed as
+    before rather than the chat failing."""
+    try:
+        from agent_friday.services import conversation_fts as _fts
+        return _fts.forgotten_ids([m.get('id') for m in rows if m.get('id')])
+    except Exception:
+        return set()
+
 
 def _conv_context(cid, limit=None, exclude_id=None):
     """This conversation's replayable turns — never another conversation's.
@@ -499,11 +515,17 @@ def _conv_context(cid, limit=None, exclude_id=None):
     # surfaces, not conversation, and are never replayed into model context.
     rows = [m for m in rows if m.get('role') not in ('system', 'system_report')
             and not (exclude_id and m.get('id') == exclude_id)]
+    gone = _forgotten_ids(rows)
     out = []
     for i, m in enumerate(rows):
         role = 'user' if m.get('role') == 'user' else 'assistant'
         text = m.get('text') or ''
-        if text:
+        forgotten = bool(text and gone and str(m.get('id')) in gone)
+        if forgotten:
+            # Forget-person took this turn out of Friday's memory: the owner
+            # still sees it, the model gets only the placeholder (no receipts).
+            out.append({"role": role, "content": _FORGOTTEN_NOTE})
+        elif text:
             if role == 'assistant' and (m.get('meta') or {}).get('library'):
                 # A reply that read the Library is recognised wherever history is replayed or summarised.
                 _library_cite.remember_library_reply(text)
@@ -515,6 +537,7 @@ def _conv_context(cid, limit=None, exclude_id=None):
                 from agent_friday.services.egress_gate import mark_local_only
                 text = mark_local_only(text)
             out.append({"role": role, "content": text})
+        if forgotten or text:
             nxt = rows[i + 1] if i + 1 < len(rows) else None
             if (role == 'user'
                     and (m.get('meta') or {}).get('status') in _UNANSWERED_STATUSES
@@ -3760,13 +3783,18 @@ def chat_send():
 
         # Anthropic-format message history
         messages = []
-        for msg in CHAT_HISTORY[_history_start(CHAT_HISTORY):]:
+        _window = CHAT_HISTORY[_history_start(CHAT_HISTORY):]
+        # A turn forget-person took out is replayed only as a placeholder.
+        _gone = _forgotten_ids(_window)
+        for msg in _window:
             if msg.get('role') == 'system':
                 # B2/B5: transparency system lines are never model context.
                 continue
             role = 'user' if msg.get('role') == 'user' else 'assistant'
             text = msg.get('text', '')
-            if text:
+            if text and _gone and str(msg.get('id')) in _gone:
+                messages.append({"role": role, "content": _FORGOTTEN_NOTE})
+            elif text:
                 if role == 'assistant' and msg.get('library'):
                     _library_cite.remember_library_reply(text)
                 if role == 'assistant':

@@ -319,6 +319,20 @@ class ConversationMemory:
         text = withhold(text)[0]
         if not text:
             return None
+        # A turn forget-person took out stays out (NS-15.7-2): a rebuild from
+        # the transcripts, or a turn still being indexed when the forget ran,
+        # re-indexes through here with the transcript id, which conversation
+        # search keeps in its `forgotten` table. Skipped only when the id is
+        # KNOWN to be forgotten: if that table cannot be read the turn is
+        # indexed and the failure logged (memory keeps working; the forget's
+        # own deletion already ran and a later forget re-runs safely).
+        if msg_id:
+            try:
+                from agent_friday.services import conversation_fts as _fts
+                if _fts.is_forgotten(msg_id):
+                    return None
+            except Exception as e:
+                print(f"  [MEMORY] forgotten-turn check failed (indexing anyway): {type(e).__name__}")
         if not self._ensure():
             return None
         # D5: verify the embedding space BEFORE the broad handler below, which

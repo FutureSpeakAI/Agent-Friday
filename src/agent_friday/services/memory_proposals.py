@@ -674,11 +674,14 @@ class SuggestionsLocked(RuntimeError):
     pass
 
 
-def _name_rows(conn, names) -> tuple:
-    wanted = [n for n in {" ".join(str(x or "").split()).lower() for x in (names or [])} if len(n) >= 3]
-    if not wanted:
+def _name_rows(conn, names, emails=()) -> tuple:
+    # The free-text rule every forget store shares (forget_registry.subject_matcher):
+    # a one-word name matches case-sensitively, so forgetting "Will Hartley"
+    # never takes a suggestion that says "I will".
+    from agent_friday.services import forget_registry as _fr
+    match = _fr.subject_matcher(names or (), emails or ())
+    if not match:
         return [], 0
-    pats = [re.compile(r"\b" + r"\s+".join(re.escape(w) for w in n.split(" ")) + r"\b", re.IGNORECASE) for n in wanted]
     out, locked = [], 0
     for fid, text, evidence in conn.execute("SELECT fact_id, text, evidence FROM proposed_facts").fetchall():
         opened = _open(text)
@@ -686,7 +689,7 @@ def _name_rows(conn, names) -> tuple:
             locked += 1                      # sealed and not openable: unknown, never "does not name them"
             continue
         hay = "%s %s" % (opened, _open(evidence))
-        if any(p.search(hay) for p in pats):
+        if match(hay):
             out.append(fid)
     return out, locked
 
@@ -703,7 +706,7 @@ def people_find(names, emails) -> int:
     """forget-person: how many proposals name the person (any status)."""
     conn = _connect()
     try:
-        ids, locked = _name_rows(conn, set(names or ()) | set(emails or ()))
+        ids, locked = _name_rows(conn, set(names or ()), set(emails or ()))
         if locked:
             raise SuggestionsLocked(LOCKED_MESSAGE)
         return len(ids)
@@ -714,7 +717,7 @@ def people_find(names, emails) -> int:
 def people_purge(names, emails) -> int:
     conn = _connect()
     try:
-        ids, locked = _name_rows(conn, set(names or ()) | set(emails or ()))
+        ids, locked = _name_rows(conn, set(names or ()), set(emails or ()))
         for fid in ids:
             conn.execute("DELETE FROM proposed_facts WHERE fact_id=?", (fid,))
         conn.commit()

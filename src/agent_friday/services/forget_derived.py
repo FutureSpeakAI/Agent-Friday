@@ -17,16 +17,24 @@ still carried a line about Dana. This module registers those stores:
                          (services/conversation_fts). The turns that name the
                          person are DELETED from both, so they are never
                          recalled or searched again; conversation search keeps
-                         their ids so a rebuild from the transcripts does not
-                         bring them back. The in-memory review buffer
-                         (memory_review) drops them too.
+                         their ids (``forgotten``) so a rebuild from the
+                         transcripts does not bring them back, and
+                         ConversationMemory.index refuses those ids too (a turn
+                         being indexed while the forget ran, or a rebuild of the
+                         vector memory). The in-memory review buffer
+                         (memory_review) drops every exchange naming them, and
+                         the chat replays those turns to the model only as a
+                         "removed" placeholder (routes/chat).
 ``conversation_graph``   the knowledge graph's nodes extracted from those turns:
                          retraction is requested through memory_derived's queue
                          (indexer.purge_conversation_turns, the rules a
-                         correction uses). The graph reads its conversation
-                         source from the vector memory just cleaned, so its
-                         next pass does not re-derive them; nodes titled with
-                         the person's name went in forget_person's step 3.
+                         correction uses). The count is of turns queued; when
+                         no graph pass is running it is applied at once and the
+                         receipt gives what went. The graph reads its
+                         conversation source from the vector memory just
+                         cleaned, so its next pass does not re-derive them;
+                         nodes titled with the person's name went in
+                         forget_person's step 3.
 ``day_summaries``        a day summary that names the person, or was made from
                          a removed turn, is removed and queued to be written
                          again (memory_derived.mark_summaries). The summary job
@@ -38,27 +46,48 @@ still carried a line about Dana. This module registers those stores:
                          that name the person; the owner's forget is the owner's
                          action, so they go at once, with every journal copy.
 ``memory_card_pending``  suggestions in the card's review queue that name them.
+``user_model``           facts in the older user model (user_model.db) that name
+                         them; the one-time move of those facts onto the card
+                         runs before the card is purged, so it cannot bring a
+                         line back.
+``dreams``               the nightly dreaming log (dreams.db and dreams/<day>.md):
+                         consolidated facts and topics naming them leave each
+                         day; the day's summary line is written again.
 ``action_receipts``      nothing is removed: listed as retained.
+``context_log``          nothing is removed: listed as retained, with its
+                         retention period.
+``egress_log``           nothing is removed: listed as retained.
 
 WHAT IS KEPT, AND WHY (the receipt says so, per store)
 ------------------------------------------------------
-* The conversation transcript (and the chat mirror built from it) is the
+* The conversation transcript (and the chat window shown from it) is the
   owner's own record of what they said; forget-person's standing policy is
   that Friday does not rewrite it. The receipt counts the messages that still
   name the person, as "retained". The owner can delete any one message from
   the history (conversation_fts.delete_message).
 * Action receipts (actions/receipts.jsonl) are the append-only record of what
   Friday did on the owner's behalf; they are counted, not changed.
+* The context log (vault/context-log/) records what was put in front of a
+  model, for the owner's own audit; it is pruned by its retention setting
+  (Settings > Privacy > Context Logging), not by a forget.
+* The egress log (vault/egress-log.jsonl) is the audit of what left this
+  computer; its reason fields can quote the text that was gated. Kept.
 
-Matching in free text is forget_registry.subject_matcher: case-sensitive,
-whole-word (forgetting "Will" never removes "I will"). Names shorter than three
-characters are not matched and the receipt lists them as not removable.
+Matching in free text is forget_registry.subject_matcher (whole words; a
+multi-word name in any case, a one-word name case-sensitively). Names that
+would take far more than the person (the owner's own, Friday's, an ordinary
+word on its own) and names shorter than three characters are not matched, and
+the receipt lists them as not removable.
+
+Running forget again is safe: what is already gone counts 0, and days and
+graph turns already handled are not queued again.
 
 Turns said AFTER the forget are the owner's new words and are indexed as
 usual. Lifting the tombstone (unforget) does not restore anything removed here.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -67,9 +96,12 @@ from typing import Any, Dict, List, Optional, Tuple
 _log = logging.getLogger(__name__)
 
 _TRANSCRIPT_REASON = ("your own conversation history, in your words: Friday does not rewrite it (you can "
-                      "delete any message from History). It is no longer recalled, searched or summarised")
+                      "delete any message from History). Those messages are no longer recalled, searched, "
+                      "summarised or replayed to the model as conversation context")
 _RECEIPTS_REASON = ("the append-only record of actions Friday took for you; it stays as the evidence of "
                     "what was done")
+_EGRESS_REASON = ("the audit record of what left this computer and why; a reason can quote the text that "
+                  "was checked. Kept with no expiry, as the evidence of every send")
 
 
 def _matcher(names, emails):
@@ -77,15 +109,17 @@ def _matcher(names, emails):
     return fr.subject_matcher(names, emails)
 
 
-def _short(m) -> List[Dict[str, str]]:
-    return [{"what": "the name %r in free text" % n,
-             "reason": "shorter than %d characters: too likely to match ordinary words" % _min()}
-            for n in getattr(m, "skipped", [])]
-
-
-def _min() -> int:
+def _keyword_matcher(m):
+    """For stores that keep lowercase keywords (dream topics): a keyword equal
+    to a forgotten name, or to a word of a multi-word one that is not refused
+    (an ordinary word, the owner's or Friday's name)."""
     from agent_friday.services import forget_registry as fr
-    return fr.MIN_NAME
+    names = set(getattr(m, "names", ()) or ())
+    words = {w for n in names if " " in n for w in n.split(" ") if len(w) >= fr.MIN_NAME}
+    words -= set(fr.name_guard(words))
+    words = {w for w in words if w not in fr.COMMON_WORDS}
+    keys = names | words
+    return lambda k: str(k or "").strip().lower() in keys
 
 
 # ── reading the stores ──────────────────────────────────────────────────────
@@ -122,7 +156,7 @@ def _transcript_hits(m) -> List[Tuple[str, dict]]:
                 if isinstance(msg, dict) and m(msg.get("text")):
                     out.append((cid, msg))
     except Exception as e:
-        _log.warning("forget: transcripts not read: %s", e)
+        _log.warning("forget: transcripts not read: %s", type(e).__name__)
     return out
 
 
@@ -159,20 +193,36 @@ def _summary_exists(day: str) -> bool:
         return False
 
 
+def _lines_naming(path: Path, m, field: Optional[str] = None) -> int:
+    """Lines of a JSONL file that name them (in `field` only, when given)."""
+    if not path.exists():
+        return 0
+    n = 0
+    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            if field is None:
+                n += bool(m(line))
+                continue
+            try:
+                n += bool(m(str((json.loads(line) or {}).get(field) or "")))
+            except (ValueError, AttributeError):
+                continue
+    return n
+
+
 def _receipts_naming(m) -> int:
     try:
         from agent_friday.services import action_journal as aj
-        p = aj._path()
-        if not p.exists():
-            return 0
-        n = 0
-        with open(p, "r", encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
-                if m(line):
-                    n += 1
-        return n
+        return _lines_naming(aj._path(), m)
     except Exception:
         return 0
+
+
+def _scrubbed(e: BaseException, what: str) -> str:
+    """A reason carrying an exception, marked so the HTTP boundary swaps it
+    (routes._errors.public_result) while the model keeps the real text."""
+    from agent_friday.user_errors import clip, exception_text
+    return clip(exception_text(e, what + " (%s)"), 200)
 
 
 # ── the stores ──────────────────────────────────────────────────────────────
@@ -197,11 +247,22 @@ def recall_purge(names, emails) -> Dict[str, Any]:
     """The recall indexes, then the graph and the day summaries made from them
     (in that order: the summaries are written again from the cleaned index)."""
     m = _matcher(names, emails)
-    not_removable = _short(m)
+    not_removable = m.notes()
     removed_ids, texts, days = set(), [], set()
     transcript = _transcript_hits(m) if m else []
+    t_ids = [str(msg.get("id")) for _c, msg in transcript if msg.get("id")]
+    # Turns an earlier forget already took out: their days and graph turns
+    # were handled then, so running forget again queues nothing twice.
+    try:
+        from agent_friday.services import conversation_fts as fts
+        already = fts.forgotten_ids(t_ids)
+    except Exception:
+        already = set()
+    fresh = [(c, msg) for c, msg in transcript if str(msg.get("id") or "") not in already]
 
     # 1. Friday's vector memory.
+    vector_ids: List[str] = []
+    left: set = set()
     if m:
         mem, why = _memory()
         if why:
@@ -212,45 +273,73 @@ def recall_purge(names, emails) -> Dict[str, Any]:
                 not_removable.append({"what": "conversation memory (vector recall)",
                                       "reason": "it could not be read, so it was not checked"})
             elif hits:
-                mem.delete(ids=[h["id"] for h in hits])
-                removed_ids |= {str(h["id"]) for h in hits}
-                texts += [h["text"] for h in hits]
-                days |= {str(h.get("date") or "")[:10] for h in hits}
+                want = [str(h["id"]) for h in hits]
+                vector_ids = want
+                n = mem.delete(ids=want)
+                gone = set(want)
+                if int(n or 0) < len(want):
+                    after = mem.matching(m)
+                    left = {str(r["id"]) for r in after} if after is not None else set(want)
+                    gone -= left
+                    if left:
+                        not_removable.append({
+                            "what": "turns in conversation memory (vector recall)", "count": len(left),
+                            "reason": "the memory did not delete them, so they may still be recalled; "
+                                      "running forget again retries"})
+                removed_ids |= gone
+                texts += [h["text"] for h in hits if str(h["id"]) in gone]
+                days |= {str(h.get("date") or "")[:10] for h in hits if str(h["id"]) in gone}
 
-    # 2. Conversation search; the transcript ids are kept out of any rebuild.
+    # 2. Conversation search; the transcript ids (and the vector memory's,
+    #    which are the same message ids) are kept out of any rebuild.
     if m:
         try:
             from agent_friday.services import conversation_fts as fts
-            got = fts.forget_turns(m, mids=[str(msg.get("id")) for _c, msg in transcript if msg.get("id")])
-            removed_ids |= set(got["mids"])
+            got = fts.forget_turns(m, mids=t_ids + vector_ids)
+            # Counted once per turn across both indexes, and not at all while
+            # the vector memory still holds it (listed as not removable above).
+            removed_ids |= set(got["mids"]) - left
             days |= set(got["dates"])
         except Exception as e:
-            not_removable.append({"what": "conversation search", "reason": "it could not be updated (%s)"
-                                  % type(e).__name__})
+            not_removable.append({"what": "conversation search",
+                                  "reason": _scrubbed(e, "it could not be updated")})
 
-    # The in-memory review buffer (what the next periodic review would read).
-    try:
-        from agent_friday.services import memory_review
-        for t in texts + [str(msg.get("text") or "") for _c, msg in transcript]:
-            memory_review.forget_text(t)
-    except Exception:
-        pass
+    # The in-memory review buffer (what the next periodic review would read):
+    # every buffered exchange naming them, including a turn still in flight.
+    if m:
+        try:
+            from agent_friday.services import memory_review
+            memory_review.forget_matching(m)
+        except Exception:
+            pass
 
-    # 3. The knowledge graph's nodes made from those turns.
-    graph = {"store": "conversation_graph", "removed": 0, "kind": "conversation turns retracted from the "
-             "knowledge graph", "not_removable": [], "retained": []}
+    # 3. The knowledge graph's nodes made from those turns (only turns this run
+    #    took out: a second forget queues nothing again).
+    graph = {"store": "conversation_graph", "removed": 0,
+             "kind": "conversation turns queued for retraction from the knowledge graph",
+             "not_removable": [], "retained": []}
     turn_texts = list(dict.fromkeys(
-        t for t in texts + [str(msg.get("text") or "") for _c, msg in transcript] if t.strip()))
+        t for t in texts + [str(msg.get("text") or "") for _c, msg in fresh] if t.strip()))
     if turn_texts:
         try:
             from agent_friday.services import memory_derived as md
             out = md.queue_graph_retraction(turn_texts) or {}
-            graph["removed"] = len(md._turn_ids(turn_texts))
-            if out.get("deferred"):
-                graph["kind"] += " (queued: applied when the running graph pass saves)"
+            n = len(md._turn_ids(turn_texts))
+            graph["removed"] = n
+            if out.get("refused"):
+                graph["not_removable"].append({
+                    "what": "knowledge graph", "count": n,
+                    "reason": "the graph refused the save; the turns stay queued and go on its next pass"})
+            elif not out.get("deferred") and "entities" in out:
+                graph["kind"] = ("conversation turns retracted from the knowledge graph now (%d entities and "
+                                 "%d links removed, %d described again, %d community summaries removed)"
+                                 % (int(out.get("entities") or 0), int(out.get("relationships") or 0),
+                                    int(out.get("described_again") or 0), int(out.get("reports") or 0)))
+            elif out.get("deferred"):
+                graph["kind"] += " (applied when the running graph pass saves)"
         except Exception as e:
-            graph["not_removable"].append({"what": "knowledge graph", "reason": "retraction could not be "
-                                           "queued (%s)" % type(e).__name__})
+            graph["not_removable"].append({"what": "knowledge graph",
+                                           "reason": _scrubbed(e, "retraction could not be queued")})
 
     # 4. Day summaries that name them, or were made from a removed turn.
     summaries = {"store": "day_summaries", "removed": 0, "kind": "day summaries removed and queued to be "
@@ -258,12 +347,12 @@ def recall_purge(names, emails) -> Dict[str, Any]:
     if m:
         try:
             from agent_friday.services import memory_derived as md
-            days |= {_day_of(msg.get("ts")) for _c, msg in transcript}
+            days |= {_day_of(msg.get("ts")) for _c, msg in fresh}
             want = set(_summary_days_naming(m)) | {d for d in days if md._valid_day(d) and _summary_exists(d)}
             summaries["removed"] = len(md.mark_summaries(want))
         except Exception as e:
-            summaries["not_removable"].append({"what": "day summaries", "reason": "they could not be removed "
-                                               "(%s)" % type(e).__name__})
+            summaries["not_removable"].append({"what": "day summaries",
+                                               "reason": _scrubbed(e, "they could not be removed")})
 
     retained = []
     if transcript:
@@ -286,11 +375,47 @@ def card_purge(names, emails) -> Dict[str, Any]:
     m = _matcher(names, emails)
     from agent_friday.services import core_memory
     c = core_memory.forget_matching(m) if m else {"lines": 0, "pending": 0, "journal": 0}
-    return {"removed": c["lines"], "kind": "memory card lines", "not_removable": _short(m),
+    return {"removed": c["lines"], "kind": "memory card lines",
             "also": [{"store": "memory_card_pending", "removed": c["pending"],
                       "kind": "memory card suggestions awaiting review"},
                      {"store": "memory_card_history", "removed": c["journal"],
                       "kind": "copies in the memory card's change history"}]}
+
+
+def user_model_find(names, emails) -> int:
+    m = _matcher(names, emails)
+    if not m:
+        return 0
+    from agent_friday.services import user_model
+    return user_model.forget_matching(m, apply=False)
+
+
+def user_model_purge(names, emails) -> Dict[str, Any]:
+    m = _matcher(names, emails)
+    n = 0
+    if m:
+        from agent_friday.services import user_model
+        n = user_model.forget_matching(m)
+    return {"removed": n, "kind": "facts in the older user model"}
+
+
+def dreams_find(names, emails) -> int:
+    m = _matcher(names, emails)
+    if not m:
+        return 0
+    from agent_friday.services import memory_dreaming
+    c = memory_dreaming.forget_matching(m, keyword=_keyword_matcher(m), apply=False)
+    return c["facts"] + c["topics"] + c["lines"]
+
+
+def dreams_purge(names, emails) -> Dict[str, Any]:
+    m = _matcher(names, emails)
+    c = {"facts": 0, "topics": 0, "lines": 0}
+    if m:
+        from agent_friday.services import memory_dreaming
+        c = memory_dreaming.forget_matching(m, keyword=_keyword_matcher(m))
+    return {"removed": c["facts"] + c["topics"] + c["lines"],
+            "kind": "items in the nightly dreaming log (consolidated facts and topics)"}
 
 
 def receipts_find(names, emails) -> int:
@@ -305,8 +430,63 @@ def receipts_purge(names, emails) -> Dict[str, Any]:
                          if n else [])}
 
 
+def _context_log_dir() -> Path:
+    from agent_friday import core
+    return Path(core.CONTEXT_LOG_DIR)
+
+
+def _context_retention() -> str:
+    try:
+        from agent_friday import core
+        days = int((core._load_settings() or {}).get("context_retention_days", 0) or 0)
+    except Exception:
+        days = 0
+    if days > 0:
+        return "kept for %d days, then removed by its retention sweep" % days
+    return "kept until you remove it: no retention period is set"
+
+
+def context_log_purge(names, emails) -> Dict[str, Any]:
+    m = _matcher(names, emails)
+    n = 0
+    if m:
+        try:
+            d = _context_log_dir()
+            if d.exists():
+                n = sum(_lines_naming(p, m) for p in sorted(d.glob("*.jsonl")))
+        except Exception:
+            n = 0
+    reason = ("the log of what was put in front of a model, for your own audit (Settings > Privacy > Context "
+              "Logging); a forget does not edit it. " + _context_retention())
+    return {"removed": 0, "kind": "context log entries",
+            "retained": [{"what": "context log entries that name them", "count": n, "reason": reason}]
+            if n else []}
+
+
+def _egress_log_path() -> Path:
+    from agent_friday.services import egress_gate
+    return Path(egress_gate._DEFAULT_LOG)
+
+
+def egress_log_purge(names, emails) -> Dict[str, Any]:
+    m = _matcher(names, emails)
+    n = 0
+    if m:
+        try:
+            n = _lines_naming(_egress_log_path(), m, field="reason")
+        except Exception:
+            n = 0
+    return {"removed": 0, "kind": "egress log entries",
+            "retained": [{"what": "egress log entries whose reason names them", "count": n,
+                          "reason": _EGRESS_REASON}] if n else []}
+
+
 def register() -> None:
     from agent_friday.services import forget_registry as fr
     fr.register_store("conversation_recall", recall_find, recall_purge)
     fr.register_store("memory_card", card_find, card_purge)
+    fr.register_store("user_model", user_model_find, user_model_purge)
+    fr.register_store("dreams", dreams_find, dreams_purge)
     fr.register_store("action_receipts", receipts_find, receipts_purge)
+    fr.register_store("context_log", receipts_find, context_log_purge)
+    fr.register_store("egress_log", receipts_find, egress_log_purge)

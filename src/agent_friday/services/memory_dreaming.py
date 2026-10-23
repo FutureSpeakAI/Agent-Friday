@@ -348,6 +348,72 @@ def _write_markdown(day, n_turns, topics, consolidated, pruned, summary) -> None
         pass
 
 
+def forget_matching(match, keyword=None, apply: bool = True) -> Dict[str, int]:
+    """Forget-person (services/forget_derived, NS-15.7-2): the consolidated
+    facts whose text `match` accepts and the topics `keyword` (a predicate on
+    one lowercase keyword) or `match` accepts leave each day's dream; the
+    day's summary line is written again from what is left, and its
+    ``dreams/<day>.md`` is rewritten from the cleaned row. A day log with no
+    row loses only the lines that name the person. With `apply=False` only
+    counts. Returns {"facts", "topics", "lines" (day logs with no row),
+    "days"}. Raises when the store cannot be read, so the receipt says it was
+    not checked."""
+    kw = keyword or (lambda _k: False)
+
+    def topic_named(t) -> bool:
+        k = str((t or {}).get("topic") or "")
+        return bool(k) and (kw(k.lower()) or match(k))
+
+    out = {"facts": 0, "topics": 0, "lines": 0, "days": 0}
+    rewritten = set()
+    if DB_PATH.exists():
+        with _LOCK:
+            conn = _connect()
+            try:
+                rows = conn.execute("SELECT dream_id, day, turns_reviewed, topics_json, consolidated_json, "
+                                    "pruned FROM dreams").fetchall()
+                for did, day, tr, tj, cj, pr in rows:
+                    topics, facts = _loads(tj, []), _loads(cj, [])
+                    keep_t = [t for t in topics if not topic_named(t)]
+                    keep_f = [f for f in facts if not match(str((f or {}).get("text") or ""))]
+                    if len(keep_t) == len(topics) and len(keep_f) == len(facts):
+                        continue
+                    out["topics"] += len(topics) - len(keep_t)
+                    out["facts"] += len(facts) - len(keep_f)
+                    out["days"] += 1
+                    if _DAY_RE.match(str(day or "")):
+                        rewritten.add(day)          # its day log is written again from the row
+                    if not apply:
+                        continue
+                    summary = _summarize(day, tr, keep_t, keep_f, pr)
+                    conn.execute("UPDATE dreams SET topics_json=?, consolidated_json=?, summary=? "
+                                 "WHERE dream_id=?", (json.dumps(keep_t), json.dumps(keep_f), summary, did))
+                    if day in rewritten:
+                        _write_markdown(day, tr, keep_t, keep_f, pr, summary)
+                if apply:
+                    conn.commit()
+            finally:
+                conn.close()
+    if DREAMS_DIR.exists():
+        topic_line = re.compile(r"^- (.+) \(\d+\)$")
+        for p in sorted(DREAMS_DIR.glob("*.md")):
+            if p.stem in rewritten:
+                continue
+            lines = p.read_text(encoding="utf-8").splitlines()
+            keep = []
+            for line in lines:
+                t = topic_line.match(line)
+                if match(line) or (t and kw(t.group(1).lower())):
+                    continue
+                keep.append(line)
+            if len(keep) != len(lines):
+                out["days"] += 1
+                out["lines"] += len(lines) - len(keep)
+                if apply:
+                    p.write_text("\n".join(keep) + "\n", encoding="utf-8")
+    return out
+
+
 def _loads(s, default):
     try:
         return json.loads(s) if s else default

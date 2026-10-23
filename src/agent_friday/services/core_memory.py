@@ -605,7 +605,13 @@ def forget_matching(match, apply: bool = True) -> Dict[str, int]:
     `match` accepts. Forgetting a person is the owner's own action, so the
     lines go at once (no review card), as an owner delete does: no copy is
     left in the journal or the queue. With `apply=False` only counts.
-    Returns {"lines", "pending", "journal"}."""
+    Returns {"lines", "pending", "journal"}.
+
+    The one-time move of the old user-model facts runs FIRST: run after the
+    purge, it would copy a line naming the person back onto the card or into
+    the queue (the facts themselves go through forget_derived's user_model
+    store as well)."""
+    ensure_migrated()
     out = {"lines": 0, "pending": 0, "journal": 0}
 
     def _names(r) -> bool:

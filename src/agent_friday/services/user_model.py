@@ -473,6 +473,27 @@ def forget(category: Optional[str] = None) -> Dict[str, Any]:
             return {"ok": False, "error": exception_text(e)}
 
 
+def forget_matching(match, apply: bool = True) -> int:
+    """Forget-person (services/forget_derived, NS-15.7-2): the facts whose text
+    `match` accepts. With `apply=False` only counts. Returns how many. Raises
+    when the store cannot be read, so the receipt says it was not checked.
+    (Signals and traits carry workspace and tool names and counts, not text
+    about people.)"""
+    if not DB_PATH.exists():
+        return 0
+    with _LOCK:
+        conn = _connect()
+        try:
+            doomed = [fid for fid, text in conn.execute("SELECT fact_id, text FROM facts")
+                      if text and match(str(text))]
+            if apply and doomed:
+                conn.executemany("DELETE FROM facts WHERE fact_id=?", [(f,) for f in doomed])
+                conn.commit()
+        finally:
+            conn.close()
+    return len(doomed)
+
+
 # ── internals ─────────────────────────────────────────────────────────────────
 def _record_signal(kind: str, value: str) -> None:
     try:
