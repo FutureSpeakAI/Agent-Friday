@@ -1512,8 +1512,14 @@ def _delete_task_for_creds(creds, tasklist_id: str, task_id: str,
         svc.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
         return {"deleted": True, "id": task_id}
     except Exception as e:
-        if _co._status(e) in (404, 410):
+        if _co._status(e) == 410:
             return {"deleted": True, "id": task_id, "already_gone": True}
+        if _co._status(e) == 404:
+            # nothing was read first, and the ids are the model's: a wrong or stale id is not a
+            # delete that happened
+            _co.not_done("refused", "Google Tasks")
+            return {"error": "That task was not found in that list, so nothing was changed. "
+                             "List the tasks again to get its current id.", "not_found": True}
         return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
 
 

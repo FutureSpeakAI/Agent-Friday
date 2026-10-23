@@ -476,8 +476,9 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
             if holds:
                 # some holds were placed: the call changed something. It is done for those, with
                 # the series kept (book or release it later) and the slots not held named.
-                why = (_co.sentence("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
-                       else _co.sentence(_co.classify(ex), "Google Calendar"))
+                with _co.per_item():     # the call did change something; still mark a revoked account
+                    why = (_co.not_done("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
+                           else _co.failed(ex, "Google Calendar", account_id=aid))
                 return {"ok": True, "partial": True, "series_id": series, "account_id": aid,
                         "holds": holds,
                         "not_held": [{"start": a.isoformat(), "end": b.isoformat()}

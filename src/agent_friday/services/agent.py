@@ -5032,6 +5032,7 @@ def _draft_email_save(inp, gs):
     body = inp.get('body') or ''
     not_saved = {"saved": False, "sent": False}
     if not str(body).strip():
+        _conn_outcome.settle({"error": "empty"})
         return json.dumps({**not_saved, "reason": "The draft has no text. Write the complete "
                                                   "message body. Nothing was saved."})
     try:
@@ -5048,6 +5049,7 @@ def _draft_email_save(inp, gs):
             in_reply_to=(reply or {}).get("in_reply_to"),
             references=(reply or {}).get("references"))
     except gs.DraftNeedsAccount as e:
+        _conn_outcome.settle({"error": "needs_account"})
         return json.dumps({**not_saved, "needs_account": True, "accounts": e.accounts,
                            "question": e.user_message,
                            "note": ("Nothing was saved. Ask the user which account, naming these; "

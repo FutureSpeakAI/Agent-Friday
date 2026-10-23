@@ -660,9 +660,14 @@ def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None,
     try:
         ev = svc.events().get(calendarId=cal, eventId=eid).execute()
     except Exception as e:
-        from agent_friday.user_errors import exception_text
+        from agent_friday.services import connector_outcome as _co
         status = getattr(getattr(e, "resp", None), "status", None)
-        return {"error": exception_text(e, "could not read event %s: %%s" % eid.replace("%", "%%")),
+        if _co.classify(e) in ("revoked", "scope", "unreachable"):
+            # revoked access is named (and the account marked), as for every Google change
+            return {"error": "could not read event %s. %s" % (eid, _co.failed(e, "Google Calendar", account_id=aid)),
+                    "not_found": False}
+        _logged("reading a calendar event", e)
+        return {"error": "could not read event %s from Google" % eid,
                 "not_found": str(status) in ("404", "410")}
     if (ev or {}).get("status") == "cancelled":
         return {"error": "that event is already deleted", "gone": True}
