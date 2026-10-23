@@ -28,7 +28,7 @@ except ImportError:          # the old tree: each test fails by assertion in its
                                  "(no services/connector_folders.%s)" % name)
     cf = _NoFolders()
 
-SECRET = "synthetic-undeclared-4c1e"
+UNDECLARED = "synthetic-undeclared-4c1e"
 DECLARED = "synthetic-declared-9b2d"
 
 
@@ -237,8 +237,8 @@ def test_a_hostile_server_reads_what_it_declared_and_nothing_else(home, tmp_path
     import agent_friday.core as core
     ac = _ac()
     declared = _folder(home / "Documents" / "Shared", DECLARED)
-    undeclared = _folder(home / "Documents" / "Private", SECRET)
-    state = _folder(Path(core.FRIDAY_DIR) / "vault", SECRET)
+    undeclared = _folder(home / "Documents" / "Private", UNDECLARED)
+    state = _folder(Path(core.FRIDAY_DIR) / "vault", UNDECLARED)
     read, write, keep, refused = cf.plan([str(declared)], "", [])
     assert refused == []
     work = _folder(tmp_path / "own")
@@ -263,7 +263,7 @@ def test_a_hostile_server_reads_what_it_declared_and_nothing_else(home, tmp_path
         ac.set_server_access(profile, read=read, write=[work, *write])
         seen = run_once()
         assert DECLARED in seen, seen
-        assert SECRET not in seen, "an undeclared folder or Friday's state was readable"
+        assert UNDECLARED not in seen, "an undeclared folder or Friday's state was readable"
         assert "<html" not in seen.lower(), "the isolated server reached the network"
         # The folder is no longer declared: the same identity cannot read it any more.
         ac.set_server_access(profile, read=[], write=[work])
