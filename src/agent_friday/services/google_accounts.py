@@ -1471,11 +1471,17 @@ def _tasks_for_creds(creds, max_results: int) -> list:
 # completed, or deleted on someone else's list. Each function also requires
 # tasklist_id (except create_task, which may default to "@default") since
 # the Tasks API addresses a task by (tasklist, task), not by task id alone.
-def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | None) -> dict:
-    """Create (task_id=None) or patch (task_id given) one task."""
+def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | None,
+                          account_id: str | None = None) -> dict:
+    """Create (task_id=None) or patch (task_id given) one task.
+
+    A change Google refused, could not be asked for, or did not confirm (a reply that names no
+    task) comes back as an error and is noted as not done (services/connector_outcome)."""
+    from agent_friday.services import connector_outcome as _co
     try:
         from googleapiclient.discovery import build
     except Exception as e:
+        _co.not_done("failed", "Google Tasks")
         return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
         from agent_friday.services import egress_record as _er
@@ -1484,16 +1490,21 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
             result = svc.tasks().patch(tasklist=tasklist_id, task=task_id, body=body).execute()
         else:
             result = svc.tasks().insert(tasklist=tasklist_id, body=body).execute()
-        return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
-                "status": result.get("status", "needsAction"), "due": result.get("due", "")}
     except Exception as e:
-        return {"error": ExceptionText(f"Tasks write failed: {e}")}
+        return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
+    if not _co.confirmed(result):
+        return {"error": _co.not_done("unconfirmed", "Google Tasks"), "unconfirmed": True}
+    return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
+            "status": result.get("status", "needsAction"), "due": result.get("due", "")}
 
 
-def _delete_task_for_creds(creds, tasklist_id: str, task_id: str) -> dict:
+def _delete_task_for_creds(creds, tasklist_id: str, task_id: str,
+                           account_id: str | None = None) -> dict:
+    from agent_friday.services import connector_outcome as _co
     try:
         from googleapiclient.discovery import build
     except Exception as e:
+        _co.not_done("failed", "Google Tasks")
         return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
         from agent_friday.services import egress_record as _er
@@ -1501,7 +1512,15 @@ def _delete_task_for_creds(creds, tasklist_id: str, task_id: str) -> dict:
         svc.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
         return {"deleted": True, "id": task_id}
     except Exception as e:
-        return {"error": ExceptionText(f"Tasks delete failed: {e}")}
+        if _co._status(e) == 410:
+            return {"deleted": True, "id": task_id, "already_gone": True}
+        if _co._status(e) == 404:
+            # nothing was read first, and the ids are the model's: a wrong or stale id is not a
+            # delete that happened
+            _co.not_done("refused", "Google Tasks")
+            return {"error": "That task was not found in that list, so nothing was changed. "
+                             "List the tasks again to get its current id.", "not_found": True}
+        return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
 
 
 def _gate_task_text(body: dict) -> tuple[dict, str]:
@@ -1530,6 +1549,16 @@ def _gate_task_text(body: dict) -> tuple[dict, str]:
     return out, ""
 
 
+def _no_task_credentials(account_id: str) -> dict:
+    """The account produced no credentials before a Tasks change: nothing was sent. `error` keeps
+    its code ("needs_reauth", or "unreachable" when the refresh never got an answer) and
+    `message` says what to do."""
+    from agent_friday.services import connector_outcome as _co
+    message = _co.no_credentials(account_id, "Google Tasks")
+    code = "unreachable" if last_problem(account_id) == "unreachable" else "needs_reauth"
+    return {"error": code, "message": message, "account_id": account_id}
+
+
 def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body: dict) -> dict:
     """Shared account-resolution + audit wrapper for complete/update/create."""
     body, gate_err = _gate_task_text(body)
@@ -1546,8 +1575,8 @@ def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body
                 "account_id": account_id}
     creds = credentials_for(account_id)
     if not creds:
-        return {"error": "needs_reauth", "account_id": account_id}
-    result = _write_task_for_creds(creds, tasklist_id, body, task_id)
+        return _no_task_credentials(account_id)
+    result = _write_task_for_creds(creds, tasklist_id, body, task_id, account_id)
     ok = "error" not in result
     cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
                    success=ok, error=None if ok else result.get("error"))
@@ -1609,8 +1638,8 @@ def delete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
                 "account_id": account_id}
     creds = credentials_for(account_id)
     if not creds:
-        return {"error": "needs_reauth", "account_id": account_id}
-    result = _delete_task_for_creds(creds, tasklist_id, task_id)
+        return _no_task_credentials(account_id)
+    result = _delete_task_for_creds(creds, tasklist_id, task_id, account_id)
     ok = "error" not in result
     cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
                    success=ok, error=None if ok else result.get("error"))

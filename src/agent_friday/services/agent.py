@@ -1982,10 +1982,12 @@ def _summarize_multi_account_errors(result):
     return list(by_id.values())
 
 
-def _calendar_write_summary(res, what):
+def _calendar_write_summary(res, what, change=True):
     """Render a write result as prose Friday can repeat truthfully."""
     if not isinstance(res, dict):
         return str(res)
+    if change:
+        _conn_outcome.settle(res)     # an error here is a change that did not happen (BD-06)
     if res.get("needs_reconnect"):
         return ("I could not %s: %s" % (what, res.get("error")))
     if res.get("error"):
@@ -2125,7 +2127,7 @@ def _tool_find_calendar_events(inp):
     q = ((inp or {}).get("query") or "").strip()
     if not q:
         return "find_calendar_events error: 'query' is required."
-    return _calendar_write_summary(cw.find_events(q), "search your calendar")
+    return _calendar_write_summary(cw.find_events(q), "search your calendar", change=False)
 
 
 def _opt_str(inp, key):
@@ -2143,7 +2145,7 @@ def _tool_find_free_slots(inp):
         count=inp.get("count") or 3,
         min_notice_hours=inp.get("min_notice_hours"),
         buffer_minutes=inp.get("buffer_minutes"))
-    return _calendar_write_summary(res, "find free times")
+    return _calendar_write_summary(res, "find free times", change=False)
 
 
 def _tool_hold_slots(inp):
@@ -2785,13 +2787,14 @@ def _tool_complete_task(inp):
     try:
         from agent_friday.services import google_accounts as ga
     except Exception as e:
-        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+        _log.warning("google_accounts unavailable: %s", type(e).__name__)
+        return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
     result = ga.complete_task(
         account_id=(inp.get('account_id') or '').strip(),
         tasklist_id=(inp.get('tasklist_id') or '').strip(),
         task_id=(inp.get('task_id') or '').strip(),
     )
-    return json.dumps(result, default=str)
+    return json.dumps(_conn_outcome.settle(result), default=str)
 
 
 def _tool_create_task(inp):
@@ -2800,7 +2803,8 @@ def _tool_create_task(inp):
     try:
         from agent_friday.services import google_accounts as ga
     except Exception as e:
-        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+        _log.warning("google_accounts unavailable: %s", type(e).__name__)
+        return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
     result = ga.create_task(
         account_id=(inp.get('account_id') or '').strip(),
         title=(inp.get('title') or '').strip(),
@@ -2808,7 +2812,7 @@ def _tool_create_task(inp):
         notes=(inp.get('notes') or '').strip(),
         due=(inp.get('due') or '').strip(),
     )
-    return json.dumps(result, default=str)
+    return json.dumps(_conn_outcome.settle(result), default=str)
 
 
 def _tool_update_task(inp):
@@ -2817,7 +2821,8 @@ def _tool_update_task(inp):
     try:
         from agent_friday.services import google_accounts as ga
     except Exception as e:
-        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+        _log.warning("google_accounts unavailable: %s", type(e).__name__)
+        return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
     result = ga.update_task(
         account_id=(inp.get('account_id') or '').strip(),
         tasklist_id=(inp.get('tasklist_id') or '').strip(),
@@ -2827,7 +2832,7 @@ def _tool_update_task(inp):
         due=(inp.get('due') or '').strip() or None,
         status=(inp.get('status') or '').strip() or None,
     )
-    return json.dumps(result, default=str)
+    return json.dumps(_conn_outcome.settle(result), default=str)
 
 
 def _tool_delete_task(inp):
@@ -2836,13 +2841,14 @@ def _tool_delete_task(inp):
     try:
         from agent_friday.services import google_accounts as ga
     except Exception as e:
-        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+        _log.warning("google_accounts unavailable: %s", type(e).__name__)
+        return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
     result = ga.delete_task(
         account_id=(inp.get('account_id') or '').strip(),
         tasklist_id=(inp.get('tasklist_id') or '').strip(),
         task_id=(inp.get('task_id') or '').strip(),
     )
-    return json.dumps(result, default=str)
+    return json.dumps(_conn_outcome.settle(result), default=str)
 
 
 def _tool_search_contacts(inp):
@@ -5026,6 +5032,7 @@ def _draft_email_save(inp, gs):
     body = inp.get('body') or ''
     not_saved = {"saved": False, "sent": False}
     if not str(body).strip():
+        _conn_outcome.settle({"error": "empty"})
         return json.dumps({**not_saved, "reason": "The draft has no text. Write the complete "
                                                   "message body. Nothing was saved."})
     try:
@@ -5042,12 +5049,14 @@ def _draft_email_save(inp, gs):
             in_reply_to=(reply or {}).get("in_reply_to"),
             references=(reply or {}).get("references"))
     except gs.DraftNeedsAccount as e:
+        _conn_outcome.settle({"error": "needs_account"})
         return json.dumps({**not_saved, "needs_account": True, "accounts": e.accounts,
                            "question": e.user_message,
                            "note": ("Nothing was saved. Ask the user which account, naming these; "
                                     "then call draft_email again with account_id. Do not guess.")},
                           default=str)
     except gs.DraftScopeMissing as e:
+        _conn_outcome.settle({"error": "scope"})
         a = e.account or {}
         return json.dumps({**not_saved, "missing_permission": "gmail.modify",
                            "account": a.get("email") or a.get("label") or a.get("id"),
@@ -5057,9 +5066,11 @@ def _draft_email_save(inp, gs):
                                     "the account, and offer the reconnect. Never say it was saved.")},
                           default=str)
     except gs.SendRefused as e:
+        _conn_outcome.settle({"error": "refused"})
         return json.dumps({**not_saved, "reason": getattr(e, "user_message", None) or str(e)})
     except Exception as e:
-        return json.dumps({**not_saved, "reason": f"could not save the draft: {e}. Nothing was saved."})
+        return json.dumps({**not_saved, "reason": "could not save the draft. "
+                           + _conn_outcome.failed(e, "Gmail")})
     who = out.get("account_email") or acct.get("email") or acct.get("id")
     label = out.get("account_label") or acct.get("label")
     receipt = ("Saved as a draft in %s's Gmail Drafts%s. Nothing was sent. Open it: %s"
@@ -11526,7 +11537,7 @@ def _tool_save_google_contact(inp):
         name=inp.get("name") or "", email=inp.get("email") or "",
         phone=inp.get("phone") or "", company=inp.get("company") or "",
         job_title=inp.get("job_title") or "")
-    return json.dumps(res, ensure_ascii=False, default=str)
+    return json.dumps(_conn_outcome.settle(res), ensure_ascii=False, default=str)
 
 
 CLAUDE_TOOLS.extend([
@@ -13702,6 +13713,7 @@ def _task_log_tool(session_ctx, name, args):
 
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
+from agent_friday.services import connector_outcome as _conn_outcome
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import call_verifier as _call_verifier
 from agent_friday.services import tool_output as _tool_output
@@ -14240,7 +14252,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         try:
             _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
             _cred_paths.REFUSED.set(False)
-            result = handler(ctx.input)
+            # A change at a connected service that did not happen (or was not
+            # confirmed) is noted by the service layer (services/connector_outcome)
+            # and recorded below as not done, whatever the handler's words were.
+            with _conn_outcome.call() as _not_done:
+                result = handler(ctx.input)
             _refused = _cred_paths.REFUSED.get()
         finally:
             if _crew_origin_tok is not None:
@@ -14285,6 +14301,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipt_credential_refusal(name, ctx.input, "refused by the handler")
         _receipts.record(name, ok=False, denied=True, detail=result)
         _outcome("refused", "credential refusal")
+    elif _not_done:
+        _nd = "not done: %s" % _not_done[0].get("kind", "failed")
+        _receipts.record(name, ok=False, detail=_nd)
+        _outcome("error", _nd)
+        result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
     else:
         _receipts.record(name, ok=True)
         _outcome("ok", "")
@@ -16360,7 +16381,10 @@ _TOOL_PENDING_SENTINELS = ("[APPROVAL CARD RAISED]",)
 # itself as a success — which is the exact defect the receipts work exists to
 # remove. Changing a failure message means updating this tuple in the same edit.
 _TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED",
-                          "INVALID ARGUMENTS")
+                          "INVALID ARGUMENTS",
+                          # a change at a connected service that did not happen
+                          # (services/connector_outcome.NOT_DONE)
+                          "[NOT DONE]")
 
 
 def _tool_call_status(result):
