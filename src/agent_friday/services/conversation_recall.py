@@ -71,9 +71,15 @@ def split_by_provenance(hits: list, provider: str = prov.GEMINI):
     return direct, rest
 
 
+def _speaker(h: dict) -> str:
+    if h.get("role") == "user":
+        return "the user"
+    # Another assistant's words brought in from an export are never labelled as Friday's.
+    return "that assistant" if str(h.get("via") or "").startswith("imported ") else "Friday"
+
+
 def format_hits(hits: list) -> str:
-    return "\n".join(f"- {h['date']} ({h['via']}, {'the user' if h['role'] == 'user' else 'Friday'}): "
-                     f"{h['text']}" for h in hits)
+    return "\n".join(f"- {h['date']} ({h['via']}, {_speaker(h)}): {h['text']}" for h in hits)
 
 
 def recent_voice_pin(max_sessions: int = 3, max_chars: int = 900, windows=None) -> str:

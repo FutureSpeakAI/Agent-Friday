@@ -37,6 +37,8 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 SOURCES = {"chatgpt": "ChatGPT", "claude": "Claude"}
+#: The `via` of an imported message: where it was said (search and recall show it).
+IMPORTED_VIA = {k: "imported %s history" % v for k, v in SOURCES.items()}
 KIND = "ai_conversation"
 MAX_FILE_BYTES = 200 * 1024 * 1024
 MAX_UNZIPPED_BYTES = 400 * 1024 * 1024
@@ -320,7 +322,7 @@ def _commit(payload: dict) -> dict:
     conv = cv.create(title=title[:120])
     try:
         conv["imported"] = {"source": source,
-                            "conversation_id": str(payload.get("conversation_id") or "")[:120],
+                            "conversation_id": withhold(str(payload.get("conversation_id") or "")[:120])[0],
                             "created": payload.get("created") if isinstance(payload.get("created"), (int, float)) else None,
                             "cut": payload.get("cut") is True}
         cv.save(conv)
@@ -332,14 +334,23 @@ def _commit(payload: dict) -> dict:
             if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
                 continue
             text, _ = _text(m.get("text"), MAX_CHARS + 200)
-            msg = {"role": m["role"], "text": text, "imported_from": source}
+            # `via` names where the words were said: search and recall label them by it, never
+            # as Friday's (services/conversation_recall.format_hits).
+            msg = {"role": m["role"], "text": text, "imported_from": source, "via": IMPORTED_VIA[source]}
             if isinstance(m.get("ts"), (int, float)):
                 msg["ts"] = float(m["ts"])
             cv.append(conv["id"], msg, settings=snap)
             n += 1
     except Exception:
-        # Nothing half-saved: the conversation goes, and the item keeps waiting.
-        shutil.rmtree(cv._dir(conv["id"]), ignore_errors=True)
+        # Nothing half-saved: the conversation goes (its folder and its search rows), and the
+        # item keeps waiting.
+        with cv._LOCK:
+            shutil.rmtree(cv._dir(conv["id"]), ignore_errors=True)
+        try:
+            from agent_friday.services import conversation_fts
+            conversation_fts.forget_conversation(conv["id"])
+        except Exception:
+            pass
         raise
     return {"conversation_id": conv["id"], "messages": n}
 

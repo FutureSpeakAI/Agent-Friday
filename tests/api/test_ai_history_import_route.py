@@ -65,6 +65,25 @@ def test_stage_then_only_a_press_on_this_pc_saves_it(client):
     _clear(Path(core.FRIDAY_DIR))
 
 
+def test_a_second_upload_while_one_is_read_is_refused_before_reading(client):
+    from agent_friday.services import ai_history_import as aih
+    assert aih._ONE_AT_A_TIME.acquire(blocking=False)
+    try:
+        r = _upload(client, preview=True)
+    finally:
+        aih._ONE_AT_A_TIME.release()
+    assert r.status_code == 409 and r.get_json()["error"] == aih.BUSY
+
+
+def test_an_upload_over_the_limit_is_refused_in_words(client, monkeypatch):
+    from agent_friday.services import ai_history_import as aih
+    monkeypatch.setattr(aih, "MAX_FILE_BYTES", 16)
+    r = _upload(client, preview=True)
+    assert r.status_code in (400, 413)
+    body = r.get_json(silent=True) or {}
+    assert body.get("ok") is False and body.get("error")
+
+
 def test_a_file_that_is_not_an_export_is_a_400_with_words(client):
     r = client.post("/api/import/ai-history",
                     data={"file": (io.BytesIO(b"hello"), "notes.txt")},

@@ -47,6 +47,9 @@ def _gate():
 @login_required
 def ai_history_import():
     from werkzeug.exceptions import RequestEntityTooLarge
+    if aih._ONE_AT_A_TIME.locked():
+        # Refused before the upload is read into memory: one export at a time.
+        return jsonify({"ok": False, "error": aih.BUSY}), 409
     try:
         f = request.files.get("file") if request.files else None
     except RequestEntityTooLarge:

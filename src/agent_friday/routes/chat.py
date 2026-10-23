@@ -515,6 +515,14 @@ def _conv_context(cid, limit=None, exclude_id=None):
                 # as something Friday or the owner said (services/untrusted_input).
                 from agent_friday.services.untrusted_input import wrap as _data_envelope
                 text = _data_envelope(text)
+            if m.get('imported_from'):
+                # A turn brought in from another assistant's history (services/ai_history_import)
+                # is a record of what was said there: replayed as data, never as Friday's own
+                # words nor as the owner asking anything now.
+                from agent_friday.services.untrusted_input import wrap as _data_envelope
+                who = 'the owner' if role == 'user' else 'that assistant'
+                text = _data_envelope('From the owner\'s %s, %s said: %s'
+                                      % (m.get('via') or 'imported AI history', who, text))
             if (m.get('meta') or {}).get('local_only'):
                 # A result the local model produced on this PC: replayed with
                 # the mark the egress gate withholds from every cloud model.
