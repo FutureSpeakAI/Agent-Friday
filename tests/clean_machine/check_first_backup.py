@@ -48,25 +48,34 @@ def cli(*words):
 
 from agent_friday.services import backup_schedule, doctor, first_backup, friday_bundle  # noqa: E402
 
-s = first_backup.status()
-check("offered", s["due"] and s["setup_done"] and not s["scheduled"], s)
-code, out = cli("on", "--out", str(folder), "--every", "daily", "--keep", "2")
-check("turned_on", code == 0 and backup_schedule.state().get("enabled"), out)
-code, out = cli("run")
-made = sorted(folder.glob("friday-scheduled-*.fridaybundle"))
-verified = False
-if made:
+try:
+    s = first_backup.status()
+    check("offered", s["due"] and s["setup_done"] and not s["scheduled"], s)
+    code, out = cli("on", "--out", str(folder), "--every", "daily", "--keep", "2")
+    check("turned_on", code == 0 and backup_schedule.state().get("enabled"), out)
+    code, out = cli("run")
+    made = sorted(folder.glob("friday-scheduled-*.fridaybundle"))
+    verified = False
+    if made:
+        try:
+            verified = bool(friday_bundle.verify(made[-1], os.environ["FRIDAY_BUNDLE_PASSPHRASE"]).get("ok"))
+        except Exception as e:  # noqa: BLE001
+            out += " | verify: %s" % e
+    check("made", code == 0 and len(made) == 1 and verified, "%s | %s" % (out, [m.name for m in made]))
+    s = first_backup.status()
+    check("no_offer", not s["due"] and s["why"] == "scheduled", s)
+    backup = next((c for c in doctor.build()["checks"] if c.get("id") == "backup"), {})
+    check("doctor", backup.get("state") == "healthy" and "scheduled" in str(backup.get("code")), backup)
+except Exception as e:  # noqa: BLE001
+    check("script", False, repr(e))
+finally:
+    # always: the kept passphrase leaves the keychain whatever happened above
+    code, out = cli("off")
     try:
-        verified = bool(friday_bundle.verify(made[-1], os.environ["FRIDAY_BUNDLE_PASSPHRASE"]).get("ok"))
+        off = not backup_schedule.state().get("enabled")
     except Exception as e:  # noqa: BLE001
-        out += " | verify: %s" % e
-check("made", code == 0 and len(made) == 1 and verified, "%s | %s" % (out, [m.name for m in made]))
-s = first_backup.status()
-check("no_offer", not s["due"] and s["why"] == "scheduled", s)
-backup = next((c for c in doctor.build()["checks"] if c.get("id") == "backup"), {})
-check("doctor", backup.get("state") == "healthy" and "scheduled" in str(backup.get("code")), backup)
-code, out = cli("off")
-check("turned_off", code == 0 and not backup_schedule.state().get("enabled"), out)
+        off, out = False, "%s | %r" % (out, e)
+    check("turned_off", code == 0 and off, out)
 
 print(json.dumps({"ok": not fails, "failed": fails, "checks": result}, indent=1, default=str))
 sys.exit(1 if fails else 0)

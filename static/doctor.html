@@ -250,11 +250,11 @@
   }
   function firstBackup() {
     api('/api/bundle/first-run').then(({ ok, d }) => {
-      $('first-backup').hidden = !(ok && d.setup_done && !d.scheduled && d.answer !== 'never');
+      $('first-backup').hidden = !(ok && d.setup_done && !d.scheduled && !d.answer && d.why !== 'asked_enough' || ok && d.due);
     });
   }
   const fbAnswer = choice => api('/api/bundle/first-run/answer', { method: 'POST', body: JSON.stringify({ choice }) })
-    .then(({ ok, d }) => { text($('sched-note'), ok ? (choice === 'never' ? 'Friday will not ask again. Scheduled bundles stay here whenever you want them.' : 'Friday will ask again in a week.') : (d.error || 'Not saved.')); firstBackup(); });
+    .then(({ ok, d }) => { text($('sched-note'), ok ? (choice === 'never' || d.asked >= d.max_asks ? 'Friday will not ask again. Scheduled bundles stay here whenever you want them.' : 'Friday will ask again in a week.') : (d.error || 'Not saved.')); firstBackup(); });
   $('fb-later').addEventListener('click', () => fbAnswer('not_now'));
   $('fb-never').addEventListener('click', () => fbAnswer('never'));
   $('sched-on').addEventListener('click', () => {

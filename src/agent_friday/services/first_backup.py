@@ -47,12 +47,13 @@ def _state() -> dict:
     except (OSError, ValueError):
         d = {}
     if isinstance(d, dict):
-        if isinstance(d.get("asked"), int) and 0 <= d["asked"] <= MAX_ASKS:
-            st["asked"] = d["asked"]
+        if isinstance(d.get("asked"), int) and not isinstance(d.get("asked"), bool):
+            st["asked"] = min(MAX_ASKS, max(0, d["asked"]))
+        now = time.time()
         for k in ("last_asked", "answered_at"):
             v = d.get(k)
-            if isinstance(v, (int, float)) and 0 < v <= time.time() + 300:
-                st[k] = float(v)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                st[k] = min(float(v), now)         # a time ahead of the clock counts as now
         if d.get("answer") in ANSWERS:
             st["answer"] = d["answer"]
     return st
@@ -98,7 +99,7 @@ def status(now: Optional[float] = None) -> dict:
     else:
         why = None
     return {"due": why is None, "why": why, "setup_done": done, "scheduled": sched,
-            "asked": st["asked"], "answer": st["answer"]}
+            "asked": st["asked"], "max_asks": MAX_ASKS, "answer": st["answer"]}
 
 
 def answer(choice: str) -> dict:
@@ -122,25 +123,28 @@ def answer(choice: str) -> dict:
 
 def tick(now: Optional[float] = None) -> Optional[dict]:
     """Every quarter hour (the server's backup loop): raise the offer when it
-    is due. Turns nothing on and sends nothing."""
-    s = status(now)
-    if not s["due"]:
-        return None
+    is due. The ask is counted before the card goes out, so a state file that
+    cannot be written raises no card at all. Turns nothing on and sends nothing."""
+    with _LOCK:
+        if not status(now)["due"]:
+            return None
+        st = _state()
+        st["asked"] = min(MAX_ASKS, st["asked"] + 1)
+        st["last_asked"] = time.time() if now is None else float(now)
+        if st["answer"] == "not_now":
+            st["answer"] = None
+        try:
+            _save(st)
+        except OSError:
+            return None
     try:
         from agent_friday import notifications_engine as ne
         ne.push(title="Keep a backup of Friday?",
                 body="Everything Friday knows is in one folder on this PC. A scheduled, encrypted "
                      "bundle in a folder you choose keeps it safe if this PC is lost or breaks.",
                 priority="low", source="backup", kind="first_backup", tier="fyi", emitter="L08",
-                dedupe_key="first-backup:%d" % (s["asked"] + 1),
+                dedupe_key="first-backup:%d" % st["asked"],
                 target={"type": "url", "url": "/doctor#schedule"})
     except Exception:
         return None
-    with _LOCK:
-        st = _state()
-        st["asked"] = min(MAX_ASKS, st["asked"] + 1)
-        st["last_asked"] = time.time() if now is None else float(now)
-        if st["answer"] == "not_now":
-            st["answer"] = None
-        _save(st)
     return {"offered": st["asked"]}
