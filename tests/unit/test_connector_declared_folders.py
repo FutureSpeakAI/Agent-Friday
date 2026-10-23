@@ -78,6 +78,17 @@ def test_a_folder_that_contains_a_refused_zone_is_refused(home):
     assert refused == [] and (home / "Documents" / "Notes").resolve() in _paths(write)
 
 
+def test_a_documents_folder_kept_elsewhere_still_protects_powershells_profile(home, monkeypatch):
+    try:
+        from agent_friday.services import path_policy as pp
+    except ImportError:
+        raise AssertionError("no path policy on this tree (services/path_policy)")
+    moved = _folder(home / "OneDrive" / "Documents")
+    monkeypatch.setattr(pp, "_known_documents", lambda: [moved.resolve()], raising=False)
+    _r, _w, _k, refused = cf.plan([{"path": str(moved), "write": True}], "", [])
+    assert refused and "contains" in refused[0]
+
+
 def test_a_write_folder_with_a_git_file_is_refused(home):
     wt = _folder(home / "Projects" / "linked")
     (wt / ".git").write_text("gitdir: C:/elsewhere/.git/worktrees/x\n", encoding="utf-8")
@@ -108,7 +119,8 @@ def test_only_the_program_and_its_script_are_opened_never_another_argument(home,
     db = profile / "places.sqlite"
     db.write_text("synthetic", encoding="utf-8")
     read, _w, _k, _r = cf.plan([], node, [str(script), "--db", str(db)])
-    assert tools.resolve() in _paths(read)                   # its own package, from package.json
+    # A program kept in an ordinary folder is declared by the owner; nothing is guessed.
+    assert tools.resolve() not in _paths(read) and home.resolve() not in _paths(read)
     assert profile.resolve() not in _paths(read), "an argument opened an app-data folder"
     # A document as the first argument opens nothing; nor does a script for an unknown program.
     docs = _folder(home / "Documents" / "Tax")
