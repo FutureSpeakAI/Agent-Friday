@@ -61,6 +61,7 @@ KIND_LABELS = {
     "migration_complete": "Old receipts all brought in",
     "setting_changed": "You changed a ledger setting",
     "backup": "Scheduled backup",
+    "export": "Export",
     "doctor_weekly": "Weekly Doctor report",
     "outcome": "What an action did",
     "authority": "Action authority revoked or restored",

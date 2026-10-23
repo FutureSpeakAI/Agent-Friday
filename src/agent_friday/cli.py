@@ -1552,6 +1552,11 @@ examples:
     p_export.add_argument("--full", action="store_true",
                           help="Include keys and credentials, encrypted with a "
                                "passphrase you type")
+    p_export.add_argument("--readable", action="store_true",
+                          help="Write your data as plain files instead (Markdown, CSV, JSON): "
+                               "wiki, memories, conversations, goals, receipts, contacts, settings")
+    p_export.add_argument("--only", metavar="CATS",
+                          help="With --readable: comma-separated categories to include")
     p_decrypt = sub.add_parser(
         "decrypt-backup", help="Turn a `friday export --full` backup back into a zip")
     p_decrypt.add_argument("file", help="The .fbak file")
@@ -1687,6 +1692,30 @@ def _ask_backup_passphrase() -> str:
             continue
         return pw
     return ""
+
+
+def cmd_export_readable(out: str | None = None, only: str | None = None) -> int:
+    """The human-readable export (services/readable_export.py): plain files
+    the owner can open without Friday, in a new folder under --out (default:
+    Documents/Friday Exports)."""
+    from agent_friday.services import friday_bundle, readable_export
+    parent = Path(out).expanduser() if out else friday_bundle.documents_dir() / "Friday Exports"
+    cats = [c.strip() for c in only.split(",") if c.strip()] if only else None
+    if readable_export.cloud_synced(parent):
+        print("Note: %s looks like a folder a sync service copies off this PC; the export is "
+              "not encrypted. Use --out to choose another folder." % parent)
+    try:
+        r = readable_export.export(parent, only=cats, by="owner:cli")
+    except readable_export.ExportError as e:
+        print("Not exported: %s" % e)
+        return 1
+    print("Exported %d files to %s" % (r["files"], r["folder"]))
+    for c, n in r["counts"].items():
+        print("  %-14s %d" % (c, n))
+    for n in r["notes"]:
+        print("  note: %s" % n)
+    print("It is your data, unencrypted: keep the folder somewhere safe.")
+    return 0
 
 
 def cmd_export(full: bool = False, out: str | None = None,
@@ -2317,6 +2346,8 @@ def main():
         rv = cmd_skills(delete_name=getattr(args, "delete", None))
     elif cmd == "vault-setup":
         rv = cmd_vault_setup()
+    elif cmd == "export" and getattr(args, "readable", False):
+        rv = cmd_export_readable(out=getattr(args, "out", None), only=getattr(args, "only", None))
     elif cmd == "export":
         rv = cmd_export(full=getattr(args, "full", False),
                         out=getattr(args, "out", None))
