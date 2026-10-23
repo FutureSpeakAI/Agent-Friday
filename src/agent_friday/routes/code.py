@@ -606,21 +606,11 @@ def code_plan():
         _code_log(f"plan failed: {e}", source="vibe", level="error")
         return api_error(e, "Couldn't plan the change")
 
-    # Extract the JSON object from the response (tolerate stray fences/prose).
-    plan_obj = None
-    txt = raw.strip()
-    if txt.startswith("```"):
-        txt = re.sub(r'^```[a-zA-Z]*\n', '', txt)
-        txt = re.sub(r'\n```\s*$', '', txt)
-    try:
-        plan_obj = json.loads(txt)
-    except Exception:
-        m = re.search(r'\{.*\}', txt, re.DOTALL)
-        if m:
-            try:
-                plan_obj = json.loads(m.group(0))
-            except Exception:
-                plan_obj = None
+    # Find the plan object in the reply: fences, prose and thinking that a
+    # local seat handed back as answer text are all tolerated
+    # (services/code_plan_parse).
+    from agent_friday.services.code_plan_parse import extract_plan
+    plan_obj = extract_plan(raw)
     if not isinstance(plan_obj, dict) or "files" not in plan_obj:
         _code_log("plan: model returned unparseable JSON", source="vibe", level="error")
         return jsonify({"status": "error", "message": "Could not parse a plan from the model.",
