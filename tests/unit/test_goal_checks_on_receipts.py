@@ -5,7 +5,6 @@ words, and the verdict cites what met each condition.
 Synthetic fixtures; nothing reaches a model."""
 from __future__ import annotations
 
-import json
 import os
 import time
 
@@ -165,7 +164,6 @@ def test_a_card_raised_or_an_unknown_tool_is_journaled_as_not_through(tmp_path, 
 
 
 def test_a_denied_or_forged_receipt_is_not_proof(tmp_path, graded):
-    from agent_friday.governance import action_gate as ag
     from agent_friday.services import goal_evidence as ge
     from agent_friday.services import task_journal as tj
     tj.append("goal-synthetic-1", "tool_call", name="send_email", ok=True, result_summary="sent 1")
@@ -174,13 +172,11 @@ def test_a_denied_or_forged_receipt_is_not_proof(tmp_path, graded):
     assert ge.judge({"kind": "receipt", "what": "a receipt"}, ev, "")["met"] is False
     _signed("goal-synthetic-1", "send_email", "allow")
     assert ge.judge({"kind": "receipt", "what": "a receipt"}, ge.collect(["goal-synthetic-1"], None), "")["met"]
-    p = ag.receipts_path()
-    lines = p.read_text(encoding="utf-8").splitlines()
-    row = json.loads(lines[-1])
-    row["tool"] = "send_money"
-    lines[-1] = json.dumps(row)
-    lines[0] = json.dumps(dict(json.loads(lines[0]), decision="allow"))
-    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    from tests import ledger_support
+    ledger_support.tamper("decision", lambda r: r.get("decision") == "allow",
+                          lambda r: r.update(tool="send_money"))
+    ledger_support.tamper("decision", lambda r: r.get("decision") == "deny",
+                          lambda r: r.update(decision="allow"))
     assert ge.judge({"kind": "receipt", "what": "a receipt"}, ge.collect(["goal-synthetic-1"], None), "")["met"] is False
 
 

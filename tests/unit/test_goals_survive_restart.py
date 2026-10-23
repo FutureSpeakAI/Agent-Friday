@@ -15,9 +15,7 @@ executor, the task status reader and the task-resume verdict are fakes.
 from __future__ import annotations
 
 import json
-import sys
 import time
-import types
 
 import pytest
 
@@ -145,10 +143,11 @@ def test_the_milestone_records_its_task_before_the_work_finishes(monkeypatch):
         seen["task_id"] = (m.get("run") or {}).get("task_id")
         return {"status": "completed", "result": "the synthetic newsletter draft"}
 
-    fake = types.ModuleType("agent_friday.services.agent")
-    fake._spawn_task = spawn
-    fake._task_snapshot = snapshot
-    monkeypatch.setitem(sys.modules, "agent_friday.services.agent", fake)
+    # the real module, two calls replaced: the run is a visible job, which
+    # keeps its row in the agent's task table
+    from agent_friday.services import agent
+    monkeypatch.setattr(agent, "_spawn_task", spawn)
+    monkeypatch.setattr(agent, "_task_snapshot", snapshot)
     goals.set_executor(None)
 
     out = goals.run_milestone(gid, mid)

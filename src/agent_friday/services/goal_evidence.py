@@ -6,7 +6,7 @@ anything is read into the words that run produced:
   1. its task's own journal: every tool call, and whether it went through
      (decided by Friday from the call's result, never by the model: a card
      raised, a refusal, an unknown tool or bad arguments is not "went through");
-  2. the signed action receipts carrying its task id (decision-bom.jsonl),
+  2. the signed action receipts carrying its task id (the action ledger),
      each signature checked, counted only when the checkpoint allowed an
      outward action;
   3. the files its task WROTE (task_ledger.files_written: only paths given
@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 _URL = re.compile(r"https?://[^\s\"'<>)\]]+")
 _FILENAME = re.compile(r"[\w.-]+\.[A-Za-z0-9]{1,8}\b")
-_RECEIPT_TAIL = 32 * 1024 * 1024
+_KEEP_RECEIPTS = 2000
 _KEEP_CALLS = 2000
 
 
@@ -78,28 +78,14 @@ def _journal_calls(task_id: str) -> List[Dict[str, Any]]:
 
 
 def _receipts(task_ids: set) -> List[Dict[str, Any]]:
-    import json
     from agent_friday.governance import action_gate as ag
     try:
-        p = ag.receipts_path()
-        if not p.exists():
-            return []
-        size = p.stat().st_size
-        with open(p, "rb") as fh:
-            if size > _RECEIPT_TAIL:
-                fh.seek(size - _RECEIPT_TAIL)
-                fh.readline()
-            lines = fh.read().decode("utf-8", errors="replace").splitlines()
+        rows = ag.receipts(newest_first=True, limit=_KEEP_RECEIPTS,
+                           where=lambda e: (e.get("rec") or {}).get("task_id") in task_ids)
     except Exception as e:
         raise _Unreadable(f"the action receipts ({type(e).__name__})")
     out = []
-    for raw in lines:
-        if not any(t in raw for t in task_ids):
-            continue
-        try:
-            row = json.loads(raw)
-        except ValueError:
-            continue
+    for row in reversed(rows):
         if isinstance(row, dict) and row.get("task_id") in task_ids:
             try:
                 ok = bool(ag.verify_receipt(row))
