@@ -6624,7 +6624,9 @@ def _admit_task_thread(task_id, record, th):
     except Exception as _sup_err:
         _task_log(task_id, 'seat supervisor unavailable (%s); dispatching directly' % _sup_err)
         admission = 'running'
-    _task_state_sync(task_id)          # queued, or waiting for the seat (NS-17.7-1)
+    if admission == 'queued-for-seat':
+        # The queue changed the record in place: record that it waits for the seat (NS-17.7-1).
+        _task_state_sync(task_id)
     if admission != 'queued-for-seat':
         # Admitted at once: the supervisor's thread factory normally started
         # it already; start it here only if nothing did.
