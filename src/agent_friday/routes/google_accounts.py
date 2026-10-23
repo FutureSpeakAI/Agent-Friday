@@ -206,7 +206,12 @@ def connect_google_account():
                 "requested_scopes": [x for x in ga.mailbox_scopes(
                                         (existing or {}).get("scopes") if existing else None)
                                      if (x["scope"] != ga.GMAIL_SEND or include_send)
-                                     and (x["scope"] != ga.GMAIL_MODIFY or include_modify)],
+                                     and (x["scope"] != ga.GMAIL_MODIFY or include_modify)]
+                                  # The preview lists contacts-write too when it is asked
+                                  # for, so it matches Google's screen (§34.4-7).
+                                  + ([{"scope": ga.CONTACTS_RW, "what": ga._SCOPE_PLAIN[ga.CONTACTS_RW],
+                                       "new": ga.CONTACTS_RW not in set((existing or {}).get("scopes") or [])}]
+                                     if include_contacts_write else []),
                 "prebrief": _goc.consent_prebrief(_kind)}
         if client_type == "web":
             resp["warning"] = (
