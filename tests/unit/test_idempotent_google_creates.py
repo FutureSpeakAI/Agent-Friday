@@ -104,7 +104,7 @@ def google(tmp_path, monkeypatch):
     monkeypatch.setattr(cw, "_gate_calendar_field", lambda text, field: (text, ""))
     monkeypatch.setattr(cw, "_drop_calendar_cache", lambda *a, **k: None)
     monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
-    monkeypatch.setattr(ga, "tasks_writable", lambda aid: True)
+    monkeypatch.setattr(ga, "tasks_writable", lambda aid: True, raising=False)
     monkeypatch.setattr(ga, "_gate_task_text", lambda body: (dict(body), ""))
     monkeypatch.setattr(ga.cs, "audit_event", lambda *a, **k: None)
     monkeypatch.setattr(ga, "_RECENT_CREATES", {}, raising=False)
@@ -185,7 +185,8 @@ def test_a_task_the_owner_made_by_hand_is_never_adopted(google):
     tasks.lose_reply = True
     lost = dict(TASK, notes="")
     res = _res(agent._tool_create_task(lost))
-    assert res.get("id") != "mine", "an owner's own task with other notes is not Friday's"
+    assert res.get("id") in tasks.store and res["id"] != "mine", \
+        "the task Friday just made is found; the owner's own task with other notes is not adopted"
 
 
 def test_without_a_key_a_lost_task_is_not_looked_for(google):
