@@ -129,3 +129,22 @@ def test_held_while_authority_is_revoked(home, monkeypatch, tool):
 def test_allowed_otherwise(home):
     v = _decide("search_email")
     assert v.action != "deny", v
+
+
+@pytest.mark.parametrize("tool", sorted(action_gate.CONNECTED_SERVICE_WRITES))
+def test_a_write_waits_after_a_restore_and_on_a_ledger_break(home, monkeypatch, tool):
+    from agent_friday.services import action_ledger, friday_bundle
+    monkeypatch.setattr(friday_bundle, "restore_hold", lambda *a, **k: "restored from a bundle (test)")
+    v = _decide(tool)
+    assert v.action == "deny" and "restored" in v.reason, v
+    monkeypatch.setattr(friday_bundle, "restore_hold", lambda *a, **k: None)
+    monkeypatch.setattr(action_ledger, "hold_reason", lambda *a, **k: "the ledger has a break (test)")
+    v = _decide(tool)
+    assert v.action == "deny" and "break" in v.reason, v
+
+
+def test_a_read_is_not_held_by_a_restore(home, monkeypatch):
+    from agent_friday.services import friday_bundle
+    monkeypatch.setattr(friday_bundle, "restore_hold", lambda *a, **k: "restored from a bundle (test)")
+    assert action_gate.CONNECTED_SERVICE_WRITES <= action_gate.CONNECTED_SERVICE_TOOLS
+    assert _decide("search_email").action != "deny"

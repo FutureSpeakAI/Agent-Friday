@@ -1399,6 +1399,12 @@ CONNECTED_SERVICE_TOOLS = frozenset({
     "list_tasks", "create_task", "update_task", "complete_task", "draft_email",
     "list_sending_accounts", "screen_select",
 })
+#: The connected-service tools that change something in the owner's account
+#: (tasks, drafts, free/busy). These also wait on every outward hold: after a
+#: restore until the owner resumes, and on a ledger break.
+CONNECTED_SERVICE_WRITES = frozenset({
+    "release_holds", "create_task", "update_task", "complete_task", "draft_email",
+})
 
 
 def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
@@ -1420,6 +1426,8 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             try:
                 from agent_friday.services import safe_mode as _sm
                 _why = _sm.refusal("connector_reads") or _authority_hold()
+                if not _why and tool_name in CONNECTED_SERVICE_WRITES:
+                    _why = outward_hold()
             except Exception as e:  # noqa: BLE001 - a check that cannot run holds
                 _why = "safe mode could not be checked (%s)" % type(e).__name__
             if _why:

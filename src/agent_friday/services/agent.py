@@ -14059,9 +14059,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             # is told the exact name; that call then passes every gate as itself.
             print(f"  [tools] '{name}' is not registered; '{resolved}' matches it but is not "
                   f"internal, so it was not run under a guessed name")
-            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so nothing ran. The "
-                    f"closest tool is '{resolved}', which is never run under a guessed name. If "
-                    f"'{resolved}' is what you meant, call it by that exact name.")
+            return _own(f"TOOL CALL FAILED — no tool named '{name}' exists, so nothing ran. The "
+                        f"closest tool is '{resolved}', which is never run under a guessed name. If "
+                        f"'{resolved}' is what you meant, call it by that exact name.")
         if resolved:
             print(f"  [tools] '{name}' is not registered; resolved to "
                   f"'{resolved}' (unambiguous match, internal)")
