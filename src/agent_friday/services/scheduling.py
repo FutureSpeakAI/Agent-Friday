@@ -416,6 +416,10 @@ def _series_events(svc, series_id) -> list:
             return items
 
 
+class _Unconfirmed(Exception):
+    """Google answered a create without naming the event it made."""
+
+
 def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
     """Place tentative "Hold: <title>" events on the owner's own calendar.
 
@@ -461,12 +465,22 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
             "extendedProperties": {"private": {HOLD_MARK: HOLD_ACTIVE,
                                                HOLD_SERIES: series}},
         }
+        from agent_friday.services import connector_outcome as _co
         try:
             ev = svc.events().insert(calendarId="primary", body=body,
                                      sendUpdates="none").execute()
+            if not _co.confirmed(ev):
+                raise _Unconfirmed()
         except Exception as ex:
             cw._drop_calendar_cache()
-            return {"error": "placing a hold failed: %s" % ex, "partial": True,
+            if holds:
+                # some holds were placed: the call changed something; say which did not
+                why = (_co.sentence("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
+                       else _co.sentence(_co.classify(ex), "Google Calendar"))
+            else:
+                why = (_co.not_done("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
+                       else _co.failed(ex, "Google Calendar", account_id=aid))
+            return {"error": "placing a hold failed. " + why, "partial": bool(holds),
                     "series_id": series, "account_id": aid, "holds": holds}
         holds.append({"id": ev.get("id"), "start": body["start"]["dateTime"],
                       "end": body["end"]["dateTime"]})
@@ -484,7 +498,9 @@ def _release(svc, series_id, keep_event_id=None) -> dict:
         try:
             fresh = svc.events().get(calendarId="primary", eventId=eid).execute()
         except Exception as e:
-            left.append({"id": eid, "why": "could not be re-read (%s)" % e})
+            from agent_friday.services import connector_outcome as _co
+            left.append({"id": eid, "why": "could not be re-read. " + _co.sentence(_co.classify(e)),
+                         "failed": _co.classify(e)})
             continue
         if not is_friday_hold(fresh, series_id):
             left.append({"id": eid, "why": "not an active Friday hold of this "
@@ -494,7 +510,9 @@ def _release(svc, series_id, keep_event_id=None) -> dict:
             svc.events().delete(calendarId="primary", eventId=eid,
                                 sendUpdates="none").execute()
         except Exception as e:
-            left.append({"id": eid, "why": "delete failed (%s)" % e})
+            from agent_friday.services import connector_outcome as _co
+            left.append({"id": eid, "why": "delete failed. " + _co.sentence(_co.classify(e)),
+                         "failed": _co.classify(e)})
             continue
         released.append({"id": eid, "start": ((fresh.get("start") or {})
                                               .get("dateTime") or "")})
@@ -511,8 +529,15 @@ def release_holds(*, series_id, account_id=None) -> dict:
     except SchedulingError as e:
         return {"error": str(e)}
     except Exception as e:
-        return {"error": "releasing holds failed: %s" % e}
+        from agent_friday.services import connector_outcome as _co
+        return {"error": "releasing holds failed. " + _co.failed(e, "Google Calendar", account_id=account_id)}
     cw._drop_calendar_cache()
+    failed = [x["failed"] for x in res.get("left_alone") or [] if x.get("failed")]
+    if failed and not res.get("released"):
+        # every hold Friday tried to release is still there: nothing was released
+        from agent_friday.services import connector_outcome as _co
+        return dict(res, ok=False, series_id=series, account_id=aid,
+                    error=_co.not_done(failed[0], "Google Calendar", account_id=aid))
     return dict(res, ok=True, series_id=series, account_id=aid)
 
 
@@ -570,7 +595,9 @@ def book_slot(*, series_id, title: str, hold_event_id=None, start=None,
     except SchedulingError as e:
         return {"error": str(e)}
     except Exception as e:
-        return {"error": "booking failed before anything changed: %s" % e}
+        from agent_friday.services import connector_outcome as _co
+        return {"error": "booking failed before anything changed. "
+                         + _co.failed(e, "Google Calendar", account_id=account_id)}
 
     patch = {"summary": gt, "status": "confirmed", "transparency": "opaque",
              "visibility": "default", "description": gd or "",
@@ -580,12 +607,17 @@ def book_slot(*, series_id, title: str, hold_event_id=None, start=None,
         patch["location"] = gl
     if emails:
         patch["attendees"] = [{"email": a} for a in emails]
+    from agent_friday.services import connector_outcome as _co
     try:
         booked = svc.events().patch(
             calendarId="primary", eventId=hold_event_id, body=patch,
             sendUpdates="all" if emails else "none").execute()
     except Exception as e:
-        return {"error": "booking failed: %s" % e}
+        return {"error": "booking failed. " + _co.failed(e, "Google Calendar", account_id=aid)}
+    if not _co.confirmed(booked):
+        # no confirmation: the holds are left in place and nothing is reported as booked
+        return {"error": "booking was not confirmed. " + _co.not_done("unconfirmed", "Google Calendar"),
+                "unconfirmed": True, "series_id": series, "account_id": aid}
     try:
         rel = _release(svc, series, keep_event_id=hold_event_id)
     except Exception as e:

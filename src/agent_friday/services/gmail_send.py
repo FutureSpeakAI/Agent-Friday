@@ -775,9 +775,10 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
     msg = {"raw": raw}
     if extras.get("thread_id"):
         msg["threadId"] = extras["thread_id"]
+    from agent_friday.services import connector_outcome as _co
     creds = G.credentials_for(account_id)
     if not creds:
-        raise SendRefused("that account's credentials could not be read, so nothing was saved")
+        raise SendRefused(_co.no_credentials(account_id, "Gmail"))
     from googleapiclient.discovery import build
     from agent_friday.services import gmail_api
     from agent_friday.services import egress_record as _er
@@ -789,10 +790,17 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
         d = gmail_api.execute(svc.users().drafts().create(userId="me", body={"message": msg}))
     except gmail_api.GmailError as e:
         if _google_refused_scope(e):
+            _co.not_done("scope", "Gmail")
             raise DraftScopeMissing(rec, google_said=True) from e
-        raise SendRefused("Gmail did not save the draft (error %s). Nothing was saved."
-                          % log_failure(e, "Gmail draft failed"),
+        _kind = _co.classify(e)
+        _co.not_done(_kind, "Gmail", account_id=account_id)
+        raise SendRefused("Gmail did not save the draft (error %s). %s"
+                          % (log_failure(e, "Gmail draft failed"), _co.sentence(_kind, "Gmail")),
                           detail="Gmail did not save the draft: %s. Nothing was saved." % e)
+    if not _co.confirmed(d):
+        # Gmail answered without naming a draft: it may or may not exist. Never "saved", and
+        # never "nothing was saved" either.
+        raise SendRefused(_co.not_done("unconfirmed", "Gmail") + " Look in the Drafts folder.")
     m = (d or {}).get("message") or {}
     return {"ok": True, "draft_id": d.get("id"), "account_id": account_id,
             "message_id": m.get("id"), "thread_id": m.get("threadId") or thread_id,
